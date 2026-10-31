@@ -65,13 +65,26 @@ def _pressure(kind: str) -> str:
     return "/".join(f"{shares[name]}%" for name in ("some", "full") if name in shares)
 
 
-def _alive(pids: list[int]) -> bool:
+def _alive(pids: list[int], commands: list[str] = ()) -> bool:
+    """Whether any of ``pids``, or any process whose command line contains one of ``commands``, runs."""
     for pid in pids:
         try:
             os.kill(pid, 0)
             return True
         except OSError:
             continue
+    if not commands:
+        return False
+    own = os.getpid()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == own:
+            continue
+        try:
+            line = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if any(command in line for command in commands):
+            return True
     return False
 
 
@@ -95,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval", type=float, default=10.0)
     parser.add_argument("--max-seconds", type=float, default=900.0)
     parser.add_argument("--watch-pid", type=int, action="append", default=[])
+    # Processes started after this one (run_h3.sh's later h3_prepare.py) are found by command line.
+    parser.add_argument("--watch-command", action="append", default=[])
     parser.add_argument("--until-url", default="")
     args = parser.parse_args(argv)
     if not Path("/proc/stat").is_file():
@@ -117,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
               f" | cpu {100 * busy / total:.0f}% iowait {100 * iowait / total:.0f}%"
               f" | stalled io {_pressure('io')} cpu {_pressure('cpu')} mem {_pressure('memory')}", flush=True)
         net, disk, cpu = now_net, now_disk, now_cpu
-        if not _alive(args.watch_pid) and (not args.until_url or _answers(args.until_url)):
+        if not _alive(args.watch_pid, args.watch_command) and (not args.until_url or _answers(args.until_url)):
             break
     return 0
 

@@ -1111,7 +1111,6 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     from h3_app.drama3.serving import audio, takes as take_store
     from h3_app.drama3.serving.generate import FRAMES_PER_SECOND
     from h3_app.drama3.serving.planner import expected_seconds
-    from h3_app.drama3.serving.server import NO_AUDIO_FRAMES
     from h3_app.drama3.serving.speech import LineSpeaker, persist_caches
 
     temperature, top_p, top_k = VOICE_PRESETS.get(request.preset, VOICE_PRESETS["Balance"])
@@ -1160,7 +1159,7 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
             for batch in batches:
                 for spoken in batch:
                     line = spoken.key
-                    problem = KEPT_ORIGINAL if NO_AUDIO_FRAMES in spoken.problem else spoken.problem
+                    problem = KEPT_ORIGINAL if spoken.no_audio else spoken.problem
                     outcomes[line.index] = (line.segment, problem)
                     done += 1
                     if problem or not spoken.samples.size:
@@ -1632,8 +1631,9 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     kept = [line for line in planned if line.note == KEPT_ORIGINAL]
     planned = [line for line in planned if line.note != KEPT_ORIGINAL]
     if not planned:
-        raise H3Error("Drama 3 could not voice any of the chosen lines: their references may be too short. "
-                      "Pick a saved voice for these speakers under Speakers, or try another Clone from.")
+        raise H3Error("Drama 3 could not voice any of the chosen lines: their references may be too short, "
+                      "or the Drama 3 server is failing (see its log). Pick a saved voice for these speakers "
+                      "under Speakers, or try another Clone from.")
     failed = [line for line in planned if line.take is None or not len(line.take)]
     if failed:
         reasons = "; ".join(f"line {line.index + 1}: {line.note or 'no translated audio returned'}" for line in failed[:20])

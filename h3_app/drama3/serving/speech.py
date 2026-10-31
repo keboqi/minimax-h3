@@ -41,6 +41,7 @@ class SpokenLine:
     samples: np.ndarray
     rate: int
     problem: str  # empty when the take passed its check, else why the kept take failed
+    no_audio: bool = False  # Drama 3 voiced nothing for the line (SpeechRequestError.no_audio)
 
 
 class LineSpeaker:
@@ -84,7 +85,8 @@ class LineSpeaker:
             except (SpeechRequestError, ValueError) as exc:
                 if not keep_going or (isinstance(exc, SpeechRequestError) and not exc.rejected_line):
                     raise
-                return SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0, f"generation failed: {exc}")
+                return SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0, f"generation failed: {exc}",
+                                  no_audio=isinstance(exc, SpeechRequestError) and exc.no_audio)
             problem = "" if attempt.check.ok else attempt.check.reason
             return SpokenLine(key, attempt.wav, attempt.samples, attempt.rate, problem)
 

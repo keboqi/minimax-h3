@@ -1717,21 +1717,36 @@ def hub_snapshot_bytes(repo_id: str, revision: str | None = None, token: str | N
 
 
 @contextmanager
-def ram_directory(target: Path, size: int | None, *, log=print):
+def ram_directory(target: Path, size: int | None, *, log=print, new: bool = True):
     """Let a whole-folder download (snapshot_download into ``target``) land in RAM.
 
-    With room for ``size`` bytes, ``target`` becomes a symlink to a folder under
-    H3_RAM_MODELS_DIR for the download inside the block; otherwise it stays (or is
-    left to become) a normal folder on disk. A link left dangling by an ended runtime
-    is removed either way, so the download starts clean. Yields whether RAM is used.
+    With room for ``size`` bytes (and ``new``), ``target`` becomes a symlink to a folder
+    under H3_RAM_MODELS_DIR for the download inside the block; otherwise it stays (or is
+    left to become) a normal folder on disk. A RAM download from earlier in this runtime
+    resumes there while RAM still has room for the rest, else its partial files are
+    dropped and it starts again on disk. A link left dangling by an ended runtime is
+    removed either way, so the download starts clean. Yields whether RAM is used.
     """
     target = Path(target)
     if target.is_symlink() and not target.exists():
         target.unlink()
     if target.is_symlink():  # already in RAM from earlier in this runtime
-        yield True
-        return
-    if target.exists() or ram_models_dir() is None:  # a disk copy, perhaps partial, keeps resuming there
+        folder = target.resolve()
+        have = sum(path.stat().st_size for path in folder.rglob("*") if path.is_file())
+        remaining = max(0, size - have) if isinstance(size, int) else 0
+        if not remaining:  # complete, or the size is unknown
+            yield True
+            return
+        if reserve_ram_bytes(remaining) is not None:
+            try:
+                yield True
+            finally:
+                _release_ram(remaining)
+            return
+        log(f"[colab-ram] {target.name}: not enough free RAM to finish; downloading to disk")
+        target.unlink()
+        shutil.rmtree(folder, ignore_errors=True)
+    if not new or target.exists() or ram_models_dir() is None:  # a disk copy, perhaps partial, keeps resuming there
         yield False
         return
     root = reserve_ram_bytes(size)

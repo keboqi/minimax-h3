@@ -1306,7 +1306,12 @@ class LineSpeakerTests(unittest.TestCase):
                   for line in batch}
         self.assertEqual(spoken["b"].samples.size, 0)
         self.assertIn(server.NO_AUDIO_FRAMES, spoken["b"].problem)
+        self.assertTrue(spoken["b"].no_audio)
+        self.assertFalse(spoken["a"].no_audio)
         self.assertEqual(fake.speech.call_count, 2)
+        # Read from the whole response body, past the message's 500-character cut.
+        self.assertTrue(server.SpeechRequestError("HTTP 500: " + "x" * 500, 500, no_audio=True).rejected_line)
+        self.assertFalse(server.SpeechRequestError("HTTP 500: engine crashed", 500).rejected_line)
 
         def down(_payload):
             raise server.SpeechRequestError("server error", 503)

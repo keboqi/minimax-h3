@@ -177,15 +177,23 @@ NUMBERED_LINE = re.compile(r"^\s*(\d+)\s*[.)、．:：]\s*(.*)$")
 
 
 def window_translation(reply: str, count: int) -> str:
-    """The last line's translation from a numbered window reply; empty unless every line came back."""
-    numbered = {}
-    for line in str(reply or "").splitlines():
+    """The last line's translation from a numbered window reply; empty unless every line came back.
+
+    Each line must come back once, in order, on one numbered line: an unnumbered line (a
+    wrapped or split translation) or a repeated number rejects the reply.
+    """
+    numbers, texts = [], []
+    for line in str(reply or "").replace("<|im_end|>", "").replace("<|endoftext|>", "").splitlines():
+        if not line.strip():
+            continue
         match = NUMBERED_LINE.match(line)
-        if match:
-            numbered.setdefault(int(match.group(1)), match.group(2).strip())
-    if sorted(numbered) != list(range(1, count + 1)):
+        if not match:
+            return ""
+        numbers.append(int(match.group(1)))
+        texts.append(match.group(2).strip())
+    if numbers != list(range(1, count + 1)):
         return ""
-    return clean_translation(numbered[count])
+    return clean_translation(texts[-1])
 
 
 def clean_translation(text: str) -> str:

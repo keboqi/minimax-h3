@@ -252,6 +252,24 @@ class SleepTests(unittest.TestCase):
             nemotron.release_for_job("unload")
         self.assertEqual(self.stops, [True])
 
+    def test_another_job_stops_a_server_an_interrupted_analysis_still_waits_on(self):
+        self.server._active_requests = 1
+        with patch.object(nemotron, "_SERVER", self.server):
+            nemotron.release_for_job("drama3")
+        self.assertEqual((self.calls, self.stops), ([], [True]))
+
+    def test_a_failed_launch_is_not_retried_and_the_next_one_skips_sleep(self):
+        from h3_app.drama3.serving import server as serving
+
+        self.server.running = lambda: False
+        self.server.process = None
+        self.server.check_free_vram = lambda *_args, **_kwargs: None
+        with patch.object(serving.SglangOmniServer, "_launch", side_effect=H3Error("not ready in 2400s")) as launch:
+            with self.assertRaises(H3Error):
+                self.server.ensure_ready(lambda: None)
+        launch.assert_called_once()
+        self.assertNotIn("--enable-sleep-mode", self.server.command())
+
 
 if __name__ == "__main__":
     unittest.main()

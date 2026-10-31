@@ -491,7 +491,9 @@ class TimingTests(unittest.TestCase):
                                                          "3．And the next generation is coming.<|im_end|>", 3),
                          "And the next generation is coming.")
         for reply in ("1. He built a nest. And the next one is coming.",
-                      "1. A\n3. C", "A\nB\nC", "1. A\n2. B\n3. C\n4. D", ""):
+                      "1. A\n3. C", "A\nB\nC", "1. A\n2. B\n3. C\n4. D", "",
+                      "1. A\n2. B\n3. Take the train.\nGet off at the next stop.",
+                      "1. A\n2. B\n3. Part one\n3. Part two", "2. B\n1. A\n3. C"):
             with self.subTest(reply=reply):
                 self.assertEqual(tools_worker.window_translation(reply, 3), "")
 
@@ -1116,7 +1118,8 @@ class ReviewFixTests(Workspace):
             @staticmethod
             def speak(lines, **_kwargs):
                 yield [SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0,
-                                  "generation failed: Request speech-1: Drama 3 generated no audio frames")
+                                  "generation failed: Request speech-1: Drama 3 generated no audio frames",
+                                  no_audio=True)
                        for key, *_rest in lines]
 
         planned = pipeline._plan(session, [0], pipeline.VOICE_LINE, self.runtime)

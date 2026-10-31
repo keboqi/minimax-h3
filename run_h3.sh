@@ -69,6 +69,7 @@ COMFY_ATTENTION_ARGS=(--use-ck-attention)
 COMFY_PID=""
 GRADIO_PID=""
 PREPARE_PIDS=()
+STATS_PID=""
 
 log() {
   printf '[h3-run] %s\n' "$*"
@@ -227,6 +228,7 @@ cleanup() {
   local pids=()
   [[ -n "$GRADIO_PID" ]] && pids+=("$GRADIO_PID")
   [[ -n "$COMFY_PID" ]] && pids+=("$COMFY_PID")
+  [[ -n "$STATS_PID" ]] && kill -0 "$STATS_PID" 2>/dev/null && pids+=("$STATS_PID")
   local prepare_pid
   for prepare_pid in "${PREPARE_PIDS[@]}"; do
     if kill -0 "$prepare_pid" 2>/dev/null; then
@@ -411,9 +413,10 @@ esac
 # Every 10 s until the downloads end and ComfyUI answers: network, disk writes, dirty pages,
 # CPU and stall pressure, to show what startup waits on. H3_STARTUP_STATS=0 turns it off.
 if [[ "${H3_STARTUP_STATS:-1}" != "0" && -f "$SCRIPT_DIR/h3_startup_stats.py" ]]; then
-  stats_watch=()
-  for prepare_pid in "${PREPARE_PIDS[@]}"; do stats_watch+=(--watch-pid "$prepare_pid"); done
-  "$PYTHON_BIN" "$SCRIPT_DIR/h3_startup_stats.py" --until-url "$COMFY_URL/system_stats" "${stats_watch[@]}" &
+  # By command line, so the preparation started after setup counts too.
+  "$PYTHON_BIN" "$SCRIPT_DIR/h3_startup_stats.py" --until-url "$COMFY_URL/system_stats" \
+    --watch-command h3_prepare.py &
+  STATS_PID=$!
 fi
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then

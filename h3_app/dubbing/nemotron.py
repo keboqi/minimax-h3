@@ -226,11 +226,18 @@ class NemotronServer(SglangOmniServer):
         """Wake a sleeping server when the GPU has room again, else start one."""
         import requests
 
+        freed = []
+
+        def free_once():  # a failed wake falls through to a start; unload ComfyUI once
+            if not freed:
+                freed.append(True)
+                free_gpu()
+
         with self._lock:
             if self._asleep and self.running():
                 # Asleep, the process keeps its CUDA context; waking maps the rest back in.
                 needed = self.settings.footprint_mib() - 1024
-                self._free_comfy_if_short(free_gpu, needed)
+                self._free_comfy_if_short(free_once, needed)
                 memory = gpu_memory()
                 if memory is not None and memory[0] < needed and evict:
                     memory = reclaim_audio_tools() or memory
@@ -249,7 +256,7 @@ class NemotronServer(SglangOmniServer):
                     self.log_line(f"Wake failed; restarting: {exc}")
                     self._sleep_disabled = True
                     self.stop()
-            super().ensure_ready(free_gpu, progress, evict=evict)
+            super().ensure_ready(free_once, progress, evict=evict)
 
     def release(self) -> None:
         """Sleep an idle server (weights to host RAM, KV cache dropped), or stop it."""
@@ -263,7 +270,7 @@ class NemotronServer(SglangOmniServer):
             if (self.running() and self._sleep_launch and not self._uncertain_request
                     and not self._sleep_disabled):
                 try:
-                    needed = (DOWNLOAD_GB + SLEEP_RAM_MARGIN_GIB) * 2**30
+                    needed = DOWNLOAD_GB * 1e9 + SLEEP_RAM_MARGIN_GIB * 2**30
                     if checkpoint.available_ram() < needed:
                         # Not a fault of the server: a later release may find the room.
                         raise ValueError(f"sleep needs {needed / 2**30:.0f} GiB of free host RAM")
@@ -309,7 +316,7 @@ class NemotronServer(SglangOmniServer):
     def command(self) -> list[str]:
         settings = self.settings
         memory = gpu_memory()
-        # A sleep launch that fails disables sleep, so the retry starts without it.
+        # A sleep launch that fails disables sleep, so the next start goes without it.
         self._sleep_launch = settings.sleep_mode == "auto" and not self._sleep_disabled
         self._eager_launch = self._eager_wanted
         # NVIDIA's recipe, without speculative decoding, for one analysis at a time.
@@ -390,11 +397,14 @@ def release_for_job(family: str) -> None:
 
 
 def release_all() -> None:
-    """Sleep an idle server (or stop it where sleep is unavailable)."""
+    """Sleep an idle server; stop it where sleep is unavailable or a request is still out."""
     with _SERVER_LOCK:
         server = _SERVER
     if server is not None and server.running():
-        server.release()
+        try:
+            server.release()
+        except H3Error:  # an interrupted analysis still waits on its reply; the new job gets the GPU
+            server.stop()
 
 
 def stop_all() -> None:

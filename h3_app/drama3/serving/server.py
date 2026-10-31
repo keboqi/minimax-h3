@@ -7,7 +7,6 @@ stop the server. The next TTS job restores the workers or restarts the server.
 from __future__ import annotations
 
 import atexit
-import contextlib
 import hashlib
 import json
 import os
@@ -75,12 +74,21 @@ SHM_PLATFORM_SPEC = "h3_omni_shm:ShmCudaPlatform"
 SNAPSHOT_CAPTURE = threading.Event()
 
 
-class SpeechRequestError(H3Error):
-    """A speech request the server answered with an HTTP error."""
+# The SGLang-Omni error when Drama 3 returns no audio for a request.
+NO_AUDIO_FRAMES = "generated no audio frames"
 
-    def __init__(self, message: str, status: int):
+
+class SpeechRequestError(H3Error):
+    """A speech request the server answered with an HTTP error.
+
+    ``no_audio``: Drama 3 voiced nothing for the line; read from the whole response body
+    when given, else from the message.
+    """
+
+    def __init__(self, message: str, status: int, *, no_audio: bool | None = None):
         super().__init__(message)
         self.status = status
+        self.no_audio = NO_AUDIO_FRAMES in message if no_audio is None else no_audio
 
     @property
     def rejected_line(self) -> bool:
@@ -89,11 +97,7 @@ class SpeechRequestError(H3Error):
         Drama 3 answers HTTP 500 when it voices nothing for a line (often a reference clip too
         short to clone); that is about this line, not a failing server.
         """
-        return self.status < 500 or NO_AUDIO_FRAMES in str(self)
-
-
-# The SGLang-Omni error when Drama 3 returns no audio for a request.
-NO_AUDIO_FRAMES = "generated no audio frames"
+        return self.status < 500 or self.no_audio
 
 
 @dataclass(frozen=True)
@@ -230,9 +234,10 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print, ram: bool =
     """Download the pinned official checkpoint once.
 
     With ``ram`` (h3_prepare's preload) and H3_RAM_MODELS_DIR set, it downloads into RAM
-    behind a symlink while there is room, off the disk; see h3_models.ram_directory.
+    behind a symlink while there is room, off the disk; an unfinished RAM download resumes
+    there either way while the rest fits. See h3_models.ram_directory.
     """
-    from h3_models import ram_directory
+    from h3_models import hub_snapshot_bytes, ram_directory
     from h3_app.workers.env import setup_lock
 
     target = settings.model_dir
@@ -249,10 +254,8 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print, ram: bool =
         from huggingface_hub import snapshot_download
 
         pin = settings.pin
-        size = int(pin.download_gb * 1e9) if ram else None
-        with ram_directory(target, size, log=log) if ram else contextlib.nullcontext():
-            if target.is_symlink() and not target.exists():  # RAM copy gone with an earlier runtime
-                target.unlink()
+        size = hub_snapshot_bytes(pin.repo, pin.revision, token) or int(pin.download_gb * 1e9)
+        with ram_directory(target, size, log=log, new=ram):
             log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} "
                 f"(~{pin.download_gb:.0f} GB, first use only).")
             snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
@@ -524,6 +527,10 @@ class SglangOmniServer:
                 if self._sleep_disabled or self.settings.sleep_mode != "auto":
                     raise
                 self._sleep_disabled = True
+                if not self.cuda_checkpoint:
+                    # A server that sleeps itself can take most of an hour to fail its start
+                    # (Nemotron's kernel compile): report it now; the next start goes without sleep.
+                    raise
                 self.log_line("Checkpoint-enabled launch failed; retrying ordinary startup once")
                 self.check_free_vram(progress, evict=evict)
                 self._launch(progress)
@@ -657,7 +664,8 @@ class SglangOmniServer:
                                         timeout=self.settings.request_timeout)
             if not response.ok:
                 raise SpeechRequestError(f"{self.label} speech request failed (HTTP {response.status_code}): "
-                                         f"{response.text[:500]}", response.status_code)
+                                         f"{response.text[:500]}", response.status_code,
+                                         no_audio=NO_AUDIO_FRAMES in response.text)
             self._speech_trace(f"Speech response {request_id}: {len(response.content)} bytes, "
                                f"sha256={hashlib.sha256(response.content).hexdigest()}")
             return response.content
@@ -739,7 +747,7 @@ def release_for_job(family: str) -> None:
     elif family in IMAGE_FAMILIES and image_room_beside_server():
         return
     elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload",
-                        "dubbing_analyze", "dubbing_lines", "dubbing"}:
+                        "dubbing_analyze", "dubbing_lines", "dubbing_words", "dubbing"}:
         release_all()
 
 

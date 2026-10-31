@@ -158,6 +158,23 @@ class RamModelTests(unittest.TestCase):
         with h3_models.ram_directory(target, 40 * GIB, log=lambda _message: None) as in_ram:
             self.assertFalse(in_ram)  # a partial disk download keeps resuming there
 
+    def test_an_unfinished_ram_download_resumes_only_while_the_rest_fits(self):
+        target = self.disk / "models" / "drama3_serving" / "fishaudio--drama-3--e0a9"
+        quiet = {"log": lambda _message: None}
+        with h3_models.ram_directory(target, 40 * GIB, **quiet):
+            (target / "part.safetensors").write_bytes(b"x" * 10)
+        # The on-demand download (new=False) resumes in RAM while the rest fits.
+        with h3_models.ram_directory(target, 40 * GIB, new=False, **quiet) as in_ram:
+            self.assertTrue(in_ram)
+            self.assertEqual(h3_models._ram_reserved, 40 * GIB - 10)
+        self.assertEqual(h3_models._ram_reserved, 0)
+        # Short of room for the rest, the partial RAM copy goes and the download moves to disk.
+        with patch.object(h3_models, "_available_memory", return_value=10 * GIB), \
+                h3_models.ram_directory(target, 40 * GIB, new=False, **quiet) as in_ram:
+            self.assertFalse(in_ram)
+            self.assertFalse(target.is_symlink() or target.exists())
+        self.assertFalse((self.ram / "drama3_serving" / target.name).exists())
+
     def test_the_drama3_preload_downloads_its_checkpoint_into_ram(self):
         from h3_app.drama3.serving import server
 
