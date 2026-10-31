@@ -301,6 +301,8 @@ class SglangOmniServer:
     # Processes holding a CUDA context while serving: Drama 3's preprocessing, engine and vocoder.
     cuda_workers = 3
     memory_settings = "H3_DRAMA3_SGLANG_ENGINE_MEMORY + CODEC_MEMORY"
+    # Sleep checkpoints the CUDA workers to RAM; a server that sleeps itself turns this off.
+    cuda_checkpoint = True
 
     def __init__(self, settings: ServerSettings):
         self.settings = settings
@@ -394,7 +396,7 @@ class SglangOmniServer:
             # it cannot capture memory the stages share over CUDA IPC.
             env.update(PYTHONPATH=str(SHM_PLATFORM_DIR), SGLANG_OMNI_PLATFORM_SPEC=SHM_PLATFORM_SPEC)
             self.log_line("Snapshot capture: Omni stages exchange tensors through host SHM")
-        elif settings.sleep_mode == "auto" and not self._sleep_disabled:
+        elif self.cuda_checkpoint and settings.sleep_mode == "auto" and not self._sleep_disabled:
             try:
                 helper, ipc = checkpoint.prepare_helper(settings.runtime_dir / "cache")
                 self._checkpoint_baseline = checkpoint.device_memory()[0]

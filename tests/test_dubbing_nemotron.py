@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from h3_app.dubbing import nemotron, pipeline, segments, session as sessions
 from h3_app.errors import H3Error
@@ -152,6 +155,90 @@ class OverlapTimingTests(unittest.TestCase):
         self.assertAlmostEqual(pipeline.slot_end(lines, 0, 10), 3.95)
         shown = pipeline.subtitle_lines(lines, {0: (0.0, 2.5)})
         self.assertEqual(shown[0]["end"], 2.5)
+
+
+class SleepTests(unittest.TestCase):
+    """vLLM's own sleep mode between analyses, with its endpoints and the GPU faked."""
+
+    def setUp(self):
+        settings = nemotron.NemotronSettings(venv=Path("/venv"), data_dir=Path("/data"), model_root=Path("/models"))
+        self.server = nemotron.NemotronServer(settings)
+        self.calls = []
+        self.awake_reply = False
+        self.server.running = lambda: True
+        self.server.healthy = lambda timeout=2.0: True
+        self.server._engine = lambda path, **params: self.calls.append((path, params))
+        self.server._is_sleeping = lambda: bool(self.calls) and self.calls[-1][0] == "/sleep" or self.awake_reply
+        self.stops = []
+        self.server.stop = lambda: (self.stops.append(True), setattr(self.server, "_asleep", False))
+        self.patches = [patch.object(nemotron, "gpu_memory", return_value=(80 * 1024, 96 * 1024, "")),
+                        patch.object(nemotron.checkpoint, "available_ram", return_value=200 * 2**30)]
+        for started in self.patches:
+            started.start()
+        self.server.command()  # a sleep-mode launch
+
+    def tearDown(self):
+        for started in self.patches:
+            started.stop()
+
+    def test_settings_default_to_sleep_and_reject_unknown_modes(self):
+        runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(nemotron.NemotronSettings.from_environment(runtime).sleep_mode, "auto")
+        with patch.dict("os.environ", {"H3_NEMOTRON_SLEEP": "OFF"}, clear=True):
+            self.assertEqual(nemotron.NemotronSettings.from_environment(runtime).sleep_mode, "off")
+        with self.assertRaises(ValueError):
+            replace(self.server.settings, sleep_mode="deep")
+
+    def test_launch_enables_sleep_unless_it_is_off_or_failed(self):
+        self.assertIn("--enable-sleep-mode", self.server.command())
+        self.server._sleep_disabled = True
+        self.assertNotIn("--enable-sleep-mode", self.server.command())
+        off = nemotron.NemotronServer(replace(self.server.settings, sleep_mode="off"))
+        self.assertNotIn("--enable-sleep-mode", off.command())
+
+    def test_release_sleeps_and_the_next_analysis_wakes(self):
+        self.server.release()
+        self.assertTrue(self.server.sleeping)
+        self.assertEqual(self.calls, [("/sleep", {"level": 1})])
+        self.server.release()  # already asleep
+        self.assertEqual(len(self.calls), 1)
+        self.server.ensure_ready(lambda: None)
+        self.assertFalse(self.server.sleeping)
+        self.assertEqual(self.calls[-1][0], "/wake_up")
+        self.assertEqual(self.stops, [])
+
+    def test_short_host_ram_stops_without_disabling_sleep(self):
+        with patch.object(nemotron.checkpoint, "available_ram", return_value=10 * 2**30):
+            self.server.release()
+        self.assertEqual((self.calls, self.stops, self.server._sleep_disabled), ([], [True], False))
+
+    def test_a_failed_sleep_stops_and_later_launches_skip_sleep(self):
+        def refuse(path, **params):
+            raise RuntimeError("/sleep answered HTTP 404")
+
+        self.server._engine = refuse
+        self.server.release()
+        self.assertEqual(self.stops, [True])
+        self.assertTrue(self.server._sleep_disabled)
+        self.assertNotIn("--enable-sleep-mode", self.server.command())
+
+    def test_waking_without_room_keeps_it_asleep(self):
+        self.server.release()
+        with patch.object(nemotron, "gpu_memory", return_value=(10 * 1024, 96 * 1024, "drama3")), \
+                patch.object(nemotron, "reclaim_audio_tools", return_value=None):
+            with self.assertRaises(H3Error):
+                self.server.ensure_ready(lambda: None)
+        self.assertTrue(self.server.sleeping)
+
+    def test_other_jobs_sleep_it_and_an_unload_stops_it(self):
+        with patch.object(nemotron, "_SERVER", self.server):
+            nemotron.release_for_job(nemotron.FAMILY)
+            self.assertFalse(self.server.sleeping)
+            nemotron.release_for_job("drama3")
+            self.assertTrue(self.server.sleeping)
+            nemotron.release_for_job("unload")
+        self.assertEqual(self.stops, [True])
 
 
 if __name__ == "__main__":

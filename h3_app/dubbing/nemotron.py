@@ -2,9 +2,10 @@
 
 NVIDIA's NVFP4 checkpoint (Blackwell only, as on our RTX PRO 6000 servers) returns a
 speaker-tagged transcript plus CTC word timings, each word with its speaker. It runs in
-its own NeMo Speech + vLLM environment as a managed server that starts for an analysis
-and stops as soon as the words are back, so translation and Drama 3 get the GPU.
-One request covers up to an hour.
+its own NeMo Speech + vLLM environment as a managed server that sleeps once the words are
+back: vLLM's sleep mode moves the weights to host RAM and drops the KV cache, so
+translation and Drama 3 get the GPU and the next analysis wakes it in seconds. Other
+engines' jobs sleep it too, and an unload stops it. One request covers up to an hour.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
 from typing import Callable
 
 from h3_requirements import (
@@ -25,8 +27,8 @@ from h3_requirements import (
     nemotron_install_commands,
 )
 
-from h3_app.drama3.serving import environment as sglang_environment
-from h3_app.drama3.serving.server import SglangOmniServer, gpu_memory
+from h3_app.drama3.serving import checkpoint, environment as sglang_environment
+from h3_app.drama3.serving.server import SglangOmniServer, gpu_memory, reclaim_audio_tools
 from h3_app.errors import H3Error
 from h3_app.workers.env import setup_lock, uv_command
 
@@ -34,6 +36,8 @@ from . import segments as segment_tools
 
 MODEL_REPO = "nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-NVFP4"
 DOWNLOAD_GB = 20
+# Sleep copies the weights (about the download) into pinned host RAM; leave this much beside them.
+SLEEP_RAM_MARGIN_GIB = 8
 MAX_SECONDS = 60 * 60
 FAMILY = "dubbing_analyze"
 # The model card's prompt; it tags up to four speakers.
@@ -70,7 +74,11 @@ class NemotronSettings:
     max_seqs: int = 1
     start_timeout: float = 2400.0  # FlashInfer compiles its NVFP4 kernels on the first start
     request_timeout: float = 3600.0
-    sleep_mode: str = "off"  # started per analysis and stopped after it; no sleep/wake
+    sleep_mode: str = "auto"  # vLLM's level-1 sleep between analyses; "off" stops it instead
+
+    def __post_init__(self):
+        if self.sleep_mode not in {"auto", "off"}:
+            raise ValueError("H3_NEMOTRON_SLEEP must be auto or off")
 
     @classmethod
     def from_environment(cls, runtime) -> "NemotronSettings":
@@ -81,6 +89,7 @@ class NemotronSettings:
             model_root=Path(env.get("H3_NEMOTRON_MODELS") or runtime.comfy_dir / "models" / "dubbing" / "nemotron"),
             port=int(env.get("H3_NEMOTRON_PORT", "8098")),
             memory_gib=float(env.get("H3_NEMOTRON_MEMORY_GIB", "40")),
+            sleep_mode=env.get("H3_NEMOTRON_SLEEP", "auto").lower(),
         )
 
     def utilization(self, total_mib: float | None) -> float:
@@ -173,9 +182,103 @@ class NemotronServer(SglangOmniServer):
     log_name = "nemotron-vllm"
     cuda_workers = 1
     memory_settings = "H3_NEMOTRON_MEMORY_GIB"
+    cuda_checkpoint = False  # vLLM sleeps itself (--enable-sleep-mode, /sleep and /wake_up)
+
+    def __init__(self, settings: NemotronSettings):
+        super().__init__(settings)
+        self._asleep = False
+        self._sleep_launch = False  # whether the running server was started with sleep mode
+
+    @property
+    def sleeping(self) -> bool:
+        return self._asleep
+
+    def _engine(self, path: str, *, timeout: float = 300.0, **params) -> None:
+        import requests
+
+        response = requests.post(f"{self.base_url}{path}", params=params, timeout=timeout)
+        if not response.ok:
+            raise RuntimeError(f"{path} answered HTTP {response.status_code}: {response.text[:200]}")
+
+    def _is_sleeping(self) -> bool:
+        import requests
+
+        response = requests.get(f"{self.base_url}/is_sleeping", timeout=10)
+        response.raise_for_status()
+        return bool(response.json()["is_sleeping"])
+
+    def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None,
+                     *, evict: bool = True) -> None:
+        """Wake a sleeping server when the GPU has room again, else start one."""
+        import requests
+
+        with self._lock:
+            if self._asleep and self.running():
+                # Asleep, the process keeps its CUDA context; waking maps the rest back in.
+                needed = self.settings.footprint_mib() - 1024
+                self._free_comfy_if_short(free_gpu, needed)
+                memory = gpu_memory()
+                if memory is not None and memory[0] < needed and evict:
+                    memory = reclaim_audio_tools() or memory
+                if memory is not None and memory[0] < needed:
+                    raise H3Error(f"Not enough free GPU memory to wake {self.label}; unload other models and retry.")
+                started = time.monotonic()
+                progress(f"Waking {self.label} from host RAM")
+                try:
+                    self._engine("/wake_up")
+                    if self._is_sleeping() or not self.healthy(timeout=10):
+                        raise RuntimeError("server is not awake after /wake_up")
+                    self._asleep = False
+                    self.log_line(f"{self.label} awake after {time.monotonic() - started:.1f}s")
+                    return
+                except (OSError, RuntimeError, ValueError, KeyError, requests.RequestException) as exc:
+                    self.log_line(f"Wake failed; restarting: {exc}")
+                    self._sleep_disabled = True
+                    self.stop()
+            super().ensure_ready(free_gpu, progress, evict=evict)
+
+    def release(self) -> None:
+        """Sleep an idle server (weights to host RAM, KV cache dropped), or stop it."""
+        import requests
+
+        with self._lock:
+            if self._active_requests:
+                raise H3Error(f"{self.label} is still transcribing; GPU release was refused.")
+            if self._asleep and self.running():
+                return
+            if (self.running() and self._sleep_launch and not self._uncertain_request
+                    and not self._sleep_disabled):
+                try:
+                    needed = (DOWNLOAD_GB + SLEEP_RAM_MARGIN_GIB) * 2**30
+                    if checkpoint.available_ram() < needed:
+                        # Not a fault of the server: a later release may find the room.
+                        raise ValueError(f"sleep needs {needed / 2**30:.0f} GiB of free host RAM")
+                except (OSError, RuntimeError, ValueError, KeyError) as exc:
+                    self.log_line(f"Sleep skipped; stopping instead: {exc}")
+                else:
+                    started = time.monotonic()
+                    self.log_line(f"Putting {self.label} to sleep; weights move to host RAM")
+                    try:
+                        self._engine("/sleep", level=1)
+                        if not self._is_sleeping():
+                            raise RuntimeError("server does not report sleeping after /sleep")
+                        self._asleep = True
+                        self.log_line(f"{self.label} asleep after {time.monotonic() - started:.1f}s")
+                        return
+                    except (OSError, RuntimeError, ValueError, KeyError, requests.RequestException) as exc:
+                        self.log_line(f"Sleep failed; stopping instead: {exc}")
+                        self._sleep_disabled = True
+            self.stop()
+
+    def stop(self) -> None:
+        with self._lock:
+            super().stop()
+            self._asleep = False
 
     def server_env(self) -> dict[str, str]:
         env = super().server_env()
+        if self.settings.sleep_mode == "auto":
+            env["VLLM_SERVER_DEV_MODE"] = "1"  # exposes /sleep, /wake_up and /is_sleeping
         env.update(
             VLLM_PLUGINS="nemo_speechlm",
             VLLM_MAX_AUDIO_DECODE_DURATION_S=str(MAX_SECONDS),
@@ -192,6 +295,8 @@ class NemotronServer(SglangOmniServer):
     def command(self) -> list[str]:
         settings = self.settings
         memory = gpu_memory()
+        # A sleep launch that fails disables sleep, so the retry starts without it.
+        self._sleep_launch = settings.sleep_mode == "auto" and not self._sleep_disabled
         # NVIDIA's recipe, without speculative decoding, for one analysis at a time.
         return [
             str(Path(settings.venv) / "bin" / "vllm"), "serve", str(settings.model_dir),
@@ -205,6 +310,7 @@ class NemotronServer(SglangOmniServer):
             "--no-async-scheduling", "--limit-mm-per-prompt", '{"audio":{"count":1,"length":57600000}}',
             "--reasoning-parser", "nemotron_v3", "--trust-request-mm-kwargs",
             "--middleware", "nemo.collections.speechlm2.vllm.salm.ctc_serving.ctc_timestamp_middleware",
+            *(["--enable-sleep-mode"] if self._sleep_launch else []),
         ]
 
     def transcribe(self, audio: Path) -> dict:
@@ -223,6 +329,8 @@ class NemotronServer(SglangOmniServer):
         }
         del encoded
         with self._lock:
+            if self._asleep:
+                raise H3Error(f"{self.label} is asleep; wake it before transcribing.")
             self._active_requests += 1
         try:
             response = self.http().post(f"{self.base_url}/v1/chat/completions", json=payload,
@@ -258,9 +366,19 @@ def shared_server(settings: NemotronSettings) -> NemotronServer:
 
 
 def release_for_job(family: str) -> None:
-    """Every other job, and an unload, stops a server an interrupted analysis left running."""
-    if family != FAMILY:
+    """Analysis keeps Nemotron; every other job sleeps it, and an unload stops it."""
+    if family == "unload":
         stop_all()
+    elif family != FAMILY:
+        release_all()
+
+
+def release_all() -> None:
+    """Sleep an idle server (or stop it where sleep is unavailable)."""
+    with _SERVER_LOCK:
+        server = _SERVER
+    if server is not None and server.running():
+        server.release()
 
 
 def stop_all() -> None:
@@ -422,7 +540,7 @@ def reply_activity(reply: dict, words: list[dict]) -> dict[str, list[list[float]
 
 def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], None], hf_token=None,
                report: Callable[[str], None] = lambda _message: None) -> dict:
-    """``{"segments", "words", "activity"}`` for ``audio`` (16 kHz mono); the server stops once they are back."""
+    """``{"segments", "words", "activity"}`` for ``audio`` (16 kHz mono); the server sleeps once they are back."""
     if not supported():
         raise H3Error("Nemotron runs on vLLM, which requires Linux. Use Qwen3-ASR or Gemini here.")
     if duration > MAX_SECONDS:
@@ -441,8 +559,8 @@ def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], 
         reply = server.transcribe(audio)
     finally:
         try:
-            server.stop()
-        except H3Error as exc:
-            server.log_line(f"Nemotron did not stop cleanly: {exc}")
+            server.release()
+        except H3Error as exc:  # still busy elsewhere; the next job's hook sleeps it
+            server.log_line(f"Nemotron stays awake: {exc}")
     words = reply_words(reply, duration)
     return {"segments": word_lines(words), "words": words, "activity": reply_activity(reply, words)}
