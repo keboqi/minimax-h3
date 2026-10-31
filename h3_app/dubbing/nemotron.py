@@ -75,6 +75,9 @@ class NemotronSettings:
     start_timeout: float = 2400.0  # FlashInfer compiles its NVFP4 kernels on the first start
     request_timeout: float = 3600.0
     sleep_mode: str = "auto"  # vLLM's level-1 sleep between analyses; "off" stops it instead
+    # Recordings up to this long launch vLLM eager (no torch.compile, no CUDA graph capture):
+    # a much shorter start for a slower decode that a short transcript hardly notices. 0: never.
+    fast_start_seconds: float = 600.0
 
     def __post_init__(self):
         if self.sleep_mode not in {"auto", "off"}:
@@ -90,6 +93,7 @@ class NemotronSettings:
             port=int(env.get("H3_NEMOTRON_PORT", "8098")),
             memory_gib=float(env.get("H3_NEMOTRON_MEMORY_GIB", "40")),
             sleep_mode=env.get("H3_NEMOTRON_SLEEP", "auto").lower(),
+            fast_start_seconds=float(env.get("H3_NEMOTRON_FAST_START_SECONDS", "600")),
         )
 
     def utilization(self, total_mib: float | None) -> float:
@@ -188,10 +192,20 @@ class NemotronServer(SglangOmniServer):
         super().__init__(settings)
         self._asleep = False
         self._sleep_launch = False  # whether the running server was started with sleep mode
+        self._eager_wanted = False  # the next launch is for a short recording
+        self._eager_launch = False  # the running server was started eager
 
     @property
     def sleeping(self) -> bool:
         return self._asleep
+
+    def prepare_for(self, duration: float) -> None:
+        """Pick the launch mode for a recording; a long one replaces an eager server."""
+        with self._lock:
+            self._eager_wanted = 0 < duration <= self.settings.fast_start_seconds
+            if self.running() and self._eager_launch and not self._eager_wanted:
+                self.log_line(f"Restarting {self.label} with CUDA graphs for a {duration / 60:.0f}-minute recording")
+                self.stop()
 
     def _engine(self, path: str, *, timeout: float = 300.0, **params) -> None:
         import requests
@@ -297,6 +311,7 @@ class NemotronServer(SglangOmniServer):
         memory = gpu_memory()
         # A sleep launch that fails disables sleep, so the retry starts without it.
         self._sleep_launch = settings.sleep_mode == "auto" and not self._sleep_disabled
+        self._eager_launch = self._eager_wanted
         # NVIDIA's recipe, without speculative decoding, for one analysis at a time.
         return [
             str(Path(settings.venv) / "bin" / "vllm"), "serve", str(settings.model_dir),
@@ -311,6 +326,7 @@ class NemotronServer(SglangOmniServer):
             "--reasoning-parser", "nemotron_v3", "--trust-request-mm-kwargs",
             "--middleware", "nemo.collections.speechlm2.vllm.salm.ctc_serving.ctc_timestamp_middleware",
             *(["--enable-sleep-mode"] if self._sleep_launch else []),
+            *(["--enforce-eager", "-O0"] if self._eager_launch else []),
         ]
 
     def transcribe(self, audio: Path) -> dict:
@@ -553,6 +569,7 @@ def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], 
     report("Downloading Nemotron 3.5 Transcribe (first use only)")
     ensure_model(settings, token=hf_token)
     try:
+        server.prepare_for(duration)
         _make_room(settings)
         server.ensure_ready(free_gpu, report)
         report("Finding speakers, words and overlaps with Nemotron")

@@ -197,6 +197,18 @@ class SleepTests(unittest.TestCase):
         off = nemotron.NemotronServer(replace(self.server.settings, sleep_mode="off"))
         self.assertNotIn("--enable-sleep-mode", off.command())
 
+    def test_short_recordings_launch_eager_and_a_long_one_replaces_that_server(self):
+        self.server.prepare_for(120)
+        self.assertIn("--enforce-eager", self.server.command())
+        self.server.prepare_for(1800)  # the eager server is running
+        self.assertEqual(self.stops, [True])
+        self.assertNotIn("--enforce-eager", self.server.command())
+        self.server.prepare_for(120)  # a full server serves short recordings as it is
+        self.assertEqual(self.stops, [True])
+        never = nemotron.NemotronServer(replace(self.server.settings, fast_start_seconds=0))
+        never.prepare_for(30)
+        self.assertNotIn("--enforce-eager", never.command())
+
     def test_release_sleeps_and_the_next_analysis_wakes(self):
         self.server.release()
         self.assertTrue(self.server.sleeping)
