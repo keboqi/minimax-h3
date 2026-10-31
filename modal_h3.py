@@ -61,6 +61,9 @@ DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 AUDIO_TOOLS_VENV = ROOT / "audio-tools-venv"
 DUB_TOOLS_VENV = ROOT / "dub-tools-venv"
+# Nemotron transcription: its vLLM environment in the image, compile caches and logs on the volume.
+NEMOTRON_VENV = ROOT / "nemotron-venv"
+NEMOTRON_DATA = DATA / "nemotron-serving"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
 OUTPUT = DATA / "output"
@@ -126,6 +129,9 @@ from h3_requirements import (  # noqa: E402
     DUB_TOOLS_READY_MARKER,
     dub_tools_fingerprint,
     dub_tools_install_commands,
+    NEMOTRON_READY_MARKER,
+    nemotron_fingerprint,
+    nemotron_install_commands,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
@@ -665,6 +671,13 @@ image = image.run_commands(
     f"{(DRAMA3_SGLANG_VENV / DRAMA3_SGLANG_READY_MARKER).as_posix()}",
 )
 
+# Nemotron 3.5 Transcribe's NeMo Speech + vLLM stack (Python 3.13, its own lockfile) in a
+# fourth interpreter; the image's CUDA 13 nvcc builds FlashInfer's NVFP4 kernels on first start.
+image = image.run_commands(
+    *(f"CC=gcc CXX=g++ {shlex.join(command)}" for command in nemotron_install_commands(NEMOTRON_VENV)),
+    f"echo {nemotron_fingerprint()} > {(NEMOTRON_VENV / NEMOTRON_READY_MARKER).as_posix()}",
+)
+
 # Qwen VoiceDesign and Stable Audio 3 Medium share one cached layer: Qwen's pinned
 # Transformers stack, stable-audio-tools and FlashAttention. Weights stay on the
 # models volume and download only when a voice or sound is first requested.
@@ -811,6 +824,8 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
             "H3_AUDIO_TOOLS_VENV": AUDIO_TOOLS_VENV.as_posix(),
             "H3_DUB_TOOLS_VENV": DUB_TOOLS_VENV.as_posix(),
+            "H3_NEMOTRON_VENV": NEMOTRON_VENV.as_posix(),
+            "H3_NEMOTRON_DATA": NEMOTRON_DATA.as_posix(),
             "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
             # The Drama 3 server commits its kernel caches to this volume.
             "H3_MODAL_COMMIT_VOLUME": VOL,

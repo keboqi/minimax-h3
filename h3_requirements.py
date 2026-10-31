@@ -301,6 +301,53 @@ def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv")
     ]
 
 
+NEMOTRON_READY_MARKER = "h3-nemotron-ready.txt"
+NEMOTRON_PYTHON = "3.13"
+# NVIDIA's NVFP4 recipe installs NeMo Speech's locked vLLM stack (vLLM 0.32, CUDA 13) from main;
+# this is main as of 2026-10-31, pinned so first-use installs match the Modal image.
+NEMOTRON_SPEECH_REPO = "https://github.com/NVIDIA-NeMo/Speech.git"
+NEMOTRON_SPEECH_REF = "a837f4e588ca778f46e586a8ad1acf5dc9a244a7"
+# Installed without dependencies, as the recipe does: PyAV decodes audio, and vLLM needs
+# OpenCV, which NeMo's dependency settings exclude.
+NEMOTRON_EXTRA_PACKAGES = ("av==19.0.2", "opencv-python-headless==5.0.0.93")
+NEMOTRON_SMOKE = (
+    "import importlib.metadata as m, torch; import nemo.collections.speechlm2.vllm.salm.ctc_serving; "
+    "assert torch.version.cuda, 'NeMo Speech installed CPU-only Torch'; "
+    "print('vllm', m.version('vllm'), 'cuda', torch.version.cuda)"
+)
+
+
+def nemotron_fingerprint() -> str:
+    """Identifies an installed Nemotron environment built from these exact pins."""
+    import hashlib
+
+    pins = "|".join((NEMOTRON_PYTHON, NEMOTRON_SPEECH_REPO, NEMOTRON_SPEECH_REF, *NEMOTRON_EXTRA_PACKAGES,
+                     NEMOTRON_SMOKE))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def nemotron_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Install steps for Nemotron's vLLM environment (image build and first use; Linux only).
+
+    NeMo Speech is installed editable, so its checkout stays beside the venv.
+    """
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    source = str(base.with_name(base.name + "-src"))
+    python = str(base / "bin" / "python")
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        ["rm", "-rf", source],
+        ["git", "clone", "--filter=blob:none", NEMOTRON_SPEECH_REPO, source],
+        ["git", "-C", source, "checkout", "--detach", NEMOTRON_SPEECH_REF],
+        [*uv, "venv", "--clear", "--python", NEMOTRON_PYTHON, "--seed", str(base)],
+        ["env", f"UV_PROJECT_ENVIRONMENT={base}", *uv, "sync", "--directory", source,
+         "--extra", "asr", "--extra", "vllm", "--locked", "--no-install-project"],
+        [*uv, "pip", "install", "--python", python, "--no-deps", "-e", source],
+        [*uv, "pip", "install", "--python", python, "--no-deps", *NEMOTRON_EXTRA_PACKAGES],
+        [python, "-c", NEMOTRON_SMOKE],
+    ]
+
+
 AUDIO_TOOLS_READY_MARKER = "h3-audio-tools-ready.txt"
 AUDIO_TOOLS_PYTHON = "3.12"
 STABLE_AUDIO_TOOLS_REPO = "https://github.com/Stability-AI/stable-audio-tools.git"

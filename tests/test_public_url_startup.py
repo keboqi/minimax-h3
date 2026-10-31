@@ -120,6 +120,7 @@ class PublicUrlStartupTests(unittest.TestCase):
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "service_env")
         namespace = dict(os=os, ROOT=ROOT, COMFY=ROOT, CONFIG=ROOT, OUTPUT=ROOT, DATA=ROOT, COMFY_PORT=8188,
                          DRAMA3_SGLANG_VENV=ROOT, DRAMA3_SGLANG_DATA=ROOT, AUDIO_TOOLS_VENV=ROOT, DUB_TOOLS_VENV=ROOT,
+                         NEMOTRON_VENV=ROOT, NEMOTRON_DATA=ROOT,
                          MODELS=ROOT, VOL="test-volume")
         exec(compile(ast.Module(body=[function], type_ignores=[]), "<modal env>", "exec"), namespace)
         environment = namespace["service_env"]()
