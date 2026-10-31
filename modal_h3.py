@@ -39,6 +39,11 @@ PROMPT_FILES = (
     "prompt_flux3_i2i.txt",
     "prompt_drama3.txt",
     "prompt_drama3_direction.txt",
+    "prompt_drama3_guided_preserve.txt",
+    "prompt_drama3_guided_brief.txt",
+    "prompt_drama3_guided_voices.txt",
+    "prompt_drama3_guided_direction.txt",
+    "prompt_drama3_guided_sound.txt",
     "prompt_moss_image.txt",
 )
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"

@@ -94,7 +94,9 @@ class CompileBasicTests(unittest.TestCase):
         return Draft(utterances, [Scene("c1", tuple(u.id for u in utterances))], directions={
             "u1": Direction(cue="tense, low"),
             "u2": Direction(cue="tense, low"),  # repeats the line before: dropped
+            "u3": Direction(cue="low, watching them"),  # "Tom asked from the sofa." after Tom: plain
             "u4": Direction(cue="too quickly", event="shaky breath"),
+            "u5": Direction(cue="neutral, observing", phrase="said"),  # "she said.": plain, phrase kept
             "u6": Direction(cue="almost pleading", phrase="Nobody", tag="stress"),  # opens the line: not marked
             "u7": Direction(cue="低声", phrase="longer this time"),  # not English: dropped
             "u8": Direction(cue="hushed, urgent", phrase="behind", tag="slow"),
@@ -110,7 +112,10 @@ class CompileBasicTests(unittest.TestCase):
         self.assertIn("Nora: No, [shaky breath]", script)  # one word: no place for a cue, the event still closes it
         self.assertIn("The bell rang again, <emphasis>longer this time</emphasis>.", script)
         self.assertIn("Tom: Stay [hushed, urgent] <slow>behind</slow> me,", script)
-        self.assertEqual(len(notes), 4, notes)
+        self.assertIn("narrator: Tom asked from the sofa.", lines)
+        self.assertIn("narrator: she <emphasis>said</emphasis>.", lines)
+        # Stressing the line's first word is skipped without a note; the others are reported.
+        self.assertEqual(len(notes), 3, notes)
         checked(self, script, KETTLE)
 
     def test_basic_ignores_staging(self):
@@ -208,6 +213,140 @@ class CompileAdvancedTests(unittest.TestCase):
         self.assertIn("陈教授: <phone_call> 林夕，是我。快离开那里！", script)
         effects = {turn.speaker_effects for node in iter_speech_nodes(tree) for turn in node.turns}
         self.assertIn(("phone_call",), effects)
+
+
+def _json(data):
+    import json
+
+    return json.dumps(data, ensure_ascii=False)
+
+
+VOICES = {"voices": [
+    {"name": "narrator", "description": "A male voice: calm, warm baritone. Clean studio recording.",
+     "preview_text": "The evening was quiet. Nothing seemed out of place."},
+    {"name": "Tom", "description": "A male voice: thirties, steady. Clean studio recording.",
+     "preview_text": "I like a quiet flat. I like knowing who is at the door."},
+    {"name": "Nora", "description": "A female voice: late twenties, bright. Clean studio recording.",
+     "preview_text": "We only just moved in. I still get lost looking for the light switches."},
+]}
+PRESERVE = {"title": "The Doorbell", "cast": [{"name": "Tom", "aliases": ["he"]}, {"name": "Nora", "aliases": ["she"]}],
+            "speakers": {"s2": "Tom", "s4": "Nora", "s6": "Nora", "s8": "Tom"},
+            "scenes": [{"from": "s1", "place": "small flat at night", "change": "calm turns to fear"}]}
+DIRECTION = {"lines": [{"id": "u1", "cue": "tense, low"}, {"id": "u8", "cue": "hushed, urgent", "stress": "behind"}]}
+SOUND = {"sounds": [{"name": "rain", "kind": "ambience", "prompt": "Light rain on a window"},
+                    {"name": "doorbell", "kind": "effect", "prompt": "Old doorbell ringing twice, close indoors"}],
+         "scenes": [{"scene": "c1", "ambience": "rain", "music": None, "room": None,
+                     "events": [{"sound": "doorbell", "at": "u7", "when": "with"}],
+                     "voices": [{"id": "u8", "effects": ["intimate_whisper"]}]}]}
+
+
+class GuidedWriterTests(unittest.TestCase):
+    """The orchestrator end to end, with each stage's model reply mocked by its prompt file."""
+
+    def run_writer(self, text, replies, **kwargs):
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from h3_app.prompt_writers import drama3 as writer
+
+        root = Path(__file__).resolve().parents[1]
+        runtime = SimpleNamespace(prompt_systems={
+            "Drama 3": root / "prompts" / "prompt_drama3.txt",
+            "Drama 3 direction": root / "prompts" / "prompt_drama3_direction.txt"})
+        self.requests = []
+
+        def fake(**call):
+            stage = call["system_path"].stem.removeprefix("prompt_drama3_guided_")
+            self.requests.append((stage, call["request_text"]))
+            answers = replies[stage]
+            answer = answers.pop(0) if isinstance(answers, list) else answers
+            if answer is None:
+                return "", "Prompt enhancement failed: HTTP 500"
+            return (answer if isinstance(answer, str) else _json(answer)), "ok"
+
+        options = dict(script_mode=writer.DRAMA3_SCRIPT_ADVANCED, return_sounds=True, return_title=True)
+        options.update(kwargs)
+        with patch.object(writer.common, "write_prompt", side_effect=fake):
+            return writer.enhance_drama3_text(
+                text, "gemini-3.5-flash-lite", "key", options.pop("voices", ()), runtime=runtime,
+                workflow=writer.DRAMA3_WORKFLOW_GUIDED, **options)
+
+    def test_preserved_prose_is_cast_directed_scored_and_validated_like_single_pass(self):
+        script, status, cast, sounds, title = self.run_writer(KETTLE, {
+            "preserve": PRESERVE, "voices": VOICES, "direction": DIRECTION, "sound": SOUND})
+        self.assertIn("in 4 Guided steps", status, status)
+        self.assertEqual(title, "The Doorbell")
+        self.assertEqual([(entry["speaker_id"], entry["name"]) for entry in cast], [(0, "narrator"), (1, "Tom"), (2, "Nora")])
+        self.assertIn('<sound name="rain" loop="true"', script)
+        self.assertIn("<|speaker:1|> <intimate_whisper> Stay [hushed, urgent] <emphasis>behind</emphasis> me,", script)
+        self.assertEqual({sound["name"] for sound in sounds}, {"rain", "doorbell"})
+        self.assertNotIn("missing or reworded", status)
+        self.assertEqual(sorted(stage for stage, _ in self.requests), ["direction", "preserve", "sound", "voices"])
+        units = dict(self.requests)["preserve"]
+        self.assertIn("s2 [quote] Are you expecting anyone?", units)
+        self.assertIn("Language: the user text is English.", units)
+
+    def test_a_bad_answer_is_retried_once_with_its_problems(self):
+        broken = dict(PRESERVE, speakers={"s2": "Tom", "s6": "Nora", "s8": "Tom"})
+        script, status, *_ = self.run_writer(KETTLE, {
+            "preserve": [broken, PRESERVE], "voices": VOICES, "direction": DIRECTION, "sound": SOUND})
+        self.assertNotIn("failed", status)
+        retry = [request for stage, request in self.requests if stage == "preserve"][1]
+        self.assertIn("- no speaker for quote unit(s) s4", retry)
+        self.assertIn("in 5 Guided steps", status)
+
+    def test_a_required_step_that_fails_twice_keeps_the_text(self):
+        unsexed = {"voices": [dict(voice, description="Warm and calm.") for voice in VOICES["voices"]]}
+        script, status, cast, *_ = self.run_writer(KETTLE, {
+            "preserve": PRESERVE, "voices": unsexed, "direction": DIRECTION, "sound": SOUND})
+        self.assertTrue(status.startswith("Prompt enhancement failed:"), status)
+        self.assertIn("voice design", status)
+        self.assertEqual((script, cast), (KETTLE, []))
+
+    def test_optional_steps_that_fail_leave_a_plain_valid_script(self):
+        script, status, cast, sounds, _title = self.run_writer(KETTLE, {
+            "preserve": PRESERVE, "voices": VOICES, "direction": "not json", "sound": None})
+        self.assertNotIn("<sound", script)
+        self.assertNotIn("[", script)
+        self.assertIn("Guided steps left out", status)
+        self.assertEqual(len(cast), 3)
+
+    def test_a_brief_is_written_then_compiled_for_basic_mode(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        brief = {"title": "Night Shift", "cast": [{"name": "Maya", "role": "curator"}, {"name": "Arthur", "role": "guard"}],
+                 "scenes": [{"place": "museum", "change": "dread", "lines": [
+                     {"speaker": "narrator", "text": "The last visitor left an hour ago."},
+                     {"speaker": "Maya", "text": "Did you hear that?"},
+                     {"speaker": "Arthur", "text": "Probably the vents."},
+                     {"speaker": "Maya", "text": "Wait.", "type": "reaction"}]}]}
+        voices = {"voices": [
+            {"name": "narrator", "description": "A male voice: calm. Clean studio recording.", "preview_text": "It was late."},
+            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "I work here."},
+            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I guard it."}]}
+        script, status, cast, sounds, title = self.run_writer(
+            "Two people alone in a museum hear something.", {"brief": brief, "voices": voices,
+                                                            "direction": {"lines": [{"id": "u2", "cue": "frozen"}]}},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertEqual(title, "Night Shift")
+        self.assertEqual(script.split("\n"), ["<|speaker:0|> The last visitor left an hour ago.",
+                                              "<|speaker:1|> Did [frozen] you hear that?",
+                                              "<|speaker:2|> Probably the vents.", "<|speaker:1|> Wait."])
+        self.assertEqual(sounds, [])
+        self.assertNotIn("sound", [stage for stage, _ in self.requests])
+
+    def test_adapt_to_voices_casts_only_the_voices_and_gives_them_the_narration(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        voices = {"voices": [dict(VOICES["voices"][1], name="Tom"), dict(VOICES["voices"][2], name="Nora")]}
+        script, status, cast, *_ = self.run_writer(KETTLE, {
+            "preserve": PRESERVE, "voices": voices, "direction": DIRECTION, "sound": SOUND},
+            voices=((3, "Tom"), (5, "Nora")), speaker_mode=writer.DRAMA3_SPEAKER_ADAPT)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual(sorted((entry["speaker_id"], entry["name"]) for entry in cast), [(3, "Tom"), (5, "Nora")])
+        self.assertIn("Available voices (cast only these names): Tom, Nora", dict(self.requests)["preserve"])
+        self.assertTrue(script.startswith("<parallel>") or "<|speaker:3|> The kettle" in script, script)
 
 
 if __name__ == "__main__":

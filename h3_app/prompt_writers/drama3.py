@@ -39,6 +39,11 @@ DRAMA3_SCRIPT_ADVANCED = "Advanced (sound enhanced)"
 
 DRAMA3_SCRIPT_MODES = (DRAMA3_SCRIPT_BASIC, DRAMA3_SCRIPT_ADVANCED)
 
+# Single-pass asks one call for the whole script; Guided writes it in short steps for smaller models.
+DRAMA3_WORKFLOW_SINGLE = "Single-pass"
+DRAMA3_WORKFLOW_GUIDED = "Guided (step by step)"
+DRAMA3_WORKFLOWS = (DRAMA3_WORKFLOW_SINGLE, DRAMA3_WORKFLOW_GUIDED)
+
 
 def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
     """Describe cloned-voice slots by speaker ID and saved name only."""
@@ -385,6 +390,29 @@ def _with_writer_notes(status: str, notes: list[str]) -> str:
     return f"{status} Writer check: {' '.join(notes)}" if notes else status
 
 
+MAX_GUIDED_NOTES = 4
+
+
+def _write_guided(text, voices, speaker_mode, script_mode, cast_context, sound_context, notes, *,
+                  runtime, ask, model_label) -> tuple[str, str]:
+    """The Guided writer's reply and status, or the original text and a failure status."""
+    from h3_app.prompt_writers.drama3_guided import guided_prompt_paths, write_drama3_guided
+
+    guided_notes: list[str] = []
+    try:
+        reply, _source_mode, calls = write_drama3_guided(
+            text, ask, guided_prompt_paths(Path(runtime.prompt_systems["Drama 3"]).parent),
+            voices=voices, speaker_mode=speaker_mode, advanced=script_mode == DRAMA3_SCRIPT_ADVANCED,
+            cast_context=cast_context, sound_context=sound_context, notes=guided_notes)
+    except H3Error as exc:
+        return text, f"{DRAMA3_PROMPT_FAILED} {exc}"
+    if guided_notes:
+        shown = "; ".join(guided_notes[:MAX_GUIDED_NOTES])
+        more = len(guided_notes) - MAX_GUIDED_NOTES
+        notes.append(f"Guided steps left out: {shown}{f'; and {more} more' if more > 0 else ''}.")
+    return reply, f"Enhanced Drama 3 prompt with {model_label} in {calls} Guided steps."
+
+
 def enhance_drama3_text(
     text: str,
     model: str,
@@ -404,10 +432,13 @@ def enhance_drama3_text(
     return_sounds: bool = False,
     return_title: bool = False,
     speaker_names: dict[int, str] | None = None,
+    workflow: str = DRAMA3_WORKFLOW_SINGLE,
 ) -> tuple:
     """Rewrite a script and validate its cast as one result before updating the UI.
 
     ``return_title`` appends the writer's title ("" when it gave none or failed).
+    ``workflow`` Guided writes the script in short steps for smaller models; its reply
+    is validated exactly like the Single-pass writer's.
     """
     original = str(text or "")
     voices = tuple(voices)
@@ -432,23 +463,35 @@ def enhance_drama3_text(
         )
     except H3Error as exc:
         return result(original, f"{DRAMA3_PROMPT_FAILED} {exc}")
-    script, status = common.write_prompt(
-        prompt=original,
-        model=model,
-        temporary_api_key=temporary_api_key,
-        target="Drama 3",
-        system_path=runtime.prompt_systems["Drama 3"],
-        backend=backend,
-        openai_api_key=openai_api_key,
-        openai_model=openai_model,
-        openai_base_url=openai_base_url,
-        media_values=(),
-        context=context,
-    )
+    notes: list[str] = []
+    if workflow == DRAMA3_WORKFLOW_GUIDED:
+        script, status = _write_guided(
+            original, voices, speaker_mode, script_mode, cast_context, sound_context, notes, runtime=runtime,
+            ask=lambda system_path, request_text: common.write_prompt(
+                prompt=request_text, model=model, temporary_api_key=temporary_api_key,
+                target="Drama 3 guided", system_path=system_path, backend=backend,
+                openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
+                media_values=(), context="", request_text=request_text),
+            model_label=openai_model if backend == "OpenAI-compatible" else model)
+    else:
+        script, status = common.write_prompt(
+            prompt=original,
+            model=model,
+            temporary_api_key=temporary_api_key,
+            target="Drama 3",
+            system_path=runtime.prompt_systems["Drama 3"],
+            backend=backend,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            openai_base_url=openai_base_url,
+            media_values=(),
+            context=context,
+        )
     if status.startswith(DRAMA3_PROMPT_FAILED):
         return result(original, status)
-    notes: list[str] = []
-    direction_prompt = getattr(runtime, "prompt_systems", {}).get(DRAMA3_DIRECTION_PROMPT)
+    # The Guided writer directs every line in its own step, so it never needs the direction pass.
+    direction_prompt = (None if workflow == DRAMA3_WORKFLOW_GUIDED
+                        else getattr(runtime, "prompt_systems", {}).get(DRAMA3_DIRECTION_PROMPT))
 
     def ask_director(request_text: str) -> tuple[str, str]:
         return common.write_prompt(

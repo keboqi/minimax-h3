@@ -24,6 +24,8 @@ SCENE_PAUSE = "<#0.8#>"
 BARGE_IN = "<#-0.3#>"
 PAUSE_SECONDS = {"short": 0.6, "long": 1.2}
 MAX_EVENTS_PER_SCENE = 4
+MAX_ATTRIBUTION_WORDS = 6
+MAX_ATTRIBUTION_WIDE = 8
 # (loop, volume, duration) by sound kind, within the ranges the Single-pass writer is given.
 SOUND_SETTINGS = {AMBIENCE: (True, 0.4, 25), MUSIC: (True, 0.2, 40), EFFECT: (False, 1.0, 4), STINGER: (False, 0.4, 6)}
 PLACEMENT = {"left": 'pan="-0.6"', "right": 'pan="0.6"', "near": 'distance="near"', "far": 'distance="far"',
@@ -53,13 +55,25 @@ def _wrap_phrase(text: str, phrase: str, tag: str) -> str | None:
     return f"{text[:start]}<{tag}>{phrase}</{tag}>{text[end:]}"
 
 
-def direct_line(utterance: Utterance, direction: Direction | None, previous_cue: str, notes: list[str]) -> tuple[str, str]:
-    """The utterance's spoken body with its direction applied, and the cue it ends up with."""
+def is_attribution(utterance: Utterance, previous: Utterance | None) -> bool:
+    """A short narrator line right after a character's line ("she said."), which reads plain."""
+    if utterance.speaker != NARRATOR or previous is None or previous.speaker == NARRATOR:
+        return False
+    return len(_WIDE_RE.findall(utterance.text)) <= MAX_ATTRIBUTION_WIDE         and len(_WIDE_RE.sub(" ", utterance.text).split()) <= MAX_ATTRIBUTION_WORDS
+
+
+def direct_line(utterance: Utterance, direction: Direction | None, previous_cue: str, notes: list[str],
+                *, attribution: bool = False) -> tuple[str, str]:
+    """The utterance's spoken body with its direction applied, and the cue it ends up with.
+
+    An ``attribution`` keeps its words plain apart from a scoped phrase: a cue on "she said."
+    would make the narrator act out the character's line.
+    """
     text = utterance.text
     if direction is None or utterance.kind == HEADING:
         return text, ""
-    cue = _clean_cue(direction.cue)
-    if direction.cue and not cue:
+    cue = "" if attribution else _clean_cue(direction.cue)
+    if direction.cue and not cue and not attribution:
         notes.append(f"{utterance.id}: dropped cue [{direction.cue}]")
     if cue and cue.casefold() == previous_cue.casefold():
         notes.append(f"{utterance.id}: dropped cue [{cue}] repeating the line before")
@@ -73,9 +87,10 @@ def direct_line(utterance: Utterance, direction: Direction | None, previous_cue:
             text = placed
     if direction.phrase:
         wrapped = _wrap_phrase(text, direction.phrase, direction.tag)
-        if wrapped is None:
+        # A phrase that opens the line is skipped quietly: a scoped tag may never open one.
+        if wrapped is None and not utterance.text.lstrip().startswith(direction.phrase.strip()):
             notes.append(f"{utterance.id}: could not mark “{direction.phrase}”")
-        else:
+        elif wrapped is not None:
             text = wrapped
     event = direction.event.strip().strip("[]").lower()
     if event:
@@ -129,8 +144,10 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
     by_id = {utterance.id: utterance for utterance in draft.utterances}
     bodies: dict[str, str] = {}
     previous_cue = ""
-    for utterance in draft.utterances:
-        bodies[utterance.id], cue = direct_line(utterance, draft.directions.get(utterance.id), previous_cue, notes)
+    for index, utterance in enumerate(draft.utterances):
+        attribution = is_attribution(utterance, draft.utterances[index - 1] if index else None)
+        bodies[utterance.id], cue = direct_line(utterance, draft.directions.get(utterance.id), previous_cue, notes,
+                                                attribution=attribution)
         previous_cue = cue or previous_cue
 
     def line(utterance: Utterance) -> str:
