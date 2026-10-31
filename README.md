@@ -315,6 +315,7 @@ Run MiniMax H3 directly on Google Colab using [`minimax_h3_colab.ipynb`](./minim
 Features in the Colab notebook:
 - **Instant startup with Python 3.12**: Automatically provisions an isolated Python 3.12 environment with `uv` matching the pinned PyTorch 2.11 + CUDA 13 and SageAttention cp312 runtime requirements.
 - **Background model provisioning**: The launch cell's ticked groups (MiniMax H3 by default; Drama 3 and Qwen Image 2.1 optional) download while the app starts, without delaying it. Everything else downloads automatically on first use.
+- **Model checkpoints in RAM**: Cell 5 sets `H3_RAM_MODELS_DIR=/dev/shm/minimax-h3-models`, so those preloaded files and Qwen Image 2.1 checkpoints download into RAM behind symlinks at their usual model paths. Colab's disk writes about 340 MB/s and lets only ~2% of RAM wait to be written, so tens of gigabytes on disk stall setup; in RAM they download at network speed. A file goes to disk instead when it would leave less than 32 GiB of RAM or 8 GiB of `/dev/shm` free.
 - **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Enable the independent `ENABLE_GRADIO_SHARE` checkbox in launch cell 6 to add a Gradio public URL alongside Cloudflare; it defaults to off.
 
 ## Drama 3 speech studio

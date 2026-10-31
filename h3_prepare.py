@@ -95,8 +95,10 @@ def drama3_model_keys() -> tuple[str, ...]:
 
 
 def sync_model_files(keys: tuple[str, ...], runtime) -> None:
-    from h3_models import resolve_hf_token, sync_models
+    from h3_models import resolve_hf_token, route_to_ram, sync_models
 
+    # With H3_RAM_MODELS_DIR set (Colab), the preloaded defaults go to RAM while it has room.
+    route_to_ram(keys)
     sync_models(
         root=runtime.comfy_dir / "models",
         manifest_path=runtime.models_config.with_name("h3_model_manifest.json"),

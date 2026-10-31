@@ -1628,6 +1628,110 @@ def _verify_pinned_model(path: Path, spec: ModelSpec) -> None:
             raise RuntimeError(f"Downloaded SHA-256 mismatch for {spec.filename}: {actual} != {spec.expected_sha256}")
 
 
+# Keeping checkpoints in RAM (Colab's notebook sets H3_RAM_MODELS_DIR to a tmpfs folder):
+# a file downloads there and its ComfyUI path becomes a symlink to it, so the bytes never
+# touch the disk. Colab's disk writes about 340 MB/s and lets only ~2% of RAM wait to be
+# written, so tens of gigabytes on disk stall every other writer, setup included. Files go
+# to RAM only while this much system RAM and tmpfs space would stay free; otherwise to disk.
+RAM_MODELS_ENV = "H3_RAM_MODELS_DIR"
+RAM_HEADROOM_BYTES = 32 * 1024**3
+RAM_DIR_HEADROOM_BYTES = 8 * 1024**3
+# Qwen Image 2.1 checkpoints always use RAM when it is enabled; route_to_ram adds others
+# (h3_prepare: the defaults it preloads).
+_RAM_KEY_PREFIXES = ("qwen_image21_",)
+_ram_keys: set[str] = set()
+_ram_lock = RLock()
+_ram_reserved = 0
+
+
+def route_to_ram(keys: Iterable[str]) -> None:
+    """Download these model keys into RAM too, when H3_RAM_MODELS_DIR is set and has room."""
+    _ram_keys.update(keys)
+
+
+def ram_models_dir() -> Path | None:
+    configured = os.environ.get(RAM_MODELS_ENV, "").strip()
+    return Path(configured) if configured else None
+
+
+def _available_memory() -> int:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def _reserve_ram(plan: dict[str, Any]) -> Path | None:
+    """The RAM folder for this download with its size reserved, or None to use the disk.
+
+    Reservations count downloads still in flight, so parallel workers cannot all claim
+    the same free space; release with _release_ram once the file is complete.
+    """
+    global _ram_reserved
+    root, key, size = ram_models_dir(), plan["key"], plan.get("size")
+    if root is None or not (key in _ram_keys or key.startswith(_RAM_KEY_PREFIXES)):
+        return None
+    if not isinstance(size, int) or size <= 0:
+        return None
+    with _ram_lock:
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            free = shutil.disk_usage(root).free
+        except OSError:
+            return None
+        if (free - _ram_reserved < size + RAM_DIR_HEADROOM_BYTES
+                or _available_memory() - _ram_reserved < size + RAM_HEADROOM_BYTES):
+            return None
+        _ram_reserved += size
+        return root
+
+
+def _release_ram(size: int) -> None:
+    global _ram_reserved
+    with _ram_lock:
+        _ram_reserved = max(0, _ram_reserved - size)
+
+
+def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, root: Path) -> str:
+    """Download into RAM and point the ComfyUI path at it; the bytes never reach the disk."""
+    from huggingface_hub import hf_hub_download
+
+    spec: ModelSpec = plan["spec"]
+    logical_dest: Path = plan["dest"]
+    ram_dest = root / spec.folder / spec.local_name
+    ram_dest.parent.mkdir(parents=True, exist_ok=True)
+    # A private Hub cache per download, also in RAM: parallel workers never share
+    # (or remove) each other's snapshot folders.
+    cache_dir = root / ".hf-download-cache" / plan["key"]
+    temporary_model = ram_dest.with_name(ram_dest.name + ".partial")
+    temporary_link = logical_dest.with_name(logical_dest.name + ".ram-link-partial")
+    print(f"{log_prefix} downloading {logical_dest.name} into RAM", flush=True)
+    try:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        cached = Path(hf_hub_download(repo_id=spec.repo_id, filename=spec.filename,
+                                      revision=plan["revision"], token=token, cache_dir=str(cache_dir)))
+        if cached.stat().st_size != plan["size"]:
+            raise RuntimeError(f"Downloaded size mismatch for {spec.filename}: "
+                               f"{cached.stat().st_size} != {plan['size']}")
+        _verify_pinned_model(cached, spec)
+        temporary_model.unlink(missing_ok=True)
+        os.link(cached.resolve(), temporary_model)
+        os.replace(temporary_model, ram_dest)
+        temporary_link.unlink(missing_ok=True)
+        temporary_link.symlink_to(ram_dest)
+        os.replace(temporary_link, logical_dest)
+        plan["cached_path"] = cached  # removed below; the batch cleanup then finds nothing
+        print(f"{log_prefix} ready {logical_dest.name} (in RAM: {ram_dest})", flush=True)
+        return plan["key"]
+    finally:
+        temporary_model.unlink(missing_ok=True)
+        temporary_link.unlink(missing_ok=True)
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
 def _download_model(
     plan: dict[str, Any],
     token: str | None,
@@ -1638,6 +1742,17 @@ def _download_model(
 
     spec: ModelSpec = plan["spec"]
     dest: Path = plan["dest"]
+    ram_root = _reserve_ram(plan)
+    if ram_root is not None:
+        try:
+            return _download_to_ram(plan, token, log_prefix, ram_root)
+        finally:
+            _release_ram(plan["size"])
+    root = ram_models_dir()
+    if root is not None and (plan["key"] in _ram_keys or plan["key"].startswith(_RAM_KEY_PREFIXES)):
+        print(f"{log_prefix} {dest.name}: not enough free RAM; downloading to disk", flush=True)
+    # A RAM copy an earlier download left behind; the disk file replaces its link below.
+    stale_ram = dest.resolve() if dest.is_symlink() else None
     print(f"{log_prefix} downloading {dest.name}", flush=True)
 
     cached = Path(
@@ -1670,6 +1785,8 @@ def _download_model(
         os.replace(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)
+    if stale_ram is not None and root is not None and stale_ram.is_relative_to(root.resolve()):
+        stale_ram.unlink(missing_ok=True)
     # Concurrent downloads from this repository may still be creating snapshot
     # links. The batch caller defers cleanup until every worker has finished.
     plan["cached_path"] = cached
