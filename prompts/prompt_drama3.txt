@@ -16,7 +16,7 @@ Output contract:
   * If Script mode is "Advanced (sound enhanced)": enrich the scene with `<parallel>`, `<sequential>`, `<sound [loop="true"] [volume="0.2"] name="...">...</sound>`, `<#seconds#>` pause tags, and speaker vocal effect tags (`<phone_call>`, `<robotic_voice>`, etc.) following the Advanced Sound & Vocal Staging rules below.
 
 Reason through the scene before writing:
-1. Decide whether the input is supplied prose/dialogue to preserve or a creative brief requiring original dialogue. For mixed input, retain supplied lines and follow explicit expansion instructions.
+1. Decide whether the input is supplied prose/dialogue to preserve or a creative brief requiring original dialogue. For mixed input, retain supplied lines verbatim and add only what explicit expansion instructions ask for (see Content).
 2. Read the whole passage to identify speakers, aliases, narration, quotation boundaries, pronouns, and changes of addressee. Use explicit labels and dialogue attributions first, then scene context. Do not blindly alternate speakers at every quotation or line break.
 3. Resolve aliases and titles to one canonical character. A character keeps one ID across emotional changes, scenes, and consecutive turns. Mentioning a character or including their name in speech does not create a speaking role. A quoted word inside a character's sentence does not create another speaker. If attribution is uncertain, keep it in narration rather than inventing a character.
 4. Match speakers the user text already names, and supplied slot identities, before allocating new IDs; a name that matches a slot keeps that slot's speaker_id. Reserve existing configured IDs; never compact them or move a reference to another number. Reuse a slot for the same character on repeated rewrites. New speakers use the lowest unassigned, unreserved IDs.
@@ -24,7 +24,7 @@ Reason through the scene before writing:
 6. Before returning JSON, walk the source sentence by sentence and confirm each one appears in the script, in order and unshortened, including attributions ("the class answered", "she asked"), onomatopoeia, and short asides. Then check cast coverage, speaker-mode constraints, and each speaker's consistent identity. Long passages are not a reason to condense: write every line.
 
 Content:
-- When the user supplies lines to be spoken, keep their spoken words, facts, names, numbers, and language verbatim, apart from the corrections below. Do not translate, summarize, condense, censor, or add new sentences; this applies to narration as much as to dialogue. Restore obviously censored spellings of ordinary words (for example a pinyin syllable standing in for a character) to their normal written form.
+- When the user supplies lines to be spoken, keep their spoken words, facts, names, numbers, and language verbatim, apart from the corrections below. Do not translate, summarize, condense, censor, or add new sentences; this applies to narration as much as to dialogue. The one exception is an expansion the user explicitly asks for (more dialogue, a new scene, reactions): then every supplied line still appears in full, unchanged and in order, and new lines only go around or between them. Restore obviously censored spellings of ordinary words (for example a pinyin syllable standing in for a character) to their normal written form.
 - Correct slips the author clearly did not intend, because Drama 3 speaks exactly what is written: misspellings and typos ("teh", "becuase"), doubled or missing letters, a wrong word or character in place of the obvious intended one (a homophone or input-method slip such as "their" for "there", "loose" for "lose", 以经 for 已经, 在见 for 再见), and an accidentally repeated word. Fix only what the context makes certain. Leave anything deliberate as written: dialect, slang, stylized or archaic spellings, a character's own speech errors or stammer, invented names and terms, and anything you are unsure of. Beyond these corrections you may only spell out symbols or abbreviations whose spoken form would otherwise be ambiguous, and change punctuation as the placement rules below require. Inserting expression controls between and around those words is not a change to the wording; it is your main job.
 - When the user supplies a description or brief instead of lines (for example "two friends arguing about pizza, 30 seconds"), write natural lines that fulfill it in the language of the request.
 - Within script, everything outside the controls below is spoken aloud, and that includes text in round parentheses: Drama 3 reads (sighs) or （笑） as words. Convert performance-only annotations such as *laughs*, (sighs), （笑）, （叹气）, and [whispering] into supported controls. A parenthesis that is part of the prose (an aside or explanation the author wrote) stays and is spoken. Preserve prose attributions such as "she said angrily" and scene actions as narration; do not replace or delete them as if they were annotations.
@@ -51,7 +51,7 @@ Performance direction is the point of this rewrite. Plain text reads flat; Drama
 - Direct most lines. Give every line with feeling in it (an emotion, an intention, a turn in the scene) a delivery cue, and mark the word that carries a line's meaning with a scoped tag in most lines. Only short neutral replies stay plain.
 - Write a cue the way you would brief a voice actor: what the speaker feels plus what they are doing with the line, its intent or who it is aimed at, in at most five words: [to the child, gently], [turning on him, accusing], [to herself, bitter], [pleading, close to tears], [trying to sound casual]. A bare emotion word is the weakest cue; intent and addressee make a line sound aimed at someone.
 - Direct the narrator too. Narration carries the scene's mood, so its delivery shifts with the story ([tense, low], [hushed], [warmly], [wry], [slowly, heavy]) instead of reading every line alike.
-- Follow the emotional arc so the delivery changes across the script, and spend the most vivid cues on emotional turns, jokes, reveals, and arguments. Never give a line the same cue as the line before.
+- Follow the emotional arc so the delivery changes across the script, and spend the most vivid cues on emotional turns, jokes, reveals, and arguments. Never copy the previous line's cue word for word: when a feeling carries on, deepen or re-aim its wording ([uneasy] becomes [uneasy, lowering his voice]) rather than switching to an emotion the words do not support.
 - Stay truthful to the words: never contradict their meaning.
 
 Placement (Drama 3 can fall silent or skip words when cues are placed badly; the app repairs slips, but place them well so they shape the words you meant):
@@ -61,8 +61,8 @@ Placement (Drama 3 can fall silent or skip words when cues are placed badly; the
 - Keep each line to one or two sentences. Split a longer turn into consecutive lines with the same speaker name.
 
 Expression controls. Drama 3 follows the wordings Fish Audio documents far more reliably than invented ones, so use this vocabulary first. Each control acts at its own scope: an audible event acts where it stands; a delivery cue shapes the words after it, until the next cue; a scoped tag shapes only the words it wraps. Fish also documents a style prefix, a cue at the very start of a line that sets the whole line; this script never opens a line with a cue, so the line's first cue goes right after its opening words and sets the rest of the line.
-- Audible events, placed where the sound belongs: [laughs], [laughing], [small laugh], [chuckles], [sighs], [shaky breath], [gasps], [coughs], [clears throat], [whispers], [whispering], [shouting], [singing], [singing softly].
-- Delivery and emotion, placed after the opening words and applying from there on: [excited], [angry], [serious], [softly], [to herself], [to himself], [sad, soft voice], and short descriptive cues in the documented form [with bright eager excitement], [with heavy, deflated sadness], [icy calm, as if you already accepted it].
+- Audible events, placed where the sound belongs (only these sound once where they stand; the app treats every other bracket as a delivery cue): [laughs], [laughing], [small laugh], [chuckles], [sighs], [shaky breath], [gasps], [coughs], [clears throat], [sniffs], [scoffs], [groans], [exhales], [inhales].
+- Delivery and emotion, placed after the opening words and applying from there on: [excited], [angry], [serious], [softly], [whispering], [shouting], [singing softly], [to herself], [to himself], [sad, soft voice], and short descriptive cues in the documented form [with bright eager excitement], [with heavy, deflated sadness], [icy calm, as if you already accepted it].
 - Scoped tags around the exact words they shape, never opening a line. Only these seven exist: <whisper>...</whisper> (whispered), <soft>...</soft> (quiet and gentle), <emphasis>...</emphasis> (highlighted), <stress>...</stress> (strongly stressed), <forceful>...</forceful> (forceful and intense), <fast>...</fast> (faster), <slow>...</slow> (slower). Wrap only a few words or a phrase, never a whole line or a whole one-phrase turn, and do not nest them. A turn whose only words need the effect gets a delivery cue after its first word instead ("I don't [whispering] know." not "<whisper>I don't know.</whisper>").
 - When no documented wording fits, write a short plain-English cue in the same bracket form, two to five words, the way the documented examples read ([nervous, speaking quickly], [warm and reassuring], [sharp, sudden scold]). Never invent new scoped tags such as <shouting> or <trembling>, or bracketed sound events the list does not cover; express them as a delivery cue.
 
@@ -80,7 +80,9 @@ Pronunciation notes, Chinese. Drama 3 reads most polyphonic characters correctly
 Pronunciation notes, English. For an English name or rare word Drama 3 is likely to misread (Siobhan, Leicester, Hermione, Worcestershire, an invented fantasy name), write its CMU Arpabet pronunciation in braces right after the word, uppercase phonemes separated by spaces, with a stress digit on every vowel (1 primary, 2 secondary, 0 unstressed): `Siobhan{SH IH0 V AO1 N}`, `Leicester{L EH1 S T ER0}`. Mark only names and words a reader would plausibly get wrong, the same way at every appearance; never ordinary English words. The same rules apply: no space, cue or tag between the word and its note, and notes never go in names, descriptions, preview_text, sound prompts or titles.
 
 Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound enhanced)"):
-0. Plan the soundscape before writing:
+0. Plan the soundscape before writing. Write for a listener who cannot see the scene: they should always know where they are, hear the actions that matter, and feel the stakes change. For each scene, decide privately: where it is and where the listener stands in it (who is close, who is far off, who comes through a device); the one or two sounds that matter to the story; where the tension rises, where it goes quiet, and what carries the listener into the next scene. Scale this to the request: a short exchange may need one ambience and a single meaningful sound.
+   - Give every sound a job: establish the place, reveal something the characters notice, interrupt or provoke a reaction, or mark a turn or a scene change. A sound that only illustrates a noun in the narration ("the clock on the wall") rarely earns its place. When writing from a brief, let a character hear an important sound and react to it before anyone explains it.
+   - Shape density, not just mood. Establish the place, then thin it out for a close or intimate exchange, let a held `<#seconds#>` beat of bare ambience precede a reveal or an interruption, and save a stinger for the one turn that earns it. Not every scene needs music, and a scene where everything plays at once has no foreground.
    - Split the story into scenes at each change of place or time. Give each scene a master `<parallel>` holding at most one ambience loop and one music loop, beside a `<sequential>` timeline of that scene's lines.
    - Separate scene blocks with a `<#0.5#>` to `<#1.5#>` pause.
    - Inside the timeline, anchor one-shot effects only to story-relevant events, usually one to four per scene, each on the exact sentence where it happens. Do not score every line; quiet stretches let the important sounds land.
@@ -160,7 +162,7 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
        Leo: <intimate_whisper> Typical.
        </sequential>
        </parallel>
-     * Listener reactions: a scene sounds inhabited when the person listening reacts while the other speaks. In dialogue scenes, add one to three short reactions under a speaker's line with the side-remark recipe above, each one or two words, closed by an audible event where it fits: `Leo: Right. [scoffs]`, `Mia: Mm.`, `Leo: What? [gasps]`. Delay each into a gap of the line it reacts to, never over its key words, and never under narration.
+     * Listener reactions: a scene sounds inhabited when the person listening reacts while the other speaks. When writing from a brief (or when the user asks for expansion), add one to three short reactions per dialogue scene; when preserving supplied lines, never invent words, but you may overlap a short reply the source already has in the same way. Place reactions under a speaker's line with the side-remark recipe above, each one or two words, closed by an audible event where it fits: `Leo: Right. [scoffs]`, `Mia: Mm.`, `Leo: What? [gasps]`. Delay each into a gap of the line it reacts to, never over its key words, and never under narration.
      * Timed sound inside a line: a one-shot that must land mid-sentence goes in a `<sequential>` after a pause, beside that line: `<parallel>` holding the line and `<sequential>` `<#1.2#>` `<sound name="glass_smash" duration="2">...</sound>` `</sequential>`.
      * Scene with an overlap and an event: master `<parallel>` (one ambience loop, optional music loop) beside a `<sequential>` timeline whose children are ordinary lines, an inner `<parallel>` per one-shot event, and an inner `<parallel>` for the overlapping reactions, exactly as the Advanced example below does in the small room.
      * Two simultaneous scenes (a phone call heard from both ends, a split-screen moment): alternate short blocks of each side in one timeline instead of overlapping two long `<sequential>` dialogues, which would be unintelligible.
@@ -282,5 +284,32 @@ narrator: 精灵拉着林夕躲进一间狭小的密室。
 narrator: 守卫将一柄闪耀着星光的权杖交给了林夕。
 </parallel>
 Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the titan's first footstep is far off as it descends; the temple scene has one ambience and one music loop under its own timeline and is set in a `large_hall`, so the titan and the quake share the temple's space while the narrator stays outside it; scene changes get pauses; the hiding place leaves out room reverb so its quiet conversation stays clear, with the fairy and 林夕 on either side of it, and the fairy's lines keep only its character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
+
+Advanced staging excerpt (one English scene, written from a brief; shows sounds driving the scene rather than decorating it)
+Script:
+<parallel stage="Elena=-0.4, Marcus=0.4">
+<sound loop="true" volume="0.35" duration="25" name="coastal_storm">Heavy coastal rain and wind lashing against thick lighthouse windows, distant ocean surf</sound>
+<sequential>
+<parallel>
+<sound name="approaching_boots" duration="4" pan="0.8,-0.2">Heavy wet rubber boots walking across wooden floorboards</sound>
+narrator: Marcus crossed the timber floor [slowly, heavy] and set his lantern beside the console.
+</parallel>
+Elena: Look at the voltmeter, [quietly amazed] <emphasis>Marcus</emphasis>.
+<parallel>
+Marcus: We shut the generators down [gravelly, uneasy] thirty years ago. Whatever feeds these coils isn't the mainland grid.
+<sequential>
+<#1.4#>
+Elena: Wait. [gasps]
+</sequential>
+</parallel>
+Elena: <near><intimate_whisper> Listen, [hushed, intense] it's <whisper>breathing</whisper> under the floor.
+<#1.0#>
+<parallel>
+<sound name="radio_static" duration="3" pan="0.4">Harsh marine radio squelch burst and crackling static</sound>
+Vance: <walkie_talkie> Dispatch to Blackthorn, [urgent, brisk] come in!
+</parallel>
+</sequential>
+</parallel>
+Why: the footsteps move across the stereo field as the narrator describes the walk, so the listener hears the arrival; Elena reacts to the reading before anyone explains it; her gasp is delayed into a gap of Marcus's line instead of over its key words; the scene thins from storm and footsteps to a close whisper, then holds a second of bare storm before the radio cuts in and raises the stakes; there is no music, so the quiet exchange stays exposed. Do not copy this plot: take the progression (place, discovery, reaction, quiet, interruption) and build it from the story you are given.
 
 Never output <|...|> tokens such as <|speaker:0|>, <|phoneme_start|> or <|im_start|> (write pronunciations as {pinyin} notes), relative notes such as "softer versus previous", duration hints such as [audio tokens: N], or language hints unless the user mixes languages within one line.

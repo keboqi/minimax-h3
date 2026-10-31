@@ -4,14 +4,14 @@ Return only the script: the same lines, in the same order, each still starting w
 
 What you may change: nothing but inserting bracketed cues and the seven scoped tags. Every spoken word and punctuation mark stays exactly as written, and so does every pronunciation note in braces, pinyin such as 还{huan2} or English Arpabet such as Siobhan{SH IH0 V AO1 N}; never add, move, or remove one, and never put a cue between a word and its note. Never add, remove, merge, split, or reorder lines; never change a speaker name; never touch staging lines (`<parallel ...>`, `<sequential>`, their closing tags, `<sound ...>...</sound>`, `<#seconds#>`) or vocal effect and distance tags such as `<phone_call>` or `<far>` right after a speaker's name. A line that changes in any other way is discarded, so a wording fix costs that line all its direction.
 
-Keep the writer's cues where they work. Add direction where it is missing, replace a bare one-word cue ([serious], [calm], [sad]) with a fuller brief, give a line that repeats the cue before it a different one, and move or drop a cue that breaks the placement rules below.
+Keep the writer's cues where they work. Add direction where it is missing, replace a bare one-word cue ([serious], [calm], [sad]) with a fuller brief, reword a cue that copies the one before it, and move or drop a cue that breaks the placement rules below.
 
 How to direct:
 - Plan each scene before you direct it (keep the plan to yourself; only the script is returned): what each character wants from the others and what they are hiding, whom each line is aimed at, where the scene turns, and how the tension rises and falls. Direct every line from that plan, so a reply answers what was just said and a character's state carries from line to line instead of resetting.
 - Use contrast, not constant intensity: keep narration restrained so the characters' moments stand out, let tension build over several lines, and save the strongest delivery for the turning points. A quiet, held-back line after an argument often lands harder than another shout.
 - Direct most lines. Give every line with feeling in it a delivery cue, and mark the word that carries a line's meaning with a scoped tag in most lines. Only short neutral replies stay plain.
 - Direct the narrator too: narration carries the mood ([tense, low], [hushed], [warmly], [wry], [slowly, heavy]) and shifts with the story instead of reading every line alike.
-- Never give a line the same cue as the line before. Stay truthful to the words: never contradict their meaning.
+- Never copy the previous line's cue word for word: when a feeling carries on, deepen or re-aim its wording rather than switching to an emotion the words do not support. Stay truthful to the words: never contradict their meaning.
 - Brief each cue like a voice actor's note: the feeling plus the line's intent or who it is aimed at, in at most five words ([to the child, gently], [turning on him, accusing], [to herself, bitter]). A bare emotion word is the weakest cue.
 - The cast list describes each voice. Voices are fixed by reference clips, so never describe age, gender, or timbre in a cue; direct only the moment's delivery.
 
@@ -22,8 +22,8 @@ Placement (Drama 3 can fall silent or skip words when cues are placed badly):
 - Scoped tags wrap only a few words or a phrase, never a whole line, and never nest.
 
 Vocabulary. Drama 3 follows Fish Audio's documented wordings far more reliably than invented ones:
-- Audible events where the sound belongs: [laughs], [laughing], [small laugh], [chuckles], [sighs], [shaky breath], [gasps], [coughs], [clears throat], [whispers], [whispering], [shouting], [singing], [singing softly].
-- Delivery and emotion, applying from where they stand: [excited], [angry], [serious], [softly], [to herself], [to himself], [sad, soft voice], and short descriptive cues in the documented form [with bright eager excitement], [with heavy, deflated sadness], [icy calm, as if you already accepted it]. When none fits, write two to five plain English words in the same form ([nervous, speaking quickly], [warm and reassuring]).
+- Audible events where the sound belongs (only these; every other bracket is a delivery cue): [laughs], [laughing], [small laugh], [chuckles], [sighs], [shaky breath], [gasps], [coughs], [clears throat], [sniffs], [scoffs], [groans], [exhales], [inhales].
+- Delivery and emotion, applying from where they stand: [excited], [angry], [serious], [softly], [whispering], [shouting], [singing softly], [to herself], [to himself], [sad, soft voice], and short descriptive cues in the documented form [with bright eager excitement], [with heavy, deflated sadness], [icy calm, as if you already accepted it]. When none fits, write two to five plain English words in the same form ([nervous, speaking quickly], [warm and reassuring]).
 - Scoped tags, only these seven: <whisper>...</whisper>, <soft>...</soft>, <emphasis>...</emphasis>, <stress>...</stress>, <forceful>...</forceful>, <fast>...</fast>, <slow>...</slow>.
 
 Example
