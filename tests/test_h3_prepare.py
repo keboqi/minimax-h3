@@ -103,6 +103,14 @@ class MainTests(unittest.TestCase):
         self.assertIn("Ready: fine", output)
 
 
+class StartupStatsTests(unittest.TestCase):
+    def test_startup_stats_is_a_no_op_without_linux_proc(self):
+        import h3_startup_stats
+
+        with patch.object(h3_startup_stats.Path, "is_file", return_value=False):
+            self.assertEqual(h3_startup_stats.main(["--max-seconds", "0"]), 0)
+
+
 class LauncherOptionTests(unittest.TestCase):
     def setUp(self):
         self.bash = bash_path()
@@ -135,6 +143,9 @@ class LauncherOptionTests(unittest.TestCase):
         # Model files start before setup; Gradio starts beside ComfyUI, not after it.
         self.assertLess(source.index('PREPARE_FILES_EARLY=1'), source.index('running automatic setup'))
         self.assertLess(source.index('log "Starting Gradio"'), source.index('log "Waiting for ComfyUI"'))
+        # The resource sampler watches the early download and can be turned off.
+        self.assertLess(source.index('PREPARE_FILES_EARLY=1'), source.index('h3_startup_stats.py'))
+        self.assertIn('H3_STARTUP_STATS:-1', source)
         # The servers decide when the launcher exits; preparation never does.
         self.assertIn('wait -n "$COMFY_PID" "$GRADIO_PID"', source)
 

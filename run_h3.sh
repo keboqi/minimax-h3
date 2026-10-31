@@ -408,6 +408,14 @@ case "${PREPARE_MODELS,,}" in
     ;;
 esac
 
+# Every 10 s until the downloads end and ComfyUI answers: network, disk writes, dirty pages,
+# CPU and stall pressure, to show what startup waits on. H3_STARTUP_STATS=0 turns it off.
+if [[ "${H3_STARTUP_STATS:-1}" != "0" && -f "$SCRIPT_DIR/h3_startup_stats.py" ]]; then
+  stats_watch=()
+  for prepare_pid in "${PREPARE_PIDS[@]}"; do stats_watch+=(--watch-pid "$prepare_pid"); done
+  "$PYTHON_BIN" "$SCRIPT_DIR/h3_startup_stats.py" --until-url "$COMFY_URL/system_stats" "${stats_watch[@]}" &
+fi
+
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
