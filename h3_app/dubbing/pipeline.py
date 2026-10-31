@@ -131,8 +131,8 @@ class AnalyzeRequest:
     # Take the stems and transcript from an earlier analysis of the same file when its settings match.
     reuse: bool = True
     refine_timestamps: bool = True
-    # HY-MT retranslation can omit both earlier dialogue and translation notes.
-    translation_context: bool = True
+    # Hy-MT translates each line with the lines before it, numbered, and keeps the last one. Off by default.
+    translation_context: bool = False
 
 
 @dataclass(frozen=True)
@@ -536,7 +536,7 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
         reply = yield from blocking(
             f"Translating {len(texts)} line(s) into {target} with Hy-MT",
             lambda report: tools.run("translate", {"texts": texts, "contexts": contexts, "target_language": target,
-                                                   "notes": request.notes if request.translation_context else ""},
+                                                   "notes": request.notes},
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
     # The editor may have saved lines meanwhile: apply each translation to the line that still

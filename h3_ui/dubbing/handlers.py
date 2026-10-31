@@ -375,7 +375,7 @@ class DubbingHandlers:
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
-                       reuse=True, refine_timestamps=True):
+                       reuse=True, refine_timestamps=True, translation_context=False):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -387,7 +387,8 @@ class DubbingHandlers:
             request = pipeline.AnalyzeRequest(
                 str(chosen), transcription, str(target_language or "").strip(), source_language, bool(translate),
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
-                str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps))
+                str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps),
+                bool(translation_context))
             for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
                 if isinstance(update, pipeline.Analysis):
                     session = update.session
@@ -400,7 +401,7 @@ class DubbingHandlers:
             yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc), presenters.plan_html(steps)
 
     def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes,
-                        translation_context=True):
+                        translation_context=False):
         """Translate the picked lines again; with none picked, fill the untranslated ones.
 
         Outputs: board, table rows, line status.

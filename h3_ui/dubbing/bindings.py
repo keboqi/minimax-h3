@@ -26,7 +26,8 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         view.analyze.click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
-                view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps],
+                view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps,
+                view.translation_context],
         outputs=[view.session, view.board, view.lines, view.analyze_status, view.plan], show_progress="minimal",
         api_name="dub_analyze_source",
     )

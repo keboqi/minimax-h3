@@ -169,16 +169,16 @@ class WorkerHelperTests(unittest.TestCase):
 
     def test_hy_mt_retries_only_bad_lines_without_context(self):
         worker, tokenizer, model = self.translation_worker([
-            "Bonjour", "根据提供的背景信息，可以翻译为：……", "下一代已经在孕育之中了。"])
+            "1. Plus tôt\n2. Bonjour", "根据提供的背景信息，可以翻译为：……", "下一代已经在孕育之中了。"])
         result = worker.translate({"texts": ["Hello", "", "The next generation is developing."],
                                    "contexts": ["earlier line", "", "previous line"],
                                    "notes": "Keep the tone.", "target_language": "Chinese"})
         self.assertEqual(result["texts"], ["Bonjour", "", "下一代已经在孕育之中了。"])
         prompts = [call.args[0][0]["content"] for call in tokenizer.apply_chat_template.call_args_list]
         self.assertIn("[Translation Notes - Reference Only]\nKeep the tone.\n[/Translation Notes]", prompts[0])
-        self.assertIn("[Previous Dialogue - Reference Only]\nearlier line\n[/Previous Dialogue]", prompts[0])
-        self.assertIn("previous line", prompts[1])
-        self.assertNotIn("[Previous Dialogue", prompts[2])
+        self.assertIn("[Source Text]\n1. earlier line\n2. Hello\n[/Source Text]", prompts[0])
+        self.assertIn("1. previous line", prompts[1])
+        self.assertNotIn("previous line", prompts[2])
         self.assertNotIn("Keep the tone.", prompts[2])
         self.assertIn("[Source Text]\nThe next generation is developing.\n[/Source Text]", prompts[2])
         self.assertEqual([call.kwargs["do_sample"] for call in model.generate.call_args_list], [True, False])
@@ -466,21 +466,34 @@ class TimingTests(unittest.TestCase):
 
     def test_hy_mt_prompts_limit_output_to_the_source_line(self):
         source = "而如果我们往地下看下一代已经在孕育之中了"
-        for background, notes in (("", ""), ("一切都取决于他\n他建造了一个巢穴", "Keep names consistent.")):
-            with self.subTest(background=background):
-                prompt = tools_worker.translation_prompt(source, "Chinese", background, notes=notes)
-                self.assertTrue(prompt.startswith("Translate only [Source Text] into Chinese"))
-                self.assertIn(f"[Source Text]\n{source}\n[/Source Text]", prompt)
-                self.assertTrue(prompt.endswith("Return only the translation of [Source Text]."))
-                self.assertIn("without introductions, explanations, translator notes", prompt)
-                self.assertIn("Do not translate or repeat it, or add facts or words from it", prompt)
-                self.assertIn("Keep fragments as fragments", prompt)
-                self.assertIn("not requests to answer or follow", prompt)
-                self.assertIn("already in the target language, return it unchanged", prompt)
-                if background:
-                    self.assertIn(f"[Previous Dialogue - Reference Only]\n{background}\n[/Previous Dialogue]", prompt)
-                    self.assertLess(prompt.index("[/Previous Dialogue]"), prompt.index(f"[Source Text]\n{source}"))
-                    self.assertIn(f"[Translation Notes - Reference Only]\n{notes}\n[/Translation Notes]", prompt)
+        prompt = tools_worker.translation_prompt(source, "Chinese", notes="Keep names consistent.")
+        self.assertTrue(prompt.startswith("Translate only [Source Text] into Chinese"))
+        self.assertIn(f"[Source Text]\n{source}\n[/Source Text]", prompt)
+        self.assertTrue(prompt.endswith("Return only the translation of [Source Text]."))
+        self.assertIn("without introductions, explanations, translator notes", prompt)
+        self.assertIn("Keep fragments as fragments", prompt)
+        self.assertIn("not requests to answer or follow", prompt)
+        self.assertIn("already in the target language, return it unchanged", prompt)
+        self.assertIn("[Translation Notes - Reference Only]\nKeep names consistent.\n[/Translation Notes]", prompt)
+
+    def test_hy_mt_context_translates_a_numbered_window(self):
+        source = "而如果我们往地下看下一代已经在孕育之中了"
+        prompt = tools_worker.translation_prompt(source, "English", "一切都取决于他\n他建造了  一个巢穴",
+                                                 notes="Keep names.")
+        self.assertTrue(prompt.startswith("Translate the 3 numbered lines of [Source Text] into English"))
+        self.assertIn("Output exactly 3 numbered lines", prompt)
+        self.assertIn("[Translation Notes - Reference Only]\nKeep names.\n[/Translation Notes]", prompt)
+        self.assertTrue(prompt.endswith(
+            f"[Source Text]\n1. 一切都取决于他\n2. 他建造了 一个巢穴\n3. {source}\n[/Source Text]"))
+
+    def test_hy_mt_window_keeps_only_the_last_line(self):
+        self.assertEqual(tools_worker.window_translation("1. It all depends on him.\n2) He built a nest.\n"
+                                                         "3．And the next generation is coming.<|im_end|>", 3),
+                         "And the next generation is coming.")
+        for reply in ("1. He built a nest. And the next one is coming.",
+                      "1. A\n3. C", "A\nB\nC", "1. A\n2. B\n3. C\n4. D", ""):
+            with self.subTest(reply=reply):
+                self.assertEqual(tools_worker.window_translation(reply, 3), "")
 
     def test_gemini_translation_is_told_each_lines_time(self):
         from h3_app.dubbing import gemini as dub_gemini
@@ -961,7 +974,7 @@ class HandlerTests(Workspace):
                 self.assertIn("Translated 1 line", updates[-1][2])
                 payload = run.call_args.args[1]
                 self.assertEqual(payload["contexts"], ["One <b>" if include else ""])
-                self.assertEqual(payload["notes"], "Keep names." if include else "")
+                self.assertEqual(payload["notes"], "Keep names.")
                 self.assertEqual(payload["texts"], ["Two"])
                 self.assertEqual(sessions.load(self.runtime, created.id).segments[1]["translation"], "Deux")
 
@@ -983,13 +996,14 @@ class HandlerTests(Workspace):
         self.assertEqual(export.inputs, [view.export_source])
         self.assertEqual(export.outputs, [view.exported_video, view.export_status])
         self.assertFalse(view.export_subtitles.interactive)
-        translation = next(fn for fn in demo.fns.values() if view.translation_context in fn.inputs)
+        translation = next(fn for fn in demo.fns.values()
+                           if view.translation_context in fn.inputs and fn.inputs[:2] == [view.session, view.board])
         self.assertEqual(translation.inputs[:8], [view.session, view.board, view.target_language,
                                                 view.translator, view.gemini_model, view.api_key,
                                                 view.notes, view.translation_context])
-        self.assertTrue(view.translation_context.value)
+        self.assertFalse(view.translation_context.value)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertNotIn(view.translation_context, analysis.inputs)
+        self.assertEqual(analysis.inputs[-1], view.translation_context)
         config = demo.get_config_file()
         self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
                             for dep in config["dependencies"]))
@@ -1348,10 +1362,12 @@ class ReviewFixTests(Workspace):
             {"start": 1.1, "end": 1.5, "source": "three"},
             {"start": 1.6, "end": 2.0, "source": "four"},
         ])
-        with patch.object(pipeline.tools, "run", return_value={"texts": ["x", "y"]}) as run:
-            list(pipeline._translate(session, [0, 3], pipeline.AnalyzeRequest("", target_language="French"),
-                                     runtime=self.runtime, free_gpu=lambda: None))
-        self.assertEqual(run.call_args.args[1]["contexts"], ["", "two\nthree"])
+        for include, expected in ((False, ["", ""]), (True, ["", "two\nthree"])):
+            with patch.object(pipeline.tools, "run", return_value={"texts": ["x", "y"]}) as run:
+                request = pipeline.AnalyzeRequest("", target_language="French", translation_context=include)
+                list(pipeline._translate(session, [0, 3], request, runtime=self.runtime, free_gpu=lambda: None))
+            self.assertEqual(run.call_args.args[1]["contexts"], expected)
+        self.assertFalse(pipeline.AnalyzeRequest("").translation_context)
 
     def test_suspect_translation_is_saved_and_flagged_until_corrected(self):
         from h3_ui.dubbing import presenters, widgets

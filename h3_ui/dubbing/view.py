@@ -217,6 +217,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         notes = gr.Textbox(label="Translation notes (optional)", lines=2,
                                            placeholder="Names, terms or tone to keep, e.g. 'Keep the name Mei; "
                                                        "casual tone.'")
+                        translation_context = gr.Checkbox(
+                            False, label="Include previous lines (Hy-MT)",
+                            info="Hy-MT translates each line together with the two before it, then keeps only "
+                                 "that line's translation. Can help with pronouns and tone; slower.")
                         card_heading("How to find the lines",
                                      "Finds who speaks when, transcribes every line and translates it.")
                         pipeline = widgets.choice_cards(TRANSCRIPTIONS, PIPELINE_LOCAL, label="Transcription",
@@ -299,10 +303,6 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         fit = gr.Markdown(elem_classes=["h3-dub-fit"])
                         line_numbers = gr.Textbox(visible=False)
                         inspected = gr.State(None)
-                        translation_context = gr.Checkbox(
-                            True, label="Include context (Hy-MT)",
-                            info="Translate again uses the previous two lines and translation notes. "
-                                 "Off: translate each line on its own.")
                         with gr.Row(elem_classes=["h3-dub-line-actions"]):
                             listen_original = gr.Button("Listen to original")
                             preview = gr.Button("Preview", variant="primary")
