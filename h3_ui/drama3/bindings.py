@@ -198,6 +198,11 @@ def _writer_slot_inputs(view):
             *([view.speaker_group] if view.speaker_group is not None else [])]
 
 
+def _workflow_input(view):
+    """The Writer workflow, last among the rewrite's inputs; copy and paste stay Single-pass."""
+    return [view.writer_workflow] if view.writer_workflow is not None else []
+
+
 def _writer_outputs(view):
     return [view.text, view.enhance_status, *drama3_cast_inputs(view),
             view.shown_slots, *[slot.group for slot in view.voices],
@@ -222,7 +227,7 @@ def _bind_writer(view, actions):
     )
     enhanced = bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
-        inputs=[view.text, view.speaker_mode, *writer_inputs(view.writer), *writer_slots],
+        inputs=[view.text, view.speaker_mode, *writer_inputs(view.writer), *writer_slots, *_workflow_input(view)],
         outputs=writer_outputs, show_progress="minimal", api_name="enhance_drama3_text",
     )
     if view.load_example is not None and actions.load_drama3_example is not None:
@@ -679,7 +684,8 @@ def _bind_auto(view, actions, generation_inputs):
     preloaded = _bind_preload(started, view, actions)
     rewritten = bind_prompt_action(
         started.then, actions.enhance_drama3_text,
-        inputs=[view.text, view.speaker_mode, *writer_inputs(view.writer), *_writer_slot_inputs(view)],
+        inputs=[view.text, view.speaker_mode, *writer_inputs(view.writer), *_writer_slot_inputs(view),
+                *_workflow_input(view)],
         outputs=_writer_outputs(view), show_progress="minimal", api_name=False,
     )
     checked = rewritten.success(drama3_auto_rewritten, inputs=view.enhance_status, outputs=view.auto_status,

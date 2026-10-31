@@ -810,7 +810,9 @@ class UiContractTests(unittest.TestCase):
         metadata = [f"speaker_{n}_{field}" for n in range(16)
                     for field in ("name", "description", "preview_text")]
         # The shown slot count is a hidden Number so browser-side handlers can read it.
-        self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group"])
+        # The Writer workflow comes last, so existing positional callers keep working.
+        self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group",
+                                       "writer_workflow"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine",

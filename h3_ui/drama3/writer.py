@@ -145,7 +145,13 @@ class WriterHandlers:
 
     def enhance_drama3_text(self, text, speaker_mode, model, temporary_api_key, backend, openai_api_key,
                             openai_model, openai_base_url, *slots):
-        """Apply indexed cast metadata and slot visibility only after validating the complete result."""
+        """Apply indexed cast metadata and slot visibility only after validating the complete result.
+
+        The Writer workflow, when the view has one, is the last input after the slots.
+        """
+        workflow = drama3_writer.DRAMA3_WORKFLOW_SINGLE
+        if slots and slots[-1] in drama3_writer.DRAMA3_WORKFLOWS:
+            workflow, slots = slots[-1], slots[:-1]
         group = self._drama3_writer_group(slots)
         try:
             names, existing, cast_context, shown = self._drama3_writer_slots(slots)
@@ -155,7 +161,7 @@ class WriterHandlers:
                 openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
                 speaker_mode=speaker_mode, runtime=self._runtime_config(), return_cast=True,
                 cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
-                return_title=True, speaker_names=self._slot_names(existing),
+                return_title=True, speaker_names=self._slot_names(existing), workflow=workflow,
             )
             if status.startswith("Prompt enhancement failed:"):
                 return text, status, *self._drama3_unchanged_outputs(group)

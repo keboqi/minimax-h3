@@ -11,7 +11,10 @@ import gradio as gr
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS
 from h3_ui.drama3.speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3.voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
-from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
+from h3_app.prompt_writers.drama3 import (
+    DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES, DRAMA3_WORKFLOW_SINGLE,
+    DRAMA3_WORKFLOWS,
+)
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 from ..prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
@@ -112,6 +115,7 @@ class Drama3View:
     pasted_reply: gr.Textbox
     apply_reply: gr.Button
     script_mode: gr.Radio | None = None
+    writer_workflow: gr.Radio | None = None
     sounds_panel: gr.Accordion | None = None
     sounds: tuple[Drama3SoundSlot, ...] = ()
     shown_sound_slots: gr.Number | None = None
@@ -618,6 +622,12 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             info="Auto decides from the text. Adapt to voices uses one speaker per voice in the "
                                  "cast. Single keeps one voice throughout.",
                         )
+                        writer_workflow = gr.Radio(
+                            list(DRAMA3_WORKFLOWS), value=DRAMA3_WORKFLOW_SINGLE, label="Writer workflow",
+                            info="Single-pass writes the script in one call, best with strong models. Guided "
+                                 "writes it in short steps (casting, voices, acting, sound), so smaller, faster "
+                                 "models give reliable scripts; it makes 3–6 calls.",
+                        )
                         enhance = gr.Button("Rewrite script", variant="primary", elem_classes=["h3-primary-action"])
                         enhance_status = gr.Textbox(label="Writer status", lines=2, interactive=False)
                         with gr.Accordion("Writing service", open=False):
@@ -871,6 +881,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         pasted_reply=pasted_reply,
         apply_reply=apply_reply,
         script_mode=script_mode,
+        writer_workflow=writer_workflow,
         sounds_panel=sounds_panel,
         sounds=sounds,
         shown_sound_slots=shown_sound_slots,
