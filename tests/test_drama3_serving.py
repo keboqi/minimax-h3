@@ -1300,7 +1300,7 @@ class LineSpeakerTests(unittest.TestCase):
                 raise server.SpeechRequestError("Request speech-1: Drama 3 generated no audio frames", 500)
             return float_wav(tone(expected_seconds(good)))
 
-        # No audio for one line is about that line: it is not retried as a server failure.
+        # Empty generations use the take retry budget, rather than transport retries.
         speaker, fake = self.speaker(silent)
         spoken = {line.key: line for batch in speaker.speak(lines, sampling={}, parallel=1, keep_going=True)
                   for line in batch}
@@ -1308,7 +1308,7 @@ class LineSpeakerTests(unittest.TestCase):
         self.assertIn(server.NO_AUDIO_FRAMES, spoken["b"].problem)
         self.assertTrue(spoken["b"].no_audio)
         self.assertFalse(spoken["a"].no_audio)
-        self.assertEqual(fake.speech.call_count, 2)
+        self.assertEqual(fake.speech.call_count, 2 + generate.AUTOMATIC_RETRIES)
         # Read from the whole response body, past the message's 500-character cut.
         self.assertTrue(server.SpeechRequestError("HTTP 500: " + "x" * 500, 500, no_audio=True).rejected_line)
         self.assertFalse(server.SpeechRequestError("HTTP 500: engine crashed", 500).rejected_line)
@@ -1320,6 +1320,45 @@ class LineSpeakerTests(unittest.TestCase):
         with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0), \
                 self.assertRaisesRegex(server.SpeechRequestError, "server error"):
             [line for batch in speaker.speak(lines[:1], sampling={}, parallel=1, keep_going=True) for line in batch]
+
+    def test_empty_generation_is_retried_before_falling_back(self):
+        good = "Hello there, friend."
+        attempts = iter([server.SpeechRequestError(server.NO_AUDIO_FRAMES, 500),
+                         float_wav(tone(expected_seconds(good)))])
+
+        def speech(_payload):
+            result = next(attempts)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        speaker, fake = self.speaker(speech)
+        spoken = [line for batch in speaker.speak([("a", good, None, None)], sampling={},
+                                                  parallel=1, keep_going=True) for line in batch]
+        self.assertEqual(fake.speech.call_count, 2)
+        self.assertEqual(spoken[0].problem, "")
+        self.assertFalse(spoken[0].no_audio)
+
+    def test_completed_line_failure_is_delivered_before_another_request_stops_the_batch(self):
+        from concurrent.futures import wait
+        from h3_app.drama3.serving import speech
+
+        speaker, _fake = self.speaker(None)
+
+        def take(*_args, text, **_kwargs):
+            if text == "Rejected line":
+                raise server.SpeechRequestError("bad reference", 400)
+            raise server.SpeechRequestError("server down", 503)
+
+        with patch.object(generate, "best_take", side_effect=take), \
+                patch.object(speech, "wait", side_effect=lambda futures, **_kw: wait(futures)):
+            batches = speaker.speak([("a", "Rejected line", None, None), ("b", "Other line", None, None)],
+                                     sampling={}, parallel=2, keep_going=True)
+            completed = next(batches)
+            self.assertEqual([line.key for line in completed], ["a"])
+            self.assertIn("bad reference", completed[0].problem)
+            with self.assertRaisesRegex(server.SpeechRequestError, "server down"):
+                next(batches)
 
 
 class TakeReuseTests(unittest.TestCase):

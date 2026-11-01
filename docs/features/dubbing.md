@@ -219,11 +219,18 @@ original, or change its volume. Changes save at once.
 Each line gets up to two attempts. A take fails its check when it is silent,
 holds far less speech than its text needs, or runs until the length cap; a
 dropped connection or HTTP 5xx is retried twice before the attempt counts. When
-both attempts fail, the line keeps the better of them. When Drama 3 rejects the
-line itself (an HTTP 4xx, or audio it cannot return), the dub carries on, and that
-line keeps its original voice. A server that is down still stops the dub.
+both attempts fail their audio checks, the dub stops rather than mixing an invalid
+take. A response with no audio frames also gets a second attempt; if neither
+attempt produces audio, that line keeps its original voice and the other lines
+continue. Other rejected requests or a server that is down stop the dub.
 
-Both kinds are marked **Take failed** in Review lines, with the reason on hover.
+Failed lines are marked **Take failed** in Review lines, with the reason visible
+on the row and in the selected line's inspector. Failure marks save as each batch
+finishes, including before an interruption. A partial result shows an
+**Incomplete dub** warning above the player with the affected line numbers, and
+each affected player line says that its original voice was kept. These warnings
+belong to the saved result and survive word-alignment repair; retrying a line
+only fixes the finished audio after generating the dub again.
 They count under **Needs attention** and get a **Failed takes** filter, and the
 **Dub it** card lists their numbers. To fix them, use **New take** on a line, or
 enter the numbers under **Fresh takes for lines**, then dub again: every other

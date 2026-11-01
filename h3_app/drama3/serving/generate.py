@@ -123,7 +123,18 @@ def best_take(server, *, text: str, reference: Path | None, transcript: str | No
     for number in range(1, attempts + 1):
         payload = server.payload(text=text, reference=reference, transcript=transcript,
                                  max_new_tokens=max_new_tokens, sampling=sampling)
-        wav = _request_speech(server, payload, stopped)
+        try:
+            wav = _request_speech(server, payload, stopped)
+        except SpeechRequestError as exc:
+            # An empty generation is a failed take too. Previously it escaped
+            # before the automatic retry, unlike decoded audio failing its check.
+            if not exc.no_audio:
+                raise
+            if number < attempts:
+                continue
+            if best is not None:
+                return best
+            raise
         samples, rate = audio.decode_wav(wav)
         check = audio.check_take(samples, rate, expected_seconds(text),
                                  max_seconds=max_new_tokens / FRAMES_PER_SECOND)

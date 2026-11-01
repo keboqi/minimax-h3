@@ -102,4 +102,15 @@ class LineSpeaker:
                     job.check()
                 for future in finished:
                     pending.pop(future)
-                yield [future.result() for future in finished]
+                completed, error = [], None
+                for future in finished:
+                    try:
+                        completed.append(future.result())
+                    except Exception as exc:
+                        if error is None:
+                            error = exc
+                # Deliver completed lines before surfacing a batch failure, so
+                # callers can persist their outcomes even when another request died.
+                yield completed
+                if error is not None:
+                    raise error

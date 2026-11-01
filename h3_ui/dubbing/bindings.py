@@ -72,7 +72,8 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     # Voicing marks lines whose take failed (and clears ones that now have a good take).
     for voiced in (previewed, retaken, dubbed):
         voiced.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
-                    **_QUIET).then(**_readiness(view, actions))
+                    **_QUIET).then(actions.focus_line, inputs=[view.session, view.board],
+                                  outputs=inspector_outputs(view), **_QUIET).then(**_readiness(view, actions))
     view.export_subtitles.click(
         actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
         concurrency_limit=1, show_progress="minimal", api_name=False,
@@ -86,6 +87,9 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     ):
         stopped = stop.click(owned_interrupt(interrupt, family), outputs=status, queue=False, api_name=False)
         stopped.then(fn=None, cancels=events, queue=False, api_name=False)
+        if family in (FAMILY_DUB, FAMILY_LINES):
+            stopped.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
+                         **_QUIET).then(**_readiness(view, actions))
 
 
 def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
@@ -157,6 +161,9 @@ def _bind_review(view: DubbingView, *, actions) -> None:
     view.session.change(**focus)
 
     view.board.focus(**focus)
+    # Also recover marks after a cancelled job whose completion chain did not run.
+    view.steps.tabs.select(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
+                           **_QUIET)
     view.board.pick(actions.pick_lines, inputs=view.board, outputs=view.line_numbers, **_QUIET)
     for button, step in ((view.previous_line, -1), (view.next_line, 1)):
         button.click(lambda session, board, step=step: actions.step_line(session, board, step),

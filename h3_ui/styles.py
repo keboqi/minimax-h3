@@ -779,6 +779,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-player-select select { min-height: 32px; padding: 2px 8px; border: 1px solid var(--h3-border); border-radius: 8px; background: var(--h3-surface); color: var(--h3-text); }
 .h3-workspace .h3-dub-player-note { margin: 0; color: var(--h3-muted); font-size: 12px; }
 .h3-workspace .h3-dub-player-note:empty { display: none; }
+.h3-workspace .h3-dub-take-warning { display: block; margin: 6px 0; padding: 8px 10px; border-left: 3px solid #dc2626; background: color-mix(in srgb, #dc2626 10%, var(--h3-surface)); color: var(--h3-text); font-size: 13px; }
 .h3-workspace .h3-dub-player-cues { max-height: min(320px, 40vh); overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-dub-player-cues li { display: flex; gap: 10px; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.45; }
 .h3-workspace .h3-dub-player-cues li:hover { background: var(--h3-surface); }

@@ -84,9 +84,8 @@ TEMPO_WARNING = (0.75, 1.6)
 VOICE_PRESETS = {"Strict": (0.7, 0.7, 30), "Balance": (1.0, 0.9, 0), "Expressive": (2.0, 1.0, 30)}
 # A line's own clip shorter than this is a weak reference; its speaker's best clip is used instead.
 MIN_REFERENCE_SECONDS = 2.0
-# Why a line keeps its original voice: Drama 3 voiced nothing for it, often because its
-# reference clip is too short to clone.
-KEPT_ORIGINAL = "Drama 3 could not voice it (its reference may be too short); it keeps its original voice"
+# Why a line keeps its original voice; the server does not identify the underlying cause.
+KEPT_ORIGINAL = "Drama 3 returned no audio; it keeps its original voice"
 REFERENCE_RANGE = (3.0, 15.0)
 REFERENCE_PAD = 0.08
 LINE_GAP = 0.05
@@ -1159,11 +1158,15 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
             for batch in batches:
                 for spoken in batch:
                     line = spoken.key
-                    problem = KEPT_ORIGINAL if spoken.no_audio else spoken.problem
+                    problem = spoken.problem
+                    if spoken.no_audio:
+                        problem = KEPT_ORIGINAL
+                    elif not spoken.samples.size:
+                        problem = problem or "no translated audio returned"
                     outcomes[line.index] = (line.segment, problem)
                     done += 1
-                    if problem or not spoken.samples.size:
-                        line.note = problem or "no translated audio returned"
+                    if problem:
+                        line.note = problem
                         line.take = None
                         # Remove a stale failed take at this identity; it must never
                         # masquerade as a successful translation in a later job.
@@ -1178,7 +1181,14 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
                         take_store.save_take(store, line.key, spoken.wav)
                     except OSError as exc:  # a full disk must not fail the dub
                         line.note = f"take not saved: {exc}"
-                yield f"Voicing lines: {done}/{len(pending)} ({time.monotonic() - started:.0f}s)"
+                # Persist before yielding: interruption or a later server failure
+                # must not hide failures already returned by the server.
+                if outcomes:
+                    _record_take_problems(session, outcomes)
+                    outcomes.clear()
+                failed = sum(bool(line.note) and line.take is None for line in pending)
+                warning = f"; {failed} failed (see Review lines)" if failed else ""
+                yield f"Voicing lines: {done}/{len(pending)} ({time.monotonic() - started:.0f}s){warning}"
     finally:
         # Recorded even when interrupted, so the lines voiced so far keep their marks.
         if outcomes:
@@ -1308,6 +1318,7 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
 
 def _speech_track(session: sessions.Session, planned: list[_Line], request: DubRequest,
                   duration: float, clips: dict[int, np.ndarray] | None = None,
+                  *, lines: list[dict] | None = None,
                   ) -> tuple[np.ndarray, list[str], dict[int, tuple[float, float]]]:
     """The dubbed speech on the source's timeline, the check notes, and where each voiced line plays.
 
@@ -1315,7 +1326,7 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     instead of being cut off; the timeline grows to hold it. ``clips``, when given,
     receives each voiced line's fitted take as placed, keyed by line index.
     """
-    lines = session.segments
+    lines = session.segments if lines is None else lines
     notes = []
     placed = []
     gains = {speaker: entry["volume"] / 100.0 for speaker, entry in speaker_settings(session).items()
@@ -1586,7 +1597,8 @@ def _prune_players(output_dir: Path) -> None:
 def _player(session: sessions.Session, speech: Path, folder: Path, *, separated: bool, speech_gain: float,
             background_gain: float, video: Path | None, mixed: Path, lines: list[dict],
             spoken: dict[int, tuple[float, float]], duration: float, language: str,
-            words: dict[int, dict[str, list[dict]]] | None = None) -> Player:
+            words: dict[int, dict[str, list[dict]]] | None = None,
+            problems: dict[int, str] | None = None) -> Player:
     """The dub's voice, the original voice and the background as separate tracks for the result player.
 
     Without separation the background still holds the original voices, so the player
@@ -1610,6 +1622,8 @@ def _player(session: sessions.Session, speech: Path, folder: Path, *, separated:
              "shown_end": shown[index]["end"],
              "speaker": line["speaker"], "source": line["source"], "translation": line["translation"],
              "translation_spoken": index in spoken,
+             "line_number": index + 1,
+             "take_problem": (problems or {}).get(index, ""),
              "source_words": (words or {}).get(index, {}).get("source", []),
              "translation_words": (words or {}).get(index, {}).get("translation", [])}
             for index, line in enumerate(lines) if line["source"] or line["translation"]]
@@ -1641,7 +1655,13 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                       "Use Preview to generate a fresh take, or untick these lines to keep their original voice.")
     yield "Placing lines on the timeline"
     clips: dict[int, np.ndarray] = {}
-    track, notes, spoken = _speech_track(session, planned, request, duration, clips)
+    track, notes, spoken = _speech_track(session, planned, request, duration, clips, lines=lines)
+    missing = [line for line in planned if line.index not in spoken]
+    if missing:
+        reasons = {line.index: (line.segment, "translated take was not placed on the timeline") for line in missing}
+        _record_take_problems(session, reasons)
+        raise H3Error("Translated speech was not placed for line(s): "
+                      + ", ".join(str(line.index + 1) for line in missing) + ". Dub was not saved; retry these lines.")
     if kept:
         notes.insert(0, f"{len(kept)} line(s) kept their original voice because Drama 3 could not voice them: "
                      + ", ".join(str(line.index + 1) for line in kept[:20]) + ("…" if len(kept) > 20 else ""))
@@ -1689,6 +1709,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "background_volume": request.background_volume, "lines": len(lines), "dubbed_lines": len(planned),
         "sped_up_lines": sum(line.speed > 1.01 for line in planned), "session": session.id,
         "word_timing": bool(request.word_timing),
+        "failed_lines": [{"line_number": line.index + 1, "reason": line.note} for line in kept],
         "speakers": speaker_settings(session),
     }
     write_snapshot(audio_out, {"family": "Dub & Translate", "settings": settings})
@@ -1731,7 +1752,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
                      background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
-                     spoken=spoken, duration=duration + overrun, language=language, words=words)
+                     spoken=spoken, duration=duration + overrun, language=language, words=words,
+                     problems={line.index: line.note for line in kept})
     # Freeze the exact fitted clips and dialogue for alignment without regenerating
     # voices or applying any edits made after this dub.
     folder = output_dir / PLAYER_DIR / stem
@@ -1757,6 +1779,9 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     sped = sum(line.speed > 1.01 for line in planned)
     slowed = sum(line.speed < 0.99 for line in planned)
     message = f"Dubbed {len(planned)} line(s) into {language or 'the target language'}"
+    if kept:
+        message = (f"**Incomplete dub: {len(kept)} line(s) failed and kept their original voice.** "
+                   "Retry them in Review lines and generate the dub again.\n\n" + message)
     if request.timing == TIMING_SMART:
         squeezed = sum(bool(line.timing_problem) for line in planned)
         message += f"; {sped} sped up to fit" if sped else ""

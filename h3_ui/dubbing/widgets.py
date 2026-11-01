@@ -82,6 +82,7 @@ BOARD_TEMPLATE = r"""${(() => {
 <button type="button" class="h3-dub-row-main" data-open="${i}" aria-label="Open line ${i + 1}">
 <span class="h3-dub-row-meta"><span class="h3-dub-row-number">${i + 1}</span><span class="h3-dub-row-time">${l.time}</span><span class="h3-dub-speaker tone-${l.tone}">${l.label}</span>${l.flags.includes('translation') ? '<span class="h3-dub-flag warn">Review translation</span>' : ''}${flag(l)}</span>
 <span class="h3-dub-row-text"><span class="h3-dub-row-source">${l.source}</span><span class="h3-dub-row-translation${l.translation ? '' : ' none'}">${l.translation || 'No translation yet'}</span></span>
+${l.flags.includes('failed') ? `<span class="h3-dub-take-warning">${l.problem}</span>` : ''}
 </button>
 <input type="checkbox" role="switch" class="h3-dub-switch" data-dub="${i}" ${l.dub ? 'checked' : ''} aria-label="Dub line ${i + 1}" title="Dub this line">
 </div>`).join('');

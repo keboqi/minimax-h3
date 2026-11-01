@@ -944,6 +944,10 @@ class HandlerTests(Workspace):
         updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH, 1.35,
                                                   8, 100, 100, True, ""))
         self.assertIn("Analyze a source first", updates[-1][4])
+        self.assertFalse(updates[0][0]["visible"])
+        self.assertIsNone(updates[0][2])
+        self.assertIn("Dub generation failed", updates[-1][0]["value"])
+        self.assertIn('role="alert"', updates[-1][0]["value"])
 
     def test_cookie_handlers(self):
         status, sites, cleared = self.handlers.import_curl_cookies(
@@ -1070,6 +1074,20 @@ class ReviewFixTests(Workspace):
                 list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
         mix.assert_not_called()
 
+    def test_missing_timeline_take_cannot_be_saved_as_a_successful_dub(self):
+        session = self.session_with_vocals([
+            {"start": 0, "end": 2.5, "source": "English original", "translation": "中文译文"}])
+
+        def synthesize(planned, *_args, **_kwargs):
+            planned[0].take = np.ones(100, dtype=np.float32)
+            return iter(())
+
+        with patch.object(pipeline, "_synthesize", side_effect=synthesize), \
+                patch.object(pipeline, "_speech_track", return_value=(np.zeros(100), [], {})):
+            with self.assertRaisesRegex(H3Error, "not placed for line\\(s\\): 1"):
+                list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
+        self.assertIn("not placed on the timeline", pipeline.take_problems(sessions.load(self.runtime, session.id))[0])
+
     def test_lines_drama3_cannot_voice_keep_their_original_voice(self):
         session = self.session_with_vocals([
             {"start": 0.0, "end": 0.05, "source": "ン", "translation": "嗯"},
@@ -1130,6 +1148,29 @@ class ReviewFixTests(Workspace):
         self.assertEqual(planned[0].note, pipeline.KEPT_ORIGINAL)
         self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)),
                          {0: pipeline.KEPT_ORIGINAL})
+
+    def test_empty_success_response_is_marked_before_the_next_progress_update(self):
+        from h3_app.drama3.serving.speech import LineSpeaker, SpokenLine
+
+        session = self.session_with_vocals([{"start": 0, "end": 2, "source": "Hello", "translation": "你好"}])
+        planned = pipeline._plan(session, [0], pipeline.VOICE_LINE, self.runtime)
+
+        def speak(*_args, **_kwargs):
+            yield [SpokenLine(planned[0], b"", np.zeros(0, dtype=np.float32), 0, "")]
+
+        with patch.object(LineSpeaker, "reference", side_effect=Path), \
+                patch.object(LineSpeaker, "ready", return_value=iter(())), \
+                patch.object(LineSpeaker, "speak", side_effect=speak), \
+                patch.object(pipeline.tools, "stop"):
+            updates = pipeline._synthesize(planned, pipeline.DubRequest(session.id), session,
+                                            runtime=self.runtime, free_gpu=lambda: None)
+            next(updates)  # starting
+            self.assertIn("1 failed", next(updates))
+            latest = sessions.load(self.runtime, session.id)
+            self.assertEqual(pipeline.take_problems(latest), {0: "no translated audio returned"})
+            from h3_ui.dubbing import presenters
+            self.assertIn("no translated audio returned", presenters.inspector_heading(latest, 0))
+            updates.close()
 
     def test_chinese_translation_reaches_tts_and_fresh_requests_bypass_cached_take(self):
         from unittest.mock import MagicMock
@@ -1695,6 +1736,67 @@ def _run(command):
 @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
 class DubRenderTests(Workspace):
     """Real ffmpeg extraction, mixing and muxing; Drama 3 and the tools worker are mocked."""
+
+    def test_dub_uses_its_original_lines_when_failure_bookkeeping_reloads_edited_session(self):
+        session = self.analyze(self.make_video(), separate=True)
+
+        def synthesize(planned, request, working, **kwargs):
+            yield from self.fake_synthesize(planned, request, working, **kwargs)
+            sessions.update_segments(self.runtime, session.id, [session.segments[1]])
+            # Each completed batch reloads the manifest to preserve concurrent edits.
+            pipeline._record_take_problems(working, {line.index: (line.segment, "") for line in planned})
+
+        with patch.object(pipeline, "_synthesize", side_effect=synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        self.assertEqual(len(result.player.lines), 2)
+        self.assertTrue(all(line["translation_spoken"] for line in result.player.lines))
+        self.assertEqual(len(sessions.load(self.runtime, session.id).segments), 1)
+
+    def test_partial_dub_exposes_failed_lines_in_result_review_and_saved_alignment(self):
+        from h3_app.drama3.serving.speech import LineSpeaker, SpokenLine
+        from h3_ui.dubbing import presenters
+        from h3_ui.dubbing.player import player_html
+
+        def speak(lines, **_kwargs):
+            for line, *_rest in lines:
+                if line.index == 0:
+                    yield [SpokenLine(line, b"", np.zeros(0, dtype=np.float32), 0,
+                                      "generation failed: no audio frames", no_audio=True)]
+                else:
+                    take = (.2 * np.sin(np.arange(pipeline.RATE // 2) / 20)).astype(np.float32)
+                    yield [SpokenLine(line, b"wav", take, pipeline.RATE, "")]
+
+        for separate in (True, False):
+            with self.subTest(separate=separate):
+                session = self.analyze(self.make_video(), separate=separate)
+                with patch.object(LineSpeaker, "reference", side_effect=Path), \
+                        patch.object(LineSpeaker, "ready", return_value=iter(())), \
+                        patch.object(LineSpeaker, "speak", side_effect=speak), \
+                        patch("h3_app.drama3.serving.speech.persist_caches"), \
+                        patch("h3_app.drama3.serving.takes.save_take"), patch.object(pipeline.tools, "stop"):
+                    result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                               free_gpu=lambda: None))[-1]
+                self.assertIn("Incomplete dub: 1 line(s) failed", result.message)
+                self.assertFalse(result.player.lines[0]["translation_spoken"])
+                self.assertTrue(result.player.lines[1]["translation_spoken"])
+                html = player_html(result.player, key="partial")
+                self.assertIn('role="alert"', html)
+                self.assertIn("Lines 1. Retry", html)
+                self.assertIn("Dub failed — original voice kept", html)
+                latest = sessions.load(self.runtime, session.id)
+                board = presenters.board_value(latest)
+                self.assertIn("failed", board["lines"][0]["flags"])
+                self.assertEqual(board["lines"][0]["problem"], pipeline.KEPT_ORIGINAL)
+                self.assertIn("Take failed", presenters.inspector_heading(latest, 0))
+                snapshot = json.loads(Path(str(result.audio) + ".settings.json").read_text(encoding="utf-8"))
+                self.assertEqual(snapshot["settings"]["failed_lines"][0]["line_number"], 1)
+                # A successful preview repairs the next dub's take, not the already saved result.
+                pipeline._record_take_problems(latest, {0: (latest.segments[0], "")})
+                self.assertEqual(pipeline.take_problems(latest), {})
+                aligned = list(pipeline.align_dub_words(session.id, runtime=self.runtime,
+                                                       free_gpu=lambda: None))[-1]
+                self.assertIn("Incomplete dub", player_html(aligned.player, key="repaired-alignment"))
 
     def make_video(self) -> Path:
         video = self.root / "Source talk.mp4"

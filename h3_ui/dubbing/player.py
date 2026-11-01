@@ -232,6 +232,26 @@ def _word_timing_note(cue: dict, enabled: bool) -> str:
             + " and ".join(missing) + '. Plain subtitles shown.</small>')
 
 
+def _take_note(cue: dict) -> str:
+    problem = cue.get("take_problem")
+    if problem:
+        return ('<small class="h3-dub-take-warning"><strong>Dub failed — original voice kept.</strong> '
+                + escape(problem) + '</small>')
+    if cue.get("translation_spoken") is False:
+        return '<small class="h3-dub-player-note">Original voice kept — this line was not dubbed.</small>'
+    return ""
+
+
+def _take_warning(lines: list[dict]) -> str:
+    failed = [escape(str(cue.get("line_number", index + 1))) for index, cue in enumerate(lines)
+              if cue.get("take_problem")]
+    if not failed:
+        return ""
+    return ('<div class="h3-dub-take-warning" role="alert"><strong>Incomplete dub: '
+            f'{len(failed)} line(s) failed and kept their original voice.</strong> '
+            f'Lines {", ".join(failed)}. Retry these lines in Review lines, then generate the dub again.</div>')
+
+
 def player_html(player: pipeline.Player, *, key: str) -> str:
     """The player for one dub; ``key`` keeps its radio group apart from earlier players on the page."""
     dub, original = file_url(player.dub), file_url(player.original)
@@ -257,7 +277,7 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
         + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">'
         f'{word_spans_html(cue["translation"], cue.get("translation_words"))}</span>'
         f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span>'
-        + _word_timing_note(cue, player.word_timing) + '</span></li>'
+        + _take_note(cue) + _word_timing_note(cue, player.word_timing) + '</span></li>'
         for cue in player.lines)
     group = escape(f"h3-dub-voice-{key}", quote=True)
     note = ("" if player.music is not None else
@@ -266,6 +286,7 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
     revision = hashlib.sha256(cues.encode()).hexdigest()[:16]
     return (
         f'<div class="h3-dub-player" data-revision="{revision}" data-duration="{player.duration:.3f}" data-subtitles="translation">'
+        f'{_take_warning(player.lines)}'
         f'<div class="h3-dub-player-screen">{screen}<div class="h3-dub-player-caption" aria-hidden="true">'
         '<span data-caption-translation></span><span data-caption-source></span></div></div>'
         f'<audio data-voice preload="metadata" src="{escape(dub, quote=True)}"></audio>{music}'

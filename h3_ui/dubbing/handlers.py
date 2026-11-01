@@ -7,6 +7,7 @@ each call, so tests can construct their own with fixtures.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 import threading
 import time
@@ -475,7 +476,8 @@ class DubbingHandlers:
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
                      keep_original, regenerate, word_timing=False):
         """Outputs: player, files, status, and a frozen export source for this result."""
-        yield (gr.skip(), gr.skip(), gr.skip(), gr.skip(), "Generating dub…", None,
+        yield (gr.update(value="", visible=False), gr.update(value=None, visible=False), None, None,
+               "Generating dub…", None,
                gr.update(interactive=False), None, "")
         try:
             request = self._dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume,
@@ -494,7 +496,10 @@ class DubbingHandlers:
                 else:
                     yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), update, *([gr.skip()] * 4)
         except Exception as exc:
-            yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), self._failed(exc), *([gr.skip()] * 4)
+            message = self._failed(exc)
+            failure = ('<div class="h3-dub-take-warning" role="alert"><strong>Dub generation failed.</strong> '
+                       + escape(str(exc)) + '</div>')
+            yield gr.update(value=failure, visible=True), gr.skip(), gr.skip(), gr.skip(), message, *([gr.skip()] * 4)
 
     def align_words(self, session_id):
         """Refresh the latest dub's player after generating or repairing word alignment."""
