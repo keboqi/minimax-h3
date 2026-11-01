@@ -326,7 +326,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             steps.button("Next: dub →", DUB, variant="primary")
             with steps.step(DUB, "Dub"):
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
-                    with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer", "h3-dub-settings"]):
+                    with gr.Column(scale=1, min_width=320, elem_classes=["h3-composer", "h3-dub-settings"]):
                         with gr.Group(visible=False, elem_classes=["h3-dub-speakers-group"]) as speakers_panel:
                             card_heading("Speakers", "Cloned from the original audio with Drama 3. Give a speaker "
                                                      "a saved voice instead, or make it louder or quieter. "
@@ -366,7 +366,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
                                                     info="These lines get new takes even when unchanged.")
                             parallel = gr.Slider(1, 32, value=16, step=1, label="Parallel requests")
-                    with gr.Column(scale=2, min_width=300, elem_classes=["h3-preview-panel", "h3-song-stage"]):
+                    with gr.Column(scale=1, min_width=320, elem_classes=["h3-preview-panel", "h3-song-stage"]):
                         card_heading("Dub it")
                         readiness = gr.HTML(presenters.readiness_html(None))
                         with gr.Column(elem_classes=["h3-action-dock"]):
@@ -375,27 +375,29 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                 elem_classes=["h3-primary-action"])
                                 stop = gr.Button("Interrupt", scale=1, interactive=False)
                             status = gr.Markdown(elem_classes=["h3-dub-status"])
-                        # The dub with either voice, the music on or off and synced subtitles.
-                        player = gr.HTML("", visible=False, js_on_load=PLAYER_JS, elem_classes=[PLAYER_CLASS])
-                        with gr.Row():
-                            align_words = gr.Button("Generate / repair word alignment", interactive=False)
-                            stop_align_words = gr.Button("Interrupt alignment", interactive=False)
-                        alignment_status = gr.Markdown("Word alignment has not been checked for this result.",
-                                                       elem_classes=["h3-dub-status"])
-                        gr.Markdown("Align the latest dub without generating voices again. Successful word "
-                                    "timings are reused; missing timings are retried.", elem_classes=["h3-song-hint"])
-                        with gr.Accordion("Dubbed files", open=False):
-                            video = gr.Video(label="Dubbed video", interactive=False)
-                            audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
-                            files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
-                        export_source = gr.State(None)
-                        export_subtitles = gr.Button("Export video with burned-in translated subtitles",
-                                                     interactive=False)
-                        export_status = gr.Markdown()
-                        exported_video = gr.File(label="Video with burned-in subtitles", interactive=False)
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Fix lines", LINES)
                         gr.Markdown("Every dub is also saved to **Media**.", elem_classes=["h3-song-hint"])
+                with gr.Column(elem_classes=["h3-preview-panel", "h3-dub-result"]):
+                    card_heading("Dubbing results")
+                    # The dub with either voice, the music on or off and synced subtitles.
+                    player = gr.HTML("", visible=False, js_on_load=PLAYER_JS, elem_classes=[PLAYER_CLASS])
+                    with gr.Row():
+                        align_words = gr.Button("Generate / repair word alignment", interactive=False)
+                        stop_align_words = gr.Button("Interrupt alignment", interactive=False)
+                    alignment_status = gr.Markdown("Word alignment has not been checked for this result.",
+                                                   elem_classes=["h3-dub-status"])
+                    gr.Markdown("Align the latest dub without generating voices again. Successful word "
+                                "timings are reused; missing timings are retried.", elem_classes=["h3-song-hint"])
+                    with gr.Accordion("Dubbed files", open=False):
+                        video = gr.Video(label="Dubbed video", interactive=False)
+                        audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
+                        files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
+                    export_source = gr.State(None)
+                    export_subtitles = gr.Button("Export video with burned-in translated subtitles",
+                                                 interactive=False)
+                    export_status = gr.Markdown()
+                    exported_video = gr.File(label="Video with burned-in subtitles", interactive=False)
     run.h3_stop = stop
     align_words.h3_stop = stop_align_words
     analyze.h3_stop = stop_analyze

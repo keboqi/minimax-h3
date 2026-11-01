@@ -694,7 +694,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual([choice[1] for choice in edit_size["choices"]],
                          ["Match first image size", "Max resolution (up to 2 MP)", "Use width and height above"])
 
-    def test_all_gemini_prompt_writers_default_to_flash_3_8(self) -> None:
+    def test_all_gemini_prompt_writers_default_to_flash_lite_3_5(self) -> None:
         models = [
             component
             for component in self.config["components"]
@@ -703,7 +703,7 @@ class UiContractTests(unittest.TestCase):
         # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
         self.assertEqual(len(models), 9)
         for model in models:
-            self.assertEqual(model["props"]["value"], "gemini-3.8-flash")
+            self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
     def test_all_prompt_writers_default_to_gemini_and_bind_credentials(self) -> None:
         writers = [

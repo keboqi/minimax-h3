@@ -62,7 +62,7 @@ GEMINI_PROMPT_MODELS = (
 )
 
 
-DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.5-flash-lite"
 
 
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"

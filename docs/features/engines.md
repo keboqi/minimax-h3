@@ -218,7 +218,7 @@ optional edited ABC score are accepted with the generation settings.
 
 The **Qwen Image 2.1**, **LTX-2.5**, **MiniMax Music 3**, and **YuE2** tabs
 also offer Gemini and OpenAI-compatible prompt writers, with Gemini
-(`gemini-3.8-flash`) selected by default. The OpenAI-compatible writer remains
+(`gemini-3.5-flash-lite`) selected by default. The OpenAI-compatible writer remains
 selectable and uses the same models, `OPENAI_API_KEY` and `OPENAI_BASE_URL`
 environment, and temporary key and endpoint behavior as the H3 writer. Each writer uses its own bundled
 system prompt in `prompts/`: `prompt_qwen_image21.txt`, `prompt_ltx25.txt`,

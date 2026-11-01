@@ -111,7 +111,7 @@
         {"parameter_name": "local_top_p", "parameter_has_default": true, "parameter_default": 0.8, "type": "type_53"},
         {"parameter_name": "local_greedy", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
         {"parameter_name": "local_seed", "parameter_has_default": true, "parameter_default": 42, "type": "type_12"},
-        {"parameter_name": "gemini_model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
+        {"parameter_name": "gemini_model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
         {"parameter_name": "gemini_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_3"},
@@ -223,7 +223,7 @@
     "/enhance_ltx25_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_56"},
         {"parameter_name": "start_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
@@ -279,7 +279,7 @@
     "/enhance_qwen_image21_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to image", "type": "type_62"},
         {"parameter_name": "reference_images", "parameter_has_default": false, "parameter_default": null, "type": "type_48"},
@@ -317,7 +317,7 @@
     "/enhance_music3_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
@@ -371,7 +371,7 @@
     "/enhance_yue2_prompt": {
       "parameters": [
         {"parameter_name": "style", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "full", "type": "type_83"},

@@ -752,10 +752,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             steps.button("← Script", SCRIPT)
                             steps.button("Next: speak →", SPEAK, variant="primary")
             with steps.step(SPEAK, "Speak"):
-                # The result (player, timeline, subtitles and stage) outgrows the mostly folded
-                # settings, so here the stage column takes the wider share and scrolls with the page.
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
-                    with gr.Column(scale=2, min_width=300, elem_classes=["h3-composer"]):
+                    with gr.Column(scale=1, min_width=320, elem_classes=["h3-composer"]):
                         card_heading("How it should sound", "Unchanged lines reuse their saved takes, so speaking "
                                                             "again after a few fixes is quick.")
                         sampling_preset = gr.Radio(
@@ -799,18 +797,19 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             # Models Auto loads on the GPU while the writer rewrites the script.
                             auto_preload_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                             auto_sound_slots = gr.Number(0, precision=0, visible=False)
-                    with gr.Column(scale=3, min_width=360, elem_classes=[*STAGE, "h3-drama3-result"]):
+                    with gr.Column(scale=1, min_width=320, elem_classes=STAGE):
                         card_heading("Speak it", "Every line goes out with its speaker's voice; the mix adds "
                                                  "sounds and effects.")
                         with gr.Column(elem_classes=["h3-action-dock"]):
                             run, stop, status = generation_actions("Generate speech", elem_id=GENERATE_ID)
-                        output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
-                        subtitles = gr.HTML("", visible=False, elem_classes=["h3-drama3-subtitle-panel"])
-                        output.h3_metadata_root = gr.Column()
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Cast & sounds", CAST)
                             steps.button("Review lines →", REVIEW, variant="primary")
                         gr.Markdown("Every production is also saved to **Media**.", elem_classes=["h3-song-hint"])
+                with gr.Column(elem_classes=[*STAGE, "h3-drama3-result"]):
+                    output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
+                    subtitles = gr.HTML("", visible=False, elem_classes=["h3-drama3-subtitle-panel"])
+                    output.h3_metadata_root = gr.Column()
                 sampling_controls = [temperature, top_p, top_k]
                 presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)
                 sampling_preset.input(fn=None, js=f"(name) => ({presets_js})[name]",
