@@ -726,6 +726,17 @@ def _bind_auto(view, actions, generation_inputs):
     spoken.success(lambda: ("Auto: done.", *idle), outputs=controls, **QUIET)
     for step, where in steps:
         step.failure(lambda where=where: (f"Auto stopped. {where} says why.", *idle), outputs=controls, **QUIET)
+        # GPU bindings first capture/validate inputs in an unqueued acceptance
+        # event. If that fails, execution never runs (or fails), so its failure
+        # handler cannot release Auto's controls.
+        acceptance = getattr(step, "acceptance", None)
+        if acceptance is not None:
+            acceptance.failure(
+                lambda: (
+                    "Auto stopped before the next generation could start. "
+                    "Check the error message, then retry Auto.", *idle),
+                outputs=controls, **QUIET,
+            )
 
     def stop_auto(request: gr.Request):
         for family in ("drama3_preload", "drama3_voice", "drama3_sound", "drama3"):

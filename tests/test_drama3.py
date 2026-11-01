@@ -858,6 +858,48 @@ class Drama3AutoTests(unittest.TestCase):
             drama3_auto_rewritten("Prompt enhancement failed: no key")
         self.assertIn("voices", drama3_auto_rewritten("Rewrote the script."))
 
+    def test_auto_releases_controls_when_a_gpu_stage_cannot_be_accepted(self):
+        import uuid
+        import gradio as gr
+        from h3_ui import job_admission
+        from h3_ui.application import _drama3_actions
+        from h3_ui.drama3.view import build_drama3_view
+        from h3_ui.drama3.bindings import _bind_auto
+
+        with gr.Blocks() as demo:
+            view = build_drama3_view(gr.Group())
+            _bind_auto(view, _drama3_actions(), [view.text])
+        dependencies = demo.get_config_file()["dependencies"]
+        controls = [view.auto_status, view.stop_auto, view.auto]
+        accepted_stages = [
+            dep for dep in dependencies
+            if getattr(demo.fns[dep["id"]].fn, "__name__", None) == "accept"
+        ]
+        self.assertEqual(len(accepted_stages), 3)  # voices, sounds, speech
+        for accepted in accepted_stages:
+            with self.subTest(stage=accepted["id"]):
+                accept = demo.fns[accepted["id"]]
+                values = [component.value for component in accept.inputs]
+                values[-1] = uuid.uuid4().hex
+                with patch.object(job_admission, "require_owner", return_value="owner"), \
+                        patch.object(job_admission.JOBS, "accept", side_effect=ValueError("Cannot capture inputs")), \
+                        self.assertRaisesRegex(gr.Error, "Cannot capture inputs"):
+                    accept.fn(*values, None)
+                # Execution is success-only, so an admission failure skips it.
+                children = [dep for dep in dependencies if dep["trigger_after"] == accepted["id"]]
+                execution = [dep for dep in children if dep["queue"]]
+                self.assertEqual(len(execution), 1)
+                self.assertTrue(execution[0]["trigger_only_on_success"])
+                failures = [demo.fns[dep["id"]] for dep in children
+                            if dep["trigger_only_on_failure"]]
+                self.assertEqual(len(failures), 1)
+                self.assertEqual(failures[0].outputs, controls)
+                status, stop, auto = failures[0].fn()
+                self.assertIn("Auto stopped", status)
+                self.assertIn("error message", status)
+                self.assertFalse(stop["interactive"])
+                self.assertTrue(auto["interactive"])
+
     def test_preload_runs_on_the_gpu_queue_beside_the_rewrite(self):
         import gradio as gr
         from h3_ui.application import _drama3_actions
