@@ -697,7 +697,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 # Volume and distance apply after the mix levels the sound to the speech.
                 tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop, "is_sound": True,
                                "volume": child.volume * audio.distance_gain(child.distance), "fade": child.fade,
-                               "envelope": child.envelope})
+                               "envelope": child.envelope, **({"tail": node.tail} if node.tail else {})})
                 track_spans.append(None)
             else:
                 child_spans: Spans = {}
@@ -736,7 +736,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 track["cursor"] = ctx.bed_cursors.get(key, 0)
                 end = min(track.get("end", float("inf")), max((t.get("advance", 0) for t in tracks), default=0))
                 ctx.bed_cursors[key] = track["cursor"] + max(0, int(end) - track["offset"])
-        mix = audio.mix_parallel(tracks, rate)
+        mix = audio.mix_parallel(tracks, rate, lead_in=node.lead_in or None)
         dry = np.zeros_like(mix.audio)
         for track in tracks:
             arr = track.get("dialogue")

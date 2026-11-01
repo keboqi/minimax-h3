@@ -247,7 +247,7 @@ class CompileAdvancedTests(unittest.TestCase):
         notes = []
         script = compile_script(draft, advanced=True, notes=notes)
         checked(self, script)
-        self.assertTrue(any("kept the first 4" in note for note in notes), notes)
+        self.assertTrue(any("kept the first 6" in note for note in notes), notes)
         self.assertTrue(any("dropped ambience 'scrape'" in note for note in notes), notes)
         self.assertTrue(any("unknown room 'cathedral'" in note for note in notes), notes)
         first_scene = script.split("<#0.8#>", 1)[0]

@@ -13,7 +13,7 @@ import re
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS
 from h3_app.drama3.serving.rooms import SCENE_ROOMS
 from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
-from h3_app.drama3.sound_policy import DURATION_CLASSES, SOUND_ROLES, sound_perspective
+from h3_app.drama3.sound_policy import DURATION_CLASSES, LEVELS, SOUND_ROLES, TRANSITIONS, sound_perspective
 
 from .compile import SCOPED_TAGS, sound_name
 from .model import (
@@ -175,11 +175,8 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     scenes = []
     for entry in data.get("scenes") if isinstance(data.get("scenes"), list) else []:
         if isinstance(entry, dict) and isinstance(entry.get("from"), str) and entry.get("from") in units:
-            beats = entry.get("beats")
-            detail = _text(entry.get("change"))
-            if isinstance(beats, list):
-                detail += " Beats: " + json.dumps(beats, ensure_ascii=False)
-            scenes.append((entry["from"], _text(entry.get("place")), detail))
+            scenes.append((entry["from"], _text(entry.get("place")), _text(entry.get("change")),
+                           parse_beats(entry.get("beats"))))
     fixes, pronunciations, insertions = [], [], []
     from .fidelity import certain_correction, fix_pattern, words
     from h3_app.drama3.phonemes import note_problems
@@ -221,20 +218,61 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
             "roles": profiles, "fixes": fixes, "pronunciations": pronunciations, "insertions": insertions}
 
 
-def scenes_from_units(utterances: list[Utterance], starts: list[tuple[str, str, str]]) -> list[Scene]:
-    """Scenes that split the utterances where the stage said a scene starts (a unit ID)."""
+def parse_beats(raw) -> tuple[tuple[str, str, str], ...]:
+    """A scene's turning points as (at phrase, focus, intent), from the content stage's beats list."""
+    beats = []
+    for entry in raw if isinstance(raw, list) else []:
+        if isinstance(entry, dict):
+            beat = (_text(entry.get("at")), _text(entry.get("focus")), _text(entry.get("intent")))
+            if any(beat):
+                beats.append(beat)
+    return tuple(beats[:8])
+
+
+def scenes_from_units(utterances: list[Utterance], starts: list[tuple]) -> list[Scene]:
+    """Scenes that split the utterances where the stage said a scene starts (a unit ID).
+
+    Each start is ``(unit, place, change)`` or ``(unit, place, change, beats)``.
+    """
     order = {}
     for index, utterance in enumerate(utterances):
         for unit in utterance.sources:
             order.setdefault(unit, index)
-    begins = sorted({order[unit]: (place, change) for unit, place, change in starts if unit in order}.items())
+    begins = sorted({order[start[0]]: (start[1], start[2], start[3] if len(start) > 3 else ())
+                     for start in starts if start[0] in order}.items())
     if not begins or begins[0][0] != 0:
-        begins.insert(0, (0, ("", "")))
+        begins.insert(0, (0, ("", "", ())))
     scenes = []
-    for number, (start, (place, change)) in enumerate(begins):
+    for number, (start, (place, change, beats)) in enumerate(begins):
         end = begins[number + 1][0] if number + 1 < len(begins) else len(utterances)
-        scenes.append(Scene(f"c{number + 1}", tuple(u.id for u in utterances[start:end]), place, change))
+        scenes.append(Scene(f"c{number + 1}", tuple(u.id for u in utterances[start:end]), place, change, beats))
     return scenes
+
+
+MAX_PALETTE_ASSETS = 4
+
+
+def parse_sound_palette(reply: str) -> tuple[str, dict[str, Sound]]:
+    """The content stage's optional story-wide ``sound_palette``: a style line and its shared score assets.
+
+    A missing or malformed palette is simply absent; it never fails the content stage.
+    """
+    try:
+        data = load_answer(reply)
+    except StageError:
+        return "", {}
+    palette = data.get("sound_palette")
+    if not isinstance(palette, dict):
+        return "", {}
+    sounds: dict[str, Sound] = {}
+    for entry in palette.get("music") if isinstance(palette.get("music"), list) else []:
+        if not isinstance(entry, dict) or len(sounds) >= MAX_PALETTE_ASSETS:
+            continue
+        name, prompt = sound_name(entry.get("name")), _text(entry.get("prompt"))
+        kind = _text(entry.get("kind")).lower() or "music"
+        if kind in ("music", "stinger") and prompt and name not in sounds:
+            sounds[name] = Sound(name, kind, prompt, "", sound_perspective("", kind, _text(entry.get("perspective"))))
+    return _text(palette.get("style"))[:400], sounds
 
 
 def _spoken_words(text: str) -> int:
@@ -293,10 +331,8 @@ def parse_content_brief(reply: str, allowed_names: set[str] | None = None,
             utterances.append(utterance)
             ids.append(utterance.id)
         if ids:
-            detail = _text(scene.get("change"))
-            if isinstance(scene.get("beats"), list):
-                detail += " Beats: " + json.dumps(scene["beats"], ensure_ascii=False)
-            scenes.append(Scene(f"c{len(scenes) + 1}", tuple(ids), _text(scene.get("place")), detail))
+            scenes.append(Scene(f"c{len(scenes) + 1}", tuple(ids), _text(scene.get("place")),
+                                _text(scene.get("change")), parse_beats(scene.get("beats"))))
     if not utterances and not problems:
         problems.append("the script has no lines")
     if allowed_names is not None and not problems:
@@ -362,6 +398,18 @@ def parse_direction(reply: str, ids: set[str], notes: list[str]) -> dict[str, Di
     return directions
 
 
+def _level(value) -> str:
+    level = _text(value).lower()
+    return level if level in LEVELS else ""
+
+
+def _bed(value) -> tuple[str, str]:
+    """A scene's ambience or music selection: a name, or ``{"name": ..., "level": ...}``."""
+    if isinstance(value, dict):
+        return (sound_name(value["name"]) if _text(value.get("name")) else ""), _level(value.get("level"))
+    return (sound_name(value) if _text(value) else ""), ""
+
+
 def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], notes: list[str]
                   ) -> tuple[dict[str, Sound], dict[str, Staging], dict[str, tuple[str, ...]]]:
     """Sounds by name, staging by scene ID, and voice effects by utterance ID."""
@@ -408,7 +456,8 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
                                      _text(event.get("phrase")), _text(event.get("end_phrase")),
                                      max(1, min(100, occurrence)) if isinstance(occurrence, int) else 1,
                                      _text(event.get("end_at")),
-                                     max(1, min(100, end_occurrence)) if isinstance(end_occurrence, int) else 1))
+                                     max(1, min(100, end_occurrence)) if isinstance(end_occurrence, int) else 1,
+                                     _level(event.get("level"))))
         positions = []
         raw_positions = entry.get("positions") if isinstance(entry.get("positions"), dict) else {}
         for name, value in raw_positions.items():
@@ -422,11 +471,14 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
             if isinstance(before, str) and before in utterance_ids:
                 pauses.append((before, "long" if _text(pause.get("length")).lower() == "long" else "short"))
         room = _text(entry.get("room")).lower()
+        ambience, ambience_level = _bed(entry.get("ambience"))
+        music, music_level = _bed(entry.get("music"))
+        transition = _text(entry.get("transition")).lower()
         staging[scene_id] = Staging(
-            ambience=sound_name(entry["ambience"]) if _text(entry.get("ambience")) else "",
-            music=sound_name(entry["music"]) if _text(entry.get("music")) else "",
+            ambience=ambience, music=music,
             room=room if room in SCENE_ROOMS else "", positions=tuple(positions), events=tuple(events),
-            pauses=tuple(pauses))
+            pauses=tuple(pauses), ambience_level=ambience_level, music_level=music_level,
+            transition=transition if transition in TRANSITIONS else "")
         for voice in entry.get("voices") if isinstance(entry.get("voices"), list) else []:
             vid = voice.get("id") if isinstance(voice, dict) else None
             if not isinstance(vid, str) or vid not in utterance_ids:

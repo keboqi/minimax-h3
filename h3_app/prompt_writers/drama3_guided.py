@@ -21,7 +21,7 @@ from h3_app.drama3.guided.fidelity import words
 from h3_app.drama3.guided.local_staging import localize_existing_cues
 from h3_app.drama3.guided.schema import (
     CHARACTER_EFFECTS, StageError, canonical, parse_content_brief, parse_content_preserve, parse_direction,
-    parse_staging, parse_voices, scenes_from_units,
+    parse_sound_palette, parse_staging, parse_voices, scenes_from_units,
 )
 from h3_app.drama3.guided.segment import (
     BRIEF, attribute_units, input_kind, is_control_line, replace_speaker_tag_line, restore_structure, segment_source,
@@ -128,6 +128,10 @@ def _scene_listing(batch: list[Scene], by_id: dict[str, Utterance]) -> str:
     parts = []
     for scene in batch:
         parts.append(f"Scene {scene.id}. Place: {scene.place or 'unspecified'}. Change: {scene.change or 'unspecified'}.")
+        if scene.beats:
+            parts.append("Beats: " + "; ".join(
+                f'at "{at}"' + (f" ({focus})" if focus else "") + (f": {intent}" if intent else "")
+                for at, focus, intent in scene.beats))
         parts.append(_line_listing([by_id[uid] for uid in scene.utterances]))
     return "\n".join(parts)
 
@@ -207,9 +211,18 @@ def _reference_preview(name: str, text: str, language: str, own_lines: str) -> s
 
 
 def _merge_batch_sounds(sounds: dict, staging: dict, batch_sounds: dict, batch_staging: dict,
-                        notes: list[str]) -> None:
-    """Add one batch's sounds and staging, renaming a clashing asset rather than substituting the first."""
+                        notes: list[str], palette: dict | None = None) -> None:
+    """Add one batch's sounds and staging, renaming a clashing asset rather than substituting the first.
+
+    The story's ``palette`` assets are authoritative: a batch that redefines one keeps the shared
+    score, so a recurring theme stays one asset that resumes across scenes.
+    """
+    palette = palette or {}
     for key, sound in batch_sounds.items():
+        if key in palette:
+            if sound != palette[key]:
+                notes.append(f"Kept the story palette's {key!r} instead of a batch's redefinition.")
+            continue
         if key not in sounds or sounds[key] == sound:
             sounds[key] = sound
             continue
@@ -289,6 +302,7 @@ def write_drama3_guided(
                    else f"Characters already in the Cast (keep these names): {', '.join(known)}" if known else "")
     kind = input_kind(text)
     roles: dict[str, str] = {}
+    palette_style, palette = "", {}
     source = None
     structured = False
     single = speaker_mode == DRAMA3_SPEAKER_SINGLE
@@ -304,11 +318,12 @@ def write_drama3_guided(
             f"{unit.id} [{unit.kind}{', label ' + unit.label if unit.label else ''}] {unit.text}"
             for unit in source.units if unit.kind != "heading")
         request = "\n".join(filter(None, [language, voices_line,
+            f"Script mode: {'Advanced' if advanced else 'Basic'}.",
             f"Explicit expansion instructions: {expansion_request}" if expansion_request else
             "Preserve source; no inserted lines are authorized.", f"Units:\n{listing}"]))
-        answer = calls.run(prompts["preserve"], request,
-                           lambda reply: parse_content_preserve(reply, source, allowed,
-                                                                expansion=bool(expansion_request)), "casting")
+        answer, (palette_style, palette) = calls.run(prompts["preserve"], request,
+            lambda reply: (parse_content_preserve(reply, source, allowed, expansion=bool(expansion_request)),
+                           parse_sound_palette(reply)), "casting")
         title = title or answer["title"]
         utterances = attribute_units(source, answer["speakers"],
             break_after={after for after, _speaker, _text in answer.get("insertions", [])})
@@ -320,9 +335,10 @@ def write_drama3_guided(
         brief_voices = "" if single else voices_line
         request = "\n".join(filter(None, [language, brief_voices, f"Script mode: {'Advanced' if advanced else 'Basic'}.",
                                           f"Brief:\n{text.strip()}"]))
-        title, utterances, scenes, roles = calls.run(
+        (title, utterances, scenes, roles), (palette_style, palette) = calls.run(
             prompts["brief"], request,
-            lambda reply: parse_content_brief(reply, None if single else allowed, notes), "writing")
+            lambda reply: (parse_content_brief(reply, None if single else allowed, notes),
+                           parse_sound_palette(reply)), "writing")
     if fixed is not None and not single and NARRATOR not in {identity(name) for name in fixed} \
             and any(u.speaker == NARRATOR for u in utterances):
         # Adapt to voices: narration goes to an unused voice first, else the first voice.
@@ -386,8 +402,15 @@ def write_drama3_guided(
             notes.append(f"{exc} Those lines are left undirected.")
             return {}
 
+    palette_line = ""
+    if palette_style or palette:
+        shared = [{"name": s.name, "kind": s.kind, "prompt": s.prompt} for s in palette.values()]
+        palette_line = (f"Story sound palette: {palette_style or 'unspecified'}. Shared score assets (select by "
+                        f"name; do not redefine): {json.dumps(shared, ensure_ascii=False)}")
+
     def sound_stage(batch):
-        request = "\n".join(filter(None, [language, f"Character profiles: {json.dumps(roles, ensure_ascii=False)}", sound_context, _scene_listing(batch, by_id)]))
+        request = "\n".join(filter(None, [language, f"Character profiles: {json.dumps(roles, ensure_ascii=False)}",
+                                          palette_line, sound_context, _scene_listing(batch, by_id)]))
         scene_ids = {scene.id for scene in batch}
         ids_in_batch = {uid for scene in batch for uid in scene.utterances}
         try:
@@ -404,10 +427,10 @@ def write_drama3_guided(
         sound_futures = [pool.submit(sound_stage, batch) for batch in batches] if advanced and not structured else []
         designed = voices_future.result()
         directions = {key: value for future in direction_futures for key, value in future.result().items()}
-        sounds, staging, effects = {}, {}, {}
+        sounds, staging, effects = dict(palette), {}, {}
         for future in sound_futures:
             batch_sounds, batch_staging, batch_effects = future.result()
-            _merge_batch_sounds(sounds, staging, batch_sounds, batch_staging, notes)
+            _merge_batch_sounds(sounds, staging, batch_sounds, batch_staging, notes, palette)
             effects.update(batch_effects)
 
     _drop_performed_sounds(staging, sounds, directions, by_id, notes)

@@ -86,7 +86,7 @@ class ImmersiveTests(unittest.TestCase):
             "speakers": {}, "scenes": [{"from": unit, "place": "market", "change": "discovery",
             "beats": [{"at": "Hello", "intent": "sincere, leave score quiet"}]}]}), source)
         self.assertEqual(result['roles']['Mia'], 'elderly, low voice')
-        self.assertIn('leave score quiet', result['scenes'][0][2])
+        self.assertEqual(result['scenes'][0][3], (('Hello', '', 'sincere, leave score quiet'),))
 
     def test_music_span_withdraws_at_anchor_and_preserves_controls(self):
         node = parse_sound_tag('<sound name="score" loop="true" anchor="opens" end_anchor="waits" '

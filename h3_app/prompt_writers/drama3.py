@@ -536,6 +536,10 @@ def enhance_drama3_text(
             if direction_prompt is not None and Path(direction_prompt).is_file() else None,
         )
         status = _with_writer_notes(status.replace(" prompt ", " script ", 1), notes)
+        if script_mode == DRAMA3_SCRIPT_ADVANCED:
+            from h3_app.drama3.sound_report import density_summary
+            summary = density_summary(parsed[0])
+            status = f"{status} {summary}" if summary else status
         if return_sounds:
             script, cast, sounds = parsed
             return result(script, status, cast, sounds)

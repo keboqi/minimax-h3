@@ -12,7 +12,9 @@ import re
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, expected_seconds, insert_cue, spoken_text
 from h3_app.drama3.serving.rooms import scene_room_name
 from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
-from h3_app.drama3.sound_policy import DURATION_CLASSES, gain_envelope
+from h3_app.drama3.sound_policy import (
+    DURATION_CLASSES, SOUND_DEFAULTS, TRANSITIONS, event_budget, gain_envelope, sound_volume,
+)
 from h3_app.drama3.phonemes import strip_notes
 from .local_staging import local_staging, phrase_count
 
@@ -23,14 +25,10 @@ from .model import (
 
 SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slow")
 MAX_CUE_WORDS = 5
-SCENE_PAUSE = "<#0.8#>"
 BARGE_IN = "<#-0.3#>"
 PAUSE_SECONDS = {"short": 0.6, "long": 1.2}
-MAX_EVENTS_PER_SCENE = 4
 MAX_ATTRIBUTION_WORDS = 6
 MAX_ATTRIBUTION_WIDE = 12
-# (loop, volume, duration) by sound kind, within the ranges the Single-pass writer is given.
-SOUND_SETTINGS = {AMBIENCE: (True, 0.4, 25), MUSIC: (True, 0.2, 40), EFFECT: (False, 1.0, 4), STINGER: (False, 0.4, 6)}
 PLACEMENT = {"left": 'pan="-0.6"', "right": 'pan="0.6"', "near": 'distance="near"', "far": 'distance="far"',
              "moving_left_to_right": 'pan="-0.8,0.8"', "moving_right_to_left": 'pan="0.8,-0.8"'}
 
@@ -145,9 +143,11 @@ def sound_name(name: str) -> str:
     return re.sub(r"[^\w-]+", "_", str(name or "").strip().lower()).strip("_")[:32] or "sound"
 
 
-def sound_line(sound: Sound, place: str = "", *, anchor: str = "", end_anchor: str = "",
+def sound_line(sound: Sound, place: str = "", *, level: str = "", anchor: str = "", end_anchor: str = "",
                edge: str = "end", occurrence: int = 1, end_occurrence: int = 1) -> str:
-    loop, volume, duration = SOUND_SETTINGS[sound.kind]
+    """The ``<sound>`` tag for one use of ``sound``; ``level`` sets this use's volume, not the asset's."""
+    loop, _volume, duration = SOUND_DEFAULTS[sound.kind]
+    volume = sound_volume(sound.kind, level)
     duration = DURATION_CLASSES.get(sound.duration_class, duration)
     attrs = [f'name="{sound_name(sound.name)}"']
     envelope = gain_envelope(sound.envelope)
@@ -213,51 +213,10 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
         return "\n".join(line(utterance) for utterance in draft.utterances)
 
     sounds = {sound_name(name): sound for name, sound in draft.sounds.items()}
-    out: list[str] = []
-    for scene_index, scene in enumerate(draft.scenes):
+    blocks: list[tuple[str, list[str], list[str], list[str]]] = []  # (transition, master attrs, loops, items)
+    for scene in draft.scenes:
         staging = draft.staging.get(scene.id, Staging())
-        events = list(staging.events)
-        event_budget = min(16, max(MAX_EVENTS_PER_SCENE, (len(scene.utterances) + 3) // 4))
-        if len(events) > event_budget:
-            notes.append(f"{scene.id}: kept the first {event_budget} of {len(events)} sound events")
-            events = events[:event_budget]
-        anchored: dict[tuple[str, str], list[str]] = {}
-        local_cues = []
-        comic_used = False
-        for event in events:
-            sound = sounds.get(sound_name(event.sound))
-            if sound is None or sound.kind not in (EFFECT, STINGER, MUSIC) or event.at not in scene.utterances:
-                notes.append(f"{scene.id}: dropped sound event {event.sound!r} at {event.at}")
-                continue
-            if sound.role == "comic":
-                if comic_used:
-                    continue
-                comic_used = True
-            if event.phrase or sound.kind == MUSIC:
-                phrase = event.phrase or strip_notes(spoken_text(by_id[event.at].text))
-                if phrase_count(phrase, by_id[event.at].text) < event.occurrence:
-                    notes.append(f'{event.at}: dropped unmatched sound anchor {phrase!r}')
-                    continue
-                end_at = event.at
-                if event.end_phrase:
-                    start = scene.utterances.index(event.at)
-                    candidates = [uid for uid in scene.utterances[start:]
-                                  if (not event.end_at or uid == event.end_at)
-                                  and phrase_count(event.end_phrase, by_id[uid].text) >= event.end_occurrence]
-                    if not candidates:
-                        notes.append(f'{event.at}: dropped unmatched ending anchor {event.end_phrase!r}')
-                        continue
-                    end_at = candidates[0]
-                elif sound.kind == MUSIC:
-                    end_at = scene.utterances[-1]
-                def format_cue(number, end_number, sound=sound, event=event, phrase=phrase):
-                    return sound_line(sound, event.place, anchor=phrase, end_anchor=event.end_phrase,
-                        edge="start" if event.when in (BEFORE, WITH) else "end",
-                        occurrence=number, end_occurrence=end_number)
-                local_cues.append((event.at, end_at, phrase, event.end_phrase,
-                                   event.occurrence, event.end_occurrence, format_cue))
-            else:
-                anchored.setdefault((event.at, event.when), []).append(sound_line(sound, event.place))
+        anchored, local_cues = _scene_events(scene, staging, sounds, by_id, notes)
         pauses = dict(staging.pauses)
         holds = []
 
@@ -334,26 +293,111 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             previous = reactions[-1] if reactions else utterance
 
         items = local_staging(items, [(uid, line(by_id[uid])) for uid in ids], local_cues, holds)
-        loops = []
-        for name, kind in ((staging.ambience, AMBIENCE), (staging.music, MUSIC)):
-            if not name:
+        attrs, loops = _scene_master(scene, staging, sounds, by_id, notes)
+        blocks.append((staging.transition or "cut", attrs, loops, items))
+    return _join_scenes(blocks)
+
+
+def _scene_events(scene, staging: Staging, sounds: dict[str, Sound], by_id: dict[str, Utterance],
+                  notes: list[str]):
+    """A scene's one-shots by (line, when), and its phrase-anchored cues for ``local_staging``."""
+    events = list(staging.events)
+    budget = event_budget(len(scene.utterances))
+    if len(events) > budget:
+        notes.append(f"{scene.id}: kept the first {budget} of {len(events)} sound events")
+        events = events[:budget]
+    anchored: dict[tuple[str, str], list[str]] = {}
+    local_cues = []
+    comic_used = False
+    for event in events:
+        sound = sounds.get(sound_name(event.sound))
+        if sound is None or sound.kind not in (EFFECT, STINGER, MUSIC) or event.at not in scene.utterances:
+            notes.append(f"{scene.id}: dropped sound event {event.sound!r} at {event.at}")
+            continue
+        if sound.role == "comic":
+            if comic_used:
                 continue
-            sound = sounds.get(sound_name(name))
-            if sound is None or sound.kind != kind:
-                notes.append(f"{scene.id}: dropped {kind} {name!r}")
-            else:
-                loops.append(sound_line(sound))
-        room = scene_room_name(staging.room) if staging.room else ""
-        if staging.room and not room:
-            notes.append(f"{scene.id}: unknown room {staging.room!r}")
-        speakers = {by_id[uid].speaker for uid in scene.utterances} - {NARRATOR}
-        stage = ", ".join(f"{name}={max(-1.0, min(float(value), 1.0)):g}"
-                          for name, value in staging.positions if name in speakers)
-        if scene_index:
-            out.append(SCENE_PAUSE)
-        if loops or room or stage:
-            attrs = (f' room="{room}"' if room else "") + (f' stage="{stage}"' if stage else "")
-            out.extend([f"<parallel{attrs}>", *loops, "<sequential>", *items, "</sequential>", "</parallel>"])
+            comic_used = True
+        if event.phrase or sound.kind == MUSIC:
+            phrase = event.phrase or strip_notes(spoken_text(by_id[event.at].text))
+            if phrase_count(phrase, by_id[event.at].text) < event.occurrence:
+                notes.append(f'{event.at}: dropped unmatched sound anchor {phrase!r}')
+                continue
+            end_at = event.at
+            if event.end_phrase:
+                start = scene.utterances.index(event.at)
+                candidates = [uid for uid in scene.utterances[start:]
+                              if (not event.end_at or uid == event.end_at)
+                              and phrase_count(event.end_phrase, by_id[uid].text) >= event.end_occurrence]
+                if not candidates:
+                    notes.append(f'{event.at}: dropped unmatched ending anchor {event.end_phrase!r}')
+                    continue
+                end_at = candidates[0]
+            elif sound.kind == MUSIC:
+                end_at = scene.utterances[-1]
+            def format_cue(number, end_number, sound=sound, event=event, phrase=phrase):
+                return sound_line(sound, event.place, level=event.level, anchor=phrase,
+                    end_anchor=event.end_phrase, edge="start" if event.when in (BEFORE, WITH) else "end",
+                    occurrence=number, end_occurrence=end_number)
+            local_cues.append((event.at, end_at, phrase, event.end_phrase,
+                               event.occurrence, event.end_occurrence, format_cue))
+        else:
+            anchored.setdefault((event.at, event.when), []).append(
+                sound_line(sound, event.place, level=event.level))
+    return anchored, local_cues
+
+
+def _scene_master(scene, staging: Staging, sounds: dict[str, Sound], by_id: dict[str, Utterance],
+                  notes: list[str]) -> tuple[list[str], list[str]]:
+    """The scene master's room/stage attributes and its looped beds."""
+    loops = []
+    for name, kind, level in ((staging.ambience, AMBIENCE, staging.ambience_level),
+                              (staging.music, MUSIC, staging.music_level)):
+        if not name:
+            continue
+        sound = sounds.get(sound_name(name))
+        if sound is None or sound.kind != kind:
+            notes.append(f"{scene.id}: dropped {kind} {name!r}")
+        else:
+            loops.append(sound_line(sound, level=level))
+    room = scene_room_name(staging.room) if staging.room else ""
+    if staging.room and not room:
+        notes.append(f"{scene.id}: unknown room {staging.room!r}")
+    speakers = {by_id[uid].speaker for uid in scene.utterances} - {NARRATOR}
+    stage = ", ".join(f"{name}={max(-1.0, min(float(value), 1.0)):g}"
+                      for name, value in staging.positions if name in speakers)
+    attrs = ([f'room="{room}"'] if room else []) + ([f'stage="{stage}"'] if stage else [])
+    return attrs, loops
+
+
+def _join_scenes(blocks: list[tuple[str, list[str], list[str], list[str]]]) -> str:
+    """Write the scenes in order, applying each one's transition from the scene before it.
+
+    An establishing scene lets its bed play longer before the first line. A bridge crossfades
+    beds: the previous scene's beds ring on while this scene's beds lead in, so its first line
+    starts as the old bed fades out rather than over it. A bridge needs beds on both sides;
+    otherwise it is a cut.
+    """
+    def effective(index: int) -> str:
+        transition = blocks[index][0] if blocks[index][0] in TRANSITIONS else "cut"
+        if transition == "bridge" and not (index and blocks[index - 1][2] and blocks[index][2]):
+            return "cut"
+        return transition
+
+    out: list[str] = []
+    for index, (_transition, attrs, loops, items) in enumerate(blocks):
+        lead_in, _tail, gap = TRANSITIONS[effective(index)]
+        next_tail = TRANSITIONS[effective(index + 1)][1] if index + 1 < len(blocks) else None
+        if index:
+            out.append(f"<#{gap:g}#>")
+        attrs = list(attrs)
+        if loops and lead_in is not None:
+            attrs.append(f'lead_in="{lead_in:g}"')
+        if loops and next_tail is not None:
+            attrs.append(f'tail="{next_tail:g}"')
+        if loops or attrs:
+            opening = "<parallel" + "".join(f" {attr}" for attr in attrs) + ">"
+            out.extend([opening, *loops, "<sequential>", *items, "</sequential>", "</parallel>"])
         else:
             out.extend(items)
     return "\n".join(out)

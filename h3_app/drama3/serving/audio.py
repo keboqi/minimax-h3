@@ -682,7 +682,7 @@ def _prepare_bed(samples, track, rate, start, speech_end, speech_offset):
     end = min(speech_end, int(track.get("end", speech_end - relative_offset)) + relative_offset)
     if end <= start:
         return samples[:0]
-    tail = int(LOOP_TAIL_SECONDS * rate)
+    tail = int(float(track.get("tail", LOOP_TAIL_SECONDS)) * rate)
     cursor = int(track.get("cursor", 0))
     fade = int(float(track.get("fade", LOOP_FADE_IN_SECONDS)) * rate)
     looped = continued_loop(samples, end - start + tail, rate, cursor)
@@ -801,14 +801,15 @@ def _duck_sound(arr: np.ndarray, duck_env: np.ndarray, rate: int, *, bed: bool) 
     return arr
 
 
-def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
+def mix_parallel(tracks: list[dict | tuple], rate: int, *, lead_in: float | None = None) -> Mix:
     """Mix a ``<parallel>`` block's speech and sound tracks.
 
     Sounds are leveled to the speech. A block with a looped bed opens with the bed alone
-    for ``SCENE_LEAD_IN_SECONDS``; beds fade in, loop to the end of the speech, dip under
-    it, and fade out over ``LOOP_TAIL_SECONDS``. One-shot effects and stingers play out in
-    full. The block advances the timeline at the end of its speech (a block without speech:
-    its longest sound), so bed and effect tails overlap what follows. Levels are not limited
+    for ``lead_in`` seconds (default ``SCENE_LEAD_IN_SECONDS``); beds fade in, loop to the end
+    of the speech, dip under it, and fade out over a track's ``tail`` (default
+    ``LOOP_TAIL_SECONDS``). One-shot effects and stingers play out in full. The block
+    advances the timeline at the end of its speech (a block without speech: its longest
+    sound), so bed and effect tails overlap what follows. Levels are not limited
     here; the finished mix is mastered once.
     """
     normalized: list[dict] = []
@@ -833,7 +834,8 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     sound_tracks = [t for t in valid if t.get("is_sound", False)]
     has_bed = any(t.get("loop", False) and not t.get("speech_relative") and not t.get("cursor")
                   for t in sound_tracks)
-    offset = int(SCENE_LEAD_IN_SECONDS * rate) if speech_tracks and has_bed else 0
+    lead = SCENE_LEAD_IN_SECONDS if lead_in is None else float(lead_in)
+    offset = int(lead * rate) if speech_tracks and has_bed else 0
     speech_end = offset + max((int(t.get("advance", len(t["audio"]))) for t in speech_tracks), default=0)
 
     speech_rms_values = [_speech_rms(t.get("dialogue", t["audio"]), rate) for t in speech_tracks]

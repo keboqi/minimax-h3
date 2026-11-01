@@ -550,8 +550,8 @@ into voice design, direction and sound without another user step.
 Advanced sound tags support `role="physical|social|group_reaction|emotional|comic|transition"`
 and `perspective="in_world|subjective|editorial"`. Editorial/subjective sounds bypass the
 scene room. Old scripts without metadata retain their room routing. `duration_class`
-selects `accent` (1 second), `reaction` (3 seconds) or `texture` (25 seconds); an explicit
-`duration` takes precedence. The generated asset retains its natural tail.
+selects `accent` (1 second), `reaction` (3 seconds), `event` (6 seconds, a sustained
+action) or `texture` (25 seconds); an explicit `duration` takes precedence. The generated asset retains its natural tail.
 
 A sound directly inside its local parallel block can set `anchor="exact phrase"`,
 `edge="start|end"` and `occurrence="1"` to follow the selected speech take. Alignment
@@ -590,3 +590,33 @@ principal performance, falling back to a late entry based on its actual duration
 Nested physical effects no longer count as speech in the bed's ducking sidechain.
 
 Sound tags also support `envelope="0:0.3,0.5:1,1:0"`: 2–8 increasing relative-time/gain points within 0–1, for score rises and withdrawals. Guided supplies the same string in a sound entry. Automation is applied before speech ducking.
+
+## Scene sound design
+
+Both writers work like an audio-drama sound editor. Plot stays fixed, but the physical
+sounds a scene already implies (entrances, footsteps, handled objects, the setting's
+weather) are rendered, and any scene with a physical setting gets a bed, at least
+quiet room tone. Cue density follows the scene type: intimate dialogue stays sparse,
+action scenes are dense. Guided keeps up to half a scene's line count in sound events
+(at least 6, at most 32).
+
+Every Advanced rewrite reports its density in the status, for example "Sound design:
+14 cues (3.5 per 10 lines), beds in 4 of 5 scenes, 11 assets.", so writers and
+prompt changes can be compared by numbers.
+
+A scene master `<parallel>` accepts `lead_in="2.5"` (seconds its beds play before
+the first line; default 0.8) and `tail="3"` (seconds its beds ring under what
+follows; default 1), each bounded to 0.3–4. Guided chooses a scene `transition`:
+`cut` (default), `establish` (a longer lead-in for the opening, a new location or a
+time jump) or `bridge` (the two scenes' beds crossfade over a 0.3 second gap: the old
+beds ring 2.5 seconds while the new ones lead in for 2, so the first new line starts
+as the old bed fades; with a bed missing on either side it is a cut).
+
+Guided scene beds and events take an optional `level` of `low`, `mid` or `high`,
+which sets that use's volume; the same asset can be quiet in one scene and loud in
+another. In Advanced mode, the Guided content step also proposes a story-wide sound
+palette: a style line and up to four shared score assets. Every sound batch receives
+the palette and selects those assets by name. A batch that redefines a palette asset
+keeps the palette's version, so a recurring theme stays one asset that resumes across
+scenes.
+

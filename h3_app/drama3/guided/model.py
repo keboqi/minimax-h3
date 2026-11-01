@@ -42,6 +42,7 @@ class Scene:
     utterances: tuple[str, ...]  # utterance IDs in order
     place: str = ""
     change: str = ""  # what turns in the scene, for the direction and staging stages
+    beats: tuple[tuple[str, str, str], ...] = ()  # (at phrase, focus, intent) turning points
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class SoundEvent:
     occurrence: int = 1  # within the at line; compilation adjusts it to the local block
     end_at: str = ""  # optional exact ending line for an anchored music span
     end_occurrence: int = 1  # within the ending line
+    level: str = ""  # "low" | "mid" | "high"; empty uses the kind's default volume
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,9 @@ class Staging:
     positions: tuple[tuple[str, float], ...] = ()
     events: tuple[SoundEvent, ...] = ()
     pauses: tuple[tuple[str, str], ...] = ()  # (utterance ID, "short" | "long") before that utterance
+    ambience_level: str = ""
+    music_level: str = ""
+    transition: str = ""  # how the scene opens: "cut" | "establish" | "bridge"; empty is a cut
 
 
 @dataclass

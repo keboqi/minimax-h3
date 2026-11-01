@@ -10,7 +10,9 @@ from h3_app.workflows.drama3 import NAME_LINE
 
 from .rooms import SCENE_ROOMS, scene_room_name
 from .speaker_effects import extract_speaker_effects, has_speaker_effects, strip_speaker_effects
-from h3_app.drama3.sound_policy import DURATION_CLASSES, PERSPECTIVES, SOUND_ROLES, sound_perspective, gain_envelope
+from h3_app.drama3.sound_policy import (
+    DURATION_CLASSES, LEAD_IN_RANGE, PERSPECTIVES, SOUND_ROLES, TAIL_RANGE, sound_perspective, gain_envelope,
+)
 
 SPEAKER_LINE_RE = re.compile(r"^<\|speaker:(\d+)\|>\s*(.*)$")
 # An opening tag may carry attributes: <parallel room="small_room" stage="Mia=-0.4">.
@@ -80,6 +82,8 @@ class ParallelNode:
     stage: tuple[tuple[str, float], ...] = ()  # (speaker, position -1 left to 1 right) in this scene
     holds: tuple[tuple[str, float], ...] = ()
     reaction: bool = False
+    lead_in: float = 0.0  # seconds its beds play before its speech; 0 keeps the mixer's default
+    tail: float = 0.0  # seconds its beds ring under what follows; 0 keeps the mixer's default
 
 
 TreeNode = Union[
@@ -249,7 +253,18 @@ def parse_parallel_attrs(tag: str, resolve: Callable[[str], str | None] | None =
         if sep and phrase.strip():
             holds.append((phrase.strip(), _bounded_number(seconds, 0.1, 3.0)))
     return {"room": scene_room_name(attrs.get("room", "")), "stage": tuple(stage), "holds": tuple(holds),
-            "reaction": attrs.get("reaction") == "true"}
+            "reaction": attrs.get("reaction") == "true",
+            "lead_in": _optional_seconds(attrs.get("lead_in"), LEAD_IN_RANGE),
+            "tail": _optional_seconds(attrs.get("tail"), TAIL_RANGE)}
+
+
+def _optional_seconds(value: str | None, bounds: tuple[float, float]) -> float:
+    """A bounded duration, or 0 (the mixer's default) when absent or not a number."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(bounds[0], min(number, bounds[1])) if number == number else 0.0
 
 
 def default_sound_name(description: str) -> str:
