@@ -158,6 +158,7 @@ class Drama3View:
     steps: StepStrip | None = None
     load_example: gr.Button | None = None
     load_example_zh: gr.Button | None = None
+    load_example_zh_latest: gr.Button | None = None
 
 
 SCRIPT, CAST, SPEAK, REVIEW = range(4)
@@ -601,6 +602,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                                      elem_id="h3-drama3-load-example")
                             load_example_zh = gr.Button("Load Chinese example (中文)", size="sm",
                                                         elem_id="h3-drama3-load-example-zh")
+                            load_example_zh_latest = gr.Button("示例三：雨巷里的末班广播", size="sm",
+                                                               elem_id="h3-drama3-load-example-zh-latest")
                         title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
                                            info="Names the output file. The writer fills it from the script.")
                         text = gr.Textbox(label="Speech text", lines=18, max_lines=60,
@@ -928,4 +931,5 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         steps=steps,
         load_example=load_example,
         load_example_zh=load_example_zh,
+        load_example_zh_latest=load_example_zh_latest,
     )

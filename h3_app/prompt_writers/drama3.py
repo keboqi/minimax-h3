@@ -382,6 +382,8 @@ def direct_drama3_script(script: str, cast: list[dict], script_mode: str, ask) -
         return script, f"The direction pass failed ({status[len(DRAMA3_PROMPT_FAILED):].strip()}); the writer's cues were kept."
     fenced = re.search(r"```[A-Za-z0-9_-]*\s*(.*?)\s*```", reply, flags=re.S)
     directed, taken, refused = merge_direction(script, names_to_tags(fenced.group(1) if fenced else reply, names))
+    if not taken and not refused:
+        return script, "A direction review kept the writer's cues."
     if not taken:
         return script, "The direction pass changed the script's words or lines, so the writer's cues were kept."
     share = direction_share(directed)

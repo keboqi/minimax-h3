@@ -28,8 +28,8 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speak
 
 from . import audio, environment, rooms, takes as take_store
 from .alignment import take_audio_digest
-from .cue_timing import insert_holds, resolve_anchor
-from .planner import Chunk, expected_seconds, plan_turns_chunks
+from .cue_timing import insert_holds, normalized, resolve_anchor
+from .planner import Chunk, expected_seconds, plan_turns_chunks, spoken_text
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
 from .speaker_effects import DISTANCE_TAGS, ROOM_EFFECT_ROOMS, SPACE_EFFECTS, apply_speaker_effects
 from .tree import (
@@ -40,9 +40,11 @@ from .tree import (
     SpeechNode,
     TreeNode,
     is_sound_only_node,
+    iter_parallel_nodes,
     iter_sound_nodes,
     iter_speech_nodes,
     parse_drama3_tree,
+    script_cue_phrases,
     strip_drama3_sound_tags,
 )
 
@@ -945,8 +947,19 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     # saved ones too, so turning them on and remixing adds them without speaking again.
     # Report every failed word alignment, including single-line takes.
     word_timing = bool(getattr(request, "word_timing", False))
-    cue_alignment = any(n.anchor or n.end_anchor for n in iter_sound_nodes(tree)) or bool(re.search(r'\bholds\s*=', script_text))
-    aligned = ordered if word_timing or cue_alignment else [take for take in ordered if len(take.chunk.lines) > 1]
+    # A scene whose anchors or holds name a phrase it speaks aligns all its takes, so a phrase
+    # crossing takes still resolves and no unaligned take splits the scene's word stream.
+    cued_take_indices: set[int] = set()
+    for scene in iter_parallel_nodes(tree):
+        phrases = script_cue_phrases(scene)
+        scene_chunks = [chunk for speech in iter_speech_nodes(scene) for chunk in node_chunks.get(id(speech), [])]
+        spoken = normalized(" ".join(spoken_text(chunk.text) for chunk in scene_chunks))
+        if any(phrase in spoken for phrase in phrases):
+            cued_take_indices.update(chunk.index for chunk in scene_chunks)
+    aligned = ordered if word_timing else [
+        take for take in ordered
+        if take.chunk.index in cued_take_indices or len(take.chunk.lines) > 1
+    ]
     if aligned:
         from .alignment import align_take
         from h3_app.dubbing import tools
@@ -961,11 +974,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                 try:
                     take.line_bounds, words = align_take(take, store, runtime, free_gpu=free_gpu,
                                                          hf_token=hf_token)
-                    take.line_words = words if word_timing or cue_alignment else None
+                    take.line_words = words if word_timing or take.chunk.index in cued_take_indices else None
                 except Exception as exc:
                     if job is not None:
                         job.check()
-                    if word_timing or len(take.chunk.lines) > 1:
+                    if word_timing or len(take.chunk.lines) > 1 or take.chunk.index in cued_take_indices:
                         alignment_notes.append(f"chunk {take.chunk.index + 1}: {exc}")
         finally:
             tools.stop()  # release alignment VRAM before the next speech job

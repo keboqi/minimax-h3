@@ -86,6 +86,7 @@ class Drama3Actions:
     generate_drama3_batch: Callable | None = None
     load_drama3_example: Callable | None = None
     load_drama3_example_zh: Callable | None = None
+    load_drama3_example_zh_latest: Callable | None = None
 
     @classmethod
     def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
@@ -261,6 +262,13 @@ def _bind_writer(view, actions):
         if view.load_example_zh is not None and actions.load_drama3_example_zh is not None:
             view.load_example_zh.click(
                 actions.load_drama3_example_zh,
+                inputs=example_inputs,
+                outputs=example_outputs,
+                **QUIET,
+            )
+        if view.load_example_zh_latest is not None and actions.load_drama3_example_zh_latest is not None:
+            view.load_example_zh_latest.click(
+                actions.load_drama3_example_zh_latest,
                 inputs=example_inputs,
                 outputs=example_outputs,
                 **QUIET,

@@ -33,6 +33,18 @@ you scroll. Moving between steps happens in the browser and sends no request.
    speech** renders the current script and references without rewriting them.
 4. **Review lines.** Hear, regenerate or remix single lines (see **Takes** below).
 
+The Script step offers three example presets. **示例三：雨巷里的末班广播**
+loads an original Chinese story with five voices and three scenes: a playful street
+market, a quiet confession, and a reunion over the neighborhood broadcast. It uses
+the production controls shared by Single-pass and Guided: social ambience,
+phrase-anchored effects, a restrained comic accent, held beats,
+a short listener reaction, and a score that withdraws and resumes. The confession
+plays over rain alone; music returns with the reunion, then withdraws for the
+repaired clock's ticking. Dialogue stays mostly dry; the broadcast uses device
+filtering and the arriving character moves from far to near. Generate its voices
+and sounds in **Cast & sounds**, then use **Generate speech** in **Speak** to perform
+the prepared script.
+
 **Auto: rewrite, voice, sound and speak** does steps 1–3 in one go. It lives on
 Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
 stops, its status names the step whose status says why.

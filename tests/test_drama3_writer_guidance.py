@@ -36,8 +36,7 @@ class WriterGuidanceTests(unittest.TestCase):
     def test_parentheses_are_spoken_and_scopes_are_explained(self):
         self.assertIn("includes text in round parentheses", self.writer)
         self.assertIn("（笑）", self.writer)
-        self.assertIn("Fish also documents a style prefix", self.writer)
-        self.assertIn("this script never opens a line with a cue", self.writer)
+        self.assertIn("never with a cue or scoped tag", self.writer)
 
     def test_documented_sound_events_are_listed_and_treated_as_sounds(self):
         for event in EVENTS:
@@ -65,22 +64,23 @@ class WriterGuidanceTests(unittest.TestCase):
             self.assertIn("[whispering]", delivery)
 
     def test_preserved_lines_are_never_padded_with_invented_reactions(self):
-        self.assertIn("when preserving supplied lines, never invent words", self.writer)
+        self.assertIn("Do not translate, summarize, condense, censor, or add new sentences", self.writer)
         self.assertIn("The one exception is an expansion the user explicitly asks for", self.writer)
         for prompt in (self.writer, self.director):
-            self.assertNotIn("Never give a line the same cue as the line before", prompt)
-            self.assertIn("Never copy the previous line's cue word for word", prompt)
+            # A continuing state may keep its cue; variety is never forced.
+            self.assertIn("A continuing state may keep the same cue or need no new cue", prompt)
+            self.assertNotIn("Never copy the previous line's cue word for word", prompt)
 
     def test_staging_excerpt_gives_sounds_a_job_and_lints_clean(self):
         from h3_app.drama3.serving.tree import iter_sound_nodes, parse_drama3_tree
 
-        self.assertIn("Give every sound a job", self.writer)
-        example = self.writer.split("Advanced staging excerpt", 1)[1]
-        script = example.split("Script:\n", 1)[1].split("\nWhy:", 1)[0].strip()
+        self.assertIn("Choose each sound for a job", self.writer)
+        example = self.writer.split("Advanced dramatic progression", 1)[1]
+        script = example.split("\n", 1)[1].split("\nThe discovery gets", 1)[0].strip()
         self.assertEqual(lint_drama3_script(script), (script, []))
         tree = parse_drama3_tree(script)
         self.assertEqual({sound.name for sound in iter_sound_nodes(tree)},
-                         {"coastal_storm", "approaching_boots", "radio_static"})
+                         {"coastal_storm", "console_click", "discovery_score"})
 
 
 if __name__ == "__main__":

@@ -976,6 +976,10 @@ class Drama3AutoTests(unittest.TestCase):
             example_story_reply_json,
         )
         from h3_app.drama3.lint import SCOPED_TAGS, lint_drama3_script, needs_direction
+        from h3_app.drama3.example_story_zh_latest import (
+            EXAMPLE_STORY_ZH_LATEST_TITLE,
+            EXAMPLE_STORY_ZH_LATEST_SPEAKERS,
+        )
         from h3_app.drama3.serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
         from h3_ui.application import _drama3_actions, drama3_handlers
         from h3_ui.drama3.bindings import bind_drama3
@@ -1015,6 +1019,11 @@ class Drama3AutoTests(unittest.TestCase):
         self.assertEqual(view.load_example.value, "Load example story")
         self.assertIsNotNone(view.load_example_zh)
         self.assertEqual(view.load_example_zh.value, "Load Chinese example (中文)")
+        self.assertIsNotNone(view.load_example_zh_latest)
+        self.assertEqual(view.load_example_zh_latest.value, "示例三：雨巷里的末班广播")
+        latest_fn = next(f for f in demo.fns.values()
+                         if f.fn == drama3_handlers.load_drama3_example_zh_latest)
+        self.assertEqual(latest_fn.inputs, [view.speaker_group])
         fn = next(f for f in demo.fns.values() if view.load_example and f.outputs and view.title in f.outputs
                   and view.shown_sound_slots in f.outputs)
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": tmp}):
@@ -1023,6 +1032,7 @@ class Drama3AutoTests(unittest.TestCase):
             with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
                 result_en = drama3_handlers.load_drama3_example("Global")
                 result_zh = drama3_handlers.load_drama3_example_zh("Global")
+                result_latest = latest_fn.fn("Global")
         self.assertEqual(len(result_en), len(fn.outputs))
         self.assertEqual(len(result_zh), len(fn.outputs))
         out_en = dict(zip(fn.outputs, result_en))
@@ -1043,6 +1053,17 @@ class Drama3AutoTests(unittest.TestCase):
         self.assertEqual(out_zh[view.voices[2].save_name], "尉迟烈")
         self.assertEqual(out_zh[view.sounds[0].save_name], "glacier_blizzard")
         self.assertEqual(out_zh[view.sounds[1].save_name], "guqin_mystery")
+        self.assertEqual(latest_fn.outputs, fn.outputs)
+        self.assertEqual(len(result_latest), len(latest_fn.outputs))
+        out_latest = dict(zip(latest_fn.outputs, result_latest))
+        self.assertEqual(out_latest[view.title], EXAMPLE_STORY_ZH_LATEST_TITLE)
+        self.assertEqual(out_latest[view.shown_slots], len(EXAMPLE_STORY_ZH_LATEST_SPEAKERS))
+        self.assertEqual(out_latest[view.shown_sound_slots], 9)
+        self.assertEqual(out_latest[view.script_mode], drama3_writer.DRAMA3_SCRIPT_ADVANCED)
+        self.assertEqual(out_latest[view.speaker_mode], drama3_writer.DRAMA3_SPEAKER_AUTO)
+        self.assertEqual(out_latest[view.voices[1].save_name], "许知夏")
+        self.assertEqual(out_latest[view.sounds[0].save_name], "market_rain")
+        self.assertIn('我没敢答应~1.2', out_latest[view.text])
         demo.close()
 
 

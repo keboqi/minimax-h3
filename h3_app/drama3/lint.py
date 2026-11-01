@@ -22,8 +22,6 @@ SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slo
 TRAILING_EVENTS = AUDIBLE_EVENTS
 MAX_CUE_WORDS = 5
 MAX_CUES_PER_LINE = 2
-# A script with fewer directed lines than this share gets a note (and a direction pass).
-MIN_DIRECTED_SHARE = 0.6
 
 CUE_RE = re.compile(r"\[([^\[\]]*)\]")
 _TRAILING_CUE_RE = re.compile(r"\s*\[([^\[\]]*)\]\s*$")
@@ -174,17 +172,15 @@ def direction_share(script: str) -> tuple[int, int]:
 
 
 def under_directed(script: str) -> bool:
-    """Whether a script of several lines leaves too many of them without direction."""
+    """Flag wholly undirected passages for review, without enforcing a cue quota."""
     directed, total = direction_share(script)
-    return total >= 3 and directed < MIN_DIRECTED_SHARE * total
+    return total >= 3 and directed == 0
 
 
-# Shallow direction: most cues are one bare word, one speaker keeps repeating a cue, or a
-# long stretch of lines goes undirected, though enough lines carry something.
+# A concentration of bare cues can merit semantic review. Cue repetition and
+# undirected stretches alone do not distinguish flat delivery from deliberate restraint.
 MIN_SHALLOW_CUES = 4
 MAX_BARE_SHARE = 0.6
-MAX_REPEATS = 3
-MAX_FLAT_RUN = 5
 
 
 def shallow_direction(script: str) -> str:
@@ -197,23 +193,11 @@ def shallow_direction(script: str) -> str:
         bare = sum(len(re.findall(r"[\w']+", cue)) == 1 for _speaker, cue in cues)
         if bare > MAX_BARE_SHARE * len(cues):
             return f"{bare} of {len(cues)} cues are a single bare word"
-        counts: dict[tuple[str, str], int] = {}
-        for key in cues:
-            counts[key] = counts.get(key, 0) + 1
-        (speaker, cue), most = max(counts.items(), key=lambda item: item[1])
-        if most >= MAX_REPEATS and most * 3 >= sum(n for (who, _), n in counts.items() if who == speaker):
-            return f"one speaker repeats [{cue}] {most} times"
-    run = longest = 0
-    for _speaker, body in lines:
-        run = 0 if is_directed(body) else run + 1
-        longest = max(longest, run)
-    if longest >= MAX_FLAT_RUN:
-        return f"{longest} lines in a row carry no direction"
     return ""
 
 
 def needs_direction(script: str) -> bool:
-    """Whether a script should get a direction pass: too few directed lines, or shallow direction."""
+    """Whether a script merits direction review; the director may keep it unchanged."""
     return under_directed(script) or bool(shallow_direction(script))
 
 
@@ -277,15 +261,9 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     if notes["long"]:
         messages.append(f"{notes['long']} cue(s) run over {MAX_CUE_WORDS} words; shorter cues are more reliable")
     if under_directed(repaired):
-        directed, total = direction_share(repaired)
-        messages.append(f"only {directed} of {total} lines carry delivery direction")
+        messages.append(f"none of {direction_share(repaired)[1]} lines carry delivery direction")
     elif shallow := shallow_direction(repaired):
         messages.append(f"direction is shallow: {shallow}")
-    cues = [CUE_RE.findall(body) for body in speaker_lines(repaired)]
-    repeats = sum(1 for previous, current in zip(cues, cues[1:])
-                  if previous and current and previous[0].strip().lower() == current[0].strip().lower())
-    if repeats:
-        messages.append(f"{repeats} line(s) open with the same cue as the line before")
     # A scene with an unreadable room or stage is still performed, without them.
     problems = [problem for tag in _PARALLEL_TAG_RE.findall(repaired) for problem in staging_problems(tag)]
     messages.extend(f"{problem}; the scene plays without it" for problem in dict.fromkeys(problems))

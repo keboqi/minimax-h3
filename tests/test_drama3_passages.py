@@ -32,13 +32,12 @@ class PassageTests(unittest.TestCase):
         self.assertEqual(requests(pinned), PASSAGE)
         self.assertEqual(requests(f"{first}\n<#0.8#>\n{middle}\n{last}"), [PASSAGE[0], "".join(PASSAGE[1:])])
 
-    def test_writer_prompt_keeps_passages_whole_unless_a_sound_must_land_on_a_sentence(self):
+    def test_writer_prompt_keeps_passages_whole_and_times_events_inside_them(self):
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
-        self.assertIn("Keep a speaker's continuous passage (consecutive lines of one speaker) inside one block", prompt)
-        self.assertIn("only when the sound must land on that exact sentence", prompt)
-        self.assertIn("Never put a `<#seconds#>` pause between lines of one passage", prompt)
-        # Paradigm 5's pinpoint anchoring points back to the rule instead of contradicting it.
-        self.assertIn('splits that speaker\'s passage into separate takes', prompt)
+        self.assertIn("Keep consecutive lines of one speaker together in the speech timeline", prompt)
+        # Events and holds inside a passage use phrase anchors on the parallel, not split blocks.
+        self.assertIn('put the sound directly on the enclosing parallel with `anchor="exact spoken phrase"`', prompt)
+        self.assertIn("For a hold inside one continuous speaker passage, use `holds=", prompt)
 
 
 if __name__ == "__main__":

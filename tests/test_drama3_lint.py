@@ -31,7 +31,7 @@ class LintTests(unittest.TestCase):
             "<sound name=\"rain\">Rain</sound>",
         ])
         self.assertEqual(len(notes), 3)
-        self.assertIn("only 0 of 3 lines carry delivery direction", notes)
+        self.assertIn("none of 3 lines carry delivery direction", notes)
 
     def test_valid_placements_are_kept_and_long_cues_reported(self):
         original = ("<|speaker:0|> I did it! [laughs]\n"
@@ -110,24 +110,21 @@ class PromptExampleTests(unittest.TestCase):
         from h3_app.drama3.serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
 
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
-        example = prompt.split("Advanced script-field example", 1)[1]
-        script = example.split("Script:\n", 1)[1].split("\nWhy:", 1)[0].strip()
+        example = prompt.split("Advanced dramatic progression (from a brief):", 1)[1]
+        script = example[example.index("\n<parallel"):].split("\nThe discovery", 1)[0].strip()
         self.assertEqual(lint_drama3_script(script), (script, []))
         tree = parse_drama3_tree(script)
         turns = [turn for node in iter_speech_nodes(tree) for turn in node.turns]
-        self.assertTrue(all(not turn.speaker_effects for turn in turns if turn.speaker == 0))  # narrator stays dry
-        self.assertIn(("fairy_tiny",), {turn.speaker_effects for turn in turns})
-        # Only the echoing temple needs a room; the hiding place keeps its stage without one.
-        scenes = [node for node in tree.children if getattr(node, "room", "")]
-        self.assertEqual([scene.room for scene in scenes], ["large_hall"])
-        staged = [node for node in tree.children if getattr(node, "stage", ())]
-        self.assertEqual(staged[0].room, "")
-        self.assertEqual(staged[0].stage, (("守护精灵", 0.4), ("林夕", -0.3)))
-        self.assertFalse(any("reverb" in effect for turn in turns for effect in turn.speaker_effects))
-        sounds = iter_sound_nodes(tree)
-        self.assertTrue(all(sound.duration for sound in sounds))
-        self.assertEqual({sound.name for sound in sounds if sound.loop},
-                         {"temple_rumble", "tense_strings", "mystery_pad"})
+        self.assertTrue(all(not turn.speaker_effects for turn in turns if turn.speaker == "narrator"))
+        self.assertIn(("walkie_talkie",), {turn.speaker_effects for turn in turns})
+        scene = tree.children[0]
+        self.assertEqual(scene.stage, (("Elena", -0.4), ("Marcus", 0.4)))
+        self.assertEqual(scene.holds, (("needle was moving", 0.8),))
+        sounds = list(iter_sound_nodes(tree))
+        self.assertEqual({sound.name for sound in sounds if sound.loop}, {"coastal_storm", "discovery_score"})
+        score = next(sound for sound in sounds if sound.name == "discovery_score")
+        self.assertEqual((score.anchor, score.end_anchor), ("needle was moving", "mainland grid"))
+
 
 
 class RepairTests(unittest.TestCase):
@@ -160,15 +157,15 @@ class RepairTests(unittest.TestCase):
         self.assertIn("removed 1 pause or silence cue(s); punctuation paces the line", notes)
         self.assertIn("removed 2 cue(s) beyond one per sentence and 2 per line", notes)
 
-    def test_direction_share_and_repeated_cues_are_reported(self):
+    def test_direction_share_allows_repeated_cues(self):
         flat = "\n".join(f"<|speaker:0|> Line number {n} goes here." for n in range(5))
         self.assertTrue(under_directed(flat))
         self.assertEqual(direction_share(flat), (0, 5))
-        self.assertIn("only 0 of 5 lines carry delivery direction", lint_drama3_script(flat)[1])
+        self.assertIn("none of 5 lines carry delivery direction", lint_drama3_script(flat)[1])
         directed = ("<|speaker:0|> One, [sad] two.\n<|speaker:1|> Three, [sad] four.\n"
                     "<|speaker:0|> Five <emphasis>six</emphasis>.")
         self.assertFalse(under_directed(directed))
-        self.assertEqual(lint_drama3_script(directed)[1], ["1 line(s) open with the same cue as the line before"])
+        self.assertEqual(lint_drama3_script(directed)[1], [])
         self.assertFalse(under_directed("<|speaker:0|> Hi.\n<|speaker:1|> Yo."))  # too short to judge
 
     def test_redundant_room_tags_and_narrator_effect_tags_are_stripped(self):
@@ -253,17 +250,37 @@ class DirectionMergeTests(unittest.TestCase):
         self.assertIn("direction is shallow", " ".join(lint_drama3_script(bare)[1]))
         repeated = "\n".join(f"<|speaker:1|> Line {n}, [{cue}] spoken." for n, cue in
                              enumerate(["tense, low", "warm and kind", "tense, low", "quietly hurt", "tense, low"]))
-        self.assertIn("repeats [tense, low] 3 times", shallow_direction(repeated))
+        self.assertEqual(shallow_direction(repeated), "")
+        self.assertFalse(needs_direction(repeated))
         directed = ["warm and kind", "quietly hurt", "to him, pleading", "trying to sound casual", "close to tears",
                     "turning on him", "with heavy sadness", "bright and eager"]
         flat_run = "\n".join([f"<|speaker:1|> Hi, [{cue}] there." for cue in directed[:5]]
                              + [f"<|speaker:0|> Plain line {n}." for n in range(5)]
                              + [f"<|speaker:1|> Bye, [{cue}] now." for cue in directed[5:]])
         self.assertFalse(under_directed(flat_run))
-        self.assertIn("5 lines in a row", shallow_direction(flat_run))
+        self.assertEqual(shallow_direction(flat_run), "")
+        self.assertFalse(needs_direction(flat_run))
         rich = ("<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Hello [nervous, speaking quickly] there?\n"
                 "<|speaker:0|> Nobody [tense, low] answered.\n<|speaker:1|> I [to herself, bitter] knew it.")
         self.assertEqual(shallow_direction(rich), "")
+
+    def test_sparse_intentional_direction_does_not_call_director(self):
+        from h3_app.drama3.lint import needs_direction
+
+        script = "<|speaker:0|> She waited [hushed, steady] by the door.\n" + "\n".join(
+            f"<|speaker:0|> Quiet passage line {n}." for n in range(8))
+        self.assertFalse(needs_direction(script))
+        def unexpected(_request):
+            self.fail("Restrained passage should not trigger another model call")
+        self.assertEqual(drama3_writer.direct_drama3_script(script, [], "Basic", unexpected), (script, ""))
+
+    def test_director_can_leave_a_wholly_plain_passage_unchanged(self):
+        script = "<|speaker:0|> Yes.\n<|speaker:0|> All right.\n<|speaker:0|> Thank you."
+        cast = [{"speaker_id": 0, "name": "Mia", "description": "Calm."}]
+        result, note = drama3_writer.direct_drama3_script(
+            script, cast, "Basic", lambda _: ("Mia: Yes.\nMia: All right.\nMia: Thank you.", "OK"))
+        self.assertEqual(result, script)
+        self.assertEqual(note, "A direction review kept the writer's cues.")
 
     def test_direction_pass_runs_only_for_under_directed_scripts(self):
         cast = [{"speaker_id": 0, "name": "narrator", "description": "Calm."},
@@ -338,11 +355,15 @@ class PromptBasicExampleTests(unittest.TestCase):
         from pathlib import Path
 
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
-        for heading in ("Basic script-field example", "Basic prose example"):
+        for heading in ("Basic delivery with referenced voices:", "Basic preserved prose (Chinese):"):
             with self.subTest(heading=heading):
                 example = prompt.split(heading, 1)[1]
-                source = example.split("User text:\n", 1)[1].split("\nScript:\n", 1)[0]
-                script = example.split("\nScript:\n", 1)[1].split("\n\n", 1)[0].strip()
+                if heading.startswith("Basic delivery"):
+                    source = "Mia: I got the job.\nSam: The one in Tokyo?\nMia: I start in March. I wanted to tell you first."
+                    script = example.strip().split("\n\n", 1)[0]
+                else:
+                    source = example.split("Source:\n", 1)[1].split("\nScript:\n", 1)[0]
+                    script = example.split("\nScript:\n", 1)[1].split("\nThe short question", 1)[0].strip()
                 names = {}
                 for line in script.split("\n"):
                     names.setdefault(line.split(":", 1)[0], len(names))

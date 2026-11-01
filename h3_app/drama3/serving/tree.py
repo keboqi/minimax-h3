@@ -499,6 +499,39 @@ def iter_speech_nodes(node: TreeNode) -> list[SpeechNode]:
     return []
 
 
+def iter_parallel_nodes(node: TreeNode) -> list[ParallelNode]:
+    """Return all ParallelNode containers in depth-first order."""
+    result: list[ParallelNode] = []
+    if isinstance(node, ParallelNode):
+        result.append(node)
+    if isinstance(node, (SequentialNode, ParallelNode)):
+        for child in node.children:
+            result.extend(iter_parallel_nodes(child))
+    return result
+
+
+def script_cue_phrases(node: TreeNode) -> set[str]:
+    """Unique normalized cue phrases from sound anchors and parallel holds in ``node``."""
+    from .cue_timing import normalized
+
+    phrases = set()
+    for sound in iter_sound_nodes(node):
+        if sound.anchor:
+            target = normalized(sound.anchor)
+            if target:
+                phrases.add(target)
+        if sound.end_anchor:
+            target = normalized(sound.end_anchor)
+            if target:
+                phrases.add(target)
+    for par in iter_parallel_nodes(node):
+        for phrase, _ in par.holds:
+            target = normalized(phrase)
+            if target:
+                phrases.add(target)
+    return phrases
+
+
 def script_speakers(script: str, *, default_speaker: str = "Speaker 0",
                     resolve: Callable[[str], str | None] | None = None) -> list[str]:
     """The labels of every speaker with a line in the script, in order of first line."""

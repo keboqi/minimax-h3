@@ -126,6 +126,18 @@ class ImmersiveTests(unittest.TestCase):
         self.assertEqual(phrase_time("打开门", [("打开", 1, 2), ("门", 2, 3)]), 3)
         self.assertIsNone(phrase_time("missing", words))
 
+    def test_script_cue_phrases_extracts_all_anchors_and_holds(self):
+        from h3_app.drama3.serving.tree import script_cue_phrases
+        script = (
+            '<parallel holds="door~1.2; step~0.5">\n'
+            '<sound name="s1" anchor="hello" end_anchor="world">Sound 1</sound>\n'
+            'Mia: Wait for me.\n'
+            '</parallel>'
+        )
+        tree = parse_drama3_tree(script)
+        phrases = script_cue_phrases(tree)
+        self.assertEqual(phrases, {"door", "step", "hello", "world"})
+
     def test_distance_does_not_discard_device(self):
         self.assertEqual(_ordered_effects(("robotic_voice", "far", "walkie_talkie")),
                          ("robotic_voice", "far", "walkie_talkie"))

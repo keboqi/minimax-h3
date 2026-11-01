@@ -708,6 +708,109 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(settings["chunks"][0]["reused"])
         self.assertEqual([word["text"] for word in settings["chunks"][0]["lines"][0]["words"]], ["Hello"])
 
+    def test_cue_alignment_only_aligns_takes_with_anchor_keywords(self):
+        aligned_texts = []
+
+        def align(take, *_args, **_kwargs):
+            aligned_texts.append(take.chunk.text)
+            samples = len(audio.tidy_take(take.samples, take.rate))
+            return [(0, samples)], [[("door", 0.0, samples / take.rate)]]
+
+        def speech(payload):
+            return float_wav(tone(expected_seconds(payload["input"])))
+
+        door_clip = Path(self.temp.name) / "door.wav"
+        door_clip.write_bytes(audio.encode_wav(tone(0.5), 16000))
+
+        script = (
+            '<parallel>\n'
+            '<sound name="door" anchor="door">Door sound</sound>\n'
+            '<sequential>\n'
+            '<|speaker:0|> Please open the door.\n'
+            '<|speaker:1|> I am already outside.\n'
+            '</sequential>\n'
+            '</parallel>'
+        )
+        req = self.request(script, script_mode="Advanced (sound enhanced)",
+                           sounds=(("door", str(door_clip), "Door sound", 1),),
+                           word_timing=False)
+        _fake, _updates, snapshot = self.run_route(req, speech, align=align)
+        # The whole scene is aligned so a phrase crossing takes still resolves.
+        self.assertEqual(aligned_texts, ["Please open the door.", "I am already outside."])
+        chunks = snapshot.call_args.args[1]["settings"]["chunks"]
+        self.assertTrue(all(chunk["lines"][0].get("words") for chunk in chunks))
+
+    def test_cue_alignment_skips_scenes_without_the_phrase(self):
+        aligned_texts = []
+
+        def align(take, *_args, **_kwargs):
+            aligned_texts.append(take.chunk.text)
+            samples = len(audio.tidy_take(take.samples, take.rate))
+            return [(0, samples)], [[("door", 0.0, samples / take.rate)]]
+
+        door_clip = Path(self.temp.name) / "door.wav"
+        door_clip.write_bytes(audio.encode_wav(tone(0.5), 16000))
+        script = (
+            '<parallel>\n'
+            '<sound name="door" anchor="door">Door sound</sound>\n'
+            '<|speaker:0|> Please open the door.\n'
+            '</parallel>\n'
+            '<parallel>\n'
+            '<|speaker:1|> Another door, another day.\n'
+            '</parallel>'
+        )
+        req = self.request(script, script_mode="Advanced (sound enhanced)",
+                           sounds=(("door", str(door_clip), "Door sound", 1),),
+                           word_timing=False)
+        self.run_route(req, lambda payload: float_wav(tone(expected_seconds(payload["input"]))), align=align)
+        self.assertEqual(aligned_texts, ["Please open the door."])
+
+    def test_cue_alignment_matches_anchor_across_performance_markup(self):
+        def align(take, *_args, **_kwargs):
+            samples = len(audio.tidy_take(take.samples, take.rate))
+            words = [(word, i * 0.2, (i + 1) * 0.2)
+                     for i, word in enumerate(spoken_text(take.chunk.text).split())]
+            return [(0, samples)], [words]
+
+        door_clip = Path(self.temp.name) / "door.wav"
+        door_clip.write_bytes(audio.encode_wav(tone(0.5), 16000))
+        script = (
+            '<parallel>\n'
+            '<sound name="door" anchor="open the door">Door sound</sound>\n'
+            '<|speaker:0|> Please open <emphasis>the door</emphasis> before leaving.\n'
+            '</parallel>'
+        )
+        req = self.request(script, script_mode="Advanced (sound enhanced)",
+                           sounds=(("door", str(door_clip), "Door sound", 1),),
+                           word_timing=False)
+        _fake, _updates, snapshot = self.run_route(
+            req, lambda payload: float_wav(tone(expected_seconds(payload["input"]))), align=align)
+        self.align_take.assert_called_once()
+        settings = snapshot.call_args.args[1]["settings"]
+        self.assertTrue(settings["chunks"][0]["lines"][0].get("words"))
+        sound = settings["sounds"][0]
+        self.assertGreater(sound["start"], 0)
+        self.assertGreater(sound["end"], sound["start"])
+
+    def test_unmatched_anchor_skips_single_line_alignment(self):
+        door_clip = Path(self.temp.name) / "door.wav"
+        door_clip.write_bytes(audio.encode_wav(tone(0.5), 16000))
+
+        script = (
+            '<parallel>\n'
+            '<sound name="door" anchor="unheard">Door sound</sound>\n'
+            '<sequential>\n'
+            '<|speaker:0|> Please open the door.\n'
+            '<|speaker:1|> I am already outside.\n'
+            '</sequential>\n'
+            '</parallel>'
+        )
+        req = self.request(script, script_mode="Advanced (sound enhanced)",
+                           sounds=(("door", str(door_clip), "Door sound", 1),),
+                           word_timing=False)
+        self.run_route(req, lambda payload: float_wav(tone(expected_seconds(payload["input"]))))
+        self.align_take.assert_not_called()
+
     def test_single_line_word_alignment_failure_is_reported(self):
         request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), word_timing=True)
         _fake, updates, snapshot = self.run_route(request,

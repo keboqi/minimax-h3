@@ -203,25 +203,27 @@ Aegis: <robotic_voice><reverb_large_hall> Ignition sequence complete, [solemn, r
 Marcus: Look at that horizon, [quiet wonder, relieved] <soft>still</soft> burning after all these years. [chuckles]"""
 
 
+def example_story(lang: str = "en") -> tuple[str, str, tuple[dict, ...]]:
+    """(title, script, speakers) of the example story for ``lang``: "en", "zh" or "zh-latest"."""
+    lang = str(lang or "en").lower()
+    if lang == "zh-latest":
+        from .example_story_zh_latest import (
+            EXAMPLE_STORY_ZH_LATEST_SCRIPT,
+            EXAMPLE_STORY_ZH_LATEST_SPEAKERS,
+            EXAMPLE_STORY_ZH_LATEST_TITLE,
+        )
+
+        return EXAMPLE_STORY_ZH_LATEST_TITLE, EXAMPLE_STORY_ZH_LATEST_SCRIPT, EXAMPLE_STORY_ZH_LATEST_SPEAKERS
+    if lang.startswith("zh"):
+        return EXAMPLE_STORY_ZH_TITLE, EXAMPLE_STORY_ZH_SCRIPT, EXAMPLE_STORY_ZH_SPEAKERS
+    return EXAMPLE_STORY_TITLE, EXAMPLE_STORY_SCRIPT, EXAMPLE_STORY_SPEAKERS
+
+
 def example_story_reply_json(lang: str = "en") -> str:
     """The example story packaged in the writer's JSON reply format."""
-    if str(lang or "en").lower().startswith("zh"):
-        return json.dumps(
-            {
-                "title": EXAMPLE_STORY_ZH_TITLE,
-                "source_mode": "brief",
-                "script": EXAMPLE_STORY_ZH_SCRIPT,
-                "speakers": list(EXAMPLE_STORY_ZH_SPEAKERS),
-            },
-            ensure_ascii=False,
-        )
+    title, script, speakers = example_story(lang)
     return json.dumps(
-        {
-            "title": EXAMPLE_STORY_TITLE,
-            "source_mode": "brief",
-            "script": EXAMPLE_STORY_SCRIPT,
-            "speakers": list(EXAMPLE_STORY_SPEAKERS),
-        },
+        {"title": title, "source_mode": "brief", "script": script, "speakers": list(speakers)},
         ensure_ascii=False,
     )
 

@@ -272,14 +272,7 @@ class WriterHandlers:
     def load_drama3_example(self, group="Global", lang="en"):
         """Load the comprehensive Soundstage example story, its speakers, and its sounds/music beds."""
         from h3_app.drama3 import speakers as drama3_speakers
-        from h3_app.drama3.example_story import (
-            EXAMPLE_STORY_SCRIPT,
-            EXAMPLE_STORY_SPEAKERS,
-            EXAMPLE_STORY_TITLE,
-            EXAMPLE_STORY_ZH_SCRIPT,
-            EXAMPLE_STORY_ZH_SPEAKERS,
-            EXAMPLE_STORY_ZH_TITLE,
-        )
+        from h3_app.drama3.example_story import example_story
         from h3_app.drama3.serving.tree import extract_script_sounds
         from h3_app.workflows.drama3 import format_script
         from h3_ui.drama3.controls import (
@@ -291,10 +284,7 @@ class WriterHandlers:
             _sound_slot_visibility,
         )
 
-        is_zh = str(lang or "en").lower().startswith("zh")
-        raw_script = EXAMPLE_STORY_ZH_SCRIPT if is_zh else EXAMPLE_STORY_SCRIPT
-        raw_speakers = EXAMPLE_STORY_ZH_SPEAKERS if is_zh else EXAMPLE_STORY_SPEAKERS
-        story_title = EXAMPLE_STORY_ZH_TITLE if is_zh else EXAMPLE_STORY_TITLE
+        story_title, raw_script, raw_speakers = example_story(lang)
 
         script = format_script(raw_script)
         cast = list(raw_speakers)
@@ -328,7 +318,7 @@ class WriterHandlers:
 
         status = (
             f'Loaded example story "{story_title}": {len(cast)} speakers and '
-            f"{len(sounds)} sound/music cues across 4 scenes. "
+            f"{len(sounds)} sound/music assets. "
             "Next: open Cast & sounds to generate speaker voices and sounds, then Speak."
         )
         return (
@@ -348,4 +338,8 @@ class WriterHandlers:
     def load_drama3_example_zh(self, group="Global"):
         """Load the comprehensive Chinese Soundstage example story, its speakers, and its sounds/music beds."""
         return self.load_drama3_example(group, lang="zh")
+
+    def load_drama3_example_zh_latest(self, group="Global"):
+        """Load the Chinese example of the latest shared production controls."""
+        return self.load_drama3_example(group, lang="zh-latest")
 
