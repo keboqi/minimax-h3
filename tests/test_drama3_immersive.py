@@ -111,7 +111,7 @@ class ImmersiveTests(unittest.TestCase):
 
     def test_roles_duration_and_editorial_routing_survive_guided_compilation(self):
         sounds, _, _ = parse_staging(json.dumps({"sounds": [{"name": "awkward", "kind": "stinger",
-            "role": "comic", "duration_class": "accent", "prompt": "Single dry pluck"}]}), set(), set(), [])
+            "role": "comic", "duration_class": "accent", "prompt": "Single dry pluck"}], "scenes": []}), set(), set(), [])
         node = parse_sound_tag(sound_line(sounds["awkward"]))
         self.assertEqual((node.duration, node.perspective), (1, "editorial"))
         self.assertIn('perspective="editorial"', sound_placement_attrs(node))

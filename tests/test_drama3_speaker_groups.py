@@ -79,7 +79,8 @@ class SpeakerGroupTests(unittest.TestCase):
                             "speakers": entries})
         slots = ["Upload a clip", None, ""] * 16 + [""] * 48 + [4, "Basic", "Story"]
         with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime):
-            result = drama3_handlers.apply_drama3_writer_reply(reply, "Original", "Auto", *slots)
+            source = "\n".join(["Hello there."] * len(entries))
+            result = drama3_handlers.apply_drama3_writer_reply(reply, source, "Auto", *slots)
             self.assertEqual(len(result), 86)
             self.assertEqual(result[-17]["value"], narrator.key)
             self.assertEqual(result[-15]["value"], alice.key)
@@ -89,7 +90,7 @@ class SpeakerGroupTests(unittest.TestCase):
             # A reply without a title keeps the title box as it is.
             self.assertEqual(result[-1], {"__type__": "update"})
             titled = drama3_handlers.apply_drama3_writer_reply(
-                json.dumps({"title": "第一章 <重逢>\n", **json.loads(reply)}), "Original", "Auto", *slots)
+                json.dumps({"title": "第一章 <重逢>\n", **json.loads(reply)}), source, "Auto", *slots)
             self.assertEqual(titled[-1], "第一章 重逢")
             bad = drama3_handlers.apply_drama3_writer_reply("invalid", "Original", "Auto", *slots)
             self.assertEqual(len(bad), len(result))

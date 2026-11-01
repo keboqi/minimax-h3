@@ -72,6 +72,7 @@ Pronunciation notes, English. For an English name or rare word Drama 3 is likely
 Advanced Sound & Vocal Staging (only when the Script mode value begins with "Advanced"):
 
 Scene design:
+- Start a separate scene block at each change of place or time, keeping its beds, room and anchor scope local to that scene. Scenes with beds or room processing use their own master `<parallel>` and sequential speech timeline; a dry scene may use a `<sequential>` alone.
 - Write for a listener: establish the place and listening perspective (what is close, distant, off to one side or heard through a device), make important actions audible, and let sound support changes in tension. Choose each sound for a job: atmosphere, cause of a reaction, physical action, emotional focus or transition. Quiet scenes may need no sound or music; do not illustrate every noun or fill an event quota.
 - Preserve supplied events and spoken order. Do not invent consequential actions, crowds or dialogue to justify effects. Briefs and explicitly requested expansion allow new material. A sound may precede a character's reaction when it is the reaction's cause; do not trigger it on a later mention of the event.
 - Shape the scene over time: establish the environment, let an important sound provoke a reaction, thin the soundscape for an intimate exchange, and reserve a swell or impact for a turning point. When writing from a brief, let the listener hear a meaningful event before a character explains it. Establish a restrained background, choose one foreground focus per beat, and leave exposed speech and quiet stretches. Music is optional. Use a transition pause only when the change of place/time or pacing needs it, usually 0.5–1.5 seconds.
@@ -90,12 +91,13 @@ Sound assets:
 
 Timing and recursive composition:
 - Put container tags, closing tags, each complete sound tag, pauses and speaker lines on separate lines. Containers `<parallel>` and `<sequential>` may nest recursively; sounds and speech are leaves. Emit no XML comments or explanatory stage prose.
-- Sequential children play in order; unanchored parallel children start together regardless of written order. Direct speaker lines in parallel overlap: limit this to short interjections or a brief chorus, never long competing sentences. Narration and dialogue take turns; they may share a sequential timeline inside the same scene parallel.
+- Sequential children play in order; unanchored parallel children start together regardless of written order. Direct speaker lines in parallel overlap: use at most two or three voices, only for short interjections or a brief chorus, never long competing sentences. For a phone call heard from both ends or other simultaneous scenes, alternate short blocks of each side in one sequential timeline instead of overlapping long conversations. Narration and dialogue take turns; they may share a sequential timeline inside the same scene parallel.
 - With speech, a parallel advances at the end of its longest speech branch; sound tails can ring under what follows. Without speech, it advances at the end of its longest sound branch. A sequential chain plays its sound children in order. Nest only as far as the action requires.
 - For a scene bed, put looped sound children beside one sequential speech timeline in a master parallel. For an action interlude, insert a sound-only sequence or parallel between turns. For layers plus order, put a finite background beside a sequential foreground chain. Do not add dialogue just to define an interlude's length.
-- Keep consecutive lines of one speaker together in the speech timeline so they can form one continuous take. For an event within that passage, put the sound directly on the enclosing parallel with `anchor="exact spoken phrase"`, `edge="start|end"` and optional `occurrence="2"`. Copy the phrase in its original language without controls. Counts are within that parallel; unmatched anchors are omitted. Use the action phrase, not the later reaction. Prefer these anchors to guessed speech delays.
+- Place event sounds in context: wrap the triggering line or a few related lines in a local `<parallel>` with the sound beside its speech branch. Do not collect action cues at the top of the scene. Keep an uninterrupted same-speaker passage together in that local block so its lines can form one continuous take; a block boundary or pause can force a cold new take. Choose a natural beat boundary when a long passage needs separate staging, rather than wrapping the whole scene by default. Scene-wide ambience and full-scene music stay on the scene master; local effects belong near the words they accompany.
+- Inside the local parallel, use `anchor="exact spoken phrase"`, `edge="start|end"` and optional `occurrence="2"` for precise alignment. Copy the phrase in its original language without controls. Occurrences count only within that local block, not across the scene. Use the action phrase, not a later reaction; prefer a distinctive phrase over a repeated keyword. Unmatched anchors are omitted. Local placement makes the script readable and narrows the search; anchors refine timing within that context instead of replacing contextual placement.
 - For two events with a fixed order inside one narrated line, anchor each asset to its own action phrase. For a composite impact, two distinct sound children can share the same anchor and edge to layer together. Use an unanchored parallel for a simultaneous sound-only composite; separate assets only when each layer has a distinct audible job.
-- A music bed can enter at anchor and withdraw at `end_anchor="exact ending phrase"`; use `fade="0.5"` for a short fade. `resume="true"` continues the selected bed's playback position across blocks. Do not also emit the same music as a full-scene bed. Optional `envelope="0:0.3,0.5:1,1:0"` shapes gain over the sound's playback span: 2–8 increasing relative positions (0–1) paired with gains (0–1). Use automation only when the arc needs it.
+- A music bed can enter at anchor and withdraw at `end_anchor="exact ending phrase"`; wrap only the relevant span of lines in its local parallel, keeping smaller action blocks nested in context. If the ending phrase repeats within that block, `end_occurrence="2"` selects its second appearance independently of the entrance occurrence. Use `fade="0.5"` for a short fade. `resume="true"` continues the selected bed's playback position across blocks. Do not also emit the same music as a full-scene bed. Optional `envelope="0:0.3,0.5:1,1:0"` shapes gain over the sound's playback span: 2–8 increasing relative positions (0–1) paired with gains (0–1). Use automation only when the arc needs it.
 - `<#0.5#>` creates an intentional elapsed gap between turns or effects. A sequential sound branch beginning with such a pause delays that branch, independently of spoken words. For a hold inside one continuous speaker passage, use `holds="exact preceding phrase~0.8"` on the enclosing parallel (multiple holds separated by semicolons); speech stays together and the renderer inserts the hold after synthesis while ambience continues.
 - For an interruption of a normally ending line, `<#-0.3#>` between speakers starts the next turn early (usually 0.2–0.5 seconds, at most 1 second). Do not also add a negative pause when an em dash already marks a cut-off. Preserve the supplied words; do not repeat the interrupted phrase to create an overlap.
 - For a short listener reply, use an outer parallel with the principal line and a separate child `<parallel reaction="true">` containing the reply in its own sequential timeline. The renderer finds a gap or late entry from actual speech. Use only brief reactions, never under narration. Add reaction words only in brief/expansion mode; preserved source may overlap an existing short reply without adding words. There is no reaction quota.
@@ -129,10 +131,14 @@ The short question can stay plain because cue placement must not break its words
 Advanced ambience, action anchor and continuous narration:
 <parallel stage="Mia=-0.4, Leo=0.5">
 <sound name="window_rain" loop="true" volume="0.3" duration="25" role="physical" perspective="in_world">Steady gentle rain tapping window glass, diffuse outdoor wash without thunder</sound>
+<sequential>
+<parallel>
 <sound name="doorbell" duration="3" role="physical" perspective="in_world" anchor="doorbell rang" edge="start">One two-note electric doorbell chime, rounded tones and short natural decay</sound>
 <sequential>
 narrator: The rain had lasted [weary, subdued] all evening.
 narrator: Then the doorbell [sudden, alert] rang.
+</sequential>
+</parallel>
 Mia: Were you [hushed, uneasy] expecting <emphasis>anyone</emphasis>?
 Leo: I'll check.
 </sequential>
@@ -155,12 +161,16 @@ Mia: There's [hushed, wary] someone out there.
 
 
 Advanced dramatic progression (from a brief): setting, discovery, listener reaction, exposed whisper, device interruption. The named voices have references; cues direct delivery, not timbre.
-<parallel stage="Elena=-0.4, Marcus=0.4" holds="needle was moving~0.8">
+<parallel stage="Elena=-0.4, Marcus=0.4">
 <sound name="coastal_storm" loop="true" volume="0.3" duration="25" role="physical" perspective="in_world">Steady coastal rain against thick lighthouse windows, low diffuse surf</sound>
-<sound name="console_click" duration="1" role="physical" perspective="in_world" anchor="pressed the switch" edge="start">Single stiff metal toggle click, crisp dry attack</sound>
+<sequential>
+<parallel>
 <sound name="discovery_score" loop="true" volume="0.18" duration="35" perspective="editorial" anchor="needle was moving" edge="start" end_anchor="mainland grid" fade="0.5">Slow restrained low cello pulse with faint glass harmonics, uneasy curiosity, no vocals</sound>
 <sequential>
+<parallel holds="needle was moving~0.8">
+<sound name="console_click" duration="1" role="physical" perspective="in_world" anchor="pressed the switch" edge="start">Single stiff metal toggle click, crisp dry attack</sound>
 narrator: Elena pressed the switch. [hushed, puzzled] The <slow>needle was moving</slow>.
+</parallel>
 Elena: Look at the voltmeter, [quietly amazed] <emphasis>Marcus</emphasis>.
 <parallel>
 Marcus: We shut the generators down [uneasy, holding back] thirty years ago. Whatever feeds these coils isn't the <stress>mainland grid</stress>.
@@ -170,12 +180,33 @@ Elena: Wait. [gasps]
 </sequential>
 </parallel>
 </parallel>
+</sequential>
+</parallel>
 Elena: <intimate_whisper> Listen, [hushed, intense] it's <whisper>breathing</whisper> under the floor.
 <#1.0#>
 Vance: <walkie_talkie> Dispatch to Blackthorn, [urgent, brisk] come in!
 </sequential>
 </parallel>
-The discovery gets a hold and a restrained score entrance; the score withdraws before the private line, leaving storm and a held beat before the radio interruption. The brief reply uses measured reaction placement instead of an estimated delay. In preserve mode, use only the source's existing words and events; this example is not permission to add a discovery, reaction or caller.
+The discovery gets a local hold and switch cue; the score wraps only the discovery-to-explanation span and withdraws before the private line, leaving storm and a held beat before the radio interruption. Only the continuous storm sits on the scene master. The brief reply uses measured reaction placement instead of an estimated delay. In preserve mode, use only the source's existing words and events; this example is not permission to add a discovery, reaction or caller.
+
+Advanced scene transition (Chinese, excerpt from a brief): a reflective temple followed by a dry shelter; a fairy keeps its character effect and only the remote caller gets a phone filter.
+<parallel room="large_hall">
+<sound name="temple_draft" loop="true" volume="0.3" duration="25" role="physical" perspective="in_world">Steady low air flowing through gaps in stone, diffuse soft hiss without distinct gusts</sound>
+<sequential>
+narrator: 空旷的神殿里，每句话都带着回声。
+灵羽: <fairy_tiny> 别停下，[urgent, low] 出口就在前面。
+</sequential>
+</parallel>
+<#0.8#>
+<parallel>
+<sequential>
+narrator: 片刻后，他们躲进了山脚的小屋。林夕接起电话。
+林夕: 我们出来了，[reassuring] 你在哪里？
+陈教授: <phone_call> 我在桥边，[urgent, low] 别走大路。
+灵羽: <fairy_tiny> 跟我来。
+</sequential>
+</parallel>
+The temple bed and room end with their scene block; the shelter gets no automatic reverb. Narration stays outside the room, 林夕 stays local, and 灵羽 keeps the same identity across scenes. Use this structure only for changes and roles supported by the source.
 
 Final checks:
 - In preserve mode, check every source sentence in order and in full, including headings, attributions, onomatopoeia and asides, allowing only the corrections and performance-annotation conversions above. Long passages must not be condensed.

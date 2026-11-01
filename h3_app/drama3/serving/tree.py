@@ -60,6 +60,7 @@ class SoundNode:
     fade: float = 1.0
     resume: bool = False
     envelope: tuple[tuple[float, float], ...] = ()
+    end_occurrence: int = 1  # independent ending-phrase occurrence within the owning parallel
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ def parse_sound_tag(raw_tag: str) -> SoundNode | None:
         role=role,
         perspective=perspective,
         anchor=attrs.get("anchor", ""), end_anchor=attrs.get("end_anchor", ""),
+        end_occurrence=int(_bounded_number(attrs.get("end_occurrence", "1"), 1, 100)),
         edge="start" if attrs.get("edge") == "start" else "end",
         occurrence=int(_bounded_number(attrs.get("occurrence", "1"), 1, 100)),
         fade=_bounded_number(attrs.get("fade", "1"), 0.01, 5.0),
@@ -183,6 +185,8 @@ def sound_placement_attrs(node: SoundNode) -> list[str]:
             attrs.append(f'{key}="{getattr(node, key).replace(chr(34), chr(39))}"')
     if node.anchor or node.end_anchor:
         attrs.extend([f'edge="{node.edge}"', f'occurrence="{node.occurrence}"'])
+    if node.end_anchor and node.end_occurrence != 1:
+        attrs.append(f'end_occurrence="{node.end_occurrence}"')
     if node.fade != 1.0:
         attrs.append(f'fade="{node.fade:g}"')
     if node.resume:

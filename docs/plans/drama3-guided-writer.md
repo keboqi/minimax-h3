@@ -1,6 +1,16 @@
 # Drama 3 Guided writer: multi-step scripts for small models
 
-Date: 2026-10-31. Status: proposed design; nothing implemented.
+Date: 2026-10-31. Status: historical design proposal; Guided is implemented.
+
+Runtime behavior and the current production contract are documented in
+`docs/features/drama3.md`. The sections below describe the original proposal;
+they are not a checklist of shipped features (in particular, the proposed
+long-brief outline stage is not implemented). The 2026-11-01 integrity work adds
+conservative source routing, ordered fidelity checks, structured-script retention,
+source-linked fixes/pronunciations/authorized insertions, explicit optional-stage
+validation and reference-aware voice preparation. Single-speaker preserve runs
+now retain content/scene analysis rather than bypassing it. See
+`docs/plans/soundstage-writer-audit.md` for the motivating failures and limitations.
 
 ## Why
 

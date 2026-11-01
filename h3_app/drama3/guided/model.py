@@ -73,7 +73,9 @@ class SoundEvent:
     place: str = ""
     phrase: str = ""
     end_phrase: str = ""
-    occurrence: int = 1
+    occurrence: int = 1  # within the at line; compilation adjusts it to the local block
+    end_at: str = ""  # optional exact ending line for an anchored music span
+    end_occurrence: int = 1  # within the ending line
 
 
 @dataclass(frozen=True)

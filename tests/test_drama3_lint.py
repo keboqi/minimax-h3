@@ -97,10 +97,9 @@ class CoverageTests(unittest.TestCase):
         })
         script, status, _cast = drama3_writer.apply_drama3_reply(
             reply, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。", (), "Auto")
-        self.assertEqual(script.split("\n")[1], "<|speaker:1|> 你出来一下！")
-        self.assertIn("Writer check:", status)
-        self.assertIn("Removed 1 cue(s) at line ends", status)
-        self.assertIn("教室里顿时鸦雀无声", status)
+        self.assertEqual(script, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。")
+        self.assertIn("failed", status)
+        self.assertIn("source words", status)
 
 
 class PromptExampleTests(unittest.TestCase):
@@ -119,7 +118,16 @@ class PromptExampleTests(unittest.TestCase):
         self.assertIn(("walkie_talkie",), {turn.speaker_effects for turn in turns})
         scene = tree.children[0]
         self.assertEqual(scene.stage, (("Elena", -0.4), ("Marcus", 0.4)))
-        self.assertEqual(scene.holds, (("needle was moving", 0.8),))
+        self.assertFalse(scene.holds)
+        pending, held = [scene], []
+        while pending:
+            node = pending.pop()
+            if getattr(node, 'holds', ()):
+                held.append(node)
+            pending.extend(getattr(node, 'children', ()))
+        self.assertEqual(len(held), 1)
+        self.assertEqual(held[0].holds, (("needle was moving", 0.8),))
+        self.assertEqual([turn.speaker for speech in iter_speech_nodes(held[0]) for turn in speech.turns], ['narrator'])
         sounds = list(iter_sound_nodes(tree))
         self.assertEqual({sound.name for sound in sounds if sound.loop}, {"coastal_storm", "discovery_score"})
         score = next(sound for sound in sounds if sound.name == "discovery_score")
@@ -329,7 +337,9 @@ class SourceModeTests(unittest.TestCase):
             "speakers": [{"speaker_id": 0, "name": "narrator", "description": "Calm.", "preview_text": "你好。"}],
         }, ensure_ascii=False)
         _script, status, _cast = drama3_writer.apply_drama3_reply(reply, self.SOURCE, (), "Auto")
-        self.assertIn("2 source phrase(s)", status)
+        self.assertIn("failed", status)
+        self.assertIn("source words", status)
+        self.assertEqual(_script, self.SOURCE)
 
 
 class VoiceSexTests(unittest.TestCase):

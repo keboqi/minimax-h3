@@ -9,17 +9,24 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+from dataclasses import replace
 from pathlib import Path
 import re
 from typing import Callable
 
 from h3_app.drama3.guided.compile import compile_script
 from h3_app.drama3.guided.model import NARRATOR, Draft, Scene, Utterance
+from h3_app.drama3.guided.enhance import apply_content_annotations
+from h3_app.drama3.guided.fidelity import words
+from h3_app.drama3.guided.local_staging import localize_existing_cues
 from h3_app.drama3.guided.schema import (
     CHARACTER_EFFECTS, StageError, canonical, parse_content_brief, parse_content_preserve, parse_direction,
     parse_staging, parse_voices, scenes_from_units,
 )
-from h3_app.drama3.guided.segment import BRIEF, attribute_units, input_kind, replace_speaker_tag_line, segment_source
+from h3_app.drama3.guided.segment import (
+    BRIEF, attribute_units, input_kind, is_control_line, replace_speaker_tag_line, restore_structure, segment_source,
+    source_request,
+)
 from h3_app.drama3.speakers import identity, normalize_name
 from h3_app.errors import H3Error
 from h3_app.prompt_writers.drama3 import (
@@ -170,6 +177,72 @@ def _assign_ids(names: list[str], slots: list[dict], fixed: dict[str, int] | Non
     return ids
 
 
+_REFERENCE_PREVIEWS = {
+    "zh": "今天的路很安静，我们可以慢慢往前走。等到了前面的路口，我会再看看地图，"
+          "然后找个合适的地方坐一会儿，把接下来的事情安排好。",
+    "ja": "今朝は時間に余裕があります。出かける前に地図を見て、道を確かめておきましょう。"
+          "途中で静かな場所を見つけたら、少し休んでから次の予定を考えたいと思います。",
+    "ko": "오늘 아침에는 시간이 충분합니다. 출발하기 전에 지도를 보고 길을 확인해 두겠습니다. "
+          "가는 길에 조용한 곳을 찾으면 잠시 앉아서 쉬고 다음 일정을 천천히 생각해 보려고 합니다.",
+    "en": "We have plenty of time to get there this morning. I will bring the map and check "
+          "the route before we leave. We can stop somewhere quiet along the way and decide what to do next.",
+}
+
+
+def _reference_preview(name: str, text: str, language: str, own_lines: str) -> str:
+    """Synthesis text for a voice that already has a reference clip, never a transcript of it."""
+    if re.search(r"[\u3040-\u30ff]", text):
+        return _REFERENCE_PREVIEWS["ja"]
+    if re.search(r"[\uac00-\ud7af]", text):
+        return _REFERENCE_PREVIEWS["ko"]
+    if re.search(r"[\u3400-\u9fff]", text):
+        return _REFERENCE_PREVIEWS["zh"]
+    if "English" in language:
+        return _REFERENCE_PREVIEWS["en"]
+    # Another language: the character's own lines, without cues, tags or notes.
+    preview = re.sub(r"\[[^\]]*\]|<[^>]*>|\{[^}]*\}", "", own_lines)[:1000].strip()
+    if not words(preview):
+        raise H3Error(f"{name}: no spoken words are available for a reference preview.")
+    return preview
+
+
+def _merge_batch_sounds(sounds: dict, staging: dict, batch_sounds: dict, batch_staging: dict,
+                        notes: list[str]) -> None:
+    """Add one batch's sounds and staging, renaming a clashing asset rather than substituting the first."""
+    for key, sound in batch_sounds.items():
+        if key not in sounds or sounds[key] == sound:
+            sounds[key] = sound
+            continue
+        suffix = 2
+        while (renamed := f"{key[:27]}_{suffix}") in sounds or renamed in batch_sounds:
+            suffix += 1
+        batch_staging = {sid: replace(plan,
+            ambience=renamed if plan.ambience == key else plan.ambience,
+            music=renamed if plan.music == key else plan.music,
+            events=tuple(replace(event, sound=renamed) if event.sound == key else event for event in plan.events))
+            for sid, plan in batch_staging.items()}
+        sounds[renamed] = replace(sound, name=renamed)
+        notes.append(f"Renamed conflicting sound {key!r} to {renamed!r}.")
+    staging.update(batch_staging)
+
+
+def _drop_performed_sounds(staging: dict, sounds: dict, directions: dict, by_id: dict, notes: list[str]) -> None:
+    """Remove a sound event that duplicates what its speaker already performs (a sigh both acted and played)."""
+    for scene_id, plan in list(staging.items()):
+        kept = []
+        for event in plan.events:
+            direction = directions.get(event.at)
+            sound = sounds.get(event.sound)
+            performed = direction.event if direction else ""
+            actor = by_id[event.at].speaker if event.at in by_id else ""
+            if (performed and sound and sound.role != "group_reaction" and actor.casefold() in sound.prompt.casefold()
+                    and re.search(r"\b" + re.escape(performed.rstrip("s")) + r"\w*\b", sound.prompt, re.I)):
+                notes.append(f"{event.at}: omitted a sound asset duplicating {actor} performing {performed}.")
+            else:
+                kept.append(event)
+        staging[scene_id] = replace(plan, events=tuple(kept))
+
+
 def _ordered_effects(effects) -> tuple[str, ...]:
     """Character, then place and distance, then device: the order Drama 3 chains them."""
     devices = {"phone_call", "walkie_talkie", "radio_broadcast", "megaphone", "old_gramophone", "bad_signal",
@@ -205,6 +278,7 @@ def write_drama3_guided(
     slot_names = {int(slot["speaker_id"]): normalize_name(slot["name"])
                   for slot in slots if str(slot.get("name") or "").strip()}
     text = "\n".join(replace_speaker_tag_line(line, slot_names) for line in str(text or "").splitlines())
+    text, expansion_request = source_request(text)
     fixed = _available_names(tuple(voices), speaker_mode, slots)
     allowed = {canonical(name).casefold() for name in fixed} if fixed is not None else None
     known = sorted({
@@ -215,29 +289,32 @@ def write_drama3_guided(
                    else f"Characters already in the Cast (keep these names): {', '.join(known)}" if known else "")
     kind = input_kind(text)
     roles: dict[str, str] = {}
+    source = None
+    structured = False
     single = speaker_mode == DRAMA3_SPEAKER_SINGLE
 
     if kind != BRIEF:
         source_mode = "preserve"
         source = segment_source(text, kind)
+        structured = any(is_control_line(line) for line in source.paragraphs)
         title = next((unit.text for unit in source.units if unit.kind == "heading"), "")
-        if single:
-            utterances = attribute_units(source, {unit.id: NARRATOR for unit in source.units if unit.kind == "quote"})
-            scenes = scenes_from_units(utterances, [])
-        else:
-            listing = "\n".join(
-                f"{unit.id} [{unit.kind}{', label ' + unit.label if unit.label else ''}] {unit.text}"
-                for unit in source.units if unit.kind != "heading")
-            request = "\n".join(filter(None, [language, voices_line, f"Units:\n{listing}"]))
-            answer = calls.run(prompts["preserve"], request,
-                               lambda reply: parse_content_preserve(reply, source, allowed), "casting")
-            if answer.get("kind") == "brief":
-                kind = BRIEF
-            else:
-                title = title or answer["title"]
-                utterances = attribute_units(source, answer["speakers"])
-                scenes = scenes_from_units(utterances, answer["scenes"])
-                roles = answer.get("roles", {})
+        if not source.units:
+            raise H3Error("The source contains no spoken text.")
+        listing = "\n".join(
+            f"{unit.id} [{unit.kind}{', label ' + unit.label if unit.label else ''}] {unit.text}"
+            for unit in source.units if unit.kind != "heading")
+        request = "\n".join(filter(None, [language, voices_line,
+            f"Explicit expansion instructions: {expansion_request}" if expansion_request else
+            "Preserve source; no inserted lines are authorized.", f"Units:\n{listing}"]))
+        answer = calls.run(prompts["preserve"], request,
+                           lambda reply: parse_content_preserve(reply, source, allowed,
+                                                                expansion=bool(expansion_request)), "casting")
+        title = title or answer["title"]
+        utterances = attribute_units(source, answer["speakers"],
+            break_after={after for after, _speaker, _text in answer.get("insertions", [])})
+        utterances = apply_content_annotations(utterances, answer)
+        scenes = scenes_from_units(utterances, answer["scenes"])
+        roles = answer.get("roles", {})
     if kind == BRIEF:
         source_mode = "brief"
         brief_voices = "" if single else voices_line
@@ -264,18 +341,39 @@ def write_drama3_guided(
 
     names = list(dict.fromkeys(u.speaker for u in utterances))
     ids = _assign_ids(names, slots, fixed)
+    slot_by_id = {int(slot["speaker_id"]): slot for slot in slots}
+    saved = {name: str(slot_by_id.get(ids[name], {}).get("description")
+                       or reusable_by_id.get(identity(name), {}).get("description") or "").strip()
+             for name in names}
+    for name, description in saved.items():
+        if description:
+            roles[name] = f"{roles.get(name, '')} Authoritative voice description: {description}".strip()
     by_id = {u.id: u for u in utterances}
+    referenced_ids = {int(speaker) for speaker, _ in voices}
 
     def voices_stage():
         listing = []
+        existing = {}
+        required = []
         for name in names:
+            slot = slot_by_id.get(ids[name], {})
+            if slot.get("has_reference", ids[name] in referenced_ids):
+                preview = str(slot.get("preview_text") or "") or _reference_preview(
+                    name, text, language, " ".join(u.text for u in utterances if u.speaker == name))
+                existing[name] = (saved[name] or "The existing reference defines the timbre; "
+                                  "use calm natural delivery.", preview)
+                continue
+            required.append(name)
             lines = " / ".join(u.text for u in utterances if u.speaker == name)[:300]
             role = roles.get(name) or ("the story's narrator" if name == NARRATOR else "")
             listing.append(f"- {name}{f' ({role})' if role else ''}: {lines}")
+        if not required:
+            return existing
         story_head = " ".join(u.text for u in utterances[:6])[:240]
         context_line = f"Story context: {title + ' — ' if title else ''}{story_head}" if story_head else ""
         request = "\n".join(filter(None, [language, context_line, "Characters:", *listing]))
-        return calls.run(prompts["voices"], request, lambda reply: parse_voices(reply, names), "voice design")
+        return {**existing, **calls.run(prompts["voices"], request,
+                                      lambda reply: parse_voices(reply, required), "voice design")}
 
     def direction_stage(batch):
         cast = ", ".join(f"{name} ({roles[name]})" if roles.get(name) else name for name in names)
@@ -303,17 +401,16 @@ def write_drama3_guided(
     with ThreadPoolExecutor(max_workers=4) as pool:
         voices_future = pool.submit(voices_stage)
         direction_futures = [pool.submit(direction_stage, batch) for batch in batches]
-        sound_futures = [pool.submit(sound_stage, batch) for batch in batches] if advanced else []
+        sound_futures = [pool.submit(sound_stage, batch) for batch in batches] if advanced and not structured else []
         designed = voices_future.result()
         directions = {key: value for future in direction_futures for key, value in future.result().items()}
         sounds, staging, effects = {}, {}, {}
         for future in sound_futures:
             batch_sounds, batch_staging, batch_effects = future.result()
-            for key, sound in batch_sounds.items():
-                sounds.setdefault(key, sound)
-            staging.update(batch_staging)
+            _merge_batch_sounds(sounds, staging, batch_sounds, batch_staging, notes)
             effects.update(batch_effects)
 
+    _drop_performed_sounds(staging, sounds, directions, by_id, notes)
     # A character effect is who the character is, so it goes on every line they speak.
     character = {}
     for uid, chosen in effects.items():
@@ -326,17 +423,18 @@ def write_drama3_guided(
                             u.sources, u.hint) if u.speaker != NARRATOR else u for u in utterances]
 
     draft = Draft(utterances, scenes, title, directions, sounds, staging)
-    script = compile_script(draft, advanced=advanced, notes=notes)
-    slot_by_id = {int(slot["speaker_id"]): slot for slot in slots}
+    if structured:
+        script = restore_structure(source, utterances, compile_script(draft, advanced=False, notes=[]))
+        script = localize_existing_cues(script)
+        notes.append("Existing sound assets were retained; anchored cues were grouped with their speech.")
+    else:
+        script = compile_script(draft, advanced=advanced, notes=notes)
     speakers = []
     for name in names:
         description, preview = designed[name]
-        slot = slot_by_id.get(ids[name], {})
-        preset = reusable_by_id.get(identity(name), {})
-        saved_description = str(slot.get("description") or preset.get("description") or "").strip()
         speakers.append({"speaker_id": ids[name], "name": name,
-                         "description": saved_description or description,
-                         "preview_text": preview})
-    reply = json.dumps({"title": " ".join(str(title or "").split())[:60], "source_mode": source_mode, "script": script,
+                         "description": saved[name] or description, "preview_text": preview})
+    title = " ".join(str(title or "").split())[:100 if source_mode == "preserve" else 60]
+    reply = json.dumps({"title": title, "source_mode": source_mode, "script": script,
                         "speakers": speakers}, ensure_ascii=False)
     return reply, source_mode, calls.count

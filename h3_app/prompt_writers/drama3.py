@@ -262,8 +262,17 @@ def parse_drama3_reply(
 
     def review(script, source_mode=""):
         from h3_app.drama3.lint import coverage_note, lint_drama3_script
+        from h3_app.drama3.guided.fidelity import validate_source_fidelity
 
+        if script_mode == DRAMA3_SCRIPT_ADVANCED and re.search(r'\banchor\s*=', script):
+            from h3_app.drama3.guided.local_staging import localize_existing_cues
+            try:
+                script = localize_existing_cues(script)
+            except (H3Error, ValueError):
+                pass  # malformed staging is left for lint to report
         script, messages = lint_drama3_script(script)
+        validate_source_fidelity(original, script, single=speaker_mode == DRAMA3_SPEAKER_SINGLE,
+                                 sequential_joint=script_mode == DRAMA3_SCRIPT_BASIC)
         if notes is not None:
             notes.extend(message[0].upper() + message[1:] + "." for message in messages)
             coverage = coverage_note(original, script, source_mode=source_mode)
@@ -273,6 +282,7 @@ def parse_drama3_reply(
 
     if require_cast or reply.lstrip().startswith("{"):
         script, cast, sounds = parse_script_cast_and_sounds(reply)
+        original = names_to_tags(original, {entry['speaker_id']: entry['name'] for entry in cast})
         if meta is not None:
             meta["title"] = parse_writer_title(reply)
         if script_mode == DRAMA3_SCRIPT_BASIC:

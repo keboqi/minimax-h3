@@ -70,7 +70,7 @@ class CastValidationTests(unittest.TestCase):
     @patch("h3_app.prompt_writers.common.write_prompt")
     def test_structured_writer_is_atomic_and_preserves_mode_and_existing_ids(self, enhance):
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
-        def rewrite(reply, text="Original", **kwargs):
+        def rewrite(reply, text="Hello there.", **kwargs):
             enhance.return_value = reply, "Enhanced prompt with writer"
             return drama3_writer.enhance_drama3_text(text, "model", "", runtime=runtime,
                                                      return_cast=True, **kwargs)
@@ -172,7 +172,7 @@ class VoiceDesignTests(unittest.TestCase):
             self.assertEqual(drama3_handlers.select_drama3_speaker("Upload a clip")[9]["visible"], False)
             voices = ["Upload a clip", None, ""] * 16
             voices[15:18] = [saved.name, None, ""]
-            result = drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
+            result = drama3_handlers.enhance_drama3_text("Hello there.", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
                                                     *voices, *([""] * 48), 4)
             self.assertEqual(result[17:19], (saved.name, saved.description))
             self.assertIn("A measured baritone.", writer.call_args.kwargs["context"])
@@ -357,7 +357,7 @@ class ResidentAudioToolsTests(unittest.TestCase):
 
 
 class CastSlotTests(unittest.TestCase):
-    def rewrite(self, response, *, name="", description="", reference=False):
+    def rewrite(self, response, *, name="", description="", reference=False, text="Original"):
         from h3_ui.application import drama3_handlers
         voices = ["Upload a clip", None, ""] * 16
         if reference:
@@ -367,11 +367,12 @@ class CastSlotTests(unittest.TestCase):
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime), \
                 patch.object(writers_common, "write_prompt", return_value=(response, "Enhanced prompt")):
-            return drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
+            return drama3_handlers.enhance_drama3_text(text, "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
                                                   *voices, *metadata, 4)
 
     def test_writer_populates_the_matching_slot_and_reveals_sparse_ids(self):
-        result = self.rewrite(writer_reply(5), name="Character 5", description="Existing description", reference=True)
+        result = self.rewrite(writer_reply(5), name="Character 5", description="Existing description", reference=True,
+                              text="Hello there.")
         self.assertEqual(len(result), 70)
         self.assertEqual(result[17:20], ("Character 5", "Existing description", cast_entry(5)["preview_text"]))
         self.assertEqual(result[50], 6)
@@ -409,7 +410,7 @@ class CastSlotTests(unittest.TestCase):
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         fenced = "Here is the result:\n```json\n" + writer_reply(5) + "\n```"
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
-            result = drama3_handlers.apply_drama3_writer_reply(fenced, "Original", "Auto", *voices, *[""] * 48, 4)
+            result = drama3_handlers.apply_drama3_writer_reply(fenced, "Hello there.", "Auto", *voices, *[""] * 48, 4)
             bad = drama3_handlers.apply_drama3_writer_reply("not json", "Original", "Auto", *voices, *[""] * 48, 4)
         # The script comes back naming its speakers, whichever form the writer used.
         self.assertEqual(result[0], "Character 5: Hello there.")

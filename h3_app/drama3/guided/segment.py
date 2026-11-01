@@ -26,7 +26,7 @@ _QUOTE_RE = re.compile(r"“([^“”]*)”|\"([^\"]*)\"|「([^「」]*)」|『(
 _SPEAKER_TAG_LINE_RE = re.compile(r"^(\s*)<\|speaker:(\d+)\|>\s*(.*)$")
 # A script label: a short name, an optional (cue), then a colon. Prose such as 她问：“…” is told
 # apart by the label's length and punctuation.
-_LABEL_RE = re.compile(r"^\s*(?P<name>[^\s:：(（<>\[\]|#][^:：(（<>\[\]|\n]{0,31}?)\s*"
+_LABEL_RE = re.compile(r"^\s*(?P<name>[^\s:：(（<>\[\]|#][^:：(（<>\[\]|\n]{0,63}?)\s*"
                        r"(?:[(（](?P<hint>[^)）]{0,40})[)）])?\s*[:：]\s*(?P<body>.*)$")
 _LABEL_PUNCTUATION_RE = re.compile(r"[，,。.!?！？“”\"「」;；、]")
 _EFFECT_TAGS_RE = re.compile(r"^\s*((?:<(?:%s)>\s*)+)" % "|".join(map(re.escape, SPEAKER_TAGS)), re.IGNORECASE)
@@ -42,10 +42,10 @@ _BRIEF_RE = re.compile(
     r"(?:scene|script|dialogue|audio\s+drama|drama|conversation|exchange|monologue|skit|piece)\b"
     r"|^\s*(?:a\s+)?(?:short\s+|brief\s+)?(?:scene|dialogue|audio\s+drama|drama|conversation|script)\s+"
     r"(?:where|about|between|in\s+which|with)\b"
-    r"|\b\d+\s*(?:-\s*)?(?:seconds?|secs?|minutes?|mins?)\b"
-    r"|\b(?:half\s+a\s+minute|(?:one|two|three)\s+minutes?)\b"
+    r"|^\s*(?:two|three|four)\s+[^.!?]*\b(?:arguing|talking)\b"
+    r"|^\s*(?:a|an)\s+(?:short|brief)\s+[^.!?]*\b(?:story|scene|dialogue|drama)\s*[.!]?$"
     r"|^\s*(?:请|帮我)?(?:写|创作|生成|编)(?:一段|一个|一篇|一出)"
-    r"|(?:关于.+的(?:广播剧|对话|场景|短剧))|(?:\d+\s*(?:秒|分钟)|[一二两三四五六七八九十半]+\s*分钟)",
+    r"|(?:关于.+的(?:广播剧|对话|场景|短剧))",
     re.IGNORECASE,
 )
 
@@ -89,8 +89,17 @@ def _label(line: str) -> re.Match | None:
         return None
     name = match["name"].strip()
     # Names are short: 守护精灵, Old Captain Reyes. 父亲慢慢点头：“…” is an attribution.
-    wide = len(re.findall(r"[^\x00-\x7f]", name))
-    if _LABEL_PUNCTUATION_RE.search(name) or len(name.split()) > 3 or wide > 5:
+    if _LABEL_PUNCTUATION_RE.search(name):
+        return None
+    # A long label is a capitalized name ("Commander Alex Morgan Reyes"), not a clause before a colon.
+    if len(name.split()) > 3 and not all(word[:1].isupper() for word in name.split()):
+        return None
+    if len(re.findall(r"[^\x00-\x7f]", name)) > 10:
+        return None
+    # A prose clause before a quote is spoken narration, even with several names/words.
+    if re.search(r'\s+(?:said|says|asked|asks|replied|answered|shouted|whispered|murmured|added|cried)\b', name):
+        return None
+    if re.search(r"(?:说|问|答|喊|道|点头)$", name):
         return None
     return match
 
@@ -98,14 +107,64 @@ def _label(line: str) -> re.Match | None:
 def input_kind(text: str) -> str:
     """A guess at what the user gave: a labelled script, prose to perform, or a brief to write from."""
     lines = [line for line in str(text or "").splitlines() if line.strip()]
-    if len(lines) >= 2 and sum(_label(line) is not None for line in lines) >= 0.6 * len(lines):
+    spoken = [line for line in lines if not is_control_line(line)]
+    if spoken and sum(_label(line) is not None for line in spoken) >= 0.6 * len(spoken):
         return SCRIPT
     joined = " ".join(lines)
     if len(joined) <= 500 and _BRIEF_RE.search(joined):
         return BRIEF
     if _QUOTE_RE.search(joined):
         return PROSE
-    return PROSE if len(_sentence_spans(joined)) >= 3 or len(joined) > 280 else BRIEF
+    return PROSE
+
+
+def source_request(text: str) -> tuple[str, str]:
+    """Separate an explicit expansion instruction on its own line from supplied speech."""
+    lines = text.splitlines()
+    if len([line for line in lines if line.strip()]) < 2:
+        return text, ''
+    instruction = re.compile(
+        r'\s*(?:please\s+)?(?:expand\s+(?:with\s+(?:more\s+)?(?:dialogue|reactions)|'
+        r'(?:the\s+)?(?:following|supplied|provided)\s+(?:text|script|story)(?:\s+with\s+more\s+dialogue)?)'
+        r'|add\s+(?:more\s+)?(?:dialogue|a new scene|reactions)\s+to\s+(?:the\s+)?'
+        r'(?:following|supplied|provided)\s+(?:text|script|story))\s*[.!]?\s*'
+        r'|\s*(?:请|帮我)?(?:扩写(?:以下|下面|提供的)(?:文本|剧本|故事)|'
+        r'(?:为|给)(?:以下|下面的)(?:文本|剧本|故事)(?:增加|添加)对话)\s*[。！]?\s*', re.I)
+    # Only a complete directive at an edge of the request may be removed. Ordinary
+    # imperatives inside narration ("Expand your chest...") remain performable text.
+    occupied = [index for index, line in enumerate(lines) if line.strip()]
+    edges = {occupied[0], occupied[-1]}
+    selected = {index for index in edges if instruction.fullmatch(lines[index])}
+    directives = [line for index, line in enumerate(lines) if index in selected]
+    source = [line for index, line in enumerate(lines) if index not in selected]
+    return '\n'.join(source), '\n'.join(directives)
+
+
+def is_control_line(line: str) -> bool:
+    """Supported standalone staging, never a piece of quoted story prose."""
+    from h3_app.drama3.serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, parse_sound_tag
+
+    line = line.strip()
+    return bool(CONTAINER_TAG_RE.fullmatch(line) or PAUSE_TAG_RE.fullmatch(line)
+                or (line.casefold().startswith('<sound') and parse_sound_tag(line) is not None))
+
+
+def restore_structure(source: Source, utterances: list[Utterance], directed: str) -> str:
+    """Put directed spoken units back between the original standalone controls."""
+    lines = directed.splitlines()
+    if len(lines) != len(utterances):
+        raise H3Error("The directed script changed the number of source units.")
+    units = {unit.id: unit for unit in source.units}
+    by_paragraph: dict[int, list[str]] = {}
+    for utterance, line in zip(utterances, lines):
+        if not utterance.sources:
+            raise H3Error("An inserted line cannot be placed inside existing staging without a source anchor.")
+        index = units[utterance.sources[0]].paragraph
+        by_paragraph.setdefault(index, []).append(line)
+    result = []
+    for index, paragraph in enumerate(source.paragraphs):
+        result.extend([paragraph] if is_control_line(paragraph) else by_paragraph.get(index, []))
+    return "\n".join(result)
 
 
 def _sentence_spans(text: str) -> list[tuple[int, int]]:
@@ -137,6 +196,21 @@ def _is_heading(paragraph: str) -> bool:
             and not re.search(r"[.!?。！？…，,;；:：]$", text))
 
 
+def performance_controls(text: str) -> str:
+    """Convert only recognized performance annotations; prose asides remain spoken."""
+    from h3_app.drama3.serving.planner import AUDIBLE_EVENTS
+
+    events = {event: event for event in AUDIBLE_EVENTS}
+    events.update({'笑': 'laughs', '叹气': 'sighs', 'whispering': 'whispering',
+                   '低声': 'whispering', '耳语': 'whispering'})
+
+    def annotation(match):
+        content = next(group for group in match.groups() if group is not None).strip().casefold()
+        return '[' + events[content] + ']' if content in events else match.group()
+
+    return re.sub(r'\(([^()]*)\)|（([^（）]*)）|\*([^*\n]+)\*', annotation, text)
+
+
 def segment_source(text: str, kind: str | None = None) -> Source:
     """The user's script or prose as numbered units ``s1…sN``."""
     paragraphs = tuple(
@@ -148,17 +222,20 @@ def segment_source(text: str, kind: str | None = None) -> Source:
 
     def add(unit_kind, words, index, start, end, **extra):
         if _SPOKEN_RE.search(words):
+            words = performance_controls(words)
             units.append(SourceUnit(f"s{len(units) + 1}", unit_kind, words.strip(), index, start, end, **extra))
 
     first = 0
     if len(paragraphs) >= 2:
-        while first < len(paragraphs) - 1 and _is_heading(paragraphs[first]):
+        while first < len(paragraphs) - 1 and not is_control_line(paragraphs[first]) and _is_heading(paragraphs[first]):
             first += 1
     if first:
         # A multi-level heading ("第一卷 …" then "第一章 …") is read once, as one title.
         add(HEADING, " ".join(paragraphs[:first]), 0, 0, len(paragraphs[0]))
     for index in range(first, len(paragraphs)):
         paragraph = paragraphs[index]
+        if is_control_line(paragraph):
+            continue
         if kind == SCRIPT and (match := _label(paragraph)) is not None:
             body_start = match.start("body")
             body = paragraph[body_start:]
@@ -190,7 +267,8 @@ def segment_source(text: str, kind: str | None = None) -> Source:
     return Source(kind, paragraphs, tuple(units))
 
 
-def attribute_units(source: Source, speakers: dict[str, str | tuple[str, ...] | list[str]]) -> list[Utterance]:
+def attribute_units(source: Source, speakers: dict[str, str | tuple[str, ...] | list[str]],
+                    *, break_after: set[str] | None = None) -> list[Utterance]:
     """Locked utterances from the source units and the content stage's ``speakers`` (unit ID → name(s)).
 
     Narration and headings default to the narrator and a script line to its label; every quote
@@ -217,7 +295,8 @@ def attribute_units(source: Source, speakers: dict[str, str | tuple[str, ...] | 
     for position, unit in enumerate(source.units):
         previous = source.units[position - 1] if runs else None
         joins = (previous is not None and previous.paragraph == unit.paragraph and names[position - 1] == names[position]
-                 and names[position] == (NARRATOR,) and QUOTE in (previous.kind, unit.kind))
+                 and names[position] == (NARRATOR,) and QUOTE in (previous.kind, unit.kind)
+                 and previous.id not in (break_after or set()))
         if joins:
             runs[-1].append(position)
         else:
@@ -230,6 +309,7 @@ def attribute_units(source: Source, speakers: dict[str, str | tuple[str, ...] | 
         # Read in place up to the next unit, so punctuation after a closing quote ("“老地方”。") stays.
         end = following.start if following is not None and following.paragraph == units[0].paragraph else len(paragraph)
         text = units[0].text if len(units) == 1 else paragraph[units[0].start:end]
+        text = performance_controls(text)
         kind = HEADING if units[0].kind == HEADING else LINE
         for speaker_name in names[run[0]]:
             utterances.append(Utterance(f"u{len(utterances) + 1}", speaker_name, text.strip(), kind,

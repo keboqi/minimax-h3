@@ -34,9 +34,9 @@ class PassageTests(unittest.TestCase):
 
     def test_writer_prompt_keeps_passages_whole_and_times_events_inside_them(self):
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
-        self.assertIn("Keep consecutive lines of one speaker together in the speech timeline", prompt)
-        # Events and holds inside a passage use phrase anchors on the parallel, not split blocks.
-        self.assertIn('put the sound directly on the enclosing parallel with `anchor="exact spoken phrase"`', prompt)
+        self.assertIn("Keep an uninterrupted same-speaker passage together in that local block", prompt)
+        # Events sit in a local block beside their speech; holds inside a passage go on the parallel.
+        self.assertIn("wrap the triggering line or a few related lines in a local `<parallel>`", prompt)
         self.assertIn("For a hold inside one continuous speaker passage, use `holds=", prompt)
 
 

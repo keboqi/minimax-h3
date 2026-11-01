@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import re
 
-from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, expected_seconds, insert_cue
+from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, expected_seconds, insert_cue, spoken_text
 from h3_app.drama3.serving.rooms import scene_room_name
 from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
 from h3_app.drama3.sound_policy import DURATION_CLASSES, gain_envelope
+from h3_app.drama3.phonemes import strip_notes
+from .local_staging import local_staging, phrase_count
 
 from .model import (
     AFTER, AMBIENCE, BEFORE, DURING, EFFECT, HEADING, INTERRUPT, MUSIC, NARRATOR, REACTION, STINGER, WITH,
@@ -74,11 +76,19 @@ def _wrap_phrase(text: str, phrase: str, tag: str) -> str | None:
     return f"{text[:start]}<{tag}>{phrase}</{tag}>{text[end:]}"
 
 
+# A speech verb, not a compound ending in one (回答, 小说, 学问).
+_ATTRIBUTION_RE = re.compile(
+    r"\b(?:said|asked|replied|answered|whispered|shouted|murmured|added|cried)\b"
+    r"|(?:说道|问道|答道|应道|喊道|低声道|(?<![小听据])说|(?<![学疑提追])问|(?<![回解])答|喊)[。！？，,:：.!?]*$", re.I)
+
+
 def is_attribution(utterance: Utterance, previous: Utterance | None) -> bool:
     """A short narrator line right after a character's line ("she said."), which reads plain."""
     if utterance.speaker != NARRATOR or previous is None or previous.speaker == NARRATOR:
         return False
-    return len(_WIDE_RE.findall(utterance.text)) <= MAX_ATTRIBUTION_WIDE         and len(_WIDE_RE.sub(" ", utterance.text).split()) <= MAX_ATTRIBUTION_WORDS
+    short = (len(_WIDE_RE.findall(utterance.text)) <= MAX_ATTRIBUTION_WIDE
+             and len(_WIDE_RE.sub(" ", utterance.text).split()) <= MAX_ATTRIBUTION_WORDS)
+    return short and _ATTRIBUTION_RE.search(utterance.text) is not None
 
 
 def direct_line(utterance: Utterance, direction: Direction | None, previous_cue: str, notes: list[str],
@@ -99,9 +109,6 @@ def direct_line(utterance: Utterance, direction: Direction | None, previous_cue:
     cue = "" if attribution else _clean_cue(raw_cue)
     if direction.cue and not cue and not attribution:
         notes.append(f"{utterance.id}: dropped cue [{direction.cue}]")
-    if cue and cue.casefold() == previous_cue.casefold():
-        notes.append(f"{utterance.id}: dropped cue [{cue}] repeating the line before")
-        cue = ""
     if cue:
         placed = _place_cue(text, f"[{cue}]", cast_names)
         if placed is None:
@@ -139,7 +146,7 @@ def sound_name(name: str) -> str:
 
 
 def sound_line(sound: Sound, place: str = "", *, anchor: str = "", end_anchor: str = "",
-               edge: str = "end", occurrence: int = 1) -> str:
+               edge: str = "end", occurrence: int = 1, end_occurrence: int = 1) -> str:
     loop, volume, duration = SOUND_SETTINGS[sound.kind]
     duration = DURATION_CLASSES.get(sound.duration_class, duration)
     attrs = [f'name="{sound_name(sound.name)}"']
@@ -152,6 +159,8 @@ def sound_line(sound: Sound, place: str = "", *, anchor: str = "", end_anchor: s
             attrs.append(f'{key}="{safe}"')
     if anchor:
         attrs.extend([f'edge="{edge}"', f'occurrence="{occurrence}"'])
+    if end_anchor and end_occurrence != 1:
+        attrs.append(f'end_occurrence="{end_occurrence}"')
     if loop:
         attrs.append('resume="true"')
     if sound.role:
@@ -213,7 +222,7 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             notes.append(f"{scene.id}: kept the first {event_budget} of {len(events)} sound events")
             events = events[:event_budget]
         anchored: dict[tuple[str, str], list[str]] = {}
-        scene_cues = []
+        local_cues = []
         comic_used = False
         for event in events:
             sound = sounds.get(sound_name(event.sound))
@@ -225,9 +234,28 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                     continue
                 comic_used = True
             if event.phrase or sound.kind == MUSIC:
-                scene_cues.append(sound_line(sound, event.place,
-                    anchor=event.phrase or by_id[event.at].text, end_anchor=event.end_phrase,
-                    edge="start" if event.when in (BEFORE, WITH) else "end", occurrence=event.occurrence))
+                phrase = event.phrase or strip_notes(spoken_text(by_id[event.at].text))
+                if phrase_count(phrase, by_id[event.at].text) < event.occurrence:
+                    notes.append(f'{event.at}: dropped unmatched sound anchor {phrase!r}')
+                    continue
+                end_at = event.at
+                if event.end_phrase:
+                    start = scene.utterances.index(event.at)
+                    candidates = [uid for uid in scene.utterances[start:]
+                                  if (not event.end_at or uid == event.end_at)
+                                  and phrase_count(event.end_phrase, by_id[uid].text) >= event.end_occurrence]
+                    if not candidates:
+                        notes.append(f'{event.at}: dropped unmatched ending anchor {event.end_phrase!r}')
+                        continue
+                    end_at = candidates[0]
+                elif sound.kind == MUSIC:
+                    end_at = scene.utterances[-1]
+                def format_cue(number, end_number, sound=sound, event=event, phrase=phrase):
+                    return sound_line(sound, event.place, anchor=phrase, end_anchor=event.end_phrase,
+                        edge="start" if event.when in (BEFORE, WITH) else "end",
+                        occurrence=number, end_occurrence=end_number)
+                local_cues.append((event.at, end_at, phrase, event.end_phrase,
+                                   event.occurrence, event.end_occurrence, format_cue))
             else:
                 anchored.setdefault((event.at, event.when), []).append(sound_line(sound, event.place))
         pauses = dict(staging.pauses)
@@ -260,11 +288,11 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             elif utterance.id in pauses:
                 if same_passage:
                     # A full long turn may span several synthesis chunks. Anchor its ending.
-                    phrase = re.sub(r'[<>";~]', " ", previous.text).split()
+                    phrase = re.sub(r'[<>";~]', " ", strip_notes(spoken_text(previous.text))).split()
                     phrase = " ".join(phrase[-6:])
                     if _WIDE_RE.search(phrase):
                         phrase = phrase[-12:]
-                    holds.append(f'{phrase}~{PAUSE_SECONDS.get(pauses[utterance.id], 0.6):g}')
+                    holds.append((previous.id, phrase, PAUSE_SECONDS.get(pauses[utterance.id], 0.6)))
                 else:
                     items.append(_delay(PAUSE_SECONDS.get(pauses[utterance.id], 0.6)))
             # A line cut off with a dash is already talked over; one that ends normally gets barged in on.
@@ -282,7 +310,7 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             if withs or durings or reactions:
                 spoken = expected_seconds(bodies[utterance.id])
                 items.append("<parallel>")
-                items.extend(withs if len(withs) == 1 else ["<sequential>", *withs, "</sequential>"] if withs else [])
+                items.extend(withs)
                 items.append(line(utterance))
                 for sound in durings:
                     items.extend(["<sequential>", _delay(spoken * 0.5), sound, "</sequential>"])
@@ -305,6 +333,7 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                     joint_sources = ()
             previous = reactions[-1] if reactions else utterance
 
+        items = local_staging(items, [(uid, line(by_id[uid])) for uid in ids], local_cues, holds)
         loops = []
         for name, kind in ((staging.ambience, AMBIENCE), (staging.music, MUSIC)):
             if not name:
@@ -322,11 +351,9 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                           for name, value in staging.positions if name in speakers)
         if scene_index:
             out.append(SCENE_PAUSE)
-        if loops or room or stage or holds or scene_cues:
+        if loops or room or stage:
             attrs = (f' room="{room}"' if room else "") + (f' stage="{stage}"' if stage else "")
-            if holds:
-                attrs += f' holds="{";".join(holds)}"'
-            out.extend([f"<parallel{attrs}>", *loops, *scene_cues, "<sequential>", *items, "</sequential>", "</parallel>"])
+            out.extend([f"<parallel{attrs}>", *loops, "<sequential>", *items, "</sequential>", "</parallel>"])
         else:
             out.extend(items)
     return "\n".join(out)

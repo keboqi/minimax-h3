@@ -117,19 +117,44 @@ does; each cast entry keeps its slot, and existing references and sparse slots
 are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
-The writer directs most lines, narration included, with Fish Audio cues and the
+The writer directs expressive lines, narration included, with Fish Audio cues and the
 seven scoped tags, briefing each cue like a note to a voice actor (the feeling plus the
 line's intent or who it is aimed at). It keeps a speaker's continuous passage in one
 staging block, since consecutive lines of one speaker are generated as one take, and
 pins a sound to a sentence mid-passage only when it must land on those words. Each new
 voice's preview is written as a calm reference: two to four sentences, about 10–20
 seconds, in the character's everyday mood. It also says whether it preserved supplied text or wrote from a
-brief; a preserved source is always checked line by line, and missing phrases are
-reported in the status. The app then repairs placements Drama 3 performs poorly: a
+brief. Both workflows check supplied words in order and known speaker labels;
+source loss, reordering or unsupported wording changes reject the reply and keep
+the current text. Explicitly supported spelling repairs, performance controls and
+pronunciation notes are allowed; approximate word similarity is never enough to
+authorize a substitution. The validator also recognizes deterministic English
+readings of currency, percentages, numbers, common metric units and selected
+abbreviations (for example, `$15` and `fifteen dollars`, or `Dr.` and `doctor`),
+while keeping values, signs and units distinct. Unknown readings remain conservative.
+Repeated quotations require explicit joint attribution and distinct voices rather
+than treating every quotation as permission to repeat it. The app then repairs placements Drama 3 performs poorly: a
 cue that opens a line moves after its opening words, ellipses become commas or
 periods, pause and silence cues are removed, and cues beyond one per sentence and
-two per line are dropped. The status reports each repair, lines that repeat the
-previous line's cue, and a script that leaves most lines undirected.
+two per line are dropped. The status reports repairs and optional-stage failures.
+A continuing emotional state may keep its cue; there is no cue, tag or reaction quota.
+
+Guided treats short finished prose and a single labelled line as source to preserve.
+For original writing, explicitly ask to write or create a scene. Single-speaker
+preservation still analyzes scenes and shared beats. Existing Advanced scripts keep
+their supported staging and sound assets while Guided enhances delivery; the sound
+planning step is skipped for those scripts. Reference voices retain their authored
+descriptions and do not require a new voice-design call. New voice previews are
+checked for practical length, including Latin-language samples.
+
+Guided's content response can identify narrow spelling repairs and risky-word
+pronunciations without rewriting the locked source. For expansion, put an explicit
+instruction such as `Expand with more dialogue.` on its own line before or after
+the supplied text. Only complete recognized expansion directives at those edges
+are separated from the speech; a spoken instruction such as `Expand your chest
+and breathe in.` stays in the script. New lines are anchored after source units; the original words
+remain in order. The shared fidelity check is deliberately conservative: an
+uncertain or larger rewording can be rejected rather than silently applied.
 
 The writer plans each scene before directing it (what each character wants and hides,
 whom each line is aimed at, where the scene turns) and uses contrast: narration stays
@@ -528,13 +553,31 @@ scene room. Old scripts without metadata retain their room routing. `duration_cl
 selects `accent` (1 second), `reaction` (3 seconds) or `texture` (25 seconds); an explicit
 `duration` takes precedence. The generated asset retains its natural tail.
 
-A sound directly inside its scene's parallel block can set `anchor="exact phrase"`,
+A sound directly inside its local parallel block can set `anchor="exact phrase"`,
 `edge="start|end"` and `occurrence="1"` to follow the selected speech take. Alignment
 runs automatically when these controls need it, independently of the subtitle setting;
 failed word alignment falls back to a matching line boundary. Use a distinctive phrase
-and count occurrences within that block. A loop may also set `end_anchor="phrase"`,
-`fade="0.5"` and `resume="true"` to enter, withdraw and continue the same asset across
-blocks. Anchored score entrances do not add an artificial scene-opening delay.
+and count occurrences within that block. Put an action cue beside its triggering
+line or continuous same-speaker passage, rather than collecting every event at the
+scene's opening. Ambience and full-scene music remain on the scene master. Anchors
+refine timing inside the local context; they do not replace readable placement.
+A loop may also set `end_anchor="phrase"`, `fade="0.5"` and `resume="true"` to
+enter, withdraw and continue the same asset across blocks. When the ending phrase
+repeats, `end_occurrence="2"` selects its second appearance independently of the
+entrance occurrence. Anchored score entrances do not add an artificial scene-opening delay.
+
+Guided uses `at` to choose the triggering line and counts `occurrence` within that
+line. For a music span it may supply `end_at`, `end_phrase` and `end_occurrence`
+to identify the ending line and phrase. The compiler groups just the relevant
+speech span, keeps smaller action cues nested in context, and adjusts occurrences
+for that local block. It retains uninterrupted same-speaker passages as one take.
+Both writers' reply validation also moves existing scene-wide anchored cues into
+local blocks when a narrower scope is available, preserving their selected words
+and assets. Existing simultaneous speech branches retain their structure.
+When the same anchor phrase occurs in overlapping branches, existing cue scope
+is retained: textual order cannot establish which voice reaches that phrase first.
+Container tags are case-insensitive; malformed nesting is reported as a controlled
+writer failure rather than an uncaught parser error.
 
 For a deliberate hold inside a continuous passage, the enclosing parallel supports
 `holds="preceding phrase~1.2"` (semicolon-separated for multiple holds). This inserts

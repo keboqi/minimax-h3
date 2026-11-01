@@ -234,12 +234,12 @@ class Drama3WriterTests(unittest.TestCase):
     @patch("openai.OpenAI")
     def test_single_mode_instructs_and_folds_onto_one_speaker(self, client):
         script, _status, user = self.rewrite(
-            client, "<|speaker:0|> Hi [warm] there.\n<|speaker:1|> Yo! [laughs]", "Single")
+            client, "<|speaker:0|> Hi.\n<|speaker:1|> Yo! [laughs]", "Single")
         self.assertIn("exactly ONE speaker", user)
-        self.assertEqual(script, "<|speaker:0|> Hi [warm] there.\n<|speaker:0|> Yo! [laughs]")
-        script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.", "Single", [(2, "Bob")])
+        self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:0|> Yo! [laughs]")
+        script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.\n<|speaker:0|> Yo.", "Single", [(2, "Bob")])
         self.assertIn("speaker_id 2", user)
-        self.assertEqual(script, "<|speaker:2|> Hi.")
+        self.assertEqual(script, "<|speaker:2|> Hi.\n<|speaker:2|> Yo.")
 
     @patch("openai.OpenAI")
     def test_adapt_mode_limits_speakers_to_reference_voices(self, client):
@@ -697,7 +697,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             "script": raw_script,
         })
         basic_script, basic_status, _cast = drama3_writer.apply_drama3_reply(
-            reply, "Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_BASIC,
+            reply, "Write a scene where Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_BASIC,
         )
         self.assertFalse(basic_status.startswith("Prompt enhancement failed:"), basic_status)
         self.assertNotIn("<parallel>", basic_script)
@@ -710,7 +710,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("<|speaker:1|> Affirmative.", basic_script)
 
         adv_script, adv_status, _cast = drama3_writer.apply_drama3_reply(
-            reply, "Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_ADVANCED,
+            reply, "Write a scene where Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_ADVANCED,
         )
         self.assertFalse(adv_status.startswith("Prompt enhancement failed:"), adv_status)
         self.assertIn("<parallel>", adv_script)

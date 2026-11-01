@@ -107,7 +107,8 @@ def _resolve_cast_name(raw_name, aliases: dict[str, str]) -> str | None:
     return None
 
 
-def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] | None = None) -> dict:
+def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] | None = None,
+                           *, expansion: bool = False) -> dict:
     """The preserve content stage: ``{"title", "speakers": {unit: name(s)}, "scenes": [(unit, place, change)]}``.
 
     Script labels resolve through the cast's aliases; every quote needs a known speaker (or a
@@ -117,10 +118,7 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     """
     data = load_answer(reply)
     if _text(data.get("kind")).lower() == "brief":
-        quotes = sum(unit.kind == QUOTE for unit in source.units)
-        if len(source.units) <= 8 and quotes <= 1:
-            return {"kind": "brief"}
-        raise StageError(['the input is a story with dialogue to preserve, not a brief; '
+        raise StageError(['the input contains source text to preserve, not a brief; '
                           'reply with "title", "cast", "speakers" and "scenes"'])
     problems: list[str] = []
     aliases = _cast(data, problems, allowed_names)
@@ -182,12 +180,45 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
             if isinstance(beats, list):
                 detail += " Beats: " + json.dumps(beats, ensure_ascii=False)
             scenes.append((entry["from"], _text(entry.get("place")), detail))
+    fixes, pronunciations, insertions = [], [], []
+    from .fidelity import certain_correction, fix_pattern, words
+    from h3_app.drama3.phonemes import note_problems
+    for fix in data.get('fixes', []) if isinstance(data.get('fixes'), list) else []:
+        if not isinstance(fix, dict):
+            problems.append('each fix needs unit, from and to')
+            continue
+        unit, old, new = units.get(_text(fix.get('unit'))), _text(fix.get('from')), _text(fix.get('to'))
+        old_words, new_words = words(old), words(new)
+        small = old != new and certain_correction(old, new)
+        duplicate = len(old_words) == 2 and old_words[0] == old_words[1] and new_words == old_words[:1]
+        if unit is None or not old or _CONTROL_RE.search(new) or len(fix_pattern(old).findall(unit.text)) != 1 or not (small or duplicate):
+            problems.append('a fix must identify one certain, small spelling repair or duplicated word in its unit')
+        else:
+            fixes.append((unit.id, old, new))
+    for entry in data.get('pronunciations', []) if isinstance(data.get('pronunciations'), list) else []:
+        word, reading = (_text(entry.get('word')), _text(entry.get('reading'))) if isinstance(entry, dict) else ('', '')
+        if (not word or not reading or _CONTROL_RE.search(word)
+                or not any(word in unit.text for unit in source.units) or note_problems(f'{word}{{{reading}}}')):
+            problems.append('each pronunciation needs a source word and valid pinyin or Arpabet reading')
+        elif any(word == w and reading != r for w, r in pronunciations):
+            problems.append(f'conflicting pronunciations for {word}')
+        else:
+            pronunciations.append((word, reading))
+    for entry in data.get('insertions', []) if isinstance(data.get('insertions'), list) else []:
+        if not isinstance(entry, dict):
+            problems.append('each insertion needs after, speaker and text')
+            continue
+        after, speaker, text = _text(entry.get('after')), _resolve_cast_name(entry.get('speaker'), aliases), _text(entry.get('text'))
+        if not expansion or after not in units or speaker is None or not text or _CONTROL_RE.search(text):
+            problems.append('insertions require an explicit expansion request, a source unit anchor, a cast speaker and plain text')
+        else:
+            insertions.append((after, speaker, text))
     if problems:
         raise StageError(problems)
     profiles = {canonical(e.get("name")): _text(e.get("role"))
                 for e in data.get("cast", []) if isinstance(e, dict)}
     return {"title": _text(data.get("title")), "speakers": speakers, "scenes": scenes,
-            "roles": profiles}
+            "roles": profiles, "fixes": fixes, "pronunciations": pronunciations, "insertions": insertions}
 
 
 def scenes_from_units(utterances: list[Utterance], starts: list[tuple[str, str, str]]) -> list[Scene]:
@@ -301,6 +332,9 @@ def parse_voices(reply: str, names: list[str]) -> dict[str, tuple[str, str]]:
         elif _CJK_RE.search(preview) and len(_CJK_RE.findall(preview)) < 25:
             problems.append(f"{match}: preview_text is too short ({len(_CJK_RE.findall(preview))} characters); "
                             "write 2–4 complete calm sentences (50–90 Chinese characters)")
+        elif not _CJK_RE.search(preview) and len(re.findall(r"\w+(?:['’’-]\w+)*", preview)) < 20:
+            problems.append(f"{match}: preview_text is too short; write 2–4 complete calm sentences, "
+                            "about 10–20 seconds aloud")
         else:
             voices[match] = (description, preview)
     missing = [name for name in names if name not in voices and not any(name in p for p in problems)]
@@ -312,6 +346,8 @@ def parse_voices(reply: str, names: list[str]) -> dict[str, tuple[str, str]]:
 
 def parse_direction(reply: str, ids: set[str], notes: list[str]) -> dict[str, Direction]:
     data = load_answer(reply)
+    if not isinstance(data.get("lines"), list):
+        raise StageError(['"lines" must be a list; use [] only when no line needs direction'])
     directions = {}
     for entry in data.get("lines") if isinstance(data.get("lines"), list) else []:
         line_id = entry.get("id") if isinstance(entry, dict) else None
@@ -330,6 +366,12 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
                   ) -> tuple[dict[str, Sound], dict[str, Staging], dict[str, tuple[str, ...]]]:
     """Sounds by name, staging by scene ID, and voice effects by utterance ID."""
     data = load_answer(reply)
+    if not isinstance(data.get("sounds"), list) or not isinstance(data.get("scenes"), list):
+        raise StageError(['"sounds" and "scenes" must be lists, including explicit quiet scene plans'])
+    received = {entry.get("scene") for entry in data["scenes"] if isinstance(entry, dict)
+                and isinstance(entry.get("scene"), str)}
+    if received != scene_ids:
+        raise StageError([f'"scenes" must cover exactly these scene IDs: {", ".join(sorted(scene_ids))}'])
     sounds = {}
     for entry in data.get("sounds") if isinstance(data.get("sounds"), list) else []:
         if not isinstance(entry, dict):
@@ -361,9 +403,12 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
                 notes.append(f"dropped sound event {event.get('sound')!r} at {at!r}")
                 continue
             occurrence = event.get("occurrence", 1)
+            end_occurrence = event.get("end_occurrence", 1)
             events.append(SoundEvent(sound_name(event.get("sound")), at, when, place if place in PLACES else "",
                                      _text(event.get("phrase")), _text(event.get("end_phrase")),
-                                     max(1, min(100, occurrence)) if isinstance(occurrence, int) else 1))
+                                     max(1, min(100, occurrence)) if isinstance(occurrence, int) else 1,
+                                     _text(event.get("end_at")),
+                                     max(1, min(100, end_occurrence)) if isinstance(end_occurrence, int) else 1))
         positions = []
         raw_positions = entry.get("positions") if isinstance(entry.get("positions"), dict) else {}
         for name, value in raw_positions.items():

@@ -728,7 +728,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             track["offset"] = start
             track["speech_relative"] = bool(child.anchor)
             if child.end_anchor:
-                end = resolve_anchor(child.end_anchor, anchor_words, anchor_lines)
+                end = resolve_anchor(child.end_anchor, anchor_words, anchor_lines, occurrence=child.end_occurrence)
                 if end is not None:
                     track["end"] = max(track["offset"], end)
             if child.loop and child.resume:

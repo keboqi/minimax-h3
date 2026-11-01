@@ -106,7 +106,7 @@ class CompileBasicTests(unittest.TestCase):
         utterances = attribute_units(segment_source(KETTLE), {"s2": "Tom", "s4": "Nora", "s6": "Nora", "s8": "Tom"})
         return Draft(utterances, [Scene("c1", tuple(u.id for u in utterances))], directions={
             "u1": Direction(cue="tense, low"),
-            "u2": Direction(cue="tense, low"),  # repeats the line before: dropped
+            "u2": Direction(cue="tense, low"),  # the continuing state may retain the same cue
             "u3": Direction(cue="low, watching them"),  # "Tom asked from the sofa." after Tom: plain
             "u4": Direction(cue="too quickly", event="shaky breath"),
             "u5": Direction(cue="neutral, observing", phrase="said"),  # "she said.": plain, phrase kept
@@ -121,14 +121,14 @@ class CompileBasicTests(unittest.TestCase):
         lines = script.split("\n")
         # insert_cue places a cue after the opening phrase, as the Single-pass rules ask.
         self.assertEqual(lines[0], "narrator: The kettle had just begun to whistle when the doorbell rang. [tense, low] Nora froze.")
-        self.assertEqual(lines[1].replace(' resume="true"', ""), "Tom: Are you expecting anyone?")
+        self.assertEqual(lines[1], "Tom: Are [tense, low] you expecting anyone?")
         self.assertIn("Nora: No, [shaky breath]", script)  # one word: no place for a cue, the event still closes it
         self.assertIn("The bell rang again, <emphasis>longer this time</emphasis>.", script)
         self.assertIn("Tom: Stay [hushed, urgent] <slow>behind</slow> me,", script)
         self.assertIn("narrator: Tom asked from the sofa.", lines)
         self.assertIn("narrator: she <emphasis>said</emphasis>.", lines)
         # Stressing the line's first word is skipped without a note; the others are reported.
-        self.assertEqual(len(notes), 3, notes)
+        self.assertEqual(len(notes), 2, notes)
         checked(self, script, KETTLE)
 
     def test_basic_ignores_staging(self):
@@ -216,8 +216,8 @@ class CompileAdvancedTests(unittest.TestCase):
         script = compile_script(self.museum(), advanced=True, notes=notes)
         tree = checked(self, script)
         lines = script.split("\n")
-        self.assertIn('holds="', lines[0])
-        self.assertIn('~1.2"', lines[0])
+        self.assertNotIn('holds="', lines[0])
+        self.assertIn('holds="since the new heating went in.~1.2"', script)
         self.assertEqual(lines[1].replace(' resume="true"', ''), '<sound name="hum" loop="true" volume="0.4" duration="25">'
                                    "Low ventilation hum in an empty stone gallery</sound>")
         # Maya's line carries the far scrape partway through and Arthur's reaction in a gap of it.
@@ -279,11 +279,11 @@ def _json(data):
 
 VOICES = {"voices": [
     {"name": "narrator", "description": "A male voice: calm, warm baritone. Clean studio recording.",
-     "preview_text": "The evening was quiet. Nothing seemed out of place."},
+     "preview_text": "The evening was quiet. Nothing seemed out of place. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
     {"name": "Tom", "description": "A male voice: thirties, steady. Clean studio recording.",
-     "preview_text": "I like a quiet flat. I like knowing who is at the door."},
+     "preview_text": "I like a quiet flat. I like knowing who is at the door. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
     {"name": "Nora", "description": "A female voice: late twenties, bright. Clean studio recording.",
-     "preview_text": "We only just moved in. I still get lost looking for the light switches."},
+     "preview_text": "We only just moved in. I still get lost looking for the light switches. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
 ]}
 PRESERVE = {"title": "The Doorbell", "cast": [{"name": "Tom", "aliases": ["he"]}, {"name": "Nora", "aliases": ["she"]}],
             "speakers": {"s2": "Tom", "s4": "Nora", "s6": "Nora", "s8": "Tom"},
@@ -408,11 +408,11 @@ class GuidedWriterTests(unittest.TestCase):
                      {"speaker": "Arthur", "text": "Probably the vents."},
                      {"speaker": "Maya", "text": "Wait.", "type": "reaction"}]}]}
         voices = {"voices": [
-            {"name": "narrator", "description": "A male voice: calm. Clean studio recording.", "preview_text": "It was late."},
-            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "I work here."},
-            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I guard it."}]}
+            {"name": "narrator", "description": "A male voice: calm. Clean studio recording.", "preview_text": "It was late. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
+            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "I work here. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
+            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I guard it. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."}]}
         script, status, cast, sounds, title = self.run_writer(
-            "Two people alone in a museum hear something.", {"brief": brief, "voices": voices,
+            "Write a scene about two people alone in a museum hearing something.", {"brief": brief, "voices": voices,
                                                             "direction": {"lines": [{"id": "u2", "cue": "frozen"}]}},
             script_mode=writer.DRAMA3_SCRIPT_BASIC)
         self.assertEqual(title, "Night Shift")
@@ -442,8 +442,8 @@ class GuidedWriterTests(unittest.TestCase):
                      {"speaker": "Cole", "text": "Stop! Drop the bag."},
                      {"speaker": "Vex", "text": "Make me."}]}]}
         voices = {"voices": [
-            {"name": "Cole", "description": "A male voice: gritty baritone. Clean studio recording.", "preview_text": "Hold it right there."},
-            {"name": "Vex", "description": "A female voice: sharp alto. Clean studio recording.", "preview_text": "Catch me if you can."}]}
+            {"name": "Cole", "description": "A male voice: gritty baritone. Clean studio recording.", "preview_text": "Hold it right there. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
+            {"name": "Vex", "description": "A female voice: sharp alto. Clean studio recording.", "preview_text": "Catch me if you can. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."}]}
         script, status, _cast, _sounds, title = self.run_writer(
             'Write a scene where a detective says "Stop!" to a fleeing thief.',
             {"brief": brief, "voices": voices, "direction": {"lines": []}},
@@ -453,7 +453,7 @@ class GuidedWriterTests(unittest.TestCase):
         self.assertNotIn("preserve", [stage for stage, _ in self.requests])
         self.assertIn("<|speaker:0|> Stop! Drop the bag.", script)
 
-        # A multi-sentence synopsis without brief keywords can still be confirmed as "kind": "brief" by S1.
+        # Short supplied prose cannot authorize its own reclassification as original writing.
         synopsis = ("The elevator stops between floors during a citywide blackout. "
                     "Two strangers inside realize both of them are carrying the same locked silver case. "
                     "Neither wants to admit who hired them.")
@@ -461,9 +461,9 @@ class GuidedWriterTests(unittest.TestCase):
             synopsis,
             {"preserve": {"kind": "brief"}, "brief": brief, "voices": voices, "direction": {"lines": []}},
             script_mode=writer.DRAMA3_SCRIPT_BASIC)
-        self.assertNotIn("failed", status, status)
-        self.assertEqual([stage for stage, _ in self.requests][:2], ["preserve", "brief"])
-        self.assertIn("<|speaker:0|> Stop! Drop the bag.", script)
+        self.assertIn("failed", status, status)
+        self.assertEqual([stage for stage, _ in self.requests], ["preserve", "preserve"])
+        self.assertEqual(script, synopsis)
 
     def test_narration_only_story_accepts_empty_cast(self):
         from h3_app.prompt_writers import drama3 as writer
@@ -489,9 +489,9 @@ class GuidedWriterTests(unittest.TestCase):
         good_brief = {"title": "Night", "cast": [{"name": "Maya", "role": "curator"}],
                       "scenes": [{"place": "hall", "change": "quiet", "lines": [{"speaker": "Maya", "text": "Hello?"}]}]}
         voices = {"voices": [{"name": "Maya", "description": "A female voice: young. Clean studio recording.",
-                              "preview_text": "I work in the gallery."}]}
+                              "preview_text": "I work in the gallery. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."}]}
         script, status, *_ = self.run_writer(
-            "Maya is alone in the hall.",
+            "Write a scene where Maya is alone in the hall.",
             {"brief": [bad_brief, good_brief], "voices": voices, "direction": {"lines": []}},
             script_mode=writer.DRAMA3_SCRIPT_BASIC)
         self.assertNotIn("failed", status, status)
@@ -507,7 +507,7 @@ class GuidedWriterTests(unittest.TestCase):
                      {"speaker": "narrator", "text": "The gallery was dark."},
                      {"speaker": "Maya", "text": "Who is there?"}]}]}
         voices = {"voices": [{"name": "Storyteller", "description": "A female voice: warm. Clean studio recording.",
-                              "preview_text": "I tell the old stories every evening."}]}
+                              "preview_text": "I tell the old stories every evening. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."}]}
         cast_context = ("Existing slot identities:\n"
                         + json.dumps([{"speaker_id": 0, "name": "Storyteller", "description": "", "has_reference": False}]))
         script, status, cast, *_ = self.run_writer(
@@ -550,8 +550,8 @@ class GuidedWriterTests(unittest.TestCase):
                                                  {"name": "Arthur", "aliases": ["Speaker 4"]}],
                     "speakers": {}, "scenes": [{"from": "s1", "place": "cellar", "change": "steps pass"}]}
         voices = {"voices": [
-            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "Quiet now."},
-            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I am listening."}]}
+            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "Quiet now. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."},
+            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I am listening. We have enough time to plan the route this morning. I will bring a map and find a quiet place to sit along the way."}]}
         cast_context = (
             "Existing slot identities:\n"
             + json.dumps([{"speaker_id": 2, "name": "Maya", "description": "", "has_reference": False},
