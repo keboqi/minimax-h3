@@ -10,6 +10,43 @@ from unittest.mock import Mock
 from h3_app.workspace_store import WorkspaceStore
 
 
+class ModalImageSetupTests(unittest.TestCase):
+    def setUp(self):
+        path = Path(__file__).resolve().parents[1] / "modal_h3.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        image = Mock()
+        for method in ("entrypoint", "apt_install", "uv_pip_install", "run_commands",
+                       "add_local_file", "add_local_dir", "run_function"):
+            getattr(image, method).return_value = image
+        namespace = {"__file__": str(path), "modal": SimpleNamespace(
+            is_local=lambda: True, Image=SimpleNamespace(from_registry=lambda *a, **k: image))}
+        body = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    getattr(target, "id", None) == "volume" for target in node.targets):
+                break  # Construct the image recipe without allocating Modal resources.
+            if isinstance(node, ast.Import) and any(alias.name == "modal" for alias in node.names):
+                continue
+            body.append(node)
+        exec(compile(ast.Module(body=body, type_ignores=[]), str(path), "exec"), namespace)
+        self.commands = [command for call in image.run_commands.call_args_list for command in call.args]
+        self.packages = [package for call in image.apt_install.call_args_list for package in call.args]
+        self.namespace = namespace
+
+    def test_default_timestamp_refinement_has_node_and_npm(self):
+        self.assertIn("nodejs", self.packages)
+        self.assertTrue(any("setup_22.x" in command for command in self.commands))
+        self.assertTrue(any(command.startswith("node ") and "< 22" in command for command in self.commands))
+        self.assertIn("npm --version", self.commands)
+
+    def test_prebuilt_workers_publish_current_readiness_markers(self):
+        for prefix, fingerprint in (("DRAMA3_SGLANG", "drama3_sglang"), ("AUDIO_TOOLS", "audio_tools"),
+                                    ("DUB_TOOLS", "dub_tools"), ("NEMOTRON", "nemotron")):
+            ns = self.namespace
+            marker = (ns[f"{prefix}_VENV"] / ns[f"{prefix}_READY_MARKER"]).as_posix()
+            self.assertIn(f"echo {ns[f'{fingerprint}_fingerprint']()} > {marker}", self.commands)
+
+
 class ModalLifecycleTests(unittest.TestCase):
     def setUp(self):
         path = Path(__file__).resolve().parents[1] / "modal_h3.py"

@@ -77,7 +77,8 @@ and does not correct a wrong transcript or speaker assignment.
 
 The published Node native runtime supports Linux x64/arm64 and Apple silicon;
 Windows requires Linux/WSL for this option. Install Node.js 22+ with npm on the
-server. On first use the app installs the pinned Align 4.2.1 SDK under
+server; the Modal image includes them. On first use the app installs the pinned
+Align 4.2.1 SDK under
 `ComfyUI/models/dubbing/align-runtime`; model downloads use `align-models` beside
 it. The SDK's license reporting remains enabled. Align supports English, Chinese,
 Japanese, Korean, French, German, Spanish, Portuguese and Italian. Unsupported

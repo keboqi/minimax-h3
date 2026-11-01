@@ -715,6 +715,22 @@ image = image.run_function(
     kwargs={"revision": REVISION},
 )
 
+# Dub & Translate enables Desert Ant Align timestamp refinement by default.
+# Ubuntu 24.04's Node package is too old for its native SDK (Node >=22).
+# Keep this after the expensive Python layers so adding it reuses those builds.
+image = (
+    image.run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/h3-nodesource-setup.sh",
+        "bash /tmp/h3-nodesource-setup.sh",
+    )
+    .apt_install("nodejs")
+    .run_commands(
+        "node -e \"if (Number(process.versions.node.split('.')[0]) < 22) process.exit(1)\"",
+        "npm --version",
+        "rm /tmp/h3-nodesource-setup.sh",
+    )
+)
+
 # Local bytecode is rewritten by every test run or import. Mounting it changes the
 # function's content hash, which makes Modal discard memory snapshots on each deploy.
 _BYTECODE_IGNORE = ["**/__pycache__", "**/*.pyc"]
