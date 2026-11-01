@@ -59,6 +59,10 @@ class Sound:
     name: str
     kind: str
     prompt: str
+    role: str = ""
+    perspective: str = ""
+    duration_class: str = ""
+    envelope: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,9 @@ class SoundEvent:
     at: str  # utterance ID
     when: str = WITH
     place: str = ""
+    phrase: str = ""
+    end_phrase: str = ""
+    occurrence: int = 1
 
 
 @dataclass(frozen=True)

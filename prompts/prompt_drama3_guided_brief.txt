@@ -18,3 +18,7 @@ Rules:
 5. Length: about 2.5 English words or 4 Chinese characters per second. Match the length the brief asks for; without one, aim for about one minute.
 6. Use one scene unless the brief moves to another place or time. Each scene has place (a few words, including what it sounds like) and change (one sentence on what turns).
 7. title is at most 60 characters, in the request's language.
+
+Production context in the same answer:
+- Each cast entry also has role: a compact source-supported character profile including explicit age/vocal traits, temperament and relationships. Preserve traits revealed later in narration; do not infer identity from the opening dialogue alone.
+- Each scene may include beats: a short list of objects {"at": "exact short phrase from this scene", "focus": "character or event", "intent": "what changes; delivery, pause and score intent"}. Identify only meaningful turns. Direction and sound use this shared plan. Infer tone per beat within the overall style; a sincere moment in a comedy remains sincere.

@@ -663,6 +663,41 @@ DUCK_HOLD_SECONDS = 0.35
 DUCK_FRAME_SECONDS = 0.01
 
 
+def continued_loop(samples: np.ndarray, length: int, rate: int, cursor: int = 0) -> np.ndarray:
+    """Slice the same crossfaded stream, bounding allocation even for a long chapter cursor."""
+    cursor = max(0, cursor)
+    overlap = min(int(LOOP_CROSSFADE_SECONDS * rate), len(samples) // 4)
+    end = loop_end(samples, overlap, rate) if overlap else len(samples)
+    step = end - overlap
+    if step > 0 and cursor >= end:
+        cursor = step + (cursor - step) % step
+    # Establish the loop seam even when this scene ends before the clip does, so a
+    # later continuation sees the same stream as one uninterrupted long render.
+    render_length = max(cursor + length, len(samples) + overlap + 1)
+    return loop_to_length(samples, render_length, rate)[cursor:cursor + length]
+
+
+def _prepare_bed(samples, track, rate, start, speech_end, speech_offset):
+    relative_offset = speech_offset if track.get("speech_relative") else 0
+    end = min(speech_end, int(track.get("end", speech_end - relative_offset)) + relative_offset)
+    if end <= start:
+        return samples[:0]
+    tail = int(LOOP_TAIL_SECONDS * rate)
+    cursor = int(track.get("cursor", 0))
+    fade = int(float(track.get("fade", LOOP_FADE_IN_SECONDS)) * rate)
+    looped = continued_loop(samples, end - start + tail, rate, cursor)
+    return _fade(looped, 0 if cursor else fade, tail)
+
+
+def apply_gain_envelope(samples, points):
+    """Apply semantic automation identically to sequential and parallel sounds."""
+    if not points or not len(samples):
+        return samples
+    times, gains = zip(*points)
+    envelope = np.interp(np.linspace(0, 1, len(samples)), times, gains).astype(np.float32)
+    return samples * _along(envelope, samples)
+
+
 def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DEPTH_DB,
                      attack: float = DUCK_ATTACK_SECONDS, release: float = DUCK_RELEASE_SECONDS,
                      hold: float = DUCK_HOLD_SECONDS) -> np.ndarray:
@@ -796,11 +831,12 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
 
     speech_tracks = [t for t in valid if not t.get("is_sound", False)]
     sound_tracks = [t for t in valid if t.get("is_sound", False)]
-    has_bed = any(t.get("loop", False) for t in sound_tracks)
+    has_bed = any(t.get("loop", False) and not t.get("speech_relative") and not t.get("cursor")
+                  for t in sound_tracks)
     offset = int(SCENE_LEAD_IN_SECONDS * rate) if speech_tracks and has_bed else 0
     speech_end = offset + max((int(t.get("advance", len(t["audio"]))) for t in speech_tracks), default=0)
 
-    speech_rms_values = [_speech_rms(t["audio"], rate) for t in speech_tracks]
+    speech_rms_values = [_speech_rms(t.get("dialogue", t["audio"]), rate) for t in speech_tracks]
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
     sounds: list[tuple[np.ndarray, bool]] = []
@@ -808,25 +844,30 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     for track in sound_tracks:
         samples = shape(track["audio"]).copy()
         loop = bool(track.get("loop", False))
+        start = max(0, int(track.get("offset", 0))) + (offset if track.get("speech_relative") else 0)
         if loop and speech_tracks:
-            tail = int(LOOP_TAIL_SECONDS * rate)
-            samples = _fade(loop_to_length(samples, speech_end + tail, rate),
-                            int(LOOP_FADE_IN_SECONDS * rate), tail)
-        current_rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+            samples = _prepare_bed(samples, track, rate, start, speech_end, offset)
+        current_rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2))) if samples.size else 0.0
         if avg_speech_rms > 0.0 and current_rms > 1e-7:
             samples = samples * float(min(avg_speech_rms * 0.7 / current_rms, 2.0))
         samples = samples * float(track.get("volume", 1.0))
+        samples = apply_gain_envelope(samples, track.get("envelope", ()))
+        if start:
+            samples = np.concatenate((np.zeros((start, *samples.shape[1:]), dtype=np.float32), samples))
         sounds.append((samples.astype(np.float32, copy=False), loop))
         played[id(track)] = len(samples)
 
     length = max([offset + len(t["audio"]) for t in speech_tracks] + [len(arr) for arr, _bed in sounds])
     speech = np.zeros((length, 2) if stereo else length, dtype=np.float32)
+    sidechain = np.zeros_like(speech)
     for track in speech_tracks:
         arr = shape(track["audio"])
         speech[offset:offset + len(arr)] += arr
+        dry = shape(track.get("dialogue", track["audio"]))
+        sidechain[offset:offset + len(dry)] += dry
     # Looped beds dip under speech while keeping low-end warmth; one-shot effects and
     # stingers stay in front, gently carving only the vocal formant band during speech.
-    duck = speech_duck_gain(speech.mean(axis=1) if stereo else speech, rate) if speech_tracks else None
+    duck = speech_duck_gain(sidechain.mean(axis=1) if stereo else sidechain, rate) if speech_tracks else None
     mixed = speech.copy()
     for arr, bed in sounds:
         mixed[: len(arr)] += _duck_sound(arr, duck, rate, bed=bed) if duck is not None else arr

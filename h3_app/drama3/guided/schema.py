@@ -13,6 +13,7 @@ import re
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS
 from h3_app.drama3.serving.rooms import SCENE_ROOMS
 from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
+from h3_app.drama3.sound_policy import DURATION_CLASSES, SOUND_ROLES, sound_perspective
 
 from .compile import SCOPED_TAGS, sound_name
 from .model import (
@@ -176,10 +177,17 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     scenes = []
     for entry in data.get("scenes") if isinstance(data.get("scenes"), list) else []:
         if isinstance(entry, dict) and isinstance(entry.get("from"), str) and entry.get("from") in units:
-            scenes.append((entry["from"], _text(entry.get("place")), _text(entry.get("change"))))
+            beats = entry.get("beats")
+            detail = _text(entry.get("change"))
+            if isinstance(beats, list):
+                detail += " Beats: " + json.dumps(beats, ensure_ascii=False)
+            scenes.append((entry["from"], _text(entry.get("place")), detail))
     if problems:
         raise StageError(problems)
-    return {"title": _text(data.get("title")), "speakers": speakers, "scenes": scenes}
+    profiles = {canonical(e.get("name")): _text(e.get("role"))
+                for e in data.get("cast", []) if isinstance(e, dict)}
+    return {"title": _text(data.get("title")), "speakers": speakers, "scenes": scenes,
+            "roles": profiles}
 
 
 def scenes_from_units(utterances: list[Utterance], starts: list[tuple[str, str, str]]) -> list[Scene]:
@@ -254,7 +262,10 @@ def parse_content_brief(reply: str, allowed_names: set[str] | None = None,
             utterances.append(utterance)
             ids.append(utterance.id)
         if ids:
-            scenes.append(Scene(f"c{len(scenes) + 1}", tuple(ids), _text(scene.get("place")), _text(scene.get("change"))))
+            detail = _text(scene.get("change"))
+            if isinstance(scene.get("beats"), list):
+                detail += " Beats: " + json.dumps(scene["beats"], ensure_ascii=False)
+            scenes.append(Scene(f"c{len(scenes) + 1}", tuple(ids), _text(scene.get("place")), detail))
     if not utterances and not problems:
         problems.append("the script has no lines")
     if allowed_names is not None and not problems:
@@ -325,7 +336,13 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
             continue
         name, kind, prompt = sound_name(entry.get("name")), _text(entry.get("kind")).lower(), _text(entry.get("prompt"))
         if kind in SOUND_KINDS and prompt:
-            sounds.setdefault(name, Sound(name, kind, prompt))
+            role = _text(entry.get("role"))
+            role = role if role in SOUND_ROLES else ""
+            duration_class = _text(entry.get("duration_class"))
+            sounds.setdefault(name, Sound(
+                name, kind, prompt, role,
+                sound_perspective(role, kind, _text(entry.get("perspective"))),
+                duration_class if duration_class in DURATION_CLASSES else "", _text(entry.get("envelope"))))
         else:
             notes.append(f"dropped sound {entry.get('name')!r}")
     staging, effects = {}, {}
@@ -343,7 +360,10 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
             if when not in EVENT_TIMES or not isinstance(at, str) or at not in utterance_ids:
                 notes.append(f"dropped sound event {event.get('sound')!r} at {at!r}")
                 continue
-            events.append(SoundEvent(sound_name(event.get("sound")), at, when, place if place in PLACES else ""))
+            occurrence = event.get("occurrence", 1)
+            events.append(SoundEvent(sound_name(event.get("sound")), at, when, place if place in PLACES else "",
+                                     _text(event.get("phrase")), _text(event.get("end_phrase")),
+                                     max(1, min(100, occurrence)) if isinstance(occurrence, int) else 1))
         positions = []
         raw_positions = entry.get("positions") if isinstance(entry.get("positions"), dict) else {}
         for name, value in raw_positions.items():

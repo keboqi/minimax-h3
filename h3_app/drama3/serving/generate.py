@@ -28,6 +28,7 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speak
 
 from . import audio, environment, rooms, takes as take_store
 from .alignment import take_audio_digest
+from .cue_timing import insert_holds, resolve_anchor
 from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
 from .speaker_effects import DISTANCE_TAGS, ROOM_EFFECT_ROOMS, SPACE_EFFECTS, apply_speaker_effects
@@ -67,7 +68,8 @@ class Take:
     wav: bytes = b""  # the server's response, saved for reuse
     line_bounds: list[tuple[int, int]] | None = None  # tidied audio at take.rate
     line_words: list[list[tuple[str, float, float]]] | None = None  # each line's words, seconds in the tidied take
-    alignment_scale: float = 1.0  # original take seconds to placed/effected seconds
+    alignment_scale: float = 1.0  # effect-only time scaling, after inserted holds
+    alignment_holds: list[tuple[float, float]] = field(default_factory=list)
 
 
 def frame_budget(text: str, limit: int) -> int:
@@ -373,13 +375,14 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
     if node.pan is not None or node.distance:
         samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
     # A one-shot happens in the scene's room, as its voices do; beds are that room already.
-    if ctx.room in rooms.ROOMS and not node.loop:
+    in_world = node.perspective not in {"editorial", "subjective"}
+    if ctx.room in rooms.ROOMS and not node.loop and in_world:
         sound_pos = sum(node.pan) / 2 if node.pan is not None else 0.0
         wet = rooms.room_wet(samples.mean(axis=1), ctx.rate, ctx.room, position=sound_pos)
         placed = np.zeros((len(wet), samples.shape[1]), dtype=np.float32)
         placed[: len(samples)] = samples
         samples = placed + wet  # the room rings on past the clip
-    elif ctx.room and not node.loop:
+    elif ctx.room and not node.loop and in_world:
         samples = np.stack([apply_speaker_effects(samples[:, channel], ctx.rate, (ctx.room,))[: len(samples)]
                             for channel in range(samples.shape[1])], axis=1)
     return samples
@@ -483,6 +486,10 @@ class _Render:
     scene_room: str | None = None  # the enclosing scene's ``room``, heard by its in-world voices too
     placements: dict[int, float] = field(default_factory=dict)  # each chunk's stereo position, as mixed
     words: dict[int, list[list[tuple[str, int, int]]]] = field(default_factory=dict)  # samples inside the take
+    dialogue: dict[int, np.ndarray] = field(default_factory=dict)
+    holds: tuple[tuple[int, str, float], ...] = ()
+    held: set = field(default_factory=set)
+    bed_cursors: dict[str, int] = field(default_factory=dict)
 
 
 def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
@@ -503,6 +510,29 @@ def _sound_span(node: SoundNode, length: int) -> tuple[tuple[str, int], tuple[in
     return ("sound", id(node)), (0, length, {"name": node.name or node.description, "loop": node.loop})
 
 
+def _place_reactions(node, tracks, track_spans, rate):
+    """Place short replies using the principal dialogue, and move their timing metadata together."""
+    principal = next((t.get("dialogue") for child, t in zip(node.children, tracks)
+                      if not getattr(child, "reaction", False) and t.get("dialogue") is not None), None)
+    if principal is not None and len(principal):
+        mono = principal.mean(axis=1) if principal.ndim == 2 else principal
+        silent = audio._silent_frames(mono, rate)
+        gaps = [(a, b) for a, b in audio._runs(silent) if a > 0 and b < len(silent)]
+        gap = max(gaps, key=lambda ab: ab[1] - ab[0]) if gaps else None
+        entry = int(gap[0] * audio.FRAME_SECONDS * rate) if gap else int(len(principal) * 0.6)
+        for child, track, own in zip(node.children, tracks, track_spans):
+            if not getattr(child, "reaction", False):
+                continue
+            for key in ("audio", "dialogue"):
+                arr = track.get(key)
+                if arr is not None:
+                    track[key] = np.concatenate((np.zeros((entry, *arr.shape[1:]), dtype=np.float32), arr))
+            track["advance"] += entry
+            if own:
+                for key, (a, b, info) in list(own.items()):
+                    own[key] = (a + entry, b + entry, info)
+
+
 def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarray, int]:
     """(audio, advance): ``node`` rendered, and where the timeline moves on after it.
 
@@ -517,7 +547,6 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         for chunk in chunks:
             take = ctx.takes[chunk.index]
             tidied = audio.tidy_take(take.samples, take.rate)
-            original_seconds = len(tidied) / take.rate
             tidied = audio.resample_audio(tidied, take.rate, rate)
             gain = ctx.gains.get(chunk.speaker, 1.0)
             if gain != 1.0:
@@ -530,6 +559,10 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                          for start, end in take.line_bounds]
             words = [[(text, round(start * rate), round(end * rate)) for text, start, end in line]
                      for line in take.line_words] if take.line_words is not None else None
+            tidied, lines, words, inserted = insert_holds(
+                tidied, rate, lines, words, chunk.lines or (chunk.text,), ctx.holds, ctx.held)
+            take.alignment_holds = [(at / rate, duration / rate) for at, duration in inserted]
+            held_length = len(tidied)
             room = _voice_room(chunk, ctx)
             distance = next((effect for effect in chunk.speaker_effects if effect in DISTANCE_TAGS), "")
             # Real rooms and distance are placed below; the other effects shape the voice itself.
@@ -547,7 +580,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                                   for text, start, end in line] for line in words]
             if words is not None:
                 ctx.words[chunk.index] = words
-            take.alignment_scale = (len(tidied) / rate / original_seconds) if original_seconds else 1.0
+            take.alignment_scale = len(tidied) / held_length if held_length else 1.0
             position = ctx.positions.get(chunk.speaker, 0.0)
             ctx.placements[chunk.index] = position
             # The room hears the voice at its stage position; distance changes only what reaches the listener directly.
@@ -563,6 +596,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets, line_offsets)
+        ctx.dialogue[id(node)] = joined.copy()
         advance = len(joined)
         tails = [(start, wet) for (start, _end), wet in zip(offsets, wets) if wet is not None]
         if tails:
@@ -582,12 +616,14 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
 
     if isinstance(node, SoundNode):
         samples = _placed_sound(node, ctx)
+        samples = audio.apply_gain_envelope(samples, node.envelope)
         volume = node.volume * audio.distance_gain(node.distance)
         if volume != 1.0:
             samples = (samples * float(volume)).astype(np.float32, copy=False)
         sound_pos = round(float(np.clip(sum(node.pan) / 2, -1.0, 1.0)), 2) if node.pan is not None else 0.0
         tail_extra = (len(rooms.room_response(ctx.room, rate, sound_pos)) - 1
-                      if ctx.room in rooms.ROOMS and not node.loop and len(samples) else 0)
+                      if ctx.room in rooms.ROOMS and not node.loop
+                      and node.perspective not in {"editorial", "subjective"} and len(samples) else 0)
         advance = max(0, len(samples) - tail_extra)
         if spans is not None:
             spans.update([_sound_span(node, advance)])
@@ -595,6 +631,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
 
     if isinstance(node, SequentialNode):
         placed: list[tuple[int, np.ndarray]] = []
+        dry_placed = []
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
         floor = 0  # the earliest an overlap may start what follows
         for child in node.children:
@@ -617,6 +654,8 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                                                 narrator_turn=narrator))
                 cursor = max(cursor + gap, floor)
             placed.append((cursor, seg))
+            if id(child) in ctx.dialogue:
+                dry_placed.append((cursor, ctx.dialogue[id(child)]))
             # A speech block holds several lines: half of the whole block could reach back before
             # its last line starts, putting what follows ahead of the line it answers.
             floor = cursor + advance // 2
@@ -633,8 +672,13 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             previous = (edges[2], edges[3]) if edges is not None else None
         length = max([cursor] + [start + len(seg) for start, seg in placed])
         out = np.zeros((length, 2), dtype=np.float32)
+        dry = np.zeros_like(out)
         for start, seg in placed:
             out[start:start + len(seg)] += seg
+        for start, arr in dry_placed:
+            end = min(len(dry), start + len(arr))
+            dry[start:end] += arr[:end - start]
+        ctx.dialogue[id(node)] = dry
         return out, cursor
 
     if isinstance(node, ParallelNode):
@@ -642,26 +686,68 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         # its stage places the speakers it names for this scene.
         stage = {speaker: position for speaker, position in node.stage if not is_narrator(speaker)}
         ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room, scene_room=node.room or ctx.scene_room,
-                      positions={**ctx.positions, **stage} if stage else ctx.positions)
+                      positions={**ctx.positions, **stage} if stage else ctx.positions,
+                      holds=(*ctx.holds, *((id(node), phrase, seconds) for phrase, seconds in node.holds)))
         tracks: list[dict] = []
         track_spans: list[Spans | None] = []  # each child's own spans; None for a cue mixed here
         for child in node.children:
             if isinstance(child, SoundNode):
                 # Volume and distance apply after the mix levels the sound to the speech.
                 tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop, "is_sound": True,
-                               "volume": child.volume * audio.distance_gain(child.distance)})
+                               "volume": child.volume * audio.distance_gain(child.distance), "fade": child.fade,
+                               "envelope": child.envelope})
                 track_spans.append(None)
             else:
                 child_spans: Spans = {}
                 child_audio, advance = _render(child, ctx, child_spans)
                 tracks.append({"audio": child_audio, "advance": advance, "loop": False,
-                               "is_sound": is_sound_only_node(child), "volume": 1.0})
+                               "is_sound": is_sound_only_node(child), "volume": 1.0,
+                               "dialogue": ctx.dialogue.get(id(child), np.zeros_like(child_audio))})
                 track_spans.append(child_spans)
+        _place_reactions(node, tracks, track_spans, rate)
+        speech_spans = {k: v for own in track_spans if own for k, v in own.items() if isinstance(k, int)}
+        anchor_words = sorted(
+            ((text, a + start, b + start)
+             for index, (start, _end, _lines) in speech_spans.items()
+             for line in ctx.words.get(index, []) for text, a, b in line), key=lambda w: w[1])
+        anchor_lines = [
+            (text, start + a, start + b)
+            for index, (start, _end, bounds) in speech_spans.items()
+            for text, (a, b) in zip(ctx.takes[index].chunk.lines or (ctx.takes[index].chunk.text,), bounds)]
+        for child, track in zip(node.children, tracks):
+            if not isinstance(child, SoundNode):
+                continue
+            start = resolve_anchor(child.anchor, anchor_words, anchor_lines,
+                                   edge=child.edge, occurrence=child.occurrence) if child.anchor else 0
+            if start is None:
+                # Unresolvable optional cues must not fire at the beginning of the scene.
+                track["audio"] = track["audio"][:0]
+                continue
+            track["offset"] = start
+            track["speech_relative"] = bool(child.anchor)
+            if child.end_anchor:
+                end = resolve_anchor(child.end_anchor, anchor_words, anchor_lines)
+                if end is not None:
+                    track["end"] = max(track["offset"], end)
+            if child.loop and child.resume:
+                key = child.name or child.description
+                track["cursor"] = ctx.bed_cursors.get(key, 0)
+                end = min(track.get("end", float("inf")), max((t.get("advance", 0) for t in tracks), default=0))
+                ctx.bed_cursors[key] = track["cursor"] + max(0, int(end) - track["offset"])
         mix = audio.mix_parallel(tracks, rate)
+        dry = np.zeros_like(mix.audio)
+        for track in tracks:
+            arr = track.get("dialogue")
+            if arr is not None:
+                end = min(len(dry), mix.speech_offset + len(arr))
+                dry[mix.speech_offset:end] += arr[:end - mix.speech_offset]
+        ctx.dialogue[id(node)] = dry
         if spans is not None:
             for child, track, own, length in zip(node.children, tracks, track_spans, mix.sound_lengths):
                 if own is None:
-                    spans.update([_sound_span(child, length)])
+                    key, (_start, end, info) = _sound_span(child, length)
+                    start = int(track.get("offset", 0)) + (mix.speech_offset if track.get("speech_relative") else 0)
+                    spans[key] = (start, end, info)
                     continue
                 # Parallel tracks all start together; speech waits for the lead-in, sounds do not.
                 shift = 0 if track["is_sound"] else mix.speech_offset
@@ -859,7 +945,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     # saved ones too, so turning them on and remixing adds them without speaking again.
     # Report every failed word alignment, including single-line takes.
     word_timing = bool(getattr(request, "word_timing", False))
-    aligned = ordered if word_timing else [take for take in ordered if len(take.chunk.lines) > 1]
+    cue_alignment = any(n.anchor or n.end_anchor for n in iter_sound_nodes(tree)) or bool(re.search(r'\bholds\s*=', script_text))
+    aligned = ordered if word_timing or cue_alignment else [take for take in ordered if len(take.chunk.lines) > 1]
     if aligned:
         from .alignment import align_take
         from h3_app.dubbing import tools
@@ -874,7 +961,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                 try:
                     take.line_bounds, words = align_take(take, store, runtime, free_gpu=free_gpu,
                                                          hf_token=hf_token)
-                    take.line_words = words if word_timing else None
+                    take.line_words = words if word_timing or cue_alignment else None
                 except Exception as exc:
                     if job is not None:
                         job.check()
@@ -936,6 +1023,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "subtitle_timing": "aligned" if t.line_bounds is not None else "estimated",
                         "alignment": {"start": spans[t.chunk.index][0] / rate,
                                       "scale": t.alignment_scale,
+                                      "holds": t.alignment_holds,
                                       "audio": take_audio_digest(t.samples, t.rate)} if t.chunk.index in spans else None,
                         **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1],
                             "lines": [{"text": text, "start": start, "end": end,

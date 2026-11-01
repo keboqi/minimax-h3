@@ -12,6 +12,7 @@ import re
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, expected_seconds, insert_cue
 from h3_app.drama3.serving.rooms import scene_room_name
 from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
+from h3_app.drama3.sound_policy import DURATION_CLASSES, gain_envelope
 
 from .model import (
     AFTER, AMBIENCE, BEFORE, DURING, EFFECT, HEADING, INTERRUPT, MUSIC, NARRATOR, REACTION, STINGER, WITH,
@@ -129,7 +130,7 @@ def _speaker_line(utterance: Utterance, body: str, notes: list[str]) -> str:
     if utterance.speaker == NARRATOR and effects:
         notes.append(f"{utterance.id}: the narrator takes no voice effect")
         effects = []
-    tags = "".join(f"<{effect}>" for effect in effects[:2])
+    tags = "".join(f"<{effect}>" for effect in effects)
     return f"{utterance.speaker}: {tags + ' ' if tags else ''}{body}"
 
 
@@ -137,9 +138,26 @@ def sound_name(name: str) -> str:
     return re.sub(r"[^\w-]+", "_", str(name or "").strip().lower()).strip("_")[:32] or "sound"
 
 
-def sound_line(sound: Sound, place: str = "") -> str:
+def sound_line(sound: Sound, place: str = "", *, anchor: str = "", end_anchor: str = "",
+               edge: str = "end", occurrence: int = 1) -> str:
     loop, volume, duration = SOUND_SETTINGS[sound.kind]
+    duration = DURATION_CLASSES.get(sound.duration_class, duration)
     attrs = [f'name="{sound_name(sound.name)}"']
+    envelope = gain_envelope(sound.envelope)
+    if envelope:
+        attrs.append('envelope="' + ','.join(f'{t:g}:{g:g}' for t, g in envelope) + '"')
+    for key, value in (("anchor", anchor), ("end_anchor", end_anchor)):
+        if value:
+            safe = re.sub(r'[<>";~]', " ", value)
+            attrs.append(f'{key}="{safe}"')
+    if anchor:
+        attrs.extend([f'edge="{edge}"', f'occurrence="{occurrence}"'])
+    if loop:
+        attrs.append('resume="true"')
+    if sound.role:
+        attrs.append(f'role="{sound.role}"')
+    if sound.perspective:
+        attrs.append(f'perspective="{sound.perspective}"')
     if loop:
         attrs.append('loop="true"')
     if volume != 1.0:
@@ -169,9 +187,13 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                               key=len, reverse=True))
     bodies: dict[str, str] = {}
     previous_cue = ""
+    group_cue = ""  # the cue before a line spoken together, which each member may act
     for index, utterance in enumerate(draft.utterances):
-        attribution = is_attribution(utterance, draft.utterances[index - 1] if index else None)
-        bodies[utterance.id], cue = direct_line(utterance, draft.directions.get(utterance.id), previous_cue, notes,
+        before = draft.utterances[index - 1] if index else None
+        if not (before is not None and utterance.sources and before.sources == utterance.sources):
+            group_cue = previous_cue
+        attribution = is_attribution(utterance, before)
+        bodies[utterance.id], cue = direct_line(utterance, draft.directions.get(utterance.id), group_cue, notes,
                                                 attribution=attribution, cast_names=cast_names)
         previous_cue = cue or previous_cue
 
@@ -186,17 +208,30 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
     for scene_index, scene in enumerate(draft.scenes):
         staging = draft.staging.get(scene.id, Staging())
         events = list(staging.events)
-        if len(events) > MAX_EVENTS_PER_SCENE:
-            notes.append(f"{scene.id}: kept the first {MAX_EVENTS_PER_SCENE} of {len(events)} sound events")
-            events = events[:MAX_EVENTS_PER_SCENE]
+        event_budget = min(16, max(MAX_EVENTS_PER_SCENE, (len(scene.utterances) + 3) // 4))
+        if len(events) > event_budget:
+            notes.append(f"{scene.id}: kept the first {event_budget} of {len(events)} sound events")
+            events = events[:event_budget]
         anchored: dict[tuple[str, str], list[str]] = {}
+        scene_cues = []
+        comic_used = False
         for event in events:
             sound = sounds.get(sound_name(event.sound))
-            if sound is None or sound.kind not in (EFFECT, STINGER) or event.at not in scene.utterances:
+            if sound is None or sound.kind not in (EFFECT, STINGER, MUSIC) or event.at not in scene.utterances:
                 notes.append(f"{scene.id}: dropped sound event {event.sound!r} at {event.at}")
                 continue
-            anchored.setdefault((event.at, event.when), []).append(sound_line(sound, event.place))
+            if sound.role == "comic":
+                if comic_used:
+                    continue
+                comic_used = True
+            if event.phrase or sound.kind == MUSIC:
+                scene_cues.append(sound_line(sound, event.place,
+                    anchor=event.phrase or by_id[event.at].text, end_anchor=event.end_phrase,
+                    edge="start" if event.when in (BEFORE, WITH) else "end", occurrence=event.occurrence))
+            else:
+                anchored.setdefault((event.at, event.when), []).append(sound_line(sound, event.place))
         pauses = dict(staging.pauses)
+        holds = []
 
         items: list[str] = []
         previous: Utterance | None = None
@@ -210,27 +245,37 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             # Keep each member's anchored sounds in its own branch, starting together.
             next_is_joint = (bool(utterance.sources) and position < len(ids)
                              and by_id[ids[position]].sources == utterance.sources)
-            if next_is_joint and not joint_sources:
-                joint_sources = utterance.sources
-                items.append("<parallel>")
-            if joint_sources:
-                items.append("<sequential>")
+            joined = bool(joint_sources)  # a later member of a line spoken together
             reactions: list[Utterance] = []
-            if not joint_sources and utterance.speaker != NARRATOR and utterance.kind != HEADING:
+            if not joined and not next_is_joint and utterance.speaker != NARRATOR and utterance.kind != HEADING:
                 while position < len(ids) and by_id[ids[position]].kind == REACTION \
                         and by_id[ids[position]].speaker not in (NARRATOR, utterance.speaker):
                     reactions.append(by_id[ids[position]])
                     position += 1
             same_passage = previous is not None and previous.speaker == utterance.speaker
-            if utterance.id in pauses:
+            if joined:
+                # The group's pause and barge-in come before it opens, so every member starts together.
+                if utterance.id in pauses:
+                    notes.append(f"{utterance.id}: no pause inside a line spoken together")
+            elif utterance.id in pauses:
                 if same_passage:
-                    notes.append(f"{utterance.id}: no pause inside one speaker's passage")
+                    # A full long turn may span several synthesis chunks. Anchor its ending.
+                    phrase = re.sub(r'[<>";~]', " ", previous.text).split()
+                    phrase = " ".join(phrase[-6:])
+                    if _WIDE_RE.search(phrase):
+                        phrase = phrase[-12:]
+                    holds.append(f'{phrase}~{PAUSE_SECONDS.get(pauses[utterance.id], 0.6):g}')
                 else:
                     items.append(_delay(PAUSE_SECONDS.get(pauses[utterance.id], 0.6)))
             # A line cut off with a dash is already talked over; one that ends normally gets barged in on.
-            if utterance.kind == INTERRUPT and previous is not None and not same_passage \
+            if utterance.kind == INTERRUPT and not joined and previous is not None and not same_passage \
                     and not previous.text.rstrip().endswith("—"):
                 items.append(BARGE_IN)
+            if next_is_joint and not joined:
+                joint_sources = utterance.sources
+                items.append("<parallel>")
+            if joint_sources:
+                items.append("<sequential>")
             items.extend(anchored.get((utterance.id, BEFORE), []))
             withs = anchored.get((utterance.id, WITH), [])
             durings = anchored.get((utterance.id, DURING), [])
@@ -242,13 +287,13 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                 for sound in durings:
                     items.extend(["<sequential>", _delay(spoken * 0.5), sound, "</sequential>"])
                 if reactions:
-                    items.append("<sequential>")
-                    items.append(_delay(spoken * 0.6))
+                    items.extend(['<parallel reaction="true">', '<sequential>'])
                     for index, reaction in enumerate(reactions):
                         if index:
                             items.append(_delay(0.4))
                         items.append(line(reaction))
                     items.append("</sequential>")
+                    items.append("</parallel>")
                 items.append("</parallel>")
             else:
                 items.append(line(utterance))
@@ -277,9 +322,11 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
                           for name, value in staging.positions if name in speakers)
         if scene_index:
             out.append(SCENE_PAUSE)
-        if loops or room or stage:
+        if loops or room or stage or holds or scene_cues:
             attrs = (f' room="{room}"' if room else "") + (f' stage="{stage}"' if stage else "")
-            out.extend([f"<parallel{attrs}>", *loops, "<sequential>", *items, "</sequential>", "</parallel>"])
+            if holds:
+                attrs += f' holds="{";".join(holds)}"'
+            out.extend([f"<parallel{attrs}>", *loops, *scene_cues, "<sequential>", *items, "</sequential>", "</parallel>"])
         else:
             out.extend(items)
     return "\n".join(out)

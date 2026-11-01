@@ -121,7 +121,7 @@ class CompileBasicTests(unittest.TestCase):
         lines = script.split("\n")
         # insert_cue places a cue after the opening phrase, as the Single-pass rules ask.
         self.assertEqual(lines[0], "narrator: The kettle had just begun to whistle when the doorbell rang. [tense, low] Nora froze.")
-        self.assertEqual(lines[1], "Tom: Are you expecting anyone?")
+        self.assertEqual(lines[1].replace(' resume="true"', ""), "Tom: Are you expecting anyone?")
         self.assertIn("Nora: No, [shaky breath]", script)  # one word: no place for a cue, the event still closes it
         self.assertIn("The bell rang again, <emphasis>longer this time</emphasis>.", script)
         self.assertIn("Tom: Stay [hushed, urgent] <slow>behind</slow> me,", script)
@@ -165,6 +165,23 @@ class CompileAdvancedTests(unittest.TestCase):
         self.assertEqual(len(list(iter_sound_nodes(joint.children[0]))), 0)
         self.assertEqual(len(list(iter_sound_nodes(joint.children[1]))), 1)
 
+    def test_joint_quote_pause_and_cues_apply_to_every_member(self):
+        from h3_app.drama3.guided.schema import scenes_from_units
+
+        source = segment_source('“We agree,” they said together.')
+        utterances = attribute_units(source, {"s1": ("Mia", "Tom")})
+        draft = Draft(utterances, scenes_from_units(utterances, []),
+                      directions={"u1": Direction(cue="excited"), "u2": Direction(cue="excited")},
+                      staging={"c1": Staging(pauses=(("u1", "long"), ("u2", "short")))})
+        notes = []
+        script = compile_script(draft, advanced=True, notes=notes)
+        checked(self, script)
+        # The pause comes before the group, so both voices still start together.
+        self.assertIn("<#1.2#>\n<parallel>\n<sequential>", script)
+        self.assertNotIn("<#0.6#>", script)
+        self.assertEqual(script.count("[excited]"), 2, script)
+        self.assertIn("u2: no pause inside a line spoken together", notes)
+
     def museum(self):
         u = [
             Utterance("u1", "narrator", "The last visitor left an hour ago."),
@@ -199,8 +216,9 @@ class CompileAdvancedTests(unittest.TestCase):
         script = compile_script(self.museum(), advanced=True, notes=notes)
         tree = checked(self, script)
         lines = script.split("\n")
-        self.assertEqual(lines[0], '<parallel stage="Maya=-0.4, Arthur=0.4">')
-        self.assertEqual(lines[1], '<sound name="hum" loop="true" volume="0.4" duration="25">'
+        self.assertIn('holds="', lines[0])
+        self.assertIn('~1.2"', lines[0])
+        self.assertEqual(lines[1].replace(' resume="true"', ''), '<sound name="hum" loop="true" volume="0.4" duration="25">'
                                    "Low ventilation hum in an empty stone gallery</sound>")
         # Maya's line carries the far scrape partway through and Arthur's reaction in a gap of it.
         block = script.split("Maya: Did you hear", 1)[0].rsplit("<parallel>", 1)[1]
@@ -211,14 +229,14 @@ class CompileAdvancedTests(unittest.TestCase):
         # Arthur's passage stays one take: the long pause before u5 is refused, u6 barges in.
         self.assertIn("night since the new heating went in.\nArthur: I checked", script)
         self.assertIn("<#0.6#>\n<#-0.3#>\nMaya: Look at the sarcophagus.", script)
-        self.assertIn("u5: no pause inside one speaker's passage", notes)
+        self.assertFalse(any("no pause" in note for note in notes))
         # Scene two: room, two loops, the stinger with its line, static before the radio voice.
         self.assertIn('<#0.8#>\n<parallel room="large_hall">', script)
         self.assertIn('<sound name="static" duration="4" pan="0.6">', script)
         self.assertIn("Vance: <walkie_talkie> Dispatch to the museum, [urgent, brisk] come in!", script)
         self.assertIn("Maya: <near><intimate_whisper> Arthur, we have to go.", script)
         self.assertEqual([sound.name for sound in iter_sound_nodes(tree)], ["hum", "scrape", "hum", "drone", "hit", "static"])
-        self.assertEqual(len(notes), 1, notes)
+        self.assertEqual(len(notes), 0, notes)
 
     def test_invalid_staging_is_dropped_with_notes_and_the_script_stays_valid(self):
         draft = self.museum()
@@ -279,6 +297,15 @@ SOUND = {"sounds": [{"name": "rain", "kind": "ambience", "prompt": "Light rain o
 
 
 class GuidedWriterTests(unittest.TestCase):
+    def test_speaker_tag_name_does_not_take_a_named_slot_id(self):
+        from h3_app.prompt_writers.drama3_guided import _assign_ids
+
+        slots = [{"speaker_id": 2, "name": "Alice"}]
+        ids = _assign_ids(["Speaker 2", "Alice"], slots, None)
+        self.assertEqual(ids["Alice"], 2)
+        self.assertNotEqual(ids["Speaker 2"], 2)
+        self.assertEqual(_assign_ids(["Speaker 3", "Alice"], slots, None), {"Speaker 3": 3, "Alice": 2})
+
     def test_preview_length_check_ignores_non_cjk_unicode(self):
         import json
         from h3_app.drama3.guided.schema import StageError, parse_voices
@@ -336,7 +363,8 @@ class GuidedWriterTests(unittest.TestCase):
         self.assertIn("in 4 Guided steps", status, status)
         self.assertEqual(title, "The Doorbell")
         self.assertEqual([(entry["speaker_id"], entry["name"]) for entry in cast], [(0, "narrator"), (1, "Tom"), (2, "Nora")])
-        self.assertIn('<sound name="rain" loop="true"', script)
+        self.assertIn('name="rain"', script)
+        self.assertIn('perspective="in_world"', script)
         self.assertIn("<|speaker:1|> <intimate_whisper> Stay [hushed, urgent] <emphasis>behind</emphasis> me,", script)
         self.assertEqual({sound["name"] for sound in sounds}, {"rain", "doorbell"})
         self.assertNotIn("missing or reworded", status)

@@ -499,3 +499,39 @@ for each chunk. Remix an older result to produce a new file with aligned subtitl
 With Word-by-word subtitles on, every take is aligned (not only multi-line chunks), its word
 times follow effects and placement like the line times, and alignment caches that hold only line
 times are aligned again.
+
+
+## Automatic immersive staging
+
+Both Single-pass and Guided can now choose social textures (market chatter, crowds),
+group reactions, subjective emotional sound and restrained comic accents according to
+the content. A sincere scene can remain quiet. Named characters' laughter and other
+vocal reactions stay with their reference voice; background sounds should not invent
+intelligible dialogue. Guided carries source character profiles and shared beat notes
+into voice design, direction and sound without another user step.
+
+Advanced sound tags support `role="physical|social|group_reaction|emotional|comic|transition"`
+and `perspective="in_world|subjective|editorial"`. Editorial/subjective sounds bypass the
+scene room. Old scripts without metadata retain their room routing. `duration_class`
+selects `accent` (1 second), `reaction` (3 seconds) or `texture` (25 seconds); an explicit
+`duration` takes precedence. The generated asset retains its natural tail.
+
+A sound directly inside its scene's parallel block can set `anchor="exact phrase"`,
+`edge="start|end"` and `occurrence="1"` to follow the selected speech take. Alignment
+runs automatically when these controls need it, independently of the subtitle setting;
+failed word alignment falls back to a matching line boundary. Use a distinctive phrase
+and count occurrences within that block. A loop may also set `end_anchor="phrase"`,
+`fade="0.5"` and `resume="true"` to enter, withdraw and continue the same asset across
+blocks. Anchored score entrances do not add an artificial scene-opening delay.
+
+For a deliberate hold inside a continuous passage, the enclosing parallel supports
+`holds="preceding phrase~1.2"` (semicolon-separated for multiple holds). This inserts
+silence into the dry performance after synthesis, allowing the atmosphere and room
+response to continue; it does not force separate speech requests. Compatible character,
+distance and device effects are retained together in Guided.
+
+Short replies in a nested `parallel reaction="true"` enter a measured gap in the
+principal performance, falling back to a late entry based on its actual duration.
+Nested physical effects no longer count as speech in the bed's ducking sidechain.
+
+Sound tags also support `envelope="0:0.3,0.5:1,1:0"`: 2–8 increasing relative-time/gain points within 0–1, for score rises and withdrawals. Guided supplies the same string in a sound entry. Automation is applied before speech ducking.

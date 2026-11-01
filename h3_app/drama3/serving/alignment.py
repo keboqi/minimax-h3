@@ -10,6 +10,7 @@ import tempfile
 
 from . import audio
 from .planner import spoken_text
+from .cue_timing import shifted_time
 
 
 def _validate(lines, bounds, words, duration):
@@ -142,12 +143,15 @@ def repair_result(path, runtime, *, free_gpu, hf_token=None):
                 lines=tuple(line["text"] for line in lines), text=chunk["text"]))
             bounds, words = align_take(take, root, runtime, free_gpu=free_gpu, hf_token=hf_token)
             origin, scale = float(placement["start"]), float(placement["scale"])
+            holds = placement.get("holds", [])
+            def placed(value, *, end=False):
+                return origin + shifted_time(value, holds, end=end) * scale
             for line, (start, end), timed in zip(lines, bounds, words):
-                line["start"] = round(min(duration, origin + start / rate * scale), 3)
-                line["end"] = round(min(duration, origin + end / rate * scale), 3)
-                line["words"] = [{"text": text, "start": round(origin + a * scale, 3),
-                                  "end": round(min(duration, origin + b * scale), 3)}
-                                 for text, a, b in timed if origin + a * scale < duration]
+                line["start"] = round(min(duration, placed(start / rate)), 3)
+                line["end"] = round(min(duration, placed(end / rate, end=True)), 3)
+                line["words"] = [{"text": text, "start": round(placed(a), 3),
+                                  "end": round(min(duration, placed(b, end=True)), 3)}
+                                 for text, a, b in timed if placed(a) < duration]
             chunk["subtitle_timing"] = "aligned"
         except JobCancelled:
             raise

@@ -10,6 +10,7 @@ from h3_app.workflows.drama3 import NAME_LINE
 
 from .rooms import SCENE_ROOMS, scene_room_name
 from .speaker_effects import extract_speaker_effects, has_speaker_effects, strip_speaker_effects
+from h3_app.drama3.sound_policy import DURATION_CLASSES, PERSPECTIVES, SOUND_ROLES, sound_perspective, gain_envelope
 
 SPEAKER_LINE_RE = re.compile(r"^<\|speaker:(\d+)\|>\s*(.*)$")
 # An opening tag may carry attributes: <parallel room="small_room" stage="Mia=-0.4">.
@@ -50,6 +51,15 @@ class SoundNode:
     duration: int = 5
     pan: tuple[float, float] | None = None  # (start, end) position, -1 left to 1 right
     distance: str = ""  # "near", "far", or "" for as recorded
+    role: str = ""
+    perspective: str = ""  # empty preserves legacy room routing
+    anchor: str = ""
+    end_anchor: str = ""
+    edge: str = "end"
+    occurrence: int = 1
+    fade: float = 1.0
+    resume: bool = False
+    envelope: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,8 @@ class ParallelNode:
     children: tuple["TreeNode", ...]
     room: str = ""  # the scene's room (``rooms.SCENE_ROOMS``), heard by its in-world voices
     stage: tuple[tuple[str, float], ...] = ()  # (speaker, position -1 left to 1 right) in this scene
+    holds: tuple[tuple[str, float], ...] = ()
+    reaction: bool = False
 
 
 TreeNode = Union[
@@ -104,17 +116,25 @@ def parse_sound_tag(raw_tag: str) -> SoundNode | None:
     if "duration" in attrs:
         try:
             duration = int(round(float(attrs["duration"])))
-        except ValueError:
+        except (ValueError, OverflowError):
             duration = default_duration
     elif body_dur_match:
         try:
             duration = int(round(float(body_dur_match.group(1))))
-        except ValueError:
+        except (ValueError, OverflowError):
             duration = default_duration
     else:
         duration = default_duration
     duration = max(1, min(duration, 47))
 
+    if "duration" not in attrs and attrs.get("duration_class") in DURATION_CLASSES:
+        duration = DURATION_CLASSES[attrs["duration_class"]]
+    role = attrs.get("role", "")
+    role = role if role in SOUND_ROLES else ""
+    perspective = attrs.get("perspective", "")
+    perspective = perspective if perspective in PERSPECTIVES else ""
+    if role:
+        perspective = sound_perspective(role, "", perspective)
     name = " ".join(attrs.get("name", "").split()).strip()
     if not name:
         name = default_sound_name(body)
@@ -127,6 +147,14 @@ def parse_sound_tag(raw_tag: str) -> SoundNode | None:
         duration=duration,
         pan=parse_pan(attrs.get("pan", "")),
         distance=distance if distance in ("near", "far") else "",
+        role=role,
+        perspective=perspective,
+        anchor=attrs.get("anchor", ""), end_anchor=attrs.get("end_anchor", ""),
+        edge="start" if attrs.get("edge") == "start" else "end",
+        occurrence=int(_bounded_number(attrs.get("occurrence", "1"), 1, 100)),
+        fade=_bounded_number(attrs.get("fade", "1"), 0.01, 5.0),
+        resume=attrs.get("resume") == "true",
+        envelope=gain_envelope(attrs.get("envelope", "")),
     )
 
 
@@ -146,6 +174,21 @@ def parse_pan(value: str) -> tuple[float, float] | None:
 def sound_placement_attrs(node: SoundNode) -> list[str]:
     """The ``pan`` and ``distance`` attributes that place ``node``, as written in a tag."""
     attrs = []
+    if node.role:
+        attrs.append(f'role="{node.role}"')
+    if node.perspective:
+        attrs.append(f'perspective="{node.perspective}"')
+    for key in ("anchor", "end_anchor"):
+        if getattr(node, key):
+            attrs.append(f'{key}="{getattr(node, key).replace(chr(34), chr(39))}"')
+    if node.anchor or node.end_anchor:
+        attrs.extend([f'edge="{node.edge}"', f'occurrence="{node.occurrence}"'])
+    if node.fade != 1.0:
+        attrs.append(f'fade="{node.fade:g}"')
+    if node.resume:
+        attrs.append('resume="true"')
+    if node.envelope:
+        attrs.append('envelope="' + ','.join(f'{t:g}:{g:g}' for t, g in node.envelope) + '"')
     if node.pan is not None:
         start, end = node.pan
         attrs.append(f'pan="{start:g}"' if start == end else f'pan="{start:g},{end:g}"')
@@ -176,6 +219,14 @@ def staging_problems(tag: str) -> list[str]:
     return problems
 
 
+def _bounded_number(value: str, low: float, high: float) -> float:
+    try:
+        number = float(value)
+        return max(low, min(number, high)) if number == number else low
+    except (ValueError, TypeError):
+        return low
+
+
 def parse_parallel_attrs(tag: str, resolve: Callable[[str], str | None] | None = None) -> dict[str, Any]:
     """The ``room`` and ``stage`` of a ``<parallel ...>`` tag; invalid values are left out.
 
@@ -188,7 +239,13 @@ def parse_parallel_attrs(tag: str, resolve: Callable[[str], str | None] | None =
         name = " ".join(match.group(1).split())
         label = (resolve(name) if resolve else None) or name
         stage.append((label, max(-1.0, min(float(match.group(2)), 1.0))))
-    return {"room": scene_room_name(attrs.get("room", "")), "stage": tuple(stage)}
+    holds = []
+    for item in attrs.get("holds", "").split(";"):
+        phrase, sep, seconds = item.rpartition("~")
+        if sep and phrase.strip():
+            holds.append((phrase.strip(), _bounded_number(seconds, 0.1, 3.0)))
+    return {"room": scene_room_name(attrs.get("room", "")), "stage": tuple(stage), "holds": tuple(holds),
+            "reaction": attrs.get("reaction") == "true"}
 
 
 def default_sound_name(description: str) -> str:

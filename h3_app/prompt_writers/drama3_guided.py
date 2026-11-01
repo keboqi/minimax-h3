@@ -153,11 +153,10 @@ def _assign_ids(names: list[str], slots: list[dict], fixed: dict[str, int] | Non
         return {name: lookup[identity(name)] for name in names}
     by_name = {identity(slot["name"]): int(slot["speaker_id"]) for slot in slots if str(slot.get("name") or "").strip()}
     reserved = {int(slot["speaker_id"]) for slot in slots}
-    ids: dict[str, int] = {}
+    ids: dict[str, int] = {name: by_name[identity(name)] for name in names if identity(name) in by_name}
     for name in names:
-        if identity(name) in by_name:
-            ids[name] = by_name[identity(name)]
-        elif (match := re.fullmatch(r"speaker (\d+)", name.strip(), re.IGNORECASE)):
+        # Named slots go first, so "Speaker 2" never takes the ID of a slot named in this cast.
+        if name not in ids and (match := re.fullmatch(r"speaker (\d+)", name.strip(), re.IGNORECASE)):
             speaker_id = int(match.group(1))
             if 0 <= speaker_id < MAX_SPEAKERS and speaker_id not in set(ids.values()):
                 ids[name] = speaker_id
@@ -176,7 +175,7 @@ def _ordered_effects(effects) -> tuple[str, ...]:
     devices = {"phone_call", "walkie_talkie", "radio_broadcast", "megaphone", "old_gramophone", "bad_signal",
                "metallic_helmet"}
     unique = list(dict.fromkeys(effects))
-    return tuple(sorted(unique, key=lambda e: 0 if e in CHARACTER_EFFECTS else 2 if e in devices else 1))[:2]
+    return tuple(sorted(unique, key=lambda e: 0 if e in CHARACTER_EFFECTS else 2 if e in devices else 1))
 
 
 def write_drama3_guided(
@@ -238,6 +237,7 @@ def write_drama3_guided(
                 title = title or answer["title"]
                 utterances = attribute_units(source, answer["speakers"])
                 scenes = scenes_from_units(utterances, answer["scenes"])
+                roles = answer.get("roles", {})
     if kind == BRIEF:
         source_mode = "brief"
         brief_voices = "" if single else voices_line
@@ -289,7 +289,7 @@ def write_drama3_guided(
             return {}
 
     def sound_stage(batch):
-        request = "\n".join(filter(None, [language, sound_context, _scene_listing(batch, by_id)]))
+        request = "\n".join(filter(None, [language, f"Character profiles: {json.dumps(roles, ensure_ascii=False)}", sound_context, _scene_listing(batch, by_id)]))
         scene_ids = {scene.id for scene in batch}
         ids_in_batch = {uid for scene in batch for uid in scene.utterances}
         try:
