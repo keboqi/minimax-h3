@@ -15,6 +15,9 @@ from h3_app.errors import H3Error
 
 from . import media_type
 
+# A retry needs at least this much of the call's time budget left to be worth sending.
+MIN_RETRY_SECONDS = 10.0
+
 
 def api_key(temporary_key: str | None) -> str:
     """A key entered in the UI, else GEMINI_API_KEY; never stored."""
@@ -140,21 +143,27 @@ class Session:
     def generate(self, model: str, parts: list[dict[str, Any]], *, generation_config: dict[str, Any],
                  system_prompt: str | None = None, timeout: float = 600,
                  action: str = "prompt generation") -> dict[str, Any]:
-        """The raw generateContent reply for one user turn, retrying transient 429/5xx spikes."""
+        """The raw generateContent reply for one user turn, retrying transient 429/5xx spikes.
+
+        ``timeout`` bounds the whole call, retries included, not each attempt.
+        """
         body: dict[str, Any] = {"contents": [{"role": "user", "parts": parts}],
                                 "generationConfig": generation_config}
         if system_prompt is not None:
             body = {"systemInstruction": {"parts": [{"text": system_prompt}]}, **body}
+        deadline = time.monotonic() + timeout
         for attempt in range(3):
             response = self.http.post(
                 f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
                 headers={"x-goog-api-key": self.key, "Content-Type": "application/json"},
                 json=body,
-                timeout=timeout,
+                timeout=max(1.0, deadline - time.monotonic()),
             )
-            if response.ok or response.status_code not in (429, 502, 503, 504) or attempt == 2:
+            backoff = 1.5 * (attempt + 1)
+            if response.ok or response.status_code not in (429, 502, 503, 504) or attempt == 2 \
+                    or deadline - time.monotonic() < backoff + MIN_RETRY_SECONDS:
                 break
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(backoff)
         if not response.ok:
             raise error(response, action)
         return response.json()

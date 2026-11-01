@@ -272,6 +272,8 @@ class SettingsController:
         updates = []
         previous_presentation = (memory or {}).get("presentation", {})
         presentation = {}
+        previous_locked = (memory or {}).get("locked", {})
+        locked = {}
         previous_values = (memory or {}).get("values", before)
         for name in self.names:
             props = {
@@ -317,7 +319,16 @@ class SettingsController:
             if name in {"generation_mode", "steps", "scheduler"}:
                 props["interactive"] = True
                 if name in {"steps", "scheduler"} and plan.effective.generation_mode == "Turbo" and plan.effective.sampling.turbo_variant == PIKA_FLEX:
-                    props.update(interactive=False, value=getattr(plan.effective.sampling, name))
+                    # Pika Flex fixes these. Write the fixed value only when it is not
+                    # already shown, so a refresh does not echo it over the control.
+                    locked[name] = getattr(plan.effective.sampling, name)
+                    props["interactive"] = False
+                    props.pop("value", None)
+                    if previous_locked.get(name) != locked[name]:
+                        props["value"] = locked[name]
+                elif name in previous_locked:
+                    # Leaving the lock shows the stored value again.
+                    props["value"] = current[name]
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
             if (
@@ -368,6 +379,7 @@ class SettingsController:
             current["mode"] == "Reference media",
         )
         new_memory["presentation"] = presentation
+        new_memory["locked"] = locked
         new_memory["visibility"] = visibility
         old_visibility = (memory or {}).get("visibility", ())
         return (

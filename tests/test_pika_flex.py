@@ -266,7 +266,7 @@ class PikaDownloadTests(unittest.TestCase):
             cached.write_bytes(b"wrong")
             dest.write_bytes(b"previous")
             spec = h3_models.ModelSpec("repo", "loras", "weights", "test", expected_sha256=hashlib.sha256(b"right").hexdigest(), revision="pinned")
-            plan = {"spec": spec, "dest": dest, "revision": "pinned", "size": 5}
+            plan = {"key": "pika_flex_test", "spec": spec, "dest": dest, "revision": "pinned", "size": 5}
             with patch("huggingface_hub.hf_hub_download", return_value=str(cached)) as download:
                 with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
                     h3_models._download_model(plan, None, "[test]", False)

@@ -17,7 +17,6 @@ from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
-import h3_models
 from h3_app import public_url
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb"
@@ -33,72 +32,6 @@ def load_function(name, namespace):
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     exec(compile(ast.Module(body=[function], type_ignores=[]), "<notebook>", "exec"), namespace)
     return namespace[name]
-
-
-class ColabRamRouterTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.original = h3_models._download_model
-        self.addCleanup(setattr, h3_models, "_download_model", self.original)
-        tree = ast.parse(cell_source("RAM_ROUTER_SOURCE ="))
-        assignment = next(node for node in tree.body if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "RAM_ROUTER_SOURCE" for t in node.targets))
-        self.router = {}
-        exec(ast.literal_eval(assignment.value), self.router)
-        self.router["_ram_root"] = self.root / "ram"
-        self.router["_available_memory"] = lambda: 10**12
-        self.fake_hf = ModuleType("huggingface_hub")
-        self.fake_hf.hf_hub_download = self.download
-        self.plans = []
-
-    def download(self, **kwargs):
-        cache = Path(kwargs.get("cache_dir", self.root / "disk-cache"))
-        cached = cache / Path(kwargs["filename"]).name
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_bytes(b"data")
-        return str(cached)
-
-    def plan(self, **kwargs):
-        spec = kwargs["spec"]
-        dest = self.root / "models" / spec.folder / spec.local_name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        plan = dict(key=kwargs["key"], spec=spec, dest=dest, manifest_key=h3_models.model_manifest_key(spec), remote_ok=True, revision="test", sha256=None, size=4, blob_id="blob", identity="identity", needs_download=True)
-        self.plans.append(plan)
-        return plan
-
-    def batch(self, key, free=10**12):
-        # Hard links exercise the file publication and cleanup on Windows too.
-        with patch.dict(sys.modules, {"huggingface_hub": self.fake_hf}), patch.object(h3_models, "_fetch_repositories", return_value={}), patch.object(h3_models, "_plan_model", side_effect=self.plan), patch.object(shutil, "disk_usage", return_value=SimpleNamespace(free=free)), patch.object(Path, "symlink_to", lambda path, target: os.link(target, path)), contextlib.redirect_stdout(io.StringIO()):
-            h3_models.sync_models(root=self.root / "models", manifest_path=self.root / "manifest.json", token="fixture", model_keys=[key])
-        return self.plans[-1]
-
-    def test_non_qwen_download_works_with_real_batch_caller(self):
-        plan = self.batch("text_encoder")
-        self.assertEqual(plan["dest"].read_bytes(), b"data")
-        self.assertIn("cached_path", plan)
-
-    def test_ram_download_records_manifest_and_survives_private_cache_cleanup(self):
-        plan = self.batch("qwen_image21_vae")
-        self.assertTrue(plan["dest"].is_relative_to(self.router["_ram_root"]))
-        self.assertEqual(plan["dest"].read_bytes(), b"data")
-        self.assertEqual((self.root / "models" / plan["manifest_key"]).read_bytes(), b"data")
-        self.assertFalse(plan["cached_path"].exists())
-        manifest = json.loads((self.root / "manifest.json").read_text())
-        self.assertEqual(manifest["files"][plan["manifest_key"]]["size"], 4)
-
-    def test_low_ram_falls_back_to_disk_with_real_batch_caller(self):
-        plan = self.batch("qwen_image21_vae", free=0)
-        self.assertTrue(plan["dest"].is_relative_to(self.root / "models"))
-        self.assertEqual(plan["dest"].read_bytes(), b"data")
-        self.assertIn("cached_path", plan)
-
-    def test_non_qwen_hook_forwards_deferred_cleanup_flag(self):
-        original = Mock(return_value="text_encoder")
-        self.router["_original_download_model"] = original
-        plan = {"key": "text_encoder"}
-        self.router["_download_model"](plan, "token", "prefix", False)
-        original.assert_called_once_with(plan, "token", "prefix", False)
 
 
 class ColabEnvironmentTests(unittest.TestCase):

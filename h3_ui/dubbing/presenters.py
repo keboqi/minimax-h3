@@ -186,7 +186,7 @@ def inspector_heading(session: sessions.Session | None, focus: int | None) -> st
         return '<div class="h3-dub-inspector-head"><h3>No line chosen</h3><p>Click a line or the timeline.</p></div>'
     line = lines[focus]
     problem = pipeline.take_problems(session).get(focus)
-    warning = (f'<p class="h3-dub-take-warning"><strong>Take failed.</strong> {escape(problem)}. '
+    warning = (f'<p class="h3-dub-take-warning"><strong>Take failed.</strong> {escape(problem.rstrip("."))}. '
                'Use Preview or New take to retry, then generate the dub again.</p>' if problem else '')
     return (f'<div class="h3-dub-inspector-head"><h3>Line {focus + 1} of {len(lines)}</h3>'
             f'<p>{clock(line["start"])} – {clock(line["end"])} · {line["end"] - line["start"]:.1f} s · '
