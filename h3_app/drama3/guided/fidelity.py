@@ -30,6 +30,33 @@ def words(text: str, *, repairs: bool = False) -> list[str]:
     return [token.casefold() for token in _TOKENS.findall(text)]
 
 
+# Chinese characters commonly typed for one another that read the same in context (的/地/得 as
+# the particle de), so swapping within a group never changes what is heard.
+_HOMOPHONE_SLIPS = tuple(frozenset(group) for group in ("的地得", "在再", "以已", "象像", "做作", "青轻", "帐账"))
+_HAN = re.compile(r"[\u3400-\u9fff]")
+
+
+def _homophone_slips(old: list[str], new: list[str]) -> bool:
+    """Whether ``new`` only swaps characters within a homophone slip group, one for one."""
+    return (0 < len(old) == len(new) <= 2
+            and all(a == b or any(a in group and b in group for group in _HOMOPHONE_SLIPS)
+                    for a, b in zip(old, new)))
+
+
+def _restores_name(before: list[str], inserted: list[str], after: list[str], names: set[str]) -> bool:
+    """Whether ``inserted`` completes a cast name the source wrote short ("韩竟是" for "韩立竟是")."""
+    if not inserted or len(inserted) > 2 or not all(_HAN.fullmatch(token) for token in inserted):
+        return False
+    added = "".join(inserted)
+    for name in names:
+        for cut in range(1, len(name)):
+            head, rest = name[:cut], name[cut:]
+            if (rest.startswith(added) and "".join(before[-cut:]) == head
+                    and "".join(after[:len(rest) - len(added)]) == rest[len(added):]):
+                return True
+    return False
+
+
 def fix_pattern(old: str) -> re.Pattern:
     """A repair target as a whole word, so "the the" never matches inside "the theory"."""
     return re.compile(r'(?<!\w)' + re.escape(old) + r'(?!\w)' if old.isascii() else re.escape(old))
@@ -118,11 +145,13 @@ def validate_source_fidelity(source: str, script: str, *, single: bool = False,
         expected.extend(tokens)
         labels.extend([int(label.group(1)) if label else None] * len(tokens))
         origins.extend([unit] * len(tokens))
-    actual, speakers = [], []
+    actual, speakers, names = [], [], set()
     for tokens, speaker in _performed_turns(script, _joint_quotes(units), sequential_joint):
         match = re.fullmatch(r'Speaker (\d+)', speaker)
         actual.extend(tokens)
         speakers.extend([int(match.group(1)) if match else None] * len(tokens))
+        if not match and len(speaker) >= 2 and _HAN.search(speaker) and speaker in source:
+            names.add(speaker)
     if not expected:
         return
     for op, a, b, c, d in SequenceMatcher(None, expected, actual, autojunk=False).get_opcodes():
@@ -138,5 +167,9 @@ def validate_source_fidelity(source: str, script: str, *, single: bool = False,
             continue  # a repeated word, not a repeated turn or sentence
         if op == 'insert' and expansion:
             continue
+        if op == 'replace' and _homophone_slips(expected[a:b], actual[c:d]):
+            continue  # a same-sound character slip, such as 年青 for 年轻
+        if op == 'insert' and _restores_name(expected[:a], actual[c:d], expected[a:], names):
+            continue  # a character dropped from a cast name
         raise H3Error("The writer omitted, reordered or changed source words beyond a spelling repair. "
                       "Your source was kept; retry the enhancement.")

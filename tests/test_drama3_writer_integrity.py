@@ -121,6 +121,18 @@ class WriterIntegrityTests(unittest.TestCase):
         with self.assertRaises(H3Error):
             validate_source_fidelity('Mia: No.\nMia: No.', '<|speaker:0|> No.')
 
+    def test_chinese_homophone_slips_and_short_names_are_repairs(self):
+        source = ('韩立走进去。众人自然知道韩竟是一名元婴级修士，都是不小地商号。\n'
+                  '“怎么看起来这般年青？”韩立问道。')
+        repaired = ('narrator: 韩立走进去。众人自然知道韩立竟是一名元婴级修士，都是不小的商号。\n'
+                    '韩立: 怎么看起来这般年轻？\nnarrator: 韩立问道。')
+        validate_source_fidelity(source, repaired)
+        for changed in (repaired.replace('年轻', '年清'),      # same sound, but not a slip group
+                        repaired.replace('韩立竟', '韩又竟'),  # an insertion that is no cast name
+                        repaired.replace('不小的', '不大的')):  # a changed word
+            with self.subTest(changed=changed), self.assertRaises(H3Error):
+                validate_source_fidelity(source, changed)
+
     def test_important_short_narrator_action_keeps_requested_direction(self):
         lines = [Utterance('u1', 'Mia', 'We are safe now.'), Utterance('u2', 'narrator', 'The gun fired.')]
         draft = Draft(lines, [Scene('c1', ('u1', 'u2'))], directions={'u2': Direction(cue='sudden, stark')})
