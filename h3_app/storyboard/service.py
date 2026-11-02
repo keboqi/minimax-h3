@@ -168,34 +168,38 @@ class StoryboardService:
         """Replace one of a scene's frames or reference lists, copying new files in.
 
         The editor hands back Gradio's cached copies of files it already shows; their
-        names match the stored ones, so those are kept instead of copied again.
-        Returns False when nothing changed.
+        names match the stored ones, so those are kept instead of copied again. A
+        branch's scenes still point at the original's media folder, so any stored file
+        the storyboard already uses counts. Returns False when nothing changed.
         """
         if field not in model.MEDIA_FIELDS:
             raise ValueError(f"Unknown scene media {field!r}.")
         directory = self.media_dir(storyboard_id)
 
-        def keep(item):
-            if isinstance(item, dict):
-                item = item.get("path") or item.get("name")
-            source = Path(str(item))
-            stored = directory / source.name
-            if stored.is_file():
-                return str(stored)
-            if not source.is_file():
-                raise H3Error(f"{source.name} is no longer available. Add it again.")
-            directory.mkdir(parents=True, exist_ok=True)
-            destination = directory / f"{model.new_id()}{source.suffix.lower()}"
-            shutil.copy2(source, destination)
-            return str(destination)
-
-        if field in ("first_image", "last_image"):
-            stored = keep(value) if value else None
-        else:
-            items = value if isinstance(value, (list, tuple)) else [value] if value else []
-            stored = [keep(item) for item in items if item]
-
         def edit(board):
+            used = {Path(path).name: path for other in board["scenes"] for path in model.media_paths(other)}
+
+            def keep(item):
+                if isinstance(item, dict):
+                    item = item.get("path") or item.get("name")
+                source = Path(str(item))
+                if source.name in used and Path(used[source.name]).is_file():
+                    return used[source.name]
+                stored = directory / source.name
+                if stored.is_file():
+                    return str(stored)
+                if not source.is_file():
+                    raise H3Error(f"{source.name} is no longer available. Add it again.")
+                directory.mkdir(parents=True, exist_ok=True)
+                destination = directory / f"{model.new_id()}{source.suffix.lower()}"
+                shutil.copy2(source, destination)
+                return str(destination)
+
+            if field in ("first_image", "last_image"):
+                stored = keep(value) if value else None
+            else:
+                items = value if isinstance(value, (list, tuple)) else [value] if value else []
+                stored = [keep(item) for item in items if item]
             scene = board["scenes"][self.scene_index(board, scene_id)]
             if model.scene_media(scene)[field] == stored:
                 return False
@@ -244,7 +248,10 @@ class StoryboardService:
                 "prefix_frames": prefix_frames, "seed": int(seed), "job_id": job_id, "inputs": inputs,
             }
             scene["takes"].append(take_id)
-            if scene["in_use"] is None or scene["in_use"] not in board["takes"]:
+            # A take made from the scene as it is now replaces one made from older inputs;
+            # later takes of the same inputs leave the choice in use alone.
+            current = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
+            if current is None or current["inputs"] != inputs:
                 scene["in_use"] = take_id
         return self.change(owner, storyboard_id, edit)[0]
 

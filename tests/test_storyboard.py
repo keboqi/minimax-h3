@@ -428,6 +428,33 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertEqual([document["takes"][t]["seed"] for t in scene["takes"]], [10, 11, 12])
         self.assertEqual(scene["in_use"], scene["takes"][0])
 
+    def test_regenerating_an_outdated_scene_uses_the_new_take_and_unblocks_flows(self):
+        storyboard_id = self.make("flow")
+        list(self.handlers.generate_remaining(storyboard_id, SimpleNamespace()))
+        first = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        self.service.update_scene("a", storyboard_id, first, prompt="prompt 1 changed")
+        statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
+        self.assertEqual(statuses[-1], "Generated the remaining scenes.")
+        document = self.service.load("a", storyboard_id)
+        self.assertEqual(sb.scene_states(document), ["done", "done"])
+        self.assertEqual(document["scenes"][0]["in_use"], document["scenes"][0]["takes"][-1])
+
+    def test_branch_media_matched_by_name_stays_current(self):
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        picture = self.root / "upload" / "frame.png"
+        picture.parent.mkdir()
+        picture.write_bytes(b"png")
+        self.service.set_scene_media("a", storyboard_id, scene_id, "last_image", str(picture))
+        stored = Path(self.service.load("a", storyboard_id)["scenes"][0]["last_image"])
+        branch = self.service.branch("a", storyboard_id)
+        cached = self.root / "gradio-cache" / stored.name
+        cached.parent.mkdir()
+        cached.write_bytes(b"png")
+        # Rendering the branch hands back Gradio's copy of the original's file.
+        self.assertFalse(self.service.set_scene_media("a", branch, scene_id, "last_image", str(cached)))
+        self.assertEqual(self.service.load("a", branch)["scenes"][0]["last_image"], str(stored))
+
 
 if __name__ == "__main__":
     unittest.main()
