@@ -141,7 +141,7 @@ def bind_gallery_view(
         if view.soundstage_view is not None:
             event.then(
                 result_view_updates, inputs=view.selected,
-                outputs=[view.soundstage_view, view.dub_view],
+                outputs=[view.soundstage_view, view.dub_view, view.player, view.audio],
                 queue=False, show_progress="hidden", api_name=False,
             )
         image_destination_sync = getattr(view.selected, "h3_image_destination_sync", None)

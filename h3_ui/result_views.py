@@ -77,4 +77,11 @@ def result_view_values(selected) -> tuple[str, str]:
 
 
 def result_view_updates(selected):
-    return tuple(panel_update(value) for value in result_view_values(selected))
+    """Updates for (Soundstage view, dub player, video preview, audio preview) in Media.
+
+    A dub's player has its own picture and voices, so it replaces the plain preview; selecting
+    other media shows that preview again. A Soundstage view follows the audio preview.
+    """
+    soundstage, dub = result_view_values(selected)
+    preview = gr.update(visible=False) if dub else gr.skip()
+    return panel_update(soundstage), panel_update(dub), preview, preview

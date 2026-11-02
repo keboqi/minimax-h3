@@ -88,6 +88,22 @@ class MediaResultViewTests(unittest.TestCase):
         self.assertIn('name="h3-dub-voice-media-talk.fr"', result_view_values(str(output_dir / "talk.fr.mp3"))[1])
         self.assertEqual(dub_html(None, scope="dub"), "")
 
+    def test_dub_player_replaces_the_plain_preview_in_media(self):
+        from h3_ui.result_views import result_view_updates
+
+        output_dir, _folder = self.dub()
+        for output in ("talk.fr.mp4", "talk.fr.mp3"):
+            _soundstage, dub, video, audio = result_view_updates(str(output_dir / output))
+            self.assertTrue(dub["visible"])
+            self.assertEqual((video["visible"], audio["visible"]), (False, False))
+        # Other media keep the preview their selection showed.
+        plain = self.root / "song.mp3"
+        plain.write_bytes(b"")
+        _soundstage, dub, video, audio = result_view_updates(str(plain))
+        self.assertFalse(dub["visible"])
+        self.assertNotIn("visible", video)
+        self.assertNotIn("visible", audio)
+
     def test_dubs_from_before_player_json_use_the_alignment_record(self):
         output_dir, _folder = self.dub(file="alignment.json", key="player")
         self.assertIn("Bonjour.", result_view_values(str(output_dir / "talk.fr.mp3"))[1])
