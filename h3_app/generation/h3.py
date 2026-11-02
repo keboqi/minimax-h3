@@ -19,7 +19,7 @@ from h3_models import MODEL_SPECS
 from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS
 
 from .construct_graph import construct_graph
-from .finish_video import finish_video, make_finishing_retry, retain_finishing
+from .finish_video import finish_video, make_finishing_retry
 from .preparation import prepare_h3
 from .requests import H3Request
 from .results import GenerationUpdate
@@ -341,7 +341,6 @@ def generate(
             job.finishing_offsets[job.variant] = sum(
                 entry["variant"] == job.variant for entry in job.ledger
             )
-            retain_finishing(job, request, prepared, execution_snapshot)
         write_snapshot(
             source, {**execution_snapshot, "stage": "H3 output before post-processing"}
         )

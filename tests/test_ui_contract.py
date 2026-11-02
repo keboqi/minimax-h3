@@ -624,7 +624,7 @@ class UiContractTests(unittest.TestCase):
         accepts = {
             fn_id for fn_id, block_fn in self.demo.fns.items()
             if getattr(block_fn.fn, "__module__", "") in {"h3_ui.job_admission", "h3_ui.jobs_view"}
-            and getattr(block_fn.fn, "__name__", "") in {"accept", "accept_retry", "accept_finishing", "accept_project"}
+            and getattr(block_fn.fn, "__name__", "") in {"accept", "accept_retry", "accept_finishing"}
         }
         restarted = {
             dependency["trigger_after"] for dependency in self.config["dependencies"]
@@ -646,7 +646,7 @@ class UiContractTests(unittest.TestCase):
         tab_nodes = layout["children"]
         self.assertEqual(
             [self.components[node["id"]]["props"]["label"] for node in tab_nodes],
-            ["Create", "Projects", "Media", "Jobs", "System", "API & workflows"],
+            ["Create", "Media", "Jobs", "System", "API & workflows"],
         )
         engine_tabs = next(
             c

@@ -1,6 +1,6 @@
-"""Durable workspace metadata. Request content is saved only by explicit consent.
+"""Durable workspace metadata. Request content is never saved.
 
-SQLite is the authority for jobs, project ownership and asset annotations. The
+SQLite is the authority for jobs, ownership and asset annotations. The
 media listing is a rebuildable index; rebuilding it never discards annotations.
 All connections are short lived so backup and threaded Gradio callbacks agree.
 """
@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import secrets
-import shutil
 import sqlite3
 import time
 import uuid
@@ -65,9 +64,6 @@ class WorkspaceStore:
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, created REAL NOT NULL,
                     request_key TEXT, digest TEXT, payload TEXT NOT NULL,
                     UNIQUE(owner, request_key));
-                CREATE TABLE IF NOT EXISTS projects (
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
-                    job_id TEXT NOT NULL, created REAL NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS assets (
                     id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, kind TEXT NOT NULL,
                     modified REAL NOT NULL, available INTEGER NOT NULL, metadata TEXT NOT NULL);
@@ -78,7 +74,6 @@ class WorkspaceStore:
                     asset_id TEXT PRIMARY KEY REFERENCES assets(id));
                 CREATE INDEX IF NOT EXISTS assets_kind_available_modified ON assets(kind, available, modified DESC);
                 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
-                CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner, created);
             """
             )
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -205,21 +200,6 @@ class WorkspaceStore:
                     json.dumps(payload),
                 ),
             )
-            # Only an explicitly saved project may retain workflow/request content.
-            for row in db.execute(
-                "SELECT id, payload FROM projects WHERE job_id=? AND owner=?",
-                (job.id, job.owner),
-            ).fetchall():
-                project = json.loads(row["payload"])
-                project["ledger"] = job.ledger
-                project["variant_seeds"] = job.variant_seeds
-                project["failed_variants"] = sorted(job.failed_variants)
-                if job.finishing_request:
-                    project["finishing"] = job.finishing_request
-                db.execute(
-                    "UPDATE projects SET payload=? WHERE id=?",
-                    (json.dumps(project), row["id"]),
-                )
 
     def jobs(self, owner=None, limit=128):
         with self.connect() as db:
@@ -246,107 +226,6 @@ class WorkspaceStore:
                 "SELECT payload FROM jobs WHERE owner=? AND request_key=?", (owner, key)
             ).fetchone()
         return json.loads(row[0]) if row else None
-
-    def save_project(self, owner, job, name):
-        if job.owner != owner:
-            raise ValueError("Project ownership mismatch.")
-        values = job.values()
-        project_id = uuid.uuid4().hex
-        directory = self.root / "projects" / project_id
-        directory.mkdir(parents=True)
-        copied = {}
-
-        def retain(value):
-            if isinstance(value, list):
-                return [retain(item) for item in value]
-            if isinstance(value, dict):
-                return {
-                    k: retain(v) if k in {"path", "name", "video", "audio"} else v
-                    for k, v in value.items()
-                }
-            if value is None:
-                return None
-            path = Path(value)
-            if not path.is_file():
-                raise ValueError(
-                    "A source file expired. Upload it again before saving this project."
-                )
-            if str(path) not in copied:
-                destination = directory / (uuid.uuid4().hex + path.suffix)
-                shutil.copy2(path, destination)
-                copied[str(path)] = str(destination)
-            return copied[str(path)]
-
-        try:
-            for index in job.media_indices:
-                values[index] = retain(values[index])
-            payload = {
-                "family": job.family,
-                "values": values,
-                "media_indices": job.media_indices,
-                "output_indices": job.output_indices,
-                "ledger": job.ledger,
-                "variant_seeds": job.variant_seeds,
-                "failed_variants": sorted(job.failed_variants),
-                "finishing": job.finishing_request,
-                "canvas_request": job.canvas_request,
-                "source_asset_ids": job.source_asset_ids,
-            }
-            with self.connect() as db:
-                db.execute(
-                    "INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        project_id,
-                        owner,
-                        (name.strip() or "Untitled project")[:120],
-                        job.id,
-                        time.time(),
-                        json.dumps(payload),
-                    ),
-                )
-            return project_id
-        except BaseException:
-            shutil.rmtree(directory, ignore_errors=True)
-            raise
-
-    def projects(self, owner):
-        with self.connect() as db:
-            return [
-                dict(row)
-                for row in db.execute(
-                    "SELECT id, name, job_id, created FROM projects WHERE owner=? ORDER BY created DESC",
-                    (owner,),
-                )
-            ]
-
-    def project(self, owner, project_id):
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT payload FROM projects WHERE id=? AND owner=?",
-                (project_id, owner),
-            ).fetchone()
-        if row is None:
-            raise ValueError("This project is unavailable for this browser owner.")
-        return json.loads(row[0])
-
-    def project_for_job(self, owner, job_id):
-        projects = [p for p in self.projects(owner) if p["job_id"] == job_id]
-        return (
-            {**self.project(owner, projects[0]["id"]), "id": projects[0]["id"]}
-            if projects
-            else None
-        )
-
-    def delete_project(self, owner, project_id):
-        self.project(owner, project_id)  # Validate ownership before changing files.
-        with self.connect() as db:
-            db.execute(
-                "DELETE FROM projects WHERE id=? AND owner=?", (project_id, owner)
-            )
-        directory = (self.root / "projects" / project_id).resolve()
-        if directory.parent != self.root / "projects":
-            raise ValueError("Invalid project directory.")
-        shutil.rmtree(directory, ignore_errors=True)
 
     def index_asset(self, path, kind, metadata=None):
         path = Path(path).resolve()

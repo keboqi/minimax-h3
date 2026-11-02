@@ -39,7 +39,6 @@ class AppViews:
     fibo2: gr.Group | None = None
     dubbing: gr.Column | None = None
     create_tab: gr.Tab | None = None
-    projects: gr.Column | None = None
     jobs_tab: gr.Tab | None = None
     # Every top-level tab, in order; Jobs polls only while it is the open one.
     main_tabs: tuple = ()
@@ -139,8 +138,6 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Dub & Translate", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
-        with gr.Tab("Projects", id="projects") as projects_tab:
-            projects = gr.Column(elem_classes=["h3-projects-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs") as jobs_tab:
@@ -173,9 +170,8 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
         fibo2,
         dubbing,
         create_tab,
-        projects,
         jobs_tab,
-        (create_tab, projects_tab, gallery_tab, jobs_tab, system_tab, api_tab),
+        (create_tab, gallery_tab, jobs_tab, system_tab, api_tab),
     )
 
 

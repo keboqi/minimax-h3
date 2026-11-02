@@ -24,10 +24,6 @@ def backup_workspace(store, destination):
         raise ValueError("Write the backup outside the workspace state directory.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory, store.connect() as db:
-        # A read transaction pins the SQLite snapshot and prevents project
-        # deletion from committing while its retained files are being copied.
-        db.execute("BEGIN")
-        projects = [row[0] for row in db.execute("SELECT id FROM projects")]
         database = Path(directory) / "workspace.sqlite3"
         with closing(sqlite3.connect(database)) as target:
             db.backup(target)
@@ -43,11 +39,6 @@ def backup_workspace(store, destination):
                     ),
                 )
                 archive.write(database, "workspace.sqlite3")
-                for project_id in projects:
-                    root = store.root / "projects" / project_id
-                    for path in root.iterdir():
-                        if path.is_file() and not path.is_symlink():
-                            archive.write(path, path.relative_to(store.root).as_posix())
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)
@@ -71,6 +62,7 @@ def restore_workspace(source, destination):
                 or "\\" in entry.filename
             ):
                 raise ValueError("Unsafe backup path.")
+            # Older backups also hold retained saved-project files, which are no longer used.
             if entry.filename not in {"workspace.sqlite3", "manifest.json"} and (
                 len(path.parts) != 3 or path.parts[0] != "projects"
             ):
@@ -78,32 +70,10 @@ def restore_workspace(source, destination):
             if not (destination / path).resolve().is_relative_to(destination):
                 raise ValueError("Unsafe backup path.")
         destination.mkdir(parents=True, exist_ok=True)
-        archive.extractall(destination)
+        archive.extract("workspace.sqlite3", destination)
     with closing(sqlite3.connect(destination / "workspace.sqlite3")) as db:
         if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise ValueError("The restored database failed its integrity check.")
-        old_root = Path(manifest["root"])
-
-        def relocate(value):
-            if isinstance(value, dict):
-                return {key: relocate(item) for key, item in value.items()}
-            if isinstance(value, list):
-                return [relocate(item) for item in value]
-            if isinstance(value, str):
-                normalized = value.replace("\\", "/")
-                prefix = str(old_root / "projects").replace("\\", "/") + "/"
-                if normalized.startswith(prefix):
-                    return str(
-                        destination / "projects" / Path(normalized[len(prefix) :])
-                    )
-            return value
-
-        for row in db.execute("SELECT id, payload FROM projects").fetchall():
-            db.execute(
-                "UPDATE projects SET payload=? WHERE id=?",
-                (json.dumps(relocate(json.loads(row[1]))), row[0]),
-            )
-        db.commit()
     return WorkspaceStore(destination)
 
 

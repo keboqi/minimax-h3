@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import time
 import uuid
-from contextlib import nullcontext
 
 import gradio as gr
 
@@ -106,8 +105,8 @@ def table(jobs, selected=None):
     )
 
 
-def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=None, other_tabs=()):
-    """Jobs in ``root``; saved projects in ``projects_root``, or an accordion in Jobs without one.
+def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
+    """Jobs in ``root``.
 
     Jobs polls every 2 seconds only while this session has unfinished jobs or
     ``jobs_tab`` is open, so an idle page sends nothing and the server can scale down.
@@ -166,15 +165,6 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=No
                         [], label="Retained H3 source variant", value=None
                     )
                     finishing = gr.Button("Retry finishing only", interactive=False)
-                with gr.Accordion(
-                    "Save as project", open=False, elem_classes=["h3-gallery-card"]
-                ):
-                    gr.Markdown(
-                        "**Saving retains the selected job's prompt and source files on this server.** "
-                        "Saved projects appear in **Projects**."
-                    )
-                    project_name = gr.Textbox(label="Project name", max_lines=1)
-                    save_project = gr.Button("Save prompt, settings & sources")
                 status = gr.Markdown(elem_classes=["h3-job-action-status"])
         ticket = gr.Textbox(visible=False)
         # Active at load so the first tick finds unfinished jobs; it then stops when idle.
@@ -184,11 +174,11 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=No
         with gr.Accordion("Browser ownership and recovery", open=False):
             gr.Markdown(
                 "Technical job history survives server restarts. Unsaved prompts and uploaded "
-                "input copies expire after 30 minutes or a restart. Save a project to retain them. "
+                "input copies expire after 30 minutes or a restart. "
                 "This browser's signed ownership cookie expires after 30 days. "
                 "Recovery never automatically repeats inference. "
-                "Keep a recovery key to reopen jobs and projects after losing browser cookies. "
-                "The key grants access to your saved content; keep it private."
+                "Keep a recovery key to reopen jobs after losing browser cookies. "
+                "The key grants access to your job history; keep it private."
             )
             reconcile = gr.Button("Reconnect to backend history")
             recovery_key = gr.Textbox(
@@ -199,40 +189,6 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=No
                 label="Restore browser recovery key", type="password"
             )
             recover_owner = gr.Button("Restore owner and reload")
-
-    with projects_root if projects_root is not None else root:
-        with (
-            nullcontext() if projects_root is not None
-            else gr.Accordion("Saved projects", open=False)
-        ):
-            if projects_root is not None:
-                with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
-                    gr.Markdown(
-                        "## Projects\nRequests you saved from **Jobs**, with their prompt, settings and "
-                        "source files. Run one again or remove it.",
-                        scale=4,
-                    )
-                    refresh_projects = gr.Button("Refresh projects", scale=0, min_width=180)
-            gr.Markdown(
-                "Projects belong to this browser owner. Provider keys are never saved."
-            )
-            project = gr.Dropdown([], label="Saved project", value=None)
-            saved_prompt = gr.Textbox(
-                label="Saved prompt / caption / lyrics", interactive=False, lines=5
-            )
-            saved_settings = gr.JSON(label="Saved request settings")
-            with gr.Row():
-                if projects_root is None:
-                    refresh_projects = gr.Button("Refresh projects")
-                run_project = gr.Button("Run saved request", variant="primary")
-            project_files = gr.File(
-                label="Project outputs", file_count="multiple", interactive=False, visible=False
-            )
-            project_status = gr.Markdown(elem_classes=["h3-job-action-status"])
-            confirm_project_delete = gr.Checkbox(
-                label="Delete the selected project and its retained inputs"
-            )
-            delete_project = gr.Button("Delete project")
 
     def owner_key(request: gr.Request):
         owner = require_owner(request)
@@ -355,134 +311,6 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=No
             return f"Backend history is unavailable: {exc}. No work was replayed."
 
     reconcile.click(reconnect, outputs=status, queue=False, api_name=False)
-
-    def project_choices(request: gr.Request):
-        rows = JOBS.store.projects(require_owner(request))
-        return gr.update(choices=[(p["name"], p["id"]) for p in rows], value=None)
-
-    refresh_projects.click(
-        project_choices, outputs=project, queue=False, api_name=False
-    )
-
-    def save(job_id, name, request: gr.Request):
-        owner = require_owner(request)
-        job = JOBS.owned(owner, job_id)
-        try:
-            project_id = JOBS.store.save_project(owner, job, name)
-        except ValueError as exc:
-            raise gr.Error(str(exc)) from exc
-        choices = project_choices(request)
-        return {
-            **choices,
-            "value": project_id,
-        }, "Project saved, including prompt and source media."
-
-    save_project.click(
-        save,
-        inputs=[selected, project_name],
-        outputs=[project, status],
-        queue=False,
-        api_name=False,
-    )
-
-    def inspect_project(project_id, request: gr.Request):
-        if not project_id:
-            return "", None
-        saved = JOBS.store.project(require_owner(request), project_id)
-        callback = JOBS.callbacks.get(saved["family"])
-        names = getattr(callback, "job_input_names", ())
-        if len(names) != len(saved["values"]):
-            return "", {
-                "engine": saved["family"],
-                "status": "Engine unavailable for inspecting this saved request.",
-            }
-        values = dict(zip(names, saved["values"], strict=True))
-        content = "\n\n".join(
-            str(values.pop(name))
-            for name in ("prompt", "caption", "lyrics")
-            if values.get(name)
-        )
-        for index in saved["media_indices"]:
-            value = values.get(names[index])
-            values[names[index]] = (
-                [Path(item).name for item in value]
-                if isinstance(value, list)
-                else Path(value).name
-                if isinstance(value, str)
-                else value
-            )
-        return content, {
-            "engine": saved["family"],
-            "settings": values,
-            "canvas": saved.get("canvas_request"),
-        }
-
-    project.change(
-        inspect_project,
-        inputs=project,
-        outputs=[saved_prompt, saved_settings],
-        queue=False,
-        api_name=False,
-    )
-
-    def remove_project(project_id, confirmed, request: gr.Request):
-        if not confirmed:
-            raise gr.Error("Select the project deletion confirmation first.")
-        owner = require_owner(request)
-        JOBS.store.project(owner, project_id)
-        if any(
-            job.finished_at is None and job.retry_of == project_id
-            for job in JOBS.list_owned(owner)
-        ):
-            raise gr.Error(
-                "Wait for this project's active run to finish before deleting it."
-            )
-        JOBS.store.delete_project(owner, project_id)
-        JOBS.forget_project(owner, project_id)
-        return (
-            project_choices(request),
-            False,
-            "Project and retained inputs deleted. Generated outputs remain in Media.",
-        )
-
-    delete_project.click(
-        remove_project,
-        inputs=[project, confirm_project_delete],
-        outputs=[project, confirm_project_delete, project_status],
-        queue=False,
-        api_name=False,
-    )
-
-    def accept_project(project_id, request: gr.Request):
-        owner = require_owner(request)
-        saved = JOBS.store.project(owner, project_id)
-        callback = JOBS.callbacks.get(saved["family"])
-        if callback is None:
-            raise gr.Error(
-                "This project's engine is unavailable in the current installation."
-            )
-        job = JOBS.accept(
-            owner,
-            saved["family"],
-            saved["values"],
-            callback=callback,
-            media_indices=saved["media_indices"],
-            output_indices=saved["output_indices"],
-            key=uuid.uuid4().hex,
-            retry_of=project_id,
-        )
-        job.variant_seeds = {int(k): v for k, v in saved["variant_seeds"].items()}
-        job.replay_indices = tuple(sorted(job.variant_seeds))
-        job.replay_seeds = (
-            tuple(job.variant_seeds[i] for i in job.replay_indices)
-            if job.family == "h3"
-            else ()
-        )
-        job.replay_ledger = saved["ledger"]
-        job.canvas_request = saved.get("canvas_request")
-        job.source_asset_ids = saved.get("source_asset_ids", job.source_asset_ids)
-        job.persist()
-        return job.id
 
     def inspect_job(job_id, request: gr.Request):
         if not job_id:
@@ -618,9 +446,6 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=No
             queue=False,
             api_name=False,
         ), [files, status]),
-        (run_project.click(
-            accept_project, inputs=project, outputs=ticket, queue=False, api_name=False
-        ), [project_files, project_status]),
     ):
         watch_acceptance(accepted)
         dispatched = accepted.success(

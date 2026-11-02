@@ -99,97 +99,6 @@ class WorkspaceStoreTests(unittest.TestCase):
             self.jobs.accept("a", "h3", ["prompt"], key="click").id, job.id
         )
 
-    def test_project_retains_inputs_and_exact_replay_across_restart(self):
-        source = self.root / "source.png"
-        source.write_bytes(b"source bytes")
-
-        def callback(*args):
-            return None
-
-        job = self.jobs.accept(
-            "a",
-            "h3",
-            ["Private prompt", str(source)],
-            callback=callback,
-            media_indices=(1,),
-        )
-        job.variant_seeds[0] = 123
-        job.fail(RuntimeError("failed"))
-        job.finished_at = 1
-        project_id = self.store.save_project("a", job, "Example")
-        job.persist()
-        self.jobs.close()
-        source.unlink()
-        self.jobs = JobCoordinator()
-        self.jobs.configure(self.store)
-        self.jobs.register_callback("h3", callback)
-        restored = self.jobs.owned("a", job.id)
-        self.assertEqual(restored.values()[0], "Private prompt")
-        self.assertEqual(Path(restored.values()[1]).read_bytes(), b"source bytes")
-        retry = self.jobs.retry("a", job.id)
-        self.assertEqual(retry.replay_seeds, (123,))
-        with self.assertRaises(ValueError):
-            self.store.delete_project("outsider", project_id)
-        self.store.delete_project("a", project_id)
-        self.assertEqual(self.store.projects("a"), [])
-
-    def test_saved_finishing_restores_original_model_policy_and_seed(self):
-        from h3_app.generation.finish_video import retain_finishing, restore_finishing
-        from h3_app.generation.requests import H3Request
-        from h3_app.contracts import GENERATION_FIELDS
-        from h3_app.catalog import UI_DEFAULTS
-        from h3_app.model_types import ModelConfig, ModelProfile
-
-        request = H3Request.from_values(
-            {name: UI_DEFAULTS.get(name) for name in GENERATION_FIELDS}
-        )
-        prepared = SimpleNamespace(
-            actual_seed=123,
-            resolved_width=512,
-            resolved_height=512,
-            models=ModelConfig(
-                {"original": ModelProfile("Original", "fl2va", "ref2va")},
-                "original",
-                "encoder",
-                "video-vae",
-                "audio-vae",
-            ),
-        )
-        job = self.jobs.accept("a", "h3", ["prompt"])
-        retain_finishing(job, request, prepared, {"seed": 123})
-        self.store.save_project("a", job, "Finishing")
-        self.jobs.close()
-        self.jobs = JobCoordinator()
-        self.jobs.finishing_factory = lambda saved: restore_finishing(saved, None)
-        with patch("h3_app.generation.finish_video.make_finishing_retry") as factory:
-            self.jobs.configure(self.store)
-        restored = self.jobs.owned("a", job.id)
-        actual_request, actual_prepared, _, snapshot = factory.call_args.args
-        self.assertEqual(actual_request.values(), request.values())
-        self.assertEqual(actual_prepared.actual_seed, 123)
-        self.assertEqual(actual_prepared.models, prepared.models)
-        self.assertEqual(snapshot, {"seed": 123})
-        self.assertIn(0, restored.finishing_callbacks)
-
-    def test_deleting_text_only_project_clears_restored_private_content(self):
-        job = self.jobs.accept("a", "h3", ["Private prompt"])
-        job.observe_submission(
-            "backend", "token", {"1": {"inputs": {"text": "Private prompt"}}}
-        )
-        project_id = self.store.save_project("a", job, "Text-only")
-        self.jobs.close()
-        self.jobs = JobCoordinator()
-        self.jobs.configure(self.store)
-        restored = self.jobs.owned("a", job.id)
-        self.assertEqual(restored.values(), ["Private prompt"])
-        self.store.delete_project("a", project_id)
-        self.jobs.forget_project("a", project_id)
-        self.assertIsNone(restored.snapshot_json)
-        self.assertIsNone(restored.finishing_request)
-        self.assertNotIn("Private prompt", json.dumps(restored.ledger))
-        with self.assertRaises(ValueError):
-            restored.values()
-
     def test_job_canvas_transforms_copies_and_preserves_snapshot(self):
         from h3_app.image_canvas import apply_job_canvas
 
@@ -462,7 +371,7 @@ class WorkspaceStoreTests(unittest.TestCase):
                 resume.set()
             self.assertTrue(accepted.result(timeout=3).snapshot_json)
 
-    def test_backup_restore_relocates_saved_inputs_and_keeps_owner_identity(self):
+    def test_backup_restore_keeps_job_history_and_owner_identity(self):
         from h3_app.workspace_admin import backup_workspace, restore_workspace
 
         owner = self.store.verify_owner(self.store.issue_owner())
@@ -471,12 +380,11 @@ class WorkspaceStoreTests(unittest.TestCase):
         job = self.jobs.accept(
             owner, "h3", ["Private prompt", str(source)], media_indices=(1,)
         )
-        project_id = self.store.save_project(owner, job, "Backup fixture")
+        job.persist()
         backup = backup_workspace(self.store, self.root / "backup.zip")
         restored = restore_workspace(backup, self.root / "restored")
-        project = restored.project(owner, project_id)
-        self.assertEqual(Path(project["values"][1]).read_bytes(), b"saved input")
-        self.assertTrue(Path(project["values"][1]).is_relative_to(restored.root))
+        self.assertEqual(restored.job(owner, job.id)["id"], job.id)
+        self.assertNotIn("Private prompt", json.dumps(restored.jobs(owner)))
         self.assertEqual(restored.recovery_owner(self.store.recovery_key(owner)), owner)
         with self.assertRaises(ValueError):
             restore_workspace(backup, restored.root)

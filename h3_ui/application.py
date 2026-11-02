@@ -943,10 +943,6 @@ def build_ui() -> gr.Blocks:
             VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS,
         )
     ]
-    from h3_app.generation.finish_video import restore_finishing
-
-    JOBS.finishing_factory = lambda job: restore_finishing(job, _generation_services())
-
     return compose_ui(
         BootstrapCatalog(
             AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,

@@ -30,7 +30,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/model_types.py, model_service.py | Model selection, lazy provisioning through `ensure_models`, and TensorRT engine lifecycle |
 | h3_models.py | Model inventory and manifest transactions locked across threads and processes |
 | h3_app/jobs.py | Bounded admission, immutable requests, input leases, durable technical ledgers, exact retries, browser ownership, cancellation and the application GPU lease |
-| h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
+| h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, asset annotations, backup/restore |
 | h3_ui/prompt_controller.py, model_controller.py, media_controller.py | The H3 prompt writer, model downloads, and the Media library with its finishing jobs and H3 input-image tools. Their service records hold only the runtime and late-bound ComfyUI, graph and file effects; `application.py` builds one of each (`PROMPTS`, `MODELS`, `MEDIA`) |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/capabilities.py | Create tasks, engines and their navigation labels |
@@ -58,7 +58,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/engines/ | Create engines that own their view, bindings and handlers (FLUX 3, MOSS-Image, Fibo 2.0). Each registers an `EngineFeature` in `FEATURES` and receives `EngineDeps` explicitly; controls.py holds the shared Generate/Interrupt/progress, prompt-writer, resolution-preset and saved-settings helpers |
 | h3_ui/h3/ | The H3 composer: view.py, services.py and sections/ (one dataclass per visible section); layout.py computes resolution, result-format and frame control updates; handlers.py holds `H3Handlers` (batched generation, the default-settings API, settings summaries and result lookup) |
 | h3_ui/events/ | H3 and workspace-wide event registration (generation, prompt, resolution, input upscale, gallery, system, layout) |
-| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding, owner-scoped job presentation, and the Projects tab of saved requests |
+| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding, and owner-scoped job presentation |
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
 | h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |

@@ -9,11 +9,12 @@ parameter ordering and return shape.
 The database is `<GRADIO_OUTPUT_DIR>/.h3-workspace/workspace.sqlite3` by default,
 so it persists with the outputs. An existing database in the previous location
 is copied on first startup, retaining ownership, history and annotations.
-Private inputs and project files remain in
+Private temporary inputs remain in
 `<GRADIO_OUTPUT_DIR parent>/h3-workspace`. `H3_WORKSPACE_DIR` explicitly overrides
 both locations. Modal places workspace state at `/data/h3-workspace` on the
-persisted data volume. SQLite schema 1 stores ownership, jobs, projects, assets
-and annotations. A newer schema is rejected rather than overwritten. Generated
+persisted data volume. SQLite schema 1 stores ownership, jobs, assets
+and annotations. Databases from before the Projects removal keep an unused
+`projects` table. A newer schema is rejected rather than overwritten. Generated
 media and schema-1 technical sidecars stay in their existing directories.
 The database directory is blocked from Gradio file serving. New media register
 their thumbnails and catalog records when saved; ordinary browsing and server
@@ -29,7 +30,7 @@ through a validated engine value, including engines outside the initial task.
 
 | Area | Behavior |
 |---|---|
-| Shell | One top bar: Create tasks, then Projects, Media, Jobs, System and API/workflows, with status; a task opens Create from any tab; task-filtered engine choices and remembered engines |
+| Shell | One top bar: Create tasks, then Media, Jobs, System and API/workflows, with status; a task opens Create from any tab; task-filtered engine choices and remembered engines |
 | H3 | Compose (inputs, prompt, recipe, output essentials) beside Preview & generate; Fine-tune tabs for every other setting; mobile Compose/Generate/Preview/Settings links |
 | Engines | H3, LTX, Qwen, Music and YuE2 share the shell, ownership, GPU queue and guarded prompt review |
 | References | Stable slots/tags, shared sparse-to-dense translation, repair after replacement/removal |
@@ -37,7 +38,6 @@ through a validated engine value, including engines outside the initial task.
 | Jobs | Immutable UI acceptance, owner-scoped idempotency, pinned sources, bounded admission, stage/seed ledger, inspect/cancel/download |
 | Retry | Failed subsets reuse recorded seeds/configuration; unknown submission outcomes block replay; H3 finishing retries use completed raw sources |
 | Recovery | Signed browser ownership and recovery keys; technical records survive restart; reconnect observes exact backend history/queue and collects existing outputs without automatic replay |
-| Projects | Save a job's private prompt/settings and source copies from **Save as project** in Jobs; the **Projects** tab inspects, runs and deletes saved requests; saved finishing state supports restart recovery |
 | Media | Typed pagination, search by filename/tags/technical settings, tags/favorites, stable IDs and lineage; bounded index batches; safe scoped deletion |
 | Comparison | Image reveal slider; two videos on elapsed time at native frame rates; shorter-duration timeline, drift correction, buffering pause, mute/A/B audio |
 | Canvas | Existing input-derived default; optional H3 conditioned Image fit/pad or fill/crop, effective dimensions and preview; transforms derived copies |
@@ -47,7 +47,7 @@ through a validated engine value, including engines outside the initial task.
 
 The server issues an HttpOnly, SameSite=Lax signed browser cookie. Its validity
 is 30 days, with renewal near expiry. It survives page reloads and process
-restart when workspace state is retained. Jobs and projects are scoped to this
+restart when workspace state is retained. Jobs are scoped to this
 owner. A recovery key restores access in a different browser; it is a bearer
 secret and should be kept privately. API session identities occupy a separate
 namespace and cannot claim a cookie owner's records by supplying its session ID.
@@ -56,19 +56,17 @@ Media library from other people with server access.
 
 Unsaved prompts, private replay graphs and request snapshots stay in memory.
 Technical SQLite records omit prompt/graph text, credentials and backend error
-or progress messages. Normal generation sidecars also omit prompts. Only the
-explicit Save project action writes full request content, replay graphs and
-copied sources to durable storage. Project deletion removes that content and
-invalidates loaded snapshots pointing into its source directory. Generated
-outputs retain the existing shared-library policy. Tags/favorites are shared
-library metadata, while projects and Jobs are private to their browser owner.
+or progress messages. Normal generation sidecars also omit prompts. Full
+request content, replay graphs and copied sources are never written to durable
+storage. Generated outputs retain the existing shared-library policy.
+Tags/favorites are shared library metadata, while Jobs are private to their
+browser owner.
 
 Admission allows eight nonterminal jobs per owner, 128 process-local records,
 2 MiB per request and 8 GiB of retained temporary inputs by default.
 `H3_JOB_MAX_INPUT_BYTES` changes the temporary-copy quota. Expired terminal
 requests are pruned every 30 seconds, 30 minutes after completion, and can be
-evicted earlier at capacity. Waiting/active sources do not expire. Explicit saved
-projects remain until deletion and are outside the temporary input quota.
+evicted earlier at capacity. Waiting/active sources do not expire.
 Technical database history remains durable; the displayed working set is bounded.
 
 File copies happen under a separate admission lock, leaving monitoring and
@@ -83,9 +81,9 @@ After restart, unfinished jobs are marked Recovering. Reconnect to backend
 history checks recorded prompt IDs. Pending work stays observed; interrupted
 application delivery/finishing is exposed for explicit recovery. A submission
 without a confirmed ID requires manual review. Nothing is automatically
-resubmitted. Exact replay after restart requires an explicitly saved project;
-technical history alone cannot reconstruct a private request. Missing sources
-and changed models/workflows reject replay.
+resubmitted. Technical history alone cannot reconstruct a private request, so
+failed-variant and finishing retries are available only until a restart.
+Missing sources and changed models/workflows reject replay.
 
 ## Backup, restore and rollback
 
@@ -95,9 +93,8 @@ Back up state separately from generated media:
 python -m h3_app.workspace_admin --state /path/to/h3-workspace backup /backups/h3-state.zip
 ```
 
-The command uses a consistent SQLite snapshot and includes explicitly saved
-project sources. Write the archive outside the state directory. It contains
-private project content and ownership signing state. Generated outputs, models
+The command uses a consistent SQLite snapshot. Write the archive outside the
+state directory. It contains ownership signing state. Generated outputs, models
 and ComfyUI inputs are not included; back them up separately.
 
 Stop H3, then restore into an empty directory:
@@ -106,13 +103,13 @@ Stop H3, then restore into an empty directory:
 python -m h3_app.workspace_admin --state /path/to/restored-state restore /backups/h3-state.zip
 ```
 
-Set `H3_WORKSPACE_DIR` to that directory before restarting. Restore relocates
-saved project source paths and preserves ownership/recovery keys. Generated
+Set `H3_WORKSPACE_DIR` to that directory before restarting. Restore preserves
+ownership/recovery keys. Saved-project files in older backups are skipped. Generated
 output paths require the original media paths or a separate media relocation.
 Unsafe archive paths, incompatible schemas and corrupt databases are rejected.
 
 Index rebuild marks unavailable files and refreshes derived technical metadata;
-it preserves identities, annotations, projects, ownership and idempotency.
+it preserves identities, annotations, ownership and idempotency.
 Schema-1 sidecars accept missing optional asset/job/lineage fields from old files.
 Rolling back application code must preserve the state directory and media.
 Older code can leave new SQLite state dormant. Back up before a future schema

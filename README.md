@@ -2,8 +2,8 @@
 
 A creative workspace for video, images, music, and audio production, with a
 standalone Gradio interface and deployment toolkit for NVIDIA Blackwell GPUs.
-Prism Studio brings multiple generation engines together with shared media,
-projects, and jobs. It provisions ComfyUI, the required models, and acceleration
+Prism Studio brings multiple generation engines together with shared media
+and jobs. It provisions ComfyUI, the required models, and acceleration
 tools for local and Modal deployments.
 
 Formerly the MiniMax H3 launcher. Existing launch commands, configuration keys,
@@ -16,7 +16,7 @@ Modal launches use the same UI.
 
 One top bar holds the navigation, so the centre of the window stays for the
 work: the Create tasks (Video, Image, Song, Soundstage, Dub & Translate), then
-Projects, Media, Jobs, System and API & workflows, with backend and job status
+Media, Jobs, System and API & workflows, with backend and job status
 at the right. Picking a task opens it from any tab; its engine choice sits at
 the top of Create. On narrow windows the bar stacks into scrolling rows.
 
@@ -102,8 +102,7 @@ section tags that follow the planned form.
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
 retries, and support separate H3 finishing retries. SQLite stores technical job
 history across restarts. A signed browser cookie and recovery key preserve
-ownership. Explicitly saved projects retain prompts/settings and copied sources;
-unsaved request content remains temporary. Recovery observes recorded backend
+ownership. Request content stays temporary and is never saved. Recovery observes recorded backend
 work and never automatically resubmits an ambiguous request.
 
 See the [workspace operating guide](docs/workspace.md) for retention,

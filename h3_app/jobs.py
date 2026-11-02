@@ -58,7 +58,6 @@ class Job:
     lease_lock: Any = field(default=None, repr=False)
     input_bytes: int = 0
     claimed: bool = False
-    finishing_request: dict | None = None
     finishing_callbacks: dict[int, Any] = field(default_factory=dict, repr=False)
     finishing_offsets: dict[int, int] = field(default_factory=dict)
     recoverable_sources: dict[int, str] = field(default_factory=dict)
@@ -66,7 +65,6 @@ class Job:
     canvas_request: dict | None = None
     source_asset_ids: list[str] = field(default_factory=list)
     recovered: bool = False
-    project_id: str | None = None
 
     def persist(self):
         if self.checkpoint is not None:
@@ -174,7 +172,6 @@ class JobCoordinator:
         self._reaper = None
         self.store = None
         self.callbacks = {}
-        self.finishing_factory = None
         self.history_outputs = None
         # Called with the family of each job that takes the GPU, before it runs;
         # lets out-of-process engines (Drama 3 servers) hand their VRAM back.
@@ -216,27 +213,10 @@ class JobCoordinator:
                     entry["state"] = "submission_unknown"
             job.claimed = True
             self.active[job.id] = job
-        self._restore_project(job)
         return job
 
     def register_callback(self, family, callback):
         self.callbacks[family] = callback
-        for job in self.records.values():
-            if job.family == family:
-                self._restore_project(job)
-
-    def _restore_project(self, job):
-        if self.store is None:
-            return
-        project = self.store.project_for_job(job.owner, job.id)
-        if project:
-            job.project_id = project["id"]
-            job.snapshot_json = json.dumps(project["values"])
-            job.callback = self.callbacks.get(job.family)
-            job.ledger = project["ledger"]
-            job.finishing_request = project.get("finishing")
-            if self.finishing_factory and job.finishing_request:
-                self.finishing_factory(job)
 
     def reconcile(self, owner, get):
         """Observe history/queue only. Missing/ambiguous submissions require review."""
@@ -485,47 +465,6 @@ class JobCoordinator:
             if job is None or job.owner != owner:
                 raise ValueError("This job is unavailable in the current session.")
             return job
-
-    def forget_project(self, owner, project_id):
-        """Clear private replay state loaded from a deleted saved project."""
-        root = (self.store.root / "projects" / project_id).resolve()
-
-        def contains(value):
-            if isinstance(value, dict):
-                return any(contains(item) for item in value.values())
-            if isinstance(value, (tuple, list)):
-                return any(contains(item) for item in value)
-            if isinstance(value, str):
-                try:
-                    return Path(value).is_absolute() and Path(
-                        value
-                    ).resolve().is_relative_to(root)
-                except (ValueError, OSError):
-                    return False
-            return False
-
-        with self.lock:
-            for job in self.records.values():
-                if job.owner == owner and (
-                    job.project_id == project_id
-                    or job.retry_of == project_id
-                    or job.snapshot_json
-                    and contains(job.values())
-                ):
-                    job.snapshot_json = None
-                    job.callback = None
-                    job.project_id = None
-                    job.finishing_callbacks.clear()
-                    job.finishing_request = None
-                    job.replay_ledger.clear()
-                    job.ledger = [
-                        {
-                            key: value
-                            for key, value in entry.items()
-                            if key not in {"graph_json", "error", "stage"}
-                        }
-                        for entry in job.ledger
-                    ]
 
     def references_path(self, path):
         """Protect managed sources used by accepted maintenance requests."""
