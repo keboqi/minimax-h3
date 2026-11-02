@@ -127,3 +127,4 @@ class BootstrapServices:
     select_gallery_media: Callable
     unload_all_models: Callable
     upscale_selected_input_images: Callable
+    storyboard_handlers: Any = None

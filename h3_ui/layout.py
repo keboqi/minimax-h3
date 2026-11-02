@@ -42,6 +42,7 @@ class AppViews:
     jobs_tab: gr.Tab | None = None
     # Every top-level tab, in order; Jobs polls only while it is the open one.
     main_tabs: tuple = ()
+    storyboard: gr.Column | None = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,8 @@ FORMAT_LAYOUT_OUTPUTS = (
     ("resolution_info", 14),
 )
 # Dub & Translate has no H3 output; its task keeps the H3 settings on Video.
-FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "TTS": "Audio", "Dub": "Video"}
+FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "Storyboard": "Video",
+                   "TTS": "Audio", "Dub": "Video"}
 TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dub & Translate"}
 
 
@@ -134,6 +136,8 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     moss_image = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Fibo 2.0", id="fibo2"):
                     fibo2 = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("Storyboard", id="storyboard"):
+                    storyboard = gr.Column(elem_classes=["h3-engine-view", "h3-storyboard-shell"])
                 with gr.Tab("Soundstage", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Dub & Translate", id="dub"):
@@ -172,6 +176,7 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
         create_tab,
         jobs_tab,
         (create_tab, gallery_tab, jobs_tab, system_tab, api_tab),
+        storyboard=storyboard,
     )
 
 

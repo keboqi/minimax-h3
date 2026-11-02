@@ -15,7 +15,7 @@ storage paths, and APIs remain compatible.
 Modal launches use the same UI.
 
 One top bar holds the navigation, so the centre of the window stays for the
-work: the Create tasks (Video, Image, Song, Soundstage, Dub & Translate), then
+work: the Create tasks (Video, Image, Song, Storyboard, Soundstage, Dub & Translate), then
 Media, Jobs, System and API & workflows, with backend and job status
 at the right. Picking a task opens it from any tab; its engine choice sits at
 the top of Create. On narrow windows the bar stacks into scrolling rows.
@@ -177,6 +177,7 @@ backends; GPU inference and deployment are validated separately.
   MOSS-Image, Fibo 2.0 and YuE2
 - [Media and finishing](docs/features/media.md): the library, comparison, SeedVR2, LTX
   upscaling, restoration, SDR to HDR and interpolation
+- [Storyboard](docs/features/storyboard.md) for long videos made of H3 scenes
 - [Soundstage](docs/features/drama3.md) and [Dub & Translate](docs/features/dubbing.md)
 - [Workspace operating guide](docs/workspace.md): storage, ownership, jobs and backups
 

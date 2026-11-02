@@ -16,9 +16,11 @@ from h3_app.progress import ProgressCallback, no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
-from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS
+from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS, STORYBOARD_NODES
+from h3_app.errors import H3Error
+from h3_app.media import history_output_candidates
 
-from .construct_graph import construct_graph
+from .construct_graph import StoryboardGraph, construct_graph
 from .finish_video import finish_video, make_finishing_retry
 from .preparation import prepare_h3
 from .requests import H3Request
@@ -45,6 +47,20 @@ def pika_sampling_profile(mode: str, adapter: str) -> dict[str, Any]:
     }
 
 
+def _storyboard_latents(runtime: RuntimeConfig, history: Mapping[str, Any]) -> dict[str, str]:
+    """Output-relative paths of a take's saved latents, by role."""
+    found = {}
+    for path in history_output_candidates(
+        runtime.output_dir, dict(history), frozenset({".safetensors"})
+    ):
+        relative = path.relative_to(runtime.output_dir.resolve()).as_posix()
+        # H3SaveAVLatent names stage-one files "<prefix>_stage1_<counter>_.safetensors".
+        found["stage_latent" if "_stage1_" in path.name else "latent"] = relative
+    if "latent" not in found:
+        raise H3Error("The take finished, but its latent wasn't saved, so later scenes can't continue from it.")
+    return found
+
+
 def generate(
     request: H3Request,
     services: GenerationServices,
@@ -52,7 +68,10 @@ def generate(
     *,
     run_context: Mapping[str, Any],
     progress: ProgressCallback = no_progress,
+    storyboard: StoryboardGraph | None = None,
+    storyboard_outputs: dict[str, str] | None = None,
 ) -> Iterator[GenerationUpdate]:
+    """``storyboard`` makes this a storyboard take; its saved latents land in ``storyboard_outputs``."""
     requested_values = request.values()
     requested_values.update(run_context)
     request = request.copy()
@@ -75,7 +94,14 @@ def generate(
             None,
             progress_status("Preparing inputs and building workflow", started=started),
         )
-        graph = construct_graph(request, prepared, services)
+        if storyboard is not None:
+            missing = STORYBOARD_NODES - prepared.available
+            if missing:
+                raise H3Error(
+                    "Missing storyboard nodes: " + ", ".join(sorted(missing))
+                    + ". Update provisioning and restart ComfyUI."
+                )
+        graph = construct_graph(request, prepared, services, storyboard)
 
         client_id = str(uuid.uuid4())
         websocket_note = None
@@ -330,6 +356,8 @@ def generate(
             return
         source = services.media.resolve_output(history, queued_at)
         fallback_video = source
+        if storyboard_outputs is not None:
+            storyboard_outputs.update(_storyboard_latents(runtime, history))
         job = CURRENT_JOB.get()
         if job is not None and request.finishing.postprocess != "None":
             # Retain only process-local policy objects, never model weights.

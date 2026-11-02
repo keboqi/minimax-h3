@@ -1,6 +1,6 @@
 # Long video storyboard plan
 
-Date: 2026-11-02. Status: proposed; no runtime changes or GPU validation performed.
+Date: 2026-11-02. Status: phases 1–3 implemented with a partial phase 4 (see Implementation notes); no GPU validation performed. User guide: [Storyboard](../features/storyboard.md).
 
 ## Decision and scope
 
@@ -115,6 +115,18 @@ New `h3_ui/storyboard/` package following the `h3_ui/drama3/` layout (`view.py`,
 3. **Task**: Storyboard task and tab, scene editor, takes, queue, export, Media skip for takes. Wire to jobs. UI contract tests for the task order and tab ids, in the style of the existing Gradio tests.
 4. **Writer and extras**: story to scenes, continue from Media, versions panel.
 5. **Validation on Modal (only when asked)**: a three-scene storyboard (flow, flow, cut) with Turbo + latent upscale + Spectrum. Check the seams frame by frame, check audio continuity, and compare flow scenes against the same scene generated as a cut. Record texture drift across at least five chained flow scenes, the known risk PrefixStream's own notes describe.
+
+## Implementation notes
+
+Where the build differs from the plan above:
+
+- **Storage**: one `storyboards` table; takes and versions live in the storyboard's JSON payload instead of their own tables. Schema 2 only adds that table.
+- **Jobs**: one job per run (a scene's takes, or the whole Generate remaining walk), not one per take. The run accepts each next scene only after the previous take is saved, so ordering is enforced inside the job.
+- **Trim**: takes keep their full clip, overlap included. Play all and Export drop each flow scene's overlap frames and the matching audio when joining; `H3SaveAVLatent` records the actual overlap as `h3_prefix_frames` in the latent file.
+- **Keyframes**: not dropped. Storyboard scenes use text-to-video or reference images only, so no first-frame keyframe can fall inside the protected head.
+- **Story to scenes**: splits the story by paragraph. Using the prompt writer for it is not built yet.
+- **Not built yet**: continue from a Media video, crossfade and dip-to-black joins, audio crossfade at cuts, SeedVR2 finish on export, the take-change confirmation dialog (the status line names the outdated scenes instead), storyboard size display.
+- **Post-processing and Regenerate**: storyboards force H3 post-processing off, and flow scenes refuse the H3 Regenerate refiner, so each take's video matches its saved latent.
 
 ## Open questions and risks
 

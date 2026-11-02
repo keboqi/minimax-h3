@@ -22,6 +22,9 @@ from h3_app.catalog import (
     PIKA_FLEX_SIGMAS,
     FUSED_MODULATION_NODE,
     H3_COMBINE_AV_LATENT_NODE,
+    H3_CONTINUATION_PREFIX_NODE,
+    H3_LOAD_AV_LATENT_NODE,
+    H3_SAVE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
     H3_IMAGE_SLICES_NODE,
     H3_LATENT_UPSCALE_STANDARD,
@@ -714,6 +717,9 @@ def finish_sampling(
     smart_stage_offload: bool = False,
     conditioning_cache_key: str | None = None,
     veda_dense_tail: bool = False,
+    continuation_ref: list[Any] | None = None,
+    continuation_frames: int = 39,
+    latent_output_prefix: str | None = None,
 ) -> None:
     result_format = normalize_result_format(result_format)
     stage_offload_enabled_ref: list[Any] | None = None
@@ -834,6 +840,17 @@ def finish_sampling(
             audio_latent=Graph.out(separated, 1),
         )
         combined_ref = Graph.out(combined)
+        if continuation_ref is not None:
+            if regenerate:
+                raise H3Error("Storyboard flow scenes can't use the H3 Regenerate refiner.")
+            # Re-pastes the full-resolution tail and replaces the stage-one mask.
+            combined_ref = Graph.out(graph.add(
+                H3_CONTINUATION_PREFIX_NODE, latent=combined_ref,
+                source=continuation_ref, context_frames=int(continuation_frames),
+            ))
+        if latent_output_prefix is not None:
+            graph.add(H3_SAVE_AV_LATENT_NODE, latent=Graph.out(initial_sampled),
+                      filename_prefix=f"{latent_output_prefix}_stage1")
         if regenerate:
             combined_ref = Graph.out(graph.add(
                 "H3RegeneratePrepareLatent", latent=combined_ref, audio_vae=audio_vae_ref,
@@ -870,6 +887,8 @@ def finish_sampling(
         )
         audio_samples = Graph.out(sampled)
     sampled_ref = Graph.out(sampled)
+    if latent_output_prefix is not None:
+        graph.add(H3_SAVE_AV_LATENT_NODE, latent=sampled_ref, filename_prefix=latent_output_prefix)
     if stage_model_offload:
         (
             _unused_conditioning,
@@ -1007,6 +1026,13 @@ class H3GraphOptions:
     # FL2VA only: Ref2VA never applies the bridge.
     semantic_bridge: bool = False
     semantic_bridge_alpha: float = 0.10
+    # Storyboard: output-relative latents of the previous take (full resolution,
+    # and stage one when latent upscale is on), and where this take saves its own.
+    continuation_source: str | None = None
+    continuation_stage_source: str | None = None
+    continuation_frames: int = 39
+    latent_output_prefix: str | None = None
+    output_prefix: str | None = None
 
 
 FL2VA_ONLY_OPTIONS = frozenset({"semantic_bridge", "semantic_bridge_alpha"})
@@ -1172,6 +1198,28 @@ def _build_h3_graph(
         )
     target_conditioning = Graph.out(target_h3, 0)
     initial_conditioning = Graph.out(initial_h3, 0)
+    target_latent = Graph.out(target_h3, 1)
+    initial_latent = Graph.out(initial_h3, 1)
+    continuation_ref = None
+    if o.continuation_source:
+        if result_format != "Video":
+            raise H3Error("Storyboard continuation produces video results only.")
+
+        def continue_from(latent, source):
+            loaded = graph.add(H3_LOAD_AV_LATENT_NODE, path=source)
+            return Graph.out(graph.add(
+                H3_CONTINUATION_PREFIX_NODE, latent=latent, source=Graph.out(loaded),
+                context_frames=int(o.continuation_frames),
+            ))
+
+        if o.latent_upscale_model_name is None:
+            target_latent = continue_from(target_latent, o.continuation_source)
+        else:
+            if not o.continuation_stage_source:
+                raise H3Error("This take has no stage-one latent to continue a latent-upscale scene from.")
+            initial_latent = continue_from(initial_latent, o.continuation_stage_source)
+            # finish_sampling pastes the full-resolution tail again before refinement.
+            continuation_ref = Graph.out(graph.add(H3_LOAD_AV_LATENT_NODE, path=o.continuation_source))
     if semantic_bridge and o.semantic_bridge and o.semantic_bridge_alpha != 0:
         if H3_SEMANTIC_BRIDGE_NODE not in o.available_nodes:
             raise H3Error(
@@ -1197,7 +1245,7 @@ def _build_h3_graph(
         graph,
         model_ref=model_ref,
         conditioning_ref=target_conditioning,
-        latent_ref=Graph.out(target_h3, 1),
+        latent_ref=target_latent,
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
         seed=o.seed,
@@ -1206,7 +1254,9 @@ def _build_h3_graph(
         turbo_variant=o.turbo_variant if o.turbo_lora_name else None,
         sampler_name=turbo_sampler_name(o.turbo_variant, o.turbo_lora_name),
         filename_prefix=(
-            f"h3/image_staging/{task}_{output_stamp}_{output_nonce}"
+            o.output_prefix
+            if o.output_prefix
+            else f"h3/image_staging/{task}_{output_stamp}_{output_nonce}"
             if result_format == "Image"
             else f"audio/h3_{task}_{output_stamp}"
             if result_format == "Audio"
@@ -1217,7 +1267,7 @@ def _build_h3_graph(
         image_vae_ref=image_vae_ref,
         single_frame_images=single_frame_images,
         initial_conditioning_ref=initial_conditioning,
-        initial_latent_ref=Graph.out(initial_h3, 1),
+        initial_latent_ref=initial_latent,
         latent_upscale_model_name=o.latent_upscale_model_name,
         latent_upscale_precision=o.latent_upscale_precision,
         latent_upscale_width=target_width,
@@ -1235,6 +1285,9 @@ def _build_h3_graph(
         stage_model_offload=o.stage_model_offload,
         smart_stage_offload=o.smart_stage_offload,
         conditioning_cache_key=conditioning_cache_key,
+        continuation_ref=continuation_ref,
+        continuation_frames=o.continuation_frames,
+        latent_output_prefix=o.latent_output_prefix,
     )
     return graph.nodes
 

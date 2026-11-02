@@ -195,7 +195,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 22)
+        self.assertEqual(len(image_inputs), 23)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -657,7 +657,15 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
             ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
-             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Soundstage", "Dub & Translate"],
+             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Storyboard", "Soundstage", "Dub & Translate"],
+        )
+        task = next(
+            c for c in self.config["components"]
+            if c["type"] == "radio" and c["props"].get("label") == "Task"
+        )
+        self.assertEqual(
+            [choice[0] for choice in task["props"]["choices"]],
+            ["Video", "Image", "Song", "Storyboard", "Soundstage", "Dub & Translate"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:

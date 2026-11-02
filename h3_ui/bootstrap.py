@@ -165,6 +165,19 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (getattr(engine_actions, "drama3_speaker_group_size", None) or (lambda _group: None))("Global"),
         )
         bind_drama3(drama3_components, engine_actions)
+        storyboard_view = None
+        if app_views.storyboard is not None and services.storyboard_handlers is not None:
+            from h3_ui.storyboard.bindings import bind_storyboard
+            from h3_ui.storyboard.view import build_storyboard_view
+
+            storyboard_view = build_storyboard_view(app_views.storyboard)
+            bind_storyboard(
+                storyboard_view,
+                services.storyboard_handlers,
+                h3_components.values,
+                interrupt=services.interrupt,
+                load_trigger=demo.load,
+            )
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -208,6 +221,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         image_inputs = [
             *h3_components.values.values(),
             *(component for feature in FEATURES for component in feature.library_inputs(engine_views[feature.id])),
+            *((storyboard_view.cast_image,) if storyboard_view is not None else ()),
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):

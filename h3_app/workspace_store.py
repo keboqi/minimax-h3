@@ -1,6 +1,6 @@
-"""Durable workspace metadata. Request content is never saved.
+"""Durable workspace metadata. Request content is saved only in storyboards.
 
-SQLite is the authority for jobs, ownership and asset annotations. The
+SQLite is the authority for jobs, ownership, storyboards and asset annotations. The
 media listing is a rebuildable index; rebuilding it never discards annotations.
 All connections are short lived so backup and threaded Gradio callbacks agree.
 """
@@ -19,7 +19,7 @@ import uuid
 from contextlib import contextmanager, closing
 from starlette.requests import Request
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 COOKIE = "h3_workspace_owner"
 OWNER_TTL = 30 * 86400
 _INDEX_ASSET_SQL = (
@@ -72,6 +72,10 @@ class WorkspaceStore:
                     favorite INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS media_catalog (
                     asset_id TEXT PRIMARY KEY REFERENCES assets(id));
+                CREATE TABLE IF NOT EXISTS storyboards (
+                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
+                    created REAL NOT NULL, updated REAL NOT NULL, payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS storyboards_owner ON storyboards(owner, updated);
                 CREATE INDEX IF NOT EXISTS assets_kind_available_modified ON assets(kind, available, modified DESC);
                 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
             """
@@ -226,6 +230,42 @@ class WorkspaceStore:
                 "SELECT payload FROM jobs WHERE owner=? AND request_key=?", (owner, key)
             ).fetchone()
         return json.loads(row[0]) if row else None
+
+    def save_storyboard(self, owner, storyboard_id, payload):
+        """Insert or replace an owner's storyboard; another owner's id is refused."""
+        now = time.time()
+        with self.connect() as db:
+            row = db.execute("SELECT owner FROM storyboards WHERE id=?", (storyboard_id,)).fetchone()
+            if row is not None and row["owner"] != owner:
+                raise ValueError("This storyboard is unavailable for this browser owner.")
+            db.execute(
+                "INSERT INTO storyboards VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "name=excluded.name, updated=excluded.updated, payload=excluded.payload",
+                (storyboard_id, owner, payload["name"], now, now, json.dumps(payload)),
+            )
+
+    def storyboards(self, owner):
+        with self.connect() as db:
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT id, name, updated FROM storyboards WHERE owner=? ORDER BY updated DESC",
+                    (owner,),
+                )
+            ]
+
+    def storyboard(self, owner, storyboard_id):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT payload FROM storyboards WHERE id=? AND owner=?", (storyboard_id, owner)
+            ).fetchone()
+        if row is None:
+            raise ValueError("This storyboard is unavailable for this browser owner.")
+        return json.loads(row[0])
+
+    def delete_storyboard(self, owner, storyboard_id):
+        self.storyboard(owner, storyboard_id)  # Validate ownership first.
+        with self.connect() as db:
+            db.execute("DELETE FROM storyboards WHERE id=? AND owner=?", (storyboard_id, owner))
 
     def index_asset(self, path, kind, metadata=None):
         path = Path(path).resolve()

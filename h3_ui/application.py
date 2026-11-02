@@ -893,6 +893,45 @@ def _engine_deps():
     )
 
 
+def _storyboard_take(values, storyboard, outputs):
+    """One storyboard take through the regular H3 generator, reporting its saved latents."""
+    request = generation_requests.H3Request.from_values(values)
+    yield from h3_generation.generate(
+        request,
+        _generation_services(),
+        _runtime_config(),
+        run_context={},
+        storyboard=storyboard,
+        storyboard_outputs=outputs,
+    )
+
+
+_STORYBOARDS = None
+
+
+def _storyboard_service():
+    global _STORYBOARDS
+    from h3_app.storyboard import StoryboardService
+
+    if JOBS.store is None:
+        raise H3Error("Storyboards need the workspace store, which isn't configured.")
+    if _STORYBOARDS is None or _STORYBOARDS.store is not JOBS.store:
+        _STORYBOARDS = StoryboardService(JOBS.store, lambda: _runtime_config())
+    return _STORYBOARDS
+
+
+def _storyboard_handlers():
+    from .storyboard.handlers import StoryboardHandlers, StoryboardServices
+    from .h3.handlers import default_request
+
+    return StoryboardHandlers(StoryboardServices(
+        service=_storyboard_service,
+        generate_take=_storyboard_take,
+        request_defaults=lambda: default_request(""),
+        publish=lambda path, metadata: write_snapshot(path, metadata),
+    ))
+
+
 def _drama3_actions():
     from h3_ui.drama3.speaker_library import SpeakerLibraryActions
     from h3_ui.drama3.bindings import Drama3Actions
@@ -1014,6 +1053,7 @@ def build_ui() -> gr.Blocks:
             drama3_actions=_drama3_actions(),
             dubbing_actions=dubbing_handlers,
             engine_deps=_engine_deps(),
+            storyboard_handlers=_storyboard_handlers(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=MEDIA.import_gallery_media,

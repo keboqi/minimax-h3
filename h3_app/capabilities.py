@@ -50,6 +50,9 @@ ENGINES += (
                      "OpenMOSS 5B image generation and reference editing, with layout boxes and Turbo LoRAs."),
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
+    EngineCapability("storyboard", "Storyboard", ("Storyboard",),
+                     "Long videos as scenes: each flows on from the last or cuts to a new shot, "
+                     "generated with MiniMax H3 and joined into one video."),
     EngineCapability("drama3", "Soundstage (Drama 3)", ("TTS",),
                      "Audio production with scripts, cast voices, sound effects, music, takes and mixing. "
                      "Speech powered by Fish Audio Drama 3."),
@@ -57,7 +60,7 @@ ENGINES += (
                      "Translate a video's speech and dub it with each speaker's cloned voice: transcribe, "
                      "review every line, then dub with Drama 3."),
 )
-TASKS = ("Video", "Image", "Audio / Music", "TTS", "Dub")
+TASKS = ("Video", "Image", "Audio / Music", "Storyboard", "TTS", "Dub")
 # Navigation and preference restoration use the first engine as the default.
 DEFAULT_ENGINES = {"Image": "qwen", "Audio / Music": "music"}
 

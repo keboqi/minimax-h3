@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from .preparation import PreparedH3
@@ -9,7 +10,23 @@ from .requests import H3Request
 from .services import GenerationServices
 
 
-def graph_options(request: H3Request, prepared: PreparedH3) -> dict[str, Any]:
+@dataclass(frozen=True)
+class StoryboardGraph:
+    """Where a storyboard take continues from and saves its output and latents.
+
+    Field names are ``H3GraphOptions`` names; the defaults are a regular H3 run.
+    """
+
+    output_prefix: str | None = None
+    latent_output_prefix: str | None = None
+    continuation_source: str | None = None
+    continuation_stage_source: str | None = None
+    continuation_frames: int = 39
+
+
+def graph_options(
+    request: H3Request, prepared: PreparedH3, storyboard: StoryboardGraph | None = None
+) -> dict[str, Any]:
     """The ``H3GraphOptions`` values both H3 tasks share, by keyword."""
     return dict(
         width=prepared.resolved_width,
@@ -65,13 +82,17 @@ def graph_options(request: H3Request, prepared: PreparedH3) -> dict[str, Any]:
         reuse_unchanged_inputs=bool(request.media.reuse_unchanged_inputs),
         stage_model_offload=prepared.effective_stage_offload,
         smart_stage_offload=prepared.smart_stage_offload,
+        **asdict(storyboard or StoryboardGraph()),
     )
 
 
 def construct_graph(
-    request: H3Request, prepared: PreparedH3, services: GenerationServices
+    request: H3Request,
+    prepared: PreparedH3,
+    services: GenerationServices,
+    storyboard: StoryboardGraph | None = None,
 ) -> dict[str, Any]:
-    options = graph_options(request, prepared)
+    options = graph_options(request, prepared, storyboard)
     if request.media.mode == "Reference media":
         return services.workflows.build_ref2va_graph(
             prompt=request.media.prompt,

@@ -2213,7 +2213,208 @@ class H3RegeneratePrepareLatent:
         return (out,)
 
 
+# Storyboard continuation. The tail selection and per-stream masks follow
+# ComfyUI-MiniMaxH3-PrefixStream (MIT, knoic, reviewed at 775be90), which in turn
+# credits Herrgott's H3 Infinite Continuation Suite. Native ComfyUI applies the
+# nested (video, audio) noise_mask per token (Comfy-Org/ComfyUI#15375).
+H3_FRAMES_PER_STEP = (1, 4, 4, 4, 4)
+H3_VIDEO_FPS = 24
+H3_AUDIO_HZ = 40
+H3_CONTINUATION_FRAMES = (22, 39, 56)
+
+
+def h3_latent_frame_boundaries(steps):
+    """Exclusive pixel-frame boundaries of an H3 video latent with ``steps`` steps."""
+    boundaries = [0]
+    for step in range(int(steps)):
+        boundaries.append(boundaries[-1] + H3_FRAMES_PER_STEP[step % 5])
+    return boundaries
+
+
+def h3_continuation_plan(source_steps, target_steps, context_frames):
+    """Pick the latest phase-aligned source tail of at most ``context_frames`` frames.
+
+    Contexts follow the H3 ``5 + 17k`` frame grid: ``2 + 5k`` latent steps that
+    start on a single-frame step. The target must keep new frames after the head.
+    """
+    source = h3_latent_frame_boundaries(source_steps)
+    target_frames = h3_latent_frame_boundaries(target_steps)[-1]
+    cap = min(int(context_frames), source[-1], target_frames - 1)
+    if cap < 5:
+        raise ValueError(
+            "Continuation needs at least 5 source frames and a target longer than its context."
+        )
+    frames = 5 + ((cap - 5) // 17) * 17
+    context_steps = 2 + 5 * ((frames - 5) // 17)
+    end_step = next(
+        (end for end in range(int(source_steps), context_steps - 1, -1)
+         if end % 5 == 2 and (end - context_steps) % 5 == 0),
+        None,
+    )
+    if end_step is None:
+        raise ValueError("The source latent has no phase-aligned continuation tail.")
+    start_step = end_step - context_steps
+    start_frame, end_frame = source[start_step], source[end_step]
+    audio_steps = round((end_frame - start_frame) * H3_AUDIO_HZ / H3_VIDEO_FPS)
+    audio_end = round(end_frame * H3_AUDIO_HZ / H3_VIDEO_FPS)
+    return {
+        "start_step": start_step,
+        "end_step": end_step,
+        "context_steps": context_steps,
+        "frames": end_frame - start_frame,
+        "audio_start": audio_end - audio_steps,
+        "audio_end": audio_end,
+        "audio_steps": audio_steps,
+        "ignored_tail_frames": source[-1] - end_frame,
+    }
+
+
+def h3_av_streams(latent, label):
+    samples = latent.get("samples") if isinstance(latent, dict) else None
+    if not getattr(samples, "is_nested", False) or len(samples.tensors) != 2:
+        raise ValueError(f"{label} expects a MiniMax H3 AV latent")
+    video, audio = samples.tensors
+    if video.ndim != 5 or video.shape[1] != 24 or audio.ndim != 4 or audio.shape[1:3] != (32, 2):
+        raise ValueError(f"{label} expects H3 video [B,24,T,H,W] and audio [B,32,2,T]")
+    if video.shape[0] != 1 or audio.shape[0] != 1:
+        raise ValueError(f"{label} supports batch size 1")
+    return video, audio
+
+
+def h3_apply_continuation(target_video, target_audio, source_video, source_audio, context_frames):
+    """Copy the source AV tail into the target head; zero masks protect it."""
+    if source_video.shape[1:2] + source_video.shape[3:] != target_video.shape[1:2] + target_video.shape[3:]:
+        raise ValueError(
+            "Continuation needs matching video latent sizes; keep the storyboard's size and VAE."
+        )
+    plan = h3_continuation_plan(source_video.shape[2], target_video.shape[2], context_frames)
+    audio_end = min(plan["audio_end"], source_audio.shape[-1])
+    audio_start = max(0, audio_end - plan["audio_steps"])
+    audio_steps = audio_end - audio_start
+    if not 0 < audio_steps < target_audio.shape[-1]:
+        raise ValueError("The continued audio context must be shorter than the new clip.")
+    video = target_video.clone()
+    audio = target_audio.clone()
+    steps = plan["context_steps"]
+    video[:, :, :steps] = source_video[:, :, plan["start_step"]:plan["end_step"]].to(video)
+    audio[..., :audio_steps] = source_audio[..., audio_start:audio_end].to(audio)
+    video_mask = torch.ones_like(video, dtype=torch.float32)
+    audio_mask = torch.ones_like(audio, dtype=torch.float32)
+    video_mask[:, :, :steps] = 0.0
+    audio_mask[..., :audio_steps] = 0.0
+    plan.update(audio_start=audio_start, audio_end=audio_end, audio_steps=audio_steps)
+    return video, audio, video_mask, audio_mask, plan
+
+
+class H3ContinuationPrefix:
+    """Start a new H3 clip from the tail of a previous one (storyboard flow)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "source": ("LATENT",),
+                "context_frames": ("INT", {"default": 39, "min": 5, "max": 192, "step": 17}),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "apply"
+    CATEGORY = "H3/Storyboard"
+
+    def apply(self, latent, source, context_frames):
+        target_video, target_audio = h3_av_streams(latent, "Continuation target")
+        source_video, source_audio = h3_av_streams(source, "Continuation source")
+        video, audio, video_mask, audio_mask, plan = h3_apply_continuation(
+            target_video, target_audio, source_video, source_audio, context_frames
+        )
+        out = latent.copy()
+        out["samples"] = comfy.nested_tensor.NestedTensor((video, audio))
+        # Always replace: a stage-one sampler output keeps its low-resolution mask.
+        out["noise_mask"] = comfy.nested_tensor.NestedTensor((video_mask, audio_mask))
+        out["h3_prefix_frames"] = plan["frames"]
+        logging.info(
+            "[H3 storyboard] Continued %d frames / %d audio ticks from source steps %d:%d.",
+            plan["frames"], plan["audio_steps"], plan["start_step"], plan["end_step"],
+        )
+        return (out,)
+
+
+def h3_storyboard_latent_path(relative):
+    """Resolve a saved storyboard latent strictly inside the ComfyUI output directory."""
+    root = os.path.realpath(folder_paths.get_output_directory())
+    path = os.path.realpath(os.path.join(root, str(relative)))
+    if os.path.commonpath((root, path)) != root or not path.endswith(".safetensors"):
+        raise ValueError("Storyboard latents must be .safetensors files inside the output directory")
+    return path
+
+
+class H3SaveAVLatent:
+    """Save a MiniMax H3 AV latent so a later storyboard scene can continue from it."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "filename_prefix": ("STRING", {"default": "h3/.storyboard/latent"}),
+            }
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "save"
+    CATEGORY = "H3/Storyboard"
+    OUTPUT_NODE = True
+
+    def save(self, latent, filename_prefix):
+        from safetensors.torch import save_file
+
+        video, audio = h3_av_streams(latent, "Save AV latent")
+        full_output_folder, filename, counter, subfolder, _prefix = folder_paths.get_save_image_path(
+            str(filename_prefix), folder_paths.get_output_directory()
+        )
+        file = f"{filename}_{counter:05}_.safetensors"
+        metadata = {"h3_prefix_frames": str(int(latent.get("h3_prefix_frames", 0)))}
+        save_file(
+            {"video": video.detach().float().cpu().contiguous(),
+             "audio": audio.detach().float().cpu().contiguous()},
+            os.path.join(full_output_folder, file),
+            metadata=metadata,
+        )
+        return {"ui": {"h3_latents": [{"filename": file, "subfolder": subfolder, "type": "output"}]}}
+
+
+class H3LoadAVLatent:
+    """Load a latent saved by ``H3SaveAVLatent`` from the output directory."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"path": ("STRING", {"default": ""})}}
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "load"
+    CATEGORY = "H3/Storyboard"
+
+    @classmethod
+    def IS_CHANGED(cls, path):
+        resolved = h3_storyboard_latent_path(path)
+        return os.path.getmtime(resolved) if os.path.isfile(resolved) else float("nan")
+
+    def load(self, path):
+        from safetensors.torch import load_file
+
+        tensors = load_file(h3_storyboard_latent_path(path))
+        video, audio = tensors["video"], tensors["audio"]
+        latent = {"samples": comfy.nested_tensor.NestedTensor((video, audio))}
+        h3_av_streams(latent, "Load AV latent")
+        return (latent,)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3ContinuationPrefix": H3ContinuationPrefix,
+    "H3SaveAVLatent": H3SaveAVLatent,
+    "H3LoadAVLatent": H3LoadAVLatent,
     "H3LatentUpscaleModelLoader": H3LatentUpscaleModelLoader,
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
@@ -2242,6 +2443,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3ContinuationPrefix": "MiniMax H3 Storyboard Continuation",
+    "H3SaveAVLatent": "MiniMax H3 Save AV Latent",
+    "H3LoadAVLatent": "MiniMax H3 Load AV Latent",
     "H3LTXPadVideoFrames": "LTX Pad Video Frames",
     "H3Flux3EditPrompt": "FLUX 3 Image Edit Prompt Upsampler",
     "H3Flux3LayoutElements": "FLUX 3 Layout Elements",

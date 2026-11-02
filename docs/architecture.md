@@ -46,12 +46,14 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, Song-specific controls and the session take history for Music 3 and YuE2 |
 | h3_ui/step_cards.py | The guided step strip shared by Soundstage and Dub & Translate, and the intro and card headings Song uses too |
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
+| h3_app/storyboard/ | Storyboard documents (scenes, takes, versions) and the outdated rule in model.py; owner-scoped storage, takes, versions and ffmpeg joining in service.py |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Startup and runtime configuration, the ComfyUI and file effects controllers and engines receive, the full H3 `generate`, and the controller and handler singletons. Controllers never import it; tests patch its effects and find a name's owner with `tests/app_targets.py` |
 | h3_ui/snapshot_preload.py | Modal's `h3-video` and `h3-soundstage` endpoints: loads the default H3 Video or Soundstage models before the workspace opens, then waits for the snapshot restore to start the UI |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
+| h3_ui/storyboard/ | Storyboard view, bindings, strip/timeline HTML and handlers; the take runner calls H3 generation with a `StoryboardGraph` that adds the continuation and latent-saving nodes |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
 | h3_ui/dubbing/ | Dub & Translate tab and Media's Download from a URL panel; handlers.py builds `DubbingHandlers` from explicit `DubbingServices` |

@@ -12,8 +12,8 @@ is copied on first startup, retaining ownership, history and annotations.
 Private temporary inputs remain in
 `<GRADIO_OUTPUT_DIR parent>/h3-workspace`. `H3_WORKSPACE_DIR` explicitly overrides
 both locations. Modal places workspace state at `/data/h3-workspace` on the
-persisted data volume. SQLite schema 1 stores ownership, jobs, assets
-and annotations. Databases from before the Projects removal keep an unused
+persisted data volume. SQLite schema 2 stores ownership, jobs, storyboards, assets
+and annotations; opening a schema-1 database adds the storyboards table. Databases from before the Projects removal keep an unused
 `projects` table. A newer schema is rejected rather than overwritten. Generated
 media and schema-1 technical sidecars stay in their existing directories.
 The database directory is blocked from Gradio file serving. New media register
@@ -58,7 +58,8 @@ Unsaved prompts, private replay graphs and request snapshots stay in memory.
 Technical SQLite records omit prompt/graph text, credentials and backend error
 or progress messages. Normal generation sidecars also omit prompts. Full
 request content, replay graphs and copied sources are never written to durable
-storage. Generated outputs retain the existing shared-library policy.
+storage, except in a storyboard: creating one keeps its scene prompts, render
+settings and cast pictures until it is deleted. Generated outputs retain the existing shared-library policy.
 Tags/favorites are shared library metadata, while Jobs are private to their
 browser owner.
 
