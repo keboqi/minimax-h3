@@ -39,6 +39,7 @@ PROMPT_FILES = (
     "prompt_flux3_i2i.txt",
     "prompt_drama3.txt",
     "prompt_drama3_direction.txt",
+    "prompt_drama3_guided_plan.txt",
     "prompt_drama3_guided_preserve.txt",
     "prompt_drama3_guided_brief.txt",
     "prompt_drama3_guided_voices.txt",
