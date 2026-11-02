@@ -166,6 +166,14 @@ source check** next to the writer workflow to reject such a rewrite and keep you
 text instead. The setting is remembered, and Auto uses it too. Pasted replies from
 another chat model are always checked strictly.
 
+With a Gemini key, the free Gemma models also help with a few small checks. When a strict check
+finds only a handful of short word changes (no numbers and no speaker changes), Gemma judges
+whether each one is a typo repair. If every change gets a yes, the rewrite is kept and the status
+lists them, for example `Source check accepted 1 small typo repair (…[keey] → …[key])`.
+Gemma also tries to fix a malformed pronunciation note before it rejects a script or a Guided
+step. The same rules still check its answer, and if Gemma is unavailable or out of free quota
+the checks behave exactly as described above. Set `H3_GEMMA=0` to turn this off.
+
 The writer plans each scene before directing it (what each character wants and hides,
 whom each line is aimed at, where the scene turns) and uses contrast: narration stays
 restrained and the strongest delivery is kept for turning points. In Advanced mode it

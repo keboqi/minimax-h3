@@ -24,6 +24,45 @@ def media_type(path: Path) -> str:
     return _SUFFIX_MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
 
 
+def _closes(text: str) -> bool:
+    """Whether the first JSON object or array in ``text`` reaches its closing bracket."""
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if quoted:
+            escaped, quoted = (False, True) if escaped else (char == "\\", char != '"')
+        elif char == '"':
+            quoted = depth > 0
+        elif char in "{[":
+            depth += 1
+        elif char in "}]" and depth:
+            depth -= 1
+            if not depth:
+                return True
+    return False
+
+
+def repair_json(text: str):
+    """The JSON value json-repair recovers from a malformed but finished reply, or None.
+
+    It drops trailing commas and fixes quoting and stray prose around the JSON. A reply
+    that never closes its outer bracket was cut off, and closing it would silently drop
+    the rest, so that is never repaired.
+    """
+    text = str(text or "")
+    if not _closes(text):
+        return None
+    try:
+        import json_repair
+    except ImportError:
+        return None
+    try:
+        value = json_repair.loads(text)
+    except Exception:  # noqa: BLE001 - a repair failure is just "not JSON"
+        return None
+    # json-repair returns "" when it finds no JSON at all.
+    return value if isinstance(value, (dict, list)) else None
+
+
 def strip_code_fence(text: str) -> str:
     """Remove one Markdown code fence that wraps the whole reply."""
     text = str(text or "").strip()

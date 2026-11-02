@@ -9,6 +9,7 @@ from typing import Iterable
 from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.llm import gemma
 from . import common
 from h3_app.drama3.guided.budget import AUTO as SMART_BUDGET_AUTO, resolve_budget
 
@@ -266,7 +267,8 @@ def parse_drama3_reply(
 
     def review(script, source_mode=""):
         from h3_app.drama3.lint import coverage_note, lint_drama3_script
-        from h3_app.drama3.guided.fidelity import source_change_note, source_changes, validate_source_fidelity
+        from h3_app.drama3.guided.fidelity import (
+            accepted_repairs_note, source_change_note, source_changes, validate_source_fidelity)
 
         if script_mode == DRAMA3_SCRIPT_ADVANCED and re.search(r'\banchor\s*=', script):
             from h3_app.drama3.guided.local_staging import localize_existing_cues
@@ -277,7 +279,9 @@ def parse_drama3_reply(
         script, messages = lint_drama3_script(script)
         checked = dict(single=speaker_mode == DRAMA3_SPEAKER_SINGLE, sequential_joint=script_mode == DRAMA3_SCRIPT_BASIC)
         if strict_source:
-            validate_source_fidelity(original, script, **checked)
+            note = accepted_repairs_note(validate_source_fidelity(original, script, **checked))
+            if note and notes is not None:
+                notes.append(note)
         elif notes is not None:
             note = source_change_note(source_changes(original, script, **checked))
             if note:
@@ -440,6 +444,7 @@ def _write_guided(text, voices, speaker_mode, script_mode, cast_context, sound_c
     return reply, f"Enhanced Drama 3 prompt with {model_label} in {calls} Guided steps." + detail
 
 
+@gemma.uses_writer_key
 def enhance_drama3_text(
     text: str,
     model: str,

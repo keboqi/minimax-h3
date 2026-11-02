@@ -238,6 +238,10 @@ _GENRES = (
 )
 
 
+# Style profiles by name, for a genre chosen outside the keyword patterns.
+GENRES = {genre.name: genre for genre in (POP, *(genre for _pattern, genre in _GENRES))}
+
+
 def detect_genre(*texts: str) -> Genre:
     text = " ".join(str(text or "") for text in texts)
     return next((genre for pattern, genre in _GENRES if pattern.search(text)), POP)
@@ -282,11 +286,15 @@ def plan_song(
     use: str = AUTO,
     idea: str = "",
     bpm: int | None = None,
+    genre: Genre | None = None,
 ) -> SongPlan:
-    """Size a conventional form so it ends naturally inside the length limit."""
+    """Size a conventional form so it ends naturally inside the length limit.
+
+    ``genre`` overrides the keyword match on ``idea``.
+    """
     use = resolve_use(use, max_seconds)
     instrumental = wants_instrumental(vocals, use, idea)
-    genre = detect_genre(idea)
+    genre = genre or detect_genre(idea)
     assumed = bpm is None
     bpm = int(bpm or genre.bpm)
     # Leave a little headroom so the ending is composed, not truncated.
@@ -395,11 +403,17 @@ def build_brief(
     idea: str = "",
     lyrics: str = "",
     mode: str | None = None,
+    genre: Genre | None = None,
+    bpm: int | None = None,
 ) -> str:
-    """Writer context: the user's plain choices plus the producer's plan."""
+    """Writer context: the user's plain choices plus the producer's plan.
+
+    ``genre`` overrides the keyword match on ``idea``; ``bpm`` applies only when
+    ``idea`` states no tempo in BPM, which is exact.
+    """
     plan = plan_song(
         max_seconds, vocals=vocals, use=use, idea=idea,
-        bpm=detect_bpm(idea),
+        bpm=detect_bpm(idea) or bpm, genre=genre,
     )
     has_lyrics = bool(str(lyrics or "").strip())
     lines = [

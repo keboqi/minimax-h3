@@ -441,6 +441,7 @@ def build(revision: str) -> None:
         "imageio-ffmpeg>=0.6",
         "requests>=2.32",
         "openai>=3.16.2,<4",
+        "json-repair>=0.60",
         "websocket-client>=1.8",
         "aiohttp>=3.11,<4",
         "httpx>=0.27",
@@ -774,7 +775,7 @@ console_image = (
         # requests: the Drama 3 SGLang-Omni downloader module imports it.
         # websocket-client, aiohttp: imported by the shared media controller and routes;
         # wsproto: the Gradio queue's WebSocket transport, as in the main application.
-        f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32",
+        f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
         "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
     )
 )

@@ -2,6 +2,7 @@
 gradio==6.30.0
 aiohttp
 requests
+json-repair
 websocket-client
 openai==3.16.2
 playwright==1.62.0

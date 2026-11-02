@@ -46,12 +46,16 @@ def load_answer(reply: str) -> dict:
     fenced = re.search(r"```[A-Za-z0-9_-]*\s*(.*?)\s*```", text, flags=re.S)
     if fenced:
         text = fenced.group(1).strip()
+    unsliced = text  # slicing to the last "}" would hide a cut-off reply from the repair
     if not text.startswith("{") and "{" in text and "}" in text:
         text = text[text.index("{"):text.rindex("}") + 1]
     try:
         data = json.loads(text)
     except ValueError as exc:
-        raise StageError([f"the reply is not valid JSON ({exc.msg} at character {exc.pos})"]) from exc
+        from h3_app.llm import repair_json
+        data = repair_json(unsliced)
+        if data is None:
+            raise StageError([f"the reply is not valid JSON ({exc.msg} at character {exc.pos})"]) from exc
     if not isinstance(data, dict):
         raise StageError(["the reply must be one JSON object"])
     return data
@@ -192,8 +196,16 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
             problems.append('a fix must identify one certain, small spelling repair or duplicated word in its unit')
         else:
             fixes.append((unit.id, old, new))
-    for entry in data.get('pronunciations', []) if isinstance(data.get('pronunciations'), list) else []:
-        word, reading = (_text(entry.get('word')), _text(entry.get('reading'))) if isinstance(entry, dict) else ('', '')
+    entries = [(_text(entry.get('word')), _text(entry.get('reading'))) if isinstance(entry, dict) else ('', '')
+               for entry in (data.get('pronunciations') if isinstance(data.get('pronunciations'), list) else [])]
+    # Gemma may fix a malformed reading before it costs the stage a retry; note_problems still decides.
+    broken = [i for i, (word, reading) in enumerate(entries) if word and reading and note_problems(f'{word}{{{reading}}}')]
+    if broken:
+        from h3_app.drama3.gemma_checks import fix_readings
+        for i, reading in zip(broken, fix_readings([entries[i] for i in broken], words=True)):
+            if reading is not None:
+                entries[i] = (entries[i][0], reading)
+    for word, reading in entries:
         if (not word or not reading or _CONTROL_RE.search(word)
                 or not any(word in unit.text for unit in source.units) or note_problems(f'{word}{{{reading}}}')):
             problems.append('each pronunciation needs a source word and valid pinyin or Arpabet reading')

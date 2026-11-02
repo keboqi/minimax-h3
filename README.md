@@ -420,6 +420,9 @@ different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (plus `OPENAI_BASE_URL` for a
 non-OpenAI endpoint) in that Modal Secret.
+The same Gemini key also gives the writers optional free Gemma checks (song style detection,
+pronunciation note fixes and the strict source check), which stay inside the free per-minute quota
+and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 

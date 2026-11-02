@@ -8,6 +8,7 @@ from typing import Any
 from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app import song_brief
 from h3_app.config import RuntimeConfig
+from h3_app.llm import gemma
 from . import common
 
 
@@ -49,6 +50,35 @@ def _writer_lyrics(lyrics: str, instrumental: bool) -> str:
     return lyrics if instrumental or _has_sung_words(lyrics) else ""
 
 
+_STYLE_REQUEST = """Classify the style of this music request for a song planner.
+Profiles:
+- verse-chorus: pop, rock, R&B, soul, jazz, metal and most songs built from verses and a hook
+- rap: rap, hip-hop, trap, drill, grime
+- dance: EDM, house, techno, trance and other club music built on builds and drops
+- ballad: slow, restrained ballads, folk, acoustic, country, lullabies
+- ambient: ambient, cinematic, soundtrack, lo-fi, meditation, drone
+bpm is the tempo the request states, in any words or language, as one number; null if it states none.
+Reply with only JSON: {{"genre": "<profile>", "bpm": <number or null>}}
+Request:
+{idea}"""
+
+
+def _song_style(idea: str) -> tuple[song_brief.Genre | None, int | None]:
+    """Gemma's style profile and stated tempo for ``idea``; (None, None) leaves it to the keyword rules."""
+    idea = str(idea or "").strip()
+    if not idea:
+        return None, None
+    # The writer waits on this, so give up quickly and let the keyword rules decide.
+    answer = gemma.ask_json(_STYLE_REQUEST.format(idea=idea[:2000]), max_output_tokens=64, timeout=8)
+    if answer is None:
+        return None, None
+    genre = song_brief.GENRES.get(str(answer.get("genre") or "").strip().lower())
+    bpm = answer.get("bpm")
+    valid = isinstance(bpm, (int, float)) and not isinstance(bpm, bool) and 40 <= bpm <= 220
+    return genre, round(bpm) if valid else None
+
+
+@gemma.uses_writer_key
 def enhance_music3_prompt(
     prompt: str,
     model: str,
@@ -77,10 +107,11 @@ def enhance_music3_prompt(
     request_text = original_caption
     if not request_text and draft_lyrics:
         request_text = "Create a fitting music description for these lyrics."
+    genre, bpm = _song_style(original_caption)
     brief = song_brief.build_brief(
         engine="MiniMax Music 3", max_seconds=duration, vocals=vocals,
         language=language, use=use, lyrics_policy=lyrics_policy, notes=notes,
-        idea=original_caption, lyrics=draft_lyrics,
+        idea=original_caption, lyrics=draft_lyrics, genre=genre, bpm=bpm,
     )
     generated, status = common.write_prompt(
         prompt=request_text,
@@ -123,6 +154,7 @@ def enhance_music3_prompt(
     return caption, new_lyrics, status
 
 
+@gemma.uses_writer_key
 def enhance_yue2_prompt(
     style: str,
     model: str,
@@ -149,10 +181,11 @@ def enhance_yue2_prompt(
     request_text = original_style
     if not request_text and draft_lyrics:
         request_text = "Create a fitting production style for these lyrics."
+    genre, bpm = _song_style(original_style)
     brief = song_brief.build_brief(
         engine="YuE2", max_seconds=duration, vocals=vocals, language=language,
         use=use, lyrics_policy=lyrics_policy, notes=notes, idea=original_style,
-        lyrics=draft_lyrics, mode=mode,
+        lyrics=draft_lyrics, mode=mode, genre=genre, bpm=bpm,
     )
     generated, status = common.write_prompt(
         prompt=request_text,

@@ -110,6 +110,10 @@ def _json_payload(text: str) -> Any:
                 return json.loads(text[first:last + 1])
             except json.JSONDecodeError:
                 continue
+    from h3_app.llm import repair_json
+    repaired = repair_json(text)
+    if repaired is not None:
+        return repaired
     raise ValueError("The reply is not valid JSON.")
 
 

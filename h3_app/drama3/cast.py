@@ -30,7 +30,10 @@ def _one_line_sound(block: str) -> str:
 
 
 def _normalize_and_validate_script_lines(raw_script: str) -> str:
-    script = validate_drama3_text(raw_script, "The writer's script")
+    from h3_app.drama3.gemma_checks import repair_reading_notes
+
+    # A malformed reading would reject the whole script; Gemma may fix it, the validator still decides.
+    script = validate_drama3_text(repair_reading_notes(raw_script), "The writer's script")
     text = script.replace("\r\n", "\n")
     # A <sound> whose description sits on its own lines is still one sound line.
     text = SOUND_BLOCK_RE.sub(lambda match: f"\n{_one_line_sound(match.group(1))}\n", text)
