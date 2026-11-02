@@ -147,8 +147,12 @@ class WriterHandlers:
                             openai_model, openai_base_url, *slots):
         """Apply indexed cast metadata and slot visibility only after validating the complete result.
 
-        The Writer workflow and Guided batch size, when the view has them, are the last inputs after the slots.
+        The Writer workflow, Guided batch size and strict source check, when the view has them, are the
+        last inputs after the slots.
         """
+        strict_source = False
+        if slots and isinstance(slots[-1], bool):
+            strict_source, slots = slots[-1], slots[:-1]
         max_batch_lines = drama3_writer.DRAMA3_GUIDED_BATCH_DEFAULT
         if (len(slots) >= 2 and isinstance(slots[-1], (int, float))
                 and slots[-2] in drama3_writer.DRAMA3_WORKFLOWS):
@@ -166,7 +170,7 @@ class WriterHandlers:
                 speaker_mode=speaker_mode, runtime=self._runtime_config(), return_cast=True,
                 cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
                 return_title=True, speaker_names=self._slot_names(existing), workflow=workflow,
-                max_batch_lines=max_batch_lines,
+                max_batch_lines=max_batch_lines, strict_source=strict_source,
             )
             if status.startswith("Prompt enhancement failed:"):
                 return text, status, *self._drama3_unchanged_outputs(group)

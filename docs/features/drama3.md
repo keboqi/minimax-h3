@@ -156,6 +156,16 @@ and breathe in.` stays in the script. New lines are anchored after source units;
 remain in order. The shared fidelity check is deliberately conservative: an
 uncertain or larger rewording can be rejected rather than silently applied.
 
+For Chinese it also accepts same-sound character slips (的/地/得, 在/再, 以/已, 象/像,
+做/作, 青/轻, 帐/账), a character restored to a cast member's name (韩竟是 for 韩立竟是)
+and a dropped doubled character (三名名老者). By default a rewrite that
+changes your words in any other way is still kept: the status lists up to four
+changed spots, for example `Source check off: kept 6 changes to your words
+(…[回复] → …[恢复]; …)`, so you can review them in the script. Turn on **Strict
+source check** next to the writer workflow to reject such a rewrite and keep your
+text instead. The setting is remembered, and Auto uses it too. Pasted replies from
+another chat model are always checked strictly.
+
 The writer plans each scene before directing it (what each character wants and hides,
 whom each line is aimed at, where the scene turns) and uses contrast: narration stays
 restrained and the strongest delivery is kept for turning points. In Advanced mode it

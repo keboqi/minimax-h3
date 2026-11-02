@@ -200,10 +200,14 @@ def _writer_slot_inputs(view):
 
 
 def _workflow_input(view):
-    """The Writer workflow and Guided batch size, last among the rewrite's inputs; copy and paste stay Single-pass."""
+    """The Writer workflow, Guided batch size and source check, last among the rewrite's inputs.
+
+    Copy and paste stay Single-pass and always check the source strictly.
+    """
     return [
         *([view.writer_workflow] if view.writer_workflow is not None else []),
         *([view.max_batch_lines] if view.max_batch_lines is not None else []),
+        *([view.strict_source] if view.strict_source is not None else []),
     ]
 
 

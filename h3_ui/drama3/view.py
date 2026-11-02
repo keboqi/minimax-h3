@@ -118,6 +118,7 @@ class Drama3View:
     script_mode: gr.Radio | None = None
     writer_workflow: gr.Radio | None = None
     max_batch_lines: gr.Slider | None = None
+    strict_source: gr.Checkbox | None = None
     sounds_panel: gr.Accordion | None = None
     sounds: tuple[Drama3SoundSlot, ...] = ()
     shown_sound_slots: gr.Number | None = None
@@ -538,6 +539,12 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             info="Maximum lines per Guided direction/sound batch (default 40, up to 100). "
                                  "Higher values group more scenes into fewer requests.",
                         )
+                        strict_source = gr.Checkbox(
+                            value=False, label="Strict source check",
+                            info="Off: the rewrite is kept and the status lists any changes to your words to "
+                                 "review. On: a rewrite that changes your words beyond small typo fixes is "
+                                 "rejected and your text is kept.",
+                        )
                         enhance = gr.Button("Rewrite script", variant="primary", elem_classes=["h3-primary-action"])
                         enhance_status = gr.Textbox(label="Writer status", lines=2, interactive=False)
                         with gr.Accordion("Writing service", open=False):
@@ -792,6 +799,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         script_mode=script_mode,
         writer_workflow=writer_workflow,
         max_batch_lines=max_batch_lines,
+        strict_source=strict_source,
         sounds_panel=sounds_panel,
         sounds=sounds,
         shown_sound_slots=shown_sound_slots,

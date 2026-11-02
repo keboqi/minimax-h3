@@ -129,14 +129,26 @@ def _performed_turns(script, joint, sequential):
     return result
 
 
-def validate_source_fidelity(source: str, script: str, *, single: bool = False,
-                             expansion: bool = False, sequential_joint: bool = False) -> None:
-    """Reject source loss, reordering and changed known labels, allowing narrow repairs."""
+SPEAKER_CHANGE = "The writer changed a supplied speaker assignment. Your source was kept."
+WORDS_CHANGE = ("The writer omitted, reordered or changed source words beyond a spelling repair. "
+                "Your source was kept; retry the enhancement.")
+
+
+def _joined(tokens: list[str]) -> str:
+    return "".join(tokens) if all(_HAN.fullmatch(token) for token in tokens) else " ".join(tokens)
+
+
+def source_changes(source: str, script: str, *, single: bool = False, expansion: bool = False,
+                   sequential_joint: bool = False) -> list[tuple[str, str, str]]:
+    """Every change the source check does not accept, as ``(kind, source words, script words)``.
+
+    ``kind`` is "speaker" for a supplied label performed by another voice, otherwise "words".
+    """
     source, directives = source_request(source)
     expansion = expansion or bool(directives)
     kind = input_kind(source)
     if kind == BRIEF:
-        return
+        return []
     units = segment_source(source, kind).units
     expected, labels, origins = [], [], []
     for unit in units:
@@ -152,24 +164,51 @@ def validate_source_fidelity(source: str, script: str, *, single: bool = False,
         speakers.extend([int(match.group(1)) if match else None] * len(tokens))
         if not match and len(speaker) >= 2 and _HAN.search(speaker) and speaker in source:
             names.add(speaker)
+    changes = []
     if not expected:
-        return
+        return changes
     for op, a, b, c, d in SequenceMatcher(None, expected, actual, autojunk=False).get_opcodes():
         if op == 'equal':
             if not single and any(label is not None and label != speaker
                                   for label, speaker in zip(labels[a:b], speakers[c:d])):
-                raise H3Error("The writer changed a supplied speaker assignment. Your source was kept.")
+                changes.append(("speaker", _joined(expected[a:b][:12]), _joined(actual[c:d][:12])))
             continue
-        if (op == 'delete' and b - a == 1 and a > 0 and expected[a] == expected[a - 1]
-                and origins[a].id == origins[a - 1].id
-                and re.search(r'\b' + re.escape(expected[a]) + r'\s+' + re.escape(expected[a]) + r'\b',
-                              origins[a].text, re.I)):
-            continue  # a repeated word, not a repeated turn or sentence
+        # Either copy of a doubled word may be the one dropped.
+        twin = None
+        if op == 'delete' and b - a == 1:
+            twin = (a - 1 if a > 0 and expected[a] == expected[a - 1]
+                    else b if b < len(expected) and expected[a] == expected[b] else None)
+        if twin is not None and origins[a].id == origins[twin].id:
+            doubled = (expected[a] * 2 if _HAN.fullmatch(expected[a]) else None)
+            if (doubled and doubled in origins[a].text) or re.search(
+                    r'\b' + re.escape(expected[a]) + r'\s+' + re.escape(expected[a]) + r'\b', origins[a].text, re.I):
+                continue  # a repeated word or character (三名名老者), not a repeated turn or sentence
         if op == 'insert' and expansion:
             continue
         if op == 'replace' and _homophone_slips(expected[a:b], actual[c:d]):
             continue  # a same-sound character slip, such as 年青 for 年轻
         if op == 'insert' and _restores_name(expected[:a], actual[c:d], expected[a:], names):
             continue  # a character dropped from a cast name
-        raise H3Error("The writer omitted, reordered or changed source words beyond a spelling repair. "
-                      "Your source was kept; retry the enhancement.")
+        context = _joined(expected[max(0, a - 4):a])
+        changes.append(("words", context + "[" + _joined(expected[a:b][:12]) + "]",
+                        context + "[" + _joined(actual[c:d][:12]) + "]"))
+    return changes
+
+
+def validate_source_fidelity(source: str, script: str, *, single: bool = False,
+                             expansion: bool = False, sequential_joint: bool = False) -> None:
+    """Reject source loss, reordering and changed known labels, allowing narrow repairs."""
+    changes = source_changes(source, script, single=single, expansion=expansion, sequential_joint=sequential_joint)
+    if changes:
+        raise H3Error(SPEAKER_CHANGE if changes[0][0] == "speaker" else WORDS_CHANGE)
+
+
+def source_change_note(changes: list[tuple[str, str, str]], limit: int = 4) -> str:
+    """A status note listing changes kept because the source check was set to warn."""
+    if not changes:
+        return ""
+    shown = "; ".join(f"{old} → {new}" if kind == "words" else f"speaker changed at {old}"
+                      for kind, old, new in changes[:limit])
+    more = len(changes) - limit
+    return (f"Source check off: kept {len(changes)} change{'s' if len(changes) != 1 else ''} to your words "
+            f"({shown}{f'; and {more} more' if more > 0 else ''}). Review them in the script.")

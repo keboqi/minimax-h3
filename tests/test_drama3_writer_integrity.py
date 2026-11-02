@@ -133,6 +133,25 @@ class WriterIntegrityTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(H3Error):
                 validate_source_fidelity(source, changed)
 
+    def test_a_doubled_chinese_character_may_be_removed(self):
+        validate_source_fidelity('其他三名名老者，也知道事态严重。', 'narrator: 其他三名老者，也知道事态严重。')
+        with self.assertRaises(H3Error):
+            validate_source_fidelity('其他三名老者，也知道事态严重。', 'narrator: 其他三老者，也知道事态严重。')
+
+    def test_relaxed_source_check_keeps_the_rewrite_and_lists_changes(self):
+        from h3_app.drama3.guided.fidelity import source_change_note, source_changes
+        source, script = 'Mia: Bring the silver key.', '<|speaker:0|> Bring the golden key.'
+        changes = source_changes(source, script)
+        self.assertEqual(changes, [("words", "bring the[silver]", "bring the[golden]")])
+        self.assertIn("bring the[silver] → bring the[golden]", source_change_note(changes))
+        with self.assertRaises(H3Error):
+            parse_drama3_reply(script, source, None, DRAMA3_SPEAKER_AUTO, require_cast=False)
+        notes = []
+        kept, _cast = parse_drama3_reply(script, source, None, DRAMA3_SPEAKER_AUTO, require_cast=False,
+                                         notes=notes, strict_source=False)
+        self.assertIn("golden", kept)
+        self.assertTrue(any(note.startswith("Source check off: kept 1 change") for note in notes), notes)
+
     def test_important_short_narrator_action_keeps_requested_direction(self):
         lines = [Utterance('u1', 'Mia', 'We are safe now.'), Utterance('u2', 'narrator', 'The gun fired.')]
         draft = Draft(lines, [Scene('c1', ('u1', 'u2'))], directions={'u2': Direction(cue='sudden, stark')})

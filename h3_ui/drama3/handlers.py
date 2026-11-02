@@ -111,6 +111,7 @@ def _publish_drama3_signatures():
         inspect.Parameter("speaker_group", inspect.Parameter.POSITIONAL_OR_KEYWORD, default="Global"),
         inspect.Parameter("writer_workflow", inspect.Parameter.POSITIONAL_OR_KEYWORD, default="Single-pass"),
         inspect.Parameter("max_batch_lines", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=40),
+        inspect.Parameter("strict_source", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=False),
     ])
 
 

@@ -238,11 +238,13 @@ def parse_drama3_reply(
     meta: dict | None = None,
     speaker_names: dict[int, str] | None = None,
     direct=None,
+    strict_source: bool = True,
 ) -> tuple:
     """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``.
 
     ``original`` may name its speakers ("Mia: Hello."); ``speaker_names`` maps the
-    Cast's names to speaker IDs for the checks against it.
+    Cast's names to speaker IDs for the checks against it. With ``strict_source`` off, a
+    reply that changes the source words is kept and the changes are listed in ``notes``.
 
     Risky cue placements are repaired; what was repaired, and source phrases the
     script dropped, are appended to ``notes`` for the status line. The reply's
@@ -262,7 +264,7 @@ def parse_drama3_reply(
 
     def review(script, source_mode=""):
         from h3_app.drama3.lint import coverage_note, lint_drama3_script
-        from h3_app.drama3.guided.fidelity import validate_source_fidelity
+        from h3_app.drama3.guided.fidelity import source_change_note, source_changes, validate_source_fidelity
 
         if script_mode == DRAMA3_SCRIPT_ADVANCED and re.search(r'\banchor\s*=', script):
             from h3_app.drama3.guided.local_staging import localize_existing_cues
@@ -271,8 +273,13 @@ def parse_drama3_reply(
             except (H3Error, ValueError):
                 pass  # malformed staging is left for lint to report
         script, messages = lint_drama3_script(script)
-        validate_source_fidelity(original, script, single=speaker_mode == DRAMA3_SPEAKER_SINGLE,
-                                 sequential_joint=script_mode == DRAMA3_SCRIPT_BASIC)
+        checked = dict(single=speaker_mode == DRAMA3_SPEAKER_SINGLE, sequential_joint=script_mode == DRAMA3_SCRIPT_BASIC)
+        if strict_source:
+            validate_source_fidelity(original, script, **checked)
+        elif notes is not None:
+            note = source_change_note(source_changes(original, script, **checked))
+            if note:
+                notes.append(note)
         if notes is not None:
             notes.extend(message[0].upper() + message[1:] + "." for message in messages)
             coverage = coverage_note(original, script, source_mode=source_mode)
@@ -450,12 +457,15 @@ def enhance_drama3_text(
     speaker_names: dict[int, str] | None = None,
     workflow: str = DRAMA3_WORKFLOW_SINGLE,
     max_batch_lines: int = DRAMA3_GUIDED_BATCH_DEFAULT,
+    strict_source: bool = False,
 ) -> tuple:
     """Rewrite a script and validate its cast as one result before updating the UI.
 
     ``return_title`` appends the writer's title ("" when it gave none or failed).
     ``workflow`` Guided writes the script in short steps for smaller models; its reply
-    is validated exactly like the Single-pass writer's.
+    is validated exactly like the Single-pass writer's. By default a rewrite that
+    changes the source words is kept and those changes are listed in the status;
+    ``strict_source`` rejects it instead.
     """
     original = str(text or "")
     voices = tuple(voices)
@@ -531,6 +541,7 @@ def enhance_drama3_text(
             notes=notes,
             meta=meta,
             speaker_names=speaker_names,
+            strict_source=strict_source,
             # A second writer call that only adds delivery cues to an under-directed script.
             direct=(lambda script, cast: direct_drama3_script(script, cast, script_mode, ask_director))
             if direction_prompt is not None and Path(direction_prompt).is_file() else None,
