@@ -67,7 +67,7 @@ class PhonemeNoteTests(unittest.TestCase):
 
     def test_coverage_subtitles_and_direction_keep_the_characters(self):
         from h3_app.drama3.lint import merge_direction, missing_source_phrases
-        from h3_ui.drama3.generation import _CUE
+        from h3_ui.drama3.result_view import _CUE
 
         self.assertEqual(missing_source_phrases("他把书还给了老师。", "<|speaker:0|> 他把书还{huan2}给了老师。",
                                                 source_mode="preserve"), [])

@@ -1,4 +1,4 @@
-"""H3 Storage Console: CPU-only models and media for the shared Modal volume.
+"""H3 Library Console: the model and media libraries on the shared Modal volume, CPU only.
 
 No application runtime, ComfyUI, torch, or GPU dependencies are imported here.
 """
@@ -105,7 +105,7 @@ def _drama3_download(checkpoint: str, root: Path) -> None:
     from h3_app.drama3.serving.server import ensure_model
 
     ensure_model(_drama3_settings(root, checkpoint), token=os.environ.get("HF_TOKEN"),
-                 log=lambda message: print(f"[storage-console] {message}", flush=True))
+                 log=lambda message: print(f"[library-console] {message}", flush=True))
 
 
 def _drama3_spec(checkpoint: str, description: str) -> SnapshotSpec:
@@ -343,7 +343,7 @@ class ModelManager:
                             sync_models(
                                 root=self.root, manifest_path=self.manifest,
                                 model_keys=(key,), download_workers=1, metadata_workers=1,
-                                log_prefix="[storage-console]",
+                                log_prefix="[library-console]",
                             )
                     except Exception as exc:
                         failures.append(f"{key}: {exc}")
@@ -389,7 +389,7 @@ class ModelManager:
             return f"Removed {len(selected)} selected model files.", self._inventory()
 
 
-TITLE = "H3 Storage Console"
+TITLE = "H3 Library Console"
 
 
 def build_ui(manager: ModelManager, media=None):
@@ -416,6 +416,9 @@ def build_ui(manager: ModelManager, media=None):
                 build_media_library(
                     media_tab, runtime, store, reload=partial(reload_volume, manager),
                 )
+                from h3_ui.result_views import load_result_view_scripts
+
+                load_result_view_scripts(ui)
     return ui.queue(default_concurrency_limit=1)
 
 
@@ -517,7 +520,7 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
     )
     from h3_app.workspace_store import WorkspaceStore
     from h3_ui.media_console import media_runtime
-    from h3_ui.styles import H3_SETUP_CSS
+    from h3_ui.styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 
     manager = ModelManager(data, volume)
     runtime = media_runtime(data, script_dir)
@@ -533,11 +536,11 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
             # No ComfyUI runs here; its proxy routes report it as unavailable.
             runtime.comfy_url, runtime.output_dir, runtime.outputs_dir, {},
             runtime.workflow_dir, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS,
-            AUDIO_EXTENSIONS, H3_SETUP_CSS, runtime.gallery_thumbnails_dir,
+            AUDIO_EXTENSIONS, H3_SETUP_CSS + H3_WORKSPACE_CSS, runtime.gallery_thumbnails_dir,
         ),
     )
     server = uvicorn.Server(uvicorn.Config(
         app, host="0.0.0.0", port=port, log_level="warning",
         proxy_headers=True, forwarded_allow_ips="*", **UVICORN_WEBSOCKET_OPTIONS,
     ))
-    threading.Thread(target=server.run, name="storage-console", daemon=True).start()
+    threading.Thread(target=server.run, name="library-console", daemon=True).start()

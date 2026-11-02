@@ -17,6 +17,7 @@ from h3_app.prompt_writers.drama3 import (
 )
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
+from ..result_views import soundstage_panel
 from ..prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
 from ..step_cards import StepStrip, card_heading, intro, step_strip
 from h3_ui.engines.controls import (
@@ -167,108 +168,6 @@ AUTO_ID = "h3-drama3-auto"
 GENERATE_ID = "h3-drama3-generate"
 # Each step's action card: Song's stage styling, kept in view while the working card scrolls.
 STAGE = ["h3-preview-panel", "h3-song-stage", "h3-drama3-stage"]
-
-
-# Gradio's waveform player keeps its <audio> element out of the DOM, so media elements are
-# registered as they get a source; each visible subtitle panel follows the player whose file
-# (or, for a blob source, whose length) matches its result, so playing and seeking both sync.
-# Clicking a line, or a voice or sound on the timeline, seeks the player to it.
-DRAMA3_SUBTITLES_JS = """
-() => {
-  if (window.h3Drama3Subtitles) return;
-  window.h3Drama3Subtitles = true;
-  const media = new Set();
-  const proto = HTMLMediaElement.prototype;
-  const source = Object.getOwnPropertyDescriptor(proto, "src");
-  Object.defineProperty(proto, "src", {
-    ...source,
-    set(value) { media.add(this); source.set.call(this, value); },
-  });
-  // While anything plays, follow it every frame; the interval below covers seeks while paused.
-  let following = false;
-  const follow = () => {
-    if (following || typeof requestAnimationFrame !== "function") return;
-    following = true;
-    const frame = () => {
-      sync();
-      following = [...media].some((element) => !element.paused);
-      if (following) requestAnimationFrame(frame);
-    };
-    requestAnimationFrame(frame);
-  };
-  const play = proto.play;
-  proto.play = function (...args) {
-    media.add(this);
-    const result = play.apply(this, args);
-    follow();
-    return result;
-  };
-  const playerFor = (box) => {
-    const id = box.dataset.media, duration = Number(box.dataset.duration);
-    let found = null;
-    for (const element of media) {
-      const url = element.currentSrc || element.src || "";
-      const matches = (id && url.includes(id))
-        || (url.startsWith("blob:") && duration > 0 && Math.abs(element.duration - duration) < 0.6);
-      if (matches && (!found || (found.paused && !element.paused))) found = element;
-    }
-    return found;
-  };
-  const sync = () => {
-    for (const box of document.querySelectorAll(".h3-drama3-subtitles")) {
-      if (!box.offsetParent) continue;
-      const player = playerFor(box);
-      const time = player ? player.currentTime : -1;
-      const lines = [...box.querySelectorAll("li")];
-      // Parallel branches arrive in script order, not playback order.
-      const started = lines.filter((line) => Number(line.dataset.start) <= time + 0.05)
-        .sort((a, b) => Number(a.dataset.start) - Number(b.dataset.start));
-      const playing = started.filter((line) => Number(line.dataset.end) > time);
-      // Highlight overlapping speech together; keep the latest start lit during gaps.
-      const highlighted = playing.length ? playing : started.slice(-1);
-      const active = highlighted.at(-1) ?? null;
-      for (const line of lines) {
-        const lit = highlighted.includes(line);
-        line.classList.toggle("active", lit);
-        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && !lit);
-        // Aligned lines light word by word: what has been said, and the word being said.
-        for (const word of line.querySelectorAll(".h3-word")) {
-          const start = Number(word.dataset.start), end = Number(word.dataset.end);
-          word.classList.toggle("spoken", lit && start <= time);
-          word.classList.toggle("current", lit && start <= time && time < end + 0.08);
-        }
-      }
-      // Voice segments follow their subtitle lines, sounds light while they play;
-      // the playhead follows the player.
-      for (const segment of box.querySelectorAll(".h3-drama3-segment")) {
-        const { line, start, end } = segment.dataset;
-        segment.classList.toggle("active", line === undefined
-          ? Number(start) <= time && time < Number(end)
-          : highlighted.includes(lines[Number(line)]));
-      }
-      const head = box.querySelector(".h3-drama3-playhead");
-      const duration = Number(box.dataset.duration) || player?.duration || 0;
-      if (head?.style) {
-        head.hidden = !(time >= 0 && duration > 0);
-        head.style.left = `${Math.min(100, Math.max(0, time / duration * 100))}%`;
-      }
-      if (active && box.h3Active !== active) {
-        const list = box.querySelector("ol");
-        list.scrollTo({ top: active.offsetTop - (list.clientHeight - active.offsetHeight) / 2, behavior: "smooth" });
-      }
-      box.h3Active = active;
-    }
-  };
-  setInterval(sync, 200);
-  document.addEventListener("click", (event) => {
-    const line = event.target.closest?.(".h3-drama3-subtitles :is(li, .h3-drama3-segment)");
-    const player = line && playerFor(line.closest(".h3-drama3-subtitles"));
-    if (!player) return;
-    player.currentTime = Number(line.dataset.start);
-    sync();
-  });
-}
-"""
 
 
 # The script box stays a plain textarea with transparent text over a <pre> that mirrors it
@@ -811,7 +710,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         gr.Markdown("Every production is also saved to **Media**.", elem_classes=["h3-song-hint"])
                 with gr.Column(elem_classes=[*STAGE, "h3-drama3-result"]):
                     output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
-                    subtitles = gr.HTML("", visible=False, elem_classes=["h3-drama3-subtitle-panel"])
+                    subtitles = soundstage_panel()
                     output.h3_metadata_root = gr.Column()
                 sampling_controls = [temperature, top_p, top_k]
                 presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)

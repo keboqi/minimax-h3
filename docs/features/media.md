@@ -25,6 +25,14 @@ adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
 In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
 that request and its available actions. **Save as project** keeps its prompt,
 settings and sources; saved requests open in **Projects**.
+Selecting a **Soundstage** result shows its generate-flow view again under the
+player: voices and sounds on a timeline, subtitles that follow playback and seek
+on click, and where each voice stands on the stage. A **Dub & Translate** result
+(its audio or video) opens in its own result player, with either voice, background
+music on or off and original or translated subtitles. Both are read from files kept
+beside the output on the volume (the settings snapshot, and the dub's
+`.dub-player/<name>/` tracks with `player.json`), so the Library Console shows them
+too. A dub's player tracks are removed once both its audio and video are deleted.
 Image mode offers the one-step **SeedVR2 2x** workflow and
 **LTX-2.5 CQ Image Enhancer**, using the same target-resolution presets.
 CQ resizes the selected still to fit the target, then generatively restores

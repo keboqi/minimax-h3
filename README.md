@@ -335,9 +335,9 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
-Deployment exposes four independent URLs: `storage` for the CPU-only
-**H3 Storage Console**, and three GPU endpoints that serve the same app: `h3`,
-`h3-video` and `h3-soundstage` (see **Preloaded endpoints** below). Open the **storage** URL
+Deployment exposes four independent URLs: `library` for the CPU-only
+**H3 Library Console**, and three GPU endpoints that serve the same app: `h3`,
+`h3-video` and `h3-soundstage` (see **Preloaded endpoints** below). Open the **library** URL
 printed by Modal first. The console uses a separate lightweight image with
 Modal's default CPU and RAM; opening it does not start the expensive GPU
 endpoint or ComfyUI. Its **Models** tab prepares checkpoints and LoRAs; its
@@ -382,7 +382,7 @@ after that sleeps as usual. Other engines still work on both endpoints, loading
 their models on demand.
 
 All three GPU endpoints share the volume and its workspace database, so use one
-at a time, as with the storage console below. `H3_MODAL_MIN_CONTAINERS` applies
+at a time, as with the Library Console below. `H3_MODAL_MIN_CONTAINERS` applies
 to each of them.
 
 The **Media library** tab browses videos, images and audio from the shared
@@ -410,8 +410,9 @@ services write the same workspace database on the volume. Modal volumes require 
 container's commits, and their file locks do not coordinate separate containers.
 GPU startup now loads the catalog without provisioning models or checking remote
 versions. Generation still downloads missing assets on demand. The old
-`manage_models` function (URL label `models`) is now `storage_console`
-(label `storage`).
+`manage_models` function (URL label `models`), later `storage_console` (label
+`storage`), is now `library_console` (label `library`): it manages the model
+and media libraries.
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 services and requires it to contain `HF_TOKEN`. If your existing secret uses a

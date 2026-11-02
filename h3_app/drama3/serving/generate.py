@@ -20,6 +20,7 @@ import requests
 
 from h3_app import stable_audio
 from h3_app.drama3 import sounds as drama3_sounds
+from h3_app.drama3.results import CHARACTER_POSITIONS, DRAMA3_FAMILY, is_narrator
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
@@ -449,15 +450,6 @@ def speaker_gains(takes: dict[int, Take]) -> dict[str, float]:
     target = float(np.median(list(levels.values())))
     return {speaker: float(10.0 ** (np.clip(target - level, -MAX_SPEAKER_GAIN_DB, MAX_SPEAKER_GAIN_DB) / 20.0))
             for speaker, level in levels.items()}
-
-
-# The narrator stands in the middle; characters take these places in order of first line.
-NARRATOR_NAMES = frozenset({"narrator", "narration", "旁白", "storyteller", "story teller"})
-CHARACTER_POSITIONS = (-0.3, 0.3, -0.15, 0.15, -0.45, 0.45)
-
-
-def is_narrator(speaker: str) -> bool:
-    return " ".join(str(speaker).split()).casefold() in NARRATOR_NAMES
 
 
 def speaker_positions(chunks: list[Chunk]) -> dict[str, float]:
@@ -1013,7 +1005,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     audio.save_mp3(joined, rate, result)
     failed = [take for take in ordered if take.check is not None and not take.check.ok]
     write_snapshot(result, {
-        "family": "Drama 3",
+        "family": DRAMA3_FAMILY,
         "settings": {
             "title": title,
             "backend": LABEL, "temperature": request.temperature,

@@ -16,7 +16,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import contextvars
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import hashlib
 import heapq
 import json
@@ -41,6 +41,7 @@ from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
 from . import gemini, moss, nemotron, refinement, segments as segment_tools, session as sessions, tools, tools_worker
+from .results import DUB_FAMILY, PLAYER_DIR, Player, load_player, prune_players as _prune_players, save_player
 
 RATE = 44100
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
@@ -97,8 +98,6 @@ CONTEXT_LINES = 2
 # A speaker's voice setting: empty clones it from the source, otherwise a saved Drama 3 speaker's key.
 ORIGINAL_VOICE = ""
 SPEAKER_VOLUME = (0.0, 200.0)
-# The result player's separate tracks sit beside the outputs in this folder, which Media skips.
-PLAYER_DIR = ".dub-player"
 # Constant bitrate: browsers seek a long variable-bitrate MP3 by estimate and land seconds away
 # from the reported time, so the dub would drift from its subtitles after every seek.
 PLAYER_MP3 = ("-c:a", "libmp3lame", "-b:a", "128k")
@@ -157,22 +156,6 @@ class DubRequest:
 class Analysis:
     session: sessions.Session
     message: str
-
-
-@dataclass
-class Player:
-    """What the result player plays: the speech tracks and background apart, so either voice and the
-    music can be switched while it plays, and each line's original and translated subtitle times."""
-
-    video: Path | None
-    dub: Path
-    original: Path
-    music: Path | None
-    duration: float
-    lines: list[dict]
-    target_language: str = ""
-    source_language: str = ""
-    word_timing: bool = False
 
 
 @dataclass
@@ -1579,19 +1562,11 @@ def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
                       "-movflags", "+faststart"], target, timeout=runtime.generation_timeout,
                      action="Exporting video with burned-in subtitles")
     original = read_snapshot(source) or {}
-    write_snapshot(result, {"family": "Dub & Translate", "source_asset_ids": [original["asset_id"]]
+    write_snapshot(result, {"family": DUB_FAMILY, "source_asset_ids": [original["asset_id"]]
                            if original.get("asset_id") else [], "settings": {
         **original.get("settings", {}), "source": source.name, "burned_subtitles": True,
         "subtitle_file": captions.name}})
     return result
-
-
-def _prune_players(output_dir: Path) -> None:
-    """Drop player tracks whose dub was deleted from Media (each folder is named after its outputs)."""
-    root = output_dir / PLAYER_DIR
-    for folder in root.iterdir() if root.is_dir() else ():
-        if folder.is_dir() and not (output_dir / f"{folder.name}.mp3").exists():
-            shutil.rmtree(folder, ignore_errors=True)
 
 
 def _player(session: sessions.Session, speech: Path, folder: Path, *, separated: bool, speech_gain: float,
@@ -1712,7 +1687,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "failed_lines": [{"line_number": line.index + 1, "reason": line.note} for line in kept],
         "speakers": speaker_settings(session),
     }
-    write_snapshot(audio_out, {"family": "Dub & Translate", "settings": settings})
+    write_snapshot(audio_out, {"family": DUB_FAMILY, "settings": settings})
 
     video_out = None
     if session.data.get("video"):
@@ -1738,7 +1713,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         video_out = _ffmpeg([*inputs, *maps, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-c:s", "mov_text",
                              *metadata, "-movflags", "+faststart"], output_dir / f"{stem}.mp4",
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
-        write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
+        write_snapshot(video_out, {"family": DUB_FAMILY, "settings": {
             **settings, "original_track": request.keep_original_track, "burned_subtitles": False}})
     words = None
     if request.word_timing:
@@ -1758,10 +1733,14 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     # voices or applying any edits made after this dub.
     folder = output_dir / PLAYER_DIR / stem
     try:
+        # Media shows this player again for the dub's outputs.
+        save_player(folder, player)
+    except OSError as exc:
+        notes.insert(0, f"Dub saved, but its result player could not be saved for Media: {exc}.")
+    try:
         np.savez_compressed(folder / "alignment.npz", **{str(index): clip for index, clip in clips.items()})
         (folder / "alignment.json").write_text(json.dumps({
-            "player": asdict(player), "lines": lines, "spoken": spoken,
-            "files": dict(session.data.get("files", {})),
+            "lines": lines, "spoken": spoken, "files": dict(session.data.get("files", {})),
         }, ensure_ascii=False, default=str), encoding="utf-8")
     except OSError as exc:
         notes.insert(0, f"Dub saved, but word-alignment repair audio could not be saved: {exc}. "
@@ -1809,9 +1788,12 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
             clips = {int(index): archive[index] for index in archive.files}
     except (OSError, ValueError, KeyError) as exc:
         raise H3Error("This dub has no saved alignment audio. Generate the dub once to enable this button.") from exc
-    frozen = sessions.Session(session.root, {"files": saved["files"],
-        "source_language": saved["player"].get("source_language", ""),
-        "target_language": saved["player"].get("target_language", "")})
+    # The player saved with the dub; dubs from before player.json keep it in alignment.json.
+    player = load_player(output)
+    if player is None:
+        raise H3Error("This dub's result player is missing. Generate the dub again to enable this button.")
+    frozen = sessions.Session(session.root, {"files": saved["files"], "source_language": player.source_language,
+                                             "target_language": player.target_language})
     if frozen.speech_audio is None or not frozen.speech_audio.is_file():
         raise H3Error("The original audio is no longer available. Analyze the source again.")
     lines = saved["lines"]
@@ -1819,7 +1801,7 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
     notes = []
     cue_indices = [index for index, line in enumerate(lines) if line["source"] or line["translation"]]
     existing = {}
-    for index, cue in zip(cue_indices, saved["player"]["lines"]):
+    for index, cue in zip(cue_indices, player.lines):
         for field in ("source", "translation"):
             timed = cue.get(f"{field}_words") or []
             try:
@@ -1834,10 +1816,6 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
     yield "Generating missing word timings; reusing successful alignments"
     words = yield from _word_timings(frozen, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
                                      hf_token=hf_token, notes=notes, existing=existing)
-    data = saved["player"]
-    for field in ("video", "dub", "original", "music"):
-        data[field] = Path(data[field]) if data[field] else None
-    player = Player(**data)
     for index, cue in zip(cue_indices, player.lines):
         cue["source_words"] = words.get(index, {}).get("source", [])
         cue["translation_words"] = words.get(index, {}).get("translation", [])
@@ -1856,6 +1834,5 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
                 if completed == len(expected) else
                 f" Newly aligned this run: {max(0, completed - before)}; already aligned: {before}. "
                 "Missing tracks still use plain subtitles. Generating the dub again is not required to apply a successful repair.")
-    saved["player"] = asdict(player)
-    (folder / "alignment.json").write_text(json.dumps(saved, ensure_ascii=False, default=str), encoding="utf-8")
+    save_player(folder, player)
     yield WordAlignment(player, message)

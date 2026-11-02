@@ -14,7 +14,7 @@ import hashlib
 from pathlib import Path
 from urllib.parse import quote
 
-from h3_app.dubbing import pipeline
+from h3_app.dubbing.results import Player
 from h3_app.dubbing.segments import format_time
 from h3_ui.subtitle_words import word_spans_html
 
@@ -252,7 +252,7 @@ def _take_warning(lines: list[dict]) -> str:
             f'Lines {", ".join(failed)}. Retry these lines in Review lines, then generate the dub again.</div>')
 
 
-def player_html(player: pipeline.Player, *, key: str) -> str:
+def player_html(player: Player, *, key: str) -> str:
     """The player for one dub; ``key`` keeps its radio group apart from earlier players on the page."""
     dub, original = file_url(player.dub), file_url(player.original)
     target = _language(player.target_language, "translated")

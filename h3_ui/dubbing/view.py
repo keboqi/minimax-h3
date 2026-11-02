@@ -28,9 +28,9 @@ from h3_app.dubbing.pipeline import (
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
+from ..result_views import dub_panel
 from ..step_cards import StepStrip, card_heading, intro, step_strip
 from . import presenters, widgets
-from .player import ELEM_CLASS as PLAYER_CLASS, PLAYER_JS
 
 SOURCE, LINES, DUB = range(3)
 STEPS_ID = "h3-dub-steps"
@@ -381,7 +381,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                 with gr.Column(elem_classes=["h3-preview-panel", "h3-dub-result"]):
                     card_heading("Dubbing results")
                     # The dub with either voice, the music on or off and synced subtitles.
-                    player = gr.HTML("", visible=False, js_on_load=PLAYER_JS, elem_classes=[PLAYER_CLASS])
+                    player = dub_panel()
                     with gr.Row():
                         align_words = gr.Button("Generate / repair word alignment", interactive=False)
                         stop_align_words = gr.Button("Interrupt alignment", interactive=False)

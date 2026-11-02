@@ -18,6 +18,7 @@ from h3_app.catalog import (
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
 from .media_previews import browser_preview_updates, browser_gallery_items
+from .result_views import result_view_updates
 
 
 def bind_gallery_view(
@@ -136,6 +137,12 @@ def bind_gallery_view(
                 queue=False,
                 show_progress="hidden",
                 api_name=False,
+            )
+        if view.soundstage_view is not None:
+            event.then(
+                result_view_updates, inputs=view.selected,
+                outputs=[view.soundstage_view, view.dub_view],
+                queue=False, show_progress="hidden", api_name=False,
             )
         image_destination_sync = getattr(view.selected, "h3_image_destination_sync", None)
         if image_destination_sync:

@@ -1,4 +1,4 @@
-"""GPU-free Media library for the storage console.
+"""GPU-free Media library for the Library Console.
 
 Browsing, search, import, tags, lineage, comparison and deletion reuse the main
 application's controller and bindings. Enhancement needs ComfyUI on the GPU
@@ -69,8 +69,10 @@ def build_media_library(
                 )
             sync.click(reload, outputs=sync_status, concurrency_id="model-volume",
                        concurrency_limit=1, api_name=False)
-        library = gr.Column()
-        maintenance = gr.Column()
+        # The main app's workspace styles: the library and the rich result views use them.
+        with gr.Column(elem_classes=["h3-workspace"]):
+            library = gr.Column()
+            maintenance = gr.Column()
     view = build_gallery_view(
         library,
         postprocess_options=POSTPROCESS_OPTIONS,

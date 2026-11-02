@@ -1,12 +1,12 @@
-"""Storage console behavior without downloading models or allocating a GPU."""
+"""Library console behavior without downloading models or allocating a GPU."""
 import ast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-import h3_storage_console as manager_module
-from h3_storage_console import (
+import h3_library_console as manager_module
+from h3_library_console import (
     AUDIO_TOOLS_FAMILY, SNAPSHOT_SPECS, ModelManager, SnapshotSpec, catalog_groups, model_presets, preset_selection,
 )
 from h3_models import MODEL_SPECS, model_manifest_key, read_json, write_json_atomic
@@ -230,7 +230,7 @@ class ModelManagerTests(unittest.TestCase):
         tree = ast.parse(source.read_text(encoding="utf-8"))
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         self.assertNotIn("provision_models", functions)
-        manager = functions["storage_console"]
+        manager = functions["library_console"]
         decorator = next(d for d in manager.decorator_list
                          if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
                          and d.func.attr == "function")

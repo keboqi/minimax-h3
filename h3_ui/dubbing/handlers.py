@@ -22,7 +22,7 @@ from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
 
 from . import presenters
-from .player import player_html
+from ..result_views import dub_html, panel_update
 
 LIBRARY_LIMIT = 200
 _DOWNLOAD_STOPS: dict[str, set[threading.Event]] = {}
@@ -485,8 +485,7 @@ class DubbingHandlers:
             for update in self._gpu(lambda **kw: pipeline.dub(request, **kw)):
                 if isinstance(update, pipeline.Dub):
                     video = str(update.video) if update.video else None
-                    shown = (gr.update(value=player_html(update.player, key=update.audio.stem), visible=True)
-                             if update.player is not None else gr.update(value="", visible=False))
+                    shown = panel_update(dub_html(update.player, scope="dub"))
                     export = ({"video": video, "subtitles": str(update.subtitles[0])}
                               if video and update.subtitles and not update.subtitles[0].name.endswith(".original.srt")
                               else None)
@@ -506,8 +505,7 @@ class DubbingHandlers:
         try:
             for update in self._gpu(lambda **kw: pipeline.align_dub_words(session_id, **kw)):
                 if isinstance(update, pipeline.WordAlignment):
-                    yield (gr.update(value=player_html(update.player, key=update.player.dub.stem), visible=True),
-                           update.message)
+                    yield panel_update(dub_html(update.player, scope="dub")), update.message
                 else:
                     yield gr.skip(), update
         except Exception as exc:

@@ -1901,8 +1901,20 @@ class DubRenderTests(Workspace):
         self.assertIn("data-music", html)
         self.assertIn('data-shown-end="', html)
         self.assertIn("Dub (French)", html)
-        # Deleting the dub from Media lets the next dub drop its player tracks.
+        # Media shows the saved player again for either output, found by name.
+        from h3_app.dubbing.results import load_player
+
+        for output in (result.audio, result.video):
+            saved = load_player(output)
+            self.assertEqual((saved.dub, saved.music, saved.video), (player.dub, player.music, player.video))
+            self.assertEqual(saved.lines, player.lines)
+        # player.json is the one record of the player; word alignment keeps only its own data.
+        self.assertNotIn("player", json.loads((folder / "alignment.json").read_text(encoding="utf-8")))
+        # Deleting both outputs from Media lets the next dub drop its player tracks.
         result.audio.unlink()
+        pipeline._prune_players(self.runtime.outputs_dir / "dubbing")
+        self.assertTrue(folder.exists())
+        result.video.unlink()
         pipeline._prune_players(self.runtime.outputs_dir / "dubbing")
         self.assertFalse(folder.exists())
 

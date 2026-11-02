@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any, Sequence
 import gradio as gr
 
+from .result_views import dub_panel, soundstage_panel
+
 
 @dataclass(frozen=True)
 class GalleryView:
@@ -62,6 +64,9 @@ class GalleryView:
     sort: Any = None
     favorite_toggle: Any = None
     counts: Any = None
+    # A Soundstage result's timeline, subtitles and stage, and a dub's result player.
+    soundstage_view: Any = None
+    dub_view: Any = None
 
 
 SORT_CHOICES = (("Newest first", "newest"), ("Oldest first", "oldest"), ("Name", "name"))
@@ -273,6 +278,7 @@ def build_gallery_view(
                     interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
+                soundstage_view, dub_view = soundstage_panel(), dub_panel()
                 with gr.Row(equal_height=True, elem_classes=["h3-gallery-title-row"]):
                     download = gr.Markdown(elem_classes=["h3-gallery-download"])
                     favorite_toggle = gr.Button(
@@ -430,4 +436,6 @@ def build_gallery_view(
         sort,
         favorite_toggle,
         counts,
+        soundstage_view,
+        dub_view,
     )

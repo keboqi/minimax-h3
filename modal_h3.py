@@ -765,7 +765,7 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
-# The storage console has its own small CPU image; it does not build or import ComfyUI.
+# The library console has its own small CPU image; it does not build or import ComfyUI.
 console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
@@ -782,7 +782,7 @@ if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
-        "h3_models.py", "h3_storage_console.py", "h3_sources.py",
+        "h3_models.py", "h3_library_console.py", "h3_sources.py",
         "h3_requirements.py", "h3_node_patches.py",
     ):
         console_image = console_image.add_local_file(
@@ -823,7 +823,7 @@ def layout() -> None:
 
 
 def prepare_runtime_models() -> None:
-    """Use the storage console's files; generation downloads missing assets on demand."""
+    """Use the library console's files; generation downloads missing assets on demand."""
     from h3_models import build_model_config, write_json_atomic
 
     volume.reload()
@@ -935,10 +935,10 @@ def wait_for_comfy_frontend(
 )
 @modal.concurrent(max_inputs=100)
 @modal.web_server(
-    UI_PORT, startup_timeout=120, label="storage", requires_proxy_auth=PROXY_AUTH,
+    UI_PORT, startup_timeout=120, label="library", requires_proxy_auth=PROXY_AUTH,
 )
-def storage_console():
-    from h3_storage_console import serve
+def library_console():
+    from h3_library_console import serve
 
     os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
     os.environ["HF_HOME"] = "/tmp/hf"
