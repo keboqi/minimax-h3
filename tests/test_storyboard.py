@@ -21,7 +21,7 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.workspace_store import WorkspaceStore
 from h3_ui.storyboard import handlers as handlers_module
 from h3_ui.storyboard.handlers import StoryboardHandlers, StoryboardServices
-from h3_ui.storyboard.presentation import strip_html, timeline_html
+from h3_ui.storyboard.presentation import scene_list_html, timeline_html
 
 PROFILE_VALUES = {name: UI_DEFAULTS.get(name, f"default-{name}") for name in GENERATION_FIELDS}
 
@@ -100,9 +100,44 @@ class StoryboardRuleTests(unittest.TestCase):
         self.assertEqual((values["duration"], values["seed"], values["result_format"]), (5.0, 7, "Video"))
         scene["cast"] = ["Officer", "Mei"]
         values = sb.scene_request_values(document, 0, PROFILE_VALUES, 7)
+        self.assertEqual((values["mode"], values["ref_image_1"]), ("Text to video", None))  # Mode is explicit.
+        scene.update(mode=sb.REFERENCES, ref_images=["/scene/extra.png"], ref_audios=["/scene/voice.wav"])
+        values = sb.scene_request_values(document, 0, PROFILE_VALUES, 7)
         self.assertEqual(values["mode"], "Reference media")
         self.assertEqual(values["prompt"], "Officer is <Picture 1>. Mei is <Picture 2>. prompt 1")
-        self.assertEqual((values["ref_image_1"], values["ref_image_2"]), ("/cast/o.png", "/cast/mei.png"))
+        self.assertEqual([values[f"ref_image_{n}"] for n in (1, 2, 3)],
+                         ["/cast/o.png", "/cast/mei.png", "/scene/extra.png"])
+        self.assertEqual(values["ref_audio_1"], "/scene/voice.wav")
+        self.assertEqual(sb.picture_tags(document, scene),
+                         ["Officer = <Picture 1>", "Mei = <Picture 2>", "image 1 = <Picture 3>"])
+
+    def test_a_continuing_scene_never_sends_a_first_frame(self):
+        document = board("flow", takes=False)
+        add_take(document, 0)
+        scene = document["scenes"][1]
+        scene.update(mode=sb.FRAMES, first_image="/scene/first.png")
+        self.assertIn("Add the last-frame picture", sb.scene_issues(document, 1))
+        scene["last_image"] = "/scene/last.png"
+        self.assertEqual(sb.scene_issues(document, 1), [])
+        values = sb.scene_request_values(document, 1, PROFILE_VALUES, 1)
+        self.assertEqual((values["mode"], values["first_image"], values["last_image"]),
+                         ("First / last frame", None, "/scene/last.png"))
+        self.assertEqual(sb.runs_as(document, 1), "Last frame")
+        scene["link"] = "cut"
+        self.assertEqual(sb.scene_request_values(document, 1, PROFILE_VALUES, 1)["first_image"], "/scene/first.png")
+
+    def test_issues_explain_what_each_mode_still_needs(self):
+        document = board("flow", takes=False)
+        first, second = document["scenes"]
+        first.update(prompt="", mode=sb.FRAMES)
+        self.assertEqual(sb.scene_issues(document, 0), ["Write a prompt", "Add a first or last frame"])
+        first.update(prompt="x", mode=sb.REFERENCES)
+        self.assertEqual(sb.scene_issues(document, 0), ["Pick at least one reference"])
+        first["ref_images"] = [f"/i{n}.png" for n in range(10)]
+        self.assertIn("Use at most 9 pictures", sb.scene_issues(document, 0)[0])
+        self.assertEqual(sb.scene_issues(document, 1), ["Generate scene 1 first: this scene continues from it"])
+        with self.assertRaisesRegex(ValueError, "Scene 2: Generate scene 1 first"):
+            sb.check_scene(document, 1)
 
     def test_profile_keeps_h3_settings_and_takes_finishing_from_defaults(self):
         values = {k: v for k, v in PROFILE_VALUES.items() if k in sb.PROFILE_FIELDS and k not in sb.DEFAULTED_FIELDS}
@@ -112,16 +147,19 @@ class StoryboardRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             sb.make_profile({}, {})
 
-    def test_strip_and_timeline_show_state_links_and_new_seconds(self):
+    def test_scene_list_and_timeline_say_how_scenes_connect_and_what_they_need(self):
         document = board("flow", "cut")
         add_take(document, 0)
-        html = strip_html(document, document["scenes"][1]["id"])
+        document["scenes"].append(sb.new_scene("Empty", "", link="cut"))
+        html = scene_list_html(document, document["scenes"][1]["id"])
         self.assertIn('aria-pressed="true"', html)
+        self.assertIn("↓ continues into", html)
+        self.assertIn("✂ cut to a fresh start", html)
+        self.assertIn("Continues scene 1 · text only", html)
         self.assertIn("h3-sb-outdated", html)
-        self.assertIn("3.4 s new", html)
-        self.assertEqual(html.count('data-sb-action="link"'), 2)
+        self.assertIn("Needs input", html)
         timeline = timeline_html(document, None)
-        self.assertEqual(timeline.count("h3-sb-segment-cut"), 1)
+        self.assertEqual(timeline.count("h3-sb-segment-cut"), 2)
 
 
 def write_latent(path: Path, prefix_frames: int):
@@ -281,7 +319,7 @@ class StoryboardRunnerTests(unittest.TestCase):
     def test_generate_remaining_chains_flows_from_the_take_in_use(self):
         storyboard_id = self.make("flow", "cut")
         statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
-        self.assertEqual(statuses[-1], "All queued scenes generated.")
+        self.assertEqual(statuses[-1], "Generated the remaining scenes.")
         document = self.service.load("a", storyboard_id)
         self.assertEqual(sb.scene_states(document), ["done"] * 3)
         self.assertEqual(document["queue"], [])
@@ -303,13 +341,55 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertEqual(sb.scene_states(document), ["done", "draft"])
         self.assertEqual(document["queue"], [document["scenes"][1]["id"]])
         rendered = self.handlers.render("a", storyboard_id)
-        self.assertIn("Generate remaining", rendered[17])
+        self.assertIn("Generate all remaining scenes", rendered["take_note"])
 
     def test_flow_scene_waits_for_its_predecessor(self):
         storyboard_id = self.make("flow")
         scene_id = self.service.load("a", storyboard_id)["scenes"][1]["id"]
-        with self.assertRaisesRegex(H3Error, "Scene 1 must be done"):
+        with self.assertRaisesRegex(ValueError, "Generate scene 1 first"):
             list(self.handlers.generate_scene(storyboard_id, scene_id, SimpleNamespace()))
+
+    def test_generate_remaining_skips_scenes_that_still_need_input(self):
+        storyboard_id = self.make("cut", "flow")
+        document = self.service.load("a", storyboard_id)
+        self.service.update_scene("a", storyboard_id, document["scenes"][1]["id"], prompt="")
+        statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
+        self.assertEqual([prompt for prompt, _ in self.graphs], ["prompt 1"])
+        self.assertIn("Skipped scene 2", statuses[-1])
+        self.assertIn("wait for a scene that needs input", statuses[-1])
+
+    def test_switching_a_take_asks_first_when_later_scenes_continue_from_it(self):
+        storyboard_id = self.make("flow", "cut")
+        list(self.handlers.generate_remaining(storyboard_id, SimpleNamespace()))
+        first = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        list(self.handlers.generate_scene(storyboard_id, first, SimpleNamespace()))
+        document = self.service.load("a", storyboard_id)
+        new_take = document["scenes"][0]["takes"][1]
+        self.assertEqual(sb.scene_states(document), ["done"] * 3)  # A new take doesn't replace the one in use.
+        with patch.object(handlers_module.gr, "Info"), patch.object(handlers_module.gr, "Warning"):
+            asked = self.handlers.use_take(storyboard_id, first, new_take, SimpleNamespace())
+            self.assertTrue(asked["confirm_group"]["visible"])
+            self.assertIn("Scene 2 continues", asked["confirm_text"])
+            self.assertIn("Scene 3 starts fresh", asked["confirm_text"])
+            self.handlers.use_take_later(storyboard_id, first, new_take, SimpleNamespace())
+        self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done", "outdated", "done"])
+
+    def test_scene_media_is_copied_once_and_matched_by_name_afterwards(self):
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        picture = self.root / "upload" / "frame.png"
+        picture.parent.mkdir()
+        picture.write_bytes(b"png")
+        self.assertTrue(self.service.set_scene_media("a", storyboard_id, scene_id, "last_image", str(picture)))
+        stored = Path(self.service.load("a", storyboard_id)["scenes"][0]["last_image"])
+        self.assertTrue(stored.is_relative_to(self.runtime.output_dir.resolve()))
+        cached = self.root / "gradio-cache" / stored.name
+        cached.parent.mkdir()
+        cached.write_bytes(b"png")
+        self.assertFalse(self.service.set_scene_media("a", storyboard_id, scene_id, "last_image", str(cached)))
+        self.assertTrue(self.service.set_scene_media("a", storyboard_id, scene_id, "last_image", None))
+        self.service.set_mode("a", storyboard_id, scene_id, sb.REFERENCES)
+        self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["mode"], sb.REFERENCES)
 
     def test_more_takes_per_run_use_consecutive_seeds_and_keep_the_first_in_use(self):
         storyboard_id = self.make()

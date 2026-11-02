@@ -221,7 +221,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         image_inputs = [
             *h3_components.values.values(),
             *(component for feature in FEATURES for component in feature.library_inputs(engine_views[feature.id])),
-            *((storyboard_view.cast_image,) if storyboard_view is not None else ()),
+            *((storyboard_view.cast_image, storyboard_view.first_image, storyboard_view.last_image,
+               storyboard_view.ref_images) if storyboard_view is not None else ()),
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):

@@ -195,7 +195,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 23)
+        self.assertEqual(len(image_inputs), 26)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -633,6 +633,38 @@ class UiContractTests(unittest.TestCase):
         }
         self.assertTrue(accepts)
         self.assertEqual(accepts - restarted, set())
+
+    def test_create_storyboard_works_with_the_pages_default_h3_settings(self) -> None:
+        # Regression: the profile lacked upscale_resolution, so Create silently failed.
+        from tempfile import TemporaryDirectory
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui.storyboard import handlers as storyboard_handlers
+
+        button = next(c for c in self.config["components"]
+                      if c["type"] == "button" and c["props"].get("value") == "Create storyboard")
+        block = next(f for f in self.demo.fns.values() if any(t[0] == button["id"] for t in f.targets))
+        values = [getattr(component, "value", None) for component in block.inputs]
+        values[:2] = ["Chase", "She runs.\n\nShe jumps."]
+        with TemporaryDirectory() as directory, \
+                mock.patch.object(JOBS, "store", WorkspaceStore(Path(directory) / "state")), \
+                mock.patch.object(storyboard_handlers, "require_owner", lambda request: "owner"), \
+                mock.patch.object(storyboard_handlers.gr, "Info"), \
+                mock.patch.object(storyboard_handlers.gr, "Warning") as warning:
+            result = block.fn(*values, None)
+        warning.assert_not_called()
+        # Gradio injects the browser request only into parameters typed as gr.Request.
+        import typing
+        import gradio as gr
+        self.assertIs(typing.get_type_hints(block.fn).get("request"), gr.Request)
+        self.assertNotEqual(block.queue, False)
+        from h3_ui.storyboard.view import RENDER_FIELDS
+        shown = dict(zip(RENDER_FIELDS, result))
+        self.assertTrue(shown["storyboard"]["value"])
+        self.assertIn("2 scenes", shown["profile_summary"])
+        self.assertEqual((shown["start_group"]["visible"], shown["board_group"]["visible"]), (False, True))
+        self.assertEqual(shown["prompt"], "She runs.")
+        self.assertFalse(shown["start"]["visible"])  # The opening scene has no start choice.
 
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(

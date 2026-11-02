@@ -920,14 +920,27 @@ def _storyboard_service():
     return _STORYBOARDS
 
 
+def storyboard_request_defaults():
+    """Every H3 generate value a storyboard may need: the signature's defaults, then the UI's."""
+    from .h3.handlers import default_request
+
+    values = {
+        name: parameter.default
+        for name, parameter in inspect.signature(generate).parameters.items()
+        if parameter.default is not inspect.Parameter.empty and name != "progress"
+    }
+    values.update(default_request(""))
+    return values
+
+
 def _storyboard_handlers():
     from .storyboard.handlers import StoryboardHandlers, StoryboardServices
-    from .h3.handlers import default_request
 
     return StoryboardHandlers(StoryboardServices(
         service=_storyboard_service,
         generate_take=_storyboard_take,
-        request_defaults=lambda: default_request(""),
+        request_defaults=storyboard_request_defaults,
+        enhance_prompt=PROMPTS.enhance_h3_prompt,
         publish=lambda path, metadata: write_snapshot(path, metadata),
     ))
 

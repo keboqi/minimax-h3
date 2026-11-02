@@ -30,6 +30,10 @@ class StoryboardService:
     def cast_dir(self, storyboard_id: str) -> Path:
         return self.store.root / "storyboards" / storyboard_id / "cast"
 
+    def media_dir(self, storyboard_id: str) -> Path:
+        """Scene frames and references; served like takes, so the editor can show them."""
+        return self.output_path(f"{TAKE_FOLDER}/{storyboard_id}/media")
+
     def take_prefix(self, storyboard_id: str, scene_id: str, take_id: str) -> str:
         """Output-relative prefix shared by a take's video and latents."""
         return f"{TAKE_FOLDER}/{storyboard_id}/{scene_id[:8]}_{take_id[:8]}"
@@ -65,6 +69,7 @@ class StoryboardService:
             return board, result
 
     def create(self, owner, name, profile, *, scenes=(), cast=()) -> str:
+        """A new storyboard; ``cast`` is (name, picture) pairs copied into it."""
         storyboard_id = model.new_id()
         board = model.new_storyboard(name, profile, scenes)
         for member_name, image in cast:
@@ -136,14 +141,67 @@ class StoryboardService:
         def edit(board):
             position = len(board["scenes"]) if after is None else self.scene_index(board, after) + 1
             previous = board["scenes"][position - 1] if position else None
+            # A new scene continues the one before it, in the same mode and with the same cast.
             scene = model.new_scene(
                 f"Scene {len(board['scenes']) + 1}",
                 seconds=previous["seconds"] if previous else 5,
                 cast=previous["cast"] if previous else (),
+                mode=model.scene_media(previous)["mode"] if previous else model.TEXT,
             )
             board["scenes"].insert(position, scene)
             return scene["id"]
         return self.change(owner, storyboard_id, edit)
+
+    def set_mode(self, owner, storyboard_id, scene_id, mode):
+        """Switch a scene's conditioning; References starts with the whole cast ticked."""
+        if mode not in model.MODES:
+            raise H3Error(f"Unknown scene mode {mode!r}.")
+
+        def edit(board):
+            scene = board["scenes"][self.scene_index(board, scene_id)]
+            if scene.get("mode", model.TEXT) != mode and mode == model.REFERENCES and not scene["cast"]:
+                scene["cast"] = [member["name"] for member in board["cast"]]
+            scene["mode"] = mode
+        return self.change(owner, storyboard_id, edit)[0]
+
+    def set_scene_media(self, owner, storyboard_id, scene_id, field, value):
+        """Replace one of a scene's frames or reference lists, copying new files in.
+
+        The editor hands back Gradio's cached copies of files it already shows; their
+        names match the stored ones, so those are kept instead of copied again.
+        Returns False when nothing changed.
+        """
+        if field not in model.MEDIA_FIELDS:
+            raise ValueError(f"Unknown scene media {field!r}.")
+        directory = self.media_dir(storyboard_id)
+
+        def keep(item):
+            if isinstance(item, dict):
+                item = item.get("path") or item.get("name")
+            source = Path(str(item))
+            stored = directory / source.name
+            if stored.is_file():
+                return str(stored)
+            if not source.is_file():
+                raise H3Error(f"{source.name} is no longer available. Add it again.")
+            directory.mkdir(parents=True, exist_ok=True)
+            destination = directory / f"{model.new_id()}{source.suffix.lower()}"
+            shutil.copy2(source, destination)
+            return str(destination)
+
+        if field in ("first_image", "last_image"):
+            stored = keep(value) if value else None
+        else:
+            items = value if isinstance(value, (list, tuple)) else [value] if value else []
+            stored = [keep(item) for item in items if item]
+
+        def edit(board):
+            scene = board["scenes"][self.scene_index(board, scene_id)]
+            if model.scene_media(scene)[field] == stored:
+                return False
+            scene[field] = stored
+            return True
+        return self.change(owner, storyboard_id, edit)[1]
 
     def toggle_link(self, owner, storyboard_id, scene_id):
         def edit(board):
@@ -237,12 +295,18 @@ class StoryboardService:
             board = self.load(owner, storyboard_id)
             self.store.delete_storyboard(owner, storyboard_id)
             shutil.rmtree(self.store.root / "storyboards" / storyboard_id, ignore_errors=True)
-            # Branches share take files, so keep any another storyboard still uses.
+            # Branches share take and scene media files, so keep any another storyboard still uses.
             used = set()
             for other_owner, other_id in self._all_ids():
                 other = self.store.storyboard(other_owner, other_id)
                 for take in other["takes"].values():
                     used |= {take["video"], take["latent"], take.get("stage_latent")}
+                for scene in other["scenes"]:
+                    used |= set(model.media_paths(scene))
+            for scene in board["scenes"]:
+                for value in model.media_paths(scene):
+                    if value not in used:
+                        Path(value).unlink(missing_ok=True)
             for take in board["takes"].values():
                 for value in (take["video"], take["latent"], take.get("stage_latent")):
                     if value and value not in used:

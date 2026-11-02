@@ -1,68 +1,93 @@
 # Storyboard
 
-The **Storyboard** task plans a long video as scenes, generates them one by one with
-MiniMax H3, and joins them into one video. It sits in Create between Song and
-Soundstage. The design and its reasoning are in the
-[plan](../plans/long-video-storyboard.md).
+The **Storyboard** task makes a long video from a list of scenes. Each scene is one
+MiniMax H3 clip. A scene either **continues** the one before it, so motion and sound
+carry on, or **starts fresh** as a new shot. The scenes are joined into one video at
+the end. It sits in Create between Song and Soundstage. Background and decisions are
+in the [plan](../plans/long-video-storyboard.md); the agreed design is the
+[Storyboard Redesign canvas](https://claude.ai/artifact/WAJ39BupkHrpvdoJXLQ4zK).
 
-## Using it
+## Starting
 
-1. **New storyboard** takes a name, an optional story and a usual scene length. Each
-   paragraph of the story becomes a draft scene. The current **MiniMax H3** render
-   settings are copied into the storyboard and stay fixed, so every scene joins
-   cleanly. **Apply current MiniMax H3 settings** replaces them later and marks every
-   scene outdated.
-2. **Storyboard and cast** holds cast pictures (up to nine) that any scene can use as
-   H3 reference images. A scene with cast runs in Reference media mode with a
-   `Name is <Picture n>.` line before its prompt; without cast it runs text to video.
-3. Each scene has a title, a prompt, a length of 5, 10 or 15 seconds, and a link to the
-   scene before it. **Flow** continues from the last frames of the previous scene's
-   take in use. **Cut** starts a new shot. Scene options set the overlap (22, 39 or 56
-   frames), the seed and how many takes one run makes. Edits save when a field loses
-   focus.
-4. **Generate scene** runs one scene; **Generate remaining** runs every draft and
-   outdated scene in order, letting a cut scene run while a flow scene waits for the
-   one before it. Every take is kept. The first take of a scene is put in use; **Use
-   this take** switches, which outdates the scenes that flow from it up to the next cut.
-5. **Play all** joins the takes in use into a preview. **Export to Media** joins them
-   into a new Media video and saves a version. Flow joins drop the repeated overlap;
-   cut joins are hard cuts. Outdated scenes are included unless the box is cleared.
-6. **Versions** keeps snapshots of the scene list. Branching one, or duplicating the
-   storyboard, makes a new storyboard that shares the existing takes.
+**Start a storyboard** asks for a name, a story and how scenes connect. Each paragraph
+of the story becomes one scene, and its text becomes that scene's prompt. *Continue one
+into the next* makes every later scene continue; *Every scene starts fresh* makes them
+separate shots joined by cuts. Either can be changed per scene. The storyboard copies
+your current **MiniMax H3** settings and keeps them, so every scene matches;
+**Storyboard settings › Use my current MiniMax H3 settings** replaces them later and
+marks every scene out of date.
 
-A flow scene repeats its overlap, so it adds less new footage than its length: a 10 s
-flow scene with the default 39-frame overlap adds about 8.4 s, and a 5 s one about
-3.4 s. Scene cards and the timeline show the new seconds.
+## A scene
 
-## How flow works
+The scene list on the left shows each scene's number, title, length, how it starts
+(Opening, Continues scene N, Fresh start), its mode, and a status: Done, Out of date,
+Not generated or Needs input. Between scenes it says "↓ continues into" or
+"✂ cut to a fresh start". Click a scene to edit it.
 
-Every take saves its final H3 audio-video latent next to its MP4 (and the stage-one
-latent when latent upscale is on). A flow take loads the previous take's latent and
-`H3ContinuationPrefix` copies its phase-aligned tail into the head of the new clip,
-with per-stream noise masks that keep that head fixed during sampling. With latent
-upscale the tail is pasted at both resolutions, and the full-resolution paste also
-replaces the stage-one mask that would otherwise reach refinement. The masking follows
+The editor says where the scene is ("Scene 2 of 4", what it comes after) and which H3
+mode it runs as. It then offers exactly what that scene can use:
+
+| | Opening scene / Start fresh | Continue the previous scene |
+|---|---|---|
+| Text to video | Yes | Yes |
+| First / last frame | Both frames | **Last frame only**: it opens on the previous scene's last frames |
+| Reference media | Yes | Yes, marked *recommended* |
+| Prompt and prompt writer | Yes | Yes |
+
+A continuing scene shows "No first frame" with the reason and a pointer to **Start
+fresh**, so a first frame can never clash with the hand-over. Reference media uses the
+storyboard's cast (tick who appears) plus the scene's own images, videos and audio; the
+editor lists which `<Picture n>` each one becomes. **Improve with the prompt writer**
+uses the writer and keys set in MiniMax H3.
+
+**Before generating** lists anything missing: a prompt, the frame the mode needs, a
+reference, or a previous scene that has no take yet. **Generate this scene** stays
+disabled until the list is clear. A continuing scene adds less new footage than its
+length, because its first ~1.6 s (39 frames by default) repeats the previous scene; the
+editor shows how much.
+
+## Takes and regenerating
+
+Every take is kept. A scene's first take is put in use; later takes are added beside
+it. **Use this take** switches. When later scenes continue from this one, the page asks
+first and names them, and the first fresh start after them that stays as it is:
+**Switch and regenerate them**, **Switch, regenerate later**, or **Cancel**. Fresh
+starts stop changes from rippling further.
+
+## The full video
+
+The timeline shows every scene by status, with fresh starts marked as cuts. **Generate
+all remaining scenes** makes every scene without a current take, in order, and skips
+scenes that still need input. **Play full video** and **Export to Media** join the takes
+in use: continuing scenes drop their repeated opening, fresh starts join as cuts. Export
+saves a version. **Versions** keeps scene lists to come back to or branch.
+
+## How continuing works
+
+Every take saves its final H3 audio-video latent (and the stage-one latent with latent
+upscale). A continuing take loads the previous take's latent, and
+`H3ContinuationPrefix` copies its phase-aligned tail into the start of the new clip with
+per-stream noise masks that keep it fixed while H3 samples the rest. With latent upscale
+the tail is pasted at both resolutions. The masking follows
 [ComfyUI-MiniMaxH3-PrefixStream](https://github.com/knoic/ComfyUI-MiniMaxH3-PrefixStream)
-(MIT) and relies on native ComfyUI per-token AV masks (Comfy-Org/ComfyUI#15375), which
-the pinned ComfyUI includes.
+(MIT) and uses native ComfyUI per-token AV masks (Comfy-Org/ComfyUI#15375), which the
+pinned ComfyUI includes.
 
-Takes are written under `h3/.storyboard/<storyboard>/` in the ComfyUI output folder.
-They stay out of Media and out of **Scan historical media**; only exports reach Media.
-Storyboards force H3 post-processing off so each take's video matches its latent;
-finish an export from Media instead. The H3 Regenerate refiner can't be used for flow
-scenes.
+Takes and scene pictures live under `h3/.storyboard/<storyboard>/` in the ComfyUI output
+folder, outside Media and **Scan historical media**; only exports reach Media.
+Storyboards force H3 post-processing off so each take matches its latent, and continuing
+scenes can't use the H3 Regenerate refiner.
 
 ## Storage and jobs
 
-Storyboards are owner-scoped rows in the workspace database (schema 2). Creating one
-is the explicit choice to keep its prompts and cast pictures on the server; cast
-pictures live under the workspace state's `storyboards/` folder and are included in
-workspace backups. A generation run is one job in **Jobs**. A run that stops (error,
-interrupt or restart) leaves the waiting scenes recorded on the storyboard; nothing
-resumes on its own, and **Generate remaining** continues from there.
+Storyboards are owner-scoped rows in the workspace database (schema 2). Creating one is
+the explicit choice to keep its prompts and pictures on the server. Cast pictures are in
+the workspace state's `storyboards/` folder and in workspace backups. A generation run
+is one job in **Jobs**. A run that stops leaves the waiting scenes recorded; nothing
+resumes on its own, and **Generate all remaining scenes** continues from there.
 
 ## Not validated yet
 
-Nothing here has run on a GPU. Seam quality, audio continuity, Spectrum with masked
-sampling, and texture drift across long unbroken flow chains still need the Modal
-validation run described in the plan.
+Nothing here has run on a GPU. Seam quality, audio continuity, continuing toward a last
+frame, Spectrum with masked sampling, and texture drift across long chains of continuing
+scenes need a real run on Modal.

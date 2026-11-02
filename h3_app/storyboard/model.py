@@ -22,7 +22,13 @@ MAX_TAKES_PER_RUN = 4
 MAX_CAST = 9
 FPS = 24
 FLOW, CUT = "flow", "cut"
+TEXT, FRAMES, REFERENCES = "Text to video", "First / last frame", "Reference media"
+MODES = (TEXT, FRAMES, REFERENCES)
+MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_REFERENCE_AUDIOS = 9, 3, 3
+# A scene's own conditioning media, like the MiniMax H3 composer's.
+MEDIA_FIELDS = ("first_image", "last_image", "ref_images", "ref_videos", "ref_audios")
 DONE, OUTDATED, DRAFT = "done", "outdated", "draft"
+STATE_NAMES = {DONE: "Done", OUTDATED: "Out of date", DRAFT: "Not generated"}
 
 # Each scene supplies these; everything else in an H3 request is the profile.
 SCENE_FIELDS = frozenset({
@@ -71,12 +77,32 @@ def profile_summary(profile: dict[str, Any]) -> str:
     return " · ".join(part for part in parts if part and part != "None")
 
 
-def new_scene(title="New scene", prompt="", seconds=5, link=FLOW, cast=()) -> dict[str, Any]:
+def new_scene(title="New scene", prompt="", seconds=5, link=FLOW, cast=(), mode=TEXT) -> dict[str, Any]:
     return {
         "id": new_id(), "title": title, "prompt": prompt, "seconds": int(seconds),
         "link": link, "cast": list(cast), "overlap": DEFAULT_OVERLAP, "seed": -1,
-        "takes_per_run": 1, "takes": [], "in_use": None,
+        "takes_per_run": 1, "takes": [], "in_use": None, "mode": mode,
+        "first_image": None, "last_image": None, "ref_images": [], "ref_videos": [], "ref_audios": [],
     }
+
+
+def scene_media(scene: dict[str, Any]) -> dict[str, Any]:
+    """The scene's mode and media; scenes saved before per-scene media read as text to video."""
+    return {
+        "mode": scene.get("mode", TEXT),
+        "first_image": scene.get("first_image"),
+        "last_image": scene.get("last_image"),
+        "ref_images": list(scene.get("ref_images", [])),
+        "ref_videos": list(scene.get("ref_videos", [])),
+        "ref_audios": list(scene.get("ref_audios", [])),
+    }
+
+
+def title_from(text: str, words: int = 6) -> str:
+    """A short scene title from the start of its description."""
+    parts = text.split()
+    title = " ".join(parts[:words]).rstrip(".,;:")
+    return title + ("…" if len(parts) > words else "")
 
 
 def new_storyboard(name: str, profile: dict[str, Any], scenes=(), cast=()) -> dict[str, Any]:
@@ -100,6 +126,13 @@ def validate_scene(scene: dict[str, Any]) -> None:
         raise ValueError("Overlap is 22, 39 or 56 frames.")
     if not 1 <= int(scene["takes_per_run"]) <= MAX_TAKES_PER_RUN:
         raise ValueError(f"Takes per run is 1 to {MAX_TAKES_PER_RUN}.")
+    media = scene_media(scene)
+    if media["mode"] not in MODES:
+        raise ValueError(f"Unknown scene mode {media['mode']!r}.")
+    if len(media["ref_images"]) > MAX_REFERENCE_IMAGES:
+        raise ValueError(f"A scene has at most {MAX_REFERENCE_IMAGES} reference pictures.")
+    if len(media["ref_videos"]) > MAX_REFERENCE_VIDEOS or len(media["ref_audios"]) > MAX_REFERENCE_AUDIOS:
+        raise ValueError("A scene has at most 3 reference videos and 3 reference audio clips.")
 
 
 def flows_from_previous(board: dict[str, Any], index: int) -> bool:
@@ -118,6 +151,7 @@ def scene_inputs(board: dict[str, Any], index: int) -> dict[str, Any]:
         "flow": flow,
         "overlap": int(scene["overlap"]) if flow else None,
         "source_take": board["scenes"][index - 1]["in_use"] if flow else None,
+        **scene_media(scene),
     }
 
 
@@ -192,17 +226,77 @@ def cast_prompt(board: dict[str, Any], scene: dict[str, Any]) -> tuple[str, list
     return f"{tags} {scene['prompt'].strip()}", [pictures[name] for name in names]
 
 
+def runs_as(board: dict[str, Any], index: int) -> str:
+    """The mode as the scene editor names it."""
+    mode = scene_media(board["scenes"][index])["mode"]
+    if mode == FRAMES and flows_from_previous(board, index):
+        return "Last frame"
+    return mode
+
+
+def picture_tags(board: dict[str, Any], scene: dict[str, Any]) -> list[str]:
+    """Which ``<Picture n>`` each cast member and scene image becomes, in order."""
+    names = [name for name in scene["cast"] if name in {member["name"] for member in board["cast"]}][:MAX_CAST]
+    tags = [f"{name} = <Picture {number}>" for number, name in enumerate(names, 1)]
+    tags += [f"image {number} = <Picture {len(names) + number}>"
+             for number in range(1, len(scene_media(scene)["ref_images"]) + 1)]
+    return tags
+
+
+def cast_count(board: dict[str, Any], scene: dict[str, Any]) -> int:
+    names = {member["name"] for member in board["cast"]}
+    return len([name for name in scene["cast"] if name in names][:MAX_CAST])
+
+
+def scene_issues(board: dict[str, Any], index: int) -> list[str]:
+    """What the scene still needs before it can be generated, in plain words.
+
+    A continuing scene opens on the previous take, so its first frame is never
+    used; its frames mode needs a last frame instead.
+    """
+    scene = board["scenes"][index]
+    media = scene_media(scene)
+    flow = flows_from_previous(board, index)
+    issues = []
+    if not scene["prompt"].strip():
+        issues.append("Write a prompt")
+    if media["mode"] == FRAMES:
+        if flow and not media["last_image"]:
+            issues.append("Add the last-frame picture")
+        if not flow and not media["first_image"] and not media["last_image"]:
+            issues.append("Add a first or last frame")
+    if media["mode"] == REFERENCES:
+        pictures = cast_count(board, scene) + len(media["ref_images"])
+        if pictures > MAX_REFERENCE_IMAGES:
+            issues.append(f"Use at most {MAX_REFERENCE_IMAGES} pictures (cast plus images); there are {pictures}")
+        if not pictures and not media["ref_videos"] and not media["ref_audios"]:
+            issues.append("Pick at least one reference")
+    if flow and scene_states(board)[index - 1] != DONE:
+        issues.append(f"Generate scene {index} first: this scene continues from it")
+    return issues
+
+
+def check_scene(board: dict[str, Any], index: int) -> None:
+    """Refuse a take whose scene isn't ready, before it reaches the GPU."""
+    issues = scene_issues(board, index)
+    if issues:
+        raise ValueError(f"Scene {index + 1}: " + "; ".join(issues) + ".")
+
+
 def scene_request_values(board: dict[str, Any], index: int, defaults: dict[str, Any], seed: int) -> dict[str, Any]:
     """Every H3 generate value for one take of this scene."""
     scene = board["scenes"][index]
-    prompt, pictures = cast_prompt(board, scene)
+    media = scene_media(scene)
+    mode = media["mode"]
+    flow = flows_from_previous(board, index)
+    prompt, pictures = cast_prompt(board, scene) if mode == REFERENCES else (scene["prompt"].strip(), [])
     values = dict(defaults)
     values.update(board["profile"])
     values.update(
-        mode="Reference media" if pictures else "Text to video",
+        mode=mode,
         prompt=prompt,
-        first_image=None,
-        last_image=None,
+        first_image=media["first_image"] if mode == FRAMES and not flow else None,
+        last_image=media["last_image"] if mode == FRAMES else None,
         duration=float(scene["seconds"]),
         seed=int(seed),
         result_format="Video",
@@ -211,9 +305,20 @@ def scene_request_values(board: dict[str, Any], index: int, defaults: dict[str, 
         **{f"ref_audio_{number}": None for number in range(1, 4)},
         **{f"fl2va_audio_{number}": None for number in range(1, 4)},
     )
-    for number, picture in enumerate(pictures, 1):
-        values[f"ref_image_{number}"] = picture
+    if mode == REFERENCES:
+        for number, picture in enumerate([*pictures, *media["ref_images"]][:MAX_REFERENCE_IMAGES], 1):
+            values[f"ref_image_{number}"] = picture
+        for number, video in enumerate(media["ref_videos"], 1):
+            values[f"ref_video_{number}"] = video
+        for number, audio in enumerate(media["ref_audios"], 1):
+            values[f"ref_audio_{number}"] = audio
     return values
+
+
+def media_paths(scene: dict[str, Any]) -> list[str]:
+    media = scene_media(scene)
+    return [path for path in (media["first_image"], media["last_image"], *media["ref_images"],
+                              *media["ref_videos"], *media["ref_audios"]) if path]
 
 
 def snapshot(board: dict[str, Any]) -> dict[str, Any]:
