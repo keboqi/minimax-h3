@@ -63,13 +63,7 @@ def _enhance_h3_prompt_with_gemini(
         if model not in GEMINI_PROMPT_MODELS:
             raise H3Error(f"Unsupported Gemini prompt model: {model}")
         key = gemini.api_key(temporary_api_key)
-        if not runtime.prompt_system_path.is_file():
-            raise H3Error(
-                f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
-            )
-        system_prompt = runtime.prompt_system_path.read_text(encoding="utf-8").strip()
-        if not system_prompt:
-            raise H3Error("prompt.txt is empty.")
+        system_prompt = common.read_system_prompt(runtime.prompt_system_path, "MiniMax H3")
         media = common.active_prompt_media(
             mode,
             first_image,
@@ -169,13 +163,7 @@ def _enhance_h3_prompt_with_openai(
     try:
         openai_model = openai_compatible.model(openai_model)
         key = openai_compatible.api_key(temporary_api_key, openai_base_url)
-        if not runtime.prompt_system_path.is_file():
-            raise H3Error(
-                f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
-            )
-        system_prompt = runtime.prompt_system_path.read_text(encoding="utf-8").strip()
-        if not system_prompt:
-            raise H3Error("prompt.txt is empty.")
+        system_prompt = common.read_system_prompt(runtime.prompt_system_path, "MiniMax H3")
         media = common.active_prompt_media(
             mode,
             first_image,

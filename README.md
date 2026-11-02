@@ -335,13 +335,16 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
-Deployment exposes four independent URLs: `library` for the CPU-only
-**H3 Library Console**, and three GPU endpoints that serve the same app: `h3`,
-`h3-video` and `h3-soundstage` (see **Preloaded endpoints** below). Open the **library** URL
-printed by Modal first. The console uses a separate lightweight image with
+Deployment exposes four independent URLs: `workshop` for the CPU-only
+**Prism Workshop**, and three GPU endpoints that serve Prism Studio: `h3`,
+`h3-video` and `h3-soundstage` (see **Preloaded endpoints** below). Open the **workshop** URL
+printed by Modal first. Workshop uses a separate lightweight image with
 Modal's default CPU and RAM; opening it does not start the expensive GPU
 endpoint or ComfyUI. Its **Models** tab prepares checkpoints and LoRAs; its
-**Media library** tab is the main app's library without GPU enhancement.
+**Media library** tab is the main app's library without GPU enhancement. Its
+**Storyboard** tab prepares scenes and cast, rewrites a story into H3 prompts, and
+enhances individual prompts using Gemini or an OpenAI-compatible service. Open the
+shared storyboard in Studio to apply H3 settings and generate its scenes.
 
 The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
 300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses
@@ -382,7 +385,7 @@ after that sleeps as usual. Other engines still work on both endpoints, loading
 their models on demand.
 
 All three GPU endpoints share the volume and its workspace database, so use one
-at a time, as with the Library Console below. `H3_MODAL_MIN_CONTAINERS` applies
+at a time, as with Workshop below. `H3_MODAL_MIN_CONTAINERS` applies
 to each of them.
 
 The **Media library** tab browses videos, images and audio from the shared
@@ -405,14 +408,15 @@ removal requires the confirmation checkbox. Failed downloads are listed for
 retry, and completed files remain saved to the shared volume.
 
 Stop the GPU endpoints before downloading or removing models, or before
-importing, annotating or deleting media, then start it after you finish: both
+importing, annotating or deleting media, or editing storyboards in Workshop,
+then start it after you finish: both
 services write the same workspace database on the volume. Modal volumes require a reload to see another
 container's commits, and their file locks do not coordinate separate containers.
 GPU startup now loads the catalog without provisioning models or checking remote
 versions. Generation still downloads missing assets on demand. The old
 `manage_models` function (URL label `models`), later `storage_console` (label
-`storage`), is now `library_console` (label `library`): it manages the model
-and media libraries.
+`storage`), then `library_console` (label `library`), is now `workshop` (label
+`workshop`): it manages models, media, and shared storyboards.
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 services and requires it to contain `HF_TOKEN`. If your existing secret uses a

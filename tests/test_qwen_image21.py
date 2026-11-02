@@ -682,7 +682,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_pruna_variants_use_published_comfy_schedules(self):
         from h3_app.model_service import qwen_image21_model_keys
-        from h3_library_console import model_presets
+        from h3_workshop import model_presets
 
         cases = (
             ("Pruna v0.2 (6-step)", "qwen_image21_pruna_v02_lora", 6,
@@ -714,7 +714,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_lightning_uses_native_adapter_and_resolution_aware_schedule_for_generation_and_editing(self):
         from h3_app.model_service import qwen_image21_model_keys
-        from h3_library_console import model_presets
+        from h3_workshop import model_presets
         from h3_models import LAZY_OPTIONAL_MODEL_KEYS, PRELOAD_MODEL_KEYS
 
         key = "qwen_image21_lightning_lora"
@@ -889,7 +889,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_official_turbo_download_is_only_one_optional_adapter(self):
         from h3_app.model_service import qwen_image21_model_keys
-        from h3_library_console import model_presets
+        from h3_workshop import model_presets
         from h3_models import LAZY_OPTIONAL_MODEL_KEYS, PRELOAD_MODEL_KEYS
 
         self.assertEqual(qwen_turbo_defaults(QWEN_IMAGE21_OFFICIAL_TURBO), (8, 1., "euler", "Off"))

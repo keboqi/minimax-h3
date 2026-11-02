@@ -231,41 +231,36 @@ class WorkspaceStore:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    # Storyboards are shared like the Media library: the Workshop and the GPU endpoint
+    # are different sites, so their browser owners differ. ``owner`` records the creator.
     def save_storyboard(self, owner, storyboard_id, payload):
-        """Insert or replace an owner's storyboard; another owner's id is refused."""
+        """Insert a storyboard, or replace one with the same id."""
         now = time.time()
         with self.connect() as db:
-            row = db.execute("SELECT owner FROM storyboards WHERE id=?", (storyboard_id,)).fetchone()
-            if row is not None and row["owner"] != owner:
-                raise ValueError("This storyboard is unavailable for this browser owner.")
             db.execute(
                 "INSERT INTO storyboards VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
                 "name=excluded.name, updated=excluded.updated, payload=excluded.payload",
                 (storyboard_id, owner, payload["name"], now, now, json.dumps(payload)),
             )
 
-    def storyboards(self, owner):
+    def storyboards(self, owner=None):
         with self.connect() as db:
             return [
                 dict(row) for row in db.execute(
-                    "SELECT id, name, updated FROM storyboards WHERE owner=? ORDER BY updated DESC",
-                    (owner,),
+                    "SELECT id, name, updated FROM storyboards ORDER BY updated DESC"
                 )
             ]
 
     def storyboard(self, owner, storyboard_id):
         with self.connect() as db:
-            row = db.execute(
-                "SELECT payload FROM storyboards WHERE id=? AND owner=?", (storyboard_id, owner)
-            ).fetchone()
+            row = db.execute("SELECT payload FROM storyboards WHERE id=?", (storyboard_id,)).fetchone()
         if row is None:
-            raise ValueError("This storyboard is unavailable for this browser owner.")
+            raise ValueError("This storyboard no longer exists.")
         return json.loads(row[0])
 
     def delete_storyboard(self, owner, storyboard_id):
-        self.storyboard(owner, storyboard_id)  # Validate ownership first.
         with self.connect() as db:
-            db.execute("DELETE FROM storyboards WHERE id=? AND owner=?", (storyboard_id, owner))
+            db.execute("DELETE FROM storyboards WHERE id=?", (storyboard_id,))
 
     def index_asset(self, path, kind, metadata=None):
         path = Path(path).resolve()

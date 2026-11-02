@@ -195,7 +195,7 @@ class FiboIntegrationTests(unittest.TestCase):
             self.assertNotIn("fibo2-venv", text)
 
     def test_library_console_groups_and_presets_fibo(self):
-        from h3_library_console import catalog_groups, model_presets
+        from h3_workshop import catalog_groups, model_presets
         self.assertEqual(set(catalog_groups()["Fibo 2.0"]), {key for key in FIBO2_MODEL_KEYS if key.startswith("fibo2_")})
         presets = model_presets()
         self.assertEqual(presets["Fibo 2.0 defaults"], ("fibo2_dev_bf16", "flux3_text_encoder", "flux3_vae"))

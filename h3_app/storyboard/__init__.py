@@ -32,6 +32,7 @@ from .model import (
     pending_scenes,
     picture_tags,
     profile_summary,
+    request_defaults,
     runs_as,
     scene_inputs,
     scene_issues,
@@ -49,6 +50,6 @@ __all__ = [
     "PROFILE_FIELDS", "REFERENCES", "SCENE_SECONDS", "STATE_NAMES", "StoryboardService", "TEXT",
     "affected_by", "cast_count", "check_scene", "flows_from_previous", "make_profile", "media_paths",
     "new_id", "new_scene", "new_seconds", "next_runnable", "pending_scenes", "picture_tags",
-    "profile_summary", "runs_as", "scene_inputs", "scene_issues", "scene_media", "scene_request_values",
+    "profile_summary", "request_defaults", "runs_as", "scene_inputs", "scene_issues", "scene_media", "scene_request_values",
     "scene_states", "title_from", "total_seconds",
 ]

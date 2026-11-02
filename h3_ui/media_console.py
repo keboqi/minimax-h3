@@ -1,4 +1,4 @@
-"""GPU-free Media library for the Library Console.
+"""GPU-free Media library for the Workshop.
 
 Browsing, search, import, tags, lineage, comparison and deletion reuse the main
 application's controller and bindings. Enhancement needs ComfyUI on the GPU

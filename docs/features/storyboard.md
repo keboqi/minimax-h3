@@ -9,13 +9,28 @@ in the [plan](../plans/long-video-storyboard.md); the agreed design is the
 
 ## Starting
 
-**Start a storyboard** asks for a name, a story and how scenes connect. Each paragraph
-of the story becomes one scene, and its text becomes that scene's prompt. *Continue one
-into the next* makes every later scene continue; *Every scene starts fresh* makes them
-separate shots joined by cuts. Either can be changed per scene. The storyboard copies
-your current **MiniMax H3** settings and keeps them, so every scene matches;
+**Start a storyboard** asks for a name, a story and how scenes connect. Separate scene
+prompts with `---` on its own line. Blank lines inside a scene stay in its prompt; text
+without a separator creates one scene. *Continue one into the next* makes every later
+scene continue; *Every scene starts fresh* makes them separate shots joined by cuts.
+Either can be changed per scene. In Studio, the storyboard copies your current
+**MiniMax H3** settings and keeps them, so every scene matches;
 **Storyboard settings › Use my current MiniMax H3 settings** replaces them later and
 marks every scene out of date.
+
+To turn a full story or short idea into scenes, choose a scene count (2–24), clip length,
+and connection style, then click **Rewrite / extend into scenes**. Both Workshop and
+Studio have hosted **Prompt writer** controls above the form for Gemini or an
+OpenAI-compatible service. The rewrite follows the same `prompts/prompt.txt` guidelines
+as the MiniMax H3 page, including visual action, dialogue, soundscape, and music for each
+scene. Review the result before creating; it does not create a storyboard automatically,
+and failures keep your input.
+
+Workshop uses the same editor with generation controls hidden. Storyboards created
+there start with H3 defaults. Prepare the scenes and cast, then open the storyboard in
+Studio, apply your current H3 settings if needed, and generate. Storyboards and saved
+pictures are shared across the endpoints; unsaved form inputs are separate. Stop one
+endpoint before editing on the other, as both write the same workspace on the Modal volume.
 
 ## A scene
 
@@ -38,7 +53,8 @@ A continuing scene shows "No first frame" with the reason and a pointer to **Sta
 fresh**, so a first frame can never clash with the hand-over. Reference media uses the
 storyboard's cast (tick who appears) plus the scene's own images, videos and audio; the
 editor lists which `<Picture n>` each one becomes. **Improve with the prompt writer**
-uses the writer and keys set in MiniMax H3.
+uses the writer and keys set in MiniMax H3 in Studio. In Workshop it uses the Storyboard
+page's hosted Prompt writer settings, also used for rewriting the full story.
 
 **Before generating** lists anything missing: a prompt, the frame the mode needs, a
 reference, or a previous scene that has no take yet. **Generate this scene** stays
@@ -80,7 +96,8 @@ scenes can't use the H3 Regenerate refiner.
 
 ## Storage and jobs
 
-Storyboards are owner-scoped rows in the workspace database (schema 2). Creating one is
+Storyboards are shared rows in the workspace database (schema 2); the owner records
+the creator, while every browser on the deployment can open and edit them. Creating one is
 the explicit choice to keep its prompts and pictures on the server. Cast pictures are in
 the workspace state's `storyboards/` folder and in workspace backups. A generation run
 is one job in **Jobs**. A run that stops leaves the waiting scenes recorded; nothing

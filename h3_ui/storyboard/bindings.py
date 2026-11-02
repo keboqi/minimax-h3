@@ -10,7 +10,7 @@ import gradio as gr
 from h3_app.storyboard import DEFAULTED_FIELDS, PROFILE_FIELDS
 
 from ..job_bindings import PROMPT_QUEUE, bind_gpu_action, owned_generation, owned_interrupt
-from .handlers import WRITER_FIELDS, StoryboardHandlers
+from .handlers import STORY_WRITER_FIELDS, WRITER_FIELDS, StoryboardHandlers
 from .view import RENDER_FIELDS, StoryboardView
 
 QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
@@ -54,12 +54,18 @@ def with_leading(callback, leading, fields, *, pack):
     return run
 
 
-def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_values: dict, *, interrupt,
-                    load_trigger=None):
-    """``h3_values`` maps MiniMax H3 setting names to their components: the profile and prompt writer."""
-    missing = [name for name in PROFILE_FIELDS if name not in h3_values and name not in DEFAULTED_FIELDS]
-    if missing:
-        raise ValueError(f"Storyboard needs these MiniMax H3 settings: {missing}")
+def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_values: dict | None = None, *,
+                    interrupt=None, load_trigger=None, gpu: bool = True):
+    """``h3_values`` maps MiniMax H3 setting names to their components: the profile and prompt writer.
+
+    Without them (the Workshop) storyboards start from the default settings and the
+    view's own writer settings. ``gpu=False`` binds everything except generating.
+    """
+    h3_values = h3_values or {}
+    if h3_values:
+        missing = [name for name in PROFILE_FIELDS if name not in h3_values and name not in DEFAULTED_FIELDS]
+        if missing:
+            raise ValueError(f"Storyboard needs these MiniMax H3 settings: {missing}")
     fields = [name for name in PROFILE_FIELDS if name in h3_values]
     profile_inputs = [h3_values[name] for name in fields]
     current = [view.storyboard, view.scene_id]
@@ -74,11 +80,13 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
     on(view.create.click,
        with_leading(handlers.create, ("name", "story", "connect", "seconds"), fields, pack=True),
        [view.new_name, view.new_story, view.new_connect, view.new_seconds, *profile_inputs])
-    on(view.new_storyboard.click, handlers.show_start, [], extra=("new_story", "new_name"), options=QUIET)
+    on(view.new_storyboard.click, handlers.show_start, [], extra=("new_story", "new_name", "rewrite_status"),
+       options=QUIET)
     on(view.cancel_new.click, handlers.refresh, current)
-    on(view.use_h3_settings.click,
-       with_leading(handlers.apply_profile, ("storyboard_id", "scene_id"), fields, pack=True),
-       [*current, *profile_inputs])
+    if h3_values:
+        on(view.use_h3_settings.click,
+           with_leading(handlers.apply_profile, ("storyboard_id", "scene_id"), fields, pack=True),
+           [*current, *profile_inputs])
     on(view.rename.click, handlers.rename, [*current, view.rename_name])
     on(view.duplicate.click, handlers.duplicate, current)
     on(view.delete.click, handlers.delete, [*current, view.confirm_delete], extra=("confirm_delete",))
@@ -101,7 +109,18 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
     for field in media:
         component = getattr(view, field)
         on(component.change, handlers.set_media(field), [*current, component], exclude=media)
-    writer = [h3_values.get(name) for name in WRITER_FIELDS]
+    story_writer = [view.writer.get(name) for name in STORY_WRITER_FIELDS]
+    if all(component is not None for component in story_writer):
+        view.rewrite_story.click(
+            as_outputs(with_leading(handlers.rewrite_story, ("story", "connect", "seconds", "count"),
+                                    STORY_WRITER_FIELDS, pack=False), ("new_story", "rewrite_status")),
+            inputs=[view.new_story, view.new_connect, view.new_seconds, view.new_scene_count, *story_writer],
+            outputs=[view.new_story, view.rewrite_status],
+            api_name=False, show_progress="minimal", **PROMPT_QUEUE,
+        )
+    else:
+        view.rewrite_story.visible = False
+    writer = [(h3_values if gpu else view.writer).get(name) for name in WRITER_FIELDS]
     if all(component is not None for component in writer):
         on(view.enhance.click,
            with_leading(handlers.enhance, ("storyboard_id", "scene_id"), WRITER_FIELDS, pack=False),
@@ -125,6 +144,8 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
                                  api_name=False, concurrency_id="h3-storyboard-join", concurrency_limit=1)
     on(exported.then, handlers.refresh, current, options=QUIET)
 
+    if not gpu:
+        return
     # The GPU buttons share Interrupt; it must be attached before binding.
     view.generate_remaining.h3_stop = view.stop
     view.confirm_regenerate.h3_stop = view.stop

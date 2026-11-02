@@ -193,14 +193,14 @@ class StoryboardServiceTests(unittest.TestCase):
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
         self.assertEqual(store.storyboards("a"), [])
 
-    def test_storyboards_are_owner_scoped_and_validated(self):
-        storyboard_id = self.service.create("a", "Chase", profile(), cast=[("Mei", self.picture)])
-        self.assertEqual([row["name"] for row in self.service.list("a")], ["Chase"])
-        self.assertEqual(self.service.list("b"), [])
-        with self.assertRaises(ValueError):
-            self.service.load("b", storyboard_id)
-        with self.assertRaises(ValueError):
-            self.store.save_storyboard("b", storyboard_id, {"name": "stolen"})
+    def test_storyboards_are_shared_between_browsers_and_validated(self):
+        # The Workshop and the GPU endpoint are different sites with different browser owners.
+        storyboard_id = self.service.create("workshop", "Chase", profile(), cast=[("Mei", self.picture)])
+        self.assertEqual([row["name"] for row in self.service.list("gpu")], ["Chase"])
+        self.service.rename("gpu", storyboard_id, "Chase 2")
+        self.assertEqual(self.service.load("workshop", storyboard_id)["name"], "Chase 2")
+        with self.assertRaisesRegex(ValueError, "no longer exists"):
+            self.service.load("a", "missing")
         document = self.service.load("a", storyboard_id)
         self.assertTrue(Path(document["cast"][0]["image"]).is_relative_to(self.store.root))
         scene_id = document["scenes"][0]["id"]
@@ -373,6 +373,33 @@ class StoryboardRunnerTests(unittest.TestCase):
             self.assertIn("Scene 3 starts fresh", asked["confirm_text"])
             self.handlers.use_take_later(storyboard_id, first, new_take, SimpleNamespace())
         self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done", "outdated", "done"])
+
+    def test_prompt_writer_gets_valid_arguments_and_failures_keep_the_prompt(self):
+        import inspect
+        from h3_ui.prompt_controller import PromptController
+
+        signature = inspect.signature(PromptController.enhance_h3_prompt)
+        replies = iter([("Better prompt", "Prompt enhanced."), ("prompt 1", "Prompt enhancement failed: no key")])
+
+        def writer(**kwargs):
+            signature.bind(None, **kwargs)  # Regression: ref_image_size was passed and rejected.
+            return next(replies)
+
+        handlers = StoryboardHandlers(StoryboardServices(
+            service=lambda: self.service, generate_take=self.fake_take,
+            request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
+            enhance_prompt=writer,
+        ))
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        settings = ["Gemini", "", 512, 0.7, 0.9, False, 0, "model", "key", "", "", None]
+        with patch.object(handlers_module.gr, "Info"), patch.object(handlers_module.gr, "Warning") as warning:
+            handlers.enhance(storyboard_id, scene_id, *settings, SimpleNamespace())
+            self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["prompt"], "Better prompt")
+            failed = handlers.enhance(storyboard_id, scene_id, *settings, SimpleNamespace())
+        warning.assert_called_once()
+        self.assertIn("Prompt unchanged", failed["status"])
+        self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["prompt"], "Better prompt")
 
     def test_scene_media_is_copied_once_and_matched_by_name_afterwards(self):
         storyboard_id = self.make()

@@ -922,13 +922,15 @@ def _storyboard_service():
 
 def storyboard_request_defaults():
     """Every H3 generate value a storyboard may need: the signature's defaults, then the UI's."""
+    from h3_app.storyboard import request_defaults
     from .h3.handlers import default_request
 
-    values = {
+    values = request_defaults()
+    values.update({
         name: parameter.default
         for name, parameter in inspect.signature(generate).parameters.items()
         if parameter.default is not inspect.Parameter.empty and name != "progress"
-    }
+    })
     values.update(default_request(""))
     return values
 

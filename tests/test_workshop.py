@@ -1,12 +1,12 @@
-"""Library console behavior without downloading models or allocating a GPU."""
+"""Workshop behavior without downloading models or allocating a GPU."""
 import ast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-import h3_library_console as manager_module
-from h3_library_console import (
+import h3_workshop as manager_module
+from h3_workshop import (
     AUDIO_TOOLS_FAMILY, SNAPSHOT_SPECS, ModelManager, SnapshotSpec, catalog_groups, model_presets, preset_selection,
 )
 from h3_models import MODEL_SPECS, model_manifest_key, read_json, write_json_atomic
@@ -225,12 +225,47 @@ class ModelManagerTests(unittest.TestCase):
                    and type(block).__name__ == "Button")
         self.assertFalse(any(run._id in [t[0] for t in dep.targets] for dep in ui.fns.values()))
 
+    def test_workshop_storyboard_prepares_everything_but_cannot_generate(self):
+        from unittest.mock import patch
+
+        from h3_app import media_catalog
+        from h3_app import storyboard as sb
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui.media_console import media_runtime
+        from h3_ui.storyboard import handlers as storyboard_handlers
+        from h3_ui.storyboard.view import RENDER_FIELDS
+
+        self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        data = Path(self.temp.name)
+        store = WorkspaceStore(data / "h3-workspace")
+        ui = manager_module.build_ui(self.manager, (media_runtime(data, data / "app"), store))
+        blocks = list(ui.blocks.values())
+        self.assertIn("Storyboard", {getattr(block, "label", None) for block in blocks})
+        buttons = {block.value: block for block in blocks if type(block).__name__ == "Button"}
+        bound = {target[0] for dep in ui.fns.values() for target in dep.targets}
+        for label in ("Generate this scene", "Generate all remaining scenes", "Switch and regenerate them"):
+            self.assertNotIn(buttons[label]._id, bound, label)
+        create = next(dep for dep in ui.fns.values() if buttons["Create storyboard"]._id in [t[0] for t in dep.targets])
+        values = [getattr(component, "value", None) for component in create.inputs]
+        values[:2] = ["Workshop story", "One.\n\n---\n\nTwo."]
+        with patch.object(storyboard_handlers, "require_owner", lambda request: "workshop-browser"), \
+                patch.object(storyboard_handlers.gr, "Info"), \
+                patch.object(storyboard_handlers.gr, "Warning") as warning:
+            result = dict(zip(RENDER_FIELDS, create.fn(*values, None)))
+        warning.assert_not_called()
+        # Created from the defaults, and shared: the GPU endpoint's browser sees it too.
+        storyboard = store.storyboard("gpu-browser", result["storyboard"]["value"])
+        self.assertEqual(storyboard["profile"], sb.make_profile(sb.request_defaults(), sb.request_defaults()))
+        self.assertEqual([row["name"] for row in store.storyboards("gpu-browser")], ["Workshop story"])
+
     def test_cpu_endpoint_has_default_resources_and_independent_image(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         self.assertNotIn("provision_models", functions)
-        manager = functions["library_console"]
+        manager = functions["workshop"]
         decorator = next(d for d in manager.decorator_list
                          if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
                          and d.func.attr == "function")
@@ -239,6 +274,23 @@ class ModelManagerTests(unittest.TestCase):
         for resource in ("gpu", "cpu", "memory"):
             self.assertNotIn(resource, arguments)
         self.assertNotIn("sync_models", ast.unparse(functions["prepare_runtime_models"]))
+
+    def test_cpu_image_includes_hosted_writer_dependencies_and_guidelines(self):
+        source = Path(__file__).resolve().parents[1] / "modal_h3.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        image = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                     and any(isinstance(target, ast.Name) and target.id == "console_image"
+                             for target in node.targets))
+        install = next(node for node in ast.walk(image) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Attribute) and node.func.attr == "uv_pip_install")
+        self.assertIn("openai>=3.16.2,<4", [arg.value for arg in install.args if isinstance(arg, ast.Constant)])
+        # Only inspect the CPU image's local file mounts, not the GPU image's mounts.
+        files = next(node for node in ast.walk(tree) if isinstance(node, ast.For)
+                     and isinstance(node.iter, ast.Tuple)
+                     and any(isinstance(item, ast.Constant) and item.value == "h3_workshop.py"
+                             for item in node.iter.elts))
+        self.assertIn("prompts/prompt.txt", [item.value for item in files.iter.elts])
+        self.assertTrue((source.parent / "prompts" / "prompt.txt").read_text(encoding="utf-8").strip())
 
 
 if __name__ == "__main__":

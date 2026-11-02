@@ -767,7 +767,7 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
-# The library console has its own small CPU image; it does not build or import ComfyUI.
+# The Prism Workshop has its own small CPU image; it does not build or import ComfyUI.
 console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
@@ -777,6 +777,7 @@ console_image = (
         # websocket-client, aiohttp: imported by the shared media controller and routes;
         # wsproto: the Gradio queue's WebSocket transport, as in the main application.
         f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
+        "openai>=3.16.2,<4",  # Workshop's OpenAI-compatible prompt writer.
         "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
     )
 )
@@ -784,8 +785,8 @@ if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
-        "h3_models.py", "h3_library_console.py", "h3_sources.py",
-        "h3_requirements.py", "h3_node_patches.py",
+        "h3_models.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
+        "h3_requirements.py", "h3_node_patches.py", "prompts/prompt.txt",
     ):
         console_image = console_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
@@ -825,7 +826,7 @@ def layout() -> None:
 
 
 def prepare_runtime_models() -> None:
-    """Use the library console's files; generation downloads missing assets on demand."""
+    """Use the Workshop's files; generation downloads missing assets on demand."""
     from h3_models import build_model_config, write_json_atomic
 
     volume.reload()
@@ -937,10 +938,10 @@ def wait_for_comfy_frontend(
 )
 @modal.concurrent(max_inputs=100)
 @modal.web_server(
-    UI_PORT, startup_timeout=120, label="library", requires_proxy_auth=PROXY_AUTH,
+    UI_PORT, startup_timeout=120, label="workshop", requires_proxy_auth=PROXY_AUTH,
 )
-def library_console():
-    from h3_library_console import serve
+def workshop():
+    from h3_workshop import serve
 
     os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
     os.environ["HF_HOME"] = "/tmp/hf"

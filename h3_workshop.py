@@ -1,4 +1,4 @@
-"""H3 Library Console: the model and media libraries on the shared Modal volume, CPU only.
+"""Prism Workshop: models, the media library and storyboards on the shared Modal volume, CPU only.
 
 No application runtime, ComfyUI, torch, or GPU dependencies are imported here.
 """
@@ -105,7 +105,7 @@ def _drama3_download(checkpoint: str, root: Path) -> None:
     from h3_app.drama3.serving.server import ensure_model
 
     ensure_model(_drama3_settings(root, checkpoint), token=os.environ.get("HF_TOKEN"),
-                 log=lambda message: print(f"[library-console] {message}", flush=True))
+                 log=lambda message: print(f"[workshop] {message}", flush=True))
 
 
 def _drama3_spec(checkpoint: str, description: str) -> SnapshotSpec:
@@ -343,7 +343,7 @@ class ModelManager:
                             sync_models(
                                 root=self.root, manifest_path=self.manifest,
                                 model_keys=(key,), download_workers=1, metadata_workers=1,
-                                log_prefix="[library-console]",
+                                log_prefix="[workshop]",
                             )
                     except Exception as exc:
                         failures.append(f"{key}: {exc}")
@@ -389,21 +389,22 @@ class ModelManager:
             return f"Removed {len(selected)} selected model files.", self._inventory()
 
 
-TITLE = "H3 Library Console"
+TITLE = "Prism Workshop"
 
 
 def build_ui(manager: ModelManager, media=None):
-    """Models, plus the GPU-free Media library when ``media`` is (runtime, store)."""
+    """Models, plus the GPU-free Media library and Storyboard when ``media`` is (runtime, store)."""
     import gradio as gr
 
     with gr.Blocks(title=TITLE) as ui:
         gr.Markdown(
             f"# {TITLE}\n"
-            "Prepare models and manage generated media on the shared Modal volume "
-            "without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
-            "Stop the GPU endpoint before changing models, or before importing, "
+            "Prepare models, manage generated media and plan storyboards on the shared Modal "
+            "volume without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
+            "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
             "annotating or deleting media. Start it again afterwards so it sees the "
-            "latest files."
+            "latest files. Storyboards prepared here open on the GPU endpoint, which "
+            "generates their scenes."
         )
         with gr.Tabs():
             with gr.Tab("Models"):
@@ -413,9 +414,12 @@ def build_ui(manager: ModelManager, media=None):
 
                 runtime, store = media
                 media_tab = gr.Tab("Media library")
-                build_media_library(
+                library = build_media_library(
                     media_tab, runtime, store, reload=partial(reload_volume, manager),
                 )
+                from h3_ui.storyboard.workshop import build_storyboard_workshop
+
+                build_storyboard_workshop(gr.Tab("Storyboard"), ui, runtime, store, library=library)
                 from h3_ui.result_views import load_result_view_scripts
 
                 load_result_view_scripts(ui)
@@ -543,4 +547,4 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
         app, host="0.0.0.0", port=port, log_level="warning",
         proxy_headers=True, forwarded_allow_ips="*", **UVICORN_WEBSOCKET_OPTIONS,
     ))
-    threading.Thread(target=server.run, name="library-console", daemon=True).start()
+    threading.Thread(target=server.run, name="workshop", daemon=True).start()

@@ -19,15 +19,26 @@ from h3_app import storyboard as sb
 from h3_app.errors import H3Error
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB
+from h3_app.storyboard.text import split_scenes
+from h3_app.storyboard.writer import rewrite_story
 from h3_ui.job_admission import require_owner
 
 from .presentation import cast_html, clock, scene_list_html, seconds_label, timeline_html
 
 TAKE_NOTE = "Every take is kept. Generate again for another version, then choose which one to use."
 # The prompt writer settings come from the MiniMax H3 tab, in enhance_h3_prompt's order.
+REFERENCE_FIELDS = (
+    *(f"ref_image_{number}" for number in range(1, 10)),
+    *(f"ref_video_{number}" for number in range(1, 4)),
+    *(f"ref_audio_{number}" for number in range(1, 4)),
+)
 WRITER_FIELDS = (
     "prompt_writer_backend", "local_prompt_base_model", "local_prompt_max_tokens", "local_prompt_temperature",
     "local_prompt_top_p", "local_prompt_greedy", "local_prompt_seed", "gemini_prompt_model", "gemini_api_key",
+    "openai_api_key", "openai_model", "openai_base_url",
+)
+STORY_WRITER_FIELDS = (
+    "prompt_writer_backend", "gemini_prompt_model", "gemini_api_key",
     "openai_api_key", "openai_model", "openai_base_url",
 )
 
@@ -215,7 +226,7 @@ class StoryboardHandlers:
         return self.render(require_owner(request), storyboard_id)
 
     def show_start(self):
-        return {"start_group": gr.update(visible=True), "new_story": "", "new_name": ""}
+        return {"start_group": gr.update(visible=True), "new_story": "", "new_name": "", "rewrite_status": ""}
 
     def _act(self, storyboard_id, scene_id, request, action, done="", reset=None):
         """Run ``action(owner)`` and re-render; ``reset`` fields follow only on success.
@@ -241,19 +252,35 @@ class StoryboardHandlers:
         return {**self.render(owner, storyboard_id, scene_id, done), **(reset or {})}
 
     # Storyboards -----------------------------------------------------------
+    def rewrite_story(self, story, connect, seconds, count, *writer_and_request):
+        *writer, request = writer_and_request
+        require_owner(request)
+        settings = dict(zip(STORY_WRITER_FIELDS, writer, strict=True))
+        settings["backend"] = settings.pop("prompt_writer_backend")
+        try:
+            rewritten = rewrite_story(story, connect, seconds, count,
+                                      runtime=self.service.runtime(), **settings)
+        except Exception as exc:
+            gr.Warning(f"Couldn't rewrite the story: {exc}")
+            return {"rewrite_status": f"Story unchanged. {exc}"}
+        return {"new_story": rewritten,
+                "rewrite_status": f"Wrote {int(count)} scenes. Review or edit them, then choose Create storyboard."}
+
     def create(self, name, story, connect, seconds, profile_values, request: gr.Request):
         def action(owner):
-            profile = sb.make_profile(profile_values, self.services.request_defaults())
-            paragraphs = [part.strip() for part in str(story or "").split("\n\n") if part.strip()]
+            defaults = self.services.request_defaults()
+            profile = sb.make_profile({**defaults, **profile_values}, defaults)
+            prompts = split_scenes(story)
             link = sb.CUT if connect == sb.CUT else sb.FLOW
-            scenes = [sb.new_scene(sb.title_from(text), text, seconds=int(seconds), link=link) for text in paragraphs]
+            scenes = [sb.new_scene(sb.title_from(text), text, seconds=int(seconds), link=link) for text in prompts]
             return Selection(self.service.create(owner, name, profile, scenes=scenes), None)
         return self._act(None, None, request, action,
                          "Storyboard created. Check each scene, then press Generate this scene.")
 
     def apply_profile(self, storyboard_id, scene_id, profile_values, request: gr.Request):
         def action(owner):
-            profile = sb.make_profile(profile_values, self.services.request_defaults())
+            defaults = self.services.request_defaults()
+            profile = sb.make_profile({**defaults, **profile_values}, defaults)
             self.service.apply_profile(owner, storyboard_id, profile)
         return self._act(storyboard_id, scene_id, request, action,
                          "Applied your current MiniMax H3 settings. Scenes made with the old ones are out of date.")
@@ -379,13 +406,17 @@ class StoryboardHandlers:
                 gemini_model=settings["gemini_prompt_model"], gemini_api_key=settings["gemini_api_key"],
                 openai_api_key=settings["openai_api_key"], mode=values["mode"],
                 first_image=values["first_image"], last_image=values["last_image"],
-                **{key: values[key] for key in values if key.startswith(("ref_image_", "ref_video_", "ref_audio_"))},
+                **{key: values[key] for key in REFERENCE_FIELDS},
                 duration=values["duration"], width=values["width"], height=values["height"],
                 openai_model=settings["openai_model"], openai_base_url=settings["openai_base_url"],
             )
         except Exception as exc:
             gr.Warning(f"The prompt writer failed: {exc}")
             return {}
+        # The writer reports failures in its status and hands back the original prompt.
+        if "failed" in str(status).lower() or not str(prompt).strip():
+            gr.Warning(str(status) or "The prompt writer returned nothing.")
+            return {"status": f"**Prompt unchanged.** {status}"}
         # Cast tags are added at generation; keep the writer's text without them.
         for tag in (f"{name} is <Picture {n}>." for n, name in enumerate(board["scenes"][index]["cast"], 1)):
             prompt = prompt.replace(tag, "").strip()

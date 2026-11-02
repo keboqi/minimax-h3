@@ -42,6 +42,9 @@ class StoryboardView:
     new_story: gr.Textbox
     new_connect: gr.Radio
     new_seconds: gr.Radio
+    new_scene_count: gr.Slider
+    rewrite_story: gr.Button
+    rewrite_status: gr.Markdown
     create: gr.Button
     cancel_new: gr.Button
     board_group: gr.Column
@@ -114,37 +117,90 @@ class StoryboardView:
     save_version: gr.Button
     versions: gr.Dropdown
     branch: gr.Button
+    # Shared hosted storyboard writer; Studio's per-scene enhancement uses the H3 tab.
+    gpu_note: gr.Markdown
+    writer: dict
 
     def components(self, names):
         return [getattr(self, name) for name in names]
 
 
-def build_storyboard_view(root) -> StoryboardView:
+GPU_NOTE = (
+    "**Scenes are generated on the GPU endpoint.** Prepare every scene here, then open the GPU "
+    "endpoint's Storyboard and press **Generate all remaining scenes**."
+)
+
+
+def build_writer_settings() -> dict:
+    """Hosted storyboard writer settings shared by Workshop and Studio."""
+    from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, OPENAI_PROMPT_MODELS
+
+    with gr.Accordion("Prompt writer", open=False):
+        gr.Markdown("Rewrite / extend uses Gemini or an OpenAI-compatible service. "
+                    "Leave a key empty to use the server's key.")
+        backend = gr.Radio(["Gemini", "OpenAI-compatible"], value="Gemini", label="Writer service")
+        with gr.Row():
+            gemini_model = gr.Dropdown(list(GEMINI_PROMPT_MODELS), value=DEFAULT_GEMINI_PROMPT_MODEL,
+                                       label="Gemini model")
+            gemini_key = gr.Textbox(label="Gemini API key (optional)", type="password")
+        with gr.Row():
+            openai_model = gr.Dropdown(list(OPENAI_PROMPT_MODELS), value=OPENAI_PROMPT_MODELS[0],
+                                       allow_custom_value=True, label="OpenAI-compatible model")
+            openai_key = gr.Textbox(label="OpenAI-compatible API key (optional)", type="password")
+            openai_url = gr.Textbox(label="Base URL (optional)", max_lines=1)
+    unused = {name: gr.State(value) for name, value in (
+        ("local_prompt_base_model", ""), ("local_prompt_max_tokens", 512), ("local_prompt_temperature", 0.7),
+        ("local_prompt_top_p", 0.9), ("local_prompt_greedy", False), ("local_prompt_seed", 0),
+    )}
+    return {
+        "prompt_writer_backend": backend, **unused, "gemini_prompt_model": gemini_model,
+        "gemini_api_key": gemini_key, "openai_api_key": openai_key, "openai_model": openai_model,
+        "openai_base_url": openai_url,
+    }
+
+
+def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
+    """``gpu=False`` builds the Workshop's page: everything except generating."""
     with root:
         gr.Markdown(
             "## Storyboard\nA storyboard is a list of scenes, and each scene is one MiniMax H3 clip. A scene can "
             "**continue** the one before it, so motion and sound carry on, or **start fresh** as a new shot. "
             "At the end the scenes are joined into one video."
         )
+        writer = build_writer_settings()
 
         with gr.Group(elem_classes=["h3-sb-start"]) as start_group:
             gr.Markdown("### Start a storyboard")
             new_name = gr.Textbox(label="Name", max_lines=1, placeholder="Rooftop chase")
             new_story = gr.Textbox(
                 label="Story", lines=7,
-                info="Each paragraph becomes one scene, and its text becomes that scene's prompt. "
-                     "Leave a blank line between paragraphs. You can edit everything afterwards.",
+                info="Enter a full story or short idea, then use Rewrite / extend into scenes. "
+                     "Or separate your own scenes with --- on its own line. Blank lines stay inside a scene. "
+                     "You can edit everything afterwards.",
                 placeholder=(
-                    "Wide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in.\n\n"
-                    "She sprints and leaps across the gap to the next roof.\n\n"
+                    "Wide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in.\n\n---\n\n"
+                    "She sprints and leaps across the gap to the next roof.\n\n---\n\n"
                     "Close-up: she lands hard and catches her breath."
                 ),
             )
             new_connect = gr.Radio(CONNECT_CHOICES, value="flow", label="How should the scenes connect?",
                                    info="You can change this for any scene later.")
             new_seconds = gr.Radio(list(SCENE_SECONDS), value=10, label="Scene length (seconds)")
-            gr.Markdown("Videos use your current **MiniMax H3** settings, kept for this storyboard so every "
-                        "scene matches. Prompts and pictures are saved on this server.")
+            with gr.Row():
+                new_scene_count = gr.Slider(2, 24, value=5, step=1, label="Scenes to write")
+                rewrite_story = gr.Button("Rewrite / extend into scenes")
+            rewrite_status = gr.Markdown()
+            gr.Markdown("Rewriting follows the MiniMax H3 prompt guidelines for each scene, including "
+                        "visual action, soundscape, and music.")
+            gr.Markdown("Rewriting uses the **Prompt writer** settings above. "
+                        "Review the rewritten scenes before creating the storyboard.")
+            gr.Markdown(
+                "Videos use your current **MiniMax H3** settings, kept for this storyboard so every "
+                "scene matches. Prompts and pictures are saved on this server." if gpu else
+                "Videos use **MiniMax H3's default settings**, kept for this storyboard so every scene "
+                "matches. To use your own, open the storyboard on the GPU endpoint and choose "
+                "**Storyboard settings › Use my current MiniMax H3 settings**."
+            )
             with gr.Row():
                 create = gr.Button("Create storyboard", variant="primary", scale=0, min_width=200)
                 cancel_new = gr.Button("Cancel", scale=0, min_width=120)
@@ -154,6 +210,7 @@ def build_storyboard_view(root) -> StoryboardView:
                 storyboard = gr.Dropdown([], label="Storyboard", value=None, scale=4, min_width=240)
                 new_storyboard = gr.Button("New storyboard", scale=0, min_width=160)
             profile_summary = gr.Markdown()
+            gpu_note = gr.Markdown(GPU_NOTE, visible=not gpu)
             status = gr.Markdown(elem_classes=["h3-job-action-status"])
             scene_id = gr.Textbox(visible=False)
 
@@ -197,7 +254,7 @@ def build_storyboard_view(root) -> StoryboardView:
                         seconds = gr.Radio(list(SCENE_SECONDS), value=10, label="Length (seconds)")
                         added_seconds = gr.Markdown()
                     checklist = gr.Markdown(elem_classes=["h3-sb-checklist"])
-                    with gr.Row():
+                    with gr.Row(visible=gpu):
                         generate = gr.Button("Generate this scene", variant="primary",
                                              elem_classes=["h3-primary-action"])
                         stop = gr.Button("Interrupt", interactive=False, scale=0, min_width=120)
@@ -225,14 +282,14 @@ def build_storyboard_view(root) -> StoryboardView:
                     take_note = gr.Markdown()
                     with gr.Group(visible=False, elem_classes=["h3-sb-confirm"]) as confirm_group:
                         confirm_text = gr.Markdown()
-                        confirm_regenerate = gr.Button("Switch and regenerate them", variant="primary")
+                        confirm_regenerate = gr.Button("Switch and regenerate them", variant="primary", visible=gpu)
                         confirm_later = gr.Button("Switch, regenerate later")
                         confirm_cancel = gr.Button("Cancel")
 
             gr.Markdown("### Full video\nContinuing scenes join seamlessly; fresh starts join as cuts.")
             timeline = gr.HTML(js_on_load=CLICK_JS)
             with gr.Row():
-                generate_remaining = gr.Button("Generate all remaining scenes")
+                generate_remaining = gr.Button("Generate all remaining scenes", visible=gpu)
                 play_all = gr.Button("Play full video")
                 export = gr.Button("Export to Media")
             include_outdated = gr.Checkbox(value=True, label="Include scenes whose take is out of date")
@@ -252,8 +309,9 @@ def build_storyboard_view(root) -> StoryboardView:
                         remove_cast = gr.Button("Remove", size="sm")
 
             with gr.Accordion("Storyboard settings", open=False):
-                use_h3_settings = gr.Button("Use my current MiniMax H3 settings")
-                gr.Markdown("Scenes made with the old settings will need generating again.")
+                with gr.Group(visible=gpu):
+                    use_h3_settings = gr.Button("Use my current MiniMax H3 settings")
+                    gr.Markdown("Scenes made with the old settings will need generating again.")
                 with gr.Row(equal_height=True):
                     rename_name = gr.Textbox(label="Storyboard name", max_lines=1, scale=3)
                     rename = gr.Button("Rename", scale=0, min_width=120)
@@ -277,6 +335,9 @@ def build_storyboard_view(root) -> StoryboardView:
         new_story=new_story,
         new_connect=new_connect,
         new_seconds=new_seconds,
+        new_scene_count=new_scene_count,
+        rewrite_story=rewrite_story,
+        rewrite_status=rewrite_status,
         create=create,
         cancel_new=cancel_new,
         board_group=board_group,
@@ -349,4 +410,6 @@ def build_storyboard_view(root) -> StoryboardView:
         save_version=save_version,
         versions=versions,
         branch=branch,
+        gpu_note=gpu_note,
+        writer=writer,
     )

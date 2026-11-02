@@ -48,6 +48,22 @@ DEFAULTED_FIELDS = frozenset({
 })
 
 
+def request_defaults() -> dict[str, Any]:
+    """Every H3 generate value from the app's defaults, without importing the GPU application.
+
+    The Workshop (CPU) creates storyboards from these; the GPU endpoint layers the
+    MiniMax H3 tab's current settings on top.
+    """
+    from h3_app.catalog import DEFAULT_UPSCALE_RESOLUTION, UI_DEFAULTS
+    from h3_models import DEFAULT_LTX25_MODEL
+
+    values = {name: None for name in GENERATION_FIELDS}
+    values.update(UI_DEFAULTS)
+    values.update(sol_step_off=0.0, sol_sink_tokens=0, ltx25_model=DEFAULT_LTX25_MODEL,
+                  upscale_resolution=DEFAULT_UPSCALE_RESOLUTION, prompt="")
+    return values
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 

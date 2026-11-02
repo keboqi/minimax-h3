@@ -1,4 +1,4 @@
-"""Owner-scoped storyboard operations over the workspace store, plus export."""
+"""Shared storyboard operations over the workspace store, plus export."""
 
 from __future__ import annotations
 

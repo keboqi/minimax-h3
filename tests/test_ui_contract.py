@@ -645,7 +645,7 @@ class UiContractTests(unittest.TestCase):
                       if c["type"] == "button" and c["props"].get("value") == "Create storyboard")
         block = next(f for f in self.demo.fns.values() if any(t[0] == button["id"] for t in f.targets))
         values = [getattr(component, "value", None) for component in block.inputs]
-        values[:2] = ["Chase", "She runs.\n\nShe jumps."]
+        values[:2] = ["Chase", "She runs.\n\n---\n\nShe jumps."]
         with TemporaryDirectory() as directory, \
                 mock.patch.object(JOBS, "store", WorkspaceStore(Path(directory) / "state")), \
                 mock.patch.object(storyboard_handlers, "require_owner", lambda request: "owner"), \
@@ -740,8 +740,8 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
-        self.assertEqual(len(models), 9)
+        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate, Storyboard
+        self.assertEqual(len(models), 10)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -749,10 +749,10 @@ class UiContractTests(unittest.TestCase):
         writers = [
             component
             for component in self.config["components"]
-            if component.get("props", {}).get("label") == "Prompt writer"
+            if component.get("props", {}).get("label") in ("Prompt writer", "Writer service")
             and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
-        self.assertEqual(len(writers), 8)
+        self.assertEqual(len(writers), 9)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
