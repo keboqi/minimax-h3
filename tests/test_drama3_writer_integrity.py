@@ -138,6 +138,17 @@ class WriterIntegrityTests(unittest.TestCase):
         with self.assertRaises(H3Error):
             validate_source_fidelity('其他三名老者，也知道事态严重。', 'narrator: 其他三老者，也知道事态严重。')
 
+    def test_a_real_reduplication_or_a_doubled_pair_elsewhere_must_stay(self):
+        for source, changed in (
+                ('他慢慢走进去，看看四周。', 'narrator: 他慢走进去，看看四周。'),   # 慢慢 is a word
+                ('他慢慢走进去，看看四周。', 'narrator: 他慢慢走进去，看四周。'),
+                ('三名老者说老老实实的话。', 'narrator: 三名老者说老实实的话。'),  # AABB form
+                # 名名 appears in the unit, but 点名，名单 is a different spot.
+                ('三名名老者点名，名单很长。', 'narrator: 三名名老者点名单很长。')):
+            with self.subTest(changed=changed), self.assertRaises(H3Error):
+                validate_source_fidelity(source, changed)
+        validate_source_fidelity('三名名老者，也知道。', 'narrator: 三名老者，也知道。')
+
     def test_relaxed_source_check_keeps_the_rewrite_and_lists_changes(self):
         from h3_app.drama3.guided.fidelity import source_change_note, source_changes
         source, script = 'Mia: Bring the silver key.', '<|speaker:0|> Bring the golden key.'

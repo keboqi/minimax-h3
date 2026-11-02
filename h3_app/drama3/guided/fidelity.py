@@ -134,6 +134,30 @@ WORDS_CHANGE = ("The writer omitted, reordered or changed source words beyond a 
                 "Your source was kept; retry the enhancement.")
 
 
+# Characters whose doubling is a real word (慢慢, 看看, 妈妈), so dropping a copy changes the source.
+_REDUPLICATED = frozenset("慢渐常刚轻静悄默偷紧深微稍早久好快远纷频连处时人个天年家事样步"
+                          "看想试说走听等问找谈聊尝笑跳摸拍敲"
+                          "妈爸哥姐弟妹奶爷婆公叔伯姑舅姥宝星")
+
+
+def _doubled_slip(expected: list[str], origins: list, first: int) -> bool:
+    """Whether ``expected[first:first + 2]`` is one word typed twice ("the the", 三名名老者) at this spot."""
+    token, unit = expected[first], origins[first]
+    if not _HAN.fullmatch(token):
+        return bool(re.search(r'\b' + re.escape(token) + r'\s+' + re.escape(token) + r'\b', unit.text, re.I))
+    if token in _REDUPLICATED:
+        return False
+    if any(0 <= i and i + 1 < len(expected) and expected[i] == expected[i + 1] != token
+           and origins[i].id == unit.id for i in (first - 2, first + 2)):
+        return False  # one half of an AABB form (老老实实)
+    # The pair must sit between the same neighbours in the source text, not elsewhere in the unit.
+    left = [expected[first - 1]] if first > 0 and origins[first - 1].id == unit.id else []
+    right = [expected[first + 2]] if first + 2 < len(expected) and origins[first + 2].id == unit.id else []
+    pattern = (r'\W*'.join(re.escape(part) for part in left) + (r'\W*' if left else '') + re.escape(token * 2)
+               + (r'\W*' if right else '') + r'\W*'.join(re.escape(part) for part in right))
+    return bool(re.search(pattern, unit.text))
+
+
 def _joined(tokens: list[str]) -> str:
     return "".join(tokens) if all(_HAN.fullmatch(token) for token in tokens) else " ".join(tokens)
 
@@ -178,11 +202,9 @@ def source_changes(source: str, script: str, *, single: bool = False, expansion:
         if op == 'delete' and b - a == 1:
             twin = (a - 1 if a > 0 and expected[a] == expected[a - 1]
                     else b if b < len(expected) and expected[a] == expected[b] else None)
-        if twin is not None and origins[a].id == origins[twin].id:
-            doubled = (expected[a] * 2 if _HAN.fullmatch(expected[a]) else None)
-            if (doubled and doubled in origins[a].text) or re.search(
-                    r'\b' + re.escape(expected[a]) + r'\s+' + re.escape(expected[a]) + r'\b', origins[a].text, re.I):
-                continue  # a repeated word or character (三名名老者), not a repeated turn or sentence
+        if (twin is not None and origins[a].id == origins[twin].id
+                and _doubled_slip(expected, origins, min(a, twin))):
+            continue  # a repeated word or character (三名名老者), not a repeated turn or sentence
         if op == 'insert' and expansion:
             continue
         if op == 'replace' and _homophone_slips(expected[a:b], actual[c:d]):
