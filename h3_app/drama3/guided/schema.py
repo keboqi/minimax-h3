@@ -410,7 +410,8 @@ def _bed(value) -> tuple[str, str]:
     return (sound_name(value) if _text(value) else ""), ""
 
 
-def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], notes: list[str]
+def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], notes: list[str], *,
+                  scene_lines: dict[str, set[str]] | None = None
                   ) -> tuple[dict[str, Sound], dict[str, Staging], dict[str, tuple[str, ...]]]:
     """Sounds by name, staging by scene ID, and voice effects by utterance ID."""
     data = load_answer(reply)
@@ -418,8 +419,24 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
         raise StageError(['"sounds" and "scenes" must be lists, including explicit quiet scene plans'])
     received = {entry.get("scene") for entry in data["scenes"] if isinstance(entry, dict)
                 and isinstance(entry.get("scene"), str)}
-    if received != scene_ids:
-        raise StageError([f'"scenes" must cover exactly these scene IDs: {", ".join(sorted(scene_ids))}'])
+    if received != scene_ids or len(data["scenes"]) != len(scene_ids):
+        raise StageError([f'"scenes" must cover each scene ID exactly once: {", ".join(sorted(scene_ids))}'])
+    if scene_lines is not None:
+        problems = []
+        for scene in data["scenes"]:
+            if (not isinstance(scene, dict) or not isinstance(scene.get("scene"), str)
+                    or scene["scene"] not in scene_lines):
+                continue
+            local = scene_lines[scene["scene"]]
+            for field, keys in (("events", ("at", "end_at")), ("pauses", ("before",)), ("voices", ("id",))):
+                for item in scene.get(field, []) if isinstance(scene.get(field), list) else []:
+                    if isinstance(item, dict):
+                        for key in keys:
+                            value = item.get(key)
+                            if value and (not isinstance(value, str) or value not in local):
+                                problems.append(f'{scene["scene"]}: {field}.{key} {value!r} is outside its target lines')
+        if problems:
+            raise StageError(problems)
     sounds = {}
     for entry in data.get("sounds") if isinstance(data.get("sounds"), list) else []:
         if not isinstance(entry, dict):

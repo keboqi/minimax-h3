@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import gradio as gr
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS
+from h3_app.drama3.guided.budget import AUTO as SMART_BUDGET_AUTO, BUDGET_PROFILES
 from h3_ui.drama3.speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3.voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.prompt_writers.drama3 import (
@@ -119,6 +120,7 @@ class Drama3View:
     writer_workflow: gr.Radio | None = None
     max_batch_lines: gr.Slider | None = None
     strict_source: gr.Checkbox | None = None
+    smart_budget_profile: gr.Dropdown | None = None
     sounds_panel: gr.Accordion | None = None
     sounds: tuple[Drama3SoundSlot, ...] = ()
     shown_sound_slots: gr.Number | None = None
@@ -530,14 +532,23 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             list(DRAMA3_WORKFLOWS), value=DRAMA3_WORKFLOW_SINGLE, label="Writer workflow",
                             info="Single-pass writes the script in one call, best with strong models. Guided "
                                  "writes it in short steps (casting, voices, acting, sound), so smaller, faster "
-                                 "models give reliable scripts; it makes 3–6 calls.",
+                                 "models can handle smaller tasks. Smart scenes plans the story first, then "
+                                 "processes short scene windows with shared context. Calls vary with length and retries.",
                         )
                         max_batch_lines = gr.Slider(
                             DRAMA3_GUIDED_BATCH_MIN, DRAMA3_GUIDED_BATCH_MAX,
                             value=DRAMA3_GUIDED_BATCH_DEFAULT, step=5,
                             label="Guided batch lines",
-                            info="Maximum lines per Guided direction/sound batch (default 40, up to 100). "
-                                 "Higher values group more scenes into fewer requests.",
+                            info="Regular Guided groups whole scenes toward this line target. Smart scenes "
+                                 "uses the lower of this value and its budget profile's limit (32 request / 24 token). "
+                                 "Dense content uses smaller windows; short scenes may share a request.",
+                        )
+                        smart_budget_profile = gr.Dropdown(
+                            choices=list(BUDGET_PROFILES), value=SMART_BUDGET_AUTO, label="Smart budget profile",
+                            visible=False,
+                            info="Auto: Gemini Flash Lite uses Request optimized; GPT-6 Luna and other models use "
+                                 "Token optimized. Override for your billing setup. Request mode uses larger batches "
+                                 "and richer context; token mode reduces repeated context. Applies only to Smart scenes.",
                         )
                         strict_source = gr.Checkbox(
                             value=False, label="Strict source check",
@@ -800,6 +811,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         writer_workflow=writer_workflow,
         max_batch_lines=max_batch_lines,
         strict_source=strict_source,
+        smart_budget_profile=smart_budget_profile,
         sounds_panel=sounds_panel,
         sounds=sounds,
         shown_sound_slots=shown_sound_slots,

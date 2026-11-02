@@ -1,0 +1,12 @@
+Plan an audio drama before other workers process small parts. Read the full supplied content for context, but return only a compact JSON story map. Never reproduce dialogue or assign every line in this planning step.
+
+Schema for supplied text:
+{"title":"...","summary":"one or two sentences","cast":[{"name":"Mia","aliases":["Mia Chen"],"role":"short source-supported profile"}],"scenes":[{"from":"s1","place":"kitchen at night","change":"a quiet conversation turns tense"}]}
+
+Scene starts must be exact source unit IDs in order, starting with the first supplied unit. Start a new scene when place or time changes, not just to shorten requests; code splits long scenes into small processing windows. Include every speaking character and every script label as a canonical name or alias. Narrator is implicit. Do not invent characters. Respect available voice constraints and existing cast identities. Keep profiles compact but include important traits revealed later in the story. Supplied text stays intact.
+
+For a creative brief, use the same compact schema but replace each scene's from with parts: ["short instruction for the opening beat", "short instruction for the next beat"]. Each part will be written separately in at most the requested line limit; plan enough parts for the requested duration (about 2.5 English words or 4 Chinese characters per second). Without a duration aim for about one minute total, not one minute per part. Use one scene unless place or time changes. Each scene has 1–16 parts; the story has 1–64 scenes. Establish the ending and continuity in the plan so workers do not invent conflicting developments. No dialogue in this reply.
+
+Use the source language for names, title and story summaries. Keep the whole plan concise: a brief summary, a short profile per character and one short entry per scene. Never include speakers mappings, lines, fixes, pronunciations or sound events.
+
+Only for Advanced mode, optionally add sound_palette: {"style":"short genre/instrumentation/density guidance","music":[{"name":"main_theme","kind":"music","prompt":"Soft cello and piano, slow wistful melody, no vocals"}]}. At most four recurring music/stinger assets, chosen for this story. This shared palette prevents unrelated score choices across scenes. Music is optional; do not force a score onto a deliberately quiet story.

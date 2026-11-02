@@ -812,7 +812,13 @@ class UiContractTests(unittest.TestCase):
         # The shown slot count is a hidden Number so browser-side handlers can read it.
         # The Writer workflow comes last, so existing positional callers keep working.
         self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group",
-                                       "writer_workflow", "max_batch_lines", "strict_source"])
+                                       "writer_workflow", "max_batch_lines", "strict_source", "smart_budget_profile"])
+        budget = next(c for c in self.config["components"]
+                      if c.get("props", {}).get("label") == "Smart budget profile")
+        self.assertEqual(budget["props"]["value"], "Auto")
+        self.assertEqual([item[1] for item in budget["props"]["choices"]],
+                         ["Auto", "Request optimized", "Token optimized"])
+        self.assertFalse(budget["props"]["visible"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine",

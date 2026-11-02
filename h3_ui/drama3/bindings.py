@@ -208,6 +208,7 @@ def _workflow_input(view):
         *([view.writer_workflow] if view.writer_workflow is not None else []),
         *([view.max_batch_lines] if view.max_batch_lines is not None else []),
         *([view.strict_source] if view.strict_source is not None else []),
+        *([view.smart_budget_profile] if getattr(view, "smart_budget_profile", None) is not None else []),
     ]
 
 
@@ -223,6 +224,10 @@ def _bind_writer(view, actions):
     """Rewrite, copy and paste; returns the events that may change the script."""
     writer_slots = _writer_slot_inputs(view)
     writer_outputs = _writer_outputs(view)
+    if getattr(view, "smart_budget_profile", None) is not None and view.writer_workflow is not None:
+        from h3_app.prompt_writers.drama3 import DRAMA3_WORKFLOW_SMART
+        view.writer_workflow.change(lambda workflow: gr.update(visible=workflow == DRAMA3_WORKFLOW_SMART),
+                                    inputs=view.writer_workflow, outputs=view.smart_budget_profile, **QUIET)
     # Copying never touches the rewrite's outputs, so a running rewrite keeps going.
     view.copy_prompt.click(actions.copy_drama3_writer_prompt,
                            inputs=[view.text, view.speaker_mode, *writer_slots],

@@ -15,6 +15,7 @@ import re
 from typing import Callable
 
 from h3_app.drama3.guided.compile import compile_script
+from h3_app.drama3.guided.batching import continuation_staging, merge_staging, prepare_batches, scene_batches
 from h3_app.drama3.guided.model import NARRATOR, Draft, Scene, Utterance
 from h3_app.drama3.guided.enhance import apply_content_annotations
 from h3_app.drama3.guided.fidelity import words
@@ -34,6 +35,7 @@ from h3_app.prompt_writers.drama3 import (
 )
 
 GUIDED_PROMPTS = {
+    "plan": "prompt_drama3_guided_plan.txt",
     "preserve": "prompt_drama3_guided_preserve.txt",
     "brief": "prompt_drama3_guided_brief.txt",
     "voices": "prompt_drama3_guided_voices.txt",
@@ -276,6 +278,8 @@ def write_drama3_guided(
     sound_context: str = "",
     notes: list[str] | None = None,
     max_batch_lines: int = MAX_BATCH_LINES,
+    smart: bool = False,
+    smart_budget=None,
 ) -> tuple[str, str, int]:
     """A writer reply (JSON, as the Single-pass writer returns), its source mode, and the call count.
 
@@ -306,6 +310,12 @@ def write_drama3_guided(
     source = None
     structured = False
     single = speaker_mode == DRAMA3_SPEAKER_SINGLE
+    smart_plan = None
+    if smart:
+        from h3_app.drama3.guided.smart import brief_content, context, parse_plan, preserve_content
+        from h3_app.drama3.guided.budget import TOKEN_BUDGET
+        smart_budget = smart_budget or TOKEN_BUDGET
+        smart_limit = min(smart_budget.lines, max(MIN_BATCH_LINES, int(max_batch_lines or MAX_BATCH_LINES)))
 
     if kind != BRIEF:
         source_mode = "preserve"
@@ -317,13 +327,24 @@ def write_drama3_guided(
         listing = "\n".join(
             f"{unit.id} [{unit.kind}{', label ' + unit.label if unit.label else ''}] {unit.text}"
             for unit in source.units if unit.kind != "heading")
-        request = "\n".join(filter(None, [language, voices_line,
+        content_context = "\n".join(filter(None, [language, voices_line,
             f"Script mode: {'Advanced' if advanced else 'Basic'}.",
             f"Explicit expansion instructions: {expansion_request}" if expansion_request else
-            "Preserve source; no inserted lines are authorized.", f"Units:\n{listing}"]))
-        answer, (palette_style, palette) = calls.run(prompts["preserve"], request,
-            lambda reply: (parse_content_preserve(reply, source, allowed, expansion=bool(expansion_request)),
-                           parse_sound_palette(reply)), "casting")
+            "Preserve source; no inserted lines are authorized."]))
+        request = f"{content_context}\nUnits:\n{listing}"
+        if smart:
+            plan_request = content_context + "\nUnits:\n" + "\n".join(
+                f"{unit.id} [{unit.kind}, label {unit.label}] {unit.text}" for unit in source.units)
+            plan_request += f"\n{cast_context}" if cast_context else ""
+            smart_plan, (palette_style, palette) = calls.run(prompts["plan"], plan_request,
+                lambda reply: (parse_plan(reply, source, allowed), parse_sound_palette(reply)), "story planning")
+            answer = preserve_content(source, smart_plan, calls, prompts["preserve"],
+                content_context, bool(expansion_request), smart_limit,
+                allowed, smart_budget)
+        else:
+            answer, (palette_style, palette) = calls.run(prompts["preserve"], request,
+                lambda reply: (parse_content_preserve(reply, source, allowed, expansion=bool(expansion_request)),
+                               parse_sound_palette(reply)), "casting")
         title = title or answer["title"]
         utterances = attribute_units(source, answer["speakers"],
             break_after={after for after, _speaker, _text in answer.get("insertions", [])})
@@ -335,10 +356,22 @@ def write_drama3_guided(
         brief_voices = "" if single else voices_line
         request = "\n".join(filter(None, [language, brief_voices, f"Script mode: {'Advanced' if advanced else 'Basic'}.",
                                           f"Brief:\n{text.strip()}"]))
-        (title, utterances, scenes, roles), (palette_style, palette) = calls.run(
-            prompts["brief"], request,
-            lambda reply: (parse_content_brief(reply, None if single else allowed, notes),
-                           parse_sound_palette(reply)), "writing")
+        if smart:
+            smart_plan, (palette_style, palette) = calls.run(prompts["plan"],
+                request + f"\n{cast_context}\nPlan parts for at most {smart_limit} short lines per writing request.",
+                lambda reply: (parse_plan(reply, allowed=None if single else allowed), parse_sound_palette(reply)),
+                "story planning")
+            title, utterances, scenes, roles = brief_content(
+                smart_plan, calls, prompts["brief"], request, smart_limit, notes, smart_budget)
+            if allowed is not None and not single:
+                used = {identity(u.speaker) for u in utterances}
+                if len(allowed - used) > (1 if NARRATOR in used and NARRATOR not in allowed else 0):
+                    raise H3Error("The Smart scene writing did not use every available voice.")
+        else:
+            (title, utterances, scenes, roles), (palette_style, palette) = calls.run(
+                prompts["brief"], request,
+                lambda reply: (parse_content_brief(reply, None if single else allowed, notes),
+                               parse_sound_palette(reply)), "writing")
     if fixed is not None and not single and NARRATOR not in {identity(name) for name in fixed} \
             and any(u.speaker == NARRATOR for u in utterances):
         # Adapt to voices: narration goes to an unused voice first, else the first voice.
@@ -387,17 +420,35 @@ def write_drama3_guided(
             return existing
         story_head = " ".join(u.text for u in utterances[:6])[:240]
         context_line = f"Story context: {title + ' — ' if title else ''}{story_head}" if story_head else ""
-        request = "\n".join(filter(None, [language, context_line, "Characters:", *listing]))
-        return {**existing, **calls.run(prompts["voices"], request,
-                                      lambda reply: parse_voices(reply, required), "voice design")}
+        size = smart_budget.voices if smart else len(required)
+        designed = dict(existing)
+        for start in range(0, len(required), size):
+            selected = required[start:start + size]
+            request = "\n".join(filter(None, [language, context_line, "Characters:", *listing[start:start + size]]))
+            designed.update(calls.run(prompts["voices"], request,
+                lambda reply, selected=selected: parse_voices(reply, selected), "voice design"))
+        return designed
+
+    def batch_context(batch):
+        if not smart_plan:
+            return ""
+        local_scenes = [{"place": scene.place, "change": scene.change} for scene in batch.scenes]
+        # Stage-specific cast/profiles below already carry authoritative descriptions.
+        return (context(smart_plan, smart_budget, scenes=local_scenes,
+                        names=set() if smart_budget.compact else None)
+                + "\nNeighboring lines (context only; do not output entries for these):\n"
+                + _line_listing(batch.neighbors) + "\nReturn decisions only for the TARGET lines below. "
+                "This may be a window within a scene; do not restart the scene or repeat an earlier event. "
+                "Use shared assets consistently. Music start/end anchors must both be in TARGET lines.")
 
     def direction_stage(batch):
-        cast = ", ".join(f"{name} ({roles[name]})" if roles.get(name) else name for name in names)
-        request = "\n".join([language, f"Cast: {cast}", _scene_listing(batch, by_id)])
-        ids_in_batch = {uid for scene in batch for uid in scene.utterances}
+        local_names = (batch.speaker_names
+                       if smart and smart_budget.compact else set(names))
+        cast = ", ".join(f"{name} ({roles[name]})" if roles.get(name) else name for name in names if name in local_names)
+        request = "\n".join([language, f"Cast: {cast}", batch_context(batch), "TARGET:", _scene_listing(batch.scenes, by_id)])
         try:
             return calls.run(prompts["direction"], request,
-                             lambda reply: parse_direction(reply, ids_in_batch, notes), "direction")
+                             lambda reply: parse_direction(reply, batch.line_ids, notes), "direction")
         except H3Error as exc:
             notes.append(f"{exc} Those lines are left undirected.")
             return {}
@@ -409,18 +460,34 @@ def write_drama3_guided(
                         f"name; do not redefine): {json.dumps(shared, ensure_ascii=False)}")
 
     def sound_stage(batch):
-        request = "\n".join(filter(None, [language, f"Character profiles: {json.dumps(roles, ensure_ascii=False)}",
-                                          palette_line, sound_context, _scene_listing(batch, by_id)]))
-        scene_ids = {scene.id for scene in batch}
-        ids_in_batch = {uid for scene in batch for uid in scene.utterances}
+        continuation = ""
+        if smart and batch.continued:
+            continuation = (f"Continuation windows: {', '.join(batch.continued)}. For these scene IDs ONLY, "
+                            "return ambience/music null and omit room/transition: their first windows own those settings. "
+                            "Add local events, pauses, positions and voice effects; use anchored music for local score changes. "
+                            "For other scene IDs in this request, choose scene beds, room and transition normally.")
+        local_roles = ({name: role for name, role in roles.items() if name in batch.speaker_names}
+                       if smart and smart_budget.compact else roles)
+        request = "\n".join(filter(None, [language, f"Character profiles: {json.dumps(local_roles, ensure_ascii=False)}",
+                                          palette_line, sound_context, batch_context(batch), continuation, "TARGET:",
+                                          _scene_listing(batch.scenes, by_id)]))
         try:
-            return calls.run(prompts["sound"], request,
-                             lambda reply: parse_staging(reply, scene_ids, ids_in_batch, notes), "sound design")
+            scene_lines = batch.scene_lines
+            # Only Smart windows need anchors kept inside their own scene; regular Guided drops bad events.
+            sounds, staging, effects = calls.run(prompts["sound"], request,
+                lambda reply: parse_staging(reply, set(scene_lines), batch.line_ids, notes,
+                                           scene_lines=scene_lines if smart else None), "sound design")
+            if smart:
+                staging = continuation_staging(staging, batch.continued, notes)
+            return sounds, staging, effects
         except H3Error as exc:
             notes.append(f"{exc} Those scenes play without added sound.")
             return {}, {}, {}
 
     batches = _batches(scenes, max_batch_lines)
+    if smart:
+        batches = scene_batches(scenes, by_id, smart_limit, smart_budget)
+    batches = prepare_batches(batches, scenes, utterances, neighbors=smart_budget.neighbors if smart else 0)
     with ThreadPoolExecutor(max_workers=4) as pool:
         voices_future = pool.submit(voices_stage)
         direction_futures = [pool.submit(direction_stage, batch) for batch in batches]
@@ -430,7 +497,10 @@ def write_drama3_guided(
         sounds, staging, effects = dict(palette), {}, {}
         for future in sound_futures:
             batch_sounds, batch_staging, batch_effects = future.result()
+            previous = {sid: staging[sid] for sid in batch_staging if smart and sid in staging}
             _merge_batch_sounds(sounds, staging, batch_sounds, batch_staging, notes, palette)
+            for sid, earlier in previous.items():
+                staging[sid] = merge_staging(earlier, staging[sid], notes, scene_id=sid)
             effects.update(batch_effects)
 
     _drop_performed_sounds(staging, sounds, directions, by_id, notes)
