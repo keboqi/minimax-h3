@@ -15,7 +15,39 @@ const press = (control) => {
 element.addEventListener('click', event => press(event.target.closest('[data-sb-action]')));
 """
 
-MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
+# A scene shows without its media loaded: players fetch only metadata until played, and a player
+# Gradio replaces stops downloading. Otherwise every take viewed keeps streaming, and after a few
+# scenes the browser's connections to the server are all taken, so the next click waits for one.
+MEDIA_JS = """
+() => {
+  if (window.h3StoryboardMedia) return;
+  window.h3StoryboardMedia = true;
+  const ROOT = ".h3-storyboard";
+  const players = (node) => node.nodeType !== 1 ? []
+    : node.matches("video, audio") ? [node] : [...node.querySelectorAll("video, audio")];
+  const stop = (player) => {
+    player.pause();
+    player.removeAttribute("src");
+    player.querySelectorAll("source").forEach((source) => source.removeAttribute("src"));
+    player.load();
+  };
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        for (const player of players(node)) {
+          if (player.closest(ROOT) && player.preload !== "none") player.preload = "metadata";
+        }
+      }
+      if (!record.target.closest?.(ROOT)) continue;
+      for (const node of record.removedNodes) {
+        players(node).filter((player) => !player.isConnected).forEach(stop);
+      }
+    }
+  }).observe(document.body, {childList: true, subtree: true});
+}
+"""
+
+MODE_NAMES ={sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
 
 
 def seconds_label(value: float) -> str:

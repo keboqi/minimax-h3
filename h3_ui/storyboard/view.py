@@ -213,7 +213,7 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
                 create = gr.Button("Create storyboard", variant="primary", scale=0, min_width=200)
                 cancel_new = gr.Button("Cancel", scale=0, min_width=120)
 
-        with gr.Column(visible=False) as board_group:
+        with gr.Column(visible=False, elem_classes=["h3-storyboard"]) as board_group:
             with gr.Row(equal_height=True):
                 storyboard = gr.Dropdown([], label="Storyboard", value=None, scale=4, min_width=240)
                 new_storyboard = gr.Button("New storyboard", scale=0, min_width=160)

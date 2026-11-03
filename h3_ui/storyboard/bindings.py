@@ -11,6 +11,7 @@ from h3_app.storyboard import DEFAULTED_FIELDS, PROFILE_FIELDS
 
 from ..job_bindings import PROMPT_QUEUE, bind_gpu_action, owned_generation, owned_interrupt
 from .handlers import STORY_WRITER_FIELDS, WRITER_FIELDS, StoryboardHandlers
+from .presentation import MEDIA_JS
 from .view import RENDER_FIELDS, StoryboardView
 
 QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
@@ -97,6 +98,7 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
     _bind_api(view, handlers)
     if load_trigger is not None:
         on(load_trigger, handlers.refresh, current, options=QUIET)
+        load_trigger(None, js=MEDIA_JS, api_name=False)
     on(view.storyboard.input, handlers.select_storyboard, [view.storyboard])
     on(view.create.click,
        with_leading(handlers.create, ("name", "story", "connect", "seconds"), fields, pack=True),

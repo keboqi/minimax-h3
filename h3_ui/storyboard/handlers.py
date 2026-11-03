@@ -76,6 +76,23 @@ def latent_prefix_frames(path: Path) -> int:
     return int(header.get("__metadata__", {}).get("h3_prefix_frames", 0))
 
 
+_SERVED: set[Path] = set()
+
+
+def served_in_place(path: str) -> str:
+    """``path``, served from where it is.
+
+    Gradio otherwise hashes every file it returns twice per event and copies it into its
+    cache, which for videos tens of MB in size slows each scene switch. Takes and stored
+    scene media never change once written, and the output folder is already served.
+    """
+    resolved = Path(path).resolve()
+    if resolved not in _SERVED and resolved.is_file():
+        gr.set_static_paths([resolved])
+        _SERVED.add(resolved)
+    return path
+
+
 def take_label(number: int, take: dict[str, Any]) -> str:
     return f"Take {number} · seed {take['seed']}"
 
@@ -186,8 +203,8 @@ class StoryboardHandlers(StoryboardApiHandlers):
             shown = media["mode"] == sb.REFERENCES if kind == "video" else voiced
             paths = media[f"ref_{kind}s"] if shown else []
             for i in range(3):
-                players[f"{kind}_preview_{i}"] = gr.update(value=paths[i] if i < len(paths) else None,
-                                                           visible=i < len(paths))
+                players[f"{kind}_preview_{i}"] = gr.update(
+                    value=served_in_place(paths[i]) if i < len(paths) else None, visible=i < len(paths))
         updates = {
             "scene_id": scene_id,
             "status": status,
@@ -219,7 +236,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "cast": gr.update(choices=cast_names, value=[name for name in scene["cast"] if name in cast_names],
                               info=None if cast_names else "No cast yet: add people under Cast below."),
             "ref_images": media["ref_images"] or None,
-            "ref_videos": media["ref_videos"] or None,
+            "ref_videos": [served_in_place(path) for path in media["ref_videos"]] or None,
             "voices_group": gr.update(visible=voiced),
             "ref_audios": gr.update(
                 value=media["ref_audios"] or None,
@@ -240,7 +257,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "overlap": gr.update(value=scene["overlap"], interactive=flow),
             "seed": scene["seed"],
             "takes_per_run": scene["takes_per_run"],
-            "take_video": in_use["video"] if in_use and Path(in_use["video"]).is_file() else None,
+            "take_video": served_in_place(in_use["video"]) if in_use and Path(in_use["video"]).is_file() else None,
             "takes": gr.update(choices=take_choices, value=scene["in_use"] if in_use else None,
                                visible=len(take_choices) > 1),
             "use_take": gr.update(visible=len(take_choices) > 1),
