@@ -131,6 +131,14 @@ def run(*, cloudflare=False):
                     assert page.evaluate("window.h3SamePage === true"), "the page reloaded after the drop"
                     assert not page.get_by_text("Connection Lost").count()
                     page.screenshot(path=str(ARTIFACTS / "resumed.png"))
+                    # The next queue stream rides a socket opened ahead of it, so a click waits for no
+                    # new connection.
+                    page.wait_for_timeout(1000)
+                    opened = len(streams)
+                    page.get_by_role("button", name="Generate fixture", exact=True).click()
+                    expect(output).to_have_value("Decoding step 2 / 3", timeout=10000)
+                    assert len(streams) == opened, streams[opened:]
+                    expect(output).to_have_value("Generation complete", timeout=10000)
                     assert not blocked, blocked
                     assert not errors, errors
                     browser.close()

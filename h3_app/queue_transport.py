@@ -18,6 +18,9 @@ QUEUE_TRANSPORT_HEAD = '<script src="/h3/queue-transport.js"></script>'
 # heartbeat as a closed tab (the session's running events stop), so a dropped
 # stream stays open here, keeping its unread bytes, until the browser resumes it.
 RESUME_SECONDS = 60.0
+# The browser opens the next queue stream's socket ahead of time (queue_transport.js), so
+# a socket waits this long for the stream it will carry.
+SPARE_SECONDS = 300.0
 # A stream whose browser stops acknowledging bytes is abandoned past this size.
 MAX_UNACKED_BYTES = 32 * 1024 * 1024
 _STREAM_ID = re.compile(r"[0-9a-f]{32}")
@@ -225,7 +228,7 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
     await socket.accept()
     tasks = set()
     try:
-        options = await asyncio.wait_for(socket.receive_json(), timeout=10)
+        options = await asyncio.wait_for(socket.receive_json(), timeout=SPARE_SECONDS)
         if not isinstance(options, dict):
             await socket.close(code=1008)
             return

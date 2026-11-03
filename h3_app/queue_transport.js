@@ -5,6 +5,29 @@
   const RESUME_MS = 55000;
   // Closes that end a stream; any other close is a dropped connection to resume.
   const FINAL_CLOSES = new Set([1000, 1008, 1011, 4404]);
+  // A new WebSocket through a remote proxy costs a whole connection setup (seconds on a slow
+  // link), and Gradio opens a queue stream for every batch of events. So once a stream ends,
+  // the next one's socket opens in the background and waits (SPARE_SECONDS on the server).
+  const spares = new Map();
+  // A spare that lasted this long timed out idle; one that closed sooner is not retried.
+  const SPARE_RETRY_MS = 30000;
+  const openSpare = (url) => {
+    if (spares.has(url)) return;
+    const spare = new WebSocket(url);
+    const opened = Date.now();
+    spare.binaryType = "arraybuffer";
+    spares.set(url, spare);
+    spare.addEventListener("close", () => {
+      if (spares.get(url) !== spare) return;
+      spares.delete(url);
+      if (Date.now() - opened > SPARE_RETRY_MS) openSpare(url);
+    });
+  };
+  const takeSpare = (url) => {
+    const spare = spares.get(url);
+    spares.delete(url);
+    return spare && spare.readyState <= WebSocket.OPEN ? spare : null;
+  };
   const originalFetch = window.fetch.bind(window);
   const streamId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)),
     (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -23,6 +46,8 @@
       }
       const socketUrl = new URL(url);
       socketUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      // The heartbeat stream stays open for the whole page, so only queue streams keep a spare.
+      const spareUrl = url.pathname === "/gradio_api/queue/data" ? socketUrl.href : null;
       const stream = streamId();
       const authorization = request.headers.get("authorization");
       let socket;
@@ -36,6 +61,7 @@
       const cleanup = () => {
         clearTimeout(retryTimer);
         request.signal.removeEventListener("abort", abort);
+        if (spareUrl) openSpare(spareUrl);
       };
       const fail = (error) => {
         if (finished) return;
@@ -55,13 +81,15 @@
         },
       });
       const connect = () => {
-        const current = socket = new WebSocket(socketUrl);
+        const current = socket = (spareUrl && !received && takeSpare(spareUrl)) || new WebSocket(socketUrl);
         current.binaryType = "arraybuffer";
-        current.onopen = () => {
+        const start = () => {
           droppedAt = null;
           retries = 0;
           current.send(JSON.stringify({authorization, stream, offset: received}));
         };
+        if (current.readyState === WebSocket.OPEN) start();
+        else current.onopen = start;
         current.onmessage = (event) => {
           if (finished || current !== socket) return;
           if (typeof event.data === "string") {
