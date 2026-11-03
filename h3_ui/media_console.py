@@ -7,7 +7,6 @@ endpoint, so it is left out.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +50,7 @@ def media_controller(runtime: RuntimeConfig) -> MediaController:
 
 
 def build_media_library(
-    tab: gr.Tab, runtime: RuntimeConfig, store, *, reload: Callable[[], str] | None = None,
+    tab: gr.Tab, runtime: RuntimeConfig, store,
 ) -> GalleryView:
     """Build and bind the library inside ``tab`` against an existing workspace store."""
     from h3_app.jobs import JOBS
@@ -61,14 +60,6 @@ def build_media_library(
     configure_media_catalog(store, lambda: runtime)
     controller = media_controller(runtime)
     with tab:
-        if reload is not None:
-            with gr.Row(equal_height=True):
-                sync = gr.Button("Reload shared volume", scale=0, min_width=200)
-                sync_status = gr.Markdown(
-                    "Reload to see outputs the GPU endpoint saved after this page opened."
-                )
-            sync.click(reload, outputs=sync_status, concurrency_id="model-volume",
-                       concurrency_limit=1, api_name=False)
         # The main app's workspace styles: the library and the rich result views use them.
         with gr.Column(elem_classes=["h3-workspace"]):
             library = gr.Column()

@@ -54,7 +54,7 @@ class ModelManagerTests(unittest.TestCase):
         self.assertIn("ltx25_audio_vae: access denied", message)
         self.assertTrue(self.manager._path(keys[2]).is_file())
         self.assertTrue(self.manager.config.is_file())
-        self.volume.reload.assert_called_once()
+        self.volume.reload.assert_not_called()
         self.assertEqual(self.volume.commit.call_count, len(keys) + 2)
         self.assertEqual(len(rows), len(MODEL_SPECS) + len(SNAPSHOT_SPECS))
 

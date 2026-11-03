@@ -258,7 +258,7 @@ class ModelManager:
         self.manifest = self.data / "h3_model_manifest.json"
         self.config = self.data / "h3_models.json"
         self.volume = volume
-        # Reload must never overlap an open file or another operation here.
+        # One model operation at a time; each commits what it changed.
         self.lock = RLock()
 
     def _keys(self, keys) -> tuple[str, ...]:
@@ -313,15 +313,16 @@ class ModelManager:
             ])
         return rows
 
+    # No volume.reload(): the GPU endpoint and the Workshop never run at once, so this
+    # container already sees the latest commits, and a reload under the open workspace
+    # database made it fail to open.
     def refresh(self):
         with self.lock:
-            self.volume.reload()
             return self._inventory()
 
     def download(self, keys, progress=lambda *_args, **_kwargs: None):
         selected = self._keys(keys)
         with self.lock:
-            self.volume.reload()
             if not selected:
                 return "Select models to download.", self._inventory()
             for key in selected:
@@ -361,7 +362,6 @@ class ModelManager:
     def remove(self, keys, confirmed):
         selected = self._keys(keys)
         with self.lock:
-            self.volume.reload()
             if not selected or not confirmed:
                 return "Select models and confirm removal first.", self._inventory()
             # Validate every destination before changing any files.
@@ -395,7 +395,7 @@ TITLE = "Prism Workshop"
 def build_ui(manager: ModelManager | None, media=None):
     """Models, plus the GPU-free Media library and Storyboard when ``media`` is (runtime, store).
 
-    Without a ``manager`` (Colab), there is no Models tab or shared volume to reload.
+    Without a ``manager`` (Colab), there is no Models tab.
     """
     import gradio as gr
 
@@ -426,10 +426,7 @@ def build_ui(manager: ModelManager | None, media=None):
 
                 runtime, store = media
                 media_tab = gr.Tab("Media library")
-                library = build_media_library(
-                    media_tab, runtime, store,
-                    reload=None if manager is None else partial(reload_volume, manager),
-                )
+                library = build_media_library(media_tab, runtime, store)
                 from h3_ui.storyboard.workshop import build_storyboard_workshop
 
                 build_storyboard_workshop(gr.Tab("Storyboard"), ui, runtime, store, library=library)
@@ -439,19 +436,6 @@ def build_ui(manager: ModelManager | None, media=None):
 
                 load_result_view_scripts(ui)
     return ui.queue(default_concurrency_limit=1)
-
-
-def reload_volume(manager: ModelManager) -> str:
-    """See the GPU endpoint's newer commits without waiting behind a model batch."""
-    if not manager.lock.acquire(blocking=False):
-        return "A model batch is running. Reload after it finishes."
-    try:
-        manager.volume.reload()
-    except Exception as exc:
-        return f"Reload failed: {exc}. Try again in a moment."
-    finally:
-        manager.lock.release()
-    return "Reloaded. Choose **Refresh library** to show the latest files."
 
 
 def _build_models(ui, manager: ModelManager):

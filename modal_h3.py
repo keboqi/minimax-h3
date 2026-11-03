@@ -824,10 +824,13 @@ def layout() -> None:
 
 
 def prepare_runtime_models() -> None:
-    """Use the Workshop's files; generation downloads missing assets on demand."""
+    """Use the Workshop's files; generation downloads missing assets on demand.
+
+    No volume.reload(): the Workshop and this endpoint never run at once, so the
+    container starts with the latest commits.
+    """
     from h3_models import build_model_config, write_json_atomic
 
-    volume.reload()
     layout()
     write_json_atomic(Path(CONFIG), build_model_config(Path(MANIFEST).name))
     volume.commit()
