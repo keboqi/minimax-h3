@@ -14,7 +14,7 @@
       else if (name in node && name !== "list") node[name] = value;
       else node.setAttribute(name, value === true ? "" : value);
     }
-    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
+    node.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
     return node;
   };
   const chip = (label, pressed, onclick) =>
@@ -403,7 +403,7 @@
   const scenePanel = () => {
     const item = scene();
     const [low, high] = state.boot.seconds;
-    return [
+    const inputs = [
       h("p", {className: "small muted"}, item.context),
       textField("Scene title", "title", {maxLength: 120}),
       item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
@@ -434,6 +434,8 @@
       item.mode !== "Text to video" && mediaSlot(
         item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
         "ref_audios", {multiple: true}),
+    ];
+    const writing = [
       textField("Prompt", "prompt", {rows: 6, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
       h("div", {className: "row"},
         h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
@@ -464,6 +466,7 @@
             button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
             button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})))),
     ];
+    return [h("div", {className: "scene-columns"}, h("div", {className: "column"}, inputs), h("div", {className: "column"}, writing))];
   };
 
   // The ticked cast, first in the prompt's picture order; the scene's own images follow below.
@@ -892,6 +895,21 @@
     if (data) showBoard(data);
   };
 
+  // In the tab, the frame grows to fit, so the app's page is the only thing that scrolls.
+  // It only grows: a frame that followed each scene's height would move the page on every switch.
+  const fitFrame = () => {
+    const frame = window.frameElement;
+    if (!frame) return;
+    const height = document.documentElement.scrollHeight;
+    if (height > frame.offsetHeight) frame.style.height = `${height}px`;
+  };
+  let fitQueued = false;
+  const queueFit = () => {
+    if (fitQueued) return;
+    fitQueued = true;
+    requestAnimationFrame(() => { fitQueued = false; fitFrame(); });
+  };
+
   // Follows the surrounding app's theme when framed; a page of its own follows the system.
   const applyTheme = () => {
     let dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -903,10 +921,14 @@
 
   const start = async () => {
     applyTheme();
+    if (window.frameElement) document.documentElement.dataset.framed = "true";
     try {
       new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
     } catch { /* Framed by another origin. */ }
     window.addEventListener("beforeunload", () => flush());
+    new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true});
+    document.addEventListener("toggle", queueFit, true);
+    window.addEventListener("resize", queueFit);
     try {
       state.boot = await request("GET", `${API}/boot`);
       $("gpu-note").hidden = state.boot.gpu;

@@ -14,7 +14,7 @@ from .handlers import WRITER_FIELDS, StoryboardHandlers
 from .page import install_storyboard_page
 
 FRAME = ('<iframe class="h3-storyboard-frame" src="/storyboard/" title="Storyboard" '
-         'allow="fullscreen"></iframe>')
+         'allow="fullscreen" scrolling="no"></iframe>')
 
 
 def _bind_api(handlers: StoryboardHandlers):

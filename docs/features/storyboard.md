@@ -11,7 +11,8 @@ Storyboard is a page of its own at `/storyboard/`, outside Gradio; the tab shows
 frame. The browser holds the whole storyboard, so moving between scenes (the filmstrip,
 the arrows, or the Left and Right keys) makes no server request. Each edit saves that
 field in the background, and the header says when everything is saved. Videos show their
-first frame and load only when played.
+first frame and load only when played. In the tab, the frame grows to fit the page, so
+only the window itself scrolls.
 
 ## Starting
 
@@ -49,7 +50,7 @@ The storyboard picker marks a project **Generated** as soon as it has a recorded
 
 ## A scene
 
-The filmstrip along the bottom shows each scene's picture, number, title, length and a
+The filmstrip along the top shows each scene's picture, number, title, length and a
 status: Done, Out of date, Not generated or Needs input. A line between two scenes marks
 a fresh start (a cut). Click a scene to edit it; **Add scene** adds one at the end.
 

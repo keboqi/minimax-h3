@@ -14,7 +14,9 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; }
+/* Desktop only. Everything flows in the page, so the page's scrollbar is the only one. */
+html, body { margin: 0; min-width: 1100px; }
+:root[data-framed] { overflow-y: hidden; }
 body {
   background: var(--bg); color: var(--text);
   font: 16px/1.4 "Source Sans 3", "Source Sans Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -61,7 +63,7 @@ legend { padding: 0 0 6px; font-size: 14px; font-weight: 600; }
 .note { padding: 8px 20px; background: var(--raised); border-bottom: 1px solid var(--line); font-size: 15px; }
 .warning { padding: 8px 12px; border: 1px solid var(--warn-line); border-radius: 6px; color: var(--warn); font-size: 15px; }
 
-.editor { min-height: 100%; display: flex; flex-direction: column; }
+.editor { min-height: 100vh; display: flex; flex-direction: column; }
 .topbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 10px 20px;
   background: var(--surface); border-bottom: 1px solid var(--line);
@@ -73,12 +75,12 @@ legend { padding: 0 0 6px; font-size: 14px; font-weight: 600; }
 }
 .grow { flex: 1 1 auto; }
 
-.workarea { flex: 1 1 auto; display: flex; flex-wrap: wrap; min-height: 0; }
-.stage { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; }
+.workarea { flex: 1 1 auto; display: flex; }
+.stage { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; }
 .stage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .stage-head h1 { font-size: 24px; line-height: 1.2; }
 .preview {
-  position: relative; flex: 1 1 280px; min-height: 280px; display: flex; align-items: center; justify-content: center;
+  position: relative; flex: 0 0 auto; width: 100%; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center;
   overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--empty-take);
 }
 .preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #0b1412; }
@@ -92,7 +94,7 @@ legend { padding: 0 0 6px; font-size: 14px; font-weight: 600; }
 .confirm p { flex: 1 1 280px; font-size: 15px; }
 
 .inspector {
-  flex: 1 1 400px; min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 14px;
+  flex: 0 0 60%; min-width: 0; display: flex; flex-direction: column; gap: 14px;
   padding: 16px 20px; background: var(--surface); border-left: 1px solid var(--line);
 }
 .inspector h2 { font-size: 20px; }
@@ -110,7 +112,7 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .slot-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .drop { border: 1px dashed var(--dash); border-radius: 6px; background: var(--control); padding: 8px; }
 .drop.over { border-color: var(--accent); background: var(--accent-soft); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, 88px); gap: 6px; margin-bottom: 6px; }
 .tile { position: relative; min-width: 0; }
 .tile img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: var(--raised); }
 .tile .remove {
@@ -121,7 +123,7 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .audio-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .audio-line audio { flex: 1 1 auto; min-width: 0; height: 36px; }
 
-.filmstrip { display: flex; flex-direction: column; gap: 8px; padding: 10px 20px 12px; background: var(--surface); border-top: 1px solid var(--line); }
+.filmstrip { display: flex; flex-direction: column; gap: 8px; padding: 10px 20px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .strip { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; padding: 2px 2px 6px; }
 .cut { flex: 0 0 2px; margin: 0 6px; background: var(--text); }
 .frame {
@@ -140,16 +142,16 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .strip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .check-label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 15px; }
 .check-label input { width: 18px; height: 18px; accent-color: var(--accent); }
-#full-video video { display: block; width: 100%; max-height: 420px; background: #0b1412; border-radius: 6px; }
+#full-video video { display: block; width: 100%; max-height: 240px; background: #0b1412; border-radius: 6px; }
 .run-status { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 @media (prefers-reduced-motion: reduce) { .frame .bar i { animation: none; width: 100%; opacity: .5; } }
 
-.start { max-width: 1280px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; }
-.start-grid { flex: 1 1 auto; display: flex; flex-wrap: wrap; }
-.start-form { flex: 1 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; }
+.start { max-width: 1280px; min-height: 100vh; margin: 0 auto; display: flex; flex-direction: column; }
+.start-grid { flex: 1 1 auto; display: flex; }
+.start-form { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; }
 .start-form textarea { min-height: 280px; }
-.start-preview { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--surface); border-left: 1px solid var(--line); }
+.start-preview { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--surface); border-left: 1px solid var(--line); }
 .start-preview h2 { font-size: 20px; }
 .card { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--control); }
 .card p { margin-top: 4px; font-size: 15px; color: var(--muted); white-space: pre-line; max-height: 7.5em; overflow: hidden; }
@@ -167,17 +169,8 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .library-grid button:hover { border-color: var(--accent); }
 .library-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
 
-/* Wide windows are an app: the preview, filmstrip and Generate stay on screen, and the inspector scrolls. */
-@media (min-width: 960px) {
-  html, body { overflow: hidden; }
-  .editor { height: 100vh; min-height: 0; }
-  .workarea { flex-wrap: nowrap; overflow: hidden; }
-  .stage { flex: 1 1 auto; overflow-y: auto; }
-  .preview { min-height: 200px; }
-  .inspector { flex: 0 0 min(420px, 38vw); overflow-y: auto; }
-  .start { height: 100vh; overflow-y: auto; }
-  #full-video video { max-height: 240px; }
-}
+.column { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.scene-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 
 .loading { padding: 40px; text-align: center; color: var(--muted); }
 .toast {

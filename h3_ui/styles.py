@@ -999,7 +999,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }
 }
 /* Storyboard: the page runs in this frame. */
-.h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 210px); min-height: 640px; border: 0; border-radius: 8px; }
+.h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {
   .h3-workspace *, .h3-workspace *::before, .h3-workspace *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }

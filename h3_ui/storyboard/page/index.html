@@ -10,6 +10,11 @@
 <div id="editor" class="editor" hidden>
   <header class="topbar" id="topbar"></header>
   <div class="note" id="gpu-note" hidden>Scenes are generated on the GPU endpoint. Prepare every scene here, then open the GPU endpoint's Storyboard and press <strong>Generate all remaining scenes</strong>.</div>
+  <section class="filmstrip" aria-label="Filmstrip">
+    <div class="strip" id="strip"></div>
+    <div class="strip-actions" id="strip-actions"></div>
+    <div id="full-video"></div>
+  </section>
   <div class="workarea">
     <main class="stage">
       <div class="stage-head" id="stage-head"></div>
@@ -20,11 +25,6 @@
     </main>
     <aside class="inspector" id="inspector"></aside>
   </div>
-  <section class="filmstrip" aria-label="Filmstrip">
-    <div class="strip" id="strip"></div>
-    <div class="strip-actions" id="strip-actions"></div>
-    <div id="full-video"></div>
-  </section>
 </div>
 <div id="start" class="start" hidden></div>
 <div id="loading" class="loading" role="status">Opening Storyboard…</div>
