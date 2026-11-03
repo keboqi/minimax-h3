@@ -1,0 +1,926 @@
+// The Storyboard page. The browser holds the whole storyboard: moving between scenes
+// asks the server for nothing, and edits save one field in the background.
+(() => {
+  const API = "/storyboard/api";
+  const SAVE_DELAY_MS = 400;
+  const POLL_MS = 1500;
+  const $ = (id) => document.getElementById(id);
+
+  const h = (tag, attributes = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [name, value] of Object.entries(attributes)) {
+      if (value === undefined || value === null || value === false) continue;
+      if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
+      else if (name in node && name !== "list") node[name] = value;
+      else node.setAttribute(name, value === true ? "" : value);
+    }
+    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
+    return node;
+  };
+  const chip = (label, pressed, onclick) =>
+    h("button", {type: "button", className: "chip", "aria-pressed": String(pressed), onclick}, label);
+  const button = (label, onclick, className = "btn", extra = {}) =>
+    h("button", {type: "button", className, onclick, ...extra}, label);
+  const icon = (path) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", 18); svg.setAttribute("height", 18); svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", 2);
+    svg.setAttribute("aria-hidden", "true");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    line.setAttribute("d", path); line.setAttribute("stroke-linecap", "round"); line.setAttribute("stroke-linejoin", "round");
+    svg.append(line);
+    return svg;
+  };
+  const stored = {
+    get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { sessionStorage.setItem(key, value); } catch { /* Private windows refuse it. */ } },
+  };
+
+  const state = {
+    boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
+    includeOutdated: true, fullVideo: null, saveLabel: "All changes saved",
+    run: null, seenRevision: null, pollTimer: null, previewKey: null,
+  };
+  const scenes = () => state.board.scenes;
+  const scene = () => scenes().find((item) => item.id === state.sceneId) || scenes()[0];
+  const boardUrl = (path = "") => `${API}/boards/${state.board.id}${path}`;
+  const sceneUrl = (path = "") => boardUrl(`/scenes/${state.sceneId}${path}`);
+
+  const request = async (method, url, body, {form = false} = {}) => {
+    const options = {method, credentials: "same-origin"};
+    if (form) options.body = body;
+    else if (body !== undefined) {
+      options.headers = {"Content-Type": "application/json"};
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    let data = null;
+    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
+    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
+    return data;
+  };
+
+  let toastTimer;
+  const toast = (message, error = false) => {
+    const node = $("toast");
+    node.textContent = message;
+    node.className = error ? "toast error" : "toast";
+    node.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
+  };
+  // Any action on the server: a failure reports itself and leaves the page as it is.
+  const act = async (work, done) => {
+    try {
+      const result = await work();
+      if (done) toast(done);
+      return result;
+    } catch (error) {
+      toast(error.message, true);
+      return undefined;
+    }
+  };
+
+  // Saving ----------------------------------------------------------------
+  const dirty = new Map();
+  let saveTimer = null;
+  let saves = Promise.resolve();
+  let saving = 0;
+
+  const setSaveLabel = (label) => {
+    state.saveLabel = label;
+    const node = $("save-state");
+    if (node) node.textContent = label;
+  };
+  const edit = (field, value) => {
+    const item = scene();
+    item[field] = value;
+    const fields = dirty.get(item.id) || {};
+    fields[field] = value;
+    dirty.set(item.id, fields);
+    setSaveLabel("Saving…");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flush, SAVE_DELAY_MS);
+  };
+  const flush = () => {
+    clearTimeout(saveTimer);
+    const boardId = state.board?.id;
+    for (const [sceneId, fields] of dirty) {
+      dirty.delete(sceneId);
+      saving += 1;
+      saves = saves.then(async () => {
+        try {
+          const data = await request("PATCH", `${API}/boards/${boardId}/scenes/${sceneId}`, fields);
+          saving -= 1;
+          if (state.board?.id === boardId) applyBoard(data, {keepInspector: true});
+          if (!saving && !dirty.size) setSaveLabel("All changes saved");
+        } catch (error) {
+          saving -= 1;
+          setSaveLabel("Couldn't save");
+          toast(error.message, true);
+          if (state.board?.id === boardId) refreshBoard();
+        }
+      });
+    }
+    return saves;
+  };
+  const refreshBoard = async () => {
+    const data = await act(() => request("GET", boardUrl()));
+    if (data) applyBoard(data, {keepInspector: true});
+  };
+  // A server reply is older than anything typed since, so unsaved fields stay on top.
+  const applyBoard = (data, {keepInspector = false} = {}) => {
+    const typed = [...dirty].map(([id, fields]) => [data.scenes.find((item) => item.id === id), fields]);
+    for (const [item, fields] of typed) if (item) Object.assign(item, fields);
+    state.board = data;
+    if (!data.scenes.some((item) => item.id === state.sceneId)) {
+      state.sceneId = data.scenes[0].id;
+      keepInspector = false;
+    }
+    if (data.run !== undefined) followRun(data.run);
+    render({keepInspector});
+  };
+
+  // Rendering -------------------------------------------------------------
+  const render = ({keepInspector = false} = {}) => {
+    renderTopbar();
+    renderStage();
+    renderStrip();
+    renderStripActions();
+    if (!keepInspector) renderInspector();
+    else renderInspectorDerived();
+  };
+
+  const renderTopbar = () => {
+    const panelButton = (name, label) => chip(label, state.panel === name, () => {
+      state.panel = state.panel === name ? null : name;
+      renderTopbar();
+      renderInspector();
+    });
+    const select = h("select", {"aria-label": "Storyboard", onchange: (event) => openBoard(event.target.value)},
+      state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
+        row.name + (row.generated ? " · Generated" : ""))));
+    $("topbar").replaceChildren(
+      h("label", {className: "board-picker"}, "Storyboard", select),
+      button("New storyboard", showStart),
+      h("div", {className: "mono small muted"},
+        `${scenes().length} scenes · ${state.board.total} · ${state.board.done} done`),
+      h("div", {className: "small muted", id: "save-state", role: "status"}, state.saveLabel),
+      h("div", {className: "grow"}),
+      panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings"),
+    );
+  };
+
+  const shownTake = () => {
+    const item = scene();
+    return item.takes.find((take) => take.id === (state.previewTake ?? item.in_use)) || null;
+  };
+
+  const renderStage = () => {
+    const item = scene();
+    const index = scenes().indexOf(item);
+    $("stage-head").replaceChildren(
+      button(icon("M15 6l-6 6 6 6"), () => step(-1), "btn icon", {"aria-label": "Previous scene", disabled: index === 0}),
+      button(icon("M9 6l6 6-6 6"), () => step(1), "btn icon",
+        {"aria-label": "Next scene", disabled: index === scenes().length - 1}),
+      h("h1", {id: "scene-heading"}, `Scene ${item.number} · ${item.title || "Untitled scene"}`),
+      h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
+    );
+    renderPreview();
+    const notes = [];
+    if (item.state === "outdated") {
+      notes.push(h("div", {className: "warning", role: "status"},
+        "This take is out of date: the scene, or the scene it continues from, changed since it was made. Generate it again to update it."));
+    }
+    if (item.takes.length) notes.push(h("div", {className: "small muted"}, state.board.take_note));
+    if (state.board.queue.length && !activeGenerate()) {
+      notes.push(h("div", {className: "small muted"},
+        `${state.board.queue.length} scene(s) remain in the generation queue. Press Generate all remaining scenes to continue.`));
+    }
+    $("stage-notes").replaceChildren(...notes);
+    renderTakes();
+  };
+
+  // Rebuilt only when the picture changes, so a playing take survives saves and polls.
+  const renderPreview = () => {
+    const item = scene();
+    const take = shownTake();
+    const key = take ? take.id : `empty:${item.id}`;
+    if (key === state.previewKey) return;
+    state.previewKey = key;
+    const node = $("preview");
+    node.querySelectorAll("video").forEach((video) => {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    });
+    if (take && !take.missing) {
+      node.replaceChildren(h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
+        "aria-label": `Take ${take.number} of scene ${item.number}`}));
+    } else {
+      node.replaceChildren(h("div", {className: "empty"},
+        h("strong", {}, take ? "This take is missing from disk" : "No take yet"),
+        h("span", {className: "muted"}, state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
+    }
+  };
+
+  const activeGenerate = () => (state.run?.active && state.run.kind === "generate" ? state.run : null);
+
+  const renderTakes = () => {
+    const item = scene();
+    const shown = shownTake();
+    const busy = Boolean(activeGenerate());
+    const blocked = item.issues.length > 0;
+    const row = item.takes.map((take) => chip(
+      `Take ${take.number}${take.id === item.in_use ? " · in use" : ""}`,
+      shown?.id === take.id,
+      () => { state.previewTake = take.id; state.question = null; renderPreview(); renderTakes(); },
+    ));
+    if (shown && shown.id !== item.in_use) row.push(button("Use this take", useTake, "btn quiet"));
+    row.push(h("div", {className: "grow"}));
+    if (state.boot.gpu) {
+      row.push(button(item.takes.length ? "Generate another take" : "Generate this scene",
+        () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
+        {disabled: blocked || busy, id: "generate-scene"}));
+    }
+    $("take-row").replaceChildren(...row);
+    $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
+      h("p", {}, state.question),
+      state.boot.gpu && button("Switch and regenerate them", () => confirmTake(true), "btn primary"),
+      button("Switch, regenerate later", () => confirmTake(false)),
+      button("Cancel", () => { state.question = null; renderTakes(); }),
+    )] : []));
+  };
+
+  const useTake = async () => {
+    const data = await act(() => request("POST", sceneUrl("/use-take"), {take_id: shownTake().id}));
+    if (!data) return;
+    state.question = data.question ? `Use this take for scene ${scene().number}? ${data.question}` : null;
+    if (!data.question) state.previewTake = null;
+    applyBoard(data, {keepInspector: true});
+  };
+  const confirmTake = async (regenerate) => {
+    const take = shownTake();
+    const sceneId = state.sceneId;
+    state.question = null;
+    if (regenerate) {
+      await startGeneration({action: "switch", scene_id: sceneId, take_id: take.id});
+      state.previewTake = null;
+      return;
+    }
+    const data = await act(() => request("POST", sceneUrl("/use-take"), {take_id: take.id, confirmed: true}),
+      "Take in use changed. The scenes that continue from it are out of date.");
+    state.previewTake = null;
+    if (data) applyBoard(data, {keepInspector: true});
+  };
+
+  const stateClass = (item) => (item.state_label === "Needs input" ? "state-needs" : `state-${item.state}`);
+
+  const renderStrip = () => {
+    const running = activeGenerate()?.scene_id;
+    const items = [];
+    scenes().forEach((item, index) => {
+      if (index && !item.flow) items.push(h("div", {className: "cut", "aria-hidden": "true"}));
+      const thumb = h("span", {className: "thumb"});
+      if (item.thumb) thumb.style.backgroundImage = `url("${item.thumb}")`;
+      items.push(h("button", {
+        type: "button", className: "frame", "aria-current": String(item.id === state.sceneId), "data-scene": item.id,
+        "aria-label": `Scene ${item.number}, ${item.title}, ${item.seconds} seconds, ${item.state_label}. ${item.summary}`,
+        onclick: () => select(item.id),
+      }, thumb,
+      item.id === running ? h("span", {className: "bar"}, h("i")) : null,
+      h("span", {className: "title"}, `${item.number} · ${item.title || "Untitled scene"}`),
+      h("span", {className: "meta"},
+        h("span", {className: stateClass(item)}, item.id === running ? "Generating" : item.state_label),
+        h("span", {className: "mono"}, `${item.seconds}s`))));
+    });
+    items.push(button("Add scene", addScene, "add-frame"));
+    $("strip").replaceChildren(...items);
+  };
+
+  const renderStripActions = () => {
+    const run = state.run;
+    const busy = run?.active;
+    const generating = activeGenerate();
+    const pending = state.board.pending;
+    const actions = [];
+    if (state.boot.gpu) {
+      actions.push(generating
+        ? button("Interrupt", interrupt, "btn danger")
+        : button(pending ? `Generate all remaining scenes (${pending})` : "All scenes are done",
+          () => startGeneration({action: "remaining"}), "btn primary", {disabled: !pending || busy}));
+    }
+    actions.push(
+      button("Play full video", () => startJoin(false), "btn", {disabled: busy}),
+      button("Export to Media", () => startJoin(true), "btn", {disabled: busy}),
+      h("label", {className: "check-label"},
+        h("input", {type: "checkbox", checked: state.includeOutdated,
+          onchange: (event) => { state.includeOutdated = event.target.checked; }}),
+        "Include out-of-date scenes"),
+    );
+    if (busy) {
+      actions.push(h("div", {className: "run-status", role: "status", id: "run-status"}, run.status));
+    }
+    $("strip-actions").replaceChildren(...actions);
+  };
+
+  const renderFullVideo = () => {
+    $("full-video").replaceChildren(...(state.fullVideo
+      ? [h("video", {src: state.fullVideo, controls: true, preload: "metadata", "aria-label": "Full video"})] : []));
+  };
+
+  // Moving between scenes -------------------------------------------------
+  const select = (sceneId) => {
+    if (sceneId === state.sceneId && !state.panel) return;
+    flush();
+    state.sceneId = sceneId;
+    state.previewTake = null;
+    state.question = null;
+    state.panel = null;
+    stored.set("h3-storyboard-scene", sceneId);
+    document.querySelectorAll("#strip .frame").forEach((frame) => {
+      frame.setAttribute("aria-current", String(frame.dataset.scene === sceneId));
+      if (frame.dataset.scene === sceneId) frame.scrollIntoView({block: "nearest", inline: "nearest"});
+    });
+    renderTopbar();
+    renderStage();
+    renderInspector();
+  };
+  const step = (offset) => {
+    const next = scenes()[scenes().indexOf(scene()) + offset];
+    if (next) select(next.id);
+  };
+  document.addEventListener("keydown", (event) => {
+    if ($("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target.closest("input, textarea, select, video, audio, dialog")) return;
+    if (event.key === "ArrowLeft") { step(-1); event.preventDefault(); }
+    if (event.key === "ArrowRight") { step(1); event.preventDefault(); }
+  });
+
+  // The inspector ---------------------------------------------------------
+  const renderInspector = () => {
+    const panels = {cast: castPanel, versions: versionsPanel, settings: settingsPanel};
+    const nodes = (panels[state.panel] || scenePanel)();
+    $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
+  };
+
+  // What depends on the server but sits beside fields being typed in.
+  const renderInspectorDerived = () => {
+    if (state.panel) { renderInspector(); return; }
+    const item = scene();
+    const set = (id, text) => { const node = $(id); if (node) node.textContent = text; };
+    set("prompt-hint", item.hint);
+    set("added-seconds", item.added);
+    set("seconds-label", `Length: ${item.seconds} s`);
+    const check = $("checklist");
+    if (check) check.replaceWith(checklist(item));
+    const previews = $("tag-hint");
+    if (previews) previews.textContent = tagHint(item);
+  };
+
+  const checklist = (item) => (item.issues.length
+    ? h("div", {className: "needs", id: "checklist"}, h("ul", {}, item.issues.map((issue) => h("li", {}, issue))))
+    : h("div", {className: "ready", id: "checklist"}, "Ready to generate."));
+  const tagHint = (item) => (item.tags.length ? `In the prompt: ${item.tags.join(", ")}` : "Tick cast or add an image, video or audio.");
+
+  const textField = (label, field, attributes = {}, tag = "input") => h("label", {className: "field"}, label,
+    h(tag, {value: scene()[field] ?? "", oninput: (event) => {
+      edit(field, event.target.value);
+      if (field === "title") {
+        $("scene-heading").textContent = `Scene ${scene().number} · ${event.target.value || "Untitled scene"}`;
+        const title = document.querySelector(`#strip [data-scene="${scene().id}"] .title`);
+        if (title) title.textContent = `${scene().number} · ${event.target.value || "Untitled scene"}`;
+      }
+    }, ...attributes}));
+
+  const choose = async (fields) => {
+    await flush();
+    await saves;
+    const data = await act(() => request("PATCH", sceneUrl(), fields));
+    if (data) applyBoard(data);
+  };
+
+  const scenePanel = () => {
+    const item = scene();
+    const [low, high] = state.boot.seconds;
+    return [
+      h("p", {className: "small muted"}, item.context),
+      textField("Scene title", "title", {maxLength: 120}),
+      item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
+        h("div", {className: "chip-grid two"},
+          chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
+          chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))),
+      h("fieldset", {}, h("legend", {}, "Conditioning"),
+        h("div", {className: "chip-grid three"},
+          chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
+          chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
+          chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
+      item.mode === "First / last frame" && h("div", {className: "split"},
+        item.flow ? h("p", {className: "small muted"},
+          `No first frame. This scene opens on scene ${item.number - 1}'s last frames. To open on a picture of your own, choose Start fresh.`)
+          : mediaSlot("First frame", "first_image", {optional: true}),
+        mediaSlot(item.flow ? "Last frame (required)" : "Last frame", "last_image", {optional: !item.flow})),
+      item.mode === "Reference media" && [
+        state.board.cast.length ? h("fieldset", {}, h("legend", {}, "Cast in this scene"),
+          h("div", {className: "chips"}, state.board.cast.map((member) => {
+            const on = item.cast.includes(member.name);
+            return chip(member.name, on, () => choose({cast: on ? item.cast.filter((name) => name !== member.name) : [...item.cast, member.name]}));
+          }))) : h("p", {className: "small muted"}, "No cast yet: add people under Cast."),
+        castPictures(item),
+        mediaSlot("Extra images", "ref_images", {multiple: true}),
+        mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true}),
+        h("p", {className: "small muted", id: "tag-hint"}, tagHint(item)),
+      ],
+      item.mode !== "Text to video" && mediaSlot(
+        item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
+        "ref_audios", {multiple: true}),
+      textField("Prompt", "prompt", {rows: 6, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+      h("div", {className: "row"},
+        h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
+        state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm")),
+      h("label", {className: "field"}, h("span", {id: "seconds-label"}, `Length: ${item.seconds} s`),
+        h("input", {type: "range", min: low, max: high, step: 1, value: item.seconds, oninput: (event) => {
+          edit("seconds", Number(event.target.value));
+          $("seconds-label").textContent = `Length: ${event.target.value} s`;
+        }}),
+        h("span", {className: "small muted", id: "added-seconds", style: "font-weight:400"}, item.added)),
+      checklist(item),
+      h("details", {},
+        h("summary", {}, "More scene options"),
+        h("div", {className: "details-body"},
+          h("div", {className: "split"},
+            h("label", {className: "field"}, "Frames shared with the previous scene",
+              h("select", {disabled: !item.flow, onchange: (event) => edit("overlap", Number(event.target.value))},
+                state.boot.overlaps.map((frames) => h("option", {value: frames, selected: frames === item.overlap}, `${frames} frames`)))),
+            h("label", {className: "field"}, "Takes per click",
+              h("select", {onchange: (event) => edit("takes_per_run", Number(event.target.value))},
+                Array.from({length: state.boot.max_takes}, (_, i) => h("option", {value: i + 1, selected: i + 1 === item.takes_per_run}, String(i + 1)))))),
+          h("label", {className: "field"}, "Seed (-1 is random)",
+            h("input", {type: "number", step: 1, value: item.seed,
+              onchange: (event) => edit("seed", Number.parseInt(event.target.value, 10) || -1)})),
+          h("div", {className: "chips"},
+            button("Duplicate scene", duplicateScene, "btn sm"),
+            button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
+            button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
+            button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})))),
+    ];
+  };
+
+  // The ticked cast, first in the prompt's picture order; the scene's own images follow below.
+  const castPictures = (item) => {
+    const ticked = item.pictures.slice(0, item.pictures.length - item.ref_images.length);
+    return ticked.length ? h("div", {className: "tiles"}, ticked.map((picture) => h("div", {className: "tile"},
+      h("img", {src: picture.thumb, alt: picture.tag, loading: "lazy"}), h("span", {className: "tag"}, picture.tag)))) : null;
+  };
+
+  const addScene = async () => {
+    await flush();
+    const data = await act(() => request("POST", boardUrl("/scenes")));
+    if (!data) return;
+    state.sceneId = data.scene_id;
+    state.previewTake = null;
+    applyBoard(data);
+  };
+  const duplicateScene = async () => {
+    await flush();
+    const data = await act(() => request("POST", sceneUrl("/duplicate")), "Scene duplicated.");
+    if (!data) return;
+    state.sceneId = data.scene_id;
+    applyBoard(data);
+  };
+  const moveScene = async (offset) => {
+    await flush();
+    const data = await act(() => request("POST", sceneUrl("/move"), {offset}));
+    if (data) applyBoard(data);
+  };
+  const deleteScene = async () => {
+    if (!confirm(`Delete scene ${scene().number}?`)) return;
+    dirty.delete(state.sceneId);
+    const data = await act(() => request("DELETE", sceneUrl()), "Scene deleted.");
+    if (data) applyBoard(data);
+  };
+  const enhance = async (event) => {
+    const control = event.currentTarget;
+    control.disabled = true;
+    await flush();
+    await saves;
+    const data = await act(() => request("POST", sceneUrl("/enhance"), {writer: writerSettings()}));
+    control.disabled = false;
+    if (!data) return;
+    toast("Prompt improved. Edit it further if you like.");
+    applyBoard(data);
+  };
+
+  // Media -----------------------------------------------------------------
+  const ACCEPT = {first_image: "image/*", last_image: "image/*", ref_images: "image/*", ref_videos: "video/*", ref_audios: "audio/*"};
+  const pickFiles = (accept, multiple) => new Promise((resolve) => {
+    const input = $("file-input");
+    input.accept = accept;
+    input.multiple = multiple;
+    input.value = "";
+    input.onchange = () => resolve([...input.files]);
+    input.click();
+  });
+  const uploadMedia = async (field, files) => {
+    if (!files.length) return;
+    const sceneId = state.sceneId;
+    const form = new FormData();
+    files.forEach((file) => form.append("files", file));
+    toast("Uploading…");
+    const data = await act(() => request("POST", boardUrl(`/scenes/${sceneId}/media/${field}`), form, {form: true}), "Added.");
+    if (data) applyBoard(data, {keepInspector: sceneId !== state.sceneId});
+  };
+  const removeMedia = async (field, path) => {
+    const data = await act(() => request("DELETE", `${sceneUrl(`/media/${field}`)}?path=${encodeURIComponent(path)}`));
+    if (data) applyBoard(data);
+  };
+  const removeButton = (field, path) => h("button", {type: "button", className: "remove", "aria-label": "Remove", onclick: () => removeMedia(field, path)}, "×");
+
+  const mediaSlot = (label, field, {multiple = false, optional = false} = {}) => {
+    const item = scene();
+    const value = item[field];
+    const list = Array.isArray(value) ? value : value ? [value] : [];
+    const pictures = ACCEPT[field] === "image/*";
+    const tiles = list.map((media) => {
+      if (field === "ref_audios") {
+        return h("div", {className: "audio-line"}, h("audio", {src: media.url, controls: true, preload: "metadata", "aria-label": media.name}),
+          button("Remove", () => removeMedia(field, media.path), "btn sm"));
+      }
+      return h("div", {className: "tile"}, h("img", {src: media.thumb || media.poster, alt: media.name, loading: "lazy"}), removeButton(field, media.path));
+    });
+    const drop = h("div", {className: "drop",
+      ondragover: (event) => { event.preventDefault(); drop.classList.add("over"); },
+      ondragleave: () => drop.classList.remove("over"),
+      ondrop: (event) => {
+        event.preventDefault();
+        drop.classList.remove("over");
+        uploadMedia(field, [...event.dataTransfer.files]);
+      },
+    },
+    tiles.length ? h("div", {className: field === "ref_audios" ? "" : "tiles"}, tiles) : null,
+    h("div", {className: "slot-actions"},
+      button(list.length && !multiple ? "Replace" : "Upload", async () => uploadMedia(field, await pickFiles(ACCEPT[field], multiple)), "btn sm"),
+      pictures && state.boot.library && button("Media library", () => openLibrary((path) => libraryMedia(field, path)), "btn sm")));
+    return h("div", {className: "slot"}, h("div", {className: "slot-head"}, h("span", {}, label),
+      optional ? h("span", {className: "muted"}, "Optional") : null), drop);
+  };
+  const libraryMedia = async (field, source) => {
+    const data = await act(() => request("PUT", sceneUrl(`/media/${field}`), {source}), "Added.");
+    if (data) applyBoard(data);
+  };
+
+  const openLibrary = (onPick) => {
+    const dialog = $("library");
+    let limit = 24;
+    const grid = h("div", {className: "library-grid"});
+    const status = h("p", {className: "small muted", role: "status"}, "Loading…");
+    const more = button("Show more images", () => { limit += 24; load(); }, "btn sm", {hidden: true});
+    const query = h("input", {type: "search", placeholder: "Filename, tags or settings",
+      onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); load(); } }});
+    const load = async () => {
+      const data = await act(() => request("GET", `${API}/library?limit=${limit}&query=${encodeURIComponent(query.value)}`));
+      if (!data) return;
+      status.textContent = `${data.total} matching images. Select a thumbnail to use it.`;
+      more.hidden = !data.more;
+      grid.replaceChildren(...data.items.map((row) => h("button", {type: "button", "aria-label": row.caption,
+        onclick: () => { dialog.close(); onPick(row.path); }}, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
+    };
+    dialog.replaceChildren(
+      h("div", {className: "library-head"},
+        h("label", {className: "field grow"}, "Search library images", query),
+        button("Search", load), button("Close", () => dialog.close())),
+      status, grid, more);
+    dialog.showModal();
+    load();
+  };
+
+  // Panels ----------------------------------------------------------------
+  const castPanel = () => {
+    const name = h("input", {maxLength: 80, placeholder: "Mei"});
+    const add = async (fill) => {
+      if (!name.value.trim()) { toast("Give the person a name first.", true); return; }
+      const form = new FormData();
+      form.append("name", name.value);
+      fill(form);
+      const data = await act(() => request("POST", boardUrl("/cast"), form, {form: true}), "Added to the cast.");
+      if (data) applyBoard(data);
+    };
+    return [
+      h("h2", {}, "Cast"),
+      h("p", {className: "small muted"}, "Add a picture of each person. Scenes using Reference media can then tick them, so they look the same in every scene."),
+      state.board.cast.length ? state.board.cast.map((member) => h("div", {className: "list-row"},
+        h("img", {src: member.thumb, alt: "", loading: "lazy"}),
+        h("div", {className: "grow"}, member.name),
+        button("Remove", async () => {
+          const data = await act(() => request("DELETE", boardUrl(`/cast/${encodeURIComponent(member.name)}`)), "Removed from the cast.");
+          if (data) applyBoard(data);
+        }, "btn sm"))) : h("p", {className: "muted"}, "No cast yet."),
+      h("label", {className: "field"}, "Name", name),
+      h("div", {className: "chips"},
+        button("Upload picture", async () => {
+          const [file] = await pickFiles("image/*", false);
+          if (file) add((form) => form.append("file", file));
+        }, "btn quiet"),
+        state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn")),
+    ];
+  };
+
+  const versionsPanel = () => {
+    const label = h("input", {maxLength: 80});
+    return [
+      h("h2", {}, "Versions"),
+      h("p", {className: "small muted"}, "Save the scene list to come back to, or branch it into a new storyboard."),
+      h("label", {className: "field"}, "Version name", label),
+      button("Save version", async () => {
+        await flush();
+        const data = await act(() => request("POST", boardUrl("/versions"), {label: label.value}), "Version saved.");
+        if (data) applyBoard(data);
+      }, "btn quiet"),
+      state.board.versions.map((version) => h("div", {className: "list-row"},
+        h("div", {className: "grow"}, version.label),
+        button("Branch", async () => {
+          const data = await act(() => request("POST", boardUrl(`/versions/${version.id}/branch`)), "Branched into a new storyboard.");
+          if (data) adoptBoard(data);
+        }, "btn sm"))),
+    ];
+  };
+
+  const WRITER_KEY = "h3-storyboard-writer";
+  const writerSettings = () => {
+    try { return JSON.parse(stored.get(WRITER_KEY)) || {}; } catch { return {}; }
+  };
+  const writerForm = () => {
+    const values = writerSettings();
+    const update = (name, value) => { stored.set(WRITER_KEY, JSON.stringify({...writerSettings(), [name]: value})); };
+    const writer = state.boot.writer;
+    const input = (label, name, attributes = {}) => h("label", {className: "field"}, label,
+      h("input", {value: values[name] ?? "", oninput: (event) => update(name, event.target.value), ...attributes}));
+    const backend = values.prompt_writer_backend || "Gemini";
+    const model = values.gemini_prompt_model || writer.gemini_default;
+    return h("details", {},
+      h("summary", {}, "Prompt writer"),
+      h("div", {className: "details-body"},
+        h("p", {className: "small muted"}, "Rewrite / extend uses Gemini or an OpenAI-compatible service. Leave a key empty to use the server's key."),
+        h("label", {className: "field"}, "Writer service",
+          h("select", {onchange: (event) => update("prompt_writer_backend", event.target.value)},
+            ["Gemini", "OpenAI-compatible"].map((name) => h("option", {selected: name === backend}, name)))),
+        h("label", {className: "field"}, "Gemini model",
+          h("select", {onchange: (event) => update("gemini_prompt_model", event.target.value)},
+            writer.gemini_models.map((name) => h("option", {selected: name === model}, name)))),
+        input("Gemini API key (optional)", "gemini_api_key", {type: "password", autocomplete: "off"}),
+        input("OpenAI-compatible model", "openai_model", {placeholder: writer.openai_models[0]}),
+        input("OpenAI-compatible API key (optional)", "openai_api_key", {type: "password", autocomplete: "off"}),
+        input("Base URL (optional)", "openai_base_url")));
+  };
+
+  const settingsPanel = () => {
+    const name = h("input", {value: state.board.name, maxLength: 120});
+    return [
+      h("h2", {}, "Storyboard settings"),
+      state.board.settings && h("p", {className: "small muted"}, `Uses: ${state.board.settings}`),
+      state.boot.gpu && [
+        button("Use my current MiniMax H3 settings", async () => {
+          const data = await act(() => request("POST", boardUrl("/profile")),
+            "Applied your current MiniMax H3 settings. Scenes made with the old ones are out of date.");
+          if (data) applyBoard(data);
+        }),
+        h("p", {className: "small muted"}, "Scenes made with the old settings will need generating again."),
+      ],
+      h("label", {className: "field"}, "Storyboard name", name),
+      button("Rename", async () => {
+        const data = await act(() => request("PATCH", boardUrl(), {name: name.value}), "Renamed.");
+        if (!data) return;
+        state.boot.boards.find((row) => row.id === data.id).name = data.name;
+        applyBoard(data);
+      }),
+      button("Duplicate storyboard", async () => {
+        await flush();
+        const data = await act(() => request("POST", boardUrl("/duplicate")), "Duplicated.");
+        if (data) adoptBoard(data);
+      }),
+      button("Delete storyboard", async () => {
+        if (!confirm(`Delete "${state.board.name}" and all its takes?`)) return;
+        dirty.clear();
+        const data = await act(() => request("DELETE", boardUrl()), "Storyboard deleted.");
+        if (!data) return;
+        state.boot.boards = state.boot.boards.filter((row) => row.id !== state.board.id);
+        if (state.boot.boards.length) openBoard(state.boot.boards[0].id);
+        else showStart();
+      }, "btn danger"),
+      writerForm(),
+    ];
+  };
+
+  // Long work -------------------------------------------------------------
+  const startGeneration = async (body) => {
+    await flush();
+    await saves;
+    const data = await act(() => request("POST", boardUrl("/generate"), body));
+    if (data) followRun(data.run, {started: true});
+    renderStage();
+    renderStrip();
+    renderStripActions();
+  };
+  const startJoin = async (exporting) => {
+    const data = await act(() => request("POST", boardUrl("/join"), {include_outdated: state.includeOutdated, export: exporting}));
+    if (data) followRun(data.run, {started: true});
+    renderStripActions();
+  };
+  const interrupt = async () => {
+    const data = await act(() => request("POST", boardUrl("/interrupt")));
+    if (data) toast(data.message);
+  };
+
+  const followRun = (run, {started = false} = {}) => {
+    const changed = run?.id !== state.run?.id;
+    const previous = state.run;
+    state.run = run;
+    if (changed) state.seenRevision = started || run?.active ? 0 : run?.revision ?? null;
+    if (run?.active && !state.pollTimer) state.pollTimer = setTimeout(poll, POLL_MS);
+    if (previous?.active && previous.id === run?.id && !run.active) announce(run);
+  };
+  const announce = (run) => {
+    if (run.error) toast(run.error, true);
+    else if (run.message || run.status) toast(run.message || run.status);
+    if (run.result_url) {
+      state.fullVideo = run.result_url;
+      renderFullVideo();
+    }
+  };
+  const poll = async () => {
+    state.pollTimer = null;
+    if (!state.board) return;
+    const boardId = state.board.id;
+    let run = null;
+    try {
+      ({run} = await request("GET", boardUrl("/run")));
+    } catch {
+      // The next poll tries again; a run doesn't depend on this page.
+      state.pollTimer = setTimeout(poll, POLL_MS * 2);
+      return;
+    }
+    if (state.board.id !== boardId) return;
+    const revised = run && run.revision !== state.seenRevision;
+    followRun(run);
+    if (revised) {
+      state.seenRevision = run.revision;
+      await refreshBoard();
+    } else {
+      renderStrip();
+      renderStripActions();
+    }
+  };
+
+  // Starting --------------------------------------------------------------
+  const parseScenes = (text) => {
+    const pattern = /^[ \t]*---(?:[ \t]*(\d+)[ \t]*---)?[ \t]*\r?$/gm;
+    const found = [];
+    let seconds = null;
+    let start = 0;
+    for (const match of text.matchAll(pattern)) {
+      const prompt = text.slice(start, match.index).trim();
+      if (prompt) { found.push([prompt, seconds]); seconds = null; }
+      if (match[1] !== undefined) seconds = Number(match[1]);
+      start = match.index + match[0].length;
+    }
+    const prompt = text.slice(start).trim();
+    if (prompt) found.push([prompt, seconds]);
+    return found;
+  };
+
+  const showStart = () => {
+    flush();
+    $("editor").hidden = true;
+    const root = $("start");
+    root.hidden = false;
+    let connect = "flow";
+    const name = h("input", {placeholder: "Rooftop chase", maxLength: 120});
+    const story = h("textarea", {rows: 14, placeholder: "---8---\n\nWide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in.\n\n---6---\n\nShe sprints and leaps across the gap to the next roof.\n\n---5---\n\nClose-up: she lands hard and catches her breath.", oninput: () => preview()});
+    const usual = h("input", {type: "range", min: state.boot.seconds[0], max: state.boot.seconds[1], step: 1, value: 10,
+      oninput: () => { usualLabel.textContent = `Usual scene length: ${usual.value} s`; preview(); }});
+    const usualLabel = h("span", {}, "Usual scene length: 10 s");
+    const count = h("input", {type: "number", min: 2, max: 24, value: 5});
+    const previewRoot = h("div", {style: "display:contents"});
+    const connectChips = h("div", {className: "chip-grid two"});
+    const status = h("p", {className: "small muted", role: "status"});
+    const renderConnect = () => connectChips.replaceChildren(
+      chip("Continue one into the next", connect === "flow", () => { connect = "flow"; renderConnect(); preview(); }),
+      chip("Every scene starts fresh", connect === "cut", () => { connect = "cut"; renderConnect(); preview(); }));
+    const preview = () => {
+      const found = parseScenes(story.value);
+      const total = found.reduce((sum, [, seconds]) => sum + (seconds ?? Number(usual.value)), 0);
+      previewRoot.replaceChildren(
+        h("div", {className: "row"}, h("h2", {}, `${found.length} ${found.length === 1 ? "scene" : "scenes"}`),
+          h("span", {className: "mono small muted"}, `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`)),
+        ...found.map(([text, seconds], index) => h("article", {className: "card"},
+          h("div", {className: "card-head"},
+            h("span", {}, `Scene ${index + 1} · ${index === 0 ? "Opening" : connect === "flow" ? "Continues" : "Fresh start"}`),
+            h("span", {className: "mono muted"}, `${seconds ?? usual.value}s`)),
+          h("p", {}, text))));
+    };
+    const rewrite = async (event) => {
+      const control = event.currentTarget;
+      control.disabled = true;
+      status.textContent = "Rewriting…";
+      const data = await act(() => request("POST", `${API}/rewrite`, {story: story.value, connect, seconds: Number(usual.value), count: Number(count.value), writer: writerSettings()}));
+      control.disabled = false;
+      status.textContent = "";
+      if (!data) return;
+      story.value = data.story;
+      status.textContent = `Wrote ${count.value} scenes; each ---N--- line gives the next scene's length. Review or edit them, then choose Create storyboard.`;
+      preview();
+    };
+    const create = async () => {
+      const data = await act(() => request("POST", `${API}/boards`, {name: name.value, story: story.value, connect, seconds: Number(usual.value)}),
+        "Storyboard created. Check each scene, then generate it.");
+      if (data) adoptBoard(data);
+    };
+    root.replaceChildren(
+      h("header", {className: "topbar"},
+        h("h1", {style: "font-size:22px"}, "New storyboard"), h("div", {className: "grow"}),
+        state.boot.boards.length ? button("Cancel", () => openBoard(state.board?.id || state.boot.boards[0].id)) : null,
+        button("Create storyboard", create, "btn primary")),
+      h("div", {className: "start-grid"},
+        h("main", {className: "start-form"},
+          h("label", {className: "field"}, "Name", name),
+          h("label", {className: "field grow"}, "Story", story),
+          h("p", {className: "small muted"}, "Enter a full story or short idea, then use Rewrite / extend into scenes. Or separate your own scenes with --- on its own line; ---6--- also makes the scene after it 6 seconds long."),
+          h("label", {className: "field"}, usualLabel, usual),
+          h("div", {className: "chips", style: "align-items:flex-end"},
+            h("label", {className: "field"}, "Scenes to write", count),
+            button("Rewrite / extend into scenes", rewrite)),
+          status, writerForm()),
+        h("aside", {className: "start-preview", "aria-label": "Scene preview"},
+          h("fieldset", {}, h("legend", {}, "How should the scenes connect?"), connectChips),
+          previewRoot,
+          h("p", {className: "small muted"}, state.boot.gpu
+            ? "Videos use your current MiniMax H3 settings, kept for this storyboard so every scene matches. Prompts and pictures are saved on this server."
+            : "Videos use MiniMax H3's default settings, kept for this storyboard so every scene matches. To use your own, open the storyboard on the GPU endpoint and choose Storyboard settings › Use my current MiniMax H3 settings."))));
+    renderConnect();
+    preview();
+    name.focus();
+  };
+
+  // Boards ----------------------------------------------------------------
+  const adoptBoard = (data) => {
+    state.boot.boards = [{id: data.id, name: data.name}, ...state.boot.boards.filter((row) => row.id !== data.id)];
+    showBoard(data);
+  };
+  const showBoard = (data) => {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+    state.run = null;
+    state.board = data;
+    state.previewKey = null;
+    state.previewTake = null;
+    state.question = null;
+    state.panel = null;
+    state.fullVideo = null;
+    stored.set("h3-storyboard-board", data.id);
+    const saved = stored.get("h3-storyboard-scene");
+    state.sceneId = data.scenes.some((item) => item.id === saved) ? saved : data.scenes[0].id;
+    followRun(data.run ?? null);
+    $("start").hidden = true;
+    $("editor").hidden = false;
+    render();
+    renderFullVideo();
+  };
+  const openBoard = async (storyboardId) => {
+    await flush();
+    await saves;
+    const data = await act(() => request("GET", `${API}/boards/${storyboardId}`));
+    if (data) showBoard(data);
+  };
+
+  // Follows the surrounding app's theme when framed; a page of its own follows the system.
+  const applyTheme = () => {
+    let dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    try {
+      if (window.parent !== window) dark = window.parent.document.body.classList.contains("dark");
+    } catch { /* Framed by another origin. */ }
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  };
+
+  const start = async () => {
+    applyTheme();
+    try {
+      new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
+    } catch { /* Framed by another origin. */ }
+    window.addEventListener("beforeunload", () => flush());
+    try {
+      state.boot = await request("GET", `${API}/boot`);
+      $("gpu-note").hidden = state.boot.gpu;
+      const boards = state.boot.boards;
+      if (!boards.length) {
+        showStart();
+      } else {
+        const saved = stored.get("h3-storyboard-board");
+        await openBoard(boards.some((row) => row.id === saved) ? saved : boards[0].id);
+      }
+    } catch (error) {
+      toast(error.message, true);
+    }
+    $("loading").hidden = true;
+  };
+  start();
+})();

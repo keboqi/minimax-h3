@@ -232,6 +232,9 @@ def build_server(
     app.add_middleware(ReverseProxySchemeMiddleware)
     install_queue_transport(app)
     install_gradio_frontend_patch(app)
+    routes = getattr(demo, "h3_routes", ())
+    for install in routes if isinstance(routes, tuple) else ():
+        install(app)
 
     @app.get("/media-previews/{filename}", include_in_schema=False)
     def media_preview(filename: str) -> FileResponse:

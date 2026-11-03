@@ -5,11 +5,18 @@ MiniMax H3 clip. A scene either **continues** the one before it, so motion and s
 carry on, or **starts fresh** as a new shot. The scenes are joined into one video at
 the end. It sits in Create between Song and Soundstage. Background and decisions are
 in the [plan](../plans/long-video-storyboard.md); the agreed design is the
-[Storyboard Redesign canvas](https://claude.ai/artifact/WAJ39BupkHrpvdoJXLQ4zK).
+[Storyboard Redesign canvas](https://claude.ai/artifact/ETR9sQf3pvaVTFTX737mv9).
+
+Storyboard is a page of its own at `/storyboard/`, outside Gradio; the tab shows it in a
+frame. The browser holds the whole storyboard, so moving between scenes (the filmstrip,
+the arrows, or the Left and Right keys) makes no server request. Each edit saves that
+field in the background, and the header says when everything is saved. Videos show their
+first frame and load only when played.
 
 ## Starting
 
-**Start a storyboard** asks for a name, a story and how scenes connect. Separate scene
+**New storyboard** asks for a name, a story and how scenes connect, and previews the
+scenes as you type. Separate scene
 prompts with `---` on its own line. Blank lines inside a scene stay in its prompt; text
 without a separator creates one scene. A scene is 5 to 15 whole seconds long. A
 `---N---` line, such as `---6---`, also sets the length of the scene after it, so the
@@ -17,8 +24,9 @@ first scene can start with one. Scenes without one use **Usual scene length**; a
 outside 5–15 stops Create and names the scene. *Continue one into the next* makes every later
 scene continue; *Every scene starts fresh* makes them separate shots joined by cuts.
 Either can be changed per scene. In Studio, the storyboard copies your current
-**MiniMax H3** settings and keeps them, so every scene matches;
-**Storyboard settings › Use my current MiniMax H3 settings** replaces them later and
+**MiniMax H3** settings, which the tab hands to the page's server side each time it opens,
+and keeps them, so every scene matches;
+**Settings › Use my current MiniMax H3 settings** replaces them later and
 marks every scene out of date.
 
 To turn a full story or short idea into scenes, choose a scene count (2–24), the usual
@@ -26,8 +34,8 @@ scene length and the connection style, then click **Rewrite / extend into scenes
 writer gives each scene the length its action and dialogue need, using the usual length
 as a guide. It writes each length as a `---N---` line before the scene, which you can
 edit before creating. Both Workshop and
-Studio have hosted **Prompt writer** controls above the form for Gemini or an
-OpenAI-compatible service. The rewrite follows the same `prompts/prompt.txt` guidelines
+Studio have hosted **Prompt writer** controls on this page and under **Settings** for
+Gemini or an OpenAI-compatible service, kept for this browser tab. The rewrite follows the same `prompts/prompt.txt` guidelines
 as the MiniMax H3 page, including visual action, dialogue, soundscape, and music for each
 scene. Review the result before creating; it does not create a storyboard automatically,
 and failures keep your input.
@@ -41,13 +49,12 @@ The storyboard picker marks a project **Generated** as soon as it has a recorded
 
 ## A scene
 
-The scene list on the left shows each scene's number, title, length, how it starts
-(Opening, Continues scene N, Fresh start), its mode, and a status: Done, Out of date,
-Not generated or Needs input. Between scenes it says "↓ continues into" or
-"✂ cut to a fresh start". Click a scene to edit it.
+The filmstrip along the bottom shows each scene's picture, number, title, length and a
+status: Done, Out of date, Not generated or Needs input. A line between two scenes marks
+a fresh start (a cut). Click a scene to edit it; **Add scene** adds one at the end.
 
-The editor says where the scene is ("Scene 2 of 4", what it comes after) and which H3
-mode it runs as. It then offers exactly what that scene can use:
+The heading names the scene and the H3 mode it runs as, and the inspector on the right
+says what it comes after. It then offers exactly what that scene can use:
 
 | | Opening scene / Start fresh | Continue the previous scene |
 |---|---|---|
@@ -66,7 +73,7 @@ scene's audio list, so switching between them keeps the voices. **Improve with t
 uses the writer and keys set in MiniMax H3 in Studio. In Workshop it uses the Storyboard
 page's hosted Prompt writer settings, also used for rewriting the full story.
 
-**Before generating** lists anything missing: a prompt, the frame the mode needs, a
+The inspector lists anything missing: a prompt, the frame the mode needs, a
 reference, or a previous scene that has no take yet. **Generate this scene** stays
 disabled until the list is clear. A continuing scene adds less new footage than its
 length, because its first ~1.6 s (39 frames by default) repeats the previous scene; the
@@ -82,7 +89,7 @@ starts stop changes from rippling further.
 
 ## The full video
 
-The timeline shows every scene by status, with fresh starts marked as cuts. **Generate
+**Generate
 all remaining scenes** makes every scene without a current take, in order, and skips
 scenes that still need input. **Play full video** and **Export to Media** join the takes
 in use: continuing scenes drop their repeated opening, fresh starts join as cuts. Export
@@ -110,8 +117,14 @@ Storyboards are shared rows in the workspace database (schema 2); the owner reco
 the creator, while every browser on the deployment can open and edit them. Creating one is
 the explicit choice to keep its prompts and pictures on the server. Cast pictures are in
 the workspace state's `storyboards/` folder and in workspace backups. A generation run
-is one job in **Jobs**. A run that stops leaves the waiting scenes recorded; nothing
-resumes on its own, and **Generate all remaining scenes** continues from there.
+is one job in **Jobs**, runs on the server under the same GPU lock as every other job, and
+the page polls it, so closing or reloading the page leaves it running and it shows again
+on return. A joined video is made the same way. A run that stops, or a server restart,
+leaves the waiting scenes recorded; nothing resumes on its own, and **Generate all
+remaining scenes** continues from there.
+
+The page's JSON API (`h3_ui/storyboard/page.py`) is for the page alone. Scripted clients
+use the API below.
 
 ## API for scripted clients
 

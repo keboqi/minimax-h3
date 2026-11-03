@@ -14,10 +14,8 @@ from h3_app import storyboard as sb
 from h3_app.config import RuntimeConfig
 from h3_app.provenance import write_snapshot
 
-from ..image_library import bind_image_library
-from .bindings import bind_storyboard
-from .handlers import StoryboardHandlers, StoryboardServices
-from .view import StoryboardView, build_storyboard_view
+from .handlers import MediaLibrary, StoryboardHandlers, StoryboardServices
+from .tab import build_storyboard_tab
 
 
 def workshop_handlers(runtime: RuntimeConfig, store) -> StoryboardHandlers:
@@ -34,21 +32,16 @@ def workshop_handlers(runtime: RuntimeConfig, store) -> StoryboardHandlers:
 
 
 def build_storyboard_workshop(tab: gr.Tab, ui: gr.Blocks, runtime: RuntimeConfig, store, *,
-                              library=None) -> StoryboardView:
-    """Build and bind the GPU-free Storyboard in ``tab``; ``library`` lends its media picker index."""
+                              library=None) -> StoryboardHandlers:
+    """The GPU-free Storyboard in ``tab``; ``library`` lends its media picker index."""
     with tab, gr.Column(elem_classes=["h3-workspace"]) as root:
         pass
-    view = build_storyboard_view(root, gpu=False)
-    bind_storyboard(view, workshop_handlers(runtime, store), gpu=False, load_trigger=ui.load)
+    handlers = workshop_handlers(runtime, store)
+    build_storyboard_tab(root, ui, handlers, gpu=False)
     if library is not None:
         from h3_ui.media_console import media_controller
 
         controller = media_controller(runtime)
-        for component in (view.cast_image, view.first_image, view.last_image, view.ref_images):
-            bind_image_library(
-                component,
-                index=library.search.h3_asset_index,
-                refresh_page=controller.refresh_media_page,
-                validate_path=controller.gallery_media_download_path,
-            )
-    return view
+        handlers.library = MediaLibrary(library.search.h3_asset_index, controller.refresh_media_page,
+                                        controller.gallery_media_download_path)
+    return handlers

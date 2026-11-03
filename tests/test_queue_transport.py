@@ -2,6 +2,7 @@
 
 import asyncio
 from threading import Event
+import time
 import unittest
 from unittest.mock import patch
 
@@ -139,6 +140,49 @@ class QueueTransportTests(unittest.TestCase):
                 self.assertEqual(message["text"], '{"end":1000}')
                 self.assertEqual(socket.receive()["code"], 1000)
         self.assertEqual(received, b"data: two\n\ndata: three\n\n")
+
+    def test_resume_after_a_lost_end_reads_the_end(self):
+        @self.app.get("/gradio_api/queue/data")
+        async def stream():
+            async def chunks():
+                yield b"data: last\n\n"
+
+            return StreamingResponse(chunks(), media_type="text/event-stream")
+
+        key = "e" * 32
+        url = "/gradio_api/queue/data?session_hash=fixture"
+        with TestClient(self.app) as client:
+            with client.websocket_connect(url, headers=self.headers) as socket:
+                socket.send_json({"stream": key})
+                self.assertEqual(socket.receive_json()["status"], 200)
+                self.assertEqual(socket.receive_bytes(), b"data: last\n\n")
+                # The server has finished; a proxy between it and the browser lost this.
+                self.assertEqual(socket.receive_json(), {"end": 1000})
+            with client.websocket_connect(url, headers=self.headers) as socket:
+                socket.send_json({"stream": key, "offset": len(b"data: last\n\n")})
+                self.assertEqual(socket.receive_json()["status"], 200)
+                self.assertEqual(socket.receive_json(), {"end": 1000})
+                self.assertEqual(socket.receive()["code"], 1000)
+
+    def test_finished_stream_is_forgotten_once_the_resume_window_passes(self):
+        @self.app.get("/gradio_api/queue/data")
+        async def stream():
+            async def chunks():
+                yield b"data: last\n\n"
+
+            return StreamingResponse(chunks(), media_type="text/event-stream")
+
+        key = "f" * 32
+        with patch.object(queue_transport, "RESUME_SECONDS", 0.01), TestClient(self.app) as client:
+            with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
+                socket.send_json({"stream": key})
+                socket.receive_json()
+                socket.receive_bytes()
+                socket.receive_json()
+            deadline = time.monotonic() + 2
+            while key in queue_transport._STREAMS and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertNotIn(key, queue_transport._STREAMS)
 
     def test_resume_without_a_live_stream_is_refused(self):
         with TestClient(self.app) as client:

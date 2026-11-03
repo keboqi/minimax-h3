@@ -21,7 +21,7 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.workspace_store import WorkspaceStore
 from h3_ui.storyboard import handlers as handlers_module
 from h3_ui.storyboard.handlers import StoryboardHandlers, StoryboardServices
-from h3_ui.storyboard.presentation import scene_list_html, timeline_html
+from h3_ui.storyboard.payload import board_payload
 
 PROFILE_VALUES = {name: UI_DEFAULTS.get(name, f"default-{name}") for name in GENERATION_FIELDS}
 
@@ -152,19 +152,16 @@ class StoryboardRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             sb.make_profile({}, {})
 
-    def test_scene_list_and_timeline_say_how_scenes_connect_and_what_they_need(self):
+    def test_payload_says_how_scenes_connect_and_what_they_need(self):
         document = board("flow", "cut")
         add_take(document, 0)
         document["scenes"].append(sb.new_scene("Empty", "", link="cut"))
-        html = scene_list_html(document, document["scenes"][1]["id"])
-        self.assertIn('aria-pressed="true"', html)
-        self.assertIn("↓ continues into", html)
-        self.assertIn("✂ cut to a fresh start", html)
-        self.assertIn("Continues scene 1 · text only", html)
-        self.assertIn("h3-sb-outdated", html)
-        self.assertIn("Needs input", html)
-        timeline = timeline_html(document, None)
-        self.assertEqual(timeline.count("h3-sb-segment-cut"), 2)
+        scenes = board_payload("id", document)["scenes"]
+        self.assertTrue(scenes[1]["flow"])
+        self.assertEqual(scenes[1]["summary"], "Continues scene 1 · text only")
+        self.assertEqual(scenes[2]["summary"], "Fresh start · text only")
+        self.assertEqual(scenes[-1]["state_label"], "Needs input")
+        self.assertEqual(scenes[0]["number"], 1)
 
 
 def write_latent(path: Path, prefix_frames: int):
@@ -347,7 +344,7 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertEqual((second["prefix_frames"], first_take["prefix_frames"]), (39, 0))
         self.assertTrue(self.graphs[0][1].output_prefix.startswith("h3/.storyboard/"))
 
-    def test_reference_previews_and_switching_to_a_text_scene(self):
+    def test_payload_carries_every_scene_so_switching_needs_no_request(self):
         storyboard_id = self.make("cut")
         first, second = self.service.load("a", storyboard_id)["scenes"]
         image = self.root / "portrait.png"
@@ -361,27 +358,18 @@ class StoryboardRunnerTests(unittest.TestCase):
             path.write_bytes(filename.encode())
             self.service.set_scene_media("a", storyboard_id, first["id"], field, [str(path)])
         document = self.service.load("a", storyboard_id)
-        scene = document["scenes"][0]
-        rendered = self.handlers.render("a", storyboard_id, first["id"])
-        self.assertEqual(rendered["image_previews"]["value"], [
-            (document["cast"][0]["image"], "Mei = <Picture 1>"), (scene["ref_images"][0], "image 1 = <Picture 2>")])
-        self.assertEqual(rendered["video_preview_0"]["value"], scene["ref_videos"][0])
-        self.assertEqual(rendered["audio_preview_0"]["value"], scene["ref_audios"][0])
-        with patch.object(self.service, "list", side_effect=AssertionError("navigation listed all boards")):
-            switched = self.handlers.render("a", storyboard_id, second["id"], previous_scene_id=first["id"])
-        self.assertEqual(switched["scene_id"], second["id"])
-        self.assertNotIn("storyboard", switched)
-        self.assertNotIn("video_preview_1", switched)
-        self.assertNotIn("first_image", switched)
-        self.assertIsNone(switched["ref_images"])
-        for field in ("image_previews", "video_preview_0", "audio_preview_0"):
-            self.assertFalse(switched[field]["visible"])
+        stored = document["scenes"][0]
+        shown, plain = board_payload(storyboard_id, document)["scenes"]
+        self.assertEqual([(item["path"], item["tag"]) for item in shown["pictures"]], [
+            (document["cast"][0]["image"], "Mei = <Picture 1>"), (stored["ref_images"][0], "image 1 = <Picture 2>")])
+        self.assertEqual(shown["ref_videos"][0]["path"], stored["ref_videos"][0])
+        self.assertEqual(shown["ref_audios"][0]["path"], stored["ref_audios"][0])
+        self.assertEqual(plain["id"], second["id"])
+        self.assertEqual((plain["pictures"], plain["ref_videos"]), ([], []))
         self.service.set_mode("a", storyboard_id, first["id"], sb.FRAMES)
-        frames = self.handlers.render("a", storyboard_id, first["id"])
-        self.assertTrue(frames["voices_group"]["visible"])
-        self.assertIn("<Audio 1>", frames["ref_audios"]["label"])
-        self.assertEqual(frames["audio_preview_0"]["value"], scene["ref_audios"][0])
-        self.assertFalse(frames["video_preview_0"]["visible"])
+        frames = board_payload(storyboard_id, self.service.load("a", storyboard_id))["scenes"][0]
+        self.assertEqual(frames["ref_audios"][0]["path"], stored["ref_audios"][0])
+        self.assertEqual(frames["pictures"], [])
 
     def test_failed_take_keeps_the_rest_of_the_queue_paused(self):
         storyboard_id = self.make("flow")
@@ -391,8 +379,7 @@ class StoryboardRunnerTests(unittest.TestCase):
         document = self.service.load("a", storyboard_id)
         self.assertEqual(sb.scene_states(document), ["done", "draft"])
         self.assertEqual(document["queue"], [document["scenes"][1]["id"]])
-        rendered = self.handlers.render("a", storyboard_id)
-        self.assertIn("Generate all remaining scenes", rendered["take_note"])
+        self.assertEqual(board_payload(storyboard_id, document)["queue"], [document["scenes"][1]["id"]])
 
     def test_flow_scene_waits_for_its_predecessor(self):
         storyboard_id = self.make("flow")
@@ -417,12 +404,11 @@ class StoryboardRunnerTests(unittest.TestCase):
         document = self.service.load("a", storyboard_id)
         new_take = document["scenes"][0]["takes"][1]
         self.assertEqual(sb.scene_states(document), ["done"] * 3)  # A new take doesn't replace the one in use.
-        with patch.object(handlers_module.gr, "Info"), patch.object(handlers_module.gr, "Warning"):
-            asked = self.handlers.use_take(storyboard_id, first, new_take, SimpleNamespace())
-            self.assertTrue(asked["confirm_group"]["visible"])
-            self.assertIn("Scene 2 continues", asked["confirm_text"])
-            self.assertIn("Scene 3 starts fresh", asked["confirm_text"])
-            self.handlers.use_take_later(storyboard_id, first, new_take, SimpleNamespace())
+        asked = self.handlers.use_take("a", storyboard_id, first, new_take)
+        self.assertIn("Scene 2 continues", asked)
+        self.assertIn("Scene 3 starts fresh", asked)
+        self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done"] * 3)  # Only asked.
+        self.assertIsNone(self.handlers.use_take("a", storyboard_id, first, new_take, confirmed=True))
         self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done", "outdated", "done"])
 
     def test_prompt_writer_gets_valid_arguments_and_failures_keep_the_prompt(self):
@@ -443,13 +429,12 @@ class StoryboardRunnerTests(unittest.TestCase):
         ))
         storyboard_id = self.make()
         scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
-        settings = ["Gemini", "", 512, 0.7, 0.9, False, 0, "model", "key", "", "", None]
-        with patch.object(handlers_module.gr, "Info"), patch.object(handlers_module.gr, "Warning") as warning:
-            handlers.enhance(storyboard_id, scene_id, *settings, SimpleNamespace())
-            self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["prompt"], "Better prompt")
-            failed = handlers.enhance(storyboard_id, scene_id, *settings, SimpleNamespace())
-        warning.assert_called_once()
-        self.assertIn("Prompt unchanged", failed["status"])
+        settings = {"prompt_writer_backend": "Gemini", "gemini_prompt_model": "model", "gemini_api_key": "key",
+                    "openai_api_key": "", "openai_model": "", "openai_base_url": None}
+        handlers.enhance("a", storyboard_id, scene_id, settings)
+        self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["prompt"], "Better prompt")
+        with self.assertRaisesRegex(H3Error, "Prompt unchanged"):
+            handlers.enhance("a", storyboard_id, scene_id, settings)
         self.assertEqual(self.service.load("a", storyboard_id)["scenes"][0]["prompt"], "Better prompt")
 
     def test_scene_media_is_copied_once_and_matched_by_name_afterwards(self):

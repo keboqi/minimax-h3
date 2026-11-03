@@ -107,6 +107,12 @@ class _Stream:
         else:
             self.close()
 
+    def retain(self):
+        """Keep a delivered stream resumable: a proxy can lose its end, and a browser that
+        resumes then needs to read that end, not a refusal that reloads its page."""
+        self.socket = None
+        self.expiry = asyncio.get_running_loop().call_later(RESUME_SECONDS, self.close)
+
     def close(self):
         """Allow no further resume; Gradio then sees the browser disconnect."""
         if self.expiry is not None:
@@ -259,7 +265,8 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
         stream = _STREAMS.get(key) if key else None
         if stream is None:
             if offset:
-                # The stream already ended or its resume window passed.
+                # The resume window passed, so the browser reports a lost connection.
+                print(f"[h3-ui] Queue websocket resume refused at byte {offset}: {target[0]}", flush=True)
                 await _end(socket, 4404)
                 return
             stream = _Stream(key, target)
@@ -276,7 +283,10 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         code = delivery.result() if delivery in done else None
         if code is not None:
-            stream.close()
+            if code == 1000 and key:
+                stream.retain()
+            else:
+                stream.close()
             await _end(socket, code)
         elif stream.socket is not socket:
             await _end(socket, 4000)  # resumed on a newer socket

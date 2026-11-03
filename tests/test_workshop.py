@@ -305,39 +305,39 @@ class ModelManagerTests(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines(), list(WORKSHOP_REQUIREMENTS))
 
     def test_workshop_storyboard_prepares_everything_but_cannot_generate(self):
-        from unittest.mock import patch
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
 
         from h3_app import media_catalog
         from h3_app import storyboard as sb
         from h3_app.jobs import JOBS
-        from h3_app.workspace_store import WorkspaceStore
+        from h3_app.workspace_store import COOKIE, WorkspaceStore, install_owner_cookie
         from h3_ui.media_console import media_runtime
-        from h3_ui.storyboard import handlers as storyboard_handlers
-        from h3_ui.storyboard.view import RENDER_FIELDS
 
         self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
         self.addCleanup(setattr, JOBS, "store", JOBS.store)
         data = Path(self.temp.name)
         store = WorkspaceStore(data / "h3-workspace")
         ui = manager_module.build_ui(self.manager, (media_runtime(data, data / "app"), store))
-        blocks = list(ui.blocks.values())
-        self.assertIn("Storyboard", {getattr(block, "label", None) for block in blocks})
-        buttons = {block.value: block for block in blocks if type(block).__name__ == "Button"}
-        bound = {target[0] for dep in ui.fns.values() for target in dep.targets}
-        for label in ("Generate this scene", "Generate all remaining scenes", "Switch and regenerate them"):
-            self.assertNotIn(buttons[label]._id, bound, label)
-        create = next(dep for dep in ui.fns.values() if buttons["Create storyboard"]._id in [t[0] for t in dep.targets])
-        values = [getattr(component, "value", None) for component in create.inputs]
-        values[:2] = ["Workshop story", "One.\n\n---\n\nTwo."]
-        with patch.object(storyboard_handlers, "require_owner", lambda request: "workshop-browser"), \
-                patch.object(storyboard_handlers.gr, "Info"), \
-                patch.object(storyboard_handlers.gr, "Warning") as warning:
-            result = dict(zip(RENDER_FIELDS, create.fn(*values, None)))
-        warning.assert_not_called()
+        self.assertIn("Storyboard", {getattr(block, "label", None) for block in ui.blocks.values()})
+        JOBS.store = store
+        app = FastAPI()
+        install_owner_cookie(app, store)
+        for install in ui.h3_routes:
+            install(app)
+        client = TestClient(app)
+        self.assertFalse(client.get("/storyboard/api/boot").json()["gpu"])
+        created = client.post("/storyboard/api/boards", json={"name": "Workshop story", "story": "One.\n\n---\n\nTwo."})
+        self.assertEqual(created.status_code, 200)
+        board = created.json()
+        refused = client.post(f"/storyboard/api/boards/{board['id']}/generate", json={"action": "remaining"})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("GPU endpoint", refused.json()["error"])
         # Created from the defaults, and shared: the GPU endpoint's browser sees it too.
-        storyboard = store.storyboard("gpu-browser", result["storyboard"]["value"])
+        storyboard = store.storyboard("gpu-browser", board["id"])
         self.assertEqual(storyboard["profile"], sb.make_profile(sb.request_defaults(), sb.request_defaults()))
         self.assertEqual([row["name"] for row in store.storyboards("gpu-browser")], ["Workshop story"])
+        self.assertIn(COOKIE, client.cookies)
 
     def test_cpu_endpoint_has_default_resources_and_independent_image(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"

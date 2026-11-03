@@ -104,7 +104,7 @@
                 controller.close();
                 current.close(1000);
               } else if (metadata.end !== 4000) {
-                fail(new TypeError("Generation progress connection closed unexpectedly"));
+                fail(new TypeError(`Generation progress connection closed unexpectedly (${metadata.end})`));
               }
               return;
             }
@@ -134,7 +134,7 @@
           }
           droppedAt ??= Date.now();
           if (FINAL_CLOSES.has(event.code) || Date.now() - droppedAt > RESUME_MS) {
-            fail(new TypeError("Generation progress connection closed unexpectedly"));
+            fail(new TypeError(`Generation progress connection closed unexpectedly (${event.code})`));
             return;
           }
           // Gradio reloads the page when this stream fails, so reconnect quietly instead.

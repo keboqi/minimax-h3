@@ -168,18 +168,17 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         if services.soundstage_workspace is not None:
             from h3_ui.drama3.projects import bind_projects
             bind_projects(drama3_components, *services.soundstage_workspace, demo.load)
-        storyboard_view = None
         if app_views.storyboard is not None and services.storyboard_handlers is not None:
-            from h3_ui.storyboard.bindings import bind_storyboard
-            from h3_ui.storyboard.view import build_storyboard_view
+            from h3_ui.storyboard.tab import build_storyboard_tab
 
-            storyboard_view = build_storyboard_view(app_views.storyboard)
-            bind_storyboard(
-                storyboard_view,
+            build_storyboard_tab(
+                app_views.storyboard,
+                demo,
                 services.storyboard_handlers,
-                h3_components.values,
+                h3_values=h3_components.values,
+                # The task picker switches tabs itself, so a Tab select event wouldn't fire.
+                triggers=(demo.load, app_views.task.change),
                 interrupt=services.interrupt,
-                load_trigger=demo.load,
             )
         gallery_components = build_gallery_view(
             gallery_view,
@@ -224,8 +223,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         image_inputs = [
             *h3_components.values.values(),
             *(component for feature in FEATURES for component in feature.library_inputs(engine_views[feature.id])),
-            *((storyboard_view.cast_image, storyboard_view.first_image, storyboard_view.last_image,
-               storyboard_view.ref_images) if storyboard_view is not None else ()),
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):
@@ -235,6 +232,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                     refresh_page=services.refresh_media_page,
                     validate_path=services.gallery_media_download_path,
                 )
+        if services.storyboard_handlers is not None:
+            from h3_ui.storyboard.handlers import MediaLibrary
+
+            services.storyboard_handlers.library = MediaLibrary(
+                gallery_components.search.h3_asset_index,
+                services.refresh_media_page,
+                services.gallery_media_download_path,
+            )
         destinations = {
             "H3 · Reference images": tuple(
                 component for component in h3_components.values.values()

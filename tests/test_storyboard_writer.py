@@ -12,7 +12,7 @@ import gradio as gr
 from h3_app.errors import H3Error
 from h3_app.storyboard import request_defaults, writer
 from h3_app.storyboard.text import SCENE_SEPARATOR, parse_scenes, split_scenes
-from h3_ui.storyboard.handlers import STORY_WRITER_FIELDS, WRITER_FIELDS, StoryboardHandlers
+from h3_ui.storyboard.handlers import WRITER_FIELDS, StoryboardHandlers
 
 
 class StoryboardWriterTests(unittest.TestCase):
@@ -76,9 +76,8 @@ class StoryboardWriterTests(unittest.TestCase):
         service = SimpleNamespace(create=lambda owner, name, profile, **kwargs: "created")
         handlers = StoryboardHandlers(SimpleNamespace(
             service=lambda: service, request_defaults=request_defaults))
-        with patch.object(service, "create", wraps=service.create) as create, \
-                patch.object(handlers, "_act", side_effect=lambda a, b, c, action, *args: action("owner")):
-            handlers.create("Story", result, "flow", 10, {}, SimpleNamespace())
+        with patch.object(service, "create", wraps=service.create) as create:
+            handlers.create("owner", "Story", result, "flow", 10)
         created = create.call_args.kwargs["scenes"]
         self.assertEqual([(item["prompt"], item["seconds"]) for item in created], [(scene, 5), (scene, 15)])
 
@@ -95,12 +94,11 @@ class StoryboardWriterTests(unittest.TestCase):
         self.assertEqual(parse_scenes(text), [("First", 8), ("Second", None), ("Third", 12), ("Fourth", 6)])
         service = SimpleNamespace(create=lambda owner, name, profile, **kwargs: "created")
         handlers = StoryboardHandlers(SimpleNamespace(service=lambda: service, request_defaults=request_defaults))
-        with patch.object(service, "create", wraps=service.create) as create, \
-                patch.object(handlers, "_act", side_effect=lambda a, b, c, action, *args: action("owner")):
-            handlers.create("Story", text, "flow", 10, {}, SimpleNamespace())
+        with patch.object(service, "create", wraps=service.create) as create:
+            handlers.create("owner", "Story", text, "flow", 10)
             self.assertEqual([item["seconds"] for item in create.call_args.kwargs["scenes"]], [8, 10, 12, 6])
             with self.assertRaisesRegex(H3Error, "Scene 2 asks for 20 s"):
-                handlers.create("Story", "One\n---20---\nTwo", "flow", 10, {}, SimpleNamespace())
+                handlers.create("owner", "Story", "One\n---20---\nTwo", "flow", 10)
 
     def test_bad_replies_and_empty_input_are_rejected(self):
         for reply in ('[]', '["Only one"]', '["One", ""]', '["One", 2]', 'not JSON', '{"scenes": []}',
@@ -114,59 +112,43 @@ class StoryboardWriterTests(unittest.TestCase):
                 writer.rewrite_story(" ", "flow", 5, 2, **self.settings())
             session.assert_not_called()
 
-    def test_handler_keeps_input_on_failure_and_only_updates_draft_on_success(self):
+    def test_handler_passes_the_runtime_and_the_page_reports_a_failed_rewrite(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from h3_ui.storyboard.page import install_storyboard_page
+
         runtime = self.settings()["runtime"]
         handlers = StoryboardHandlers(SimpleNamespace(
-            service=lambda: SimpleNamespace(runtime=lambda: runtime)))
-        settings = {**self.settings(), "prompt_writer_backend": "Gemini"}
-        values = [settings.get(field) for field in STORY_WRITER_FIELDS]
-        with patch("h3_ui.storyboard.handlers.require_owner", return_value="owner"), \
-                patch("h3_ui.storyboard.handlers.gr.Warning"), \
-                patch("h3_ui.storyboard.handlers.rewrite_story") as rewrite:
-            rewrite.side_effect = H3Error("Service unavailable")
-            result = handlers.rewrite_story("Original", "flow", 10, 2, *values, SimpleNamespace())
-            self.assertNotIn("new_story", result)
-            self.assertIn("Story unchanged", result["rewrite_status"])
+            service=lambda: SimpleNamespace(runtime=lambda: runtime), enhance_prompt=None))
+        app = FastAPI()
+        install_storyboard_page(app, handlers, gpu=False)
+        client = TestClient(app)
+        with patch("h3_ui.storyboard.page.request_owner", return_value="owner"),                 patch("h3_ui.storyboard.handlers.rewrite_story") as rewrite:
+            rewrite.side_effect = OSError("Service unavailable")
+            failed = client.post("/storyboard/api/rewrite", json={"story": "Original", "count": 2})
+            self.assertEqual(failed.status_code, 400)
+            self.assertIn("Service unavailable", failed.json()["error"])
             rewrite.side_effect = None
             rewrite.return_value = "One" + SCENE_SEPARATOR + "Two"
-            result = handlers.rewrite_story("Original", "flow", 10, 2, *values, SimpleNamespace())
-            self.assertEqual(result["new_story"], "One" + SCENE_SEPARATOR + "Two")
+            result = client.post("/storyboard/api/rewrite", json={"story": "Original", "count": 2})
+            self.assertEqual(result.json()["story"], "One" + SCENE_SEPARATOR + "Two")
             self.assertIs(rewrite.call_args.kwargs["runtime"], runtime)
 
-    def test_workshop_writer_is_available_before_creating_a_board_and_bound(self):
-        from h3_ui.storyboard.bindings import bind_storyboard
-        from h3_ui.storyboard.view import build_storyboard_view
+    def test_studio_enhance_uses_the_h3_writer_settings_it_captured(self):
+        from h3_app.storyboard import PROFILE_FIELDS
+        from h3_ui.storyboard.tab import build_storyboard_tab
 
-        with gr.Blocks() as ui:
-            view = build_storyboard_view(gr.Column(), gpu=False)
-            bind_storyboard(view, StoryboardHandlers(None), gpu=False)
-        settings = view.writer["prompt_writer_backend"]
-        parent = settings.parent
-        while parent is not None:
-            self.assertIsNot(parent, view.board_group)
-            parent = getattr(parent, "parent", None)
-        event = next(dep for dep in ui.fns.values() if (view.rewrite_story._id, "click") in dep.targets)
-        self.assertEqual(event.inputs[:4], [view.new_story, view.new_connect, view.new_seconds, view.new_scene_count])
-        self.assertEqual(event.outputs, [view.new_story, view.rewrite_status])
-
-    def test_studio_rewrite_uses_its_hosted_writer_when_h3_uses_local(self):
-        from h3_app.storyboard import PROFILE_FIELDS, request_defaults
-        from h3_ui.storyboard.bindings import bind_storyboard
-        from h3_ui.storyboard.view import build_storyboard_view
-
+        captured = {}
         with gr.Blocks() as ui:
             defaults = request_defaults()
             h3_values = {name: gr.State(defaults[name]) for name in PROFILE_FIELDS}
             h3_values.update({name: gr.State(None) for name in WRITER_FIELDS})
-            h3_values["prompt_writer_backend"] = gr.State("Local MiniMax-H3 8B")
-            view = build_storyboard_view(gr.Column(), gpu=True)
-            bind_storyboard(view, StoryboardHandlers(None), h3_values, interrupt=lambda: None)
-        rewrite = next(dep for dep in ui.fns.values() if (view.rewrite_story._id, "click") in dep.targets)
-        enhance = next(dep for dep in ui.fns.values() if (view.enhance._id, "click") in dep.targets)
-        self.assertTrue(view.rewrite_story.visible)
-        self.assertEqual(rewrite.inputs[4:], [view.writer[name] for name in STORY_WRITER_FIELDS])
-        self.assertEqual(view.writer["prompt_writer_backend"].value, "Gemini")
-        self.assertEqual(enhance.inputs[2:], [h3_values[name] for name in WRITER_FIELDS])
+            handlers = StoryboardHandlers(None)
+            handlers.capture_settings = lambda owner, profile, written: captured.update(writer=written, profile=profile)
+            build_storyboard_tab(gr.Column(), ui, handlers, h3_values=h3_values, triggers=(ui.load,))
+        capture = next(dep for dep in ui.fns.values() if dep.fn.__name__ == "capture")
+        self.assertEqual(capture.inputs[-len(WRITER_FIELDS):], [h3_values[name] for name in WRITER_FIELDS])
+        self.assertIs(capture.queue, False)
 
 
 if __name__ == "__main__":

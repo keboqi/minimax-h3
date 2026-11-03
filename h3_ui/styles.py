@@ -998,42 +998,8 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-gallery-workspace > .column { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }
 }
-/* Storyboard */
-.h3-workspace .h3-sb-list { display: flex; flex-direction: column; }
-.h3-workspace .h3-sb-list-meta { margin: 0 0 8px; font-size: 13px; color: var(--body-text-color-subdued); }
-.h3-workspace .h3-sb-scene { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 8px; background: var(--block-background-fill); color: inherit; text-align: left; cursor: pointer; font: inherit; }
-.h3-workspace .h3-sb-scene[aria-pressed="true"] { border: 2px solid var(--h3-accent); }
-.h3-workspace .h3-sb-scene-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-.h3-workspace .h3-sb-meta { font-size: 13px; color: var(--body-text-color-subdued); }
-.h3-workspace .h3-sb-title { font-weight: 600; line-height: 1.3; }
-.h3-workspace .h3-sb-state { align-self: flex-start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
-.h3-workspace .h3-sb-done { background: var(--h3-accent-soft); color: var(--h3-accent-ink); }
-.h3-workspace .h3-sb-outdated, .h3-workspace .h3-sb-needs { background: #fff4e0; color: #8a4b00; }
-.h3-workspace .h3-sb-draft { background: var(--h3-muted-surface); color: var(--body-text-color-subdued); }
-.dark .h3-workspace .h3-sb-outdated, .dark .h3-workspace .h3-sb-needs { background: #4a3210; color: #ffd89b; }
-.h3-workspace .h3-sb-join { margin: 0 0 0 12px; padding: 4px 0 4px 12px; font-size: 12px; }
-.h3-workspace .h3-sb-join-flow { border-left: 2px solid var(--h3-accent); color: var(--h3-accent-ink); }
-.h3-workspace .h3-sb-join-cut { border-left: 2px dashed var(--h3-border); color: var(--body-text-color-subdued); }
-.h3-workspace .h3-sb-add { margin-top: 10px; min-height: 44px; border: 1.5px dashed var(--h3-disclosure-border); border-radius: 8px; background: transparent; color: var(--h3-accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
-.h3-workspace .h3-sb-checklist { padding: 8px 12px; border-radius: 8px; background: var(--h3-muted-surface); }
-.h3-workspace .h3-sb-confirm { padding: 12px; border: 2px solid #e0a43c; border-radius: 10px; }
-.h3-workspace .h3-sb-timeline { display: flex; gap: 2px; height: 40px; border-radius: 8px; overflow: hidden; }
-.h3-workspace .h3-sb-segment { min-width: 28px; border: 0; padding: 0 8px; text-align: left; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.h3-workspace .h3-sb-segment.h3-sb-done { background: #2c8a74; color: #fff; }
-.h3-workspace .h3-sb-segment.h3-sb-outdated { background: #e0a43c; color: #3a2400; }
-.h3-workspace .h3-sb-segment.h3-sb-draft { background: var(--h3-muted-surface); color: var(--body-text-color); box-shadow: inset 0 0 0 1px var(--h3-border); }
-.h3-workspace .h3-sb-segment-cut { border-left: 3px solid var(--body-text-color); }
-.h3-workspace .h3-sb-segment-selected { outline: 2px solid var(--body-text-color); outline-offset: -2px; }
-.h3-workspace .h3-sb-timeline-meta { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0 0; font-size: 13px; color: var(--body-text-color-subdued); }
-.h3-workspace .h3-sb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0 0; font-size: 13px; color: var(--body-text-color-subdued); }
-.h3-workspace .h3-sb-key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: -8px; }
-.h3-workspace .h3-sb-key.h3-sb-done { background: #2c8a74; }
-.h3-workspace .h3-sb-key.h3-sb-outdated { background: #e0a43c; }
-.h3-workspace .h3-sb-key.h3-sb-draft { box-shadow: inset 0 0 0 1px var(--h3-border); }
-.h3-workspace .h3-sb-key-cut { width: 3px; height: 14px; border-radius: 0; background: var(--body-text-color); }
-.h3-workspace .h3-sb-cast { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.h3-workspace .h3-sb-cast li { padding: 4px 12px; border-radius: 16px; background: var(--h3-accent-soft); color: var(--h3-accent-ink); }
-.h3-workspace .h3-sb-empty { margin: 0; color: var(--body-text-color-subdued); }
+/* Storyboard: the page runs in this frame. */
+.h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 210px); min-height: 640px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {
   .h3-workspace *, .h3-workspace *::before, .h3-workspace *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
