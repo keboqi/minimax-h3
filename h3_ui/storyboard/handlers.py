@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import random
 import struct
+from time import monotonic
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
@@ -98,7 +99,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
     def choices(self, owner):
         return [(row["name"], row["id"]) for row in self.service.list(owner)]
 
-    def render(self, owner, storyboard_id, scene_id=None, status="") -> dict[str, Any]:
+    def render(self, owner, storyboard_id, scene_id=None, status="", *, previous_scene_id=None) -> dict[str, Any]:
         choices = self.choices(owner)
         if not any(value == storyboard_id for _, value in choices):
             storyboard_id = choices[0][1] if choices else None
@@ -117,7 +118,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         states = sb.scene_states(board)
         flow = sb.flows_from_previous(board, index)
         previous = board["scenes"][index - 1] if index else None
-        issues = sb.scene_issues(board, index)
+        issues = sb.scene_issues(board, index, states)
         cast_names = [member["name"] for member in board["cast"]]
         take_choices = [
             (take_label(number, board["takes"][take_id]), take_id)
@@ -149,10 +150,20 @@ class StoryboardHandlers(StoryboardApiHandlers):
             note = ("This take is out of date: the scene, or the scene it continues from, changed since it "
                     "was made. Generate it again to update it.")
         if board["queue"]:
-            note += (f"\n\n{len(board['queue'])} scene(s) were still waiting when generation stopped. "
+            note += (f"\n\n{len(board['queue'])} scene(s) remain in the generation queue. "
                      "Press **Generate all remaining scenes** to continue.")
-        pending = sb.pending_scenes(board)
-        return {
+        pending = len(states) - states.count(sb.DONE)
+        pictures = []
+        players = {}
+        if media["mode"] == sb.REFERENCES:
+            _, cast_images = sb.model.cast_prompt(board, scene)
+            pictures = list(zip([*cast_images, *media["ref_images"]], tags))
+        for kind in ("video", "audio"):
+            paths = media[f"ref_{kind}s"] if media["mode"] == sb.REFERENCES else []
+            for i in range(3):
+                players[f"{kind}_preview_{i}"] = gr.update(value=paths[i] if i < len(paths) else None,
+                                                           visible=i < len(paths))
+        updates = {
             "start_group": gr.update(visible=False),
             "board_group": gr.update(visible=True),
             "storyboard": gr.update(choices=choices, value=storyboard_id),
@@ -160,7 +171,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "profile_summary": (f"Uses your MiniMax H3 settings: {sb.profile_summary(board['profile'])} · "
                                 f"{len(ids)} scenes, about {clock(sb.total_seconds(board))} in total"),
             "status": status,
-            "scene_list": scene_list_html(board, scene_id),
+            "scene_list": scene_list_html(board, scene_id, states),
             "scene_heading": (f"### Scene {index + 1} of {len(ids)} · {scene['title'] or 'Untitled scene'}\n"
                               f"Runs as **{sb.runs_as(board, index)}**"),
             "scene_context": context,
@@ -190,6 +201,8 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "ref_images": media["ref_images"] or None,
             "ref_videos": media["ref_videos"] or None,
             "ref_audios": media["ref_audios"] or None,
+            "image_previews": gr.update(value=pictures, visible=bool(pictures)),
+            **players,
             "tag_hint": "In the prompt: " + ", ".join(tags) if tags else "Tick cast or add an image, video or audio.",
             "prompt": scene["prompt"],
             "prompt_hint": prompt_hint,
@@ -210,15 +223,30 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "take_note": note,
             "confirm_group": gr.update(visible=False),
             "confirm_text": "",
-            "timeline": timeline_html(board, scene_id),
+            "timeline": timeline_html(board, scene_id, states),
             "generate_remaining": gr.update(
-                value=f"Generate all remaining scenes ({len(pending)})" if pending else "All scenes are done",
+                value=f"Generate all remaining scenes ({pending})" if pending else "All scenes are done",
                 interactive=bool(pending)),
             "cast_list": cast_html(board),
             "remove_cast_name": gr.update(choices=cast_names, value=None),
             "rename_name": board["name"],
             "versions": gr.update(choices=[(v["label"], v["id"]) for v in reversed(board["versions"])], value=None),
         }
+
+        # Gradio postprocesses file outputs and fires their change listeners even when
+        # two scenes use the same media. Only transfer fields that changed on navigation.
+        if previous_scene_id in ids:
+            old_scene = board["scenes"][ids.index(previous_scene_id)]
+            old_media = sb.scene_media(old_scene)
+            for field in sb.MEDIA_FIELDS:
+                if media[field] == old_media[field]:
+                    if field == "last_image":
+                        updates[field].pop("value", None)  # its label can still change
+                    else:
+                        updates.pop(field)
+            if old_scene["in_use"] == scene["in_use"]:
+                updates.pop("take_video")
+        return updates
 
     def refresh(self, storyboard_id, scene_id, request: gr.Request):
         return self.render(require_owner(request), storyboard_id, scene_id)
@@ -328,11 +356,10 @@ class StoryboardHandlers(StoryboardApiHandlers):
         action = getattr(evt, "action", "select")
         target = getattr(evt, "scene_id", "") or scene_id
 
-        def run(owner):
-            if action == "add":
-                return Selection(storyboard_id, self.service.add_scene(owner, storyboard_id, after=None)[1])
-            return Selection(storyboard_id, target)
-        return self._act(storyboard_id, scene_id, request, run)
+        if action == "add":
+            return self._act(storyboard_id, scene_id, request, lambda owner: Selection(
+                storyboard_id, self.service.add_scene(owner, storyboard_id, after=None)[1]))
+        return self.render(require_owner(request), storyboard_id, target, previous_scene_id=scene_id)
 
     def save_text(self, storyboard_id, scene_id, prompt, title, seconds, overlap, seed, takes_per_run,
                   request: gr.Request):
@@ -579,6 +606,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if not storyboard_id:
             raise H3Error("Create a storyboard first.")
         board = self.service.load(owner, storyboard_id)
+        started = monotonic()
         queue, skipped = [], []
         for index in sb.pending_scenes(board):
             own = [issue for issue in sb.scene_issues(board, index) if not issue.startswith("Generate scene")]
@@ -598,10 +626,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
                 yield f"{len(queue)} left · {status}", gr.update()
             queue.remove(board["scenes"][index]["id"])
             self.service.set_queue(owner, storyboard_id, queue)
+            yield f"Scene {index + 1} generated · {len(queue)} left.", sb.new_id()
         waiting = f" {len(queue)} scene(s) wait for a scene that needs input." if queue else ""
         if skipped:
             waiting += f" Skipped scene {', '.join(str(i + 1) for i in skipped)}: still need input."
-        yield ("Generated the remaining scenes." + waiting).strip(), gr.update()
+        yield f"Generated the remaining scenes. Total generation time {clock(monotonic() - started)}.{waiting}", gr.update()
 
     def switch_and_regenerate(self, storyboard_id, scene_id, take_id, request: gr.Request = None):
         """Use the chosen take, then regenerate the scenes that continue from it."""

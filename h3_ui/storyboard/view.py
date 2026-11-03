@@ -28,6 +28,7 @@ RENDER_FIELDS = (
     "scene_list", "scene_heading", "scene_context", "start", "opening_note",
     "mode", "frames_group", "first_image", "first_frame_box", "no_first_note", "last_image",
     "refs_group", "cast", "ref_images", "ref_videos", "ref_audios", "tag_hint",
+    "image_previews", *(f"{kind}_preview_{i}" for kind in ("video", "audio") for i in range(3)),
     "prompt", "prompt_hint", "title", "seconds", "added_seconds", "checklist", "generate",
     "overlap", "seed", "takes_per_run",
     "take_video", "takes", "use_take", "take_note", "confirm_group", "confirm_text",
@@ -69,6 +70,9 @@ class StoryboardView:
     ref_images: gr.File
     ref_videos: gr.File
     ref_audios: gr.File
+    image_previews: gr.Gallery
+    reference_players: dict
+    scene_completed: gr.Textbox
     tag_hint: gr.Markdown
     prompt: gr.Textbox
     enhance: gr.Button
@@ -122,7 +126,7 @@ class StoryboardView:
     writer: dict
 
     def components(self, names):
-        return [getattr(self, name) for name in names]
+        return [self.reference_players[name] if name in self.reference_players else getattr(self, name) for name in names]
 
 
 GPU_NOTE = (
@@ -216,6 +220,7 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
             gpu_note = gr.Markdown(GPU_NOTE, visible=not gpu)
             status = gr.Markdown(elem_classes=["h3-job-action-status"])
             scene_id = gr.Textbox(visible=False)
+            scene_completed = gr.Textbox(visible=False)
 
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3, min_width=260):
@@ -246,6 +251,14 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
                                                  file_types=["video"], type="filepath")
                             ref_audios = gr.File(label="Reference audio (up to 3)", file_count="multiple",
                                                  file_types=["audio"], type="filepath")
+                        image_previews = gr.Gallery(label="Reference pictures", columns=3, height="auto",
+                                                    interactive=False, visible=False)
+                        reference_players = {}
+                        for kind, player in (("video", gr.Video), ("audio", gr.Audio)):
+                            with gr.Row():
+                                for i in range(3):
+                                    reference_players[f"{kind}_preview_{i}"] = player(
+                                        label=f"Reference {kind} {i + 1}", interactive=False, visible=False)
                         tag_hint = gr.Markdown()
                     prompt = gr.Textbox(label="Prompt", lines=4,
                                         placeholder="Describe what happens, the camera and the sound.")
@@ -366,6 +379,7 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
         ref_images=ref_images,
         ref_videos=ref_videos,
         ref_audios=ref_audios,
+        image_previews=image_previews, reference_players=reference_players, scene_completed=scene_completed,
         tag_hint=tag_hint,
         prompt=prompt,
         enhance=enhance,

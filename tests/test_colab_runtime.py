@@ -179,28 +179,40 @@ class ColabLauncherTests(unittest.TestCase):
             venv = root / "env with spaces"
             (venv / "bin").mkdir(parents=True)
             python = venv / "bin" / "python3"
-            python.write_text("#!/usr/bin/env bash\nprintf 'selected-venv\\n'\n", encoding="utf-8")
+            python.write_text("#!/usr/bin/env bash\nprintf 'selected-venv\\n'\n", encoding="utf-8", newline="\n")
             python.chmod(0o755)
+            smi = venv / "bin" / "nvidia-smi"
+            smi.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$TEST_GPU"\n', encoding="utf-8", newline="\n")
+            smi.chmod(0o755)
             run_script = root / "run_h3.sh"
-            run_script.write_text('printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\nprintf "%s\\n" "$H3_DRAMA3_SGLANG_CHECKPOINT"\n', encoding="utf-8")
+            run_script.write_text('printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\nprintf "%s\\n" "$H3_DRAMA3_SGLANG_CHECKPOINT"\n', encoding="utf-8", newline="\n")
             tree = ast.parse(cell_source("launcher_source ="))
-            conditional = next(node for node in tree.body if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "USE_RAM_FOR_QWEN")
-            command_assignment = next(node for node in conditional.orelse if isinstance(node, ast.Assign))
-            source_assignment = next(node for node in tree.body if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "launcher_source" for t in node.targets))
+            assignments = [node for node in tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in {"command", "launcher_source"} for t in node.targets)]
             def shell_path(path):
                 value = path.as_posix()
                 return "/" + value[0].lower() + value[2:] if os.name == "nt" else value
-            namespace = dict(Path=PurePosixPath, shlex=shlex, VENV_DIR=shell_path(venv), workspace=PurePosixPath(shell_path(root)))
-            exec(compile(ast.Module(body=[command_assignment, source_assignment], type_ignores=[]), "<launcher>", "exec"), namespace)
+            namespace = dict(Path=PurePosixPath, shlex=shlex, ram_env="", VENV_DIR=shell_path(venv), workspace=PurePosixPath(shell_path(root)))
+            exec(compile(ast.Module(body=assignments, type_ignores=[]), "<launcher>", "exec"), namespace)
             launcher = root / "run_h3_colab.sh"
-            launcher.write_text(namespace["launcher_source"], encoding="utf-8")
-            env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict")
+            launcher.write_text(namespace["launcher_source"], encoding="utf-8", newline="\n")
+            env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict", TEST_GPU="NVIDIA RTX PRO 6000")
+            env.pop("H3_APP", None)
             env.pop("H3_DRAMA3_SGLANG_CHECKPOINT", None)
             result = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True, check=True)
             self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset", "fp8"])
             chosen = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, H3_DRAMA3_SGLANG_CHECKPOINT="int4"),
                                     capture_output=True, text=True, check=True)
             self.assertEqual(chosen.stdout.splitlines()[-1], "int4")
+            for gpu in ("", "NVIDIA T4", "RTX PRO 6000\nRTX PRO 6000"):
+                failed = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, TEST_GPU=gpu),
+                                        capture_output=True, text=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn("needs the Colab G4", failed.stderr)
+                self.assertEqual(failed.stdout, "")
+            workshop = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, TEST_GPU="", H3_APP="workshop"),
+                                      capture_output=True, text=True, check=True)
+            self.assertEqual(workshop.stdout, result.stdout)
             python.unlink()
             failed = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)

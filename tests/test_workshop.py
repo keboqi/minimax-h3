@@ -254,6 +254,34 @@ class ModelManagerTests(unittest.TestCase):
         self.assertLess(start, source.index("setup_h3.py\" --install-dir"))
         self.assertLess(start, source.index("start_prepare \""))
 
+    def test_shutdown_stops_fallback_tunnel_started_during_server_exit(self):
+        from contextlib import ExitStack
+        from threading import Event
+
+        from h3_app import public_url
+
+        starting = Event()
+        server = Mock(started=True)
+        server.run.side_effect = lambda: self.assertTrue(starting.wait(5))
+        process = Mock()
+
+        def launch(*args, **kwargs):
+            starting.set()
+            stop = share.call_args.kwargs["stop"]
+            return process if stop.wait(5) else None
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("h3_app.config.RuntimeConfig.from_environment"))
+            stack.enter_context(patch("h3_app.workspace_store.default_store"))
+            stack.enter_context(patch.object(manager_module, "build_ui"))
+            stack.enter_context(patch.object(manager_module, "_server", return_value=server))
+            stack.enter_context(patch.object(public_url, "public_url_settings", return_value=(False, True)))
+            share = stack.enter_context(patch.object(public_url, "start_gradio_share", return_value=None))
+            stack.enter_context(patch.object(public_url, "launch_cloudflare", side_effect=launch))
+            cleanup = stack.enter_context(patch.object(public_url, "stop_cloudflare"))
+            manager_module.main()
+            cleanup.assert_called_once_with(process)
+
     def test_launcher_reads_workshop_requirements(self):
         import subprocess
         import sys

@@ -129,7 +129,8 @@ class StoryboardService:
         with self.lock:
             board = self.load(owner, storyboard_id)
             result = edit(board)
-            self.save(owner, storyboard_id, board)
+            if result is not False:
+                self.save(owner, storyboard_id, board)
             return board, result
 
     def create(self, owner, name, profile, *, scenes=(), cast=()) -> str:

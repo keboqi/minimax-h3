@@ -36,26 +36,26 @@ def scene_summary(board: dict, index: int) -> str:
     return f"{start} · {name}"
 
 
-def scene_status(board: dict, index: int, state: str) -> tuple[str, str]:
+def scene_status(board: dict, index: int, state: str, states: list[str]) -> tuple[str, str]:
     """The card's status label and CSS state; drafts that can't run yet say so."""
     if state == sb.DRAFT:
-        own = [issue for issue in sb.scene_issues(board, index) if not issue.startswith("Generate scene")]
+        own = [issue for issue in sb.scene_issues(board, index, states) if not issue.startswith("Generate scene")]
         if own:
             return "Needs input", "needs"
     return sb.STATE_NAMES[state], state
 
 
-def scene_list_html(board: dict | None, selected: str | None) -> str:
+def scene_list_html(board: dict | None, selected: str | None, states=None) -> str:
     if board is None:
         return ""
-    states = sb.scene_states(board)
+    states = sb.scene_states(board) if states is None else states
     items = []
     for index, (scene, state) in enumerate(zip(board["scenes"], states)):
         if index:
             flow = sb.flows_from_previous(board, index)
             label = "↓ continues into" if flow else "✂ cut to a fresh start"
             items.append(f'<div class="h3-sb-join h3-sb-join-{"flow" if flow else "cut"}">{label}</div>')
-        label, css = scene_status(board, index, state)
+        label, css = scene_status(board, index, state, states)
         items.append(
             f'<button type="button" class="h3-sb-scene" data-sb-action="select" data-scene-id="{escape(scene["id"])}" '
             f'aria-pressed="{str(scene["id"] == selected).lower()}">'
@@ -71,10 +71,10 @@ def scene_list_html(board: dict | None, selected: str | None) -> str:
             '<div class="h3-sb-list">' + "".join(items) + "</div>")
 
 
-def timeline_html(board: dict | None, selected: str | None) -> str:
+def timeline_html(board: dict | None, selected: str | None, states=None) -> str:
     if board is None:
         return ""
-    states = sb.scene_states(board)
+    states = sb.scene_states(board) if states is None else states
     segments = []
     for index, (scene, state) in enumerate(zip(board["scenes"], states)):
         added = max(sb.new_seconds(board, index), 0.5)

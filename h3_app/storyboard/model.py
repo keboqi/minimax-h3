@@ -265,7 +265,7 @@ def cast_count(board: dict[str, Any], scene: dict[str, Any]) -> int:
     return len([name for name in scene["cast"] if name in names][:MAX_CAST])
 
 
-def scene_issues(board: dict[str, Any], index: int) -> list[str]:
+def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = None) -> list[str]:
     """What the scene still needs before it can be generated, in plain words.
 
     A continuing scene opens on the previous take, so its first frame is never
@@ -288,7 +288,7 @@ def scene_issues(board: dict[str, Any], index: int) -> list[str]:
             issues.append(f"Use at most {MAX_REFERENCE_IMAGES} pictures (cast plus images); there are {pictures}")
         if not pictures and not media["ref_videos"] and not media["ref_audios"]:
             issues.append("Pick at least one reference")
-    if flow and scene_states(board)[index - 1] != DONE:
+    if flow and (states if states is not None else scene_states(board))[index - 1] != DONE:
         issues.append(f"Generate scene {index} first: this scene continues from it")
     return issues
 

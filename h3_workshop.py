@@ -593,16 +593,17 @@ def main() -> None:
     cloudflare_enabled, share_enabled = public_url_settings()
     cache_dir = script_dir / ".cache" / "cloudflared"
     stopped = threading.Event()
-    tunnel = []
+    tunnel = None
 
     def publish():
+        nonlocal tunnel
         while not server.started:
             if stopped.wait(0.1):
                 return
         print(f"[workshop] {TITLE} is ready at http://127.0.0.1:{port}", flush=True)
         if cloudflare_enabled:
-            tunnel.append(launch_cloudflare(port, cache_dir=cache_dir))
-        if share_enabled:
+            tunnel = launch_cloudflare(port, cache_dir=cache_dir)
+        if share_enabled and not stopped.is_set():
             share_url = start_gradio_share(
                 lambda: gradio_networking.setup_tunnel(
                     local_host="127.0.0.1", local_port=port, share_token=ui.share_token,
@@ -611,18 +612,19 @@ def main() -> None:
                 ),
                 stop=stopped,
             )
-            if share_url is None and not any(tunnel) and not stopped.is_set():
+            if share_url is None and tunnel is None and not stopped.is_set():
                 print("[workshop] Gradio Share is unavailable; opening a Cloudflare URL instead", flush=True)
-                tunnel.append(launch_cloudflare(port, cache_dir=cache_dir))
+                tunnel = launch_cloudflare(port, cache_dir=cache_dir)
 
-    threading.Thread(target=publish, name="workshop-public-url", daemon=True).start()
+    publisher = threading.Thread(target=publish, name="workshop-public-url", daemon=True)
+    publisher.start()
     try:
         # uvicorn handles SIGINT/SIGTERM in the main thread and returns on shutdown.
         server.run()
     finally:
         stopped.set()
-        for process in tunnel:
-            stop_cloudflare(process)
+        publisher.join()
+        stop_cloudflare(tunnel)
 
 
 if __name__ == "__main__":

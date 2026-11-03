@@ -175,12 +175,16 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
         bind_gpu_action(view.generate.click, owned_generation(handlers.generate_scene, "storyboard"),
                         inputs=current, outputs=progress, show_progress="minimal", api_name=False),
         bind_gpu_action(view.generate_remaining.click, owned_generation(handlers.generate_remaining, "storyboard"),
-                        inputs=[view.storyboard], outputs=progress, show_progress="minimal", api_name=False),
+                        inputs=[view.storyboard], outputs=[view.status, view.scene_completed], show_progress="minimal", api_name=False),
         bind_gpu_action(view.confirm_regenerate.click,
                         owned_generation(handlers.switch_and_regenerate, "storyboard"),
-                        inputs=[*current, view.takes], outputs=progress, show_progress="minimal", api_name=False),
+                        inputs=[*current, view.takes], outputs=[view.status, view.scene_completed], show_progress="minimal", api_name=False),
     )
+    progress_fields = ("scene_list", "timeline", "generate_remaining", "take_video", "takes", "use_take",
+                       "take_note", "generate", "checklist")
+    view.scene_completed.change(as_outputs(handlers.refresh, progress_fields), inputs=current,
+                                outputs=view.components(progress_fields), **QUIET)
     for event in runs:
-        on(event.then, handlers.refresh, current, options=QUIET)
+        on(event.then, handlers.refresh, current, options=QUIET, exclude=("status",))
     stopped = view.stop.click(owned_interrupt(interrupt, "storyboard"), outputs=view.status, **QUIET)
     on(stopped.then, handlers.refresh, current, options=QUIET)

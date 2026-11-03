@@ -318,8 +318,16 @@ class StoryboardRunnerTests(unittest.TestCase):
 
     def test_generate_remaining_chains_flows_from_the_take_in_use(self):
         storyboard_id = self.make("flow", "cut")
-        statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
-        self.assertEqual(statuses[-1], "Generated the remaining scenes.")
+        completed = []
+        statuses = []
+        for status, pulse in self.handlers.generate_remaining(storyboard_id, SimpleNamespace()):
+            statuses.append(status)
+            if isinstance(pulse, str):
+                document = self.service.load("a", storyboard_id)
+                completed.append(sb.scene_states(document).count(sb.DONE))
+                self.assertEqual(len(self.graphs), completed[-1])
+        self.assertEqual(completed, [1, 2, 3])
+        self.assertRegex(statuses[-1], r"Total generation time \d+:\d{2}")
         document = self.service.load("a", storyboard_id)
         self.assertEqual(sb.scene_states(document), ["done"] * 3)
         self.assertEqual(document["queue"], [])
@@ -331,6 +339,32 @@ class StoryboardRunnerTests(unittest.TestCase):
         second = document["takes"][document["scenes"][1]["in_use"]]
         self.assertEqual((second["prefix_frames"], first_take["prefix_frames"]), (39, 0))
         self.assertTrue(self.graphs[0][1].output_prefix.startswith("h3/.storyboard/"))
+
+    def test_reference_previews_and_switching_to_a_text_scene(self):
+        storyboard_id = self.make("cut")
+        first, second = self.service.load("a", storyboard_id)["scenes"]
+        image = self.root / "portrait.png"
+        image.write_bytes(b"cast")
+        self.service.add_cast("a", storyboard_id, "Mei", image)
+        self.service.set_mode("a", storyboard_id, first["id"], sb.REFERENCES)
+        self.service.update_scene("a", storyboard_id, first["id"], cast=["Mei"])
+        for field, filename in (("ref_images", "prop.png"), ("ref_videos", "clip.mp4"),
+                                ("ref_audios", "voice.wav")):
+            path = self.root / filename
+            path.write_bytes(filename.encode())
+            self.service.set_scene_media("a", storyboard_id, first["id"], field, [str(path)])
+        document = self.service.load("a", storyboard_id)
+        scene = document["scenes"][0]
+        rendered = self.handlers.render("a", storyboard_id, first["id"])
+        self.assertEqual(rendered["image_previews"]["value"], [
+            (document["cast"][0]["image"], "Mei = <Picture 1>"), (scene["ref_images"][0], "image 1 = <Picture 2>")])
+        self.assertEqual(rendered["video_preview_0"]["value"], scene["ref_videos"][0])
+        self.assertEqual(rendered["audio_preview_0"]["value"], scene["ref_audios"][0])
+        switched = self.handlers.render("a", storyboard_id, second["id"], previous_scene_id=first["id"])
+        self.assertNotIn("first_image", switched)
+        self.assertIsNone(switched["ref_images"])
+        for field in ("image_previews", "video_preview_0", "audio_preview_0"):
+            self.assertFalse(switched[field]["visible"])
 
     def test_failed_take_keeps_the_rest_of_the_queue_paused(self):
         storyboard_id = self.make("flow")
@@ -434,7 +468,7 @@ class StoryboardRunnerTests(unittest.TestCase):
         first = self.service.load("a", storyboard_id)["scenes"][0]["id"]
         self.service.update_scene("a", storyboard_id, first, prompt="prompt 1 changed")
         statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
-        self.assertEqual(statuses[-1], "Generated the remaining scenes.")
+        self.assertRegex(statuses[-1], r"Total generation time \d+:\d{2}")
         document = self.service.load("a", storyboard_id)
         self.assertEqual(sb.scene_states(document), ["done", "done"])
         self.assertEqual(document["scenes"][0]["in_use"], document["scenes"][0]["takes"][-1])
