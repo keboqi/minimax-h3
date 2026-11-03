@@ -54,6 +54,25 @@ def with_leading(callback, leading, fields, *, pack):
     return run
 
 
+def _bind_api(view: StoryboardView, handlers: StoryboardHandlers):
+    """API-only endpoints for scripted clients: import a storyboard, list them, read one.
+
+    Each endpoint has its own hidden trigger, so none of them runs from the page.
+    """
+    with view.board_group, gr.Group(visible=False):
+        spec = gr.Textbox(label="Storyboard spec (JSON)")
+        files = gr.File(label="Scene and cast files", file_count="multiple", type="filepath")
+        storyboard_id = gr.Textbox(label="Storyboard id")
+        result = gr.JSON(label="Storyboard")
+        options = {"show_progress": "hidden", "concurrency_id": "h3-storyboard-edit", "concurrency_limit": 4}
+        for fn, inputs, api_name in (
+            (handlers.storyboard_import, [spec, files], "storyboard_import"),
+            (handlers.storyboard_list, [], "storyboard_list"),
+            (handlers.storyboard_details, [storyboard_id], "storyboard_details"),
+        ):
+            gr.Button(visible=False).click(fn, inputs=inputs, outputs=result, api_name=api_name, **options)
+
+
 def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_values: dict | None = None, *,
                     interrupt=None, load_trigger=None, gpu: bool = True):
     """``h3_values`` maps MiniMax H3 setting names to their components: the profile and prompt writer.
@@ -74,6 +93,7 @@ def bind_storyboard(view: StoryboardView, handlers: StoryboardHandlers, h3_value
         names = tuple(name for name in (*RENDER_FIELDS, *extra) if name not in exclude)
         return trigger(as_outputs(callback, names), inputs=inputs, outputs=view.components(names), **options)
 
+    _bind_api(view, handlers)
     if load_trigger is not None:
         on(load_trigger, handlers.refresh, current, options=QUIET)
     on(view.storyboard.input, handlers.select_storyboard, [view.storyboard])

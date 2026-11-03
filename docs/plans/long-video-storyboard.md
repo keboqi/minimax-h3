@@ -128,6 +128,7 @@ Where the build differs from the plan above:
 - **Keyframes**: not dropped. Storyboard scenes use text-to-video or reference images only, so no first-frame keyframe can fall inside the protected head.
 - **Story to scenes**: splits the story by paragraph. Using the prompt writer for it is not built yet.
 - **Not built yet**: continue from a Media video, crossfade and dip-to-black joins, audio crossfade at cuts, SeedVR2 finish on export, the take-change confirmation dialog (the status line names the outdated scenes instead), storyboard size display.
+- **Scene length**: any whole number of seconds from 5 to 15 (a slider), not only 5, 10 or 15.
 - **Post-processing and Regenerate**: storyboards force H3 post-processing off, and flow scenes refuse the H3 Regenerate refiner, so each take's video matches its saved latent.
 
 ## Open questions and risks

@@ -41,7 +41,7 @@ class StoryboardView:
     new_name: gr.Textbox
     new_story: gr.Textbox
     new_connect: gr.Radio
-    new_seconds: gr.Radio
+    new_seconds: gr.Slider
     new_scene_count: gr.Slider
     rewrite_story: gr.Button
     rewrite_status: gr.Markdown
@@ -74,7 +74,7 @@ class StoryboardView:
     enhance: gr.Button
     prompt_hint: gr.Markdown
     title: gr.Textbox
-    seconds: gr.Radio
+    seconds: gr.Slider
     added_seconds: gr.Markdown
     checklist: gr.Markdown
     generate: gr.Button
@@ -175,17 +175,20 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
             new_story = gr.Textbox(
                 label="Story", lines=7,
                 info="Enter a full story or short idea, then use Rewrite / extend into scenes. "
-                     "Or separate your own scenes with --- on its own line. Blank lines stay inside a scene. "
-                     "You can edit everything afterwards.",
+                     "Or separate your own scenes with --- on its own line; ---6--- also makes the scene "
+                     "after it 6 seconds long. Blank lines stay inside a scene. You can edit everything afterwards.",
                 placeholder=(
-                    "Wide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in.\n\n---\n\n"
-                    "She sprints and leaps across the gap to the next roof.\n\n---\n\n"
+                    "---8---\n\nWide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in."
+                    "\n\n---6---\n\nShe sprints and leaps across the gap to the next roof.\n\n---5---\n\n"
                     "Close-up: she lands hard and catches her breath."
                 ),
             )
             new_connect = gr.Radio(CONNECT_CHOICES, value="flow", label="How should the scenes connect?",
                                    info="You can change this for any scene later.")
-            new_seconds = gr.Radio(list(SCENE_SECONDS), value=10, label="Scene length (seconds)")
+            new_seconds = gr.Slider(SCENE_SECONDS[0], SCENE_SECONDS[-1], value=10, step=1,
+                                    label="Usual scene length (seconds)",
+                                    info="Used by scenes without ---N---. Rewriting picks each scene's "
+                                         "length around it.")
             with gr.Row():
                 new_scene_count = gr.Slider(2, 24, value=5, step=1, label="Scenes to write")
                 rewrite_story = gr.Button("Rewrite / extend into scenes")
@@ -251,7 +254,8 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
                         enhance = gr.Button("Improve with the prompt writer", size="sm", scale=0, min_width=240)
                     title = gr.Textbox(label="Scene title", max_lines=1)
                     with gr.Row(equal_height=True):
-                        seconds = gr.Radio(list(SCENE_SECONDS), value=10, label="Length (seconds)")
+                        seconds = gr.Slider(SCENE_SECONDS[0], SCENE_SECONDS[-1], value=10, step=1,
+                                            label="Length (seconds)")
                         added_seconds = gr.Markdown()
                     checklist = gr.Markdown(elem_classes=["h3-sb-checklist"])
                     with gr.Row(visible=gpu):

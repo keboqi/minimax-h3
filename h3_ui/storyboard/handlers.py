@@ -19,10 +19,11 @@ from h3_app import storyboard as sb
 from h3_app.errors import H3Error
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB
-from h3_app.storyboard.text import split_scenes
+from h3_app.storyboard.text import parse_scenes
 from h3_app.storyboard.writer import rewrite_story
 from h3_ui.job_admission import require_owner
 
+from .api import StoryboardApiHandlers
 from .presentation import cast_html, clock, scene_list_html, seconds_label, timeline_html
 
 TAKE_NOTE = "Every take is kept. Generate again for another version, then choose which one to use."
@@ -85,7 +86,7 @@ def checklist(issues: list[str], flow: bool, previous: int) -> str:
     return "\n".join(lines)
 
 
-class StoryboardHandlers:
+class StoryboardHandlers(StoryboardApiHandlers):
     def __init__(self, services: StoryboardServices):
         self.services = services
 
@@ -264,15 +265,20 @@ class StoryboardHandlers:
             gr.Warning(f"Couldn't rewrite the story: {exc}")
             return {"rewrite_status": f"Story unchanged. {exc}"}
         return {"new_story": rewritten,
-                "rewrite_status": f"Wrote {int(count)} scenes. Review or edit them, then choose Create storyboard."}
+                "rewrite_status": f"Wrote {int(count)} scenes; each ---N--- line gives the next scene's length. "
+                                 "Review or edit them, then choose Create storyboard."}
 
     def create(self, name, story, connect, seconds, profile_values, request: gr.Request):
         def action(owner):
             defaults = self.services.request_defaults()
             profile = sb.make_profile({**defaults, **profile_values}, defaults)
-            prompts = split_scenes(story)
             link = sb.CUT if connect == sb.CUT else sb.FLOW
-            scenes = [sb.new_scene(sb.title_from(text), text, seconds=int(seconds), link=link) for text in prompts]
+            scenes = []
+            for number, (text, length) in enumerate(parse_scenes(story), 1):
+                if length is not None and length not in sb.SCENE_SECONDS:
+                    raise H3Error(f"Scene {number} asks for {length} s; a scene is {sb.SCENE_SECONDS[0]} "
+                                  f"to {sb.SCENE_SECONDS[-1]} seconds.")
+                scenes.append(sb.new_scene(sb.title_from(text), text, seconds=length or int(seconds), link=link))
             return Selection(self.service.create(owner, name, profile, scenes=scenes), None)
         return self._act(None, None, request, action,
                          "Storyboard created. Check each scene, then press Generate this scene.")

@@ -15,7 +15,8 @@ from typing import Any
 
 from h3_app.contracts import GENERATION_FIELDS
 
-SCENE_SECONDS = (5, 10, 15)
+# Whole seconds, within the H3 clip limit; a continuing scene's overlap must fit with room to spare.
+SCENE_SECONDS = tuple(range(5, 16))
 OVERLAP_FRAMES = (22, 39, 56)
 DEFAULT_OVERLAP = 39
 MAX_TAKES_PER_RUN = 4
@@ -134,8 +135,8 @@ def new_storyboard(name: str, profile: dict[str, Any], scenes=(), cast=()) -> di
 
 
 def validate_scene(scene: dict[str, Any]) -> None:
-    if int(scene["seconds"]) not in SCENE_SECONDS:
-        raise ValueError("A scene is 5, 10 or 15 seconds long.")
+    if scene["seconds"] not in SCENE_SECONDS:
+        raise ValueError(f"A scene is {SCENE_SECONDS[0]} to {SCENE_SECONDS[-1]} whole seconds long.")
     if scene["link"] not in (FLOW, CUT):
         raise ValueError("A scene either flows on or cuts to a new shot.")
     if int(scene["overlap"]) not in OVERLAP_FRAMES:

@@ -11,15 +11,21 @@ in the [plan](../plans/long-video-storyboard.md); the agreed design is the
 
 **Start a storyboard** asks for a name, a story and how scenes connect. Separate scene
 prompts with `---` on its own line. Blank lines inside a scene stay in its prompt; text
-without a separator creates one scene. *Continue one into the next* makes every later
+without a separator creates one scene. A scene is 5 to 15 whole seconds long. A
+`---N---` line, such as `---6---`, also sets the length of the scene after it, so the
+first scene can start with one. Scenes without one use **Usual scene length**; a length
+outside 5–15 stops Create and names the scene. *Continue one into the next* makes every later
 scene continue; *Every scene starts fresh* makes them separate shots joined by cuts.
 Either can be changed per scene. In Studio, the storyboard copies your current
 **MiniMax H3** settings and keeps them, so every scene matches;
 **Storyboard settings › Use my current MiniMax H3 settings** replaces them later and
 marks every scene out of date.
 
-To turn a full story or short idea into scenes, choose a scene count (2–24), clip length,
-and connection style, then click **Rewrite / extend into scenes**. Both Workshop and
+To turn a full story or short idea into scenes, choose a scene count (2–24), the usual
+scene length and the connection style, then click **Rewrite / extend into scenes**. The
+writer gives each scene the length its action and dialogue need, using the usual length
+as a guide. It writes each length as a `---N---` line before the scene, which you can
+edit before creating. Both Workshop and
 Studio have hosted **Prompt writer** controls above the form for Gemini or an
 OpenAI-compatible service. The rewrite follows the same `prompts/prompt.txt` guidelines
 as the MiniMax H3 page, including visual action, dialogue, soundscape, and music for each
@@ -102,6 +108,17 @@ the explicit choice to keep its prompts and pictures on the server. Cast picture
 the workspace state's `storyboards/` folder and in workspace backups. A generation run
 is one job in **Jobs**. A run that stops leaves the waiting scenes recorded; nothing
 resumes on its own, and **Generate all remaining scenes** continues from there.
+
+## API for scripted clients
+
+Both endpoints publish three API-only endpoints (`h3_ui/storyboard/api.py`), so a
+client can plan a storyboard elsewhere and import it on the Workshop:
+`/storyboard_import(spec, files)` creates a whole storyboard from a JSON spec (name,
+optional settings as H3 profile fields, cast, and scenes with mode, frames, references
+and how each starts). Media fields name uploaded files by file name. A spec with an
+unknown field or a missing file is refused as a whole. `/storyboard_list()` and
+`/storyboard_details(id)` report the storyboards and each scene's state and what it
+still needs. Generating stays on the page.
 
 ## Not validated yet
 

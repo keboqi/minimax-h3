@@ -204,8 +204,8 @@ class StoryboardServiceTests(unittest.TestCase):
         document = self.service.load("a", storyboard_id)
         self.assertTrue(Path(document["cast"][0]["image"]).is_relative_to(self.store.root))
         scene_id = document["scenes"][0]["id"]
-        with self.assertRaisesRegex(ValueError, "5, 10 or 15"):
-            self.service.update_scene("a", storyboard_id, scene_id, seconds=7)
+        with self.assertRaisesRegex(ValueError, "5 to 15 whole seconds"):
+            self.service.update_scene("a", storyboard_id, scene_id, seconds=16)
         with self.assertRaisesRegex(H3Error, "at least one scene"):
             self.service.delete_scene("a", storyboard_id, scene_id)
 
