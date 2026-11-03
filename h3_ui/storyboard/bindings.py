@@ -55,7 +55,7 @@ def with_leading(callback, leading, fields, *, pack):
 
 
 def _bind_api(view: StoryboardView, handlers: StoryboardHandlers):
-    """API-only endpoints for scripted clients: import a storyboard, list them, read one.
+    """API-only endpoints for scripted clients: import or update a storyboard, list them, read one.
 
     Each endpoint has its own hidden trigger, so none of them runs from the page.
     """
@@ -67,6 +67,7 @@ def _bind_api(view: StoryboardView, handlers: StoryboardHandlers):
         options = {"show_progress": "hidden", "concurrency_id": "h3-storyboard-edit", "concurrency_limit": 4}
         for fn, inputs, api_name in (
             (handlers.storyboard_import, [spec, files], "storyboard_import"),
+            (handlers.storyboard_update, [storyboard_id, spec, files], "storyboard_update"),
             (handlers.storyboard_list, [], "storyboard_list"),
             (handlers.storyboard_details, [storyboard_id], "storyboard_details"),
         ):

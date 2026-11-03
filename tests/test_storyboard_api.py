@@ -77,7 +77,75 @@ class StoryboardApiTests(unittest.TestCase):
         self.assertEqual((second["overlap"], Path(second["last_image"]).read_bytes()), (22, b"end.png"))
         self.assertEqual((third["takes_per_run"], third["title"]), (2, "Dawn over the sea"))
         self.assertEqual(self.handlers.storyboard_list()[0]["id"], details["id"])
-        self.assertEqual(self.handlers.storyboard_details(details["id"]), details)
+        self.assertEqual(details["changes"]["added"], ["Arrival", "She opens the door", "Dawn over the sea"])
+        self.assertEqual({**self.handlers.storyboard_details(details["id"]), "changes": details["changes"]}, details)
+
+    def keyed_board(self):
+        """An imported storyboard of keyed scenes a, b, c, d whose takes are all in use."""
+        spec = {"name": "Keys", "scenes": [
+            {"key": "a", "prompt": "A.", "mode": "Reference media", "ref_images": ["door.png"]},
+            {"key": "b", "prompt": "B.", "link": "flow"},
+            {"key": "c", "prompt": "C.", "link": "cut"},
+            {"key": "d", "prompt": "D.", "link": "cut"},
+        ]}
+        storyboard_id = self.handlers.storyboard_import(json.dumps(spec), [self.files["door.png"]])["id"]
+        board = self.service.load("a", storyboard_id)
+        for index, scene in enumerate(board["scenes"]):
+            board = self.service.record_take("a", storyboard_id, scene["id"], f"t{index}", video="v.mp4",
+                                             latents={"latent": "l.safetensors"}, seed=1,
+                                             inputs=sb.scene_inputs(board, index))
+        self.assertEqual(sb.scene_states(board), ["done"] * 4)
+        return storyboard_id, spec, board
+
+    def test_update_keeps_takes_of_unchanged_scenes_and_follows_the_plan(self):
+        storyboard_id, spec, before = self.keyed_board()
+        # The same picture under another upload name is matched by content, not copied again.
+        renamed = self.root / "uploads" / "door-again.png"
+        renamed.write_bytes(b"door.png")
+        folder = self.runtime.output_dir / "h3/.storyboard" / storyboard_id / "media"
+        media = sorted(folder.iterdir())
+        a, b, c, _ = spec["scenes"]
+        revised = {"scenes": [dict(a, ref_images=["door-again.png"]), dict(b, prompt="B, revised."),
+                              {"key": "e", "prompt": "E.", "link": "cut"}, c]}
+        details = self.handlers.storyboard_update(storyboard_id, json.dumps(revised), [str(renamed)])
+        self.assertEqual(details["changes"], {"added": ["e"], "updated": ["b"], "removed": ["d"],
+                                              "settings_changed": False})
+        self.assertEqual([(scene["key"], scene["state"]) for scene in details["scenes"]],
+                         [("a", "done"), ("b", "outdated"), ("e", "draft"), ("c", "done")])
+        board = self.service.load("a", storyboard_id)
+        self.assertEqual([scene["id"] for scene in board["scenes"][:2]],
+                         [scene["id"] for scene in before["scenes"][:2]])
+        self.assertEqual(board["scenes"][1]["takes"], ["t1"])
+        self.assertEqual(board["scenes"][0]["ref_images"], before["scenes"][0]["ref_images"])
+        self.assertEqual(sorted(folder.iterdir()), media)
+        # The removed scene's take stays recorded, and the profile is untouched without settings.
+        self.assertIn("t3", board["takes"])
+        self.assertEqual(board["profile"], before["profile"])
+
+    def test_update_with_new_settings_outdates_every_scene(self):
+        storyboard_id, spec, _ = self.keyed_board()
+        details = self.handlers.storyboard_update(
+            storyboard_id, json.dumps({**spec, "settings": {"width": 1920}}), [self.files["door.png"]])
+        self.assertTrue(details["changes"]["settings_changed"])
+        self.assertEqual({scene["state"] for scene in details["scenes"]}, {"outdated"})
+
+    def test_failed_update_changes_nothing_and_removes_its_copies(self):
+        storyboard_id, spec, before = self.keyed_board()
+        folder = self.runtime.output_dir / "h3/.storyboard" / storyboard_id / "media"
+        media = sorted(folder.iterdir())
+        revised = {"scenes": [dict(spec["scenes"][0], ref_images=["mei.png"])]}
+        with patch.object(self.service, "save", side_effect=RuntimeError("disk full")), \
+                self.assertRaisesRegex(RuntimeError, "disk full"):
+            self.handlers.storyboard_update(storyboard_id, json.dumps(revised), [self.files["mei.png"]])
+        self.assertEqual(sorted(folder.iterdir()), media)
+        self.assertEqual(self.service.load("a", storyboard_id), before)
+        bad = ((json.dumps({"scenes": [{"key": "a", "prompt": "x"}, {"key": "a", "prompt": "y"}]}), "already used"),
+               (json.dumps({"scenes": [{"prompt": "x", "cast": ["Mei"]}]}), "not in the cast"))
+        for spec_text, message in bad:
+            with self.subTest(message=message), self.assertRaisesRegex(gr.Error, message):
+                self.handlers.storyboard_update(storyboard_id, spec_text, [])
+        with self.assertRaisesRegex(gr.Error, "no longer exists"):
+            self.handlers.storyboard_update("missing", json.dumps(spec), [])
 
     def test_bad_specs_are_refused_before_anything_is_stored(self):
         cases = (
@@ -107,7 +175,7 @@ class StoryboardApiTests(unittest.TestCase):
         with gr.Blocks() as ui, gr.Tabs():
             build_storyboard_workshop(gr.Tab("Storyboard"), ui, self.runtime, self.store)
         names = {dep.api_name for dep in ui.fns.values() if dep.api_visibility == "public"}
-        self.assertTrue({"storyboard_import", "storyboard_list", "storyboard_details"} <= names)
+        self.assertTrue({"storyboard_import", "storyboard_update", "storyboard_list", "storyboard_details"} <= names)
 
 
 if __name__ == "__main__":

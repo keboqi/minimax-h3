@@ -111,14 +111,24 @@ resumes on its own, and **Generate all remaining scenes** continues from there.
 
 ## API for scripted clients
 
-Both endpoints publish three API-only endpoints (`h3_ui/storyboard/api.py`), so a
-client can plan a storyboard elsewhere and import it on the Workshop:
-`/storyboard_import(spec, files)` creates a whole storyboard from a JSON spec (name,
-optional settings as H3 profile fields, cast, and scenes with mode, frames, references
-and how each starts). Media fields name uploaded files by file name. A spec with an
-unknown field or a missing file is refused as a whole. `/storyboard_list()` and
-`/storyboard_details(id)` report the storyboards and each scene's state and what it
-still needs. Generating stays on the page.
+Both endpoints publish four API-only endpoints (`h3_ui/storyboard/api.py`), so a
+client can plan a storyboard elsewhere and keep it in step on the Workshop:
+
+- `/storyboard_import(spec, files)` creates a whole storyboard from a JSON spec: name,
+  optional settings as H3 profile fields, cast, and scenes with an optional `key`,
+  mode, frames, references and how each starts. Media fields name uploaded files by
+  file name.
+- `/storyboard_update(id, spec, files)` makes an existing storyboard match a revised
+  spec. Scenes matched by `key` keep their takes and stay *Done* unless their inputs
+  changed. Other scenes are added or removed, and the order follows the spec. Name,
+  settings and cast change only when the spec has them. Uploads that match stored
+  media by content are not stored again; the editor reuses media the same way.
+- `/storyboard_list()` and `/storyboard_details(id)` report the storyboards, each
+  scene's state and what it still needs.
+
+Import and update return what changed. A spec with an unknown field or a missing file
+is refused as a whole, and a failed update changes nothing. Generating stays on the
+page.
 
 ## Not validated yet
 

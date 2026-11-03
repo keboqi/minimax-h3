@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import time
 from pathlib import Path
@@ -17,6 +18,69 @@ from . import model
 
 TAKE_FOLDER = "h3/.storyboard"
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+# Scene fields a sync sets from the plan; the rest are the storyboard's own (takes, take in use).
+SYNC_FIELDS = ("title", "prompt", "seconds", "link", "mode", "cast", "overlap", "seed", "takes_per_run")
+
+
+def file_digest(path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+class SceneFiles:
+    """Stores scene media once per storyboard.
+
+    An incoming file is the stored file it is named after (the editor hands back
+    Gradio's cached copies of files it shows), else a used file with the same content,
+    else a new copy. A branch's scenes point at the original's media folder, so any
+    file the storyboard uses counts. ``discard`` removes the copies made so far.
+    """
+
+    def __init__(self, directory: Path, board: dict[str, Any]):
+        self.directory = directory
+        self.used = {Path(path).name: path for scene in board["scenes"] for path in model.media_paths(scene)}
+        self.digests: dict[str, str] | None = None
+        self.copied: list[Path] = []
+
+    def keep(self, item) -> str:
+        if isinstance(item, dict):
+            item = item.get("path") or item.get("name")
+        source = Path(str(item))
+        if source.name in self.used and Path(self.used[source.name]).is_file():
+            return self.used[source.name]
+        stored = self.directory / source.name
+        if stored.is_file():
+            return str(stored)
+        if not source.is_file():
+            raise H3Error(f"{source.name} is no longer available. Add it again.")
+        digest = file_digest(source)
+        if self.digests is None:
+            self.digests = {}
+            for path in self.used.values():
+                if Path(path).is_file():
+                    self.digests.setdefault(file_digest(path), path)
+        if digest in self.digests:
+            return self.digests[digest]
+        self.directory.mkdir(parents=True, exist_ok=True)
+        destination = self.directory / f"{model.new_id()}{source.suffix.lower()}"
+        shutil.copy2(source, destination)
+        self.copied.append(destination)
+        self.used[destination.name] = self.digests[digest] = str(destination)
+        return str(destination)
+
+    def value(self, field, value):
+        """A frame field's stored path, or a reference field's list of them."""
+        if field in ("first_image", "last_image"):
+            return self.keep(value) if value else None
+        items = value if isinstance(value, (list, tuple)) else [value] if value else []
+        return [self.keep(item) for item in items if item]
+
+    def discard(self):
+        for path in self.copied:
+            path.unlink(missing_ok=True)
 
 
 class StoryboardService:
@@ -174,32 +238,9 @@ class StoryboardService:
         """
         if field not in model.MEDIA_FIELDS:
             raise ValueError(f"Unknown scene media {field!r}.")
-        directory = self.media_dir(storyboard_id)
 
         def edit(board):
-            used = {Path(path).name: path for other in board["scenes"] for path in model.media_paths(other)}
-
-            def keep(item):
-                if isinstance(item, dict):
-                    item = item.get("path") or item.get("name")
-                source = Path(str(item))
-                if source.name in used and Path(used[source.name]).is_file():
-                    return used[source.name]
-                stored = directory / source.name
-                if stored.is_file():
-                    return str(stored)
-                if not source.is_file():
-                    raise H3Error(f"{source.name} is no longer available. Add it again.")
-                directory.mkdir(parents=True, exist_ok=True)
-                destination = directory / f"{model.new_id()}{source.suffix.lower()}"
-                shutil.copy2(source, destination)
-                return str(destination)
-
-            if field in ("first_image", "last_image"):
-                stored = keep(value) if value else None
-            else:
-                items = value if isinstance(value, (list, tuple)) else [value] if value else []
-                stored = [keep(item) for item in items if item]
+            stored = SceneFiles(self.media_dir(storyboard_id), board).value(field, value)
             scene = board["scenes"][self.scene_index(board, scene_id)]
             if model.scene_media(scene)[field] == stored:
                 return False
@@ -235,6 +276,90 @@ class StoryboardService:
                 raise H3Error("A storyboard keeps at least one scene.")
             board["scenes"].pop(self.scene_index(board, scene_id))
         return self.change(owner, storyboard_id, edit)[0]
+
+    def sync(self, owner, storyboard_id, scenes, *, name=None, profile=None, cast=None) -> dict[str, Any]:
+        """Make the storyboard match planned ``scenes``, keeping the takes of scenes that stay.
+
+        Each planned scene is a dict of ``SYNC_FIELDS``, an optional ``key`` and ``media``
+        (media field → uploaded file or files). A scene whose key matches a stored one keeps
+        its id, takes and take in use, gets the given fields and exactly the given media;
+        fields it leaves out keep their values. Stored scenes the plan leaves out are removed
+        (their takes stay recorded), and scenes follow the plan's order. ``name``, ``profile``
+        and ``cast`` ((name, picture) pairs) replace the storyboard's only when given. Whether
+        a scene is out of date then follows from its inputs as always. Returns what changed.
+        """
+        keys = [item["key"] for item in scenes if item.get("key")]
+        if len(keys) != len(set(keys)):
+            raise H3Error("Each scene key can be used only once.")
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            files = SceneFiles(self.media_dir(storyboard_id), board)
+            try:
+                changes = self._sync(board, storyboard_id, scenes, name, profile, cast, files)
+                self.save(owner, storyboard_id, board)
+            except Exception:
+                files.discard()
+                raise
+        return changes
+
+    def _sync(self, board, storyboard_id, scenes, name, profile, cast, files):
+        if name is not None:
+            board["name"] = (str(name).strip() or board["name"])[:120]
+        settings_changed = profile is not None and profile != board["profile"]
+        if settings_changed:
+            board["profile"] = profile
+        if cast is not None:
+            board["cast"] = self._sync_cast(board, storyboard_id, cast, files)
+        names = {member["name"] for member in board["cast"]}
+        stored = {scene["key"]: scene for scene in board["scenes"] if scene.get("key")}
+        planned, added, updated = [], [], []
+        for number, item in enumerate(scenes, 1):
+            key = item.get("key")
+            scene = stored.pop(key, None) if key else None
+            before = copy.deepcopy(scene)
+            if scene is None:
+                title = item.get("title") or model.title_from(item.get("prompt", "")) or f"Scene {number}"
+                scene = model.new_scene(title)
+                if key:
+                    scene["key"] = key
+            for field in SYNC_FIELDS:
+                if field in item:
+                    scene[field] = list(item[field]) if field == "cast" else item[field]
+            media = item.get("media") or {}
+            for field in model.MEDIA_FIELDS:
+                scene[field] = files.value(field, media.get(field))
+            scene["cast"] = [member for member in scene["cast"] if member in names]
+            label = key or scene["title"]
+            if before is None:
+                added.append(label)
+            elif before != scene:
+                updated.append(label)
+            planned.append(scene)
+        kept = {scene["id"] for scene in planned}
+        removed = [scene.get("key") or scene["title"] for scene in board["scenes"] if scene["id"] not in kept]
+        board["scenes"] = planned
+        board["queue"] = [scene_id for scene_id in board["queue"] if scene_id in kept]
+        return {"added": added, "updated": updated, "removed": removed, "settings_changed": settings_changed}
+
+    def _sync_cast(self, board, storyboard_id, cast, files):
+        """The planned cast; a member whose name and picture are unchanged keeps its stored picture."""
+        if len(cast) > model.MAX_CAST:
+            raise H3Error(f"A storyboard has at most {model.MAX_CAST} cast pictures.")
+        stored = {member["name"]: member for member in board["cast"]}
+        members = []
+        for member_name, image in cast:
+            member_name = str(member_name).strip()
+            if any(member["name"] == member_name for member in members):
+                raise H3Error("That cast name is already used.")
+            current = stored.get(member_name)
+            if (current and Path(current["image"]).is_file() and Path(image).is_file()
+                    and file_digest(current["image"]) == file_digest(image)):
+                members.append(current)
+                continue
+            member = self._copy_cast(storyboard_id, member_name, image)
+            files.copied.append(Path(member["image"]))
+            members.append(member)
+        return members
 
     # Takes -----------------------------------------------------------------
     def record_take(self, owner, storyboard_id, scene_id, take_id, *, video, latents, seed, inputs, job_id=None):
