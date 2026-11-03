@@ -70,6 +70,15 @@ WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
 GRADIO_VERSION = "6.30.0"
+# The Prism Workshop's CPU-only stack: Modal's console image and the Colab Workshop launch.
+WORKSHOP_REQUIREMENTS = (
+    # requests: the Drama 3 SGLang-Omni downloader module imports it.
+    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
+    "openai>=3.16.2,<4",  # Workshop's OpenAI-compatible prompt writer.
+    # websocket-client, aiohttp: imported by the shared media controller and routes;
+    # wsproto: the Gradio queue's WebSocket transport, as in the main application.
+    "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
+)
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
     "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",

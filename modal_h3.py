@@ -161,6 +161,7 @@ from h3_requirements import (  # noqa: E402
     TORCHAUDIO_VERSION,
     TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
+    WORKSHOP_REQUIREMENTS,
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
@@ -772,14 +773,7 @@ console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
     .apt_install("ffmpeg")
-    .uv_pip_install(
-        # requests: the Drama 3 SGLang-Omni downloader module imports it.
-        # websocket-client, aiohttp: imported by the shared media controller and routes;
-        # wsproto: the Gradio queue's WebSocket transport, as in the main application.
-        f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
-        "openai>=3.16.2,<4",  # Workshop's OpenAI-compatible prompt writer.
-        "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
-    )
+    .uv_pip_install(*WORKSHOP_REQUIREMENTS)
 )
 if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight

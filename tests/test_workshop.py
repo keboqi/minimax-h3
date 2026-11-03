@@ -225,6 +225,35 @@ class ModelManagerTests(unittest.TestCase):
                    and type(block).__name__ == "Button")
         self.assertFalse(any(run._id in [t[0] for t in dep.targets] for dep in ui.fns.values()))
 
+    def test_colab_workshop_has_no_models_tab_or_volume_reload(self):
+        from h3_app import media_catalog
+        from h3_app.config import RuntimeConfig
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import default_store
+
+        self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        data = Path(self.temp.name)
+        # The Studio's own layout: run_h3.sh exports these for both apps.
+        runtime = RuntimeConfig.from_environment(data, {
+            "COMFY_DIR": str(data / "h3" / "ComfyUI"),
+            "GRADIO_OUTPUT_DIR": str(data / "h3" / "gradio_outputs"),
+        })
+        ui = manager_module.build_ui(None, (runtime, default_store(runtime.outputs_dir)))
+        labels = {getattr(block, "label", None) for block in ui.blocks.values()}
+        self.assertTrue({"Media library", "Storyboard"} <= labels)
+        self.assertNotIn("Models", labels)
+        buttons = {block.value for block in ui.blocks.values() if type(block).__name__ == "Button"}
+        self.assertNotIn("Reload shared volume", buttons)
+
+    def test_launcher_starts_workshop_before_studio_setup(self):
+        source = (Path(__file__).resolve().parents[1] / "run_h3.sh").read_text(encoding="utf-8")
+        self.assertIn('APP="${H3_APP:-studio}"', source)
+        self.assertIn('exec "$PYTHON_BIN" -u -m h3_workshop', source)
+        start = source.index('[[ "$APP" == "workshop" ]] && run_workshop')
+        self.assertLess(start, source.index("setup_h3.py\" --install-dir"))
+        self.assertLess(start, source.index("start_prepare \""))
+
     def test_workshop_storyboard_prepares_everything_but_cannot_generate(self):
         from unittest.mock import patch
 
@@ -283,7 +312,10 @@ class ModelManagerTests(unittest.TestCase):
                              for target in node.targets))
         install = next(node for node in ast.walk(image) if isinstance(node, ast.Call)
                        and isinstance(node.func, ast.Attribute) and node.func.attr == "uv_pip_install")
-        self.assertIn("openai>=3.16.2,<4", [arg.value for arg in install.args if isinstance(arg, ast.Constant)])
+        from h3_requirements import WORKSHOP_REQUIREMENTS
+
+        self.assertEqual(ast.unparse(install.args[0]), "*WORKSHOP_REQUIREMENTS")
+        self.assertIn("openai>=3.16.2,<4", WORKSHOP_REQUIREMENTS)
         # Only inspect the CPU image's local file mounts, not the GPU image's mounts.
         files = next(node for node in ast.walk(tree) if isinstance(node, ast.For)
                      and isinstance(node.iter, ast.Tuple)

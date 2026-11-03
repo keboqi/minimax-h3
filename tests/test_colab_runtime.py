@@ -272,7 +272,7 @@ class InterruptingOutput:
 class ColabLogStreamingTests(unittest.TestCase):
     def setUp(self):
         self.run = load_function("run_colab_launcher", dict(
-            os=os, subprocess=subprocess, signal=signal,
+            os=os, subprocess=subprocess, signal=signal, LAUNCH_APP="workshop",
             ENABLE_CLOUDFLARE_TUNNEL=True, ENABLE_GRADIO_SHARE=False, DRAMA3_CHECKPOINT="fp8",
             PREPARE_MINIMAX_H3=True, PREPARE_DRAMA3=False, PREPARE_QWEN_IMAGE=True,
         ))
@@ -282,6 +282,7 @@ class ColabLogStreamingTests(unittest.TestCase):
         def open_fixture(command, **kwargs):
             self.assertEqual(command, ["bash", "fixture.sh"])
             self.assertEqual(kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            self.assertEqual(kwargs["env"]["H3_APP"], "workshop")
             self.assertEqual(kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
             self.assertEqual(kwargs["env"]["GRADIO_SHARE"], "false")
             self.assertEqual(kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
@@ -439,6 +440,7 @@ class CloudflareTests(unittest.TestCase):
             self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "true")
             self.assertEqual(popen.call_args.kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
             self.assertEqual(popen.call_args.kwargs["env"]["H3_PREPARE_MODELS"], "h3")
+            self.assertEqual(popen.call_args.kwargs["env"]["H3_APP"], "studio")
 
     def test_public_url_defaults_and_overrides(self):
         for environment, expected in (

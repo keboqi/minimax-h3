@@ -392,30 +392,43 @@ class ModelManager:
 TITLE = "Prism Workshop"
 
 
-def build_ui(manager: ModelManager, media=None):
-    """Models, plus the GPU-free Media library and Storyboard when ``media`` is (runtime, store)."""
+def build_ui(manager: ModelManager | None, media=None):
+    """Models, plus the GPU-free Media library and Storyboard when ``media`` is (runtime, store).
+
+    Without a ``manager`` (Colab), there is no Models tab or shared volume to reload.
+    """
     import gradio as gr
 
     with gr.Blocks(title=TITLE) as ui:
-        gr.Markdown(
-            f"# {TITLE}\n"
-            "Prepare models, manage generated media and plan storyboards on the shared Modal "
-            "volume without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
-            "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
-            "annotating or deleting media. Start it again afterwards so it sees the "
-            "latest files. Storyboards prepared here open on the GPU endpoint, which "
-            "generates their scenes."
-        )
+        if manager is None:
+            gr.Markdown(
+                f"# {TITLE}\n"
+                "Manage generated media and plan storyboards without starting ComfyUI or "
+                "loading models. Storyboards prepared here open in the Studio, which "
+                "generates their scenes."
+            )
+        else:
+            gr.Markdown(
+                f"# {TITLE}\n"
+                "Prepare models, manage generated media and plan storyboards on the shared Modal "
+                "volume without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
+                "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
+                "annotating or deleting media. Start it again afterwards so it sees the "
+                "latest files. Storyboards prepared here open on the GPU endpoint, which "
+                "generates their scenes."
+            )
         with gr.Tabs():
-            with gr.Tab("Models"):
-                _build_models(ui, manager)
+            if manager is not None:
+                with gr.Tab("Models"):
+                    _build_models(ui, manager)
             if media is not None:
                 from h3_ui.media_console import build_media_library
 
                 runtime, store = media
                 media_tab = gr.Tab("Media library")
                 library = build_media_library(
-                    media_tab, runtime, store, reload=partial(reload_volume, manager),
+                    media_tab, runtime, store,
+                    reload=None if manager is None else partial(reload_volume, manager),
                 )
                 from h3_ui.storyboard.workshop import build_storyboard_workshop
 
@@ -512,27 +525,16 @@ def _build_models(ui, manager: ModelManager):
     ui.load(refresh_catalog, outputs=inventories, **operation)
 
 
-def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
-    """Serve models and media with the main application's file routes, without ComfyUI."""
-    import threading
-
+def _server(ui, runtime, *, host: str, port: int):
+    """The main application's file routes around ``ui``, without ComfyUI."""
     import uvicorn
 
     from h3_app import server as server_routes
     from h3_app.catalog import (
         AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, UVICORN_WEBSOCKET_OPTIONS, VIDEO_EXTENSIONS,
     )
-    from h3_app.workspace_store import WorkspaceStore
-    from h3_ui.media_console import media_runtime
     from h3_ui.styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 
-    manager = ModelManager(data, volume)
-    runtime = media_runtime(data, script_dir)
-    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
-        folder.mkdir(parents=True, exist_ok=True)
-    # Same state directory as the GPU endpoint's H3_WORKSPACE_DIR.
-    store = WorkspaceStore(Path(data) / "h3-workspace")
-    ui = build_ui(manager, (runtime, store))
     app = server_routes.build_server(
         ui,
         [str(runtime.output_dir.resolve()), str(runtime.outputs_dir.resolve())],
@@ -543,8 +545,85 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
             AUDIO_EXTENSIONS, H3_SETUP_CSS + H3_WORKSPACE_CSS, runtime.gallery_thumbnails_dir,
         ),
     )
-    server = uvicorn.Server(uvicorn.Config(
-        app, host="0.0.0.0", port=port, log_level="warning",
+    return uvicorn.Server(uvicorn.Config(
+        app, host=host, port=port, log_level="warning",
         proxy_headers=True, forwarded_allow_ips="*", **UVICORN_WEBSOCKET_OPTIONS,
     ))
+
+
+def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
+    """Serve models and media on the shared Modal volume, without ComfyUI."""
+    import threading
+
+    from h3_app.workspace_store import WorkspaceStore
+    from h3_ui.media_console import media_runtime
+
+    manager = ModelManager(data, volume)
+    runtime = media_runtime(data, script_dir)
+    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    # Same state directory as the GPU endpoint's H3_WORKSPACE_DIR.
+    store = WorkspaceStore(Path(data) / "h3-workspace")
+    ui = build_ui(manager, (runtime, store))
+    server = _server(ui, runtime, host="0.0.0.0", port=port)
     threading.Thread(target=server.run, name="workshop", daemon=True).start()
+
+
+def main() -> None:
+    """Serve the Studio's media and storyboards on Colab, without models or ComfyUI.
+
+    Uses the Studio's folders and workspace store (run_h3.sh exports COMFY_DIR and
+    GRADIO_OUTPUT_DIR), and the same Gradio Share / Cloudflare public URL settings.
+    """
+    import threading
+
+    from gradio import networking as gradio_networking
+
+    from h3_app.config import RuntimeConfig
+    from h3_app.public_url import launch_cloudflare, public_url_settings, start_gradio_share, stop_cloudflare
+    from h3_app.workspace_store import default_store
+
+    script_dir = Path(__file__).resolve().parent
+    runtime = RuntimeConfig.from_environment(script_dir)
+    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    ui = build_ui(None, (runtime, default_store(runtime.outputs_dir)))
+    port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+    server = _server(ui, runtime, host=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"), port=port)
+    cloudflare_enabled, share_enabled = public_url_settings()
+    cache_dir = script_dir / ".cache" / "cloudflared"
+    stopped = threading.Event()
+    tunnel = []
+
+    def publish():
+        while not server.started:
+            if stopped.wait(0.1):
+                return
+        print(f"[workshop] {TITLE} is ready at http://127.0.0.1:{port}", flush=True)
+        if cloudflare_enabled:
+            tunnel.append(launch_cloudflare(port, cache_dir=cache_dir))
+        if share_enabled:
+            share_url = start_gradio_share(
+                lambda: gradio_networking.setup_tunnel(
+                    local_host="127.0.0.1", local_port=port, share_token=ui.share_token,
+                    share_server_address=getattr(ui, "share_server_address", None),
+                    share_server_tls_certificate=getattr(ui, "share_server_tls_certificate", None),
+                ),
+                stop=stopped,
+            )
+            if share_url is None and not any(tunnel) and not stopped.is_set():
+                print("[workshop] Gradio Share is unavailable; opening a Cloudflare URL instead", flush=True)
+                tunnel.append(launch_cloudflare(port, cache_dir=cache_dir))
+
+    threading.Thread(target=publish, name="workshop-public-url", daemon=True).start()
+    try:
+        # uvicorn handles SIGINT/SIGTERM in the main thread and returns on shutdown.
+        server.run()
+    finally:
+        stopped.set()
+        for process in tunnel:
+            stop_cloudflare(process)
+
+
+if __name__ == "__main__":
+    main()

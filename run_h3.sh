@@ -3,28 +3,37 @@ set -Eeuo pipefail
 
 # MiniMax H3 fixed-default launcher.
 #
-#   bash run_h3.sh [--prepare GROUPS | --no-prepare]
+#   bash run_h3.sh [--prepare GROUPS | --no-prepare] [--workshop]
 #
 # Default models download in the background from the start, alongside setup,
 # ComfyUI and Gradio.
 # GROUPS is a comma-separated list of h3 (MiniMax H3), drama3 (Drama 3) and
 # qwen_image (Qwen Image 2.1), or all / none; H3_PREPARE_MODELS sets the same
 # list. The default is h3. Models left out still download on first use.
+# --workshop (or H3_APP=workshop) starts the Prism Workshop instead: media and
+# storyboards on the same folders, without ComfyUI, models or a GPU.
 
 usage() {
-  sed -n '6,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '6,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 PREPARE_MODELS="${H3_PREPARE_MODELS-h3}"
+APP="${H3_APP:-studio}"
 while (( $# )); do
   case "$1" in
     --prepare) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; PREPARE_MODELS="$2"; shift 2 ;;
     --prepare=*) PREPARE_MODELS="${1#*=}"; shift ;;
     --no-prepare) PREPARE_MODELS="none"; shift ;;
+    --workshop) APP="workshop"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf '[h3-run error] Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+case "${APP,,}" in
+  studio|workshop) APP="${APP,,}" ;;
+  *) printf '[h3-run error] Unknown app: %s (use studio or workshop)
+' "$APP" >&2; exit 2 ;;
+esac
 # Reject a typo now rather than in the background after setup.
 for group in ${PREPARE_MODELS//,/ }; do
   case "${group,,}" in
@@ -364,6 +373,33 @@ EOF
   fi
 }
 
+# The Workshop needs only its CPU stack; it serves the Studio's folders and workspace store.
+run_workshop() {
+  local -a requirements
+  mapfile -t requirements < <("$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from h3_requirements import WORKSHOP_REQUIREMENTS
+
+print("
+".join(WORKSHOP_REQUIREMENTS))
+PY
+  )
+  (( ${#requirements[@]} )) || die "Could not read the Workshop requirements"
+  log "Checking Prism Workshop dependencies"
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --quiet --python "$PYTHON_BIN" "${requirements[@]}"
+  else
+    "$PYTHON_BIN" -m pip install --quiet "${requirements[@]}"
+  fi
+  free_port "$GRADIO_SERVER_PORT"
+  export COMFY_DIR GRADIO_OUTPUT_DIR GRADIO_SERVER_NAME GRADIO_SERVER_PORT
+  log "Starting Prism Workshop (no ComfyUI or models)"
+  cd "$SCRIPT_DIR"
+  exec "$PYTHON_BIN" -u -m h3_workshop
+}
+
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
 ensure_repo_integrity
@@ -376,6 +412,7 @@ if [[ "$PYTHON_BIN" == */.venv/bin/python3 ]]; then
 fi
 log "Runtime Python: $PYTHON_BIN"
 ensure_ffmpeg
+[[ "$APP" == "workshop" ]] && run_workshop
 report_sglang_sleep
 
 # start_prepare LABEL FLAG PYTHON...: run h3_prepare.py in the background (FLAG: --files-only,
