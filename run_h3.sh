@@ -382,8 +382,8 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from h3_requirements import WORKSHOP_REQUIREMENTS
 
-print("
-".join(WORKSHOP_REQUIREMENTS))
+for requirement in WORKSHOP_REQUIREMENTS:
+    print(requirement)
 PY
   )
   (( ${#requirements[@]} )) || die "Could not read the Workshop requirements"

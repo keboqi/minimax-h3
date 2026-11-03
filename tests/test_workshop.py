@@ -254,6 +254,20 @@ class ModelManagerTests(unittest.TestCase):
         self.assertLess(start, source.index("setup_h3.py\" --install-dir"))
         self.assertLess(start, source.index("start_prepare \""))
 
+    def test_launcher_reads_workshop_requirements(self):
+        import subprocess
+        import sys
+
+        from h3_requirements import WORKSHOP_REQUIREMENTS
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "run_h3.sh").read_text(encoding="utf-8")
+        function = source[source.index("run_workshop() {"):]
+        script = function[function.index("<<'PY'\n") + 7:function.index("\nPY\n")]
+        result = subprocess.run([sys.executable, "-", str(root)], input=script,
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), list(WORKSHOP_REQUIREMENTS))
+
     def test_workshop_storyboard_prepares_everything_but_cannot_generate(self):
         from unittest.mock import patch
 

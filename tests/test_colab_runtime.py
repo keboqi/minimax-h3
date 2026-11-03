@@ -208,7 +208,7 @@ class ColabLauncherTests(unittest.TestCase):
 
 
 class ColabLaunchUpdateTests(unittest.TestCase):
-    def run_launch_cell(self, enabled=None, pull_error=None):
+    def run_launch_cell(self, enabled=None, pull_error=None, app=None, g4=True):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ("h3_ui/application.py", "h3_models.py"):
@@ -225,11 +225,17 @@ class ColabLaunchUpdateTests(unittest.TestCase):
                         for target in node.targets
                     ):
                         node.value = ast.Constant(enabled)
+            if app is not None:
+                for node in tree.body:
+                    if isinstance(node, ast.Assign) and any(
+                        isinstance(target, ast.Name) and target.id == "LAUNCH_APP" for target in node.targets
+                    ):
+                        node.value = ast.Constant(app)
             events = Mock()
             events.pull.side_effect = pull_error
             namespace = dict(
                 Path=Path, WORKSPACE_DIR=str(root), COLAB_LAUNCHER="fixture.sh",
-                run_colab_launcher=events.launch,
+                run_colab_launcher=events.launch, COLAB_G4=g4,
             )
             with patch.object(os, "chdir"), patch.object(subprocess, "run", events.pull), contextlib.redirect_stdout(io.StringIO()):
                 if pull_error:
@@ -250,6 +256,12 @@ class ColabLaunchUpdateTests(unittest.TestCase):
             ["git", "-C", workspace, "pull", "--ff-only", "origin", "HEAD"], check=True,
         )
         self.assertEqual([call[0] for call in events.mock_calls], ["pull", "launch"])
+
+    def test_studio_needs_g4_but_workshop_runs_on_cpu(self):
+        with self.assertRaisesRegex(RuntimeError, "needs the Colab G4"):
+            self.run_launch_cell(g4=False)
+        events, _ = self.run_launch_cell(app="workshop", g4=False)
+        events.launch.assert_called_once_with("fixture.sh")
 
     def test_failed_pull_prevents_service_start(self):
         events, _ = self.run_launch_cell(
