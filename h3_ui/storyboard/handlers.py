@@ -33,6 +33,7 @@ REFERENCE_FIELDS = (
     *(f"ref_image_{number}" for number in range(1, 10)),
     *(f"ref_video_{number}" for number in range(1, 4)),
     *(f"ref_audio_{number}" for number in range(1, 4)),
+    *(f"fl2va_audio_{number}" for number in range(1, 4)),
 )
 WRITER_FIELDS = (
     "prompt_writer_backend", "local_prompt_base_model", "local_prompt_max_tokens", "local_prompt_temperature",
@@ -158,8 +159,10 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if media["mode"] == sb.REFERENCES:
             _, cast_images = sb.model.cast_prompt(board, scene)
             pictures = list(zip([*cast_images, *media["ref_images"]], tags))
+        voiced = media["mode"] in (sb.FRAMES, sb.REFERENCES)
         for kind in ("video", "audio"):
-            paths = media[f"ref_{kind}s"] if media["mode"] == sb.REFERENCES else []
+            shown = media["mode"] == sb.REFERENCES if kind == "video" else voiced
+            paths = media[f"ref_{kind}s"] if shown else []
             for i in range(3):
                 players[f"{kind}_preview_{i}"] = gr.update(value=paths[i] if i < len(paths) else None,
                                                            visible=i < len(paths))
@@ -200,7 +203,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
                               info=None if cast_names else "No cast yet: add people under Cast below."),
             "ref_images": media["ref_images"] or None,
             "ref_videos": media["ref_videos"] or None,
-            "ref_audios": media["ref_audios"] or None,
+            "voices_group": gr.update(visible=voiced),
+            "ref_audios": gr.update(
+                value=media["ref_audios"] or None,
+                label=("Voices (up to 3): <Audio 1> to <Audio 3>, for new dialogue with these frames"
+                       if media["mode"] == sb.FRAMES else "Reference audio (up to 3)")),
             "image_previews": gr.update(value=pictures, visible=bool(pictures)),
             **players,
             "tag_hint": "In the prompt: " + ", ".join(tags) if tags else "Tick cast or add an image, video or audio.",
@@ -240,7 +247,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             old_media = sb.scene_media(old_scene)
             for field in sb.MEDIA_FIELDS:
                 if media[field] == old_media[field]:
-                    if field == "last_image":
+                    if field in ("last_image", "ref_audios"):
                         updates[field].pop("value", None)  # its label can still change
                     else:
                         updates.pop(field)

@@ -26,7 +26,8 @@ FLOW, CUT = "flow", "cut"
 TEXT, FRAMES, REFERENCES = "Text to video", "First / last frame", "Reference media"
 MODES = (TEXT, FRAMES, REFERENCES)
 MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_REFERENCE_AUDIOS = 9, 3, 3
-# A scene's own conditioning media, like the MiniMax H3 composer's.
+# A scene's own conditioning media, like the MiniMax H3 composer's. ``ref_audios`` are the
+# scene's voices in either mode: Reference media audio, or the FL2VA voices of a frames scene.
 MEDIA_FIELDS = ("first_image", "last_image", "ref_images", "ref_videos", "ref_audios")
 DONE, OUTDATED, DRAFT = "done", "outdated", "draft"
 STATE_NAMES = {DONE: "Done", OUTDATED: "Out of date", DRAFT: "Not generated"}
@@ -329,6 +330,10 @@ def scene_request_values(board: dict[str, Any], index: int, defaults: dict[str, 
             values[f"ref_video_{number}"] = video
         for number, audio in enumerate(media["ref_audios"], 1):
             values[f"ref_audio_{number}"] = audio
+    elif mode == FRAMES:
+        # FL2VA voices; a continuing scene keeps them with its last frame.
+        for number, audio in enumerate(media["ref_audios"], 1):
+            values[f"fl2va_audio_{number}"] = audio
     return values
 
 

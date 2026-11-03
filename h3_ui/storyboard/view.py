@@ -27,7 +27,7 @@ RENDER_FIELDS = (
     "start_group", "board_group", "storyboard", "scene_id", "profile_summary", "status",
     "scene_list", "scene_heading", "scene_context", "start", "opening_note",
     "mode", "frames_group", "first_image", "first_frame_box", "no_first_note", "last_image",
-    "refs_group", "cast", "ref_images", "ref_videos", "ref_audios", "tag_hint",
+    "refs_group", "cast", "ref_images", "ref_videos", "voices_group", "ref_audios", "tag_hint",
     "image_previews", *(f"{kind}_preview_{i}" for kind in ("video", "audio") for i in range(3)),
     "prompt", "prompt_hint", "title", "seconds", "added_seconds", "checklist", "generate",
     "overlap", "seed", "takes_per_run",
@@ -69,6 +69,7 @@ class StoryboardView:
     cast: gr.CheckboxGroup
     ref_images: gr.File
     ref_videos: gr.File
+    voices_group: gr.Group
     ref_audios: gr.File
     image_previews: gr.Gallery
     reference_players: dict
@@ -246,20 +247,24 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
                         cast = gr.CheckboxGroup([], label="Cast in this scene")
                         ref_images = build_image_file_input(label="Extra images", file_count="multiple",
                                                             file_types=["image"], type="filepath")
-                        with gr.Row():
-                            ref_videos = gr.File(label="Reference videos (up to 3)", file_count="multiple",
-                                                 file_types=["video"], type="filepath")
-                            ref_audios = gr.File(label="Reference audio (up to 3)", file_count="multiple",
-                                                 file_types=["audio"], type="filepath")
+                        ref_videos = gr.File(label="Reference videos (up to 3)", file_count="multiple",
+                                             file_types=["video"], type="filepath")
                         image_previews = gr.Gallery(label="Reference pictures", columns=3, height="auto",
                                                     interactive=False, visible=False)
                         reference_players = {}
-                        for kind, player in (("video", gr.Video), ("audio", gr.Audio)):
-                            with gr.Row():
-                                for i in range(3):
-                                    reference_players[f"{kind}_preview_{i}"] = player(
-                                        label=f"Reference {kind} {i + 1}", interactive=False, visible=False)
+                        with gr.Row():
+                            for i in range(3):
+                                reference_players[f"video_preview_{i}"] = gr.Video(
+                                    label=f"Reference video {i + 1}", interactive=False, visible=False)
                         tag_hint = gr.Markdown()
+                    # Reference media audio, or a frames scene's FL2VA voices: <Audio 1> to <Audio 3> either way.
+                    with gr.Group(visible=False) as voices_group:
+                        ref_audios = gr.File(label="Reference audio (up to 3)", file_count="multiple",
+                                             file_types=["audio"], type="filepath")
+                        with gr.Row():
+                            for i in range(3):
+                                reference_players[f"audio_preview_{i}"] = gr.Audio(
+                                    label=f"Reference audio {i + 1}", interactive=False, visible=False)
                     prompt = gr.Textbox(label="Prompt", lines=4,
                                         placeholder="Describe what happens, the camera and the sound.")
                     with gr.Row(equal_height=True):
@@ -378,6 +383,7 @@ def build_storyboard_view(root, *, gpu: bool = True) -> StoryboardView:
         cast=cast,
         ref_images=ref_images,
         ref_videos=ref_videos,
+        voices_group=voices_group,
         ref_audios=ref_audios,
         image_previews=image_previews, reference_players=reference_players, scene_completed=scene_completed,
         tag_hint=tag_hint,

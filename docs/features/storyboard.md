@@ -51,14 +51,17 @@ mode it runs as. It then offers exactly what that scene can use:
 | | Opening scene / Start fresh | Continue the previous scene |
 |---|---|---|
 | Text to video | Yes | Yes |
-| First / last frame | Both frames | **Last frame only**: it opens on the previous scene's last frames |
+| First / last frame | Both frames, plus up to 3 voices | **Last frame only**: it opens on the previous scene's last frames; up to 3 voices |
 | Reference media | Yes | Yes, marked *recommended* |
 | Prompt and prompt writer | Yes | Yes |
 
 A continuing scene shows "No first frame" with the reason and a pointer to **Start
 fresh**, so a first frame can never clash with the hand-over. Reference media uses the
 storyboard's cast (tick who appears) plus the scene's own images, videos and audio; the
-editor lists which `<Picture n>` each one becomes. **Improve with the prompt writer**
+editor lists which `<Picture n>` each one becomes. A First / last frame scene takes up to
+three voices, like the MiniMax H3 tab's FL2VA voice references: they become `<Audio 1>`
+to `<Audio 3>` for new dialogue with those frames. Both modes keep these clips in the
+scene's audio list, so switching between them keeps the voices. **Improve with the prompt writer**
 uses the writer and keys set in MiniMax H3 in Studio. In Workshop it uses the Storyboard
 page's hosted Prompt writer settings, also used for rewriting the full story.
 

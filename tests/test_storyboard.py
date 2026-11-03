@@ -108,6 +108,7 @@ class StoryboardRuleTests(unittest.TestCase):
         self.assertEqual([values[f"ref_image_{n}"] for n in (1, 2, 3)],
                          ["/cast/o.png", "/cast/mei.png", "/scene/extra.png"])
         self.assertEqual(values["ref_audio_1"], "/scene/voice.wav")
+        self.assertIsNone(values["fl2va_audio_1"])
         self.assertEqual(sb.picture_tags(document, scene),
                          ["Officer = <Picture 1>", "Mei = <Picture 2>", "image 1 = <Picture 3>"])
 
@@ -123,6 +124,10 @@ class StoryboardRuleTests(unittest.TestCase):
         self.assertEqual((values["mode"], values["first_image"], values["last_image"]),
                          ("First / last frame", None, "/scene/last.png"))
         self.assertEqual(sb.runs_as(document, 1), "Last frame")
+        scene["ref_audios"] = ["/scene/v1.wav", "/scene/v2.wav"]
+        values = sb.scene_request_values(document, 1, PROFILE_VALUES, 1)
+        self.assertEqual([values[f"fl2va_audio_{n}"] for n in (1, 2, 3)], ["/scene/v1.wav", "/scene/v2.wav", None])
+        self.assertIsNone(values["ref_audio_1"])  # Frames voices never reach the Ref2VA slots.
         scene["link"] = "cut"
         self.assertEqual(sb.scene_request_values(document, 1, PROFILE_VALUES, 1)["first_image"], "/scene/first.png")
 
@@ -365,6 +370,12 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertIsNone(switched["ref_images"])
         for field in ("image_previews", "video_preview_0", "audio_preview_0"):
             self.assertFalse(switched[field]["visible"])
+        self.service.set_mode("a", storyboard_id, first["id"], sb.FRAMES)
+        frames = self.handlers.render("a", storyboard_id, first["id"])
+        self.assertTrue(frames["voices_group"]["visible"])
+        self.assertIn("<Audio 1>", frames["ref_audios"]["label"])
+        self.assertEqual(frames["audio_preview_0"]["value"], scene["ref_audios"][0])
+        self.assertFalse(frames["video_preview_0"]["visible"])
 
     def test_failed_take_keeps_the_rest_of_the_queue_paused(self):
         storyboard_id = self.make("flow")
