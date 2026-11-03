@@ -48,6 +48,7 @@ class QueueTransportTests(unittest.TestCase):
                 self.assertEqual(socket.receive_json()["status"], 200)
                 self.assertEqual(socket.receive_bytes(), b'data: {"msg":"progress"}\n')
                 self.assertEqual(socket.receive_bytes(), b'\ndata: {"msg":"process_completed"}\n\n')
+                self.assertEqual(socket.receive_json(), {"end": 1000})
                 self.assertEqual(socket.receive()["code"], 1000)
         self.assertEqual(observed, {"session": "fixture", "authorization": "Bearer fixture", "cookie": "browser-owner", "compressed": False})
 
@@ -133,15 +134,17 @@ class QueueTransportTests(unittest.TestCase):
                 socket.send_json({"stream": key, "offset": len(b"data: one\n\n")})
                 self.assertEqual(socket.receive_json()["status"], 200)
                 received = b""
-                while (message := socket.receive())["type"] == "websocket.send":
+                while (message := socket.receive()).get("bytes") is not None:
                     received += message["bytes"]
-                self.assertEqual(message["code"], 1000)
+                self.assertEqual(message["text"], '{"end":1000}')
+                self.assertEqual(socket.receive()["code"], 1000)
         self.assertEqual(received, b"data: two\n\ndata: three\n\n")
 
     def test_resume_without_a_live_stream_is_refused(self):
         with TestClient(self.app) as client:
             with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
                 socket.send_json({"stream": "b" * 32, "offset": 12})
+                self.assertEqual(socket.receive_json(), {"end": 4404})
                 self.assertEqual(socket.receive()["code"], 4404)
 
     def test_dropped_stream_closes_once_the_resume_window_passes(self):
@@ -156,6 +159,7 @@ class QueueTransportTests(unittest.TestCase):
             self.assertTrue(cleaned.wait(timeout=2))
             with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
                 socket.send_json({"stream": "c" * 32, "offset": len(b"data: first\n\n")})
+                self.assertEqual(socket.receive_json(), {"end": 4404})
                 self.assertEqual(socket.receive()["code"], 4404)
 
     def test_browser_close_ends_a_resumable_stream_at_once(self):

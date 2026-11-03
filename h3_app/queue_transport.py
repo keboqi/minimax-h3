@@ -219,6 +219,19 @@ def _http_scope(socket, authorization):
     return scope
 
 
+async def _end(socket, code):
+    """Close with ``code``, stated in the stream first.
+
+    Some proxies (Modal's) replace a close frame with a reserved code, so the browser
+    sees every close as a dropped connection; it reads the end from this message.
+    """
+    try:
+        await socket.send_json({"end": code})
+    except _SOCKET_ERRORS:
+        return
+    await socket.close(code=code)
+
+
 async def relay_queue_stream(app, socket: WebSocket) -> None:
     # Browser cookies must not grant a different website access to this stream.
     origin = urlsplit(socket.headers.get("origin", ""))
@@ -230,7 +243,7 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
     try:
         options = await asyncio.wait_for(socket.receive_json(), timeout=SPARE_SECONDS)
         if not isinstance(options, dict):
-            await socket.close(code=1008)
+            await _end(socket, 1008)
             return
         authorization = options.get("authorization")
         key = options.get("stream")
@@ -240,21 +253,21 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
             or (key is not None and not (isinstance(key, str) and _STREAM_ID.fullmatch(key)))
             or type(offset) is not int or offset < 0
         ):
-            await socket.close(code=1008)
+            await _end(socket, 1008)
             return
         target = (socket.url.path, socket.url.query)
         stream = _STREAMS.get(key) if key else None
         if stream is None:
             if offset:
                 # The stream already ended or its resume window passed.
-                await socket.close(code=4404)
+                await _end(socket, 4404)
                 return
             stream = _Stream(key, target)
             if key:
                 _STREAMS[key] = stream
             stream.task = asyncio.create_task(stream.run(app, _http_scope(socket, authorization)))
         elif stream.target != target or not stream.base <= offset <= stream.end:
-            await socket.close(code=1008)
+            await _end(socket, 1008)
             return
         stream.attach(socket)
         delivery = asyncio.create_task(stream.deliver(socket, offset))
@@ -264,9 +277,9 @@ async def relay_queue_stream(app, socket: WebSocket) -> None:
         code = delivery.result() if delivery in done else None
         if code is not None:
             stream.close()
-            await socket.close(code=code)
+            await _end(socket, code)
         elif stream.socket is not socket:
-            await socket.close(code=4000)  # resumed on a newer socket
+            await _end(socket, 4000)  # resumed on a newer socket
         else:
             dropped = listener.result() if listener in done else 1006
             # Only the browser's own close (1000) ends the stream; a proxy drop can resume.

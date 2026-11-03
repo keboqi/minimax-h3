@@ -93,10 +93,24 @@
         current.onmessage = (event) => {
           if (finished || current !== socket) return;
           if (typeof event.data === "string") {
+            let metadata;
+            try { metadata = JSON.parse(event.data); } catch (error) { fail(error); return; }
+            // The server states its close here: a proxy can turn the close frame itself into
+            // a dropped connection, which would resume a finished stream and fail it.
+            if ("end" in metadata) {
+              if (metadata.end === 1000 && responded) {
+                finished = true;
+                cleanup();
+                controller.close();
+                current.close(1000);
+              } else if (metadata.end !== 4000) {
+                fail(new TypeError("Generation progress connection closed unexpectedly"));
+              }
+              return;
+            }
             // A resumed stream repeats its response metadata; the response already exists.
             if (responded) return;
             try {
-              const metadata = JSON.parse(event.data);
               const response = new Response(body, {
                 status: metadata.status,
                 headers: {"Content-Type": metadata.content_type},
