@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from h3_app import storyboard as sb
-from h3_app.catalog import UI_DEFAULTS
+from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, UI_DEFAULTS
 from h3_app.config import RuntimeConfig
 from h3_app.contracts import GENERATION_FIELDS
 from h3_app.generation.results import GenerationUpdate
@@ -225,6 +225,41 @@ class StoryboardPageTests(unittest.TestCase):
         done = self.client.post(self.scene_url(board, 0, "/use-take"), json={"take_id": other, "confirmed": True}).json()
         self.assertEqual(done["scenes"][0]["in_use"], other)
         self.assertEqual(done["scenes"][1]["state"], "outdated")
+
+    def enhancing_handlers(self):
+        """Handlers whose writer checks each call against the real one and keeps its settings."""
+        import inspect
+        from dataclasses import replace
+
+        from h3_ui.prompt_controller import PromptController
+
+        signature = inspect.signature(PromptController.enhance_h3_prompt)
+        calls = []
+
+        def writer(**kwargs):
+            signature.bind(None, **kwargs)
+            calls.append(kwargs)
+            return "Better prompt", "Prompt enhanced."
+
+        self.handlers.services = replace(self.handlers.services, enhance_prompt=writer)
+        return calls
+
+    def test_prompt_writer_works_before_any_writer_settings_are_chosen(self):
+        calls = self.enhancing_handlers()
+        board = self.create()
+        response = self.client.post(self.scene_url(board, 0, "/enhance"), json={"writer": {}})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["scenes"][0]["prompt"], "Better prompt")
+        self.assertEqual((calls[0]["backend"], calls[0]["gemini_model"]), ("Gemini", DEFAULT_GEMINI_PROMPT_MODEL))
+
+    def test_prompt_writer_uses_the_h3_tabs_settings_over_the_pages(self):
+        calls = self.enhancing_handlers()
+        board = self.create()
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        self.handlers.capture_settings(owner, {}, {"prompt_writer_backend": "OpenAI-compatible", "gemini_api_key": ""})
+        self.client.post(self.scene_url(board, 0, "/enhance"),
+                         json={"writer": {"prompt_writer_backend": "Gemini", "gemini_api_key": "page-key"}})
+        self.assertEqual((calls[0]["backend"], calls[0]["gemini_api_key"]), ("OpenAI-compatible", "page-key"))
 
     def test_interrupt_reaches_the_storyboard_family(self):
         board = self.create()

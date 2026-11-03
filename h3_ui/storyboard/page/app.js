@@ -436,7 +436,7 @@
         "ref_audios", {multiple: true}),
     ];
     const writing = [
-      textField("Prompt", "prompt", {rows: 6, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+      textField("Prompt", "prompt", {rows: 14, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
       h("div", {className: "row"},
         h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
         state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm")),

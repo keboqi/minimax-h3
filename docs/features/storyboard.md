@@ -71,8 +71,9 @@ editor lists which `<Picture n>` each one becomes. A First / last frame scene ta
 three voices, like the MiniMax H3 tab's FL2VA voice references: they become `<Audio 1>`
 to `<Audio 3>` for new dialogue with those frames. Both modes keep these clips in the
 scene's audio list, so switching between them keeps the voices. **Improve with the prompt writer**
-uses the writer and keys set in MiniMax H3 in Studio. In Workshop it uses the Storyboard
-page's hosted Prompt writer settings, also used for rewriting the full story.
+uses the writer and keys set in MiniMax H3 in Studio, with the Storyboard page's hosted
+Prompt writer settings filling anything left blank. In Workshop it uses the page's settings,
+also used for rewriting the full story, and works from their defaults until you change them.
 
 The inspector lists anything missing: a prompt, the frame the mode needs, a
 reference, or a previous scene that has no take yet. **Generate this scene** stays

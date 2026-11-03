@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from h3_app import storyboard as sb
+from h3_app.catalog import (
+    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_PROMPT_WRITER_BACKEND,
+)
 from h3_app.errors import H3Error
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB
@@ -33,8 +36,10 @@ WRITER_FIELDS = (
     "local_prompt_top_p", "local_prompt_greedy", "local_prompt_seed", "gemini_prompt_model", "gemini_api_key",
     "openai_api_key", "openai_model", "openai_base_url",
 )
-# What the page's own hosted writer settings leave out.
-LOCAL_WRITER_DEFAULTS = {
+# What a writer setting is when neither the MiniMax H3 tab nor the page gave one.
+WRITER_DEFAULTS = {
+    "prompt_writer_backend": DEFAULT_PROMPT_WRITER_BACKEND, "gemini_prompt_model": DEFAULT_GEMINI_PROMPT_MODEL,
+    "gemini_api_key": "", "openai_api_key": "", "openai_model": DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": None,
     "local_prompt_base_model": "", "local_prompt_max_tokens": 512, "local_prompt_temperature": 0.7,
     "local_prompt_top_p": 0.9, "local_prompt_greedy": False, "local_prompt_seed": 0,
 }
@@ -121,7 +126,10 @@ class StoryboardHandlers(StoryboardApiHandlers):
         board = self.service.load(owner, storyboard_id)
         index = self.service.scene_index(board, scene_id)
         values = sb.scene_request_values(board, index, self.services.request_defaults(), seed=0)
-        settings = {**LOCAL_WRITER_DEFAULTS, **(self.settings.get(owner, {}).get("writer") or writer or {})}
+        settings = dict(WRITER_DEFAULTS)
+        # The MiniMax H3 tab's choices win; the page's fill what it left blank.
+        for chosen in (writer or {}, self.settings.get(owner, {}).get("writer") or {}):
+            settings.update({name: value for name, value in chosen.items() if value not in (None, "")})
         prompt, status = self.services.enhance_prompt(
             prompt=values["prompt"], backend=settings["prompt_writer_backend"],
             local_base_model=settings["local_prompt_base_model"],
