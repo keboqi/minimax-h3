@@ -165,6 +165,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (getattr(engine_actions, "drama3_speaker_group_size", None) or (lambda _group: None))("Global"),
         )
         bind_drama3(drama3_components, engine_actions)
+        if services.soundstage_workspace is not None:
+            from h3_ui.drama3.projects import bind_projects
+            bind_projects(drama3_components, *services.soundstage_workspace, demo.load)
         storyboard_view = None
         if app_views.storyboard is not None and services.storyboard_handlers is not None:
             from h3_ui.storyboard.bindings import bind_storyboard

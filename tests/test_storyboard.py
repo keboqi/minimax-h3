@@ -230,6 +230,7 @@ class StoryboardServiceTests(unittest.TestCase):
 
     def test_branches_share_takes_and_deleting_one_keeps_shared_files(self):
         storyboard_id = self.service.create("a", "Chase", profile())
+        self.assertFalse(self.service.list("a")[0]["generated"])
         document = self.service.load("a", storyboard_id)
         scene_id = document["scenes"][0]["id"]
         video = self.runtime.output_dir / "h3/.storyboard/x/take.mp4"
@@ -239,6 +240,7 @@ class StoryboardServiceTests(unittest.TestCase):
         self.service.record_take("a", storyboard_id, scene_id, "t1", video=video, latents={"latent": latent},
                                  seed=3, inputs=sb.scene_inputs(document, 0))
         self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done"])
+        self.assertTrue(self.service.list("a")[0]["generated"])
         _, version = self.service.save_version("a", storyboard_id, "First")
         branch = self.service.branch("a", storyboard_id, version)
         self.assertEqual(self.service.load("a", branch)["scenes"][0]["in_use"], "t1")

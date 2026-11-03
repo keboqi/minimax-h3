@@ -106,7 +106,7 @@ class GenerationHandlers:
             tools.stop()
 
     def preload_drama3_models(self, voice_engine, script_mode="Basic"):
-        """Load what Auto needs while the writer works: the voice design engine, Stable Audio, then SGLang-Omni.
+        """Load what Auto needs before voice generation: the voice design engine, Stable Audio, then SGLang-Omni.
 
         Stable Audio loads only for Advanced scripts. Loaded models are kept and never
         unloaded to make room; a model that fails or does not fit is left to the step
@@ -266,5 +266,12 @@ class GenerationHandlers:
                  description, duration)
                 for name, audio, description, duration in request.sounds
             ))
-        yield from run_drama3(request, self._generation_services(), self._runtime_config(),
-                              progress=progress, free_gpu=self.free_comfy_vram)
+        project = settings[names_end + 1] if len(settings) > names_end + 1 else ""
+        for update in run_drama3(request, self._generation_services(), self._runtime_config(),
+                                 progress=progress, free_gpu=self.free_comfy_vram):
+            if project and update.output:
+                from h3_app.jobs import JOBS
+                result = update.output.get("value") if isinstance(update.output, dict) else update.output
+                if result:
+                    JOBS.store.mark_soundstage_generated(project, result)
+            yield update

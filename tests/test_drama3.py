@@ -275,6 +275,24 @@ class Drama3WriterTests(unittest.TestCase):
 
 
 class Drama3AppInputTests(unittest.TestCase):
+    def test_project_is_marked_only_when_a_render_returns_audio(self):
+        from h3_app.generation.results import GenerationUpdate, fresh_audio
+        from h3_app.jobs import JOBS
+        from h3_ui.application import drama3_handlers
+
+        values = ["Mia: Hello.", *(["Upload a clip", None, ""] * 16), 1.0, 0.9, 30, 8192, 16, 0, "Basic",
+                  *([None, None, "", "", 5] * 16), "Title", *([""] * 16), False, "Chapter one"]
+        updates = [GenerationUpdate(None, "Working"), GenerationUpdate(fresh_audio("speech.mp3"), "Done")]
+        with patch.object(JOBS, "store") as store, patch.object(drama3_handlers, "_runtime_config"), \
+                patch.object(drama3_handlers, "_generation_services"), \
+                patch("h3_app.generation.drama3.validate_drama3"), \
+                patch("h3_app.generation.drama3.generate_drama3", return_value=updates):
+            frames = drama3_handlers.generate_drama3(*values)
+            next(frames)
+            store.mark_soundstage_generated.assert_not_called()
+            next(frames)
+            store.mark_soundstage_generated.assert_called_once_with("Chapter one", "speech.mp3")
+
     def test_slot_values_map_to_speakers_with_absolute_staged_paths(self):
         from h3_ui import application
 
@@ -777,13 +795,13 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
 
         gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
         # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs + 1 title
-        # + 16 speaker names + 1 word_timing = 154
-        self.assertEqual(len(gen_drama.job_input_names), 154)
+        # + 16 speaker names + word_timing and project_name = 155
+        self.assertEqual(len(gen_drama.job_input_names), 155)
         gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
-        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 154)
-        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 155)
+        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 155)
+        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 156)
         gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 
@@ -900,7 +918,7 @@ class Drama3AutoTests(unittest.TestCase):
                 self.assertFalse(stop["interactive"])
                 self.assertTrue(auto["interactive"])
 
-    def test_preload_runs_on_the_gpu_queue_beside_the_rewrite(self):
+    def test_auto_starts_voices_after_script_sync_and_reuses_the_applied_script(self):
         import gradio as gr
         from h3_ui.application import _drama3_actions
         from h3_ui.drama3.view import build_drama3_view
@@ -909,11 +927,32 @@ class Drama3AutoTests(unittest.TestCase):
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
             bind_drama3(view, _drama3_actions())
-        preloads = [fn for fn in demo.fns.values()
-                    if [block._id for block in fn.outputs] == [view.auto_preload_status._id]]
-        self.assertEqual(len(preloads), 1)
-        self.assertEqual(preloads[0].concurrency_id, "h3-gpu")
-        self.assertEqual([block._id for block in preloads[0].inputs], [view.voice_engine._id, view.script_mode._id])
+        deps = demo.get_config_file()["dependencies"]
+        voice_admissions = [dep for dep in deps if dep["trigger_only_on_success"]
+                            and getattr(demo.fns[dep["id"]].fn, "__name__", "") == "accept"
+                            and view.voice_engine in demo.fns[dep["id"]].inputs]
+        self.assertEqual(len(voice_admissions), 1)
+        previous = demo.fns[voice_admissions[0]["trigger_after"]]
+        self.assertEqual(previous.fn.__name__, "sync_drama3_script_sounds")
+        prepare = next(fn for fn in demo.fns.values() if fn.inputs and fn.inputs[0] is view.prepared_script)
+        values = [block.value for block in prepare.inputs]
+        values[1] = "Mia: Hello."
+        values[0] = (values[1], view.script_mode.value)
+        updates = prepare.fn(*values)
+        self.assertEqual(updates[1], "Using the prepared script.")
+        self.assertEqual(updates[0], gr.skip())
+
+    def test_script_preview_shows_speakers_parallel_sound_and_no_player(self):
+        from h3_ui.drama3.result_view import script_preview_html
+
+        script = '<parallel>\nMia: Hello.\n<sound name="Rain">light rain</sound>\n</parallel>'
+        panel = script_preview_html(script, drama3_writer.DRAMA3_SCRIPT_ADVANCED)
+        for expected in ("Estimated timing", "Mia", "Hello.", "Rain", "h3-drama3-stage-map", "data-preview"):
+            self.assertIn(expected, panel)
+        self.assertNotIn("<audio", panel)
+        basic = script_preview_html(script, drama3_writer.DRAMA3_SCRIPT_BASIC)
+        self.assertIn("Hello.", basic)
+        self.assertNotIn("Rain", basic)
 
     def test_preload_loads_the_voice_engine_then_sounds_then_sglang_and_survives_failures(self):
         from h3_app import audio_tools

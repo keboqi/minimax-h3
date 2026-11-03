@@ -159,7 +159,7 @@ class StoryboardApiHandlers:
     def storyboard_list(self, request: gr.Request = None):
         """Every storyboard on the deployment, newest first."""
         owner = require_owner(request)
-        return [{"id": row["id"], "name": row["name"], "updated": row["updated"]} for row in self.service.list(owner)]
+        return [{"id": row["id"], "name": row["name"], "updated": row["updated"], "generated": bool(row["generated"])} for row in self.service.list(owner)]
 
     def storyboard_details(self, storyboard_id, request: gr.Request = None):
         """A storyboard's scenes: how each starts, its state and what it still needs."""

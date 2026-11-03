@@ -19,6 +19,8 @@ from h3_app.prompt_writers.drama3 import (
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 from ..result_views import soundstage_panel
+from .projects import ProjectControls
+from .result_view import script_preview_html
 from ..prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
 from ..step_cards import StepStrip, card_heading, intro, step_strip
 from h3_ui.engines.controls import (
@@ -86,6 +88,7 @@ class Drama3SoundSlot:
 
 @dataclass(frozen=True)
 class Drama3View:
+    project: ProjectControls
     text: gr.Textbox
     speaker_mode: gr.Radio
     writer: RemotePromptWriterControls
@@ -130,10 +133,10 @@ class Drama3View:
     stop_sounds: gr.Button | None = None
     skip_existing_sounds: gr.Checkbox | None = None
     sound_status: gr.Markdown | None = None
+    prepared_script: gr.State | None = None
     auto: gr.Button | None = None
     stop_auto: gr.Button | None = None
     auto_status: gr.Markdown | None = None
-    auto_preload_status: gr.Markdown | None = None
     auto_sound_slots: gr.Number | None = None
     auto_save_speakers: gr.Checkbox | None = None
     speaker_group: gr.Dropdown | None = None
@@ -485,12 +488,14 @@ def _sound_slot(index, names):
     )
 
 
-def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",), group_size=None):
+def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",), group_size=None, *, gpu=True):
     root.elem_classes = [*root.elem_classes, "h3-song", "h3-drama3"]
     with root:
-        intro("Soundstage · powered by Drama 3", "Turn any text into an audio drama.",
-              "Write and direct a script, cast the voices and sounds, speak it, then review every line. "
-              "Or paste any text and let <strong>Auto</strong> do every step.", "AUDIO DRAMA")
+        detail = ("Write and direct a script, cast the voices and sounds, speak it, then review every line. "
+                  "Or paste any text and let <strong>Auto</strong> do every step." if gpu else
+                  "Write, cast and preview your script here. Save the project, then load it in Studio to generate audio.")
+        intro("Soundstage · powered by Drama 3", "Turn any text into an audio drama.", detail, "AUDIO DRAMA")
+        project = ProjectControls.build()
         steps = step_strip(STEPS_ID)
         with steps.tabs:
             with steps.step(SCRIPT, "Script"):
@@ -557,6 +562,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                  "rejected and your text is kept.",
                         )
                         enhance = gr.Button("Rewrite script", variant="primary", elem_classes=["h3-primary-action"])
+                        prepared_script = gr.State(None)
                         enhance_status = gr.Textbox(label="Writer status", lines=2, interactive=False)
                         with gr.Accordion("Writing service", open=False):
                             writer = build_remote_prompt_writer_controls(GEMINI_PROMPT_MODELS,
@@ -572,9 +578,15 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
                                                       placeholder='{"script": "Mia: ...", "speakers": [{"speaker_id": 0, "name": "Mia", ...}]}')
                             apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
-                        steps.button("Auto: rewrite, voice, sound and speak →", SPEAK, press=AUTO_ID,
+                        preview = gr.Button("Preview script without audio", size="sm")
+                        preview_panel = soundstage_panel()
+                        preview.click(lambda script, mode: gr.update(value=script_preview_html(script, mode), visible=True),
+                                      inputs=[text, script_mode], outputs=preview_panel, **QUIET)
+                        gr.on([text.change, script_mode.change], lambda: gr.update(visible=False),
+                              outputs=preview_panel, **QUIET)
+                        auto_shortcut = steps.button("Auto: rewrite, voice, sound and speak →", SPEAK, press=AUTO_ID,
                                      classes=("h3-song-skip",))
-                        gr.Markdown("**Auto** does every step with the settings on Speak; follow it there.",
+                        auto_hint = gr.Markdown("**Auto** does every step with the settings on Speak; follow it there.",
                                     elem_classes=["h3-song-hint"])
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("Next: cast & sounds →", CAST, variant="primary")
@@ -646,7 +658,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 add_sound = gr.Button("Add sound", size="sm")
                                 remove_sound = gr.Button("Remove last sound", size="sm")
                     with gr.Column(scale=2, min_width=300, elem_classes=STAGE):
-                        card_heading("Prepare voices & sounds",
+                        prepare_heading = card_heading("Prepare voices & sounds",
                                      "Generate all speaker voices and the sounds for an Advanced script in one job. "
                                      "Each panel also has its own generation button.")
                         voice_engine = gr.Radio(
@@ -670,8 +682,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             prepare_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Script", SCRIPT)
-                            steps.button("Next: speak →", SPEAK, variant="primary")
-            with steps.step(SPEAK, "Speak"):
+                            next_speak = steps.button("Next: speak →", SPEAK, variant="primary")
+            with steps.step(SPEAK, "Speak") as speak_tab:
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
                     with gr.Column(scale=1, min_width=320, elem_classes=["h3-composer"]):
                         card_heading("How it should sound", "Unchanged lines reuse their saved takes, so speaking "
@@ -704,7 +716,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                      "runs on.")
                         with gr.Column(elem_classes=["h3-drama3-auto"]):
                             gr.HTML('<div class="h3-drama3-auto-heading"><strong>Auto</strong>'
-                                    '<p>Rewrites the script, generates every voice (and every sound in Advanced), '
+                                    '<p>Reuses the applied rewrite or rewrites the current script, '
+                                    'generates every voice (and every sound in Advanced), '
                                     'then speaks it with these settings.</p></div>')
                             with gr.Row(elem_classes=["h3-generation-buttons"]):
                                 auto = gr.Button("Auto: rewrite, voice, sound and speak", size="sm",
@@ -714,8 +727,6 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 info="After the voices are generated, Auto saves them like Save all speakers.")
                             auto_status = gr.Markdown("Paste any text on Script, pick a script mode, then run Auto.",
                                                       elem_classes=["h3-drama3-note"])
-                            # Models Auto loads on the GPU while the writer rewrites the script.
-                            auto_preload_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                             auto_sound_slots = gr.Number(0, precision=0, visible=False)
                     with gr.Column(scale=1, min_width=320, elem_classes=STAGE):
                         card_heading("Speak it", "Every line goes out with its speaker's voice; the mix adds "
@@ -740,7 +751,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         ([, preset]) => preset.every((value, index) => value === values[index]))?.[0] ?? null""",
                     inputs=sampling_controls, outputs=sampling_preset, **QUIET,
                 )
-            with steps.step(REVIEW, "Review lines"):
+            with steps.step(REVIEW, "Review lines") as review_tab:
                 card_heading("Review every line",
                              "Click a line to hear its take. Regenerate one you don't like, or remix after "
                              "changing sounds or effects. Lines appear here once speech is generated.")
@@ -773,7 +784,17 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                 with gr.Row(elem_classes=["h3-song-step-nav"]):
                     steps.button("← Speak", SPEAK)
                     steps.button("Generate speech again", SPEAK, press=GENERATE_ID)
+    if not gpu:
+        for control in (speak_tab, review_tab, auto_shortcut, auto_hint, next_speak, prepare_cast,
+                        stop_prepare_cast, generate_voices, stop_voices, generate_sounds, stop_sounds,
+                        asr_model, library_open, prepare_heading):
+            control.visible = False
+        for slot in (*voices, *sounds):
+            slot.generate.visible = slot.stop.visible = False
+        for slot in voices:
+            slot.transcribe.visible = False
     return Drama3View(
+        project=project,
         text=text,
         speaker_mode=speaker_mode,
         writer=writer,
@@ -821,10 +842,10 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         stop_sounds=stop_sounds,
         skip_existing_sounds=skip_existing_sounds,
         sound_status=sound_status,
+        prepared_script=prepared_script,
         auto=auto,
         stop_auto=stop_auto,
         auto_status=auto_status,
-        auto_preload_status=auto_preload_status,
         auto_sound_slots=auto_sound_slots,
         auto_save_speakers=auto_save_speakers,
         speaker_group=speaker_group,

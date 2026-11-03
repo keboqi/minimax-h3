@@ -345,6 +345,8 @@ endpoint or ComfyUI. Its **Models** tab prepares checkpoints and LoRAs; its
 **Storyboard** tab prepares scenes and cast, rewrites a story into H3 prompts, and
 enhances individual prompts using Gemini or an OpenAI-compatible service. Open the
 shared storyboard in Studio to apply H3 settings and generate its scenes.
+The **Sound Stage** tab lets you prepare and preview a script, cast, and sound effects on CPU.
+Save the project by name, then load it in Studio to generate voices, sound effects, and speech.
 
 The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
 300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses

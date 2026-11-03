@@ -80,9 +80,9 @@ class SpeakerHandlers:
         from h3_app.drama3 import speakers as drama3_speakers
         from h3_ui.drama3.controls import UPLOAD_VOICE
         if not name or name == UPLOAD_VOICE:
-            return (gr.update(visible=True), gr.update(value="", interactive=True),
+            return (gr.update(visible=True), gr.update(interactive=True),
                     gr.update(visible=True), gr.update(visible=False), "", gr.skip(),
-                    gr.update(interactive=True), gr.skip(), None, gr.update(value=None, visible=False))
+                    gr.update(interactive=True), gr.skip(), gr.skip(), gr.update(value=None, visible=False))
         try:
             saved = drama3_speakers.load_speaker(name, self._runtime_config())
         except H3Error as exc:

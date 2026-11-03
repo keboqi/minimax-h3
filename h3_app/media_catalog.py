@@ -45,6 +45,7 @@ class MediaCatalog:
             or ".processing" in path.parts
             # Storyboard takes stay in their storyboard; only exports reach Media.
             or ".storyboard" in path.parts
+            or ".soundstage" in path.parts
             or path.is_relative_to(runtime.gallery_thumbnails_dir.resolve())
             or not any(path.is_relative_to(root) for root in self.roots)
         ):

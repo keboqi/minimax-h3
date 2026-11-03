@@ -1,4 +1,4 @@
-"""Durable workspace metadata. Request content is saved only in storyboards.
+"""Durable workspace metadata and named production projects.
 
 SQLite is the authority for jobs, ownership, storyboards and asset annotations. The
 media listing is a rebuildable index; rebuilding it never discards annotations.
@@ -75,6 +75,8 @@ class WorkspaceStore:
                 CREATE TABLE IF NOT EXISTS storyboards (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
                     created REAL NOT NULL, updated REAL NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS soundstage_projects (
+                    name TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT, updated REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS storyboards_owner ON storyboards(owner, updated);
                 CREATE INDEX IF NOT EXISTS assets_kind_available_modified ON assets(kind, available, modified DESC);
                 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
@@ -247,7 +249,8 @@ class WorkspaceStore:
         with self.connect() as db:
             return [
                 dict(row) for row in db.execute(
-                    "SELECT id, name, updated FROM storyboards ORDER BY updated DESC"
+                    "SELECT id, name, updated, EXISTS(SELECT 1 FROM json_each(payload, '$.takes')) "
+                    "AS generated FROM storyboards ORDER BY updated DESC"
                 )
             ]
 
@@ -261,6 +264,28 @@ class WorkspaceStore:
     def delete_storyboard(self, owner, storyboard_id):
         with self.connect() as db:
             db.execute("DELETE FROM storyboards WHERE id=?", (storyboard_id,))
+
+    def soundstage_projects(self):
+        with self.connect() as db:
+            return [(row["name"], bool(row["result"])) for row in db.execute(
+                "SELECT name, result FROM soundstage_projects ORDER BY updated DESC")]
+
+    def save_soundstage_project(self, name, payload):
+        with self.connect() as db:
+            db.execute("INSERT INTO soundstage_projects(name, payload, updated) VALUES (?, ?, ?) "
+                       "ON CONFLICT(name) DO UPDATE SET payload=excluded.payload, updated=excluded.updated",
+                       (name, json.dumps(payload), time.time()))
+
+    def soundstage_project(self, name):
+        with self.connect() as db:
+            row = db.execute("SELECT payload, result FROM soundstage_projects WHERE name=?", (name,)).fetchone()
+        if row is None:
+            raise ValueError("Select a saved Sound Stage project.")
+        return json.loads(row["payload"]), row["result"]
+
+    def mark_soundstage_generated(self, name, result):
+        with self.connect() as db:
+            db.execute("UPDATE soundstage_projects SET result=?, updated=? WHERE name=?", (str(result), time.time(), name))
 
     def index_asset(self, path, kind, metadata=None):
         path = Path(path).resolve()

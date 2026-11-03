@@ -98,7 +98,8 @@ class StoryboardHandlers(StoryboardApiHandlers):
 
     # Rendering -------------------------------------------------------------
     def choices(self, owner):
-        return [(row["name"], row["id"]) for row in self.service.list(owner)]
+        return [(row["name"] + (" · Generated" if row["generated"] else ""), row["id"])
+                for row in self.service.list(owner)]
 
     def render(self, owner, storyboard_id, scene_id=None, status="", *, previous_scene_id=None) -> dict[str, Any]:
         choices = self.choices(owner)

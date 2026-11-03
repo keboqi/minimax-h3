@@ -1068,6 +1068,7 @@ def build_ui() -> gr.Blocks:
             drama3_actions=_drama3_actions(),
             dubbing_actions=dubbing_handlers,
             engine_deps=_engine_deps(),
+            soundstage_workspace=(JOBS.store, OUTPUT_DIR),
             storyboard_handlers=_storyboard_handlers(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,

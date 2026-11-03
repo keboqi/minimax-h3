@@ -53,6 +53,7 @@ DRAMA3_SUBTITLES_JS = """
     return result;
   };
   const playerFor = (box) => {
+    if (box.dataset.preview !== undefined) return null;
     const id = box.dataset.media, duration = Number(box.dataset.duration);
     let found = null;
     for (const element of media) {
@@ -65,7 +66,7 @@ DRAMA3_SUBTITLES_JS = """
   };
   const sync = () => {
     for (const box of document.querySelectorAll(".h3-drama3-subtitles")) {
-      if (!box.offsetParent) continue;
+      if (!box.offsetParent || box.dataset.preview !== undefined) continue;
       const player = playerFor(box);
       const time = player ? player.currentTime : -1;
       const lines = [...box.querySelectorAll("li")];
@@ -206,6 +207,46 @@ def _stage_html(tones):
             '<span class="h3-drama3-stage-side" aria-hidden="true">R</span></div></div>')
 
 
+def script_preview_html(script: str, script_mode: str) -> str:
+    """Estimate a silent timeline from the same script tree used for speech generation."""
+    from h3_app.drama3.serving.planner import expected_seconds
+    from h3_app.drama3.serving.tree import (
+        ParallelNode, PauseNode, SoundNode, SpeechNode, parse_drama3_tree, strip_drama3_sound_tags,
+    )
+    from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_BASIC
+
+    chunks, sounds = [], []
+
+    def place(node, start, stage):
+        if isinstance(node, PauseNode):
+            return max(0, start + node.seconds)
+        if isinstance(node, SoundNode):
+            end = start + node.duration
+            sounds.append(dict(name=node.name or node.description, loop=node.loop, start=start, end=end))
+            return end
+        if isinstance(node, SpeechNode):
+            for turn in node.turns:
+                end = start + max(0.1, expected_seconds(turn.text))
+                chunks.append(dict(name=turn.speaker, text=turn.text, start=start, end=end, pan=stage.get(turn.speaker)))
+                start = end
+            return start
+        if isinstance(node, ParallelNode):
+            staging = {**stage, **dict(node.stage)}
+            return max((place(child, start, staging) for child in node.children), default=start)
+        for child in node.children:
+            start = place(child, start, stage)
+        return start
+
+    if script_mode == DRAMA3_SCRIPT_BASIC:
+        script = strip_drama3_sound_tags(script)
+    duration = place(parse_drama3_tree(script), 0, {})
+    # A trailing overlap can move the cursor behind the end of an earlier clip.
+    duration = max(duration, max((item["end"] for item in chunks + sounds), default=0))
+    panel = subtitles_html(dict(chunks=chunks, sounds=sounds, duration=duration), None)
+    return ("<p>Script preview · Estimated timing</p>" + panel if panel
+            else "<p>Add a spoken line to preview the script.</p>")
+
+
 def subtitles_html(settings: dict, output) -> str:
     """The rich view for a result with these snapshot ``settings``, or "" when it has no line timings.
 
@@ -244,6 +285,10 @@ def subtitles_html(settings: dict, output) -> str:
     duration = float(settings.get("duration") or 0)
     # The result's 32-hex id is in every copy's file name, so the browser can find its player.
     media = re.search(r"[0-9a-f]{32}", Path(str(output)).name)
-    return (f'<div class="h3-drama3-subtitles" data-media="{media.group(0) if media else ""}" '
+    preview = ' data-preview' if output is None else ''
+    timeline = _timeline_html(entries, tones, duration, sounds)
+    if preview:
+        timeline = f'<div inert>{timeline}</div>'
+    return (f'<div class="h3-drama3-subtitles"{preview} data-media="{media.group(0) if media else ""}" '
             f'data-duration="{duration:.3f}">'
-            f'{_timeline_html(entries, tones, duration, sounds)}<ol>{lines}</ol>{_stage_html(tones)}</div>')
+            f'{timeline}<ol>{lines}</ol>{_stage_html(tones)}</div>')

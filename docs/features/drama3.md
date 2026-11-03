@@ -93,14 +93,24 @@ new clips. Check **Save generated speakers to the selected group** (off by defau
 to have Auto save the cast after the voices are generated, as **Save all speakers**
 does. Interrupt controls stop their corresponding jobs.
 
-While the writer rewrites the script, Auto loads the models it will need on the
-GPU, in order: the voice design engine (Qwen VoiceDesign, or SGLang-Omni for
-Drama 3 voice design), Stable Audio 3 Medium in Advanced mode, then SGLang-Omni.
-Models that are already loaded are kept. The preload never unloads one model to
-make room for another; a model that does not fit or fails to load is left to the
-step that needs it, and the line under the Auto status says which.
+Auto reuses the last successful rewrite or applied writer reply in this session
+when the script text and mode still match. On the Script step, **Preview script
+without audio** shows the lines, speakers and sound cues on an estimated timeline.
+
+Once the script is ready, Auto generates speaker voices, then Advanced-mode
+sound effects, then speech. Each stage uses its model immediately if loaded
+or loads it when needed. Skipped slots do not require their generation model.
 
 ## Script writer and cast
+
+Workshop's **Sound Stage** tab supports writing, applying external replies, editing cast and sound
+briefs, and silent preview on CPU. Enter a **Project name** and click **Save project**. Saving
+under the same name updates the draft. In Studio, select that name under **Saved Sound Stage
+projects** and click **Load project** to continue with Auto or manual generation.
+
+Projects retain script and generation settings, cast and sound slots, reference clips and
+transcripts. A speech result marks the project **Generated** and becomes available on the
+Speak step when you load it again. On Modal, stop one endpoint before editing on the other.
 
 To use a chat model outside the app, open **Use another chat model** on the
 Script step and click **Copy full writer prompt**; a running

@@ -37,7 +37,7 @@ class SoundHandlers:
                 gr.skip(),
                 gr.update(interactive=True),
                 gr.update(interactive=True),
-                None,
+                gr.skip(),
             )
         try:
             saved = drama3_sounds.load_sound(name, self._runtime_config())

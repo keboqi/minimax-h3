@@ -37,6 +37,7 @@ there start with H3 defaults. Prepare the scenes and cast, then open the storybo
 Studio, apply your current H3 settings if needed, and generate. Storyboards and saved
 pictures are shared across the endpoints; unsaved form inputs are separate. Stop one
 endpoint before editing on the other, as both write the same workspace on the Modal volume.
+The storyboard picker marks a project **Generated** as soon as it has a recorded scene take.
 
 ## A scene
 

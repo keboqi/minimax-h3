@@ -785,6 +785,10 @@ if IS_LOCAL:
         console_image = console_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
         )
+    for prompt in sorted((LOCAL / "prompts").glob("prompt_drama3*.txt")):
+        console_image = console_image.add_local_file(
+            prompt, remote_path=(ROOT / "prompts" / prompt.name).as_posix(), copy=False,
+        )
     # Repository snapshots reuse the runtime's own downloaders and layouts, and
     # the media library reuses the main application's controller and views.
     for package in ("h3_app", "h3_ui"):
@@ -937,6 +941,7 @@ def wait_for_comfy_frontend(
 def workshop():
     from h3_workshop import serve
 
+    os.environ["H3_WORKSPACE_DIR"] = (DATA / "h3-workspace").as_posix()
     os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
     os.environ["HF_HOME"] = "/tmp/hf"
     serve(Path(DATA), volume, port=UI_PORT, script_dir=Path(ROOT))
