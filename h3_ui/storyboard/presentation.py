@@ -15,16 +15,32 @@ const press = (control) => {
 element.addEventListener('click', event => press(event.target.closest('[data-sb-action]')));
 """
 
-# A scene shows without its media loaded: players fetch only metadata until played, and a player
-# Gradio replaces stops downloading. Otherwise every take viewed keeps streaming, and after a few
-# scenes the browser's connections to the server are all taken, so the next click waits for one.
+# A scene shows without its media loaded. A video shows its first frame (/video-posters) and
+# loads only when played; audio fetches only metadata. A player Gradio replaces stops downloading.
+# Otherwise every take viewed keeps streaming, and after a few scenes the browser's connections
+# to the server are all taken, so the next click waits for one.
 MEDIA_JS = """
 () => {
   if (window.h3StoryboardMedia) return;
   window.h3StoryboardMedia = true;
   const ROOT = ".h3-storyboard";
+  const FILE = "/gradio_api/file=";
   const players = (node) => node.nodeType !== 1 ? []
     : node.matches("video, audio") ? [node] : [...node.querySelectorAll("video, audio")];
+  const prepare = (player) => {
+    if (!player.closest(ROOT)) return;
+    if (player.tagName !== "VIDEO") {
+      if (player.preload !== "none") player.preload = "metadata";
+      return;
+    }
+    player.preload = "none";
+    const url = new URL(player.getAttribute("src") || "", location.href);
+    const at = url.pathname.indexOf(FILE);
+    if (at < 0) return;
+    const path = decodeURIComponent(url.pathname.slice(at + FILE.length));
+    const poster = url.pathname.slice(0, at) + "/video-posters?path=" + encodeURIComponent(path);
+    if (player.getAttribute("poster") !== poster) player.setAttribute("poster", poster);
+  };
   const stop = (player) => {
     player.pause();
     player.removeAttribute("src");
@@ -33,21 +49,21 @@ MEDIA_JS = """
   };
   new MutationObserver((records) => {
     for (const record of records) {
-      for (const node of record.addedNodes) {
-        for (const player of players(node)) {
-          if (player.closest(ROOT) && player.preload !== "none") player.preload = "metadata";
-        }
+      if (record.type === "attributes") {
+        prepare(record.target);
+        continue;
       }
+      for (const node of record.addedNodes) players(node).forEach(prepare);
       if (!record.target.closest?.(ROOT)) continue;
       for (const node of record.removedNodes) {
         players(node).filter((player) => !player.isConnected).forEach(stop);
       }
     }
-  }).observe(document.body, {childList: true, subtree: true});
+  }).observe(document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ["src"]});
 }
 """
 
-MODE_NAMES ={sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
+MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
 
 
 def seconds_label(value: float) -> str:

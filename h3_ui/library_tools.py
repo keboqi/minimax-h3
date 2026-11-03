@@ -117,7 +117,10 @@ def build_library_tools(
         lineage_view = gr.HTML(LINEAGE_EMPTY)
         with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
             lineage = gr.JSON(label="Asset identity and lineage")
-    pair = gr.State({"a": None, "b": None})
+    # Inside root: a State left in a gr.Tabs becomes a sibling of the tabs and shifts their
+    # order, so the tab after it shows over the one after that.
+    with root:
+        pair = gr.State({"a": None, "b": None})
     # A tray under the library; it appears once A or B holds an item.
     with root, gr.Group(visible=False, elem_classes=["h3-compare-tray"]) as comparison:
         gr.Markdown(

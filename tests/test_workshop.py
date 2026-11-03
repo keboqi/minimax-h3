@@ -201,6 +201,8 @@ class ModelManagerTests(unittest.TestCase):
             self.manager._path("turbo_lora")
 
     def test_media_library_omits_gpu_enhancement(self):
+        import gradio as gr
+
         from h3_app import media_catalog
         from h3_app.workspace_store import WorkspaceStore
         from h3_ui.media_console import media_runtime
@@ -219,6 +221,12 @@ class ModelManagerTests(unittest.TestCase):
         blocks = ui.blocks.values()
         labels = {getattr(block, "label", None) for block in blocks}
         self.assertTrue({"Media library", "Models"} <= labels)
+        # The page places each tab by its position among the Tabs' children, so anything else
+        # there shifts the tabs after it: Storyboard then showed over Sound Stage.
+        tabs = next(block for block in blocks if isinstance(block, gr.Tabs))
+        self.assertEqual([child.label for child in tabs.children],
+                         ["Models", "Media library", "Storyboard", "Sound Stage"])
+        self.assertTrue(all(isinstance(child, gr.Tab) for child in tabs.children))
         enhance = [block for block in blocks if getattr(block, "label", None) == "Enhance selected media"]
         self.assertEqual([block.visible for block in enhance], [False])
         run = next(block for block in blocks if getattr(block, "value", None) == "Enhance selected media"

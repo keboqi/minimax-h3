@@ -244,6 +244,27 @@ def build_server(
             raise HTTPException(status_code=404, detail="Preview not found")
         return FileResponse(candidate, headers={"Cache-Control": "private, max-age=60"})
 
+    @app.get("/video-posters", include_in_schema=False)
+    def video_poster(path: str) -> FileResponse:
+        """An output video's first frame, so a player shows a picture before loading the video."""
+        from types import SimpleNamespace
+
+        from .gallery_store import gallery_thumbnail
+
+        video = Path(path).resolve()
+        roots = (config.output_dir.resolve(), config.outputs_dir.resolve())
+        poster = None
+        if (
+            config.thumbnail_dir is not None
+            and video.suffix.lower() in config.video_extensions
+            and any(video.is_relative_to(root) for root in roots)
+            and video.is_file()
+        ):
+            poster = gallery_thumbnail(video, runtime=SimpleNamespace(gallery_thumbnails_dir=config.thumbnail_dir))
+        if poster is None:
+            raise HTTPException(status_code=404, detail="Poster not found")
+        return FileResponse(poster, headers={"Cache-Control": "private, max-age=3600"})
+
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",
         name="download_ltx25_workflow",
