@@ -102,6 +102,13 @@ class StoryboardHandlers(StoryboardApiHandlers):
                 for row in self.service.list(owner)]
 
     def render(self, owner, storyboard_id, scene_id=None, status="", *, previous_scene_id=None) -> dict[str, Any]:
+        if previous_scene_id and storyboard_id:
+            try:
+                board = self.service.load(owner, storyboard_id)
+            except ValueError:
+                pass  # The board may have been deleted in another session.
+            else:
+                return self._render_scene(board, scene_id, status, previous_scene_id)
         choices = self.choices(owner)
         if not any(value == storyboard_id for _, value in choices):
             storyboard_id = choices[0][1] if choices else None
@@ -112,6 +119,20 @@ class StoryboardHandlers(StoryboardApiHandlers):
                 "confirm_group": gr.update(visible=False),
             }
         board = self.service.load(owner, storyboard_id)
+        return {
+            **self._render_scene(board, scene_id, status, None),
+            "start_group": gr.update(visible=False),
+            "board_group": gr.update(visible=True),
+            "storyboard": gr.update(choices=choices, value=storyboard_id),
+            "profile_summary": (f"Uses your MiniMax H3 settings: {sb.profile_summary(board['profile'])} · "
+                                f"{len(board['scenes'])} scenes, about {clock(sb.total_seconds(board))} in total"),
+            "cast_list": cast_html(board),
+            "remove_cast_name": gr.update(choices=[m["name"] for m in board["cast"]], value=None),
+            "rename_name": board["name"],
+            "versions": gr.update(choices=[(v["label"], v["id"]) for v in reversed(board["versions"])], value=None),
+        }
+
+    def _render_scene(self, board, scene_id, status, previous_scene_id):
         ids = [scene["id"] for scene in board["scenes"]]
         scene_id = scene_id if scene_id in ids else ids[0]
         index = ids.index(scene_id)
@@ -168,12 +189,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
                 players[f"{kind}_preview_{i}"] = gr.update(value=paths[i] if i < len(paths) else None,
                                                            visible=i < len(paths))
         updates = {
-            "start_group": gr.update(visible=False),
-            "board_group": gr.update(visible=True),
-            "storyboard": gr.update(choices=choices, value=storyboard_id),
             "scene_id": scene_id,
-            "profile_summary": (f"Uses your MiniMax H3 settings: {sb.profile_summary(board['profile'])} · "
-                                f"{len(ids)} scenes, about {clock(sb.total_seconds(board))} in total"),
             "status": status,
             "scene_list": scene_list_html(board, scene_id, states),
             "scene_heading": (f"### Scene {index + 1} of {len(ids)} · {scene['title'] or 'Untitled scene'}\n"
@@ -235,10 +251,6 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "generate_remaining": gr.update(
                 value=f"Generate all remaining scenes ({pending})" if pending else "All scenes are done",
                 interactive=bool(pending)),
-            "cast_list": cast_html(board),
-            "remove_cast_name": gr.update(choices=cast_names, value=None),
-            "rename_name": board["name"],
-            "versions": gr.update(choices=[(v["label"], v["id"]) for v in reversed(board["versions"])], value=None),
         }
 
         # Gradio postprocesses file outputs and fires their change listeners even when
@@ -246,6 +258,19 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if previous_scene_id in ids:
             old_scene = board["scenes"][ids.index(previous_scene_id)]
             old_media = sb.scene_media(old_scene)
+            if (old_media["mode"] == sb.REFERENCES) == (media["mode"] == sb.REFERENCES) and (
+                media["mode"] != sb.REFERENCES or
+                (scene["cast"] == old_scene["cast"] and media["ref_images"] == old_media["ref_images"])
+            ):
+                updates.pop("image_previews")
+            for kind in ("video", "audio"):
+                modes = (sb.REFERENCES,) if kind == "video" else (sb.REFERENCES, sb.FRAMES)
+                field = f"ref_{kind}s"
+                old_paths = old_media[field] if old_media["mode"] in modes else []
+                new_paths = media[field] if media["mode"] in modes else []
+                for i in range(3):
+                    if old_paths[i:i + 1] == new_paths[i:i + 1]:
+                        updates.pop(f"{kind}_preview_{i}")
             for field in sb.MEDIA_FIELDS:
                 if media[field] == old_media[field]:
                     if field in ("last_image", "ref_audios"):

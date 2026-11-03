@@ -367,7 +367,11 @@ class StoryboardRunnerTests(unittest.TestCase):
             (document["cast"][0]["image"], "Mei = <Picture 1>"), (scene["ref_images"][0], "image 1 = <Picture 2>")])
         self.assertEqual(rendered["video_preview_0"]["value"], scene["ref_videos"][0])
         self.assertEqual(rendered["audio_preview_0"]["value"], scene["ref_audios"][0])
-        switched = self.handlers.render("a", storyboard_id, second["id"], previous_scene_id=first["id"])
+        with patch.object(self.service, "list", side_effect=AssertionError("navigation listed all boards")):
+            switched = self.handlers.render("a", storyboard_id, second["id"], previous_scene_id=first["id"])
+        self.assertEqual(switched["scene_id"], second["id"])
+        self.assertNotIn("storyboard", switched)
+        self.assertNotIn("video_preview_1", switched)
         self.assertNotIn("first_image", switched)
         self.assertIsNone(switched["ref_images"])
         for field in ("image_previews", "video_preview_0", "audio_preview_0"):
