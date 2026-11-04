@@ -72,6 +72,11 @@ def generate(
     storyboard_outputs: dict[str, str] | None = None,
 ) -> Iterator[GenerationUpdate]:
     """``storyboard`` makes this a storyboard take; its saved latents land in ``storyboard_outputs``."""
+    if str(request.output.result_format).strip().lower() == "image":
+        from .ph3_image import generate_ph3_image
+
+        yield from generate_ph3_image(request, services, runtime, progress=progress)
+        return
     requested_values = request.values()
     requested_values.update(run_context)
     request = request.copy()

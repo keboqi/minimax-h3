@@ -317,7 +317,7 @@ class SettingsController:
                     interactive=True,
                 )
             if name in {"generation_mode", "steps", "scheduler"}:
-                props["interactive"] = True
+                props["interactive"] = fmt != "Image"
                 if name in {"steps", "scheduler"} and plan.effective.generation_mode == "Turbo" and plan.effective.sampling.turbo_variant == PIKA_FLEX:
                     # Pika Flex fixes these. Write the fixed value only when it is not
                     # already shown, so a refresh does not echo it over the control.
@@ -343,11 +343,11 @@ class SettingsController:
             if name == "duration":
                 props["visible"] = fmt != "Image"
             if name in {"image_frames", "image_vae"}:
-                props["visible"] = fmt == "Image"
+                props["visible"] = False
             if name == "batch_count":
                 props["visible"] = fmt == "Video"
             if name == "latent_upscale":
-                props["interactive"] = fmt != "Audio"
+                props["interactive"] = fmt == "Video"
             if name == "generation_postprocess":
                 props["interactive"] = fmt == "Video"
             presentation[name] = {

@@ -88,6 +88,18 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    **{
+        key: ModelSpec(
+            "PrunaAI/P-H3-Image-Comfy", folder, f"{folder}/{filename}",
+            "Pruna P-H3-Image · ComfyUI", revision="44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543",
+        )
+        for key, folder, filename in (
+            ("ph3_image_lora", "loras", "p-h3-image_lora_bf16.safetensors"),
+            ("ph3_image_text_encoder", "text_encoders", "p-h3-image_text_encoder_int8_convrot.safetensors"),
+            ("ph3_image_upsampler", "text_encoders", "p-h3-image_prompt_upsampler_bf16.safetensors"),
+            ("ph3_image_vae", "vae", "p-h3-image_vae_int8_convrot.safetensors"),
+        )
+    },
     "pika_flex_fl2va_lora": ModelSpec(
         ORIGINAL_MODEL_REPO, "loras", "loras/pika_h3_flex_fl2va_v1_bf16.safetensors",
         "Pika H3 Flex FL2VA · official ComfyUI BF16 · 6-step",
@@ -1083,6 +1095,7 @@ DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
     "h3_regenerate_refiner_16",
     "h3_regenerate_refiner_384",
     *FLUX3_MODEL_KEYS,

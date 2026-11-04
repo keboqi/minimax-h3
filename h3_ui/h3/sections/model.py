@@ -59,7 +59,7 @@ def build_model_section(
             services.RESULT_FORMATS,
             value=defaults["result_format"],
             label="Result format",
-            info="H3 always samples vision and audio; this selects what is decoded and shown.",
+            info="Image uses P-H3-Image with the selected FL2VA base and its image LoRA: one image, eight steps, automatic prompt expansion.",
             visible=False,
         )
     with model_parent if model_parent is not None else nullcontext():

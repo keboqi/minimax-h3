@@ -29,6 +29,7 @@ class PreparedImage:
     model_keys: tuple[str, ...]
     settings: dict[str, Any]  # recorded beside the request's own values
     size: str  # the queued status's size note, such as " · 1024×1024"
+    ensure_base_model: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,8 @@ def run_image_job(engine: ImageEngine, request, services, runtime, *, progress=n
             raise H3Error(f"This backend lacks the {engine.label} text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
+        if prepared.ensure_base_model is not None:
+            prepared.ensure_base_model()
         services.models.ensure_model_keys(prepared.model_keys)
         queued_at = time.time()
         prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))

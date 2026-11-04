@@ -66,6 +66,18 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     differences = plan.differences()
     title = effective.preset + (" · Modified" if differences else "")
     fmt = output.result_format
+    if fmt == "Image":
+        image_seed = "Random seed" if output.seed < 0 else f"Seed {output.seed}"
+        return (
+            '<section class="h3-setup-card" aria-label="Next run"'
+            f' data-settings-ready="{str(bool(extras.get("_settings_ready"))).lower()}" data-changed-tabs="{{}}">'
+            '<div class="h3-setup-heading"><strong>Next run · P-H3-Image</strong></div>'
+            f'<p>Base model: {esc(effective.model_profile)} · FL2VA + P-H3-Image LoRA</p>'
+            f'<p>One image · {output.width}×{output.height} · '
+            f'8 steps · Euler · CFG 1 · {esc(image_seed)} · automatic prompt expansion</p>'
+            '<p>Dedicated INT8 image text encoder and VAE · BF16 prompt upsampler. '
+            'Video sampling, decoder, attention and finishing settings do not apply.</p></section>'
+        )
     length = (
         f"{output.image_frames} image frame(s)"
         if fmt == "Image"

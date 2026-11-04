@@ -186,8 +186,8 @@ def result_format_layout_updates(
             display_height = snap_to_grid(current_height, alignment)
     return (
         gr.update(visible=not is_image),
-        gr.update(visible=is_image),
-        gr.update(visible=is_image),
+        gr.update(visible=False),
+        gr.update(visible=False),
         gr.update(visible=presentation.is_video),
         gr.update(visible=False),
         gr.update(visible=False),
