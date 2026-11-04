@@ -58,7 +58,8 @@ DRAMA3_SGLANG_PYTHON = "3.12"
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
 DRAMA3_SGLANG_OMNI_REF = "e8c635ecb9c68bcf2fbc32ceb3c40f85f3590657"  # v0.2.0
 DRAMA3_HF_REPO = "fishaudio/drama-3"
-DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+# October 29 FP8 repack; revision-specific directories invalidate older caches.
+DRAMA3_HF_REVISION = "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
 # Opt-in official 4-bit GPTQ quantization (H3_DRAMA3_SGLANG_CHECKPOINT=int4): 24 GB to
 # download instead of 41.5 GB and 20.8 GiB of engine weights instead of 37 GiB, about
 # 8% slower per request at the same WER (SGLang-Omni's Drama 3 cookbook).

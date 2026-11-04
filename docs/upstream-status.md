@@ -1,5 +1,56 @@
 # Upstream status
 
+## Drama 3 FP8 pin updated — 2026-11-04
+
+`DRAMA3_HF_REVISION` now pins `78e5ab79e49aa9a25abe8799eff2c4d73a1c3216`,
+the audited October 29 FP8 repack. After redeploying, first use downloads this
+revision into its own cache directory; the old checkpoint directory is not
+reused. INT4 retains its existing pin. Parsed upstream model configuration is
+unchanged, but GPU loading and listening comparisons remain unverified.
+Focused validation passed: 96 Drama serving tests and five preparation tests.
+The audit below records the pre-update decision.
+
+## Model and LoRA audit — 2026-11-04
+
+Checked all **134 configured files across 42 model repositories** in
+`h3_models.py`, plus **nine speech/audio repositories** referenced by the
+workers: **51 repositories total**. All configured filenames still exist;
+all **59 configured SHA-256 values match** current upstream metadata. The
+remaining 75 entries have no configured checksum baseline, so their presence
+does not establish that their contents are unchanged. This compares the source
+inventory, not files installed in a deployed container.
+
+### Candidates and decisions
+
+| Model / adapter | Current project state → upstream observation | Decision |
+| --- | --- | --- |
+| DMAD H3 | Uses `dmad_minimax_h3_4step_full_critic_comfyui.safetensors`. A separately trained eight-step student was uploaded October 30 UTC (the card announces October 29), including `minimax_h3/dmad_minimax_h3_8step_full_critic_comfyui.safetensors`. | Highest-priority new LoRA candidate. Add as a separate eight-step option with the author's sampler contract; compare video, audio and runtime before changing defaults. The author's quality claim is not a local benchmark. |
+| Drama 3 FP8 | Pin `e0a9218a` → head `78e5ab79`. October 29 replaces eight weight shards with fifteen and changes the shard index. Parsed config objects are identical, including `bsgemm-moe`; shard bytes total 39.603574 GB → 39.603551 GB. | Review the repack before upgrading. Metadata does not establish tensor equality or improved speech quality. Keep the pin pending loading/listening checks. INT4 remains exactly at our `a6f58869` pin. |
+| Fibo 2.0 | Configured Dev and Edit Turbo hashes match. Upstream also contains `loras/fibo_2.0_turbo_lora_avg_rank_270_bf16.safetensors`, uploaded October 21 and already mentioned by the October 28 audit. | Optional separate acceleration experiment; our merged Edit Turbo checkpoint is already available. This is not a newly discovered replacement for those checkpoints. |
+| MOSS few-step | Our frozen four-step v2.0 file still matches. The same repository offers `moss_image_sft_3step_v1.0.safetensors` for exactly three steps, Euler/simple, CFG 1, strength 1. | Optional draft mode, not a four-step replacement. It predates this audit; retain the current four-step final mode. |
+| P-H3 Image | Our `44a0fb73` pin is the current head, including native ComfyUI workflows. | Keep. Other precisions/merged files are alternatives, not a later release. |
+| H3 base / Turbo / Singularity | Pika Flex, Sol INT8, both regenerate refiners, LightX2V four/eight-step adapters and Singularity V2 are already represented. All their configured checksums match. Larry remains v4-600 EMA; its latest experimental v5 upload is an older `.bin`, not a new ComfyUI release. | Keep existing selections. No newer drop-in adapter was found in these repositories. |
+| Qwen Image 2.1 | Official Turbo, Pruna v0.2/v0.1 and Viggle v0.3 configured hashes match. October 29 adds Pruna adapters to the Comfy-Org repository; we already source them from Pruna directly. Lightning's configured hash also matches. | Keep. No replacement Lightning weight was published; community schedule suggestions do not establish an edit-drift fix. |
+| FLUX 3 Klein | All eleven configured hashes match metadata at current head `9d36114c` (November 2 UTC). | No configured weight replacement indicated. Commit history requires authenticated access, so the latest repository change was not classified. |
+| LTX / enhancement / upscaling | All configured LTX-2.5, legacy 2.3 IC-LoRAs, CQ enhancer, SeedVR2, H3 latent upscaler and VAE filenames exist; configured hashes match where present. | No newer replacement identified. Several gated histories could not be read; retain current compatibility choices. |
+| Other speech / music | Music 3, YuE2, Qwen VoiceDesign, Qwen ASR/aligner and Hy-MT2 repositories show no newer activity since the October 30 cutoff. MOSS Transcribe head differs from our pin only in README. Nemotron's latest commits concern documentation/chat templates, not a newly uploaded checkpoint. | Keep. Nemotron is unpinned, so an already cached deployment need not contain the latest template; that is separate from a weight upgrade. |
+
+Sources: [DMAD card and usage](https://huggingface.co/ZhengmingYu/DMAD),
+[Drama 3 history](https://huggingface.co/fishaudio/drama-3/commits/main),
+[Fibo history](https://huggingface.co/Comfy-Org/Fibo-2.0/commits/main),
+[MOSS draft instructions](https://huggingface.co/akhaliq/MOSS-Image-SFT-4-steps),
+[P-H3 Image](https://huggingface.co/PrunaAI/P-H3-Image-Comfy),
+[Qwen adapters](https://huggingface.co/Comfy-Org/Qwen-Image-2.1),
+[Lightning community report](https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning/discussions/5).
+Exact heads, file metadata, recent commit summaries, configured checksum
+comparisons and Drama/MOSS pinned-to-head comparisons are saved under
+`.cache/model-audit-2026-11-04/`.
+
+Public metadata was available for all 51 repositories. Commit-history requests
+returned HTTP 401 for FLUX, Stable Audio and ten LTX repositories; those histories
+remain unverified. No model weights were downloaded, model defaults or revisions
+changed, tests run, deployment performed or GPU quality claims validated.
+
 ## Implemented upgrades — 2026-11-04
 
 The five recommended upgrades from the audit below are now pinned in

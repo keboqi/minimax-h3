@@ -327,7 +327,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(int4.checkpoint, "int4")
         self.assertIsNone(int4.engine_memory)
         self.assertEqual(int4.model_dir.name, "fishaudio--drama-3-int4--a6f588691a13")
-        self.assertEqual(self.settings.model_dir.name, "fishaudio--drama-3--e0a9218aa488")
+        self.assertEqual(self.settings.model_dir.name, "fishaudio--drama-3--78e5ab79e49a")
         rtx_pro_6000 = 97887  # MiB, as nvidia-smi reports it
         self.assertEqual(self.settings.engine_fraction(rtx_pro_6000), 0.513)  # (37 + 12) / 95.6 GiB
         self.assertEqual(int4.engine_fraction(rtx_pro_6000), 0.343)  # (20.8 + 12) / 95.6 GiB
