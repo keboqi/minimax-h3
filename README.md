@@ -198,7 +198,7 @@ supplies Comfy Kitchen attention through its matching `comfy-kitchen` dependency
 
 ## Run locally
 
-Local and Modal provisioning and the UI test environment pin Gradio 6.30.0.
+Local and Modal provisioning and the UI test environment pin Gradio 6.31.0.
 Existing local installs refresh an older Gradio on the next `run_h3.sh` startup;
 Spectrum also refreshes from its shared source pin. Modal deployments require a
 rebuild/redeploy to pick up these dependency changes.
@@ -432,9 +432,10 @@ and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI after v0.43.0 at immutable revision
-`0df1646a9cd71d4c990a87014fb37797a2956ead`, which adds native Sol H3 VAE decoding
-and H3 latent upscaler support. Refinement and H3 Regenerate use Core's optimized
+The deployment pins ComfyUI v0.44.0 plus its frontend update at immutable revision
+`7f09d3fa4a783868fe39d4d63cf4f815e58abecd`, including native Sol H3 VAE decoding,
+H3 latent upscaling, P-H3-Image conditioning and LoRA bypass support.
+Refinement and H3 Regenerate use Core's optimized
 upscaler with a bundled loader that preserves FP32/BF16/FP16 precision choices.
 Fast and Singularity select the lazily downloaded
 Sol INT8 decoder while retaining LightVAE Lite encoding. It also includes native Fibo 2.0
@@ -445,8 +446,8 @@ Pad Image node and an opt-in agent host (off unless `--enable-agent`). It also e
 structured Fibo 2.0 negatives as written instead of cleaning them like captions
 ([Comfy-Org/ComfyUI#17285](https://github.com/Comfy-Org/ComfyUI/pull/17285)), so our
 text-to-image negative applies as intended, and adds aimdo 0.6.0 dynamic-VRAM KV caches for
-Qwen Image 2.1. Its requirements: frontend package 1.57.6, Comfy Kitchen 0.2.40, upstream
-aimdo 0.6.0, workflow templates 0.11.98 and embedded docs 0.5.15.
+Qwen Image 2.1. Its requirements: frontend package 1.58.5, Comfy Kitchen 0.2.40, upstream
+aimdo 0.6.0, workflow templates 0.11.101 and embedded docs 0.5.16.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

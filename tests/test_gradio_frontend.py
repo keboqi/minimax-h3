@@ -1,10 +1,15 @@
 """The served Gradio bundle re-sends only loading statuses that changed."""
 
+import asyncio
 import importlib.resources
+from pathlib import Path
+import tempfile
 import unittest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from gradio.ranged_response import OpenRange, RangedFileResponse
+from starlette.exceptions import HTTPException
 
 from h3_app.gradio_frontend import (
     LOADING_STATI_ORIGINAL, LOADING_STATI_PATCHED, install_gradio_frontend_patch, patched_bundle)
@@ -57,6 +62,52 @@ class GradioFrontendPatchTests(unittest.TestCase):
             return manager.calls;
         }}""")
         self.assertEqual(sent, [[1, "pending"], [2, "complete"], [1, "complete"], [3, "pending"]])
+
+
+class GradioMediaRangeTests(unittest.IsolatedAsyncioTestCase):
+    async def respond(self, path, byte_range, **kwargs):
+        messages = []
+
+        async def send(message):
+            messages.append(message)
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        response = RangedFileResponse(path, byte_range, **kwargs)
+        await asyncio.wait_for(response({}, receive, send), timeout=2)
+        return messages
+
+    async def test_range_beyond_eof_returns_only_available_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preview.mp4"
+            path.write_bytes(b"0123456789")
+            messages = await self.respond(path, OpenRange(3, 100_000))
+        self.assertEqual(messages[0]["status"], 206)
+        headers = dict(messages[0]["headers"])
+        self.assertEqual(headers[b"content-length"], b"7")
+        self.assertEqual(headers[b"content-range"], b"bytes 3-9/10")
+        self.assertEqual(b"".join(m["body"] for m in messages[1:]), b"3456789")
+        self.assertFalse(messages[-1]["more_body"])
+
+    async def test_start_past_eof_is_rejected_including_empty_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preview.mp4"
+            for body in (b"", b"0123456789"):
+                path.write_bytes(body)
+                with self.assertRaises(HTTPException) as raised:
+                    await self.respond(path, OpenRange(len(body), None))
+                self.assertEqual(raised.exception.status_code, 416)
+                self.assertEqual(raised.exception.headers["Content-Range"], f"bytes */{len(body)}")
+
+    async def test_truncated_media_aborts_instead_of_looping_on_empty_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "preview.mp4"
+            path.write_bytes(b"x" * 8192)
+            original_stat = path.stat()
+            path.write_bytes(b"x" * 1024)
+            with self.assertRaisesRegex(RuntimeError, "File ended"):
+                await self.respond(path, OpenRange(0, 8191), stat_result=original_stat)
 
 
 if __name__ == "__main__":

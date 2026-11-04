@@ -1,6 +1,6 @@
 """Serve Gradio's frontend bundle with a fix for its per-event loading-status cost.
 
-On every server event, Gradio's frontend (checked against 6.30.0) re-sends the
+On every server event, Gradio's frontend (checked against 6.31.0) re-sends the
 loading status of each component that any earlier server event used as an
 input or output, and each send searches the whole layout tree for that
 component. In a UI this large, the cost grows with every event and reaches

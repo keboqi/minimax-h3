@@ -41,11 +41,11 @@ VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 # ComfyUI v0.40.0 fixes Qwen Image low-VRAM caching and adds direct single-latent
 # H3 decoder metadata. Keep frontend and Kitchen aligned with its requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
-H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
+H3_AUDIO_T8_REF = "3a23f333537d9a715aad7ce79af8d9ec891d9ad8"  # v1.104.0 + native Core compatibility
 
-# Post-release revision with native P-H3-Image and bypass LoRA support.
+# v0.44.0 plus the matching frontend maintenance release.
 # Keep this source paired with Kitchen 0.2.40 and Drama's new/old cache compatibility.
-COMFY_REF = "2c75dc1b379a59e0880619d029607af5169a62ef"  # native P-H3-Image conditioning and LoRA bypass
+COMFY_REF = "7f09d3fa4a783868fe39d4d63cf4f815e58abecd"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -53,10 +53,10 @@ DRAMA3_REF = "67a733a96890637dc27b1914974ad00c569405fb"
 # Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"
-# Parallel Drama 3 backend: SGLang-Omni v0.1.9, the first release that includes
-# Drama 3 (FishOmniModel, #2763) and its sampling fixes (#2810, #2890, #2844).
+# SGLang-Omni v0.2.0 includes Drama 3's fused vocoder activation/padding.
+# Keep later experimental reference sampling separate from this release.
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
-DRAMA3_SGLANG_OMNI_REF = "8200f49934d66de591c035cab1c626c0600905fa"  # v0.1.9
+DRAMA3_SGLANG_OMNI_REF = "e8c635ecb9c68bcf2fbc32ceb3c40f85f3590657"  # v0.2.0
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 # Opt-in official 4-bit GPTQ quantization (H3_DRAMA3_SGLANG_CHECKPOINT=int4): 24 GB to
@@ -65,11 +65,11 @@ DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 DRAMA3_INT4_HF_REPO = "fishaudio/drama-3-int4"
 DRAMA3_INT4_HF_REVISION = "a6f588691a13b6607cb09f9800556487ab7aa0fe"
 COMFY_KITCHEN_VERSION = "0.2.40"
-COMFY_FRONTEND_VERSION = "1.57.6"
+COMFY_FRONTEND_VERSION = "1.58.5"
 WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
-GRADIO_VERSION = "6.30.0"
+GRADIO_VERSION = "6.31.0"
 # The Prism Workshop's CPU-only stack: Modal's console image and the Colab Workshop launch.
 WORKSHOP_REQUIREMENTS = (
     # requests: the Drama 3 SGLang-Omni downloader module imports it.
@@ -302,7 +302,7 @@ def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv")
         # needs >=6.30. The project overrides it in [tool.uv], which uv ignores for a
         # git-URL install, so apply the same override explicitly.
         [python, "-c", f"open({overrides!r}, 'w').write({DRAMA3_SGLANG_OVERRIDES!r})"],
-        # SGLang pins Torch 2.13; name the CUDA wheel because builders have no GPU.
+        # SGLang-Omni pins Torch 2.14.1; select CUDA wheels on GPU-less builders.
         [*uv, "pip", "install", "--python", python, *DRAMA3_SGLANG_PIP_FLAGS,
          f"--torch-backend={DRAMA3_SGLANG_TORCH_BACKEND}", "--overrides", overrides,
          f"sglang-omni[fishaudio] @ git+{DRAMA3_SGLANG_OMNI_REPO}@{DRAMA3_SGLANG_OMNI_REF}"],
@@ -459,7 +459,7 @@ DUB_TOOLS_PYTHON = "3.12"
 DUB_TOOLS_REQUIREMENTS = (
     "qwen-asr==0.0.6",
     "omnivad==0.2.13",
-    "audio-separator==0.47.1",
+    "audio-separator==0.48.0",
     # audio-separator imports audioread but no longer gets it: librosa 0.11 made it optional.
     "audioread==3.1.0",
     "onnxruntime>=1.17",
@@ -556,10 +556,10 @@ def selftest() -> None:
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
-    assert COMFY_REF == "2c75dc1b379a59e0880619d029607af5169a62ef"
+    assert COMFY_REF == "7f09d3fa4a783868fe39d4d63cf4f815e58abecd"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.40"
-    assert COMFY_FRONTEND_VERSION == "1.57.6"
+    assert COMFY_FRONTEND_VERSION == "1.58.5"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 12
     with tempfile.TemporaryDirectory() as temp:

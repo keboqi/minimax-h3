@@ -1,5 +1,144 @@
 # Upstream status
 
+## Implemented upgrades — 2026-11-04
+
+The five recommended upgrades from the audit below are now pinned in
+`h3_requirements.py` for local setup and Modal builds:
+
+| Component | New pin |
+| --- | --- |
+| Gradio | 6.31.0, also in `requirements-test.txt` |
+| audio-separator | 0.48.0, isolated dubbing environment |
+| ComfyUI / frontend | `7f09d3fa4a783868fe39d4d63cf4f815e58abecd` / 1.58.5 |
+| T8 Audio | `3a23f333537d9a715aad7ce79af8d9ec891d9ad8` |
+| SGLang-Omni | v0.2.0 / `e8c635ecb9c68bcf2fbc32ceb3c40f85f3590657` |
+
+Kitchen remains 0.2.40. ComfyUI's Torch/CUDA/NumPy stack and model defaults
+remain unchanged; Omni's new Torch 2.14.1 dependency stays in its separate
+environment. The existing environment fingerprints invalidate older Omni and
+dubbing readiness markers when their pins change.
+
+Validation completed with Gradio 6.31.0 and Brotli 1.2.1 installed in the local
+UI test environment:
+
+- The focused transport/proxy, Drama serving/checkpoint/snapshot, dubbing,
+  audio-worker, FL2VA and standalone suite ran 306 tests: 302 passed and four
+  optional Torch/audio numerical tests were skipped. Three additional file-range
+  regressions passed, covering oversized ranges, starts past EOF/empty files,
+  and media truncated after stat. The existing frontend bundle patch still applies.
+- Browser queue acceptance passed, including reconnecting after dropped sockets
+  with SSE blocked. Browser media acceptance passed for cached previews,
+  image selection and audio/video/image switching.
+- Exact-source checks verified Core's paired frontend/Kitchen requirements,
+  T8's unchanged voice node schema/execution method, and audio-separator's used
+  interfaces. The actual v0.2.0 Drama config accepts our launch overrides; its
+  router methods honor H3's SHM platform override without using direct CUDA IPC.
+- Omni's fishaudio dependencies resolved for Python 3.12, Linux glibc >=2.34
+  and CUDA 13 using the existing protobuf override. The shared requirements
+  self-test passed. Evidence is in `.cache/component-upgrade-2026-11-04/`.
+
+No full test suite, GPU inference, speech listening comparison or deployment
+was run. Rebuild/redeploy Modal to adopt the new build dependencies. Local
+startup detects the changed Core/frontend/Gradio and refreshes setup; the
+isolated speech/dubbing environments refresh on next use. GPU engine loading,
+snapshot/sleep/wake behavior and separation output still need deployment checks.
+The audit below records the pre-upgrade state and rationale.
+
+## Component audit — 2026-11-04
+
+This section supersedes the older recommendations below. Compared the actual
+pins against all **18 Git repositories**: nine match their default-branch head
+and nine have updates. Queried 25 PyPI packages; 24 returned a latest version,
+while `kornia-rs` returned no usable version. These are upstream observations,
+not an inventory of packages resolved in a deployed container. No runtime pins,
+installed packages or model defaults were changed.
+
+### Recommended upgrade order
+
+1. **Gradio 6.30.0 → 6.31.0.** Highest-priority UI maintenance candidate:
+   fixes an infinite loop on file ranges past EOF, requires `brotli>=1.2.1`
+   for the security issue identified in its release notes, and puts Video
+   conversions/watermarks in the cache. Update the shared pin and test
+   requirements together. Run focused queue/WebSocket, media-range, video-cache
+   and browser checks. Its metadata also requires Hub >=1.16,<3 and
+   gradio-client 2.7.2; Hub 1.x remains allowed by both policies, but validate
+   the resolved FastAPI/Starlette stack with our custom routes/proxy.
+   [Release notes](https://github.com/gradio-app/gradio/releases/tag/gradio%406.31.0).
+2. **audio-separator 0.47.1 → 0.48.0, in the dubbing venv only.** Restricts
+   checkpoint deserialization, adds mirror-first downloads and SHA-256 checks
+   where a published checksum exists, and uses temporary files for downloads.
+   The two-commit comparison changes no dependencies besides the package's
+   version. Check loading our chosen separation models, cached/fresh downloads
+   and stem outputs before adoption; unknown-checksum files are still allowed.
+   [Exact changes](https://github.com/nomadkaraoke/python-audio-separator/compare/v0.47.1...v0.48.0).
+3. **ComfyUI/frontend as a pair:** `2c75dc1b` (already v0.44.0) →
+   `7f09d3fa`, frontend 1.57.6 → 1.58.5. The single Core commit only changes
+   the frontend requirement; Kitchen remains 0.2.40. Frontend 1.58.5 includes
+   canvas recovery and picking up new node types after backend restarts.
+   Validate `/comfyui/`, immutable assets, encoded nested workflows and a saved
+   workflow reload. No inference improvement is established by this change.
+   [Core diff](https://github.com/Comfy-Org/ComfyUI/compare/2c75dc1b379a59e0880619d029607af5169a62ef...7f09d3fa4a783868fe39d4d63cf4f815e58abecd),
+   [frontend notes](https://github.com/Comfy-Org/ComfyUI_frontend/releases/tag/v1.58.5).
+4. **T8 Audio:** evaluate `3a23f333` (37 commits beyond our pin). New
+   compatibility fixes stop rejecting an unchanged native SigmaShift factory
+   merely because other Core source changed, and handle explicitly exported
+   nonpersistent buffers. This is more relevant than the earlier audit's
+   feature-only assessment, particularly for composed semantic-bridge paths.
+   Our voice graph uses `MiniMaxH3AudioConditioningT8`; it is not established
+   that this ordinary path needs the fix. Check its input contract, reference
+   conditioning and native/bridge sampling before adopting the larger update.
+   Upstream's tiny-model CPU checks establish software compatibility, not GPU
+   output quality. [Compatibility report](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/blob/3a23f333537d9a715aad7ce79af8d9ec891d9ad8/docs/CORE_COMPAT_20261031.md).
+5. **SGLang-Omni:** evaluate released **v0.2.0** at `e8c635ec`
+   (134 commits past our v0.1.9), rather than jumping directly to main
+   `b3064b2e` (251 commits). The release includes fused Snake activation/padding
+   for Drama 3's vocoder. Main additionally offers opt-in reference sampling
+   with epsilon cutoff and a shorter first streaming window; those are separate
+   candidates, not v0.2.0 features. Review install requirements, CLI/router and
+   host-SHM platform compatibility, then run speech, GPU snapshot and
+   sleep/wake checks. Keep reference sampling opt-in pending listening tests.
+   [Release](https://github.com/sgl-project/sglang-omni/releases/tag/v0.2.0),
+   [vocoder change](https://github.com/sgl-project/sglang-omni/commit/cc5ca8d8982bad577f19390d941f6bb455dc02d1),
+   [later reference sampling](https://github.com/sgl-project/sglang-omni/commit/b1097644c09fd3dbe00c26e46d114dbec87f923d).
+
+### Remaining source decisions
+
+| Component | Pin → checked head | Decision |
+| --- | --- | --- |
+| KJNodes | `57105374` → `ab72eda7`, 31 commits | Optional: H3 audio-preview scaling, prompt builders and subgraph/UI fixes. No demonstrated fix to our generated inference graphs; review the LoRA/model-optimization changes when upgrading. |
+| ControlNet Aux | `59b1fc41` → `a587a4c1`, 7 commits | Low priority; MediaPipe face-mesh, animal-pose JSON and dependency cleanup. |
+| LTXVideo | `3bf3ca62` → `220e1d45`, 6 commits | Hold a pin-only update: still removes `LTXVSDRToHDRWorkingSpace` and `LTXVSaveHLG`, both used by `h3_app/workflows/upscale.py`. Migrate HDR graphs/templates first. |
+| Spectrum-MOSS | `3fde0674` → `1e5eb359`, 15 commits | Hold a pin-only update: requires `warn_unverified_sampler`. ER-SDE support needs graph integration and benchmarking; preserve our explicit tail steps. |
+| Drama3 nodes | `67a733a9` → `8cb3c643`, 1 commit | Registry publishing only; no runtime upgrade needed. |
+| NeMo Speech | `a837f4e5` → `0fc5d7ad`, 3 commits | Word-confidence boundaries, codec training and duplex early-interruption fixes; no demonstrated benefit to our Nemotron vLLM path. |
+
+Unchanged heads: Larry Turbo, SLA, Veda, Sol (public fork), H3 Spectrum,
+Qwen Spectrum, Video Depth Anything, TensorRT VAE and stable-audio-tools.
+Exact compared SHAs, commit summaries and changed filenames are recorded in
+`.cache/component-audit-2026-11-04/repos.json`.
+
+### Remaining package decisions
+
+| Package | Policy/pin → checked latest | Decision |
+| --- | --- | --- |
+| Torch / torchvision / torchaudio | 2.11.0 / 0.26.0 / 2.11.0 → 2.15.0 / 0.29.2 / 2.11.1 | Hold the validated CUDA/attention ABI; do not independently choose each package's latest version. |
+| NumPy / SciPy | 1.26.4 / 1.15.3 → 2.5.4 / 1.18.1 | Hold main environment's ABI/HDR constraints. Dubbing already uses an isolated NumPy 2 environment. |
+| Transformers / kernels / Hub | <5.18 / 0.16.0 / <2 → 5.22.1 / 0.18.1 / 2.4.0 | Review jointly. Latest Transformers' kernels extra requires >=0.17.2,<0.18, so even the latest kernels is outside that range. Hub 2 is not required: Transformers still allows Hub >=1.31,<3. |
+| Diffusers / Kornia | <0.37 / 0.8.3 → 0.42.1 / 0.9.0 | Hold pending model/node compatibility work. `kornia-rs` latest could not be determined. |
+| Kitchen | 0.2.40 → same | Keep. |
+| wsproto / Pedalboard | 1.2.0 / 0.9.19 → 1.3.2 / 0.9.26 | Secondary maintenance candidates; validate queue transport and speaker effects. |
+| OpenAI SDK | runtime >=3.16.2,<4; tests 3.16.2 → 3.45.0 | Already allowed at runtime; align tested/deployed resolution in a separate prompt-writer check. |
+| Playwright | tests 1.62.0 → 1.64.1 | Optional test tooling refresh; reinstall its matching browser if adopted. |
+| TensorRT CU13 / yt-dlp | >=11.2,<12 / >=2026.8.19 → 11.4.0.106 / 2026.10.26 | Already allowed; a cached deployment may still need a rebuild to resolve them. |
+| Qwen TTS / Qwen ASR / OmniVAD | 0.1.1 / 0.0.6 / 0.2.13 → same | Keep isolated environments. |
+| Modal | queried latest 1.6.3 | Deployment tooling candidate; installed SDK version was not inspected. |
+
+Package evidence: public [PyPI JSON metadata](https://docs.pypi.org/api/json/),
+saved with dependency metadata in `.cache/component-audit-2026-11-04/packages.json`.
+This audit reviewed source diffs and local graph usage. No test suite, package
+installation, deployment or GPU inference was run. Model repositories were not
+re-audited; model candidates below retain their earlier validation boundaries.
+
 ## Targeted recheck — 2026-10-30
 
 Pika H3 Flex is integrated as a selectable six-step Turbo/refinement LoRA using

@@ -1,6 +1,6 @@
 """Isolated SGLang-Omni environment for Drama 3; ready only after validation.
 
-SGLang-Omni needs Torch 2.13, which conflicts with ComfyUI's stack.
+SGLang-Omni needs Torch 2.14.1, which conflicts with ComfyUI's stack.
 Modal bakes its uv environment into the image; Linux installs prepare it on first use.
 """
 
