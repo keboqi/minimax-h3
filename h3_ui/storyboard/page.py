@@ -102,7 +102,7 @@ class Runs:
         return run
 
     def active(self, owner, storyboard_id, kind=None) -> Run | None:
-        return next((run for run in self.items.values()
+        return next((run for run in list(self.items.values())
                      if run.owner == owner and run.storyboard_id == storyboard_id and run.finished_at is None
                      and (kind is None or run.kind == kind)), None)
 
@@ -144,7 +144,7 @@ def _image_thumbnail(path: Path, root: Path) -> Path | None:
             image.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
             image.convert("RGB").save(partial, "JPEG", quality=82)
         partial.replace(thumbnail)
-    except (OSError, UnidentifiedImageError, ValueError):
+    except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError):
         partial.unlink(missing_ok=True)
         return None
     return thumbnail
@@ -152,7 +152,6 @@ def _image_thumbnail(path: Path, root: Path) -> Path | None:
 
 def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: bool, interrupt=None) -> None:
     runs = Runs()
-    service = lambda: handlers.service
     # The Jobs tab retries a storyboard job through this.
     JOBS.register_callback("storyboard", handlers.run_job)
     api = "/storyboard/api"
@@ -160,8 +159,12 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def owner_of(request: Request) -> str:
         return request_owner(request, JOBS.store)
 
+    def session_of(request: Request):
+        """What outlives ``request`` and names its owner to the job path."""
+        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
+
     def payload(owner, storyboard_id):
-        board = service().load(owner, storyboard_id)
+        board = handlers.service.load(owner, storyboard_id)
         data = board_payload(storyboard_id, board)
         data["run"] = run_payload(owner, storyboard_id)
         return data
@@ -193,7 +196,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         return {
             "gpu": gpu,
             "boards": [{"id": row["id"], "name": row["name"], "generated": bool(row["generated"])}
-                       for row in service().list(owner)],
+                       for row in handlers.service.list(owner)],
             "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],
             "overlaps": list(OVERLAP_FRAMES), "max_takes": MAX_TAKES_PER_RUN,
             "library": handlers.library is not None,
@@ -239,20 +242,20 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def rename(storyboard_id: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
-        service().rename(owner, storyboard_id, body.get("name", ""))
+        handlers.service.rename(owner, storyboard_id, body.get("name", ""))
         return payload(owner, storyboard_id)
 
     @app.delete(f"{api}/boards/{{storyboard_id}}", include_in_schema=False)
     @guarded
     def delete(storyboard_id: str, request: Request):
-        service().delete(owner_of(request), storyboard_id)
+        handlers.service.delete(owner_of(request), storyboard_id)
         return {"deleted": True}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/duplicate", include_in_schema=False)
     @guarded
     def duplicate(storyboard_id: str, request: Request):
         owner = owner_of(request)
-        return payload(owner, service().branch(owner, storyboard_id))
+        return payload(owner, handlers.service.branch(owner, storyboard_id))
 
     @app.post(f"{api}/boards/{{storyboard_id}}/profile", include_in_schema=False)
     @guarded
@@ -273,37 +276,37 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         if "title" in fields:
             fields["title"] = str(fields["title"]).strip()[:120]
         if fields:
-            service().update_scene(owner, storyboard_id, scene_id, **fields)
+            handlers.service.update_scene(owner, storyboard_id, scene_id, **fields)
         if "mode" in body:
-            service().set_mode(owner, storyboard_id, scene_id, body["mode"])
+            handlers.service.set_mode(owner, storyboard_id, scene_id, body["mode"])
         return payload(owner, storyboard_id)
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes", include_in_schema=False)
     @guarded
     def add_scene(storyboard_id: str, request: Request):
         owner = owner_of(request)
-        _, scene_id = service().add_scene(owner, storyboard_id)
+        _, scene_id = handlers.service.add_scene(owner, storyboard_id)
         return {**payload(owner, storyboard_id), "scene_id": scene_id}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/duplicate", include_in_schema=False)
     @guarded
     def duplicate_scene(storyboard_id: str, scene_id: str, request: Request):
         owner = owner_of(request)
-        _, copy_id = service().duplicate_scene(owner, storyboard_id, scene_id)
+        _, copy_id = handlers.service.duplicate_scene(owner, storyboard_id, scene_id)
         return {**payload(owner, storyboard_id), "scene_id": copy_id}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/move", include_in_schema=False)
     @guarded
     def move_scene(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
-        service().move_scene(owner, storyboard_id, scene_id, int(body.get("offset", 0)))
+        handlers.service.move_scene(owner, storyboard_id, scene_id, int(body.get("offset", 0)))
         return payload(owner, storyboard_id)
 
     @app.delete(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}", include_in_schema=False)
     @guarded
     def delete_scene(storyboard_id: str, scene_id: str, request: Request):
         owner = owner_of(request)
-        service().delete_scene(owner, storyboard_id, scene_id)
+        handlers.service.delete_scene(owner, storyboard_id, scene_id)
         return payload(owner, storyboard_id)
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/enhance", include_in_schema=False)
@@ -317,16 +320,16 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     # Media -----------------------------------------------------------------
     def stored_media(board, scene_id, field_name):
-        scene = board["scenes"][service().scene_index(board, scene_id)]
+        scene = board["scenes"][handlers.service.scene_index(board, scene_id)]
         current = sb.scene_media(scene)[field_name]
         return [current] if isinstance(current, str) else list(current or [])
 
     def set_media(owner, storyboard_id, scene_id, field_name, added):
-        with service().lock:
-            board = service().load(owner, storyboard_id)
+        with handlers.service.lock:
+            board = handlers.service.load(owner, storyboard_id)
             current = stored_media(board, scene_id, field_name)
             value = added[-1] if field_name in SINGLE_FIELDS else [*current, *added]
-            service().set_scene_media(owner, storyboard_id, scene_id, field_name, value)
+            handlers.service.set_scene_media(owner, storyboard_id, scene_id, field_name, value)
 
     def spool(files: list[UploadFile], directory: str, allowed) -> list[str]:
         """Saved uploads under unique names: a stored file with the same name is another file."""
@@ -373,11 +376,11 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def remove_media(storyboard_id: str, scene_id: str, field_name: str, path: str, request: Request):
         owner = owner_of(request)
-        with service().lock:
-            board = service().load(owner, storyboard_id)
+        with handlers.service.lock:
+            board = handlers.service.load(owner, storyboard_id)
             kept = [item for item in stored_media(board, scene_id, field_name) if item != path]
             value = (kept[0] if kept else None) if field_name in SINGLE_FIELDS else kept
-            service().set_scene_media(owner, storyboard_id, scene_id, field_name, value)
+            handlers.service.set_scene_media(owner, storyboard_id, scene_id, field_name, value)
         return payload(owner, storyboard_id)
 
     @app.get(f"{api}/library", include_in_schema=False)
@@ -403,19 +406,19 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                  file: UploadFile | None = File(default=None), source: str = Form(default="")):
         owner = owner_of(request)
         if source:
-            service().add_cast(owner, storyboard_id, name, library_source(source))
+            handlers.service.add_cast(owner, storyboard_id, name, library_source(source))
         elif file is not None:
             with TemporaryDirectory(prefix="h3-storyboard-") as directory:
-                service().add_cast(owner, storyboard_id, name, spool([file], directory, IMAGE_EXTENSIONS)[0])
+                handlers.service.add_cast(owner, storyboard_id, name, spool([file], directory, IMAGE_EXTENSIONS)[0])
         else:
             raise H3Error("Choose a picture first.")
         return payload(owner, storyboard_id)
 
-    @app.delete(f"{api}/boards/{{storyboard_id}}/cast/{{name}}", include_in_schema=False)
+    @app.delete(f"{api}/boards/{{storyboard_id}}/cast/{{name:path}}", include_in_schema=False)
     @guarded
     def remove_cast(storyboard_id: str, name: str, request: Request):
         owner = owner_of(request)
-        service().remove_cast(owner, storyboard_id, name)
+        handlers.service.remove_cast(owner, storyboard_id, name)
         return payload(owner, storyboard_id)
 
     # Takes and versions ----------------------------------------------------
@@ -431,19 +434,22 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def save_version(storyboard_id: str, request: Request, body: dict = Body(default={})):
         owner = owner_of(request)
-        service().save_version(owner, storyboard_id, body.get("label", ""))
+        handlers.service.save_version(owner, storyboard_id, body.get("label", ""))
         return payload(owner, storyboard_id)
 
     @app.post(f"{api}/boards/{{storyboard_id}}/versions/{{version_id}}/branch", include_in_schema=False)
     @guarded
     def branch(storyboard_id: str, version_id: str, request: Request):
         owner = owner_of(request)
-        return payload(owner, service().branch(owner, storyboard_id, version_id))
+        return payload(owner, handlers.service.branch(owner, storyboard_id, version_id))
 
     # Files -----------------------------------------------------------------
-    def owned_file(owner, storyboard_id, path) -> Path:
-        board = service().load(owner, storyboard_id)
-        allowed = referenced_paths(board) | {str(service().preview_path(storyboard_id))}
+    def owned_file(request: Request, storyboard_id, path) -> Path:
+        try:
+            board = handlers.service.load(owner_of(request), storyboard_id)
+            allowed = referenced_paths(board) | {str(handlers.service.preview_path(storyboard_id))}
+        except (H3Error, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="File not found") from exc
         file = Path(path)
         if path not in allowed or not file.is_file():
             raise HTTPException(status_code=404, detail="File not found")
@@ -451,19 +457,13 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     @app.get(f"{api}/boards/{{storyboard_id}}/file", include_in_schema=False)
     def storyboard_file(storyboard_id: str, path: str, request: Request):
-        try:
-            file = owned_file(owner_of(request), storyboard_id, path)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        return FileResponse(file, headers={"Cache-Control": "private, max-age=3600"})
+        return FileResponse(owned_file(request, storyboard_id, path),
+                            headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get(f"{api}/boards/{{storyboard_id}}/thumb", include_in_schema=False)
     def storyboard_thumb(storyboard_id: str, path: str, request: Request):
-        try:
-            file = owned_file(owner_of(request), storyboard_id, path)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        thumbnail = _image_thumbnail(file, service().runtime().gallery_thumbnails_dir)
+        file = owned_file(request, storyboard_id, path)
+        thumbnail = _image_thumbnail(file, handlers.service.runtime().gallery_thumbnails_dir)
         return FileResponse(thumbnail or file, headers={"Cache-Control": "private, max-age=86400"})
 
     # Long work -------------------------------------------------------------
@@ -481,18 +481,16 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         action = body.get("action")
         if action not in (GENERATE_SCENE, GENERATE_REMAINING, SWITCH_AND_REGENERATE):
             raise H3Error("Unknown generation request.")
-        if runs.active(owner, storyboard_id, "generate"):
-            raise H3Error("This storyboard is already generating.")
-        board = service().load(owner, storyboard_id)
+        board = handlers.service.load(owner, storyboard_id)
         if action == GENERATE_SCENE:
-            sb.check_scene(board, service().scene_index(board, body.get("scene_id")))
-        job = JOBS.accept(owner, "storyboard",
-                          [action, storyboard_id, body.get("scene_id"), body.get("take_id")],
-                          callback=handlers.run_job, output_indices=(1,), key=uuid.uuid4().hex)
-        # The thread outlives this request, so it keeps just what names the owner.
-        session = SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
+            sb.check_scene(board, handlers.service.scene_index(board, body.get("scene_id")))
+        session = session_of(request)
 
         def work(run):
+            # Accepted here, once this is the storyboard's only run: a refused run leaves no job.
+            job = JOBS.accept(owner, "storyboard",
+                              [action, storyboard_id, body.get("scene_id"), body.get("take_id")],
+                              callback=handlers.run_job, output_indices=(1,), key=uuid.uuid4().hex)
             try:
                 for status, changed in execute_accepted(job.id, session):
                     run.status = status
@@ -509,8 +507,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def stop(storyboard_id: str, request: Request):
         if interrupt is None:
             raise H3Error("Nothing can run here.")
-        session = SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
-        return {"message": interrupt(session, family="storyboard"),
+        return {"message": interrupt(session_of(request), family="storyboard"),
                 "run": run_payload(owner_of(request), storyboard_id)}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/join", include_in_schema=False)

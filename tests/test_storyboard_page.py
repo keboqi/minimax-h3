@@ -1,10 +1,12 @@
 """The Storyboard page's JSON API: editing, media, take switching, files and GPU runs."""
 
+from dataclasses import replace
 from io import BytesIO
 import json
 from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
+from threading import Event
 import time
 import unittest
 from unittest.mock import patch
@@ -229,7 +231,6 @@ class StoryboardPageTests(unittest.TestCase):
     def enhancing_handlers(self):
         """Handlers whose writer checks each call against the real one and keeps its settings."""
         import inspect
-        from dataclasses import replace
 
         from h3_ui.prompt_controller import PromptController
 
@@ -260,6 +261,33 @@ class StoryboardPageTests(unittest.TestCase):
         self.client.post(self.scene_url(board, 0, "/enhance"),
                          json={"writer": {"prompt_writer_backend": "Gemini", "gemini_api_key": "page-key"}})
         self.assertEqual((calls[0]["backend"], calls[0]["gemini_api_key"]), ("OpenAI-compatible", "page-key"))
+
+    def test_a_second_generate_is_refused_and_leaves_no_job_behind(self):
+        board = self.create()
+        url = f"{API}/boards/{board['id']}/generate"
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        release = Event()
+        self.addCleanup(release.set)
+
+        def waiting_take(values, graph, outputs):
+            release.wait(timeout=10)
+            yield from self.fake_take(values, graph, outputs)
+
+        self.handlers.services = replace(self.handlers.services, generate_take=waiting_take)
+        self.assertEqual(self.client.post(url, json={"action": "remaining"}).status_code, 200)
+        self.assertEqual(self.client.post(url, json={"action": "remaining"}).status_code, 400)
+        release.set()
+        self.wait_for_run(board)
+        jobs = JOBS.list_owned(owner)
+        self.assertEqual(len(jobs), 1)
+        self.assertIsNotNone(jobs[0].finished_at)
+
+    def test_a_cast_name_with_a_slash_can_be_removed(self):
+        board = self.create()
+        url = f"{API}/boards/{board['id']}/cast"
+        with self.picture().open("rb") as handle:
+            self.client.post(url, data={"name": "Mei/Tan"}, files={"file": ("mei.png", handle, "image/png")})
+        self.assertEqual(self.client.delete(f"{url}/Mei%2FTan").json()["cast"], [])
 
     def test_interrupt_reaches_the_storyboard_family(self):
         board = self.create()

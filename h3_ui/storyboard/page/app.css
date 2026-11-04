@@ -164,7 +164,7 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .library { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); }
 .library::backdrop { background: rgba(0, 0, 0, .5); }
 .library-head { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
-.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; max-height: 60vh; overflow: auto; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
 .library-grid button { padding: 0; border: 2px solid transparent; border-radius: 6px; background: none; }
 .library-grid button:hover { border-color: var(--accent); }
 .library-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }

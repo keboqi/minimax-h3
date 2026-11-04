@@ -115,6 +115,25 @@ def check(context, url):
     page.get_by_role("button", name=re.compile(r"Scene 3, ")).click()
     expect(prompt).to_have_value("Typed in scene three.")
 
+    # A dropped connection loses nothing: the edit is sent again.
+    dropped = []
+    def drop_once(route):
+        dropped.append(route.request.post_data)
+        route.abort() if len(dropped) == 1 else route.continue_()
+    page.route("**/storyboard/api/boards/*/scenes/*", drop_once)
+    prompt.fill("Typed through a dropped connection.")
+    expect(page.locator("#save-state")).to_have_text("All changes saved", timeout=10000)
+    assert len(dropped) == 2, dropped
+    page.unroute("**/storyboard/api/boards/*/scenes/*")
+
+    # Seed 0 is a seed, not "random".
+    page.get_by_text("More scene options").click()
+    seed = page.get_by_label("Seed (-1 is random)")
+    with page.expect_request(lambda request: request.method == "PATCH") as saved:
+        seed.fill("0")
+        seed.blur()
+    assert saved.value.post_data_json == {"seed": 0}, saved.value.post_data
+
     # Choices apply and fix what the checklist asks for.
     page.get_by_role("button", name=re.compile(r"Scene 1, ")).click()
     page.get_by_role("button", name="Generate this scene").wait_for()

@@ -3,6 +3,7 @@
 (() => {
   const API = "/storyboard/api";
   const SAVE_DELAY_MS = 400;
+  const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
   const $ = (id) => document.getElementById(id);
 
@@ -46,8 +47,8 @@
   const boardUrl = (path = "") => `${API}/boards/${state.board.id}${path}`;
   const sceneUrl = (path = "") => boardUrl(`/scenes/${state.sceneId}${path}`);
 
-  const request = async (method, url, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
+  const request = async (method, url, body, {form = false, keepalive = false} = {}) => {
+    const options = {method, credentials: "same-origin", keepalive};
     if (form) options.body = body;
     else if (body !== undefined) {
       options.headers = {"Content-Type": "application/json"};
@@ -56,8 +57,19 @@
     const response = await fetch(url, options);
     let data = null;
     try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
+    if (!response.ok) {
+      throw Object.assign(new Error(data?.error || data?.detail || `The server answered ${response.status}.`),
+        {refused: response.status < 500});
+    }
     return data;
+  };
+
+  // In the tab the frame is taller than the window, so what's visible is only part of it.
+  const visibleArea = () => {
+    const frame = window.frameElement;
+    if (!frame) return {top: 0, bottom: innerHeight};
+    const box = frame.getBoundingClientRect();
+    return {top: Math.max(0, -box.top), bottom: Math.min(innerHeight, window.parent.innerHeight - box.top)};
   };
 
   let toastTimer;
@@ -65,6 +77,7 @@
     const node = $("toast");
     node.textContent = message;
     node.className = error ? "toast error" : "toast";
+    node.style.bottom = `${innerHeight - visibleArea().bottom + 20}px`;
     node.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
@@ -95,30 +108,40 @@
   const edit = (field, value) => {
     const item = scene();
     item[field] = value;
-    const fields = dirty.get(item.id) || {};
-    fields[field] = value;
-    dirty.set(item.id, fields);
+    const entry = dirty.get(item.id) || {boardId: state.board.id, fields: {}};
+    entry.fields[field] = value;
+    dirty.set(item.id, entry);
     setSaveLabel("Saving…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flush, SAVE_DELAY_MS);
   };
   const flush = () => {
     clearTimeout(saveTimer);
-    const boardId = state.board?.id;
-    for (const [sceneId, fields] of dirty) {
+    for (const [sceneId, entry] of dirty) {
+      const {boardId, fields} = entry;
       dirty.delete(sceneId);
       saving += 1;
       saves = saves.then(async () => {
         try {
-          const data = await request("PATCH", `${API}/boards/${boardId}/scenes/${sceneId}`, fields);
+          // Keepalive lets the last edit finish when the page is closing.
+          const data = await request("PATCH", `${API}/boards/${boardId}/scenes/${sceneId}`, fields, {keepalive: true});
           saving -= 1;
           if (state.board?.id === boardId) applyBoard(data, {keepInspector: true});
           if (!saving && !dirty.size) setSaveLabel("All changes saved");
         } catch (error) {
           saving -= 1;
-          setSaveLabel("Couldn't save");
-          toast(error.message, true);
-          if (state.board?.id === boardId) refreshBoard();
+          if (error.refused) {
+            setSaveLabel("Couldn't save");
+            toast(error.message, true);
+            if (state.board?.id === boardId) refreshBoard();
+            return;
+          }
+          // A lost connection loses nothing: the edit waits for the next try, under anything newer.
+          const newer = dirty.get(sceneId);
+          dirty.set(sceneId, {boardId, fields: {...fields, ...newer?.fields}});
+          setSaveLabel("Connection lost, retrying…");
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(flush, SAVE_RETRY_MS);
         }
       });
     }
@@ -130,8 +153,7 @@
   };
   // A server reply is older than anything typed since, so unsaved fields stay on top.
   const applyBoard = (data, {keepInspector = false} = {}) => {
-    const typed = [...dirty].map(([id, fields]) => [data.scenes.find((item) => item.id === id), fields]);
-    for (const [item, fields] of typed) if (item) Object.assign(item, fields);
+    for (const [id, {fields}] of dirty) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
     state.board = data;
     if (!data.scenes.some((item) => item.id === state.sceneId)) {
       state.sceneId = data.scenes[0].id;
@@ -366,7 +388,7 @@
 
   // What depends on the server but sits beside fields being typed in.
   const renderInspectorDerived = () => {
-    if (state.panel) { renderInspector(); return; }
+    if (state.panel) return;  // Its inputs may hold what's being typed.
     const item = scene();
     const set = (id, text) => { const node = $(id); if (node) node.textContent = text; };
     set("prompt-hint", item.hint);
@@ -459,7 +481,10 @@
                 Array.from({length: state.boot.max_takes}, (_, i) => h("option", {value: i + 1, selected: i + 1 === item.takes_per_run}, String(i + 1)))))),
           h("label", {className: "field"}, "Seed (-1 is random)",
             h("input", {type: "number", step: 1, value: item.seed,
-              onchange: (event) => edit("seed", Number.parseInt(event.target.value, 10) || -1)})),
+              onchange: (event) => {
+                const seed = Number.parseInt(event.target.value, 10);
+                edit("seed", Number.isNaN(seed) ? -1 : seed);
+              }})),
           h("div", {className: "chips"},
             button("Duplicate scene", duplicateScene, "btn sm"),
             button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
@@ -588,6 +613,9 @@
       grid.replaceChildren(...data.items.map((row) => h("button", {type: "button", "aria-label": row.caption,
         onclick: () => { dialog.close(); onPick(row.path); }}, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
     };
+    const area = visibleArea();
+    dialog.style.marginTop = `${area.top + 16}px`;
+    dialog.style.maxHeight = `${area.bottom - area.top - 32}px`;
     dialog.replaceChildren(
       h("div", {className: "library-head"},
         h("label", {className: "field grow"}, "Search library images", query),
@@ -764,13 +792,16 @@
     }
     if (state.board.id !== boardId) return;
     const revised = run && run.revision !== state.seenRevision;
+    const sceneChanged = run?.scene_id !== state.run?.scene_id;
     followRun(run);
     if (revised) {
       state.seenRevision = run.revision;
       await refreshBoard();
     } else {
-      renderStrip();
-      renderStripActions();
+      // Only what changed: a rebuilt button loses a click landing on it.
+      const status = $("run-status");
+      if (status) status.textContent = run.status;
+      if (sceneChanged) renderStrip();
     }
   };
 
