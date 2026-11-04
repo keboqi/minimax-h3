@@ -510,7 +510,6 @@ class GenerationIntegrationTests(unittest.TestCase):
             )
             for fmt, cancel in (
                 ("Video", False),
-                ("Image", False),
                 ("Audio", False),
                 ("Video", True),
             ):

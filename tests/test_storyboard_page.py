@@ -23,7 +23,7 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.workspace_store import COOKIE, WorkspaceStore, install_owner_cookie
 from h3_ui.storyboard.handlers import MediaLibrary, StoryboardHandlers, StoryboardServices
-from h3_ui.storyboard.page import install_storyboard_page
+from h3_ui.storyboard.page import _image_thumbnail, install_storyboard_page
 
 API = "/storyboard/api"
 PROFILE_VALUES = {name: UI_DEFAULTS.get(name, f"default-{name}") for name in GENERATION_FIELDS}
@@ -54,7 +54,8 @@ class StoryboardPageTests(unittest.TestCase):
         app = FastAPI()
         install_owner_cookie(app, self.store)
         install_storyboard_page(app, self.handlers, gpu=True,
-                                interrupt=lambda request, family: self.interrupted.append(family) or "Stopping.")
+                                interrupt=lambda request, family, job_id: self.interrupted.append((family, job_id))
+                                or "Stopping.")
         self.client = TestClient(app)
 
     def fake_take(self, values, graph, outputs):
@@ -289,10 +290,40 @@ class StoryboardPageTests(unittest.TestCase):
             self.client.post(url, data={"name": "Mei/Tan"}, files={"file": ("mei.png", handle, "image/png")})
         self.assertEqual(self.client.delete(f"{url}/Mei%2FTan").json()["cast"], [])
 
-    def test_interrupt_reaches_the_storyboard_family(self):
-        board = self.create()
-        response = self.client.post(f"{API}/boards/{board['id']}/interrupt")
-        self.assertEqual((response.json()["message"], self.interrupted), ("Stopping.", ["storyboard"]))
+    def test_interrupt_stops_only_this_storyboards_job(self):
+        started, release = Event(), Event()
+        finish = self.fake_take
+
+        def held(values, graph, outputs):
+            started.set()
+            release.wait(10)
+            yield from finish(values, graph, outputs)
+
+        self.handlers.services = replace(self.handlers.services, generate_take=held)
+        board, other = self.create(), self.create()
+        self.assertEqual(self.client.post(f"{API}/boards/{other['id']}/interrupt").json()["message"],
+                         "This storyboard isn't generating.")
+        self.client.post(f"{API}/boards/{board['id']}/generate",
+                         json={"action": "scene", "scene_id": board["scenes"][0]["id"]})
+        self.assertTrue(started.wait(10))
+        try:
+            response = self.client.post(f"{API}/boards/{board['id']}/interrupt")
+            self.assertEqual(response.json()["message"], "Stopping.")
+            [(family, job_id)] = self.interrupted
+            self.assertEqual(family, "storyboard")
+            self.assertEqual(JOBS.records[job_id].family, "storyboard")
+        finally:
+            release.set()
+        self.wait_for_run(board)
+
+    def test_thumbnails_follow_the_pictures_rotation(self):
+        path = self.root / "rotated.jpg"
+        exif = Image.Exif()
+        exif[0x0112] = 6  # Shown rotated 90 degrees.
+        Image.new("RGB", (800, 400)).save(path, exif=exif)
+        thumbnail = _image_thumbnail(path, self.root / "thumbs")
+        with Image.open(thumbnail) as image:
+            self.assertGreater(image.height, image.width)
 
     def test_joining_runs_in_the_background_and_offers_the_video(self):
         board = self.create()

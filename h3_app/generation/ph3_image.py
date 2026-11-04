@@ -52,12 +52,15 @@ def image_references(media):
 def generate_ph3_image(request, services, runtime, *, progress=no_progress):
     try:
         references = image_references(request.media)
+        plan = services.policy.resolve_request_settings(request.values())
+        if plan.issues:
+            raise H3Error(" ".join(plan.issues))
+        output = plan.effective.output
         models = services.models.load_model_config()
         profile_key = models.profile_key(request.sampling.model_profile)
         profile = models.profiles[profile_key]
         image_request = PH3ImageRequest(request.media.prompt, profile.fl2va,
-                                        request.output.width, request.output.height,
-                                        request.output.seed, references)
+                                        output.width, output.height, output.seed, references)
         validate_ph3_image(image_request)
 
         def prepare(image_request, values, info, runtime):

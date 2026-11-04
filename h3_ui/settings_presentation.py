@@ -78,11 +78,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
             '<p>Dedicated INT8 image text encoder and VAE · BF16 prompt upsampler. '
             'Video sampling, decoder, attention and finishing settings do not apply.</p></section>'
         )
-    length = (
-        f"{output.image_frames} image frame(s)"
-        if fmt == "Image"
-        else f"{output.duration:g} seconds"
-    )
+    length = f"{output.duration:g} seconds"
     dimensions = f"{output.width}×{output.height}"
     voice_count = sum(bool(getattr(effective, f"fl2va_audio_{i}")) for i in range(1, 4))
     if effective.mode == "First / last frame" and voice_count:

@@ -223,6 +223,8 @@ def resolve_settings(
         inactive.update({"postprocess", "batch_count"})
         finishing = replace(finishing, postprocess="None")
         output = replace(output, batch_count=1)
+    if fmt == "Image":
+        finishing = replace(finishing, latent_upscale=False)
     if fmt == "Audio":
         inactive.update(
             {"width", "height", "latent_upscale", "latent_upscale_refine_steps"}
@@ -247,18 +249,9 @@ def resolve_settings(
         )
         adjusted("dimensions", (output.width, output.height), snapped, reason)
         output = replace(output, width=snapped[0], height=snapped[1])
+    inactive.update({"image_frames", "image_vae"})
     if fmt == "Image":
         inactive.add("duration")
-        if "500K" in output.image_vae:
-            frames = adjusted(
-                "image_frames",
-                output.image_frames,
-                1,
-                "The 500K image decoder produces one frame.",
-            )
-            output = replace(output, image_frames=frames)
-    else:
-        inactive.update({"image_frames", "image_vae"})
     if sampling.text_encoder == "BF16":
         offload = adjusted(
             "stage_model_offload",
@@ -322,8 +315,6 @@ def resolve_settings(
         )
     if fmt != "Image" and not 2 <= output.duration <= 15:
         issues.append("Duration must be between 2 and 15 seconds.")
-    if fmt == "Image" and not 1 <= output.image_frames <= 20:
-        issues.append("Choose between 1 and 20 image frames.")
     if fmt == "Video" and not 1 <= output.batch_count <= 4:
         issues.append("Choose between 1 and 4 videos per batch.")
     bridge = request.semantic_bridge
@@ -388,6 +379,9 @@ def resolve_settings(
         use_lynnreal_vae=decoders.use_lynnreal_vae if decoders else request.use_lynnreal_vae,
         use_sol_vae=decoders.use_sol_vae if decoders else request.use_sol_vae,
     )
+    if fmt == "Image":
+        # P-H3-Image runs its own workflow, so the video checks above can't block it.
+        issues.clear()
     return ResolvedSettings(
         request, effective, tuple(adjustments), frozenset(inactive), tuple(issues)
     )

@@ -10,6 +10,7 @@ from h3_app.contracts import GENERATION_FIELDS
 from h3_app.generation.h3 import generate
 from h3_app.generation.requests import H3Request
 from h3_app.model_types import ModelConfig, ModelProfile
+from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
 from h3_app.workflows.ph3_image import PH3_IMAGE_KEYS, PH3_IMAGE_SIGMAS, build_ph3_image_graph
 from h3_models import LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, PRELOAD_MODEL_KEYS
 
@@ -19,6 +20,8 @@ def inputs(graph, kind):
 
 
 class PH3ImageTests(unittest.TestCase):
+    context = ResolutionContext()
+
     def request(self, **changes):
         return H3Request.from_values({**dict.fromkeys(GENERATION_FIELDS), **UI_DEFAULTS, "result_format": "Image",
                                       "width": 2912, "height": 2912, "seed": 42,
@@ -34,6 +37,8 @@ class PH3ImageTests(unittest.TestCase):
                 if node["class_type"] not in missing}
         info["CLIPLoader"] = {"input": {"required": {"type": [["minimax"]]}}}
         return SimpleNamespace(
+            policy=SimpleNamespace(resolve_request_settings=lambda values: resolve_settings(
+                GenerationRequest.from_values(values), self.context)),
             models=SimpleNamespace(load_model_config=Mock(return_value=models),
                                    unload_prompt_rewriter=Mock(), ensure_model_keys=Mock(),
                                    ensure_profile_model=Mock()),
@@ -119,6 +124,29 @@ class PH3ImageTests(unittest.TestCase):
             result = list(generate(self.request(**changes), services, SimpleNamespace(), run_context={}))[-1]
             self.assertTrue(result.status.startswith("Error:"))
             services.models.ensure_model_keys.assert_not_called()
+
+    def test_the_graph_uses_the_size_the_plan_resolved(self):
+        for context, changes, size in (
+            (ResolutionContext(), {"width": 1000, "height": 1000}, (992, 992)),
+            (ResolutionContext(start_dimensions=(1280, 704)),
+             {"mode": "First / last frame", "first_image": "start.png"}, (1280, 704)),
+        ):
+            with self.subTest(size=size), patch("h3_app.generation.image_jobs.write_snapshot"), \
+                    patch.object(self, "context", context):
+                services = self.services()
+                results = list(generate(self.request(**changes), services, SimpleNamespace(), run_context={}))
+                self.assertEqual(results[-1].output, ["fox.png"])
+                graph = services.execution.submit_prompt.call_args.args[0]
+                conditioning = inputs(graph, "PH3ImageConditioning")
+                self.assertEqual((conditioning["width"], conditioning["height"]), size)
+
+    def test_video_only_settings_cannot_block_an_image(self):
+        plan = resolve_settings(GenerationRequest.from_values({
+            **UI_DEFAULTS, "result_format": "Image", "prompt": "a fox", "steps": 1, "image_frames": 99,
+            "image_vae": "Unknown", "latent_upscale": True, "latent_upscale_refine_steps": 99,
+        }))
+        self.assertEqual(plan.issues, ())
+        self.assertFalse(plan.effective.finishing.latent_upscale)
 
     def test_weights_are_lazy_and_no_image_transformer_is_provisioned(self):
         self.assertTrue(set(PH3_IMAGE_KEYS) <= set(LAZY_OPTIONAL_MODEL_KEYS))

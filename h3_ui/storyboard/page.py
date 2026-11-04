@@ -57,6 +57,7 @@ class Run:
     storyboard_id: str
     kind: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    job_id: str | None = None  # The generation job, once accepted.
     status: str = "Waiting for the GPU…"
     # Rises each time the storyboard changed, so the page knows to read it again.
     revision: int = 0
@@ -130,7 +131,7 @@ def guarded(endpoint):
 
 def _image_thumbnail(path: Path, root: Path) -> Path | None:
     """A small cached JPEG of a picture, or None when it can't be read as one."""
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image, ImageOps, UnidentifiedImageError
 
     stat = path.stat()
     key = hashlib.sha256(f"{path}:{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()[:24]
@@ -141,8 +142,9 @@ def _image_thumbnail(path: Path, root: Path) -> Path | None:
     partial = thumbnail.with_suffix(f".{uuid.uuid4().hex}.tmp.jpg")
     try:
         with Image.open(path) as image:
-            image.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
-            image.convert("RGB").save(partial, "JPEG", quality=82)
+            upright = ImageOps.exif_transpose(image)
+            upright.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
+            upright.convert("RGB").save(partial, "JPEG", quality=82)
         partial.replace(thumbnail)
     except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError):
         partial.unlink(missing_ok=True)
@@ -491,6 +493,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             job = JOBS.accept(owner, "storyboard",
                               [action, storyboard_id, body.get("scene_id"), body.get("take_id")],
                               callback=handlers.run_job, output_indices=(1,), key=uuid.uuid4().hex)
+            run.job_id = job.id
             try:
                 for status, changed in execute_accepted(job.id, session):
                     run.status = status
@@ -507,8 +510,16 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def stop(storyboard_id: str, request: Request):
         if interrupt is None:
             raise H3Error("Nothing can run here.")
-        return {"message": interrupt(session_of(request), family="storyboard"),
-                "run": run_payload(owner_of(request), storyboard_id)}
+        owner = owner_of(request)
+        run = runs.active(owner, storyboard_id, "generate")
+        if run is None:
+            message = "This storyboard isn't generating."
+        elif run.job_id is None:
+            message = "The run is still starting. Try again in a moment."
+        else:
+            # One owner can run several storyboards; only this one stops.
+            message = interrupt(session_of(request), family="storyboard", job_id=run.job_id)
+        return {"message": message, "run": run_payload(owner, storyboard_id)}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/join", include_in_schema=False)
     @guarded

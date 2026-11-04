@@ -153,7 +153,7 @@ class DecoderTests(unittest.TestCase):
     def test_generation_does_not_prepare_unused_video_decoder(self):
         from h3_ui import application as app
 
-        for fmt in ("Audio", "Image"):
+        for fmt in ("Audio",):
             kwargs = {
                 name: app.UI_DEFAULTS.get(name)
                 for name, p in inspect.signature(app.generate).parameters.items()

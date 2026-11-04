@@ -95,10 +95,11 @@
   };
 
   // Saving ----------------------------------------------------------------
-  const dirty = new Map();
+  const dirty = new Map();  // Waiting for their turn, by scene.
+  const sending = new Map();  // The one request under way.
   let saveTimer = null;
   let saves = Promise.resolve();
-  let saving = 0;
+  let savesFinished = 0;
 
   const setSaveLabel = (label) => {
     state.saveLabel = label;
@@ -115,45 +116,62 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flush, SAVE_DELAY_MS);
   };
+  const saveUrl = (boardId, sceneId) => `${API}/boards/${boardId}/scenes/${sceneId}`;
+  const saveScene = async (sceneId) => {
+    const entry = dirty.get(sceneId);
+    if (!entry) return;
+    const {boardId, fields} = entry;
+    dirty.delete(sceneId);
+    sending.set(sceneId, entry);
+    try {
+      const data = await request("PATCH", saveUrl(boardId, sceneId), fields, {keepalive: true});
+      sending.delete(sceneId);
+      savesFinished += 1;
+      if (state.board?.id === boardId) applyBoard(data, {keepInspector: true});
+      if (!dirty.size) setSaveLabel("All changes saved");
+    } catch (error) {
+      sending.delete(sceneId);
+      if (error.refused) {
+        setSaveLabel("Couldn't save");
+        toast(error.message, true);
+        if (state.board?.id === boardId) refreshBoard();
+        return;
+      }
+      // A lost connection loses nothing: the edit waits for the next try, under anything newer.
+      const newer = dirty.get(sceneId);
+      dirty.set(sceneId, {boardId, fields: {...fields, ...newer?.fields}});
+      setSaveLabel("Connection lost, retrying…");
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flush, SAVE_RETRY_MS);
+    }
+  };
   const flush = () => {
     clearTimeout(saveTimer);
-    for (const [sceneId, entry] of dirty) {
-      const {boardId, fields} = entry;
-      dirty.delete(sceneId);
-      saving += 1;
-      saves = saves.then(async () => {
-        try {
-          // Keepalive lets the last edit finish when the page is closing.
-          const data = await request("PATCH", `${API}/boards/${boardId}/scenes/${sceneId}`, fields, {keepalive: true});
-          saving -= 1;
-          if (state.board?.id === boardId) applyBoard(data, {keepInspector: true});
-          if (!saving && !dirty.size) setSaveLabel("All changes saved");
-        } catch (error) {
-          saving -= 1;
-          if (error.refused) {
-            setSaveLabel("Couldn't save");
-            toast(error.message, true);
-            if (state.board?.id === boardId) refreshBoard();
-            return;
-          }
-          // A lost connection loses nothing: the edit waits for the next try, under anything newer.
-          const newer = dirty.get(sceneId);
-          dirty.set(sceneId, {boardId, fields: {...fields, ...newer?.fields}});
-          setSaveLabel("Connection lost, retrying…");
-          clearTimeout(saveTimer);
-          saveTimer = setTimeout(flush, SAVE_RETRY_MS);
-        }
-      });
-    }
+    for (const sceneId of dirty.keys()) saves = saves.then(() => saveScene(sceneId));
     return saves;
   };
+  // The page is closing, so what's waiting can't take its turn behind the request under way.
+  const flushNow = () => {
+    clearTimeout(saveTimer);
+    for (const [sceneId, {boardId, fields}] of dirty) {
+      // Keepalive lets the request finish after the page has gone.
+      request("PATCH", saveUrl(boardId, sceneId), fields, {keepalive: true}).catch(() => {});
+    }
+    dirty.clear();
+  };
   const refreshBoard = async () => {
+    const before = savesFinished;
     const data = await act(() => request("GET", boardUrl()));
-    if (data) applyBoard(data, {keepInspector: true});
+    if (!data) return;
+    // A save that finished meanwhile may be missing from this reply.
+    if (before !== savesFinished) await refreshBoard();
+    else applyBoard(data, {keepInspector: true});
   };
   // A server reply is older than anything typed since, so unsaved fields stay on top.
   const applyBoard = (data, {keepInspector = false} = {}) => {
-    for (const [id, {fields}] of dirty) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
+    for (const edits of [sending, dirty]) {
+      for (const [id, {fields}] of edits) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
+    }
     state.board = data;
     if (!data.scenes.some((item) => item.id === state.sceneId)) {
       state.sceneId = data.scenes[0].id;
@@ -416,9 +434,10 @@
     }, ...attributes}));
 
   const choose = async (fields) => {
+    const url = sceneUrl();  // Taken first: the selection can move during the wait.
     await flush();
     await saves;
-    const data = await act(() => request("PATCH", sceneUrl(), fields));
+    const data = await act(() => request("PATCH", url, fields));
     if (data) applyBoard(data);
   };
 
@@ -510,15 +529,17 @@
     applyBoard(data);
   };
   const duplicateScene = async () => {
+    const url = sceneUrl("/duplicate");
     await flush();
-    const data = await act(() => request("POST", sceneUrl("/duplicate")), "Scene duplicated.");
+    const data = await act(() => request("POST", url), "Scene duplicated.");
     if (!data) return;
     state.sceneId = data.scene_id;
     applyBoard(data);
   };
   const moveScene = async (offset) => {
+    const url = sceneUrl("/move");
     await flush();
-    const data = await act(() => request("POST", sceneUrl("/move"), {offset}));
+    const data = await act(() => request("POST", url, {offset}));
     if (data) applyBoard(data);
   };
   const deleteScene = async () => {
@@ -530,9 +551,10 @@
   const enhance = async (event) => {
     const control = event.currentTarget;
     control.disabled = true;
+    const url = sceneUrl("/enhance");
     await flush();
     await saves;
-    const data = await act(() => request("POST", sceneUrl("/enhance"), {writer: writerSettings()}));
+    const data = await act(() => request("POST", url, {writer: writerSettings()}));
     control.disabled = false;
     if (!data) return;
     toast("Prompt improved. Edit it further if you like.");
@@ -753,6 +775,8 @@
     renderStripActions();
   };
   const startJoin = async (exporting) => {
+    await flush();
+    await saves;
     const data = await act(() => request("POST", boardUrl("/join"), {include_outdated: state.includeOutdated, export: exporting}));
     if (data) followRun(data.run, {started: true});
     renderStripActions();
@@ -762,15 +786,22 @@
     if (data) toast(data.message);
   };
 
+  // Runs already reported in this tab, so a reload or a board switch doesn't repeat them.
+  const ANNOUNCED_KEY = "h3-storyboard-announced";
+  const announced = new Set((() => {
+    try { return JSON.parse(stored.get(ANNOUNCED_KEY)) || []; } catch { return []; }
+  })());
   const followRun = (run, {started = false} = {}) => {
     const changed = run?.id !== state.run?.id;
-    const previous = state.run;
     state.run = run;
     if (changed) state.seenRevision = started || run?.active ? 0 : run?.revision ?? null;
     if (run?.active && !state.pollTimer) state.pollTimer = setTimeout(poll, POLL_MS);
-    if (previous?.active && previous.id === run?.id && !run.active) announce(run);
+    // A run that ended while this page wasn't watching still reports, once.
+    if (run && !run.active && !announced.has(run.id)) announce(run);
   };
   const announce = (run) => {
+    announced.add(run.id);
+    stored.set(ANNOUNCED_KEY, JSON.stringify([...announced].slice(-50)));
     if (run.error) toast(run.error, true);
     else if (run.message || run.status) toast(run.message || run.status);
     if (run.result_url) {
@@ -956,7 +987,7 @@
     try {
       new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
     } catch { /* Framed by another origin. */ }
-    window.addEventListener("beforeunload", () => flush());
+    window.addEventListener("beforeunload", flushNow);
     new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true});
     document.addEventListener("toggle", queueFit, true);
     window.addEventListener("resize", queueFit);

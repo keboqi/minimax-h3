@@ -955,11 +955,11 @@ def _drama3_actions():
     )
 
 
-def interrupt(request: gr.Request, family: str = "h3") -> str:
+def interrupt(request: gr.Request, family: str = "h3", job_id: str | None = None) -> str:
     try:
         from .job_admission import require_owner
 
-        return JOBS.cancel(require_owner(request), family, api_get, api_post)
+        return JOBS.cancel(require_owner(request), family, api_get, api_post, job_id=job_id)
     except Exception as exc:
         return f"Interrupt failed: {exc}"
 

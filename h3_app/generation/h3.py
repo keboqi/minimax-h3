@@ -177,7 +177,6 @@ def generate(
                 "per_token" if request.sampling.semantic_bridge else None
             ),
             sampled_frames=prepared.generation_frames,
-            image_frames=prepared.requested_image_frames,
             use_trt_vae=request.output.use_trt_vae,
             use_int8_vae=request.output.use_int8_vae,
             video_encoder=request.output.video_encoder,
@@ -255,13 +254,8 @@ def generate(
         queued_status = (
             f"Queued `{prompt_id}` · seed {prepared.actual_seed} · "
             f"{prepared.resolved_width}×{prepared.resolved_height} · {prepared.generation_frames} sampled frames · "
-            f"result {request.output.result_format.lower()}"
-            + (
-                f" ({prepared.requested_image_frames} decoded frame(s)) · "
-                if request.output.result_format == "Image"
-                else " · "
-            )
-            + f"model {prepared.selected_label} · {prepared.effective_steps} steps/{prepared.effective_scheduler} · "
+            f"result {request.output.result_format.lower()} · "
+            f"model {prepared.selected_label} · {prepared.effective_steps} steps/{prepared.effective_scheduler} · "
             f"attention {attention_status} ({prepared.sol_reason}; ~{prepared.packed_tokens:,} target tokens) · "
             f"dense-backend {runtime.dense_attention_backend} · "
             f"cache {cache_status} · unchanged-input reuse "
@@ -328,22 +322,6 @@ def generate(
             ),
         )
         history = services.execution.wait_for_history(prompt_id)
-        if request.output.result_format == "Image":
-            results = services.media.resolve_image_outputs(
-                history, queued_at, prepared.requested_image_frames
-            )
-            for path in results:
-                write_snapshot(path, execution_snapshot)
-            finished_at = time.monotonic()
-            elapsed = finished_at - started
-            timing_summary = timings.summary(now=finished_at)
-            progress(1, desc="Complete")
-            yield GenerationUpdate(
-                [str(path) for path in results],
-                f"Completed in {elapsed:.1f}s · {len(results)} image frame(s) ready "
-                f"for selection · seed {prepared.actual_seed}\n\n{timing_summary}",
-            )
-            return
         if request.output.result_format == "Audio":
             result = services.media.resolve_audio_output(history, queued_at)
             write_snapshot(result, execution_snapshot)

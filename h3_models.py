@@ -2164,6 +2164,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
         "pika_flex_fl2va_lora", "pika_flex_ref2va_lora",
         *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),

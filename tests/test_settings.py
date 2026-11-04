@@ -172,7 +172,7 @@ class SettingsTests(unittest.TestCase):
         )
         self.assertEqual(p.requested.finishing, r.finishing)
 
-    def test_start_image_and_single_frame_resolution(self):
+    def test_start_image_sets_the_image_size(self):
         r = GenerationRequest(
             mode="First / last frame",
             output=OutputSettings(
@@ -183,8 +183,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(
             (p.effective.output.width, p.effective.output.height), (1024, 768)
         )
-        self.assertEqual(p.effective.output.image_frames, 1)
-        self.assertEqual(r.output.image_frames, 12)
 
     def test_mode_memory_and_reset_scope(self):
         v = {
