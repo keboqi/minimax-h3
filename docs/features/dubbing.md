@@ -5,6 +5,28 @@ with each speaker's own cloned voice. Open **Create** and choose the **Dub & Tra
 Soundstage. It works in three steps, shown as a step strip: **Source**, **Review
 lines** and **Dub**. A finished analysis opens Review lines.
 
+## Projects and Workshop
+
+**Dub & Translate** is also available in **Prism Workshop**. Upload media or use
+**Media → From a URL**, choose the languages and processing settings, then enter a
+**Project name** and **Save project**. The saved source survives the upload cache;
+named projects and their sessions are kept beyond the usual 14-day session cleanup.
+API keys are never saved in projects.
+
+Open Studio and **Load project** to analyze the source, translate, preview voices,
+generate the dub or align words. Completed analysis updates the project selected
+when analysis started. If another save has replaced its session in the meantime,
+the new analysis stays open for review and can be kept with **Save project**.
+**Save project** also keeps changes to processing and mix settings.
+Return to Workshop and load that same project to edit lines, assign speaker voices,
+listen to the original, review the latest completed dub, download audio/video and
+subtitles, or export a video with burned-in subtitles. Line and speaker edits save
+automatically. Workshop has no model actions; transcription, automatic translation,
+voice generation and word alignment run in Studio.
+
+On Modal, stop Studio before using Workshop and restart it after saving, so both
+apps see the latest shared files.
+
 ## 1 · Source
 
 Pick the source in one of three tabs: **Upload** a video or audio file, choose

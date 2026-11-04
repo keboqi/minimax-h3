@@ -16,18 +16,29 @@ from ..job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 _QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
 
 
-def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> None:
+def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, actions, gpu=True) -> None:
     """``task`` is Create's task picker; Dub & Translate is its "Dub" task."""
     _bind_source(view, task=task, create_tab=create_tab, actions=actions)
     _bind_review(view, actions=actions)
     _bind_dub(view, actions=actions)
+
+    view.listen_original.click(actions.listen_original, inputs=[view.session, view.line_numbers],
+                               outputs=[view.original_audio, view.line_status], **_QUIET)
+    for event in (view.session.change, view.line_numbers.change, view.start.input, view.end.input):
+        event(lambda: None, outputs=view.original_audio, **_QUIET)
+    view.export_subtitles.click(
+        actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
+        concurrency_limit=1, show_progress="minimal", api_name=False,
+    )
+    if not gpu:
+        return
 
     analyzed = bind_gpu_action(
         view.analyze.click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
                 view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps,
-                view.translation_context],
+                view.translation_context, view.project.active],
         outputs=[view.session, view.board, view.lines, view.analyze_status, view.plan], show_progress="minimal",
         api_name="dub_analyze_source",
     )
@@ -41,10 +52,6 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
                     **_QUIET).then(**_readiness(view, actions))
     line_inputs = [view.session, view.line_numbers, view.voice_mode, view.preset, view.timing, view.max_speed,
                    view.parallel]
-    view.listen_original.click(actions.listen_original, inputs=[view.session, view.line_numbers],
-                               outputs=[view.original_audio, view.line_status], **_QUIET)
-    for event in (view.session.change, view.line_numbers.change, view.start.input, view.end.input):
-        event(lambda: None, outputs=view.original_audio, **_QUIET)
     previewed = bind_gpu_action(
         view.preview.click, owned_generation(actions.preview_line, FAMILY_LINES), inputs=line_inputs,
         outputs=[view.preview_audio, view.line_status], show_progress="minimal", api_name=False,
@@ -74,10 +81,6 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         voiced.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
                     **_QUIET).then(actions.focus_line, inputs=[view.session, view.board],
                                   outputs=inspector_outputs(view), **_QUIET).then(**_readiness(view, actions))
-    view.export_subtitles.click(
-        actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
-        concurrency_limit=1, show_progress="minimal", api_name=False,
-    )
     # Each Interrupt stops only its own step's family, so stopping a preview leaves a running dub alone.
     for stop, status, family, events in (
         (view.stop_analyze, view.analyze_status, FAMILY_ANALYZE, [analyzed]),
@@ -99,8 +102,11 @@ def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
         # Engine tabs are switched by the task picker, so their own select event never fires.
         return actions.library_choices(current) if selected == "Dub" else gr.skip()
 
-    for trigger in (task.input, create_tab.select):
-        trigger(refresh_for_dub, inputs=[task, view.library], outputs=view.library, **_QUIET)
+    if task is not None:
+        for trigger in (task.input, create_tab.select):
+            trigger(refresh_for_dub, inputs=[task, view.library], outputs=view.library, **_QUIET)
+    else:
+        create_tab.select(actions.library_choices, inputs=view.library, outputs=view.library, **_QUIET)
     view.media_tab.select(actions.library_choices, inputs=view.library, outputs=view.library, **_QUIET)
     # One source at a time: an upload replaces the Media pick and the other way round.
     view.source.upload(lambda: None, outputs=view.library, **_QUIET)
@@ -109,8 +115,12 @@ def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
     for event in (view.source.change, view.library.change):
         event(actions.source_card, inputs=[view.source, view.library], outputs=view.source_card, **_QUIET)
     view.sessions_tab.select(actions.recent_sessions, outputs=view.recent, **_QUIET)
-    view.recent.open(actions.open_recent, inputs=view.recent,
-                     outputs=[view.session, view.board, view.lines, view.analyze_status, view.target_language],
+    def open_recent(recent):
+        return (*actions.open_recent(recent), None, None, "Unsaved session")
+
+    view.recent.open(open_recent, inputs=view.recent,
+                     outputs=[view.session, view.board, view.lines, view.analyze_status, view.target_language,
+                              view.project.active, view.project.settings, view.project.status],
                      **_QUIET)
 
     # The analysis plan and the More options title follow the settings.
@@ -153,12 +163,18 @@ def _bind_review(view: DubbingView, *, actions) -> None:
              **_QUIET}
     readiness = _readiness(view, actions)
     # A new session (analyzed or reopened) clears the last one's results and opens Review lines.
-    view.session.change(actions.clear_results,
+    view.session.change(actions.clear_results, inputs=[view.session, view.project.settings],
                         outputs=[view.line_numbers, view.line_status, view.preview_audio, view.regenerate,
                                  view.player, view.video, view.audio, view.files, view.status, view.export_source,
-                                 view.export_subtitles, view.exported_video, view.export_status], **_QUIET)
-    view.session.change(None, inputs=view.session, js=opened_session_js(view.steps), **_QUIET)
+                                 view.export_subtitles, view.exported_video, view.export_status], **_QUIET).then(
+        actions.restore_result, inputs=view.session,
+        outputs=[view.player, view.video, view.audio, view.files, view.status, view.export_source,
+                 view.export_subtitles, view.exported_video, view.export_status], **_QUIET)
+    view.session.change(None, inputs=[view.session, view.board], js=opened_session_js(view.steps), **_QUIET)
     view.session.change(**focus)
+    view.session.change(actions.session_source, inputs=view.session, outputs=view.source, **_QUIET)
+    view.session.change(actions.project_selection, inputs=[view.project.active, view.session],
+                        outputs=view.project.active, **_QUIET)
 
     view.board.focus(**focus)
     # Also recover marks after a cancelled job whose completion chain did not run.
@@ -200,7 +216,8 @@ def _bind_dub(view: DubbingView, *, actions) -> None:
     view.session.change(**speakers)
     view.steps.tabs.select(**speakers)
     # Each session starts on its transcription's Clone from default; a pick then holds in this view.
-    view.session.change(actions.voice_default, inputs=view.session, outputs=view.voice_mode, **_QUIET)
+    view.session.change(actions.voice_default, inputs=[view.session, view.project.settings],
+                        outputs=view.voice_mode, **_QUIET)
     view.speakers.save(actions.save_speaker, inputs=[view.session, view.speakers], outputs=view.speakers_status,
                        **_QUIET)
     readiness = _readiness(view, actions)

@@ -72,6 +72,7 @@ def build_media_library(
         seedvr2_choices=(),
         default_seedvr2=None,
         enhance=False,
+        downloads=True,
     )
     with view.inspector:
         settings_used = gr.HTML("Select an output to inspect its settings.")
@@ -84,6 +85,8 @@ def build_media_library(
         validate_path=controller.gallery_media_download_path,
         preview_media=controller.refresh_media_page,
     )
+    from .dubbing.handlers import DubbingHandlers, DubbingServices
+    downloads = DubbingHandlers(DubbingServices(lambda: runtime, None, controller.list_media_paths, gpu=False))
     bind_gallery_view(
         view,
         tab=tab,
@@ -99,5 +102,6 @@ def build_media_library(
         delete=controller.delete_selected_gallery_media,
         empty=controller.empty_generated_media_gallery,
         list_paths=controller.list_media_paths,
+        download_actions=downloads,
     )
     return view

@@ -96,6 +96,33 @@ def load_player(output: str | Path) -> Player | None:
     return player if player.dub is not None and player.original is not None else None
 
 
+@dataclass(frozen=True)
+class SavedResult:
+    audio: Path | None
+    video: Path | None
+    subtitles: tuple[Path, ...]
+    player: Player | None
+
+    @property
+    def translated_subtitles(self) -> Path | None:
+        return next((path for path in self.subtitles if not path.name.endswith(".original.srt")), None)
+
+
+def load_result(output: str | Path) -> SavedResult | None:
+    """Find this dub's outputs, including surviving audio if its video was removed."""
+    output = Path(output)
+    audio, video = output.with_suffix(".mp3"), output.with_suffix(".mp4")
+    audio = audio if audio.is_file() else None
+    video = video if video.is_file() else None
+    if audio is None and video is None:
+        return None
+    # The dot boundary avoids collecting another dub whose stem starts with this one.
+    subtitles = tuple(sorted(path for path in output.parent.iterdir()
+                             if path.name.startswith(output.stem + ".")
+                             and path.suffix == ".srt" and path.is_file()))
+    return SavedResult(audio, video, subtitles, load_player(output))
+
+
 def prune_players(output_dir: Path) -> None:
     """Drop player folders whose dub was deleted from Media: neither its ``.mp3`` nor ``.mp4`` is left."""
     import shutil

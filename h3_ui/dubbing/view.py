@@ -31,6 +31,7 @@ from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 from ..result_views import dub_panel
 from ..step_cards import StepStrip, card_heading, intro, step_strip
 from . import presenters, widgets
+from .projects import ProjectControls
 
 SOURCE, LINES, DUB = range(3)
 STEPS_ID = "h3-dub-steps"
@@ -58,6 +59,7 @@ TIMING_CHOICES = (
 
 @dataclass(frozen=True)
 class DubbingView:
+    project: ProjectControls
     steps: StepStrip
     session: gr.Textbox
     # Source
@@ -157,9 +159,9 @@ def opened_session_js(steps: StepStrip) -> str:
     Review lines is open (for at most two seconds).
     """
     return (
-        "(id) => { "
+        "(id, board) => { "
         f"const root = document.getElementById({steps.tabs.elem_id!r}); "
-        "if (!id || !root || root.dataset.session === id) return; "
+        "if (!id || !root || root.dataset.session === id || !board?.lines?.length) return; "
         "root.dataset.session = id; "
         f"({steps.go(LINES)})(); "
         "let tries = 0; "
@@ -177,12 +179,18 @@ def default_plan() -> str:
         translator=TRANSLATOR_HYMT, target_language="English"))
 
 
-def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default_gemini_model: str) -> DubbingView:
+def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default_gemini_model: str,
+                       gpu=True) -> DubbingView:
     root.elem_classes = [*root.elem_classes, "h3-song", "h3-dub"]
     with root:
         intro("Dub & Translate", "Hear it in another language.",
               "Bring a video or recording, check every translated line, then dub it in each speaker's "
               "own voice.", "DUB STUDIO")
+        project = ProjectControls.build()
+        if not gpu:
+            gr.Markdown("Prepare and save a project here, then load it in Studio to analyze or generate. "
+                        "Return to Workshop to edit lines, play results and download files. "
+                        "Line edits save automatically; Save project keeps the source and settings.")
         session = gr.Textbox(visible=False)
         steps = step_strip(STEPS_ID)
         with steps.tabs:
@@ -402,8 +410,12 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
     align_words.h3_stop = stop_align_words
     analyze.h3_stop = stop_analyze
     preview.h3_stop = new_take.h3_stop = retranslate.h3_stop = stop_preview
+    if not gpu:
+        for control in (analyze, stop_analyze, preview, new_take, retranslate, stop_preview,
+                        run, stop, align_words, stop_align_words):
+            control.visible = False
     return DubbingView(
-        steps, session, source, library, refresh_library, media_tab, sessions_tab, recent, source_card,
+        project, steps, session, source, library, refresh_library, media_tab, sessions_tab, recent, source_card,
         source_language, target_language, notes, pipeline, translate, translator, gemini, gemini_model, api_key,
         options, separate, separator_model, reuse, local, aligner, merge_gap, refine_timestamps, plan, analyze, stop_analyze,
         analyze_status, board, lines, inspected, inspector, previous_line, next_line, start, end, speaker, original,

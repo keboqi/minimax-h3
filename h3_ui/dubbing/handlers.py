@@ -32,9 +32,10 @@ _DOWNLOAD_LOCK = threading.Lock()
 @dataclass(frozen=True)
 class DubbingServices:
     runtime_config: Callable[[], Any]
-    free_gpu: Callable[[], None]
+    free_gpu: Callable[[], None] | None
     # (mode) -> newest-first managed media paths for "Video" or "Audio".
     list_media: Callable[[str], list]
+    gpu: bool = True
 
 
 def _line_key(index: int, line: dict) -> dict:
@@ -73,6 +74,8 @@ class DubbingHandlers:
 
     def _gpu(self, run):
         """Shared keyword arguments for pipeline steps."""
+        if not self.services.gpu:
+            raise H3Error("Open this project in Studio to transcribe, translate or generate audio.")
         return run(runtime=self._runtime(), free_gpu=self.services.free_gpu, hf_token=self._hf_token())
 
     def _failed(self, exc: BaseException) -> str:
@@ -358,25 +361,62 @@ class DubbingHandlers:
             return f"**Not saved:** {exc}"
         return ""
 
-    def voice_default(self, session_id):
+    def voice_default(self, session_id, project_settings=None):
         """Outputs: Clone from, set to the session's transcription default."""
         session = self._session(session_id)
+        if isinstance(project_settings, dict) and project_settings.get("session") == session_id:
+            return project_settings.get("voice_mode", gr.skip())
         return gr.skip() if session is None else pipeline.default_voice_mode(session.data.get("pipeline"))
 
     def readiness(self, session_id):
         return presenters.readiness_html(self._session(session_id))
 
-    def clear_results(self):
+    def clear_results(self, session_id=None, project_settings=None):
         """A new session makes the previous one's line picks, preview and dub stale.
 
         Outputs: line controls, result files/status, export source/button/file/status.
         """
-        return ("", "", None, "", gr.update(value="", visible=False), gr.update(value=None, visible=True), None,
+        regenerate = (project_settings.get("regenerate", "") if isinstance(project_settings, dict)
+                      and project_settings.get("session") == session_id else "")
+        return ("", "", None, regenerate, gr.update(value="", visible=False), gr.update(value=None, visible=True), None,
                 None, "", None, gr.update(interactive=False), None, "")
+
+    def session_source(self, session_id):
+        session = self._session(session_id)
+        return str(session.path("source")) if session else gr.skip()
+
+    def project_selection(self, project, session_id):
+        """Advance browser context only when the backend attached this completed analysis."""
+        if not project:
+            return None
+        from h3_app.dubbing import projects
+
+        try:
+            _, session = projects.load(self._runtime(), project["name"])
+        except H3Error:
+            return None
+        return {"name": project["name"], "session": session_id} if session.id == session_id else None
+
+    def restore_result(self, session_id):
+        """Reopen the latest completed dub without invoking any models."""
+        from h3_app.dubbing.results import load_result
+
+        session = self._session(session_id)
+        output = session.data.get("last_output") if session else None
+        result = load_result(output) if output else None
+        if result is None:
+            return (gr.skip(),) * 9
+        video = str(result.video) if result.video else None
+        translated = result.translated_subtitles
+        export = {"video": video, "subtitles": str(translated)} if video and translated else None
+        return (panel_update(dub_html(result.player, scope="dub")) if result.player else gr.update(visible=False),
+                gr.update(value=video, visible=bool(video)), str(result.audio) if result.audio else None,
+                [str(p) for p in result.subtitles], "Opened the latest saved dub.", export,
+                gr.update(interactive=bool(export)), None, "")
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
-                       reuse=True, refine_timestamps=True, translation_context=False):
+                       reuse=True, refine_timestamps=True, translation_context=False, project=None):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -393,8 +433,21 @@ class DubbingHandlers:
             for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
                 if isinstance(update, pipeline.Analysis):
                     session = update.session
+                    message = update.message
+                    if project:
+                        from h3_app.dubbing import projects
+
+                        try:
+                            attached = projects.attach(self._runtime(), project["name"], session.id,
+                                                       expected_session=project["session"])
+                        except OSError as exc:
+                            record_failure(exc)
+                            message += f" Project could not be updated: {exc}. Save project to keep these lines."
+                        else:
+                            if not attached:
+                                message += " Project changed during analysis; Save project to keep these lines."
                     yield (session.id, presenters.board_value(session), segment_tools.to_rows(session.segments),
-                           update.message, presenters.plan_html(steps, finished=True))
+                           message, presenters.plan_html(steps, finished=True))
                 else:
                     active = presenters.step_for_status(update) or active
                     yield gr.skip(), gr.skip(), gr.skip(), update, presenters.plan_html(steps, active=active)

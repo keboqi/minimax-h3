@@ -84,8 +84,13 @@ def prune(runtime, *, now: float | None = None) -> None:
     root = sessions_dir(runtime)
     if not root.is_dir():
         return
+    from .projects import retained_sessions
+
+    retained = retained_sessions(runtime)
     cutoff = (time.time() if now is None else now) - KEEP_SECONDS
     for folder in root.iterdir():
+        if folder.name in retained:
+            continue
         manifest = folder / MANIFEST
         try:
             stale = folder.is_dir() and (manifest.stat().st_mtime if manifest.is_file()

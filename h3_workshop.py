@@ -403,14 +403,14 @@ def build_ui(manager: ModelManager | None, media=None):
         if manager is None:
             gr.Markdown(
                 f"# {TITLE}\n"
-                "Manage media, prepare Sound Stage projects and plan storyboards without starting ComfyUI or "
+                "Manage media, prepare Dub & Translate and Sound Stage projects and plan storyboards without starting ComfyUI or "
                 "loading models. Storyboards prepared here open in the Studio, which "
                 "generates their scenes."
             )
         else:
             gr.Markdown(
                 f"# {TITLE}\n"
-                "Prepare models, manage media, write Sound Stage scripts and plan storyboards on the shared Modal "
+                "Prepare models, manage media, prepare Dub & Translate and Sound Stage projects and plan storyboards on the shared Modal "
                 "volume without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
                 "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
                 "annotating or deleting media. Start it again afterwards so it sees the "
@@ -432,6 +432,8 @@ def build_ui(manager: ModelManager | None, media=None):
                 build_storyboard_workshop(gr.Tab("Storyboard"), ui, runtime, store, library=library)
                 from h3_ui.drama3.workshop import build_soundstage_workshop
                 build_soundstage_workshop(gr.Tab("Sound Stage"), ui, runtime, store)
+                from h3_ui.dubbing.workshop import build_dubbing_workshop
+                build_dubbing_workshop(gr.Tab("Dub & Translate"), ui, runtime)
                 from h3_ui.result_views import load_result_view_scripts
 
                 load_result_view_scripts(ui)

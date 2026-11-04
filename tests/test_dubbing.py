@@ -1009,7 +1009,7 @@ class HandlerTests(Workspace):
                                                 view.notes, view.translation_context])
         self.assertFalse(view.translation_context.value)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertEqual(analysis.inputs[-1], view.translation_context)
+        self.assertEqual(analysis.inputs[-2:], [view.translation_context, view.project.active])
         config = demo.get_config_file()
         self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
                             for dep in config["dependencies"]))

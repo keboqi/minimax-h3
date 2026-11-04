@@ -202,6 +202,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             )
             bind_dubbing(dubbing_components, task=app_views.task, create_tab=app_views.create_tab,
                          interrupt=services.interrupt, actions=services.dubbing_actions)
+            from .dubbing.projects import bind_projects as bind_dubbing_projects
+            bind_dubbing_projects(dubbing_components, services.dubbing_actions, demo.load)
         with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools
