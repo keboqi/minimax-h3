@@ -516,6 +516,10 @@ expensive ComfyUI image layer is built. Changes to those sources
 therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers.
 `h3_requirements.py` and `h3_sources.py`, which control build-time package
 installation, ABI policy and source pins, are copied into an earlier image layer.
+Workshop-only packages live in `h3_workshop_requirements.py`, which is excluded
+from Studio's build inputs and build-time imports. Changing that list rebuilds
+the CPU Workshop dependency layer while reusing Studio's cached image. Changing
+shared version pins in `h3_requirements.py` still rebuilds Studio as intended.
 
 ## Validation
 

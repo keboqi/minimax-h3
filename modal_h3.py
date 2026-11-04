@@ -54,6 +54,7 @@ LOCAL_UI_PACKAGE = LOCAL / "h3_ui"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
 LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
+LOCAL_WORKSHOP_REQUIREMENTS = LOCAL / "h3_workshop_requirements.py"
 LOCAL_SHARED_SOURCES = LOCAL / "h3_sources.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
@@ -161,7 +162,6 @@ from h3_requirements import (  # noqa: E402
     TORCHAUDIO_VERSION,
     TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
-    WORKSHOP_REQUIREMENTS,
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
@@ -195,7 +195,7 @@ _RUNTIME_LOCAL_MOUNTS = (
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
-_REQUIRED_LOCAL_FILES = _BUILD_LOCAL_FILES + _RUNTIME_LOCAL_FILES
+_REQUIRED_LOCAL_FILES = _BUILD_LOCAL_FILES + _RUNTIME_LOCAL_FILES + (LOCAL_WORKSHOP_REQUIREMENTS,)
 if IS_LOCAL:
     missing = [str(path) for path in _REQUIRED_LOCAL_FILES if not path.is_file()]
     for package in (LOCAL_UI_PACKAGE, LOCAL / "h3_app"):
@@ -773,14 +773,18 @@ console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
     .apt_install("ffmpeg")
-    .uv_pip_install(*WORKSHOP_REQUIREMENTS)
 )
 if IS_LOCAL:
+    # Image recipes are resolved by the local deploy process. The GPU build's
+    # remote module import must not need this CPU-only dependency module.
+    from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
+
+    console_image = console_image.uv_pip_install(*WORKSHOP_REQUIREMENTS)
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
         "h3_models.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
-        "h3_requirements.py", "h3_node_patches.py", "prompts/prompt.txt",
+        "h3_requirements.py", "h3_workshop_requirements.py", "h3_node_patches.py", "prompts/prompt.txt",
     ):
         console_image = console_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,

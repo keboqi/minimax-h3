@@ -294,7 +294,7 @@ class ModelManagerTests(unittest.TestCase):
         import subprocess
         import sys
 
-        from h3_requirements import WORKSHOP_REQUIREMENTS
+        from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
 
         root = Path(__file__).resolve().parents[1]
         source = (root / "run_h3.sh").read_text(encoding="utf-8")
@@ -398,12 +398,14 @@ class ModelManagerTests(unittest.TestCase):
     def test_cpu_image_includes_hosted_writer_dependencies_and_guidelines(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
-        image = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+        image = next(node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
                      and any(isinstance(target, ast.Name) and target.id == "console_image"
-                             for target in node.targets))
+                             for target in node.targets)
+                     and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+                     and node.value.func.attr == "uv_pip_install")
         install = next(node for node in ast.walk(image) if isinstance(node, ast.Call)
                        and isinstance(node.func, ast.Attribute) and node.func.attr == "uv_pip_install")
-        from h3_requirements import WORKSHOP_REQUIREMENTS
+        from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
 
         self.assertEqual(ast.unparse(install.args[0]), "*WORKSHOP_REQUIREMENTS")
         self.assertIn("openai>=3.16.2,<4", WORKSHOP_REQUIREMENTS)
@@ -413,6 +415,7 @@ class ModelManagerTests(unittest.TestCase):
                      and any(isinstance(item, ast.Constant) and item.value == "h3_workshop.py"
                              for item in node.iter.elts))
         self.assertIn("prompts/prompt.txt", [item.value for item in files.iter.elts])
+        self.assertIn("h3_workshop_requirements.py", [item.value for item in files.iter.elts])
         self.assertTrue((source.parent / "prompts" / "prompt.txt").read_text(encoding="utf-8").strip())
 
 

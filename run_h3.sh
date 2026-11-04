@@ -380,7 +380,7 @@ run_workshop() {
 import sys
 
 sys.path.insert(0, sys.argv[1])
-from h3_requirements import WORKSHOP_REQUIREMENTS
+from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
 
 for requirement in WORKSHOP_REQUIREMENTS:
     print(requirement)
