@@ -243,7 +243,7 @@ def resolve_settings(
             max(grid, int(round(int(value) / grid)) * grid) for value in source
         )
         reason = (
-            "From the start image, aligned for generation."
+            "From the start image's ratio at the pixel cap."
             if dimensions
             else f"Aligned to {grid}-pixel boundaries."
         )

@@ -288,7 +288,9 @@ class H3Handlers:
             and first
         ):
             dimensions = start_frame_generation_resolution(
-                first, alignment=64 if request.finishing.latent_upscale else 32
+                first,
+                alignment=64 if request.finishing.latent_upscale else 32,
+                auto_megapixels=request.sampling.auto_megapixels,
             )
         return resolve_settings(
             request, ResolutionContext(dimensions, self.services.runtime_config().memory_profile)

@@ -158,6 +158,7 @@ class H3OutputInputs:
     use_sol_vae: bool = False
     video_encoder: str = "Original"
     lightvae_decoder: str = "none"
+    auto_megapixels: str = "1 MP"
 
 
 @dataclass

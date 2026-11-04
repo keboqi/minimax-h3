@@ -841,6 +841,7 @@ def generate(
     video_encoder: str = "Original",
     lightvae_decoder: str = "none",
     use_sol_vae: bool = False,
+    auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     progress=gr.Progress(track_tqdm=False),
 ):
     values = dict(locals())

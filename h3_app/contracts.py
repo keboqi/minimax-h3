@@ -80,6 +80,7 @@ GENERATION_FIELDS = (
     "video_encoder",
     "lightvae_decoder",
     "use_sol_vae",
+    "auto_megapixels",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -158,6 +159,7 @@ GENERATION_COMPONENTS = (
     "video_encoder",
     "lightvae_decoder",
     "use_sol_vae",
+    "auto_megapixels",
 )
 
 
@@ -182,6 +184,8 @@ class GenerationArguments:
             args = (*args, "Original", "none")
         if len(args) == GENERATION_FIELDS.index("use_sol_vae"):
             args = (*args, False)
+        if len(args) == GENERATION_FIELDS.index("auto_megapixels"):
+            args = (*args, "1 MP")
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

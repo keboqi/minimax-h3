@@ -100,7 +100,7 @@ def build_workspace_output(defaults, services, root, *, details_parent=None, det
             list(services.AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
             value=services.DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
             label="Start-frame auto cap",
-            info="Caps automatic video size. Conditioned image output uses the first frame's aligned native dimensions.",
+            info="Caps automatic video size. Image edits from a first frame scale to this size, keeping its aspect ratio.",
         )
         seed = gr.Number(
             value=defaults["seed"],

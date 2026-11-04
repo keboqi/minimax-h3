@@ -86,7 +86,8 @@
         {"parameter_name": "latent_upscale_refine_lora", "parameter_has_default": true, "parameter_default": "Same as generation", "type": "type_45"},
         {"parameter_name": "video_encoder", "parameter_has_default": true, "parameter_default": "LightVAE Lite", "type": "type_93"},
         {"parameter_name": "lightvae_decoder", "parameter_has_default": true, "parameter_default": "none", "type": "type_94"},
-        {"parameter_name": "use_sol_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"}
+        {"parameter_name": "use_sol_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "auto_megapixels", "parameter_has_default": true, "parameter_default": "1 MP", "type": "type_102"}
       ],
       "returns": [
         {"type": "type_10", "component": "Video"},
@@ -1589,6 +1590,15 @@
         "Full-frame refinement",
         "H3 Regenerate 2K · rank 16 (experimental)",
         "H3 Regenerate 2K · rank 384 (experimental)"
+      ]
+    },
+    "type_102": {
+      "type": "string",
+      "enum": [
+        "1 MP",
+        "2 MP",
+        "4 MP",
+        "8 MP"
       ]
     }
   }

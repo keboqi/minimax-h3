@@ -67,7 +67,7 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
             return (
                 gr.skip(),
                 gr.skip(),
-                "Input-derived image canvas; the first frame determines aligned dimensions.",
+                "Input-derived image canvas; the first frame's ratio and the pixel cap set the size.",
             )
         if tier == "custom" or ratio == "Custom":
             return gr.skip(), gr.skip(), "Use Width and Height in Fine-tune → Size, seed & canvas."

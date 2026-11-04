@@ -1,18 +1,22 @@
 """P-H3-Image selected-base routing and native workflow contracts (CPU only)."""
 
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from h3_app.catalog import UI_DEFAULTS
-from h3_app.contracts import GENERATION_FIELDS
+from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
 from h3_app.generation.h3 import generate
 from h3_app.generation.requests import H3Request
+from h3_app.image_canvas import apply_job_canvas
 from h3_app.model_types import ModelConfig, ModelProfile
 from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
 from h3_app.workflows.ph3_image import PH3_IMAGE_KEYS, PH3_IMAGE_SIGMAS, build_ph3_image_graph
 from h3_models import LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, PRELOAD_MODEL_KEYS
+from h3_ui.h3.layout import auto_resolution_from_start_frame, start_frame_generation_resolution
+from PIL import Image
 
 
 def inputs(graph, kind):
@@ -139,6 +143,39 @@ class PH3ImageTests(unittest.TestCase):
                 graph = services.execution.submit_prompt.call_args.args[0]
                 conditioning = inputs(graph, "PH3ImageConditioning")
                 self.assertEqual((conditioning["width"], conditioning["height"]), size)
+
+    def test_first_frame_edit_scales_to_the_selected_pixel_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = str(Path(directory) / "first.png")
+            Image.new("RGB", (3000, 2000)).save(first)
+            for cap, size in (("1 MP", (1152, 768)), ("4 MP", (2432, 1632)), ("8 MP", (3456, 2304))):
+                with self.subTest(cap=cap):
+                    self.assertEqual(start_frame_generation_resolution(first, alignment=32, auto_megapixels=cap), size)
+                    self.assertEqual(auto_resolution_from_start_frame(first, 1, 1, "Image", False, cap)[:2], size)
+            self.assertEqual(self.request(first_image=first, auto_megapixels="4 MP").values()["auto_megapixels"], "4 MP")
+
+            small = str(Path(directory) / "small.png")
+            Image.new("RGB", (640, 640)).save(small)
+            self.assertEqual(start_frame_generation_resolution(small, alignment=32, auto_megapixels="4 MP"),
+                             (1984, 1984))
+            # Video keeps its cap as a ceiling and never upscales.
+            self.assertEqual(auto_resolution_from_start_frame(small, 1, 1, "Video", False, "4 MP")[:2], (640, 640))
+
+    def test_old_positional_calls_default_the_cap(self):
+        legacy = [None] * GENERATION_FIELDS.index("auto_megapixels")
+        self.assertEqual(GenerationArguments.from_positional(legacy).values["auto_megapixels"], "1 MP")
+
+    def test_a_canvas_transform_keeps_its_exact_size_past_the_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "first.png"
+            Image.new("RGB", (640, 320)).save(first)
+            job = SimpleNamespace(
+                canvas_request={"mode": "Fit / pad", "width": 1024, "height": 512}, family="h3",
+                input_lease=directory, callback=SimpleNamespace(job_input_names=(
+                    "result_format", "mode", "first_image", "last_image", "auto_megapixels")))
+            values = apply_job_canvas(job, ["Image", "First / last frame", str(first), None, "8 MP"])
+            self.assertEqual(start_frame_generation_resolution(values[2], alignment=32, auto_megapixels=values[4]),
+                             (1024, 512))
 
     def test_video_only_settings_cannot_block_an_image(self):
         plan = resolve_settings(GenerationRequest.from_values({

@@ -8,11 +8,13 @@ from h3_ui.presentation import result_format_presentation
 from h3_app.errors import H3Error
 from h3_app.catalog import (
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+    EXACT_CANVAS_MEGAPIXELS,
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
     INPUT_IMAGE_FRAME_PRESETS,
     UI_DEFAULTS,
 )
+from h3_app.generation.image_jobs import aspect_edit_dimensions
 from h3_app.policy import (
     auto_resolution_pixel_cap,
     normalize_image_vae,
@@ -81,6 +83,16 @@ def resolution_info_preview(
     return prefix + resolution_summary(resolved_width, resolved_height)
 
 
+def image_edit_resolution(
+    source_width: int, source_height: int, *, pixel_cap: int, alignment: int
+) -> tuple[int, int]:
+    """Scale an edit to the selected cap, as the other image engines' Max size does."""
+    return aspect_edit_dimensions(
+        source_width, source_height, maximize=True, max_pixels=pixel_cap,
+        min_side=256, max_side=8192, grid=alignment, label="P-H3-Image",
+    )
+
+
 def auto_resolution_from_start_frame(
     first_image: Any,
     current_width: int | float | None,
@@ -110,12 +122,16 @@ def auto_resolution_from_start_frame(
         from PIL import Image
 
         with Image.open(paths[0]) as image:
-            width, height = resolution_for_aspect_ratio(
-                *image.size,
-                preserve_native=normalized_result == "Image",
-                alignment=64 if latent_upscale else 32,
-                pixel_cap=auto_resolution_pixel_cap(auto_megapixels),
-            )
+            alignment = 64 if latent_upscale else 32
+            pixel_cap = auto_resolution_pixel_cap(auto_megapixels)
+            if normalized_result == "Image":
+                width, height = image_edit_resolution(
+                    *image.size, pixel_cap=pixel_cap, alignment=alignment
+                )
+            else:
+                width, height = resolution_for_aspect_ratio(
+                    *image.size, alignment=alignment, pixel_cap=pixel_cap
+                )
     except Exception as exc:
         return (
             fallback_width,
@@ -139,7 +155,7 @@ def resolution_choice_updates(
 
 
 def start_frame_generation_resolution(
-    first_image: Any, *, alignment: int
+    first_image: Any, *, alignment: int, auto_megapixels: str
 ) -> tuple[int, int] | None:
     paths = normalize_paths(first_image)
     if not paths:
@@ -148,8 +164,14 @@ def start_frame_generation_resolution(
         from PIL import Image
 
         with Image.open(paths[0]) as image:
-            return resolution_for_aspect_ratio(
-                *image.size, preserve_native=True, alignment=alignment
+            if auto_megapixels == EXACT_CANVAS_MEGAPIXELS:
+                return resolution_for_aspect_ratio(
+                    *image.size, preserve_native=True, alignment=alignment
+                )
+            return image_edit_resolution(
+                *image.size,
+                pixel_cap=auto_resolution_pixel_cap(auto_megapixels),
+                alignment=alignment,
             )
     except Exception as exc:
         raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
@@ -161,6 +183,7 @@ def result_format_layout_updates(
     current_height: int | float,
     first_image: Any,
     latent_upscale: bool,
+    auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
 ):
     presentation = result_format_presentation(normalize_result_format(result_format))
     result_format = presentation.format
@@ -177,6 +200,7 @@ def result_format_layout_updates(
                     current_height,
                     result_format,
                     latent_upscale,
+                    auto_megapixels,
                 )
             except Exception:
                 display_width = snap_to_grid(current_width, alignment)

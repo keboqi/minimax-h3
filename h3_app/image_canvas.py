@@ -3,6 +3,8 @@
 from pathlib import Path
 from PIL import Image, ImageOps
 
+from h3_app.catalog import EXACT_CANVAS_MEGAPIXELS
+
 MODES = ("Input-derived", "Fit / pad", "Fill / crop")
 
 
@@ -68,4 +70,7 @@ def apply_job_canvas(job, values):
             canvas["width"],
             canvas["height"],
         )
+    # The chosen canvas is the output size; the pixel cap must not rescale it.
+    if "auto_megapixels" in names:
+        result[names.index("auto_megapixels")] = EXACT_CANVAS_MEGAPIXELS
     return result
