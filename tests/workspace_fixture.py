@@ -40,6 +40,12 @@ def fake_remake_take(values, remake, progress):
     """A window's take: its trimmed source, saved where the graph would save it."""
     from h3_app.generation.results import GenerationUpdate
 
+    if remake is None:  # A quick edit: the picture, as an H3 image run names its output.
+        target = app.OUTPUT_DIR / "h3" / f"quick_edit_{time.time_ns()}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1280, 704), "orange").save(target)
+        yield GenerationUpdate([str(target)], "P-H3-Image complete")
+        return
     target = app.OUTPUT_DIR / f"{remake.output_prefix or 'h3/remake_fixture'}.mp4"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes((app._runtime_config().input_dir / remake.source_video).read_bytes())

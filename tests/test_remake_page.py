@@ -49,6 +49,7 @@ class RemakePageTests(unittest.TestCase):
         self.input_dir.mkdir()
         self.runtime = SimpleNamespace(output_dir=self.output_dir, prompt_systems={"Viggle Remake": Path("x")})
         self.interrupted = []
+        self.edits = []
         writer = patch("h3_app.remake.runner.enhance_remake_prompt", return_value=(SIX_SECTIONS, "Enhanced."))
         writer.start()
         self.addCleanup(writer.stop)
@@ -75,6 +76,16 @@ class RemakePageTests(unittest.TestCase):
         return str(target.relative_to(self.input_dir))
 
     def take(self, values, remake, progress):
+        if remake is None:
+            self.edits.append(values)
+            if "fail" in values["prompt"]:
+                yield GenerationUpdate(None, "Error: no memory\n\ntimings")
+                return
+            target = self.output_dir / "h3" / "edited.png"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(values["first_image"], target)
+            yield GenerationUpdate([str(target)], "P-H3-Image complete")
+            return
         target = self.output_dir / f"{remake.output_prefix or 'h3/single'}.mp4"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.input_dir / remake.source_video, target)
@@ -89,7 +100,7 @@ class RemakePageTests(unittest.TestCase):
             return self.ok(self.client.post(f"{API}/source", files={"file": ("dance.mp4", handle)}))
 
     def selection(self, source, end=12, max_window=226):
-        return {"sha": source["sha"], "start": 0, "end": end, "short_edge": 480, "mix": 0, "max_window": max_window}
+        return {"sha": source["sha"], "start": 0, "end": end, "short_edge": 0, "mix": 0, "max_window": max_window}
 
     def editor(self, source, **changes):
         return {"video": source["path"], "selection": self.selection(source, end=8), "prompt": SIX_SECTIONS,
@@ -104,6 +115,42 @@ class RemakePageTests(unittest.TestCase):
                 return run
             time.sleep(0.05)
         self.fail("The run never finished.")
+
+    def test_the_edit_models_are_h3_and_qwen(self):
+        models = self.ok(self.client.get(f"{API}/boot"))["edit_models"]
+        self.assertEqual([model["id"] for model in models], ["h3", "qwen"])
+
+    def finished_edit(self):
+        for _ in range(200):
+            run = self.ok(self.client.get(f"{API}/quick-edit/run"))["run"]
+            if not run["active"]:
+                return run
+            time.sleep(0.05)
+        self.fail("The edit never finished.")
+
+    def test_a_quick_edit_runs_h3_on_the_picture_and_keeps_its_size(self):
+        self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "make it blue"}))
+        run = self.finished_edit()
+        self.assertIsNone(run["error"])
+        self.assertEqual(self.client.get(f"{API}/file", params={"path": run["result_url"]}).status_code, 200)
+        self.assertNotEqual(run["result_url"], self.picture)
+        values = self.edits[0]
+        self.assertEqual((values["result_format"], values["mode"], values["prompt"]),
+                         ("Image", "First / last frame", "make it blue"))
+        self.assertEqual(values["image_edit_size"], "Match first image size")
+        self.assertTrue(any(job.family == "remake_edit" for job in JOBS.records.values()))
+
+    def test_a_failed_quick_edit_reports_why(self):
+        self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "fail"}))
+        run = self.finished_edit()
+        self.assertEqual(run["error"], "no memory")
+        self.assertIsNone(run["result_url"])
+
+    def test_a_quick_edit_needs_a_prompt_and_the_owners_picture(self):
+        for body in ({"picture": self.picture, "prompt": "  "},
+                     {"picture": str(self.root / "secret.png"), "prompt": "x"}):
+            self.assertEqual(self.client.post(f"{API}/quick-edit", json=body).status_code, 400)
+        self.assertEqual(self.edits, [])
 
     def test_a_source_is_kept_and_described(self):
         source = self.source()
@@ -218,12 +265,12 @@ class RemakePageTests(unittest.TestCase):
                          [{"slot": 2, "path": self.picture}])
 
     def test_a_picture_can_only_be_sent_from_the_owners_folder(self):
-        self.ok(self.client.post(f"{API}/send-to-image", json={"path": self.picture}))
+        self.ok(self.client.post(f"{API}/send-to-image", json={"path": self.picture, "model": "h3"}))
         sent = next(iter(self.handlers.outgoing.values()))
         self.assertNotEqual(sent, self.picture)
         self.assertTrue(Path(sent).is_file())
-        self.assertEqual(self.client.post(f"{API}/send-to-image", json={"path": str(self.root / "x.png")}).status_code,
-                         400)
+        for body in ({"path": str(self.root / "x.png"), "model": "h3"}, {"path": self.picture, "model": "nope"}):
+            self.assertEqual(self.client.post(f"{API}/send-to-image", json=body).status_code, 400)
 
     def test_an_interrupt_with_nothing_running_says_so(self):
         self.assertEqual(self.ok(self.client.post(f"{API}/interrupt"))["message"], "Nothing is running.")

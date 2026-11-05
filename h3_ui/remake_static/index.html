@@ -28,7 +28,7 @@
       <div class="menu" id="menu" hidden></div>
     </div>
     <div class="seg" role="group" aria-label="Remake type" id="mode"></div>
-    <label class="inline"><span class="small muted">Short edge</span><select id="short-edge" class="field tight"></select></label>
+    <label class="inline" title="Auto matches the source's shape and size, up to 1080p, whatever the MiniMax H3 settings. Pick a short edge to save memory."><span class="small muted">Size</span><select id="short-edge" class="field tight" aria-label="Short edge"></select></label>
     <div class="action">
       <div class="readiness">
         <div class="steps" id="steps"></div>
@@ -130,6 +130,7 @@
           <h3>Reference frames <span class="small muted" id="pic-count"></span></h3>
           <label class="inline check" title="Holds each picture at its frame for the first four steps. Remake needs all pictures pinned or none."><input type="checkbox" id="pinned">Pin to frames</label>
         </div>
+        <label class="inline" title="MiniMax H3 edits on the model a run already loads, so nothing else has to load."><span class="small muted">Edit with</span><select id="edit-model" class="field tight" aria-label="Edit with"></select></label>
         <div class="pictures" id="pictures"></div>
       </section>
       <section class="block last" aria-label="Prompt">
@@ -176,7 +177,7 @@
     <details>
       <summary>What follows MiniMax H3</summary>
       <div class="map">
-        <div><div class="small muted strong">Follows MiniMax H3</div>Base model, text encoder, video encoder and decoder, seed, attention, memory, acceleration, latent upscale, finishing on single clips</div>
+        <div><div class="small muted strong">Follows MiniMax H3</div>Base model, text encoder, video encoder and decoder, seed, attention, memory, acceleration; latent upscale and finishing with a chosen short edge</div>
         <div><div class="small muted strong">Set by Remake</div>Swap or Edit LoRA, six-step Euler schedule, size, window length, reference conditioning, pins, clean source audio</div>
         <div><div class="small muted strong">Not used here</div>Turbo LoRAs, steps and scheduler, Semantic Bridge, refinement LoRA choice, Variations</div>
       </div>

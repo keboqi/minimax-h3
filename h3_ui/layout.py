@@ -229,6 +229,7 @@ def bind_workspace_navigation(
                 browser("first"),
                 value("latent_upscale"),
                 value("auto_megapixels"),
+                value("image_edit_size"),
             ))
             if snap:
                 overrides.update(width=layout[12]["value"], height=layout[13]["value"])

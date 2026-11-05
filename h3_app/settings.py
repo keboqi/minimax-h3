@@ -36,6 +36,7 @@ class SamplingSettings:
     sol_exact_mode: str = "off"
     sol_dense_steps: int = 1
     auto_megapixels: str = "1 MP"
+    image_edit_size: str = "Match first image size"
     turbo_variant: str = LIGHTX2V_4STEP
     attention_mode: str = "SLA"
     sla_preset: str = "Fast"
@@ -292,6 +293,8 @@ def resolve_settings(
         inactive.add("sla_preset")
     if request.mode != "First / last frame":
         inactive.add("auto_megapixels")
+    if request.mode != "First / last frame" or request.output.result_format != "Image":
+        inactive.add("image_edit_size")
     minimum = 4 if generation_mode == "Turbo" else 10
     if sampling.steps < minimum:
         issues.append(

@@ -181,6 +181,8 @@ details summary:hover { color: var(--text); }
 .pic .wait { border: 1px dashed var(--dash); }
 .pic .body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .pic .field.tight { width: 64px; }
+.pic .quick { display: flex; gap: 6px; }
+.pic .quick .field.tight { flex: 1 1 auto; width: auto; min-width: 0; }
 .empty-slot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px dashed var(--dash); border-radius: 10px; color: var(--muted); font-size: 13px; }
 .suggestion { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--accent); border-radius: 10px; }
 .suggestion pre { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.55; }

@@ -45,6 +45,7 @@ class H3View:
     attention_mode: gr.components.Component
     audio_output: gr.components.Component
     auto_megapixels: gr.components.Component
+    image_edit_size: gr.components.Component
     batch_count: gr.components.Component
     cache_mode: gr.components.Component
     draft_resolution: gr.components.Component
@@ -184,6 +185,7 @@ H3_COMPONENT_ORDER = (
     "attention_mode",
     "audio_output",
     "auto_megapixels",
+    "image_edit_size",
     "batch_count",
     "cache_mode",
     "draft_resolution",

@@ -19,10 +19,31 @@ class ImageLibraryPicker:
     status: gr.Markdown
 
 
-def _build_input(component_type, **kwargs):
+def _remove_thumbnail(paths, event: gr.SelectData):
+    return [path for index, path in enumerate(paths or []) if index != event.index]
+
+
+def _bind_thumbnails(files):
+    """Show a multi-file input's images as thumbnails instead of its filenames; a click removes one.
+
+    Gradio's Gallery reports no deletions, so the file input stays the value and the way to add.
+    """
+    gallery = gr.Gallery(label="Click an image to remove it", interactive=False, allow_preview=False, columns=4,
+                         fit_columns=False, height="auto", object_fit="cover", buttons=[], visible=False,
+                         elem_classes=["h3-input-thumbnails"])
+    files.change(lambda paths: gr.update(value=list(paths or []), visible=bool(paths)), inputs=files, outputs=gallery,
+                 queue=False, api_name=False, show_progress="hidden")
+    gallery.select(_remove_thumbnail, inputs=files, outputs=files, queue=False, api_name=False, show_progress="hidden")
+
+
+def _build_input(component_type, *, thumbnails=False, **kwargs):
     visible = kwargs.get("visible", True)
     with gr.Column(visible=visible, elem_classes=["h3-image-library-input"]) as container:
+        if thumbnails:
+            kwargs["elem_classes"] = ["h3-input-files"]
         component = component_type(**kwargs)
+        if thumbnails:
+            _bind_thumbnails(component)
         with gr.Accordion("Choose from media library", open=False) as panel:
             query = gr.Textbox(
                 value="", label="Search library images", placeholder="Filename, tags or settings"
@@ -47,8 +68,8 @@ def build_image_input(**kwargs):
     return _build_input(gr.Image, **kwargs)
 
 
-def build_image_file_input(**kwargs):
-    return _build_input(gr.File, **kwargs)
+def build_image_file_input(*, thumbnails=False, **kwargs):
+    return _build_input(gr.File, thumbnails=thumbnails, **kwargs)
 
 
 def select_library_image(paths, current, event, *, validate_path, multiple=False):

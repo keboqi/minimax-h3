@@ -49,6 +49,8 @@ def main(shots=None):
             check=True,
         )
         edited = root / "edited.png"
+        extra = root / "extra.png"
+        Image.new("RGB", (640, 360), (200, 120, 40)).save(extra)
         env = {**os.environ, "H3_WORKSPACE_DIR": str(root / "state")}
         env.pop("H3_UI_LAYOUT", None)
         process = subprocess.Popen([sys.executable, "-m", "tests.workspace_fixture", str(port)], env=env)
@@ -88,20 +90,51 @@ def main(shots=None):
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-extracted.png"), full_page=True)
 
-                # The edit round trip: Edit in Image opens that task with the frame.
+                # The edit round trip: MiniMax H3 is the default, and edits on the frame as its first frame.
+                remake.get_by_role("button", name="Edit in Image").first.click()
+                expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
+                expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
+                    "MiniMax H3", timeout=10000)
+                expect(page.get_by_label("First / last frame")).to_be_checked(timeout=10000)
+                # The edit keeps the frame's size, not the start-frame cap's.
+                # The frame shows, and the edit keeps its size on the grid, not the start-frame cap's.
+                expect(page.locator("#first-frame-image img").first).to_be_visible(timeout=10000)
+                expect(page.get_by_text("1280×704", exact=True).locator("visible=true").first).to_be_visible(
+                    timeout=10000)
+                picker.filter(has_text="Remake").click()
+
+                # Any other model still opens with the frame.
+                remake.get_by_label("Edit with").select_option(label="Qwen Image 2.1")
                 remake.get_by_role("button", name="Edit in Image").first.click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
                 expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
                     "Qwen Image 2.1", timeout=10000)
                 # The frame itself arrives, not just the task.
                 page.locator(".h3-engine-view:visible").get_by_text("Reference images and editing").click()
-                expect(page.locator(".h3-engine-view:visible").get_by_role("cell", name=re.compile(r".png"))).to_be_visible(
-                    timeout=10000)
+                references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
+                    has=page.locator(".h3-input-thumbnails"))
+                expect(references.locator(".h3-input-thumbnails img").first).to_be_visible(timeout=10000)
+                expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
+                if shots:
+                    page.screenshot(path=str(Path(shots) / "qwen-thumbnails.png"), full_page=True)
+                # Adding one and clicking a thumbnail away both reach the input the request reads.
+                references.locator('.h3-input-files input[type="file"]').first.set_input_files(str(extra))
+                expect(references.locator(".h3-input-files tbody tr")).to_have_count(2, timeout=10000)
+                expect(references.locator(".h3-input-thumbnails img")).to_have_count(2, timeout=10000)
+                references.locator(".h3-input-thumbnails .thumbnail-item").first.click()
+                expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
                 picker.filter(has_text="Remake").click()
                 expect(readiness).to_contain_text("Edit Picture 1")
 
                 # An edit replaces the raw frame.
                 Image.new("RGB", (1280, 720), (40, 60, 80)).save(edited)
+                # A quick edit repaints the picture where it is, and can be undone.
+                remake.get_by_label("Quick edit for picture 1").fill("Make the sky orange.")
+                remake.get_by_role("button", name="Quick edit").click()
+                expect(readiness).to_contain_text("Rewrite your request", timeout=30000)
+                remake.get_by_role("button", name="Undo edit").click()
+                expect(readiness).to_contain_text("Edit Picture 1", timeout=10000)
+
                 remake.get_by_label("Remove picture 1").click()
                 expect(readiness).to_contain_text("Extract a frame", timeout=10000)
                 remake.locator("#picture-input").set_input_files(str(edited))

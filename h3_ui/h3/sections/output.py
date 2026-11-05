@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 import gradio as gr
 
+from h3_app.catalog import H3_EDIT_SIZE_CAP, H3_EDIT_SIZE_MATCH
+
 if TYPE_CHECKING:
     from ..services import H3ViewServices
 
@@ -17,6 +19,7 @@ class OutputSection:
     duration: gr.components.Component
     fast_resolution: gr.components.Component
     height: gr.components.Component
+    image_edit_size: gr.components.Component
     image_frames: gr.components.Component
     large_resolution: gr.components.Component
     resolution_info: gr.components.Component
@@ -100,7 +103,13 @@ def build_workspace_output(defaults, services, root, *, details_parent=None, det
             list(services.AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
             value=services.DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
             label="Start-frame auto cap",
-            info="Caps automatic video size. Image edits from a first frame scale to this size, keeping its aspect ratio.",
+            info="Caps automatic video size. Image edits can scale to this size instead of matching their first frame.",
+        )
+        image_edit_size = gr.Radio(
+            [H3_EDIT_SIZE_MATCH, H3_EDIT_SIZE_CAP],
+            value=H3_EDIT_SIZE_MATCH,
+            label="Image edit size",
+            info="For Image from a first frame. Match keeps its size on the model's grid, up to 8 MP.",
         )
         seed = gr.Number(
             value=defaults["seed"],
@@ -147,6 +156,7 @@ def build_workspace_output(defaults, services, root, *, details_parent=None, det
         duration,
         fast_resolution,
         height,
+        image_edit_size,
         image_frames,
         large_resolution,
         resolution_info,

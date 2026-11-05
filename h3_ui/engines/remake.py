@@ -20,14 +20,17 @@ from typing import Any, Iterable, Mapping
 
 import gradio as gr
 
-from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL
+from h3_app.capabilities import engines_for_task
+from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, H3_EDIT_SIZE_MATCH
 from h3_app.errors import H3Error
 from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_video_metadata
+from h3_app.progress import no_progress
 from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.remake import (
-    DEFAULT_SHORT_EDGE, EDIT, FPS, MAX_PICTURES, MIN_FRAMES, RECOMMENDED_MAX_FRAMES, SHORT_EDGES, SWAP,
-    RemakeGraph, canvas_size, check_pins, frames_for_seconds, missing_sections, output_size, request_overrides,
+    AUTO_SHORT_EDGE, DEFAULT_SHORT_EDGE, EDIT, FPS, MAX_PICTURES, MIN_FRAMES, RECOMMENDED_MAX_FRAMES, SHORT_EDGES, SWAP,
+    RemakeGraph, RenderSize, check_pins, frames_for_seconds, missing_sections, output_size, render_size,
+    request_overrides,
 )
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
 from h3_app.remake.media import extract_frame, filmstrip, frame_seconds, trim_source
@@ -53,7 +56,11 @@ FINISHING_CONTROLS = {
 DOCUMENTED_PROFILE = "Original"
 READY = "Ready to generate."
 RUN_BUTTON = "remake-generate"
-EDIT_BRIDGE = "remake-edit-bridge"
+# The engines that can repaint a frame. H3 comes first: it edits on the model a run has already loaded.
+EDIT_MODELS = tuple(sorted((engine for engine in engines_for_task("Image") if engine.id in ("h3", "qwen")),
+                           key=lambda engine: engine.id != "h3"))
+EDIT_BRIDGE = "remake-edit-bridge-{}"
+H3_MODE = "h3-conditioning-mode"
 SETTINGS_BRIDGE = "remake-settings-bridge"
 FRAME = ('<iframe class="h3-remake-frame" src="/remake/" title="Remake" '
          'allow="fullscreen" scrolling="no"></iframe>')
@@ -64,13 +71,33 @@ SCRATCH_LIFETIME = 3600
 UPLOAD_LIFETIME = 7 * 24 * 3600
 
 
-def open_engine_js(task: str, engine: str) -> str:
-    """Browser code that opens ``engine`` under ``task``, as clicking them in the top bar does."""
+def open_engine_js(task: str, engine: str, h3_mode: str | None = None) -> str:
+    """Browser code that opens ``engine`` under ``task``, as clicking them in the top bar does.
+
+    ``h3_mode`` is then clicked too: as with a person's click, the mode's own inputs appear.
+    """
+    choose_mode = f"""
+  const mode = (tries) => {{
+    const label = [...document.querySelectorAll("#{H3_MODE} label")]
+      .find((item) => item.textContent.trim() === {h3_mode!r});
+    if (label?.offsetParent) {{
+      const input = label.querySelector("input");
+      if (!input.checked) input.click();
+    }} else if (tries > 0) setTimeout(() => mode(tries - 1), 100);
+  }};
+  mode(50);""" if h3_mode else ""
     return f"""() => {{
   const pick = (selector, text) => [...document.querySelectorAll(selector)]
     .find((label) => label.textContent.trim() === text)?.querySelector("input")?.click();
   pick(".h3-task-picker label", {task!r});
-  requestAnimationFrame(() => requestAnimationFrame(() => pick(".h3-engine-bar label", {engine!r})));
+  // The task's engines arrive from the server, so an engine that isn't the default needs waiting for.
+  const engine = (tries) => {{
+    const label = [...document.querySelectorAll(".h3-engine-bar label")]
+      .find((item) => item.textContent.trim() === {engine!r});
+    if (label) label.querySelector("input")?.click();
+    else if (tries > 0) setTimeout(() => engine(tries - 1), 100);
+  }};
+  requestAnimationFrame(() => requestAnimationFrame(() => engine(50)));{choose_mode}
 }}"""
 
 
@@ -108,7 +135,7 @@ class RemakeView:
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
-    edit_bridge: gr.Button
+    edit_bridges: dict[str, gr.Button]
     settings_bridge: gr.Button
 
     def pictures(self):
@@ -132,9 +159,9 @@ def _scratch_path(suffix: str) -> Path:
     return directory / f"{uuid.uuid4().hex}{suffix}"
 
 
-def _canvas(video, short_edge) -> tuple[int, int]:
+def _render_size(video, short_edge) -> RenderSize:
     metadata = probe_video_metadata(Path(video))
-    return canvas_size(short_edge, metadata.width, metadata.height)
+    return render_size(short_edge, metadata.width, metadata.height)
 
 
 def selected_frames(start, end) -> int:
@@ -219,18 +246,17 @@ def next_run_details(captured: Mapping[str, Any], mode, video, start, end, short
                      max_window: int = 345) -> dict[str, Any]:
     """What the page's Next run line shows."""
     profile = str(captured.get("model_profile") or "Current selection")
-    upscale = bool(captured.get("latent_upscale"))
+    upscale = bool(captured.get("latent_upscale")) if int(short_edge) else False
     size = "Set by the source"
     duration = "Set by the selection"
     windowed = needs_windows(start, end, max_window)
     try:
         duration = f"{selection_frames(start, end) / FPS:.2f} s" if windowed else (
             f"{min(selected_frames(start, end), int(max_window)) / FPS:.2f} s")
-        metadata = probe_video_metadata(Path(video)) if video else None
-        width, height = canvas_size(short_edge, metadata.width, metadata.height) if metadata else canvas_size(
-            short_edge, 16, 9)
-        width, height = output_size(width, height, upscale)
-        size = f"{width} × {height}"
+        if video:
+            sampled = _render_size(video, short_edge)
+            upscale = sampled.upscale(upscale)
+            size = "{} × {}".format(*output_size(sampled.width, sampled.height, upscale))
     except H3Error:
         pass
     context = [f"Remake {mode} LoRA", f"{picture_count} edited frame{'' if picture_count == 1 else 's'}",
@@ -352,9 +378,11 @@ class RemakeHandlers:
         """One frame for a source the browser can't play; scrubbing writes many, so they're scratch."""
         return extract_frame(video, frame_seconds(base, frame), _scratch_path(".png"))
 
-    def send_to_image(self, owner, path) -> None:
+    def send_to_image(self, owner, path, engine) -> None:
         """Leave a copy where Gradio will take it, for the bridge button the page presses next."""
         self.require_readable(owner, path)
+        if engine not in {model.id for model in EDIT_MODELS}:
+            raise H3Error("Pick an edit model.")
         target = _scratch_path(Path(path).suffix or ".png")
         shutil.copy2(path, target)
         self.outgoing[owner] = str(target)
@@ -382,11 +410,9 @@ class RemakeHandlers:
     def source_payload(video, sha=None, name=None) -> dict[str, Any]:
         path = Path(video)
         metadata = probe_video_metadata(path)
-        cropped = abs(metadata.width / metadata.height - 16 / 9) >= 0.02
         return {
             "path": str(path), "sha": sha or file_content_sha256(path), "name": name or path.stem,
             "info": f"{metadata.width}×{metadata.height} · {metadata.fps:.2f} fps · {metadata.duration:.2f} s",
-            "canvas_note": "Remake's canvas is 16:9, so other shapes are center-cropped." if cropped else "",
             "audio_note": ("Source audio found. It stays in the result and guides mouth movement."
                            if metadata.has_audio else "No audio in this source, so the result stays silent."),
             "duration": metadata.duration,
@@ -556,7 +582,8 @@ class RemakeHandlers:
             else:
                 start, frames = float(selection.start or 0), min(selected_frames(selection.start, selection.end),
                                                                  int(selection.max_window))
-            width, height = _canvas(video, selection.short_edge)
+            size = _render_size(video, selection.short_edge)
+            width, height = size.width, size.height
             clip = _scratch_path(".mp4")
             trim_source(video, clip, start=start, frames=frames, width=width, height=height)
         except H3Error as exc:
@@ -573,6 +600,28 @@ class RemakeHandlers:
             clip.unlink(missing_ok=True)
         # A failed writer hands the request back; it isn't a prompt to accept.
         return ("" if "failed" in status else suggestion), status
+
+    # Quick edit ------------------------------------------------------------
+    def quick_edit(self, picture, prompt, progress=no_progress):
+        """Repaint a picture from text with H3's image edit, keeping its size. Yields (image, status)."""
+        if not picture or not str(prompt or "").strip():
+            raise H3Error("Write what to change in the frame.")
+        job = CURRENT_JOB.get()
+        owner = job.owner if job is not None else "local"
+        values = {**self.deps.h3_defaults(), **self.captured(owner), "result_format": "Image",
+                  "mode": "First / last frame", "first_image": picture, "last_image": None, "prompt": prompt,
+                  "image_edit_size": H3_EDIT_SIZE_MATCH}
+        result = None
+        for update in self.deps.h3_take(values, None, progress):
+            status = str(update.status).split("\n\n")[0]
+            if status.startswith("Error:"):
+                raise H3Error(status.removeprefix("Error:").strip())
+            output = update.output[0] if isinstance(update.output, list) else update.output
+            result = output or result
+            yield None, status
+        if result is None:
+            raise H3Error("The edit finished without an image.")
+        yield result, "Frame edited."
 
     # Generation ------------------------------------------------------------
     def generate_remake(self, mode, source_video, start, end, short_edge, prompt, pin_frames,
@@ -612,15 +661,19 @@ class RemakeHandlers:
         if pin_frames and not pinned:
             raise H3Error("Give every picture a frame number, or turn pinning off.")
         check_pins(pinned, len(pictures), frames)
-        width, height = _canvas(source_video, short_edge)
+        size = _render_size(source_video, short_edge)
+        width, height = size.width, size.height
 
         yield None, "Trimming the source to the selection"
         captured = self.captured(owner) if job is not None else {}
         values = {**self.deps.h3_defaults(), **captured}
         values.update(request_overrides(
             prompt=prompt, first_picture=str(pictures[0]), width=width, height=height, frames=frames,
-            latent_upscale=bool(values.get("latent_upscale")),
+            latent_upscale=size.upscale(values.get("latent_upscale")),
         ))
+        if int(short_edge) == AUTO_SHORT_EDGE:
+            # Finishing can change the size, and Auto's size is the source's.
+            values["postprocess"] = "None"
         clip = _scratch_path(".mp4")
         try:
             trim_source(source_video, clip, start=float(start or 0), frames=frames, width=width, height=height)
@@ -651,7 +704,8 @@ def build_remake_view(root) -> RemakeView:
             pin_frames = gr.Checkbox(value=True, label="Pin every picture to its frame")
             request = gr.Textbox(label="Edit request")
             prompt = gr.Textbox(label="Remake prompt")
-            short_edge = gr.Dropdown(list(SHORT_EDGES), value=DEFAULT_SHORT_EDGE, label="Short edge")
+            short_edge = gr.Dropdown([("Auto", AUTO_SHORT_EDGE), *((str(edge), edge) for edge in SHORT_EDGES)],
+                                     value=DEFAULT_SHORT_EDGE, label="Short edge")
             max_window = gr.Number(value=DEFAULT_WINDOW_FRAMES, precision=0, label="Longest window")
             smart = gr.Checkbox(value=True, label="Smart")
             auto_prompts = gr.Checkbox(value=True, label="Write a prompt for each window")
@@ -665,12 +719,13 @@ def build_remake_view(root) -> RemakeView:
             output = gr.Video(label="Generated remake", interactive=False)
             output.h3_metadata_root = gr.Column()
             run, stop, status = generation_actions("Generate remake", elem_id=RUN_BUTTON)
-            edit_bridge = gr.Button("Send to Image", elem_id=EDIT_BRIDGE)
+            edit_bridges = {model.id: gr.Button(f"Edit in {model.label}", elem_id=EDIT_BRIDGE.format(model.id))
+                            for model in EDIT_MODELS}
             settings_bridge = gr.Button("Open MiniMax H3 settings", elem_id=SETTINGS_BRIDGE)
     return RemakeView(
         mode, source_video, start, end, *pictures, *pins, pin_frames, request, prompt, short_edge, max_window, smart,
         auto_prompts, mix, window_index, use_carried, writer_model, writer_backend, openai_model, source_sha, output,
-        run, stop, status, edit_bridge, settings_bridge,
+        run, stop, status, edit_bridges, settings_bridge,
     )
 
 
@@ -713,9 +768,30 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
     return handlers
 
 
+@dataclass(frozen=True)
+class EditTarget:
+    """Where an edit model takes the frame: its input, and the H3 mode that shows that input."""
+
+    picture: Any
+    multiple: bool = True
+    h3_mode: str | None = None
+
+
+def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHandlers) -> None:
+    def outgoing(request):
+        path = handlers.outgoing.pop(require_owner(request), None)
+        if not path:
+            return gr.update()
+        return [path] if target.multiple else path
+
+    button.click(_with_request(outgoing, 0), outputs=target.picture, api_name=False, show_progress="hidden").then(
+        None, js=open_engine_js("Image", label, target.h3_mode), queue=False, api_name=False,
+    )
+
+
 def bind_h3_settings(view: RemakeView, handlers: RemakeHandlers, h3_values: Mapping[str, Any], triggers,
-                     image_target=None) -> None:
-    """Follow the MiniMax H3 selection, and hand frames to ``image_target`` for editing.
+                     edit_targets: Mapping[str, EditTarget] | None = None) -> None:
+    """Follow the MiniMax H3 selection, and hand frames to ``edit_targets`` for editing.
 
     Settings are read on ``triggers``. Changing them means opening MiniMax H3 and coming back,
     which fires the task change.
@@ -730,15 +806,9 @@ def bind_h3_settings(view: RemakeView, handlers: RemakeHandlers, h3_values: Mapp
 
     gr.on(triggers=list(triggers), fn=_with_request(capture, len(controls)), inputs=controls, outputs=None,
           queue=False, api_name=False, show_progress="hidden")
-    if image_target is not None:
-        def outgoing(request):
-            path = handlers.outgoing.pop(require_owner(request), None)
-            return [path] if path else gr.update()
-
-        view.edit_bridge.click(_with_request(outgoing, 0), outputs=image_target, api_name=False,
-                               show_progress="hidden").then(
-            None, js=open_engine_js("Image", "Qwen Image 2.1"), queue=False, api_name=False,
-        )
+    for model in EDIT_MODELS:
+        if model.id in (edit_targets or {}):
+            _bind_edit_bridge(view.edit_bridges[model.id], edit_targets[model.id], model.label, handlers)
 
 
 FEATURE = EngineFeature("remake", lambda root, deps: build_remake_view(root), bind_remake, library_label="Remake",

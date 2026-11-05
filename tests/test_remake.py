@@ -22,8 +22,8 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_video_metadata
 from h3_app.remake import (
-    EDIT, KEYFRAME_UNTIL, MAX_FRAMES, MIN_FRAMES, REMAKE_NODES, SECTIONS, SIGMAS, SWAP, RemakeGraph, canvas_size,
-    check_pins, frames_for_seconds, missing_sections, output_size, request_overrides,
+    AUTO_SHORT_EDGE, EDIT, KEYFRAME_UNTIL, MAX_FRAMES, MIN_FRAMES, REMAKE_NODES, SECTIONS, SIGMAS, SWAP, RemakeGraph, canvas_size,
+    check_pins, frames_for_seconds, missing_sections, output_size, render_size, request_overrides,
 )
 from h3_app.remake.model import REQUEST_STEPS
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
@@ -84,6 +84,36 @@ class RulesTests(unittest.TestCase):
         with self.assertRaises(H3Error):
             canvas_size(500, 1920, 1080)
         self.assertEqual(output_size(832, 480, True), (1664, 960))
+
+    def test_the_canvas_keeps_the_sources_shape(self):
+        self.assertEqual(canvas_size(480, 1440, 1080), (640, 480))
+        self.assertEqual(canvas_size(480, 1080, 1080), (480, 480))
+        self.assertEqual(canvas_size(480, 1080, 1440), (480, 640))
+        # An ultrawide source stops at what Viggle's largest canvas holds.
+        self.assertEqual(canvas_size(736, 2560, 1080), (1280, 736))
+
+    def test_auto_reaches_the_source_without_the_h3_setting(self):
+        for source, sampled, upscale, final in (
+            ((854, 480), (832, 480), False, (832, 480)),
+            ((1280, 720), (1280, 736), False, (1280, 736)),
+            ((1920, 1080), (960, 544), True, (1920, 1088)),
+            ((1080, 1920), (544, 960), True, (1088, 1920)),
+            ((1440, 1080), (704, 544), True, (1408, 1088)),
+            ((3840, 2160), (960, 544), True, (1920, 1088)),
+            ((320, 240), (640, 480), False, (640, 480)),
+        ):
+            with self.subTest(source=source):
+                size = render_size(AUTO_SHORT_EDGE, *source)
+                self.assertEqual((size.width, size.height), sampled)
+                for h3_setting in (False, True):
+                    self.assertIs(size.upscale(h3_setting), upscale)
+                self.assertEqual(output_size(size.width, size.height, upscale), final)
+
+    def test_a_chosen_short_edge_leaves_latent_upscale_to_h3(self):
+        size = render_size(480, 1920, 1080)
+        self.assertEqual((size.width, size.height), (832, 480))
+        self.assertIs(size.upscale(True), True)
+        self.assertIs(size.upscale(False), False)
 
     def test_pins_are_all_or_none_and_inside_the_clip(self):
         check_pins((), 3, 226)
@@ -353,6 +383,22 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual((remake.mode, remake.frames, remake.pins), (SWAP, 107, (12,)))
         self.assertEqual(remake.pictures, (f"remake_pictures/{self.picture.name}",))
         self.assertIn(remake.source_video, self.stored)
+
+    def test_auto_size_overrules_h3s_upscale_and_finishing(self):
+        CURRENT = SimpleNamespace(owner="local", check=lambda: None)
+        self.handlers.settings["local"] = {"latent_upscale": True, "postprocess": "SeedVR2", "model_profile": "Default"}
+        token = CURRENT_JOB.set(CURRENT)
+        try:
+            list(self.handlers.generate_remake(
+                SWAP, str(self.video), 0, 4.6, AUTO_SHORT_EDGE, SIX_SECTIONS, True, str(self.picture),
+                None, None, None, 12, None, None, None,
+            ))
+        finally:
+            CURRENT_JOB.reset(token)
+        values, _graph = self.takes[-1]
+        self.assertEqual((values["width"], values["height"]), (1280, 736))
+        self.assertIs(values["latent_upscale"], False)
+        self.assertEqual(values["postprocess"], "None")
 
     def test_no_job_falls_back_to_the_defaults(self):
         self.generate()

@@ -14,6 +14,7 @@ from h3_app.catalog import (
     INPUT_IMAGE_FRAME_PRESETS,
     UI_DEFAULTS,
 )
+from h3_app.catalog import H3_EDIT_SIZE_MATCH, H3_EDIT_SIZE_MAX_PIXELS
 from h3_app.generation.image_jobs import aspect_edit_dimensions
 from h3_app.policy import (
     auto_resolution_pixel_cap,
@@ -84,11 +85,19 @@ def resolution_info_preview(
 
 
 def image_edit_resolution(
-    source_width: int, source_height: int, *, pixel_cap: int, alignment: int
+    source_width: int, source_height: int, *, pixel_cap: int, alignment: int,
+    edit_size: str = H3_EDIT_SIZE_MATCH,
 ) -> tuple[int, int]:
-    """Scale an edit to the selected cap, as the other image engines' Max size does."""
+    """Keep the first image's size, or scale to the cap, as the other image engines' Match and Max do."""
+    match = edit_size == H3_EDIT_SIZE_MATCH
+    if match:
+        # The nearest size on P-H3-Image's grid: 1920×1080 stays 1920 wide, not the 1888 a fit under it gives.
+        width, height = (max(256, snap_to_grid(side, 32)) for side in (source_width, source_height))
+        if width * height <= H3_EDIT_SIZE_MAX_PIXELS:
+            return width, height
     return aspect_edit_dimensions(
-        source_width, source_height, maximize=True, max_pixels=pixel_cap,
+        source_width, source_height, maximize=not match,
+        max_pixels=H3_EDIT_SIZE_MAX_PIXELS if match else pixel_cap,
         min_side=256, max_side=8192, grid=alignment, label="P-H3-Image",
     )
 
@@ -100,6 +109,7 @@ def auto_resolution_from_start_frame(
     result_format: str = DEFAULT_RESULT_FORMAT,
     latent_upscale: bool = False,
     auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+    edit_size: str = H3_EDIT_SIZE_MATCH,
 ) -> tuple[int | float, int | float, str]:
     """Apply the automatic ratio resolution after Gradio stages the image."""
     fallback_width = current_width or UI_DEFAULTS["width"]
@@ -126,7 +136,7 @@ def auto_resolution_from_start_frame(
             pixel_cap = auto_resolution_pixel_cap(auto_megapixels)
             if normalized_result == "Image":
                 width, height = image_edit_resolution(
-                    *image.size, pixel_cap=pixel_cap, alignment=alignment
+                    *image.size, pixel_cap=pixel_cap, alignment=alignment, edit_size=edit_size
                 )
             else:
                 width, height = resolution_for_aspect_ratio(
@@ -155,7 +165,7 @@ def resolution_choice_updates(
 
 
 def start_frame_generation_resolution(
-    first_image: Any, *, alignment: int, auto_megapixels: str
+    first_image: Any, *, alignment: int, auto_megapixels: str, edit_size: str = H3_EDIT_SIZE_MATCH
 ) -> tuple[int, int] | None:
     paths = normalize_paths(first_image)
     if not paths:
@@ -172,6 +182,7 @@ def start_frame_generation_resolution(
                 *image.size,
                 pixel_cap=auto_resolution_pixel_cap(auto_megapixels),
                 alignment=alignment,
+                edit_size=edit_size,
             )
     except Exception as exc:
         raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
@@ -184,6 +195,7 @@ def result_format_layout_updates(
     first_image: Any,
     latent_upscale: bool,
     auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+    edit_size: str = H3_EDIT_SIZE_MATCH,
 ):
     presentation = result_format_presentation(normalize_result_format(result_format))
     result_format = presentation.format
@@ -201,6 +213,7 @@ def result_format_layout_updates(
                     result_format,
                     latent_upscale,
                     auto_megapixels,
+                    edit_size,
                 )
             except Exception:
                 display_width = snap_to_grid(current_width, alignment)

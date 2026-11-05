@@ -146,6 +146,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
             "use_lynnreal_vae": False,
             "use_sol_vae": False,
             "auto_megapixels": "1 MP",
+            "image_edit_size": "Match first image size",
             "video_encoder": "Original",
             "lightvae_decoder": "none",
             "latent_upscale_refine_lora": "Same as generation",

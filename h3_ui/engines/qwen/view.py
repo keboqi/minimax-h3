@@ -143,6 +143,7 @@ def build_qwen_image21_view(
                     open=defaults["mode"] == "Image edit",
                 ):
                     reference_images = build_image_file_input(
+                        thumbnails=True,
                         label="Input / reference images",
                         file_count="multiple",
                         file_types=["image"],

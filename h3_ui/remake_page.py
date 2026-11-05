@@ -31,7 +31,7 @@ from h3_app.remake.runner import Selection
 from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, LENGTHS, needs_windows
 from h3_app.workspace_store import request_owner
 
-from .engines.remake import READY, RemakeHandlers, next_run_details, readiness_message, readiness_step
+from .engines.remake import EDIT_MODELS, READY, RemakeHandlers, next_run_details, readiness_message, readiness_step
 from .job_admission import execute_accepted
 from .job_bindings import owned_generation
 from .storyboard.page import Run, Runs, guarded
@@ -41,6 +41,7 @@ STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
 # ``generate_remake``'s positions of the source and the four pictures.
 MEDIA_INDICES = (1, 7, 8, 9, 10)
 RUN_KEY = "remake"
+EDIT_KEY = "remake-quick-edit"
 
 
 def _selection(body: dict[str, Any]) -> Selection:
@@ -69,9 +70,13 @@ def _spool(upload: UploadFile, directory: str, allowed) -> Path:
 
 def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None) -> None:
     runs = Runs(busy="A Remake is already running.")
+    edits = Runs(busy="A quick edit is already running.")
     callback = owned_generation(handlers.generate_remake, "remake")
     # The Gradio bridge registers an equal callback; without it, retries still need one.
     JOBS.callbacks.setdefault("remake", callback)
+    edit_callback = owned_generation(handlers.quick_edit, "remake_edit")
+    # The Jobs tab retries a quick edit through this.
+    JOBS.register_callback("remake_edit", edit_callback)
     api = "/remake/api"
 
     def owner_of(request: Request) -> str:
@@ -84,6 +89,19 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     def run_payload(owner):
         run = runs.latest(owner, RUN_KEY)
         return run.public(None) if run is not None else None
+
+    def edit_payload(owner):
+        run = edits.latest(owner, EDIT_KEY)
+        return run.public(None) if run is not None else None
+
+    def interrupted(request: Request, run: Run | None, family: str) -> str:
+        if interrupt is None:
+            raise H3Error("Nothing can run here.")
+        if run is None:
+            return "Nothing is running."
+        if run.job_id is None:
+            return "The run is still starting. Try again in a moment."
+        return interrupt(session_of(request), family=family, job_id=run.job_id)
 
     def readable(request: Request, path: str) -> tuple[str, Path]:
         """The owner and the file a GET names; anything else is simply not found."""
@@ -133,6 +151,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         return {
             "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
             "short_edges": list(SHORT_EDGES), "short_edge": DEFAULT_SHORT_EDGE,
+            "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS],
             "lengths": list(LENGTHS), "max_window": DEFAULT_WINDOW_FRAMES,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS), "openai_model": DEFAULT_OPENAI_PROMPT_MODEL},
@@ -299,7 +318,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/send-to-image", include_in_schema=False)
     @guarded
     def send_to_image(request: Request, body: dict = Body(...)):
-        handlers.send_to_image(owner_of(request), str(body.get("path") or ""))
+        handlers.send_to_image(owner_of(request), str(body.get("path") or ""), body.get("model"))
         return {"ok": True}
 
     # Prompt ----------------------------------------------------------------
@@ -378,14 +397,42 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/interrupt", include_in_schema=False)
     @guarded
     def stop(request: Request):
-        if interrupt is None:
-            raise H3Error("Nothing can run here.")
         owner = owner_of(request)
-        run = runs.active(owner, RUN_KEY, "generate")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
-        else:
-            message = interrupt(session_of(request), family="remake", job_id=run.job_id)
+        message = interrupted(request, runs.active(owner, RUN_KEY, "generate"), "remake")
         return {"message": message, "run": run_payload(owner)}
+
+    # Quick edit ------------------------------------------------------------
+    @app.post(f"{api}/quick-edit", include_in_schema=False)
+    @guarded
+    def quick_edit(request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        picture, prompt = body.get("picture"), str(body.get("prompt") or "").strip()
+        handlers.require_readable(owner, picture)
+        if not picture or not prompt:
+            raise H3Error("Write what to change in the frame.")
+        session = session_of(request)
+
+        def work(run: Run):
+            job = JOBS.accept(owner, "remake_edit", [picture, prompt], callback=edit_callback, key=uuid.uuid4().hex,
+                              media_indices=(0,), output_indices=(0,))
+            run.job_id = job.id
+            for output, status in execute_accepted(job.id, session):
+                run.status = status
+                if output:
+                    run.result_url = handlers.adopt_picture(owner, output)
+                run.revision += 1
+
+        edits.start(Run(owner, EDIT_KEY, "edit"), work)
+        return {"run": edit_payload(owner)}
+
+    @app.get(f"{api}/quick-edit/run", include_in_schema=False)
+    @guarded
+    def read_quick_edit(request: Request):
+        return {"run": edit_payload(owner_of(request))}
+
+    @app.post(f"{api}/quick-edit/interrupt", include_in_schema=False)
+    @guarded
+    def stop_quick_edit(request: Request):
+        owner = owner_of(request)
+        message = interrupted(request, edits.active(owner, EDIT_KEY, "edit"), "remake_edit")
+        return {"message": message, "run": edit_payload(owner)}

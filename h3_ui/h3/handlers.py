@@ -280,6 +280,7 @@ class H3Handlers:
                 first,
                 alignment=64 if request.finishing.latent_upscale else 32,
                 auto_megapixels=request.sampling.auto_megapixels,
+                edit_size=request.sampling.image_edit_size,
             )
         return resolve_settings(
             request, ResolutionContext(dimensions, self.services.runtime_config().memory_profile)

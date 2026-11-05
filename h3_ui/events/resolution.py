@@ -68,10 +68,10 @@ def bind_resolution(
             extra_outputs=[components.resolution_info],
         )
 
-    def start_frame(first, width, height, result_format, latent_upscale, cap):
+    def start_frame(first, width, height, result_format, latent_upscale, cap, edit_size):
         return dimensions(
             *services.auto_resolution_from_start_frame(
-                first, width, height, result_format, latent_upscale, cap
+                first, width, height, result_format, latent_upscale, cap, edit_size
             )
         )
 
@@ -82,6 +82,7 @@ def bind_resolution(
         components.result_format,
         components.latent_upscale,
         components.auto_megapixels,
+        components.image_edit_size,
     ]
     controller.bind_refresh(
         [components.first.change],
@@ -94,20 +95,20 @@ def bind_resolution(
     # from this response would retrigger it indefinitely in Gradio. Without a
     # start frame the cap changes no dimension, and the preset or cap edit's
     # own settings response already describes it.
-    def start_frame_cap(first, width, height, result_format, latent_upscale, cap):
+    def start_frame_cap(first, width, height, result_format, latent_upscale, cap, edit_size):
         if not first:
             return None
         overrides, extras = start_frame(
-            first, width, height, result_format, latent_upscale, cap
+            first, width, height, result_format, latent_upscale, cap, edit_size
         )
-        return {**overrides, "auto_megapixels": cap}, extras
+        return {**overrides, "auto_megapixels": cap, "image_edit_size": edit_size}, extras
 
     controller.bind_refresh(
-        [components.auto_megapixels.change],
+        [components.auto_megapixels.change, components.image_edit_size.change],
         start_frame_cap,
         inputs=start_frame_inputs,
         extra_outputs=[components.resolution_info],
-        exclude=[components.auto_megapixels],
+        exclude=[components.auto_megapixels, components.image_edit_size],
     )
     for dimension in (components.width, components.height):
         dimension.input(

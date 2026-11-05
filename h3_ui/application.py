@@ -847,6 +847,7 @@ def generate(
     lightvae_decoder: str = "none",
     use_sol_vae: bool = False,
     auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+    image_edit_size: str = "Match first image size",
     progress=gr.Progress(track_tqdm=False),
 ):
     values = dict(locals())

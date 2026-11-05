@@ -6,7 +6,7 @@
   const PULSE_MS = 2500;
   const CHECK_DELAY_MS = 200;
   const PREFS = "h3-remake-prefs";
-  const BRIDGE = {edit: "remake-edit-bridge", settings: "remake-settings-bridge"};
+  const BRIDGE = {edit: (model) => `remake-edit-bridge-${model}`, settings: "remake-settings-bridge"};
   const QUEUED = ["pending", "changed", "failed"];
   const $ = (id) => document.getElementById(id);
 
@@ -37,11 +37,12 @@
     long: false, text: "", project: null, index: 0, frame: 0, mode: "Swap", pinned: true, smart: true, auto: true,
     slots: [null, null, null, null], useCarried: true, suggestion: "", previous: null, view: "source", wipe: 50,
     alignSlot: null, alignView: "Overlay", check: null, run: null, runSeen: -1, output: null, playing: false,
-    menu: false, renaming: null, confirming: null, target: null, settings: null,
+    menu: false, renaming: null, confirming: null, target: null, settings: null, quick: null,
   };
   const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })();
   const savePrefs = () => {
-    const kept = {mode: state.mode, shortEdge: state.shortEdge, maxWindow: state.maxWindow, smart: state.smart,
+    const kept = {mode: state.mode, outputEdge: state.shortEdge, maxWindow: state.maxWindow, smart: state.smart,
+                  editModel: $("edit-model").value,
                   auto: state.auto, pinned: state.pinned, backend: $("writer-backend").value, model: $("writer-model").value};
     try { localStorage.setItem(PREFS, JSON.stringify(kept)); } catch { /* Private windows refuse it. */ }
   };
@@ -271,10 +272,10 @@
     if (state.view === "align") renderViewer();
   });
 
-  const replacePicture = (index, path) => {
+  const replacePicture = (index, path, {before = null, untouched = false} = {}) => {
     const slot = state.slots[index];
     // A picture for an empty slot belongs at the playhead, like an extracted frame.
-    state.slots[index] = {...slot, path, pin: slot?.pin ?? playheadPin(), untouched: false, sent: false, align: null};
+    state.slots[index] = {...slot, path, pin: slot?.pin ?? playheadPin(), untouched, sent: false, align: null, before};
     afterPictures();
     measure(index);
   };
@@ -307,10 +308,43 @@
     afterPictures();
   });
 
+  const sleep = (milliseconds) => new Promise((resolve) => { setTimeout(resolve, milliseconds); });
+
+  // Repaints the picture where it is. It finishes on its own if you move on, and only lands if its slot still holds it.
+  const quickEdit = safely(async (index) => {
+    const slot = state.slots[index];
+    const prompt = (slot.quick ?? "").trim();
+    if (!prompt) throw new Error("Write what to change in the frame.");
+    const opened = state.index;
+    state.quick = {index, status: "Waiting for the GPU…"};
+    renderPictures();
+    try {
+      let {run} = await post("/quick-edit", {picture: slot.path, prompt});
+      while (run.active) {
+        await sleep(POLL_MS);
+        ({run} = await request("GET", "/quick-edit/run"));
+        state.quick.status = run.status;
+        const line = $("quick-status");
+        if (line) line.textContent = run.status;
+      }
+      if (run.error) throw new Error(run.error);
+      if (!run.result_url) return;
+      if (state.index !== opened || state.slots[index]?.path !== slot.path) {
+        toast("The edit finished after the picture changed, so it's in Media instead.");
+        return;
+      }
+      replacePicture(index, run.result_url, {before: {path: slot.path, untouched: Boolean(slot.untouched)}});
+    } finally {
+      state.quick = null;
+      renderPictures();
+    }
+  });
+
   const sendToImage = safely(async (index) => {
     const slot = state.slots[index];
-    await post("/send-to-image", {path: slot.path});
-    const bridge = window.parent === window ? null : window.parent.document.getElementById(BRIDGE.edit);
+    const model = $("edit-model").value;
+    await post("/send-to-image", {path: slot.path, model});
+    const bridge = window.parent === window ? null : window.parent.document.getElementById(BRIDGE.edit(model));
     if (!bridge) throw new Error("Open Remake in the app to edit in Image.");
     slot.sent = true;
     renderPictures();
@@ -690,6 +724,16 @@
                   }})) : null;
     const status = slot.untouched ? ["Not edited", "chip warn"] : slot.align?.state === "shifted" ? ["Shifted", "chip warn"]
       : slot.align?.state === "lined_up" ? ["Lined up", "chip good"] : ["Edited", "chip"];
+    const editing = state.quick?.index === index;
+    const quickRow = h("div", {className: "quick"},
+      h("input", {className: "field tight", placeholder: "Describe the change", value: slot.quick ?? "",
+                  disabled: Boolean(state.quick), "aria-label": `Quick edit for picture ${index + 1}`,
+                  oninput: (event) => { slot.quick = event.target.value; },
+                  onkeydown: (event) => { if (event.key === "Enter") quickEdit(index); }}),
+      editing
+        ? button("Interrupt", safely(async () => toast((await post("/quick-edit/interrupt")).message)))
+        : button("Quick edit", () => quickEdit(index), slot.untouched ? "btn primary" : "btn",
+          {disabled: Boolean(state.quick)}));
     return h("div", {className: `pic${state.view === "align" && state.alignSlot === index ? " on" : ""}`},
       h("img", {src: fileUrl(slot.path), alt: `Picture ${index + 1}`}),
       h("div", {className: "body"},
@@ -701,11 +745,15 @@
             if (state.alignSlot === index) { state.alignSlot = null; state.view = "source"; renderViewer(); }
             afterPictures();
           }, "btn quiet mini", {"aria-label": `Remove picture ${index + 1}`})),
+        quickRow,
+        editing ? h("p", {className: "small muted", id: "quick-status", role: "status"}, state.quick.status) : null,
         h("div", {className: "row tightrow"}, pinField,
-          slot.sent ? button("Choose the edited image", () => openLibrary(index), "btn primary")
-            : slot.untouched ? button("Edit in Image", () => sendToImage(index), "btn primary")
-              : button("Edit in Image", () => sendToImage(index)),
-          slot.untouched ? button("Replace", () => openLibrary(index))
+          slot.before ? button("Undo edit", () => replacePicture(index, slot.before.path, {untouched: slot.before.untouched}))
+            : null,
+          // Still offered once sent: the frame can go to another model.
+          button("Edit in Image", () => sendToImage(index)),
+          slot.sent ? button("Choose the edited image", () => openLibrary(index), "btn primary") : null,
+          slot.untouched ? (slot.sent ? null : button("Replace", () => openLibrary(index)))
             : button("Check alignment", () => {
               state.alignSlot = index;
               state.view = "align";
@@ -907,6 +955,7 @@
     $("prompt").addEventListener("change", () => { saveWindow(); });
     $("writer-backend").addEventListener("change", () => { fillWriterModels(); renderPromptMeta(); savePrefs(); });
     $("writer-model").addEventListener("change", savePrefs);
+    $("edit-model").addEventListener("change", savePrefs);
     $("rewrite").addEventListener("click", safely(async (event) => {
       const control = event.currentTarget;
       control.disabled = true;
@@ -984,10 +1033,13 @@
     window.addEventListener("resize", queueFit);
     try {
       state.boot = await request("GET", "/boot");
-      state.shortEdge = prefs.shortEdge ?? state.boot.short_edge;
+      state.shortEdge = prefs.outputEdge ?? state.boot.short_edge;
       state.maxWindow = prefs.maxWindow ?? state.boot.max_window;
       Object.assign(state, {mode: prefs.mode ?? "Swap", smart: prefs.smart ?? true, auto: prefs.auto ?? true, pinned: prefs.pinned ?? true});
-      $("short-edge").replaceChildren(...state.boot.short_edges.map((edge) => h("option", {value: edge}, String(edge))));
+      $("short-edge").replaceChildren(h("option", {value: 0}, "Auto, match source"),
+        ...state.boot.short_edges.map((edge) => h("option", {value: edge}, String(edge))));
+      $("edit-model").replaceChildren(...state.boot.edit_models.map((model) => h("option", {value: model.id}, model.label)));
+      if (state.boot.edit_models.some((model) => model.id === prefs.editModel)) $("edit-model").value = prefs.editModel;
       $("max-window").replaceChildren(...state.boot.lengths.map((length) =>
         h("option", {value: length}, `${(length / fps()).toFixed(1)} s (${length} frames)`)));
       if (prefs.backend) $("writer-backend").value = prefs.backend;

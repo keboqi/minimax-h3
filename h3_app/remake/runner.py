@@ -15,7 +15,7 @@ from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.provenance import write_snapshot
 
 from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
-from .model import FPS, RemakeGraph, canvas_size, check_pins, request_overrides
+from .model import FPS, RemakeGraph, RenderSize, check_pins, render_size, request_overrides
 from .project import (
     DONE, FAILED, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor, store_picture,
     window_inputs,
@@ -97,9 +97,10 @@ class WindowRunner:
         metadata = probe_video_metadata(Path(video))
         if total > int(metadata.duration * FPS) + 1:
             raise H3Error("The selection runs past the end of the source.")
-        width, height = canvas_size(selection.short_edge, metadata.width, metadata.height)
+        size = render_size(selection.short_edge, metadata.width, metadata.height)
         plans = plan_windows(total, detect_cuts(video, start, total / FPS), max_frames=selection.max_window)
-        data = {"start": start, "frames": total, "width": width, "height": height, "mix": 0,
+        data = {"start": start, "frames": total, "width": size.width, "height": size.height,
+                "latent_upscale": size.latent_upscale, "mix": 0,
                 "has_audio": bool(metadata.has_audio), "name": Path(video).stem, "selection": selection._asdict()}
         return self.projects.create(owner, selection.key, video, data, plans)
 
@@ -177,7 +178,9 @@ class WindowRunner:
         values = {**self.defaults(), **options.h3_settings}
         values.update(request_overrides(
             prompt=text, first_picture=str(pictures[0]), width=project["width"], height=project["height"],
-            frames=frames, latent_upscale=bool(values.get("latent_upscale")),
+            frames=frames, latent_upscale=RenderSize(project["width"], project["height"],
+                                                     project.get("latent_upscale")).upscale(
+                values.get("latent_upscale")),
         ))
         # Each window must join as sampled; finishing belongs on the joined video.
         values["postprocess"] = "None"

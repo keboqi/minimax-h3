@@ -1,6 +1,7 @@
 """Stable positional API boundary; internal callers use named request values."""
 
 from dataclasses import dataclass, replace
+from h3_app.catalog import H3_EDIT_SIZE_MATCH
 from typing import Any
 
 GENERATION_FIELDS = (
@@ -81,6 +82,7 @@ GENERATION_FIELDS = (
     "lightvae_decoder",
     "use_sol_vae",
     "auto_megapixels",
+    "image_edit_size",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -160,6 +162,7 @@ GENERATION_COMPONENTS = (
     "lightvae_decoder",
     "use_sol_vae",
     "auto_megapixels",
+    "image_edit_size",
 )
 
 
@@ -186,6 +189,8 @@ class GenerationArguments:
             args = (*args, False)
         if len(args) == GENERATION_FIELDS.index("auto_megapixels"):
             args = (*args, "1 MP")
+        if len(args) == GENERATION_FIELDS.index("image_edit_size"):
+            args = (*args, H3_EDIT_SIZE_MATCH)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

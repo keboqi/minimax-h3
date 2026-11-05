@@ -52,6 +52,7 @@ def build_model_section(
     ):
         mode = gr.Radio(
             ["Text to video", "First / last frame", "Reference media"],
+            elem_id="h3-conditioning-mode",
             value=defaults["mode"],
             label="Conditioning mode",
         )

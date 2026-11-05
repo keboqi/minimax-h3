@@ -770,6 +770,12 @@ AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
 DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "1 MP"
 
 
+# How H3 sizes an image edit from its first frame. Match stops at the largest cap.
+H3_EDIT_SIZE_MATCH = "Match first image size"
+H3_EDIT_SIZE_CAP = "Scale to the start-frame cap"
+H3_EDIT_SIZE_MAX_PIXELS = AUTO_RESOLUTION_MEGAPIXEL_PRESETS["8 MP"]
+
+
 # Set on a job after a canvas transform: its derived frame is already the size.
 EXACT_CANVAS_MEGAPIXELS = "Exact canvas"
 

@@ -66,6 +66,7 @@ EXTRA_FIELDS = {
     ),
     "h3": (
         "ref_size",
+        "image_edit_size",
         "local_prompt_base_model",
         "local_prompt_max_tokens",
         "local_prompt_temperature",

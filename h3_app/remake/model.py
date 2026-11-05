@@ -13,7 +13,14 @@ MIN_FRAMES, MAX_FRAMES = 90, 345
 # Viggle recommends staying at or below this length.
 RECOMMENDED_MAX_FRAMES = 294
 SHORT_EDGES = tuple(range(480, 737, 32))
-DEFAULT_SHORT_EDGE = 480
+# Follows the source: the finished video matches its shape and, up to a limit, its size.
+AUTO_SHORT_EDGE = 0
+DEFAULT_SHORT_EDGE = AUTO_SHORT_EDGE
+GRID = 32
+# Auto stops here: a 1080p finish, because a doubled 736 is far heavier than a regular H3 job.
+AUTO_MAX_OUTPUT_EDGE = 1088
+# No side reaches past what Viggle's largest canvas holds, whatever the source's shape.
+MAX_CANVAS_PIXELS = 1280 * 736
 MAX_PICTURES = 4
 SWAP, EDIT = "Swap", "Edit"
 SIGMAS = {
@@ -67,17 +74,48 @@ def frames_for_seconds(seconds: float) -> int:
 
 
 def canvas_size(short_edge: int, source_width: int, source_height: int) -> tuple[int, int]:
-    """Remake's 16:9-class canvas, in the source's orientation, as ``(width, height)``."""
+    """The canvas in the source's shape, as ``(width, height)``, with both sides on the grid.
+
+    Rounding down keeps Viggle's sizes for 16:9 sources, and anything left over is center-cropped.
+    """
     short_edge = int(short_edge)
     if short_edge not in SHORT_EDGES:
         raise H3Error(f"Remake's short edge must be one of {SHORT_EDGES[0]}–{SHORT_EDGES[-1]} in steps of 32.")
-    long_edge = short_edge * 16 // 9 // 32 * 32
+    shorter, longer = sorted((int(source_width), int(source_height)))
+    long_edge = min(short_edge * longer // shorter, MAX_CANVAS_PIXELS // short_edge) // GRID * GRID
     return (long_edge, short_edge) if source_width >= source_height else (short_edge, long_edge)
 
 
 def output_size(width: int, height: int, latent_upscale: bool) -> tuple[int, int]:
     """The finished video's size: latent upscale doubles the sampled canvas."""
     return (width * 2, height * 2) if latent_upscale else (width, height)
+
+
+@dataclass(frozen=True)
+class RenderSize:
+    """What a run samples, and whether latent upscale doubles it; ``None`` leaves that to H3."""
+
+    width: int
+    height: int
+    latent_upscale: bool | None = None
+
+    def upscale(self, h3_setting: Any) -> bool:
+        return bool(h3_setting) if self.latent_upscale is None else self.latent_upscale
+
+
+def render_size(short_edge: int, source_width: int, source_height: int) -> RenderSize:
+    """The size of a run. A chosen short edge is sampled as is; Auto reaches the source's own size.
+
+    Auto samples directly while the canvas can reach the source, and past that samples half the
+    size and doubles it, so the finish doesn't depend on the H3 latent upscale setting.
+    """
+    if int(short_edge) != AUTO_SHORT_EDGE:
+        return RenderSize(*canvas_size(short_edge, source_width, source_height))
+    target = min(source_width, source_height, AUTO_MAX_OUTPUT_EDGE)
+    upscale = target > SHORT_EDGES[-1]
+    wanted = (target / 2 if upscale else target) + GRID / 2
+    sampled = max(SHORT_EDGES[0], min(SHORT_EDGES[-1], int(wanted) // GRID * GRID))
+    return RenderSize(*canvas_size(sampled, source_width, source_height), upscale)
 
 
 def refine_tail_steps(sigmas: str, requested: int) -> int:
@@ -130,6 +168,7 @@ def request_overrides(*, prompt: str, first_picture: str, width: int, height: in
         "scheduler": "simple",
         "semantic_bridge": False,
         "semantic_bridge_alpha": 0.0,
+        "latent_upscale": bool(latent_upscale),
         "latent_upscale_refine_lora": "Same as generation",
         "fl2va_audio_1": None,
         "fl2va_audio_2": None,

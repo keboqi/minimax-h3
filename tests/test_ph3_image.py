@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+
+from h3_app.catalog import H3_EDIT_SIZE_CAP, H3_EDIT_SIZE_MATCH
 from unittest.mock import Mock, patch
 
 from h3_app.catalog import UI_DEFAULTS
@@ -150,16 +152,31 @@ class PH3ImageTests(unittest.TestCase):
             Image.new("RGB", (3000, 2000)).save(first)
             for cap, size in (("1 MP", (1152, 768)), ("4 MP", (2432, 1632)), ("8 MP", (3456, 2304))):
                 with self.subTest(cap=cap):
-                    self.assertEqual(start_frame_generation_resolution(first, alignment=32, auto_megapixels=cap), size)
-                    self.assertEqual(auto_resolution_from_start_frame(first, 1, 1, "Image", False, cap)[:2], size)
+                    self.assertEqual(start_frame_generation_resolution(
+                        first, alignment=32, auto_megapixels=cap, edit_size=H3_EDIT_SIZE_CAP), size)
+                    self.assertEqual(auto_resolution_from_start_frame(
+                        first, 1, 1, "Image", False, cap, H3_EDIT_SIZE_CAP)[:2], size)
             self.assertEqual(self.request(first_image=first, auto_megapixels="4 MP").values()["auto_megapixels"], "4 MP")
 
             small = str(Path(directory) / "small.png")
             Image.new("RGB", (640, 640)).save(small)
-            self.assertEqual(start_frame_generation_resolution(small, alignment=32, auto_megapixels="4 MP"),
-                             (1984, 1984))
+            self.assertEqual(start_frame_generation_resolution(
+                small, alignment=32, auto_megapixels="4 MP", edit_size=H3_EDIT_SIZE_CAP), (1984, 1984))
             # Video keeps its cap as a ceiling and never upscales.
             self.assertEqual(auto_resolution_from_start_frame(small, 1, 1, "Video", False, "4 MP")[:2], (640, 640))
+
+    def test_a_first_frame_edit_matches_its_image_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for source, size in (((1280, 736), (1280, 736)), ((640, 640), (640, 640)), ((1920, 1080), (1920, 1088)),
+                                 ((6000, 4000), (3456, 2304))):
+                with self.subTest(source=source):
+                    first = str(Path(directory) / f"{source[0]}.png")
+                    Image.new("RGB", source).save(first)
+                    # Whatever the cap says: 1 MP would shrink every one of these.
+                    self.assertEqual(start_frame_generation_resolution(first, alignment=32, auto_megapixels="1 MP"), size)
+                    self.assertEqual(auto_resolution_from_start_frame(first, 1, 1, "Image", False, "1 MP")[:2], size)
+            legacy = [None] * GENERATION_FIELDS.index("image_edit_size")
+            self.assertEqual(GenerationArguments.from_positional(legacy).values["image_edit_size"], H3_EDIT_SIZE_MATCH)
 
     def test_old_positional_calls_default_the_cap(self):
         legacy = [None] * GENERATION_FIELDS.index("auto_megapixels")

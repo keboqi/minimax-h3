@@ -18,9 +18,13 @@ on the right always shows the selection or the window under the playhead.
    14.4 seconds), and rounds down to the nearest allowed length. Longer selections render in windows.
 3. Move the playhead to a frame and press **Extract frame**. It fills the first empty slot with its frame number, and a
    numbered marker appears under the timeline.
-4. Press **Edit in Image**, which sends the frame to Qwen Image 2.1, and edit it there. Then bring the result back from
-   Media with **Set as** › **Remake · Picture N**, or with **Choose the edited image** on the picture. Both keep the
-   frame number. Generate stays off while a slot holds the frame exactly as it was extracted.
+4. Type the change under the picture and press **Quick edit**. MiniMax H3's image edit repaints the frame right there at
+   its own size, and **Undo edit** brings the frame back. For more control, pick **MiniMax H3** or **Qwen Image 2.1** under
+   **Edit with** and press **Edit in Image**, which opens that model in the Image task with the frame loaded. **MiniMax H3**, the default, edits it as a first frame on the base model a run loads anyway, so no second
+   diffusion model has to load, though its image LoRA, text encoder and VAE download on first use. It keeps the frame's
+   size unless you change **Image edit size** there. Then bring the result
+   back from Media with **Set as** › **Remake · Picture N**, or with **Choose the edited image** on the picture. Both keep
+   the frame number. Generate stays off while a slot holds the frame exactly as it was extracted.
 5. Keep **Pin to frames** on for clips with cuts, or when the composition matters. Frame numbers count from Start;
    moving Start shifts them so each stays on its source frame.
 6. A picture that comes back is measured on its own and shows **Lined up** or **Shifted**. **Check alignment** opens the
@@ -28,12 +32,17 @@ on the right always shows the selection or the window under the playhead.
    cannot fix a changed pose.
 7. Write an **Edit request**, press **Rewrite / enhance**, and accept the suggestion. Gemini reads the clip and the
    frames. OpenAI-compatible services only see the frames.
-8. Pick a **Short edge** and press the action at the top right, which says what it will do. 480 gives 832×480 and 736
-   gives 1280×736. The Source, Frames and Prompt steps beside it show what is still missing.
+8. Press the action at the top right, which says what it will do. The Source, Frames and Prompt steps beside it show
+   what is still missing.
 
 The viewer has **Source**, **Result** and **Compare**, where you drag a divider across the two.
 
-The canvas is always 16:9-class, in the source's orientation, so other shapes are center-cropped.
+**Size** starts on **Auto, match source**: the video keeps the source's shape and size, up to 1080p, whatever the
+MiniMax H3 settings say. Sources up to 736 pixels on their short edge are sampled directly. Larger ones are sampled at
+half size and doubled, so 1920×1080 samples 960×544 and finishes at 1920×1088, because both sides must be multiples of
+32. Pick a short edge to use less memory: 480 samples 832×480 from a 16:9 source, and latent upscale then follows
+MiniMax H3. Every size keeps the source's shape, up to what 1280×736 holds; anything left over is center-cropped.
+
 The soundtrack needs no extraction: it stays clean through sampling and comes out in the result, and it
 guides mouth movement. A silent source stays silent.
 
@@ -79,17 +88,16 @@ MiniMax H3 apply as soon as you come back.
 
 | Follows MiniMax H3 | Set by Remake | Not used |
 |---|---|---|
-| Base model, text encoder, video encoder and decoder, seed, attention, memory, acceleration, latent upscale, finishing | Swap or Edit LoRA, six-step Euler schedule, size, length, reference conditioning, pins, clean source audio | Turbo LoRAs, steps and scheduler, Semantic Bridge, refinement LoRA choice, Variations |
+| Base model, text encoder, video encoder and decoder, seed, attention, memory, acceleration; latent upscale and finishing with a chosen short edge | Swap or Edit LoRA, six-step Euler schedule, size, length, reference conditioning, pins, clean source audio | Turbo LoRAs, steps and scheduler, Semantic Bridge, refinement LoRA choice, Variations |
 
 The run uses the base model's FL2VA checkpoint. Viggle documents stock FL2VA, so Next run marks every
 other base as an untested pairing without blocking it. The Singularity profiles point at Ref2VA-derived
 files.
 
-Latent upscale is on by default in H3, so a default run samples at the canvas, doubles it (832×480 becomes
-1664×960) and refines the last two steps of the schedule with the same Remake LoRA and audio held clean. The
+A run that doubles samples at the canvas, doubles it (960×544 becomes 1920×1088) and refines the last two steps of the schedule with the same Remake LoRA and audio held clean. The
 reference stays at canvas size: rebuilding it at the doubled size made a 14 s clip about three times the largest
-regular H3 job. This pairing is ours, not Viggle's, and Next run says so. Turn latent upscale off in MiniMax H3
-for Viggle's exact recipe.
+regular H3 job. This pairing is ours, not Viggle's, and Next run says so. Pick a short edge and turn latent upscale off in
+MiniMax H3 for Viggle's exact recipe.
 
 ## How it runs
 

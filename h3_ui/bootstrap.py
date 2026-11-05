@@ -158,12 +158,16 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         for feature in FEATURES:
             engine_views[feature.id] = feature.build(getattr(app_views, feature.key), services.engine_deps)
             engine_handlers[feature.id] = feature.bind(engine_views[feature.id], services.engine_deps)
-        from .engines.remake import bind_h3_settings
+        from .engines.remake import EditTarget, bind_h3_settings
 
         bind_h3_settings(
             engine_views["remake"], engine_handlers["remake"], h3_components.values,
             # The task picker switches tabs itself, so a Tab select event wouldn't fire.
-            (demo.load, app_views.task.change), image_target=engine_views["qwen"].reference_images,
+            (demo.load, app_views.task.change),
+            edit_targets={
+                "h3": EditTarget(h3_components.values["first"], multiple=False, h3_mode="First / last frame"),
+                "qwen": EditTarget(engine_views["qwen"].reference_images),
+            },
         )
         from functools import partial
 

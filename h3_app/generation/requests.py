@@ -159,6 +159,7 @@ class H3OutputInputs:
     video_encoder: str = "Original"
     lightvae_decoder: str = "none"
     auto_megapixels: str = "1 MP"
+    image_edit_size: str = "Match first image size"
 
 
 @dataclass

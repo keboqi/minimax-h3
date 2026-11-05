@@ -1003,6 +1003,11 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 /* Remake: the page runs in this frame, and the bridge beside it stays out of sight. */
 .h3-remake-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; }
 .h3-remake-bridge { display: none !important; }
+/* Thumbnails stand in for a file input's list of names. */
+.h3-input-files .file-preview-holder { display: none !important; }
+.h3-input-files { min-height: 48px; }
+.h3-input-thumbnails, .h3-input-thumbnails .grid-wrap, .h3-input-thumbnails .grid-container { height: auto !important; min-height: 0 !important; max-height: none !important; }
+.h3-input-thumbnails .grid-wrap { padding-top: 28px; }
 /* Storyboard: the page runs in this frame. */
 .h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {

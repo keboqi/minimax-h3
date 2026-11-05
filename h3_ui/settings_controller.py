@@ -331,6 +331,8 @@ class SettingsController:
                     props["value"] = current[name]
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
+            if name == "image_edit_size":
+                props["visible"] = fmt == "Image"
             if (
                 name in {"width", "height"}
                 and self.components.get("aspect_ratio") is not None

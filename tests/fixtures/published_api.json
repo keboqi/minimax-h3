@@ -87,7 +87,8 @@
         {"parameter_name": "video_encoder", "parameter_has_default": true, "parameter_default": "LightVAE Lite", "type": "type_93"},
         {"parameter_name": "lightvae_decoder", "parameter_has_default": true, "parameter_default": "none", "type": "type_94"},
         {"parameter_name": "use_sol_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
-        {"parameter_name": "auto_megapixels", "parameter_has_default": true, "parameter_default": "1 MP", "type": "type_102"}
+        {"parameter_name": "auto_megapixels", "parameter_has_default": true, "parameter_default": "1 MP", "type": "type_102"},
+        {"parameter_name": "image_edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_image_edit_size"}
       ],
       "returns": [
         {"type": "type_10", "component": "Video"},
@@ -383,6 +384,7 @@
     }
   },
   "types": {
+    "type_image_edit_size": {"enum": ["Match first image size", "Scale to the start-frame cap"], "title": "Radio", "type": "string"},
     "type_1": {
       "type": "string"
     },
