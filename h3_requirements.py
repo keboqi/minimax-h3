@@ -43,9 +43,9 @@ VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "3a23f333537d9a715aad7ce79af8d9ec891d9ad8"  # v1.104.0 + native Core compatibility
 
-# v0.44.0 plus the matching frontend maintenance release.
+# v0.44.0 plus the frontend maintenance release and adaptive SeedVR2 VAE slices (#17508).
 # Keep this source paired with Kitchen 0.2.40 and Drama's new/old cache compatibility.
-COMFY_REF = "7f09d3fa4a783868fe39d4d63cf4f815e58abecd"
+COMFY_REF = "56f179f6c50dad0c4c860ae4da427415c8e86415"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -548,7 +548,7 @@ def selftest() -> None:
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
-    assert COMFY_REF == "7f09d3fa4a783868fe39d4d63cf4f815e58abecd"
+    assert COMFY_REF == "56f179f6c50dad0c4c860ae4da427415c8e86415"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.40"
     assert COMFY_FRONTEND_VERSION == "1.58.5"

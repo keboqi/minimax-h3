@@ -434,8 +434,9 @@ and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.44.0 plus its frontend update at immutable revision
-`7f09d3fa4a783868fe39d4d63cf4f815e58abecd`, including native Sol H3 VAE decoding,
+The deployment pins ComfyUI v0.44.0 plus its frontend update and adaptive SeedVR2
+VAE slicing at immutable revision `56f179f6c50dad0c4c860ae4da427415c8e86415`
+([Comfy-Org/ComfyUI#17508](https://github.com/Comfy-Org/ComfyUI/pull/17508)), including native Sol H3 VAE decoding,
 H3 latent upscaling, P-H3-Image conditioning and LoRA bypass support.
 Refinement and H3 Regenerate use Core's optimized
 upscaler with a bundled loader that preserves FP32/BF16/FP16 precision choices.

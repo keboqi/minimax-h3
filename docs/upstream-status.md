@@ -1,5 +1,15 @@
 # Upstream status
 
+## ComfyUI SeedVR2 VAE pin updated — 2026-11-04
+
+`COMFY_REF` now pins `56f179f6c50dad0c4c860ae4da427415c8e86415`, including
+[adaptive SeedVR2 VAE slicing (#17508)](https://github.com/Comfy-Org/ComfyUI/pull/17508).
+The two-commit upgrade changes no dependency requirements. Our native tiled
+SeedVR2 encode/decode graphs use the updated implementation without graph changes.
+It uses spare memory for longer slices and, where supported, device-held caches;
+lower peak VRAM and a particular speedup are not guaranteed. GPU performance
+remains unverified. Reprovision local ComfyUI or rebuild/redeploy Modal to apply it.
+
 ## Drama 3 FP8 pin updated — 2026-11-04
 
 `DRAMA3_HF_REVISION` now pins `78e5ab79e49aa9a25abe8799eff2c4d73a1c3216`,
@@ -60,7 +70,7 @@ The five recommended upgrades from the audit below are now pinned in
 | --- | --- |
 | Gradio | 6.31.0, also in `requirements-test.txt` |
 | audio-separator | 0.48.0, isolated dubbing environment |
-| ComfyUI / frontend | `7f09d3fa4a783868fe39d4d63cf4f815e58abecd` / 1.58.5 |
+| ComfyUI / frontend | `56f179f6c50dad0c4c860ae4da427415c8e86415` / 1.58.5 |
 | T8 Audio | `3a23f333537d9a715aad7ce79af8d9ec891d9ad8` |
 | SGLang-Omni | v0.2.0 / `e8c635ecb9c68bcf2fbc32ceb3c40f85f3590657` |
 
