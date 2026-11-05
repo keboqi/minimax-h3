@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import gradio as gr
 import numpy as np
 from PIL import Image
 
@@ -24,13 +25,13 @@ from h3_app.remake import (
 from h3_app.remake.model import REQUEST_STEPS
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
 from h3_app.remake.media import detect_cuts, extract_frame, join_windows, trim_source
-from h3_app.remake.runner import Selection
+from h3_app.remake.runner import CONTINUE_REQUEST, Selection
 from h3_app.remake.windows import LENGTHS, carried_frame, needs_windows, plan_windows
 from h3_app.staging import file_content_sha256
 from h3_app.workflows import h3
 from h3_models import MODEL_SPECS
 from h3_ui.engines.feature import EngineDeps
-from h3_ui.engines.remake import READY, RemakeHandlers, next_run_card, readiness_message, selection_text
+from h3_ui.engines.remake import READY, WINDOW_OUTPUTS, RemakeHandlers, next_run_card, readiness_message, selection_text
 from h3_ui.h3.handlers import default_request
 from tests.workflow_cases import H3_DEFAULTS
 
@@ -572,9 +573,11 @@ class WindowRunTests(unittest.TestCase):
         self.writer.start()
         self.addCleanup(self.writer.stop)
         self.written = []
+        self.requests = []
 
     def write(self, request, mode, clip, pictures, pins, frames, width, height, *args, previous_prompt="", **_options):
         self.written.append((list(pictures), list(pins), previous_prompt))
+        self.requests.append(request)
         return SIX_SECTIONS + f"\n# {len(self.written)}", "Enhanced."
 
     def run_windows(self, *, index=0, prompt="", picture=None, pin=12, smart=True, end=20):
@@ -680,6 +683,33 @@ class WindowRunTests(unittest.TestCase):
         selection = Selection("unsaved", 0, 20, 480, 12, 226)
         self.assertEqual(self.handlers.selection_changed("local", selection, 0, 0)[5], {"__type__": "update"})
         self.assertIsNone(self.handlers.selection_changed("local", selection, 0, 2)[5])
+
+    def test_smart_continues_from_window_ones_prompt_without_an_edit_request(self):
+        updates = list(self.handlers.generate_remake(
+            SWAP, str(self.video), 0, 20, 480, SIX_SECTIONS, True, str(self.picture), None, None, None, 12, None, None,
+            None, 226, "", True, 12, 0, True,
+        ))
+        self.assertIn("Combined", updates[-1][1])
+        self.assertEqual(self.requests[0], CONTINUE_REQUEST)
+        self.assertEqual(self.written[0][2], SIX_SECTIONS)
+
+    def test_a_first_window_with_no_prompt_or_request_still_says_so(self):
+        with self.assertRaisesRegex(H3Error, "needs a prompt, or an edit request"):
+            list(self.handlers.generate_remake(
+                SWAP, str(self.video), 0, 20, 480, "", True, str(self.picture), None, None, None, 12, None, None,
+                None, 226, "", True, 12, 0, True,
+            ))
+
+    def test_opening_the_list_without_choosing_changes_nothing(self):
+        updates = self.handlers.window_selected("local", self.selection(), None, 0, "", True)
+        self.assertEqual(len(updates), WINDOW_OUTPUTS)
+        self.assertTrue(all(update == gr.update() for update in updates))
+
+    def test_the_list_fills_in_while_a_run_plans_windows(self):
+        self.assertEqual(self.handlers.window_list("local", self.selection())[1]["choices"], [])
+        self.run_windows(picture=str(self.picture))
+        self.assertEqual(len(self.handlers.window_list("local", self.selection())[1]["choices"]),
+                         len(self.project()["windows"]))
 
     def test_generating_with_an_empty_editor_keeps_an_auto_prompt(self):
         self.run_windows(picture=str(self.picture))

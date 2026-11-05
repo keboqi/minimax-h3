@@ -120,7 +120,9 @@ def main(shots=None):
                 page.get_by_role("button", name="Split into windows").click()
                 expect(page.get_by_text("windows", exact=False).filter(has_text="rendered").first).to_be_visible(
                     timeout=20000)
-                page.get_by_label("Edit request").fill("Turn the card into a robot")
+                # Window 1's prompt is enough: no edit request.
+                page.get_by_label("Edit request").fill("")
+                page.get_by_label("Remake prompt").fill("summary:\nA robot dances.")
                 page.get_by_role("button", name="Generate remake").click()
                 status = page.get_by_label("Generation progress").locator("visible=true").first
                 expect(status).to_have_value(re.compile("Combined"), timeout=60000)

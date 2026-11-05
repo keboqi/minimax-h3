@@ -56,6 +56,10 @@ class RunOptions:
     h3_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
+# With no edit request, a later window is written from the prompt before it.
+CONTINUE_REQUEST = "Continue the same edit through this window."
+
+
 def _scratch_clip() -> Path:
     return Path(tempfile.gettempdir()) / f"h3-remake-{uuid.uuid4().hex}.mp4"
 
@@ -146,7 +150,7 @@ class WindowRunner:
                         width=project["width"], height=project["height"])
             text = window["prompt"]
             # An auto prompt's <Picture N> tags only fit the pictures it was written for.
-            stale = window["prompt_auto"] and window["prompt_pictures"] != len(pictures) and options.request.strip()
+            stale = window["prompt_auto"] and window["prompt_pictures"] != len(pictures)
             if stale or not text.strip():
                 yield None, f"{label}: writing the prompt"
                 text = self._write_prompt(project, index, str(clip), pictures, pins, options)
@@ -187,16 +191,18 @@ class WindowRunner:
         yield str(take), f"{label} done"
 
     def _write_prompt(self, project, index, clip, pictures, pins, options: RunOptions) -> str:
-        if not options.request.strip():
+        previous = project["windows"][index - 1]["prompt"] if index else ""
+        request = options.request.strip() or (CONTINUE_REQUEST if previous.strip() else "")
+        if not request:
             raise H3Error(f"Window {index + 1} needs a prompt, or an edit request for Smart to write one.")
         window = project["windows"][index]
         keys = options.writer_keys
         text, status = enhance_remake_prompt(
-            options.request, options.mode, clip, pictures, pins, window["render"][1] - window["render"][0],
+            request, options.mode, clip, pictures, pins, window["render"][1] - window["render"][0],
             project["width"], project["height"], options.writer_model, keys.get("gemini") or "",
             options.writer_backend, keys.get("openai") or "", options.openai_model, keys.get("url"),
             runtime=self.runtime(),
-            previous_prompt=project["windows"][index - 1]["prompt"] if index else "",
+            previous_prompt=previous,
             carried_picture=pictures.index(window["carried"]) + 1 if window["carried"] in pictures else None,
         )
         if "failed" in status:

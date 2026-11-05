@@ -53,6 +53,8 @@ DOCUMENTED_PROFILE = "Original"
 READY = "Ready to generate."
 DEFAULT_SELECTION_FRAMES = DEFAULT_WINDOW_FRAMES
 RUN_BUTTON = "remake-generate"
+# What opening a window fills: its index, slots, frame numbers, eight editor values, then the list.
+WINDOW_OUTPUTS = 1 + 2 * MAX_PICTURES + 8 + 2
 
 # Gradio has copied a scratch file into its own cache long before this.
 SCRATCH_LIFETIME = 3600
@@ -247,6 +249,8 @@ def readiness_message(video, start, end, prompt, pin_frames, originals, pictures
     if not str(prompt or "").strip():
         if long and smart and str(request or "").strip():
             return f"{READY} Smart writes each window's prompt from your edit request."
+        if long and smart and int(window or 0) > 0:
+            return f"{READY} Smart writes this window's prompt from the one before it."
         return "Rewrite your request, then accept the six-section prompt."
     if missing_sections(prompt):
         return f"{READY} This prompt isn't in the six-section format, which Remake hasn't been tested with."
@@ -387,6 +391,9 @@ class RemakeHandlers:
             raise gr.Error("Add a source video first.")
         return self._window_list(self.runner.plan(owner, video, selection), 0)
 
+    def window_list(self, owner, selection):
+        return self._window_list(self.runner.saved(owner, selection))
+
     def refresh_windows(self, owner, selection, index):
         """The window list and the open window, after a run changed them."""
         project = self.runner.saved(owner, selection)
@@ -398,8 +405,8 @@ class RemakeHandlers:
 
     def window_selected(self, owner, selection, new, previous, prompt, use_carried, *values):
         """Keep the open window's edits, then open ``new`` in the same editor."""
-        if new is None:
-            raise gr.Error("Split the selection into windows first.")
+        if new is None:  # Opening the list without choosing a window.
+            return tuple(gr.update() for _ in range(WINDOW_OUTPUTS))
         project = self.runner.store_editor(self._project(owner, selection), previous, prompt, use_carried,
                                            values[:MAX_PICTURES], values[MAX_PICTURES:])
         return (*self._open_window(project, int(new)), *self._window_list(project, int(new)))
@@ -813,6 +820,7 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
                        outputs=[*pictures, *pins, view.originals], show_progress="hidden", api_name=False)
     view.split.click(_on_selection(handlers.split, len(selection) + 1), inputs=[*selection, view.source_video],
                      outputs=window_list, show_progress="minimal", api_name=False)
+    assert len(opened) + len(window_list) == WINDOW_OUTPUTS
     view.window.input(
         _on_selection(handlers.window_selected, len(selection) + 2 + len(editor)),
         inputs=[*selection, view.window, view.window_index, *editor], outputs=[*opened, *window_list],
@@ -827,6 +835,9 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
     ).success(None, js=f"() => document.getElementById({RUN_BUTTON!r})?.click()", queue=False, api_name=False)
     view.combine.click(_on_selection(handlers.combine, len(selection)), inputs=selection,
                        outputs=[view.output, view.status], show_progress="minimal", api_name=False)
+    # A run plans the windows itself, so the list fills in as it goes.
+    view.status.change(_on_selection(handlers.window_list, len(selection)), inputs=selection, outputs=window_list,
+                       trigger_mode="always_last", **QUIET)
     view.output.change(_on_selection(handlers.refresh_windows, len(selection) + 1),
                        inputs=[*selection, view.window_index],
                        outputs=[*window_list, view.window_take, view.carried, view.prompt], **QUIET)

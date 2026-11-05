@@ -37,8 +37,9 @@ memory). A selection that fits stays a single run. A longer one renders in windo
 
 - Windows end on the source's cuts where they can. A shot too long for one window continues into the next, starting
   **Mix frames** earlier so the overlap crossfades when joined.
-- **Smart** (on by default) needs a picture on window 1 and an edit request. Every later window takes the last frame
-  of the render before it, written with its prompt automatically. In a continuing window that frame is pinned to its
+- **Smart** (on by default) needs a picture on window 1, plus either an edit request or a prompt for that window. Every
+  later window takes the last frame of the render before it, and gets its prompt from your request or, without one,
+  from the prompt before it. In a continuing window that frame is pinned to its
   moment; after a cut it only passes on the look. Window 1's picture joins any window with no picture of its own.
 - Pick a window to change it. The Reference frames and Remake prompt editors follow your choice, and pins count from
   the start of that window. **Copy carried frame to a slot** turns the carried frame into one you can edit.
