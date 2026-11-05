@@ -730,7 +730,7 @@ def finish_sampling(
     latent_output_prefix: str | None = None,
     manual_sigmas: str | None = None,
     noise_ref: list[Any] | None = None,
-    hold_audio_in_refinement: bool = False,
+    prepare_refinement: Callable[[list[Any]], list[Any]] | None = None,
 ) -> None:
     result_format = normalize_result_format(result_format)
     stage_offload_enabled_ref: list[Any] | None = None
@@ -868,8 +868,8 @@ def finish_sampling(
             combined_ref = Graph.out(graph.add(
                 "H3RegeneratePrepareLatent", latent=combined_ref, audio_vae=audio_vae_ref,
             ))
-        if hold_audio_in_refinement:
-            combined_ref = Graph.out(graph.add("RemakeHoldAudio", latent=combined_ref))
+        if prepare_refinement is not None:
+            combined_ref = prepare_refinement(combined_ref)
         if stage_model_offload:
             (
                 _unused_conditioning,
@@ -1457,6 +1457,7 @@ def build_remake_graph(
     keyframe_until: float,
     output_stamp: str = "0",
     output_nonce: str = "",
+    held_frames: str | None = None,
     **settings: Any,
 ) -> dict[str, Any]:
     """Viggle Remake on the selected H3 model stack. ``settings`` are :class:`H3GraphOptions`.
@@ -1464,6 +1465,7 @@ def build_remake_graph(
     ``source_video`` is already trimmed to ``frames`` at 24 fps on the sampled canvas. The model,
     encoders, attention, memory and finishing are the regular H3 ones. Latent upscale refines with
     the same conditioning: a reference at the doubled size would quadruple the job.
+    ``held_frames`` is a clip of the previous window's render that starts this one, in every pass.
     """
     o = H3GraphOptions(**settings)
     graph = Graph()
@@ -1515,11 +1517,21 @@ def build_remake_graph(
                      short_edge=min(source_width, source_height))
     noise = graph.add("RemakeNoise", positive=Graph.out(node), seed=int(o.seed))
     steps = len(sigmas.split(",")) - 1
+    held_ref = None
+    if held_frames:
+        held_ref = Graph.out(graph.add("GetVideoComponents", video=Graph.out(graph.add("LoadVideo", file=held_frames))))
+
+    def hold_frames(latent_ref):
+        if held_ref is None:
+            return latent_ref
+        return Graph.out(graph.add("RemakeHoldFrames", latent=latent_ref, vae=conditioning_vae_ref, frames=held_ref))
+
+    target_ref = hold_frames(Graph.out(node, 1))
     finish_sampling(
         graph,
         model_ref=model_ref,
         conditioning_ref=Graph.out(node),
-        latent_ref=Graph.out(node, 1),
+        latent_ref=target_ref,
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
         seed=o.seed,
@@ -1529,7 +1541,7 @@ def build_remake_graph(
         sampler_name="euler",
         filename_prefix=o.output_prefix or f"h3/remake_{output_stamp}",
         initial_conditioning_ref=Graph.out(node),
-        initial_latent_ref=Graph.out(node, 1),
+        initial_latent_ref=target_ref,
         latent_upscale_model_name=o.latent_upscale_model_name,
         latent_upscale_precision=o.latent_upscale_precision,
         latent_upscale_width=target_width,
@@ -1541,7 +1553,7 @@ def build_remake_graph(
         conditioning_cache_key=conditioning_cache_key,
         manual_sigmas=sigmas,
         noise_ref=Graph.out(noise),
-        hold_audio_in_refinement=True,
+        prepare_refinement=lambda latent: hold_frames(Graph.out(graph.add("RemakeHoldAudio", latent=latent))),
     )
     return graph.nodes
 

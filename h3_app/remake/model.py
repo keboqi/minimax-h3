@@ -32,7 +32,7 @@ SECTIONS = (
     "detailed_description", "overall_soundscape", "non_diegetic_music",
 )
 REMAKE_NODES = frozenset({
-    "RemakeConditioning", "RemakeKeyframeUntil", "RemakeNoise", "RemakeHoldAudio",
+    "RemakeConditioning", "RemakeKeyframeUntil", "RemakeNoise", "RemakeHoldAudio", "RemakeHoldFrames",
     "LoraLoaderBypassModelOnly", "ManualSigmas", "LoadVideo", "GetVideoComponents",
 })
 
@@ -47,6 +47,7 @@ class RemakeGraph:
     pins: tuple[int | None, ...]
     frames: int
     output_prefix: str | None = None
+    held_frames: str | None = None
 
     @property
     def lora_key(self) -> str:

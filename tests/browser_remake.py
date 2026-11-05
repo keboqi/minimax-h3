@@ -129,6 +129,7 @@ def main(shots=None):
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-windows.png"), full_page=True)
 
+                expect(page.get_by_label("Write a prompt for each window")).to_be_checked()
                 # The manual side: open a window, take its carried frame, regenerate it alone, combine.
                 choices = page.get_by_label("Window", exact=True)
                 choices.click()
@@ -147,6 +148,23 @@ def main(shots=None):
                 expect(status).to_have_value(re.compile("Combined"), timeout=30000)
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-window2.png"), full_page=True)
+
+                # A project reopens after a reload, with nothing to upload and nothing to render again.
+                page.reload()
+                expect(picker.first).to_be_visible(timeout=60000)
+                page.locator(".h3-task-picker label", has_text="Remake").click()
+                page.get_by_text("Projects", exact=True).click()
+                page.get_by_label("Saved project").click()
+                page.get_by_role("option", name=re.compile("source")).first.click()
+                page.get_by_role("button", name="Load project").click()
+                expect(page.get_by_text("Source audio found")).to_be_visible(timeout=30000)
+                expect(page.get_by_text("rendered", exact=False).first).to_be_visible(timeout=20000)
+                page.get_by_role("button", name="Combine final video").click()
+                wait_for_remake_jobs(url, 2)
+                expect(page.get_by_label("Generation progress").locator("visible=true").first).to_have_value(
+                    re.compile("Combined"), timeout=30000)
+                if shots:
+                    page.screenshot(path=str(Path(shots) / "remake-loaded.png"), full_page=True)
 
                 page.get_by_role("button", name="Open MiniMax H3 settings →").click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Video", timeout=10000)

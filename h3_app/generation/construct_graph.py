@@ -106,6 +106,7 @@ def construct_graph(
             pictures=list(remake.pictures),
             pins=remake.pins,
             frames=remake.frames,
+            held_frames=remake.held_frames,
             lora_name=MODEL_SPECS[remake.lora_key].local_name,
             sigmas=remake.sigmas,
             keyframe_until=KEYFRAME_UNTIL,

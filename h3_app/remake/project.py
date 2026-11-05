@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from h3_app.staging import file_content_sha256
 
-from .model import MAX_PICTURES
+from .model import FPS, MAX_PICTURES
 from .windows import carried_frame
 
 FOLDER = "h3/.remake"
@@ -50,9 +50,21 @@ class Projects:
 
     def load(self, owner: str, key: str) -> dict[str, Any] | None:
         path = self.folder(owner, key) / "project.json"
-        if not path.is_file():
-            return None
-        return {**json.loads(path.read_text("utf-8")), "folder": str(path.parent)}
+        if path.is_file():
+            return {**json.loads(path.read_text("utf-8")), "folder": str(path.parent)}
+        return next((project for project in self.list(owner) if key in project.get("aliases", ())), None)
+
+    def list(self, owner: str) -> list[dict[str, Any]]:
+        """This owner's projects, most recently changed first."""
+        folder = self.folder(owner, "x").parent
+        paths = sorted(folder.glob("*/project.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        return [{**json.loads(path.read_text("utf-8")), "folder": str(path.parent),
+                 "updated": path.stat().st_mtime} for path in paths]
+
+    def delete(self, project: dict[str, Any]) -> None:
+        folder = self.folder(project["owner"], project["key"])
+        with _LOCK:
+            shutil.rmtree(folder)
 
     def create(self, owner: str, key: str, source: str, data: dict[str, Any], plans: list[dict]) -> dict[str, Any]:
         folder = self.folder(owner, key)
@@ -79,6 +91,29 @@ class Projects:
             change(current)
             self._write(current)
             return current
+
+
+def with_selection(projects: Projects, project: dict[str, Any]) -> dict[str, Any]:
+    """Make sure a project records the selection it reopens with.
+
+    Earlier projects kept only its fingerprint, so they gain these values and answer to the new
+    fingerprint too. Their folders don't move, because their renders are recorded by path.
+    """
+    if "selection" in project:
+        return project
+    lengths = [window["render"][1] - window["render"][0] for window in project["windows"]]
+    selection = {
+        "sha": file_content_sha256(Path(project["source"])), "start": project["start"],
+        "end": project["start"] + project["frames"] / FPS, "short_edge": min(project["width"], project["height"]),
+        "mix": project["mix"], "max_window": max(lengths),
+    }
+    alias = fingerprint(selection["sha"], float(selection["start"]), float(selection["end"]),
+                        int(selection["short_edge"]), int(selection["mix"]), int(selection["max_window"]))
+
+    def adopt(current):
+        current.update(selection=selection, aliases=[alias], name=Path(project["source"]).stem)
+
+    return projects.edit(project, adopt)
 
 
 def store_picture(project: dict[str, Any], path: str | Path) -> str:

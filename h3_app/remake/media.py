@@ -94,6 +94,22 @@ def join_windows(pieces: Sequence[dict[str, Any]], audio_source: str | Path, *, 
     return output
 
 
+def held_clip(take: str | Path, output: Path, *, first: int, frames: int) -> Path:
+    """Copy exactly these frames of a take, losslessly, for the next window to start from."""
+    partial = output.with_suffix(".partial.mp4")
+    run_media_process(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(take), "-map", "0:v:0",
+         "-vf", f"trim=start_frame={int(first)}:end_frame={int(first) + int(frames)},setpts=PTS-STARTPTS",
+         "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", str(partial)],
+        timeout=120, partial_outputs=(partial,),
+    )
+    if not partial.is_file() or probe_video_metadata(partial).frame_count < frames:
+        partial.unlink(missing_ok=True)
+        raise H3Error(f"The previous window's render doesn't reach frame {int(first) + int(frames)}.")
+    partial.replace(output)
+    return output
+
+
 def trim_source(video: str | Path, output: Path, *, start: float, frames: int, width: int, height: int) -> Path:
     """Write exactly ``frames`` at 24 fps, cover-cropped to the canvas, keeping any soundtrack.
 

@@ -24,17 +24,17 @@ from h3_app.remake import (
 )
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
 from h3_app.remake.media import extract_frame, frame_seconds, trim_source
-from h3_app.remake.project import CHANGED, RENDERED, STATE_NAMES
+from h3_app.remake.project import CHANGED, RENDERED, STATE_NAMES, with_selection
 from h3_app.remake.runner import SELECTION_FIELDS, RunOptions, Selection, WindowRunner
 from h3_app.remake.windows import (
-    DEFAULT_MIX_FRAMES, DEFAULT_WINDOW_FRAMES, LENGTHS, needs_windows, selection_frames,
+    DEFAULT_WINDOW_FRAMES, LENGTHS, needs_windows, selection_frames,
 )
 from h3_app.staging import file_content_sha256
 from h3_app.storyboard import PROFILE_FIELDS
 
 from ..h3.view import panel_heading
 from ..image_library import build_image_input
-from ..job_admission import require_owner
+from ..job_admission import family_busy, require_owner
 from ..job_bindings import bind_prompt_action
 from ..prompt_writer_controls import build_remote_prompt_writer_controls
 from .controls import QUIET, bind_generation, generation_actions
@@ -116,7 +116,8 @@ class RemakeView:
     max_window: gr.Dropdown
     window_group: Any
     smart: gr.Checkbox
-    mix: gr.Slider
+    auto_prompts: gr.Checkbox
+    mix: gr.Number
     split: gr.Button
     window_summary: gr.Markdown
     window: gr.Dropdown
@@ -127,8 +128,15 @@ class RemakeView:
     copy_carried: gr.Button
     regenerate: gr.Button
     combine: gr.Button
-    source_sha: gr.State
+    source_sha: gr.Textbox
     frame_base: gr.State
+    project: gr.Dropdown
+    project_name: gr.Textbox
+    load_project: gr.Button
+    rename_project: gr.Button
+    delete_project: gr.Button
+    confirm_delete: gr.Checkbox
+    project_status: gr.Markdown
     readiness: gr.HTML
     output: gr.Video
     run: gr.Button
@@ -225,7 +233,7 @@ def unedited_slot(pictures: Iterable[Any], originals: Mapping[str, str] | None) 
 
 
 def readiness_message(video, start, end, prompt, pin_frames, originals, pictures, pins, *, long=False, window=0,
-                      smart=True, request="", window_frames=None) -> str:
+                      smart=True, request="", window_frames=None, auto_prompts=True) -> str:
     """Why Generate is unavailable, or a note beginning with :data:`READY`."""
     if not video:
         return "Add a source video to start."
@@ -247,6 +255,8 @@ def readiness_message(video, start, end, prompt, pin_frames, originals, pictures
         if any(not 0 <= int(pin) < frames for pin in filled_pins):
             return f"Pins must be frames from 0 to {frames - 1} of the selection."
     if not str(prompt or "").strip():
+        if long and int(window or 0) > 0 and not auto_prompts:
+            return f"{READY} This window reuses window 1's prompt."
         if long and smart and str(request or "").strip():
             return f"{READY} Smart writes each window's prompt from your edit request."
         if long and smart and int(window or 0) > 0:
@@ -321,17 +331,10 @@ class RemakeHandlers:
     def source_changed(self, video):
         """Select the start of a new source, at the length Viggle's workflows use."""
         if not video:
-            return "", 0, 0, gr.update(value=0, maximum=1), None, 0, None
-        metadata = probe_video_metadata(Path(video))
-        end = round(min(metadata.duration, DEFAULT_SELECTION_FRAMES / FPS), 2)
-        canvas_note = "" if abs(metadata.width / metadata.height - 16 / 9) < 0.02 else (
-            " · Remake's canvas is 16:9, so other shapes are center-cropped")
-        audio_note = "Source audio found. It stays in the result and guides mouth movement." if metadata.has_audio else (
-            "No audio in this source, so the result stays silent.")
-        info = (f"{metadata.width}×{metadata.height} · {metadata.fps:.2f} fps · {metadata.duration:.2f} s"
-                f"{canvas_note}\n\n{audio_note}")
-        return (info, 0, end, self._frame_range(0, end, 0), self._preview(video, 0, 0), 0,
-                file_content_sha256(Path(video)))
+            return "", 0, 0, gr.update(value=0, maximum=1), None, 0, None, 0
+        end = round(min(probe_video_metadata(Path(video)).duration, DEFAULT_SELECTION_FRAMES / FPS), 2)
+        return (self._source_info(video), 0, end, self._frame_range(0, end, 0), self._preview(video, 0, 0), 0,
+                file_content_sha256(Path(video)), 0)
 
     @staticmethod
     def _frame_range(start, end, frame, max_window=345):
@@ -340,6 +343,16 @@ class RemakeHandlers:
         except H3Error:
             return gr.update(value=0, maximum=1)
         return gr.update(value=min(int(frame or 0), frames - 1), minimum=0, maximum=frames - 1)
+
+    @staticmethod
+    def _source_info(video) -> str:
+        metadata = probe_video_metadata(Path(video))
+        canvas_note = "" if abs(metadata.width / metadata.height - 16 / 9) < 0.02 else (
+            " · Remake's canvas is 16:9, so other shapes are center-cropped")
+        audio_note = "Source audio found. It stays in the result and guides mouth movement." if metadata.has_audio else (
+            "No audio in this source, so the result stays silent.")
+        return (f"{metadata.width}×{metadata.height} · {metadata.fps:.2f} fps · {metadata.duration:.2f} s"
+                f"{canvas_note}\n\n{audio_note}")
 
     def selection_changed(self, owner, selection, frame, index=0):
         """The selection line and its windows; a saved selection opens on its first window."""
@@ -380,6 +393,62 @@ class RemakeHandlers:
         choices = [(window_label(window), window["index"]) for window in windows]
         return summary, gr.update(choices=choices, value=value) if value is not None else gr.update(choices=choices)
 
+    # Projects --------------------------------------------------------------
+    def project_choices(self, owner, value=None):
+        """Every saved long Remake, newest first, for the Projects list."""
+        choices = []
+        for project in self.runner.projects.list(owner):
+            windows = project["windows"]
+            done = sum(window["state"] in RENDERED for window in windows)
+            saved = time.strftime("%Y-%m-%d %H:%M", time.localtime(project["updated"]))
+            name = project.get("name") or Path(project["source"]).stem
+            choices.append((f"{name} · {project['frames'] / FPS:.1f} s · {done} of {len(windows)} windows · {saved}",
+                            project["key"]))
+        return gr.update(choices=choices, value=value)
+
+    def _named_project(self, owner, key):
+        project = self.runner.projects.load(owner, key) if key else None
+        if project is None:
+            raise gr.Error("Pick a project first.")
+        return project
+
+    def load_project(self, owner, key):
+        """Reopen a project from its own copy of the source, so nothing needs uploading."""
+        runner = self.runner
+        project = with_selection(runner.projects, self._named_project(owner, key))
+        source = project["source"]
+        if not Path(source).is_file():
+            raise gr.Error("This project's copy of the source is gone.")
+        chosen = project["selection"]
+        start, end, max_window = chosen["start"], chosen["end"], chosen["max_window"]
+        note = " It keeps its crossfades. Upload the source again for seamless windows." if chosen["mix"] else ""
+        return (
+            source, self._source_info(source), chosen["sha"], start, start, end, chosen["short_edge"], chosen["mix"],
+            max_window, project.get("mode") or SWAP, project.get("request") or "", project.get("smart", True),
+            project.get("pinned", True), project.get("auto_prompts", True), project.get("name") or Path(source).stem, gr.update(visible=True),
+            selection_text(start, end, max_window), f"Loaded **{project.get('name')}**.{note}",
+            *self._window_list(project, 0), *self._open_window(project, 0),
+        )
+
+    def rename_project(self, owner, key, name):
+        name = str(name or "").strip()
+        if not name:
+            raise gr.Error("Enter a name.")
+        projects = self.runner.projects
+        projects.edit(self._named_project(owner, key), lambda current: current.update(name=name))
+        return self.project_choices(owner, key), f"Renamed to **{name}**."
+
+    def delete_project(self, owner, key, confirmed):
+        if not confirmed:
+            raise gr.Error("Tick the box to confirm. This deletes the project's renders and its copy of the source.")
+        if family_busy(owner, "remake"):
+            raise gr.Error("Wait for the current Remake to finish.")
+        projects = self.runner.projects
+        project = self._named_project(owner, key)
+        projects.delete(project)
+        return (self.project_choices(owner), False, f"Deleted **{project.get('name') or key}**. Videos you combined "
+                "stay in Media.")
+
     def _project(self, owner, selection):
         project = self.runner.saved(owner, selection)
         if project is None:
@@ -419,8 +488,10 @@ class RemakeHandlers:
         slot = next((number for number, picture in zip(SLOTS, pictures) if not picture), None)
         if slot is None:
             raise gr.Error("All four slots are full. Remove a picture first.")
+        # Under held frames it is the last of them; repainted, it still belongs at that moment.
+        pin = window["hold"] - 1 if window.get("hold") else window["carried_pin"]
         return (*(gr.update(value=window["carried"]) if number == slot else gr.update() for number in SLOTS),
-                *(gr.update(value=window["carried_pin"]) if number == slot else gr.update() for number in SLOTS),
+                *(gr.update(value=pin) if number == slot else gr.update() for number in SLOTS),
                 False)
 
     def mark_window(self, owner, selection, index, prompt, use_carried, *values):
@@ -528,10 +599,10 @@ class RemakeHandlers:
     # Generation ------------------------------------------------------------
     def generate_remake(self, mode, source_video, start, end, short_edge, prompt, pin_frames,
                         picture_1, picture_2, picture_3, picture_4, pin_1, pin_2, pin_3, pin_4,
-                        max_window=DEFAULT_WINDOW_FRAMES, edit_request="", smart=True, mix=DEFAULT_MIX_FRAMES,
+                        max_window=DEFAULT_WINDOW_FRAMES, edit_request="", smart=True, mix=0,
                         window_index=0, use_carried=True, writer_model=DEFAULT_GEMINI_PROMPT_MODEL,
-                        writer_backend="Gemini", openai_model=DEFAULT_OPENAI_PROMPT_MODEL,
-                        progress=gr.Progress(track_tqdm=False)):
+                        writer_backend="Gemini", openai_model=DEFAULT_OPENAI_PROMPT_MODEL, source_sha="",
+                        auto_prompts=True, progress=gr.Progress(track_tqdm=False)):
         slots = (picture_1, picture_2, picture_3, picture_4), (pin_1, pin_2, pin_3, pin_4)
         pictures, pins = filled_slots(*slots)
         if mode not in (SWAP, EDIT):
@@ -543,12 +614,17 @@ class RemakeHandlers:
         if needs_windows(start, end, max_window):
             yield None, "Scanning the source for cuts"
             runner = self.runner
-            selection = Selection(file_content_sha256(Path(source_video)), start, end, short_edge, mix, max_window)
+            sha = source_sha or file_content_sha256(Path(source_video))
+            selection = Selection(sha, start, end, short_edge, mix, max_window)
             project = runner.plan(owner, source_video, selection)
             project = runner.store_editor(project, window_index, prompt, use_carried, *slots)
+            project = runner.projects.edit(project, lambda current: current.update(
+                mode=mode, request=str(edit_request or ""), smart=bool(smart), pinned=bool(pin_frames),
+                auto_prompts=bool(auto_prompts),
+            ))
             yield from runner.run(project, RunOptions(
                 mode, bool(pin_frames), bool(smart), str(edit_request or ""), writer_model, writer_backend,
-                openai_model, self.writer_keys.get(owner, {}), self.captured(owner),
+                openai_model, self.writer_keys.get(owner, {}), self.captured(owner), bool(auto_prompts),
             ), progress)
             return
         if not pictures:
@@ -612,6 +688,19 @@ def build_remake_view(root) -> RemakeView:
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=6, min_width=320, elem_classes=["h3-composer"]):
                 gr.HTML(panel_heading("01", "Compose"))
+                with gr.Accordion("Projects", open=False):
+                    gr.Markdown("A selection long enough for windows saves itself as a project, with its own copy of "
+                                "the source, so you can come back without uploading again.")
+                    project = gr.Dropdown([], value=None, label="Saved project")
+                    with gr.Row(elem_classes=["h3-settings-links"]):
+                        load_project = gr.Button("Load project")
+                    with gr.Row():
+                        project_name = gr.Textbox(label="Project name", lines=1)
+                        rename_project = gr.Button("Rename")
+                    with gr.Row():
+                        confirm_delete = gr.Checkbox(value=False, label="Yes, delete this project")
+                        delete_project = gr.Button("Delete project")
+                    project_status = gr.Markdown()
                 mode = gr.Radio([SWAP, EDIT], value=SWAP, label="Remake type",
                                 info="Swap replaces a character or subject. Edit changes objects, background, "
                                      "weather or light.", elem_classes=["h3-recipe-cards"])
@@ -688,10 +777,13 @@ def build_remake_view(root) -> RemakeView:
                                     "above follow the window you pick here.")
                         smart = gr.Checkbox(
                             value=True, label="Smart: continue automatically",
-                            info="Carries the last frame of each render into the next window and writes its prompt "
-                                 "from your edit request. Turn off to give every window its own frames.")
-                        mix = gr.Slider(0, 24, value=DEFAULT_MIX_FRAMES, step=1, label="Mix frames",
-                                        info="Frames crossfaded between continuing windows.")
+                            info="Gives each window a frame from the render before it and writes its prompt from "
+                                 "your edit request. Turn off to give every window its own frames.")
+                        auto_prompts = gr.Checkbox(
+                            value=True, label="Write a prompt for each window",
+                            info="Turn off to reuse window 1's prompt, which often works for a single scene. "
+                                 "A prompt you typed for a window stays.")
+                        mix = gr.Number(value=0, precision=0, visible=False)
                         split = gr.Button("Split into windows")
                         window_summary = gr.Markdown()
                         window = gr.Dropdown([], value=None, label="Window")
@@ -724,7 +816,7 @@ def build_remake_view(root) -> RemakeView:
             open_settings = gr.Button("Open MiniMax H3 settings →", elem_classes=["h3-settings-link"])
         originals = gr.State({})
         last_start = gr.State(0)
-        source_sha = gr.State(None)
+        source_sha = gr.Textbox(value="", visible=False)
         frame_base = gr.State(0.0)
         previous_prompt = gr.State("")
     pictures, pins, edits = zip(*controls)
@@ -732,21 +824,25 @@ def build_remake_view(root) -> RemakeView:
         mode, source_video, source_info, start, end, selection_info, frame, frame_preview, extract,
         *pictures, *pins, *edits, pin_frames, originals, last_start, align_slot, align_view, align_check,
         align_apply, align_preview, align_status, request, writer, rewrite, rewrite_status, suggestion, accept, keep,
-        undo, previous_prompt, prompt, short_edge, max_window, window_group, smart, mix, split, window_summary,
+        undo, previous_prompt, prompt, short_edge, max_window, window_group, smart, auto_prompts, mix, split,
+        window_summary,
         window, window_index, window_take, carried, use_carried, copy_carried, regenerate, combine, source_sha,
-        frame_base, readiness, output, run, stop, status, next_run, open_settings,
+        frame_base, project, project_name, load_project, rename_project, delete_project, confirm_delete,
+        project_status, readiness, output, run, stop, status, next_run, open_settings,
     )
 
 
 def _bind_readiness(view: RemakeView):
     inputs = [view.source_video, view.start, view.end, view.prompt, view.pin_frames, view.originals, view.max_window,
-              view.smart, view.request, view.window_index, *view.pictures(), *view.pins()]
+              view.smart, view.request, view.window_index, view.auto_prompts, *view.pictures(), *view.pins()]
 
-    def readiness(video, start, end, prompt, pin_frames, originals, max_window, smart, request, window, *values):
+    def readiness(video, start, end, prompt, pin_frames, originals, max_window, smart, request, window, auto_prompts,
+                  *values):
         long = needs_windows(start, end, max_window)
         message = readiness_message(video, start, end, prompt, pin_frames, originals,
                                     values[:MAX_PICTURES], values[MAX_PICTURES:], long=long, window=window,
-                                    smart=smart, request=request, window_frames=max_window if long else None)
+                                    smart=smart, request=request, window_frames=max_window if long else None,
+                                    auto_prompts=auto_prompts)
         ready = message.startswith(READY)
         return (f'<p class="h3-readiness" role="{"status" if ready else "alert"}">{html.escape(message)}</p>',
                 gr.update(interactive=ready))
@@ -797,12 +893,27 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
         # Replacing a picture keeps its frame number: that's how an edit comes back to its slot.
         picture.change(lambda path: (gr.update(visible=bool(path)), gr.update(visible=bool(path))),
                        inputs=picture, outputs=[pin, edit], **QUIET)
-    view.source_video.change(
-        handlers.source_changed, inputs=view.source_video,
+    # Upload and clear only: loading a project sets the video without resetting its selection.
+    gr.on(
+        triggers=[view.source_video.upload, view.source_video.clear], fn=handlers.source_changed,
+        inputs=view.source_video,
         outputs=[view.source_info, view.start, view.end, view.frame, view.frame_preview, view.last_start,
-                 view.source_sha],
+                 view.source_sha, view.mix],
         show_progress="hidden", api_name=False,
     )
+    view.load_project.click(
+        _owned(handlers.load_project, 1), inputs=view.project,
+        outputs=[view.source_video, view.source_info, view.source_sha, view.start, view.last_start, view.end,
+                 view.short_edge, view.mix, view.max_window, view.mode, view.request, view.smart, view.pin_frames,
+                 view.auto_prompts, view.project_name, view.window_group, view.selection_info, view.project_status, *window_list,
+                 *opened],
+        show_progress="minimal", api_name=False,
+    )
+    view.rename_project.click(_owned(handlers.rename_project, 2), inputs=[view.project, view.project_name],
+                              outputs=[view.project, view.project_status], show_progress="hidden", api_name=False)
+    view.delete_project.click(_owned(handlers.delete_project, 2), inputs=[view.project, view.confirm_delete],
+                              outputs=[view.project, view.confirm_delete, view.project_status],
+                              show_progress="hidden", api_name=False)
     gr.on(
         triggers=[view.source_sha.change, view.start.change, view.end.change, view.max_window.change,
                   view.short_edge.change, view.mix.change],
@@ -819,7 +930,8 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
                        inputs=[view.source_video, view.frame_base, view.frame, view.originals, *pictures],
                        outputs=[*pictures, *pins, view.originals], show_progress="hidden", api_name=False)
     view.split.click(_on_selection(handlers.split, len(selection) + 1), inputs=[*selection, view.source_video],
-                     outputs=window_list, show_progress="minimal", api_name=False)
+                     outputs=window_list, show_progress="minimal", api_name=False,
+                     ).then(_owned(handlers.project_choices, 1), inputs=view.project, outputs=view.project, **QUIET)
     assert len(opened) + len(window_list) == WINDOW_OUTPUTS
     view.window.input(
         _on_selection(handlers.window_selected, len(selection) + 2 + len(editor)),
@@ -838,6 +950,7 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
     # A run plans the windows itself, so the list fills in as it goes.
     view.status.change(_on_selection(handlers.window_list, len(selection)), inputs=selection, outputs=window_list,
                        trigger_mode="always_last", **QUIET)
+    view.output.change(_owned(handlers.project_choices, 1), inputs=view.project, outputs=view.project, **QUIET)
     view.output.change(_on_selection(handlers.refresh_windows, len(selection) + 1),
                        inputs=[*selection, view.window_index],
                        outputs=[*window_list, view.window_take, view.carried, view.prompt], **QUIET)
@@ -872,7 +985,8 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
     bind_generation(view, "remake", handlers.generate_remake, deps.interrupt, [
         view.mode, view.source_video, view.start, view.end, view.short_edge, view.prompt, view.pin_frames,
         *pictures, *pins, view.max_window, view.request, view.smart, view.mix, view.window_index, view.use_carried,
-        view.writer.model, view.writer.backend, view.writer.openai_model,
+        view.writer.model, view.writer.backend, view.writer.openai_model, view.source_sha,
+        view.auto_prompts,
     ])
     return handlers
 
@@ -905,6 +1019,8 @@ def bind_h3_settings(view: RemakeView, handlers: RemakeHandlers, h3_values: Mapp
         *values, request = args
         return card(require_owner(request), *values)
 
+    gr.on(triggers=list(triggers), fn=_owned(handlers.project_choices, 1), inputs=view.project, outputs=view.project,
+          queue=False, api_name=False, show_progress="hidden")
     gr.on(triggers=list(triggers), fn=_with_request(capture, len(controls) + len(summary_inputs)),
           inputs=[*controls, *summary_inputs], outputs=view.next_run,
           queue=False, api_name=False, show_progress="hidden")

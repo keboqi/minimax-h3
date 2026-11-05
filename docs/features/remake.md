@@ -35,21 +35,28 @@ guides mouth movement. A silent source stays silent.
 One render holds a limited length, set by **Longest window** (9.4 s by default; lower it if long clips run out of
 memory). A selection that fits stays a single run. A longer one renders in windows, and a **Windows** panel appears:
 
-- Windows end on the source's cuts where they can. A shot too long for one window continues into the next, starting
-  **Mix frames** earlier so the overlap crossfades when joined.
+- Windows end on the source's cuts where they can. A shot too long for one window continues into the next: its first
+  17 frames are the last 17 frames kept from the render before it, held unchanged through sampling, so the two meet in
+  a plain cut with nothing blended. Those frames come from the render, so a window can't start until the one before
+  it has rendered.
 - **Smart** (on by default) needs a picture on window 1, plus either an edit request or a prompt for that window. Every
-  later window takes the last frame of the render before it, and gets its prompt from your request or, without one,
-  from the prompt before it. In a continuing window that frame is pinned to its
-  moment; after a cut it only passes on the look. Window 1's picture joins any window with no picture of its own.
+  later window takes the last frame of the render before it, to pass on the look, and gets its prompt from your
+  request or, without one, from the prompt before it. Window 1's picture joins any window with no picture of its own.
+- **Write a prompt for each window** is on by default. Turn it off to reuse window 1's prompt, which often works for
+  a single scene. A prompt you typed for a window stays; prompts written earlier are replaced when that window renders.
 - Pick a window to change it. The Reference frames and Remake prompt editors follow your choice, and pins count from
   the start of that window. **Copy carried frame to a slot** turns the carried frame into one you can edit.
 - **Regenerate this window** renders only that window and any others you changed. The window after it shows
-  *Earlier window changed*: its take still joins, and you decide whether to regenerate it.
+  *Earlier window changed*: its take still joins, and you decide whether to regenerate it. If it continues the same
+  shot, regenerate it to remove the jump at that join, then do the same for any window that continues from it.
 - **Combine final video** joins the takes and adds the source's soundtrack, so the audio has no seams. A run does this
   itself when every window is rendered.
 
-A selection keeps its windows beside the renders in `h3/.remake`, so opening the same source and range again resumes
-it. Only the joined video reaches Media. Windows skip post-processing, so that they join as sampled; finish the joined
+A selection keeps its windows beside the renders in `h3/.remake`, with its own copy of the source. **Projects** at the
+top of the tab lists them: **Load project** brings back the source, selection, windows, frames and prompts with
+nothing to upload, and you can rename or delete them there. A project split before held frames keeps its crossfades;
+upload the source again to split it the new way. Deleting removes the windows' renders and the copy of the
+source; combined videos stay in Media. Only the joined video reaches Media. Windows skip post-processing, so that they join as sampled; finish the joined
 video from Media.
 
 ## What follows MiniMax H3
@@ -81,6 +88,8 @@ conditioning and sampling around the normal model stack:
 - `RemakeConditioning`, `RemakeKeyframeUntil` and `RemakeNoise` come from Viggle, vendored in
   `custom_nodes/H3Remake`. `UPSTREAM.md` there records the revision and the one local change, which lets a
   carried frame be pinned while other pictures stay unpinned.
+- `RemakeHoldFrames` is local. It encodes the held frames and marks them as finished in the target, leaving the audio
+  held as before. With latent upscale it runs before each pass, so the frames are held at both sizes.
 - `request_overrides` selects FL2VA through First / last frame mode. The picture passed there is never
   used as a first frame.
 - The request asks for 10 steps to satisfy Normal generation's minimum. The real six-step schedule

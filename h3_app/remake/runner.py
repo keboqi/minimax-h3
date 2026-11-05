@@ -14,7 +14,7 @@ from h3_app.media_tools import probe_video_metadata
 from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.provenance import write_snapshot
 
-from .media import detect_cuts, extract_frame, frame_seconds, join_windows, trim_source
+from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
 from .model import FPS, RemakeGraph, canvas_size, check_pins, request_overrides
 from .project import (
     DONE, FAILED, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor, store_picture,
@@ -24,7 +24,11 @@ from .windows import plan_windows, selection_frames
 
 
 class Selection(NamedTuple):
-    """What identifies a long Remake: the same values reopen the same windows."""
+    """What identifies a long Remake: the same values reopen the same windows.
+
+    ``mix`` is 0 now. Only a project made before held frames has another value, which it keeps
+    so that it reopens and joins as it was split.
+    """
 
     sha: str | None
     start: float
@@ -54,6 +58,8 @@ class RunOptions:
     # In memory only: never part of a job's saved values.
     writer_keys: Mapping[str, Any] = field(default_factory=dict)
     h3_settings: Mapping[str, Any] = field(default_factory=dict)
+    # Off: later windows reuse window 1's prompt instead of getting their own.
+    auto_prompts: bool = True
 
 
 # With no edit request, a later window is written from the prompt before it.
@@ -92,10 +98,9 @@ class WindowRunner:
         if total > int(metadata.duration * FPS) + 1:
             raise H3Error("The selection runs past the end of the source.")
         width, height = canvas_size(selection.short_edge, metadata.width, metadata.height)
-        plans = plan_windows(total, detect_cuts(video, start, total / FPS),
-                             max_frames=selection.max_window, mix=selection.mix)
-        data = {"start": start, "frames": total, "width": width, "height": height, "mix": int(selection.mix),
-                "has_audio": bool(metadata.has_audio)}
+        plans = plan_windows(total, detect_cuts(video, start, total / FPS), max_frames=selection.max_window)
+        data = {"start": start, "frames": total, "width": width, "height": height, "mix": 0,
+                "has_audio": bool(metadata.has_audio), "name": Path(video).stem, "selection": selection._asdict()}
         return self.projects.create(owner, selection.key, video, data, plans)
 
     def store_editor(self, project, index, prompt, use_carried, pictures, pins) -> dict[str, Any]:
@@ -117,7 +122,7 @@ class WindowRunner:
             yield None, "Joining the windows"
             yield self.combine(project), self.combined_status(project)
         else:
-            yield None, "Some windows need a frame before they can be combined."
+            yield None, "Some windows still need a frame or an earlier window before they can be combined."
 
     def _carry(self, project: dict[str, Any], index: int) -> dict[str, Any]:
         """Refresh the frame a window takes from the take before it."""
@@ -139,6 +144,10 @@ class WindowRunner:
             yield None, f"{label} needs a frame. Skipped."
             return
         window = project["windows"][index]
+        hold = window.get("hold", 0)
+        if hold and not project["windows"][index - 1]["take"]:
+            yield None, f"{label} continues window {index}, which needs generating first. Skipped."
+            return
         first, last = window["render"]
         frames = last - first
         pinned = active_pins(pins)
@@ -151,13 +160,18 @@ class WindowRunner:
             text = window["prompt"]
             # An auto prompt's <Picture N> tags only fit the pictures it was written for.
             stale = window["prompt_auto"] and window["prompt_pictures"] != len(pictures)
-            if stale or not text.strip():
+            shared = project["windows"][0]["prompt"]
+            if index and not options.auto_prompts and shared.strip() and (window["prompt_auto"] or not text.strip()):
+                text = shared
+            elif stale or not text.strip():
                 yield None, f"{label}: writing the prompt"
                 text = self._write_prompt(project, index, str(clip), pictures, pins, options)
+            if text != window["prompt"]:
                 self.projects.edit(project, lambda current: current["windows"][index].update(
                     prompt=text, prompt_auto=True, prompt_pictures=len(pictures),
                 ))
             staged = self.stage_file(str(clip), "remake_sources", reuse=True)
+            held = self._stage_held(project, index) if hold else None
         finally:
             clip.unlink(missing_ok=True)
         values = {**self.defaults(), **options.h3_settings}
@@ -172,6 +186,7 @@ class WindowRunner:
             mode=options.mode, source_video=staged,
             pictures=tuple(self.stage_file(str(path), "remake_pictures", reuse=True) for path in pictures),
             pins=pinned, frames=frames, output_prefix=f"{prefix}/w{index + 1:02d}_{uuid.uuid4().hex[:8]}",
+            held_frames=held,
         )
         take = None
         for update in self.take(values, remake, progress):
@@ -189,6 +204,16 @@ class WindowRunner:
         if index + 1 < len(windows):
             self._carry(project, index + 1)
         yield str(take), f"{label} done"
+
+    def _stage_held(self, project: dict[str, Any], index: int) -> str:
+        """The frames of the previous render that this window starts on."""
+        previous, window = project["windows"][index - 1], project["windows"][index]
+        clip = _scratch_clip()
+        try:
+            held_clip(previous["take"], clip, first=window["render"][0] - previous["render"][0], frames=window["hold"])
+            return self.stage_file(str(clip), "remake_sources", reuse=True)
+        finally:
+            clip.unlink(missing_ok=True)
 
     def _write_prompt(self, project, index, clip, pictures, pins, options: RunOptions) -> str:
         previous = project["windows"][index - 1]["prompt"] if index else ""

@@ -1,8 +1,11 @@
 """Remake: run rules, graph shape, source trimming, frame alignment and the tab's handlers."""
 
+import importlib
 import shutil
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 import uuid
 from dataclasses import fields, replace
@@ -12,7 +15,8 @@ from unittest.mock import patch
 
 import gradio as gr
 import numpy as np
-from PIL import Image
+import torch
+from PIL import Image, ImageChops
 
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate
@@ -36,7 +40,16 @@ from h3_ui.h3.handlers import default_request
 from tests.workflow_cases import H3_DEFAULTS
 
 SIX_SECTIONS = "\n".join(f"{name}:\ntext" for name in SECTIONS)
+ROOT = Path(__file__).resolve().parents[1]
 OPTIONS = {field.name: H3_DEFAULTS[field.name] for field in fields(h3.H3GraphOptions) if field.name in H3_DEFAULTS}
+
+
+class NestedTensor:
+    def __init__(self, tensors):
+        self.tensors = tuple(tensors)
+
+    def unbind(self):
+        return self.tensors
 
 
 def nodes(graph, kind):
@@ -168,6 +181,26 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(first["noise"], second["noise"])
         (_, split), = nodes(graph, "SplitSigmas")
         self.assertEqual(split["step"], 4)
+
+    def test_held_frames_start_every_pass(self):
+        graph = remake_graph(width=1664, height=960, latent_upscale_model_name="upscaler.safetensors",
+                             latent_upscale_refine_steps=2, held_frames="remake_sources/held.mp4")
+        (condition_id, condition), = nodes(graph, "RemakeConditioning")
+        (hold_audio_id, _), = nodes(graph, "RemakeHoldAudio")
+        (first_hold_id, first_hold), (second_hold_id, second_hold) = nodes(graph, "RemakeHoldFrames")
+        self.assertEqual(first_hold["latent"], [condition_id, 1])
+        self.assertEqual(second_hold["latent"], [hold_audio_id, 0])
+        self.assertEqual(first_hold["frames"], second_hold["frames"])
+        self.assertEqual(first_hold["vae"], condition["vae"])
+        (first, second) = [inputs for _, inputs in nodes(graph, "SamplerCustomAdvanced")]
+        self.assertEqual(first["latent_image"], [first_hold_id, 0])
+        self.assertEqual(second["latent_image"], [second_hold_id, 0])
+
+    def test_held_frames_in_a_single_pass(self):
+        graph = remake_graph(held_frames="remake_sources/held.mp4")
+        (hold_id, _), = nodes(graph, "RemakeHoldFrames")
+        (_, run), = nodes(graph, "SamplerCustomAdvanced")
+        self.assertEqual(run["latent_image"], [hold_id, 0])
 
     def test_refinement_stays_a_tail_of_the_schedule(self):
         graph = remake_graph(width=1664, height=960, latent_upscale_model_name="upscaler.safetensors",
@@ -417,7 +450,7 @@ class HandlerTests(unittest.TestCase):
         with patch("h3_app.prompt_writers.common.write_prompt",
                    return_value=("robot", "Prompt enhancement failed: no key")):
             self.assertEqual(self.handlers.rewrite_prompt(
-                "local", Selection(None, 0, 4.6, 480, 12, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
+                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
                 None, None, None,
                 12, None, None, None, "gemini-model", "", "Gemini", "", "model", None,
             ), ("", "Prompt enhancement failed: no key"))
@@ -436,7 +469,7 @@ class HandlerTests(unittest.TestCase):
         )
         with patch("h3_app.prompt_writers.common.write_prompt", write):
             prompt, status = self.handlers.rewrite_prompt(
-                "local", Selection(None, 0, 4.6, 480, 12, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
+                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
                 None, None, None,
                 12, None, None, None, "gemini-model", "", "Gemini", "", "model", None,
             )
@@ -462,8 +495,64 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("missing subject_definitions", status)
 
 
+class HoldFramesNodeTests(unittest.TestCase):
+    def setUp(self):
+        package = types.ModuleType("h3remake_under_test")
+        package.__path__ = [str(ROOT / "custom_nodes/H3Remake")]
+        nested = types.ModuleType("comfy.nested_tensor")
+        nested.NestedTensor = NestedTensor
+        comfy = types.ModuleType("comfy")
+        comfy.nested_tensor = nested
+        nodes_module = types.ModuleType("h3remake_under_test.nodes")
+        self.resized = []
+
+        def lanczos(image, width, height):
+            self.resized.append((width, height))
+            return torch.zeros(image.shape[0], height, width, image.shape[3])
+
+        nodes_module.lanczos = lanczos
+        with patch.dict(sys.modules, {
+            "comfy": comfy, "comfy.nested_tensor": nested, "h3remake_under_test": package,
+            "h3remake_under_test.nodes": nodes_module,
+        }):
+            self.node = importlib.import_module("h3remake_under_test.hold_frames").RemakeHoldFrames()
+            sys.modules.pop("h3remake_under_test.hold_frames")
+        self.encoded = []
+
+    def encode(self, pixels):
+        self.encoded.append(pixels)
+        return torch.full((1, 24, 7, 30, 52), 3.0, dtype=torch.float64)
+
+    def run_node(self, frames):
+        video, audio = torch.zeros(1, 24, 37, 30, 52), torch.ones(1, 32, 2, 400)
+        latent = {"samples": NestedTensor((video, audio)),
+                  "noise_mask": NestedTensor((torch.ones_like(video), torch.zeros_like(audio)))}
+        return self.node.run(latent, SimpleNamespace(encode=self.encode), frames)[0]
+
+    def test_seventeen_frames_become_five_held_latents_and_leave_the_audio_alone(self):
+        out = self.run_node(torch.ones(17, 480, 832, 3))
+        video, audio = out["samples"].unbind()
+        video_mask, audio_mask = out["noise_mask"].unbind()
+        self.assertEqual(self.encoded[0].shape[0], 22)
+        self.assertTrue((video[:, :, :5] == 3).all())
+        self.assertTrue((video[:, :, 5:] == 0).all())
+        self.assertTrue((video_mask[:, :, :5] == 0).all())
+        self.assertTrue((video_mask[:, :, 5:] == 1).all())
+        self.assertTrue((audio == 1).all())
+        self.assertTrue((audio_mask == 0).all())
+        self.assertEqual(self.resized, [])
+
+    def test_a_render_at_another_size_is_scaled_to_the_target(self):
+        self.run_node(torch.ones(17, 960, 1664, 3))
+        self.assertEqual(self.resized, [(832, 480)])
+
+    def test_only_whole_chunks_can_be_held(self):
+        with self.assertRaises(AssertionError):
+            self.run_node(torch.ones(12, 480, 832, 3))
+
+
 class PlanTests(unittest.TestCase):
-    def check_tiled(self, windows, total, mix):
+    def check_tiled(self, windows, total):
         self.assertEqual(windows[0]["own"][0], 0)
         self.assertEqual(windows[-1]["own"][1], total)
         for window in windows:
@@ -471,16 +560,24 @@ class PlanTests(unittest.TestCase):
             self.assertLessEqual(window["render"][0], window["own"][0])
             self.assertGreaterEqual(window["render"][1], window["own"][1])
         for before, after in zip(windows, windows[1:]):
-            self.assertEqual(after["own"][0], before["own"][1] - (mix if after["continues"] else 0))
+            self.assertEqual(after["own"][0], before["own"][1])
+            self.assertLess(before["own"][0], before["own"][1])
+            if after["continues"]:
+                # The held frames are the last the previous window keeps, and exist in its render.
+                self.assertEqual(after["own"][0] - after["render"][0], after["hold"])
+                self.assertGreaterEqual(after["render"][0], before["render"][0])
+                self.assertLessEqual(after["own"][0], before["render"][1])
 
-    def test_a_long_take_chains_with_an_overlap(self):
-        windows = plan_windows(600, [], max_frames=226, mix=12)
-        self.check_tiled(windows, 600, 12)
+    def test_a_long_take_chains_on_held_frames(self):
+        windows = plan_windows(600, [], max_frames=226)
+        self.check_tiled(windows, 600)
         self.assertEqual([window["continues"] for window in windows], [False, True, True])
+        self.assertEqual([window["hold"] for window in windows], [0, 17, 17])
 
-    def test_windows_end_on_cuts_and_start_new_shots_without_a_mix(self):
-        windows = plan_windows(600, [200, 410], max_frames=226, mix=12)
-        self.check_tiled(windows, 600, 12)
+    def test_windows_end_on_cuts_and_start_new_shots_without_held_frames(self):
+        windows = plan_windows(600, [200, 410], max_frames=226)
+        self.check_tiled(windows, 600)
+        self.assertEqual([window["hold"] for window in windows], [0, 0, 0])
         self.assertEqual([window["own"][1] for window in windows], [200, 410, 600])
         self.assertEqual([window["continues"] for window in windows], [False, False, False])
 
@@ -489,22 +586,29 @@ class PlanTests(unittest.TestCase):
             for cuts in ([], [300, 311, 700], list(range(40, total, 45))):
                 for max_frames in (124, 226, 345):
                     if total >= max_frames + 17:
-                        self.check_tiled(plan_windows(total, cuts, max_frames=max_frames, mix=12), total, 12)
+                        self.check_tiled(plan_windows(total, cuts, max_frames=max_frames), total)
 
-    def test_a_carried_frame_with_no_mix_pins_the_first_frame(self):
-        first, second = plan_windows(600, [], max_frames=226, mix=0)[:2]
-        self.assertEqual(carried_frame(first, second)[1], 0)
+    def test_the_last_window_takes_what_it_needs_from_the_one_before(self):
+        windows = plan_windows(226 + 18, [], max_frames=226)
+        self.check_tiled(windows, 244)
+        self.assertEqual(windows[-1]["render"], [154, 244])
+        self.assertEqual(windows[0]["own"], [0, 171])
 
     def test_windows_only_appear_past_one_window(self):
         self.assertFalse(needs_windows(0, 226 / 24, 226))
         self.assertFalse(needs_windows(0, 240 / 24, 226))
         self.assertTrue(needs_windows(0, 243 / 24, 226))
 
-    def test_the_carried_frame_is_the_last_kept_one_and_pins_only_when_continuing(self):
-        continuing, following = plan_windows(600, [], max_frames=226, mix=12)[:2]
-        self.assertEqual(carried_frame(continuing, following), (225, 11))
-        first, after_cut = plan_windows(600, [200, 410], max_frames=226, mix=12)[:2]
+    def test_the_carried_frame_is_the_last_kept_one_and_is_never_pinned(self):
+        continuing, following = plan_windows(600, [], max_frames=226)[:2]
+        self.assertEqual(carried_frame(continuing, following), (225, None))
+        first, after_cut = plan_windows(600, [200, 410], max_frames=226)[:2]
         self.assertEqual(carried_frame(first, after_cut), (199, None))
+
+    def test_a_project_from_before_held_frames_keeps_its_pin(self):
+        previous = {"render": [0, 226], "own": [0, 226], "continues": False}
+        window = {"render": [214, 440], "own": [214, 440], "continues": True}
+        self.assertEqual(carried_frame(previous, window), (225, 11))
 
 
 class JoinTests(unittest.TestCase):
@@ -583,14 +687,14 @@ class WindowRunTests(unittest.TestCase):
     def run_windows(self, *, index=0, prompt="", picture=None, pin=12, smart=True, end=20):
         return list(self.handlers.generate_remake(
             SWAP, str(self.video), 0, end, 480, prompt, True, picture, None, None, None, pin, None, None, None,
-            226, "make a robot", smart, 12, index, True,
+            226, "make a robot", smart, 0, index, True,
         ))
 
     def project(self):
         return self.handlers.runner.saved("local", self.selection())
 
     def selection(self):
-        return Selection(file_content_sha256(self.video), 0, 20, 480, 12, 226)
+        return Selection(file_content_sha256(self.video), 0, 20, 480, 0, 226)
 
     def test_a_long_selection_renders_every_window_and_joins_them(self):
         updates = self.run_windows(picture=str(self.picture))
@@ -605,10 +709,98 @@ class WindowRunTests(unittest.TestCase):
         self.assertTrue(all(values["postprocess"] == "None" for values, _ in self.takes))
         first, second = self.takes[0][1], self.takes[1][1]
         self.assertEqual(first.pins, (12,))
-        # Window 2: the frame carried from window 1, pinned, then window 1's picture for identity.
+        # Window 2: the frame carried from window 1 and window 1's picture set the look; held frames fix the start.
         self.assertEqual(len(second.pictures), 2)
-        self.assertEqual(second.pins, (project["windows"][0]["own"][1] - 1 - project["windows"][1]["render"][0], None))
+        self.assertEqual(second.pins, ())
+        self.assertIsNone(first.held_frames)
+        held = probe_video_metadata(self.input_dir / second.held_frames)
+        self.assertEqual(held.frame_count, 17)
+        self.assertEqual((held.width, held.height), (832, 480))
         self.assertEqual(self.written[1][2], self.written[0][2] or SIX_SECTIONS + "\n# 1")
+
+    def reuse_first_prompt(self, **options):
+        return list(self.handlers.generate_remake(
+            SWAP, str(self.video), 0, 20, 480, SIX_SECTIONS, True, str(self.picture), None, None, None, 12, None, None,
+            None, 226, "make a robot", True, 0, 0, True, auto_prompts=False, **options,
+        ))
+
+    def test_with_auto_prompts_off_every_window_reuses_the_first_prompt(self):
+        self.assertIn("Combined", self.reuse_first_prompt()[-1][1])
+        self.assertEqual(self.written, [])
+        self.assertEqual({window["prompt"] for window in self.project()["windows"]}, {SIX_SECTIONS})
+        self.assertFalse(self.project()["auto_prompts"])
+        self.assertEqual({values["prompt"] for values, _remake in self.takes}, {SIX_SECTIONS})
+
+    def test_with_auto_prompts_off_a_typed_prompt_stays_and_written_ones_are_replaced(self):
+        self.run_windows(picture=str(self.picture), prompt=SIX_SECTIONS)
+        typed = SIX_SECTIONS + "\n# typed"
+
+        def edit(current):
+            current["windows"][1].update(prompt=typed, prompt_auto=False, state="changed")
+            current["windows"][2].update(state="changed")
+
+        self.handlers.runner.projects.edit(self.project(), edit)
+        self.reuse_first_prompt()
+        windows = self.project()["windows"]
+        self.assertEqual(windows[1]["prompt"], typed)
+        self.assertEqual(windows[2]["prompt"], SIX_SECTIONS)
+
+    def test_with_auto_prompts_off_an_empty_first_window_is_still_written(self):
+        updates = list(self.handlers.generate_remake(
+            SWAP, str(self.video), 0, 20, 480, "", True, str(self.picture), None, None, None, 12, None, None,
+            None, 226, "make a robot", True, 0, 0, True, auto_prompts=False,
+        ))
+        self.assertIn("Combined", updates[-1][1])
+        self.assertEqual(len(self.written), 1)
+        windows = self.project()["windows"]
+        self.assertEqual({window["prompt"] for window in windows}, {windows[0]["prompt"]})
+
+    def test_readiness_says_a_later_window_reuses_the_first_prompt(self):
+        message = readiness_message(str(self.video), 0, 20, "", True, {}, (None,) * 4, (None,) * 4, long=True, window=1,
+                                    window_frames=226, auto_prompts=False)
+        self.assertEqual(message, f"{READY} This window reuses window 1's prompt.")
+
+    def test_held_frames_are_the_end_of_what_the_previous_window_keeps(self):
+        self.run_windows(picture=str(self.picture))
+        windows = self.project()["windows"]
+        offset = windows[1]["render"][0] - windows[0]["render"][0]
+        with tempfile.TemporaryDirectory() as folder:
+            held, take = Path(folder) / "held.png", Path(folder) / "take.png"
+            extract_frame(self.input_dir / self.takes[1][1].held_frames, 0, held)
+            extract_frame(windows[0]["take"], offset / 24, take)
+            difference = ImageChops.difference(Image.open(held).convert("RGB"), Image.open(take).convert("RGB"))
+            self.assertLess(max(high for _low, high in difference.getextrema()), 16)
+
+    def test_a_held_window_waits_for_the_window_before_it(self):
+        self.run_windows(picture=str(self.picture))
+        project = self.project()
+        self.handlers.runner.projects.edit(project, lambda current: current["windows"][0].update(
+            take=None, state="pending", pictures=[],
+        ))
+        updates = self.run_windows(index=1, prompt=project["windows"][1]["prompt"], pin=None)
+        self.assertTrue(any("needs a frame" in status for _output, status in updates))
+        self.handlers.runner.projects.edit(self.project(), lambda current: current["windows"][1].update(
+            state="changed",
+        ))
+        updates = self.run_windows(index=1, prompt=project["windows"][1]["prompt"], pin=None)
+        self.assertTrue(any("continues window 1" in status for _output, status in updates))
+        self.assertIn("still need", updates[-1][1])
+
+    def test_a_project_from_before_held_frames_still_crossfades(self):
+        self.run_windows(picture=str(self.picture))
+        count = len(self.takes)
+
+        def from_before(current):
+            current["mix"] = 12
+            for window in current["windows"]:
+                window.pop("hold", None)
+            current["windows"][1]["state"] = "changed"
+
+        project = self.project()
+        self.handlers.runner.projects.edit(project, from_before)
+        self.run_windows(index=1, prompt=project["windows"][1]["prompt"], pin=None)
+        self.assertEqual(len(self.takes), count + 1)
+        self.assertIsNone(self.takes[-1][1].held_frames)
 
     def test_regenerating_only_renders_what_changed_and_flags_what_follows(self):
         self.run_windows(picture=str(self.picture))
@@ -680,14 +872,14 @@ class WindowRunTests(unittest.TestCase):
         self.assertEqual(len(self.takes), count)
 
     def test_a_changed_selection_only_clears_a_later_windows_editor(self):
-        selection = Selection("unsaved", 0, 20, 480, 12, 226)
+        selection = Selection("unsaved", 0, 20, 480, 0, 226)
         self.assertEqual(self.handlers.selection_changed("local", selection, 0, 0)[5], {"__type__": "update"})
         self.assertIsNone(self.handlers.selection_changed("local", selection, 0, 2)[5])
 
     def test_smart_continues_from_window_ones_prompt_without_an_edit_request(self):
         updates = list(self.handlers.generate_remake(
             SWAP, str(self.video), 0, 20, 480, SIX_SECTIONS, True, str(self.picture), None, None, None, 12, None, None,
-            None, 226, "", True, 12, 0, True,
+            None, 226, "", True, 0, 0, True,
         ))
         self.assertIn("Combined", updates[-1][1])
         self.assertEqual(self.requests[0], CONTINUE_REQUEST)
@@ -697,7 +889,7 @@ class WindowRunTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "needs a prompt, or an edit request"):
             list(self.handlers.generate_remake(
                 SWAP, str(self.video), 0, 20, 480, "", True, str(self.picture), None, None, None, 12, None, None,
-                None, 226, "", True, 12, 0, True,
+                None, 226, "", True, 0, 0, True,
             ))
 
     def test_opening_the_list_without_choosing_changes_nothing(self):
@@ -710,6 +902,56 @@ class WindowRunTests(unittest.TestCase):
         self.run_windows(picture=str(self.picture))
         self.assertEqual(len(self.handlers.window_list("local", self.selection())[1]["choices"]),
                          len(self.project()["windows"]))
+
+    def test_projects_list_newest_first_and_load_without_an_upload(self):
+        self.run_windows(picture=str(self.picture))
+        choices = self.handlers.project_choices("local")["choices"]
+        self.assertEqual(len(choices), 1)
+        self.assertIn("source · 20.0 s", choices[0][0])
+        with patch.object(self.handlers, "_preview", return_value="frame.png"):
+            loaded = self.handlers.load_project("local", choices[0][1])
+        project = self.project()
+        self.assertEqual(loaded[0], project["source"])
+        self.assertEqual(loaded[2:9], (file_content_sha256(self.video), 0, 0, 20, 480, 0, 226))
+        self.assertEqual(loaded[9:14], (SWAP, "make a robot", True, True, True))
+        self.assertEqual(loaded[20], 0)
+        self.assertEqual(loaded[21], project["windows"][0]["pictures"][0])
+
+    def test_a_project_from_before_selections_were_saved_still_loads(self):
+        self.run_windows(picture=str(self.picture))
+        project = self.project()
+
+        def forget(current):
+            del current["selection"], current["name"]
+
+        self.handlers.runner.projects.edit(project, forget)
+        with patch.object(self.handlers, "_preview", return_value="frame.png"):
+            loaded = self.handlers.load_project("local", project["key"])
+        chosen = Selection(*loaded[2:4], loaded[5], *loaded[6:9])
+        resumed = self.handlers.runner.saved("local", chosen)
+        self.assertEqual(resumed["key"], project["key"])
+        self.assertEqual(self.handlers.runner.plan("local", str(self.video), chosen)["key"], project["key"])
+
+    def test_renaming_and_deleting_a_project(self):
+        self.run_windows(picture=str(self.picture))
+        key = self.project()["key"]
+        update, status = self.handlers.rename_project("local", key, "Robot dance")
+        self.assertIn("Robot dance", update["choices"][0][0])
+        with self.assertRaises(gr.Error):
+            self.handlers.delete_project("local", key, False)
+        with patch("h3_ui.engines.remake.family_busy", return_value=True), self.assertRaises(gr.Error):
+            self.handlers.delete_project("local", key, True)
+        with patch("h3_ui.engines.remake.family_busy", return_value=False):
+            update, confirmed, status = self.handlers.delete_project("local", key, True)
+        self.assertEqual(update["choices"], [])
+        self.assertIs(confirmed, False)
+        self.assertIsNone(self.project())
+
+    def test_another_owner_cannot_see_a_project(self):
+        self.run_windows(picture=str(self.picture))
+        self.assertEqual(self.handlers.project_choices("someone-else")["choices"], [])
+        with self.assertRaises(gr.Error):
+            self.handlers.load_project("someone-else", self.project()["key"])
 
     def test_generating_with_an_empty_editor_keeps_an_auto_prompt(self):
         self.run_windows(picture=str(self.picture))

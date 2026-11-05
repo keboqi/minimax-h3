@@ -146,7 +146,7 @@ def generate(
             spec = MODEL_SPECS[remake.lora_key]
             execution_snapshot["remake"] = {
                 "mode": remake.mode, "frames": remake.frames, "pins": list(remake.pins),
-                "pictures": len(remake.pictures), "sigmas": remake.sigmas, "adapter": spec.local_name,
+                "pictures": len(remake.pictures), "held": bool(remake.held_frames), "sigmas": remake.sigmas, "adapter": spec.local_name,
                 "repo_id": spec.repo_id, "revision": spec.revision, "sha256": spec.expected_sha256,
             }
         if prepared.turbo_lora_name and prepared.selected_turbo == PIKA_FLEX:
