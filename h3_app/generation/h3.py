@@ -6,7 +6,7 @@ from h3_app.jobs import CURRENT_JOB, record_failure
 
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
@@ -19,6 +19,7 @@ from h3_models import MODEL_SPECS
 from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS, STORYBOARD_NODES
 from h3_app.errors import H3Error
 from h3_app.media import history_output_candidates
+from h3_app.remake import REMAKE_NODES, STEPS as REMAKE_STEPS, RemakeGraph
 
 from .construct_graph import StoryboardGraph, construct_graph
 from .finish_video import finish_video, make_finishing_retry
@@ -70,8 +71,12 @@ def generate(
     progress: ProgressCallback = no_progress,
     storyboard: StoryboardGraph | None = None,
     storyboard_outputs: dict[str, str] | None = None,
+    remake: RemakeGraph | None = None,
 ) -> Iterator[GenerationUpdate]:
-    """``storyboard`` makes this a storyboard take; its saved latents land in ``storyboard_outputs``."""
+    """``storyboard`` makes this a storyboard take; its saved latents land in ``storyboard_outputs``.
+
+    ``remake`` runs Viggle Remake on the same model stack, attention, memory and finishing settings.
+    """
     if str(request.output.result_format).strip().lower() == "image":
         from .ph3_image import generate_ph3_image
 
@@ -106,7 +111,17 @@ def generate(
                     "Missing storyboard nodes: " + ", ".join(sorted(missing))
                     + ". Update provisioning and restart ComfyUI."
                 )
-        graph = construct_graph(request, prepared, services, storyboard)
+        if remake is not None:
+            missing = REMAKE_NODES - prepared.available
+            if missing:
+                raise H3Error(
+                    "Missing Remake nodes: " + ", ".join(sorted(missing))
+                    + ". Update provisioning and restart ComfyUI."
+                )
+            yield GenerationUpdate(None, progress_status("Checking the Remake LoRA", started=started))
+            services.models.ensure_model_keys((remake.lora_key,))
+            prepared = replace(prepared, effective_steps=REMAKE_STEPS, effective_scheduler="euler")
+        graph = construct_graph(request, prepared, services, storyboard, remake)
 
         client_id = str(uuid.uuid4())
         websocket_note = None
@@ -127,6 +142,13 @@ def generate(
             ),
             "adjustments": [asdict(item) for item in prepared.plan.adjustments],
         }
+        if remake is not None:
+            spec = MODEL_SPECS[remake.lora_key]
+            execution_snapshot["remake"] = {
+                "mode": remake.mode, "frames": remake.frames, "pins": list(remake.pins),
+                "pictures": len(remake.pictures), "sigmas": remake.sigmas, "adapter": spec.local_name,
+                "repo_id": spec.repo_id, "revision": spec.revision, "sha256": spec.expected_sha256,
+            }
         if prepared.turbo_lora_name and prepared.selected_turbo == PIKA_FLEX:
             execution_snapshot["sampling_profile"] = pika_sampling_profile(
                 request.media.mode, prepared.turbo_lora_name,

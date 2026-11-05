@@ -970,6 +970,10 @@ def install_bundled_nodes(comfy: Path) -> None:
         lightvae_source, comfy / "custom_nodes" / "H3LightVAE", dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    shutil.copytree(
+        SCRIPT_DIR / "custom_nodes" / "H3Remake", comfy / "custom_nodes" / "H3Remake", dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     print(f"[h3-setup] synced {destination}")
 
 

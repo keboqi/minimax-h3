@@ -209,11 +209,18 @@ def add_model_stack(
     veda_predictor: str | None = None,
     sampling_steps: int = 4,
     sla_preset: str = DEFAULT_SLA_PRESET,
+    adapter_lora_name: str | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     if use_veda and (use_sla or use_sol or use_sage):
         raise H3Error("Veda must be selected as the only attention override.")
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
+
+    if adapter_lora_name:
+        # Merging into BF16 weights loses part of the update, so the adapter runs in bypass.
+        model_ref = Graph.out(graph.add(
+            "LoraLoaderBypassModelOnly", model=model_ref, lora_name=adapter_lora_name, strength_model=1.0,
+        ))
 
     if turbo_lora_name:
         model_ref = add_turbo_model_patch(
@@ -720,6 +727,9 @@ def finish_sampling(
     continuation_ref: list[Any] | None = None,
     continuation_frames: int = 39,
     latent_output_prefix: str | None = None,
+    manual_sigmas: str | None = None,
+    noise_ref: list[Any] | None = None,
+    hold_audio_in_refinement: bool = False,
 ) -> None:
     result_format = normalize_result_format(result_format)
     stage_offload_enabled_ref: list[Any] | None = None
@@ -754,7 +764,7 @@ def finish_sampling(
             )
     if refinement_variant in H3_REGENERATE_MODELS:
         latent_upscale_refine_steps = 3
-    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    noise_ref = noise_ref or Graph.out(graph.add("RandomNoise", noise_seed=int(seed)))
     refinement_model_ref = (
         h3_refinement_attention_model(
             graph, refinement_model_ref or model_ref,
@@ -781,7 +791,9 @@ def finish_sampling(
         if use_larry_sampler
         else graph.add(CORE_SAMPLER_NODE, sampler_name=sampler_name)
     )
-    if turbo_variant == PIKA_FLEX:
+    if manual_sigmas is not None:
+        sigmas = graph.add("ManualSigmas", sigmas=manual_sigmas)
+    elif turbo_variant == PIKA_FLEX:
         steps = 6
         sigmas = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
     else:
@@ -805,7 +817,7 @@ def finish_sampling(
         )
         initial_sampled = graph.add(
             "SamplerCustomAdvanced",
-            noise=Graph.out(noise),
+            noise=noise_ref,
             guider=Graph.out(initial_guider),
             sampler=Graph.out(sampler),
             sigmas=Graph.out(sigmas),
@@ -855,6 +867,8 @@ def finish_sampling(
             combined_ref = Graph.out(graph.add(
                 "H3RegeneratePrepareLatent", latent=combined_ref, audio_vae=audio_vae_ref,
             ))
+        if hold_audio_in_refinement:
+            combined_ref = Graph.out(graph.add("RemakeHoldAudio", latent=combined_ref))
         if stage_model_offload:
             (
                 _unused_conditioning,
@@ -869,7 +883,7 @@ def finish_sampling(
             )
         sampled = graph.add(
             "SamplerCustomAdvanced",
-            noise=Graph.out(noise),
+            noise=noise_ref,
             guider=Graph.out(guider),
             sampler=Graph.out(refinement_sampler),
             sigmas=refine_sigmas_ref,
@@ -879,7 +893,7 @@ def finish_sampling(
     else:
         sampled = graph.add(
             "SamplerCustomAdvanced",
-            noise=Graph.out(noise),
+            noise=noise_ref,
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
             sigmas=Graph.out(sigmas),
@@ -1054,7 +1068,9 @@ def _options_signature(mode_parameters, *, exclude=frozenset()):
     return inspect.Signature([*mode_parameters, *options, *naming], return_annotation=dict[str, Any])
 
 
-def _add_options_model_stack(graph: Graph, options: H3GraphOptions, veda_key: str):
+def _add_options_model_stack(
+    graph: Graph, options: H3GraphOptions, veda_key: str, *, adapter_lora_name: str | None = None,
+):
     o = options
     return add_model_stack(
         graph,
@@ -1094,6 +1110,7 @@ def _add_options_model_stack(graph: Graph, options: H3GraphOptions, veda_key: st
         sampling_steps=o.steps,
         veda_predictor=MODEL_SPECS[veda_key].local_name,
         sla_preset=o.sla_preset,
+        adapter_lora_name=adapter_lora_name,
     )
 
 
@@ -1425,6 +1442,116 @@ build_ref2va_graph.__signature__ = _options_signature([
     inspect.Parameter("reference_audios", inspect.Parameter.KEYWORD_ONLY, annotation=list[str]),
     inspect.Parameter("ref_image_size", inspect.Parameter.KEYWORD_ONLY, annotation=str),
 ], exclude=FL2VA_ONLY_OPTIONS)
+
+
+def build_remake_graph(
+    *,
+    prompt: str,
+    source_video: str,
+    pictures: list[str],
+    pins: tuple[int, ...],
+    frames: int,
+    lora_name: str,
+    sigmas: str,
+    keyframe_until: float,
+    output_stamp: str = "0",
+    output_nonce: str = "",
+    **settings: Any,
+) -> dict[str, Any]:
+    """Viggle Remake on the selected H3 model stack. ``settings`` are :class:`H3GraphOptions`.
+
+    ``source_video`` is already trimmed to ``frames`` at 24 fps on the sampled canvas. The model,
+    encoders, attention, memory and finishing are the regular H3 ones.
+    """
+    o = H3GraphOptions(**settings)
+    graph = Graph()
+    model_ref, clip_ref, video_vae_ref, audio_vae_ref = _add_options_model_stack(
+        graph, o, "veda_t2va", adapter_lora_name=lora_name,
+    )
+    conditioning_vae_ref = h3_conditioning_video_vae(
+        graph, o.models, video_vae_ref, use_trt_vae=o.use_trt_vae, video_encoder=o.video_encoder,
+        available_nodes=o.available_nodes, has_visual_conditioning=True,
+    )
+    model_ref = Graph.out(graph.add("RemakeKeyframeUntil", model=model_ref, keyframe_until=float(keyframe_until)))
+
+    target_width, target_height = snap32(o.width), snap32(o.height)
+    source_width, source_height = target_width, target_height
+    if o.latent_upscale_model_name is not None:
+        source_width, source_height, target_width, target_height = (
+            h3_latent_upscale_dimensions(target_width, target_height)
+        )
+    conditioning_media = [("remake_source", source_video),
+                          *((f"remake_picture_{index}", path) for index, path in enumerate(pictures, 1))]
+    conditioning_cache_key = h3_conditioning_cache_key(
+        "remake", prompt, o.text_encoder_name or o.models.text_encoder, conditioning_media,
+        encoder_settings={
+            **({"video_encoder": o.video_encoder} if o.video_encoder != "Original" else {}),
+            "frames": int(frames),
+            "encoder_small_input": o.encoder_small_input,
+        },
+    )
+    clip_cache = graph.add(
+        H3_CONDITIONING_CACHE_NODE, clip=clip_ref, cache_key=conditioning_cache_key,
+        encoder_small_input=o.encoder_small_input, reuse_conditioning=o.reuse_unchanged_inputs,
+    )
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    inputs: dict[str, Any] = {
+        "clip": Graph.out(clip_cache),
+        "vae": conditioning_vae_ref,
+        "audio_vae": audio_vae_ref,
+        "audio": Graph.out(components, 1),
+        "prompt": prompt,
+        "pins": ", ".join(str(int(pin)) for pin in pins),
+        "frames": int(frames),
+        **{f"ref_{index}": Graph.out(graph.add("LoadImage", image=path))
+           for index, path in enumerate(pictures, 1)},
+    }
+
+    def conditioning(width: int, height: int):
+        source = Graph.out(components)
+        if (width, height) != (source_width, source_height):
+            source = Graph.out(graph.add(
+                "ImageScale", image=source, upscale_method="bicubic", width=width, height=height, crop="disabled",
+            ))
+        return graph.add("RemakeConditioning", **inputs, source=source, short_edge=min(width, height))
+
+    initial_node = conditioning(source_width, source_height)
+    target_node = initial_node
+    if o.latent_upscale_model_name is not None:
+        target_node = conditioning(target_width, target_height)
+    noise = graph.add("RemakeNoise", positive=Graph.out(initial_node), seed=int(o.seed))
+    steps = len(sigmas.split(",")) - 1
+    finish_sampling(
+        graph,
+        model_ref=model_ref,
+        conditioning_ref=Graph.out(target_node),
+        latent_ref=Graph.out(target_node, 1),
+        video_vae_ref=video_vae_ref,
+        audio_vae_ref=audio_vae_ref,
+        seed=o.seed,
+        steps=steps,
+        scheduler=o.scheduler,
+        turbo_variant=None,
+        sampler_name="euler",
+        filename_prefix=o.output_prefix or f"h3/remake_{output_stamp}",
+        initial_conditioning_ref=Graph.out(initial_node),
+        initial_latent_ref=Graph.out(initial_node, 1),
+        latent_upscale_model_name=o.latent_upscale_model_name,
+        latent_upscale_precision=o.latent_upscale_precision,
+        latent_upscale_width=target_width,
+        latent_upscale_height=target_height,
+        # Refinement is a tail of the schedule, never all of it.
+        latent_upscale_refine_steps=min(int(o.latent_upscale_refine_steps), steps - 1),
+        veda_dense_tail=o.use_veda and resolve_sla_preset(o.sla_preset)[0] == "Quality",
+        stage_model_offload=o.stage_model_offload,
+        smart_stage_offload=o.smart_stage_offload,
+        conditioning_cache_key=conditioning_cache_key,
+        manual_sigmas=sigmas,
+        noise_ref=Graph.out(noise),
+        hold_audio_in_refinement=True,
+    )
+    return graph.nodes
 
 
 def required_nodes_for(

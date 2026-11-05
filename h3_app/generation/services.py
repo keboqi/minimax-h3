@@ -250,6 +250,7 @@ class WorkflowsServices:
     build_fl2va_graph: BuildFl2VaGraph
     build_ltx25_graph: BuildLtx25Graph
     build_ref2va_graph: BuildRef2VaGraph
+    build_remake_graph: Callable[..., dict[str, Any]]
     build_upscale_graph: BuildUpscaleGraph
 
 

@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from h3_app.remake import KEYFRAME_UNTIL, RemakeGraph
+from h3_models import MODEL_SPECS
+
 from .preparation import PreparedH3
 from .requests import H3Request
 from .services import GenerationServices
@@ -91,8 +94,21 @@ def construct_graph(
     prepared: PreparedH3,
     services: GenerationServices,
     storyboard: StoryboardGraph | None = None,
+    remake: RemakeGraph | None = None,
 ) -> dict[str, Any]:
     options = graph_options(request, prepared, storyboard)
+    if remake is not None:
+        return services.workflows.build_remake_graph(
+            prompt=request.media.prompt,
+            source_video=remake.source_video,
+            pictures=list(remake.pictures),
+            pins=remake.pins,
+            frames=remake.frames,
+            lora_name=MODEL_SPECS[remake.lora_key].local_name,
+            sigmas=remake.sigmas,
+            keyframe_until=KEYFRAME_UNTIL,
+            **options,
+        )
     if request.media.mode == "Reference media":
         return services.workflows.build_ref2va_graph(
             prompt=request.media.prompt,

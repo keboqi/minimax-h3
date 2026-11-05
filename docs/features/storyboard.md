@@ -3,7 +3,7 @@
 The **Storyboard** task makes a long video from a list of scenes. Each scene is one
 MiniMax H3 clip. A scene either **continues** the one before it, so motion and sound
 carry on, or **starts fresh** as a new shot. The scenes are joined into one video at
-the end. It sits in Create between Song and Soundstage. Background and decisions are
+the end. It sits in Create between Remake and Soundstage. Background and decisions are
 in the [plan](../plans/long-video-storyboard.md); the agreed design is the
 [Storyboard Redesign canvas](https://claude.ai/artifact/ETR9sQf3pvaVTFTX737mv9).
 

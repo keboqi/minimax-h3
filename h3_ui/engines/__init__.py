@@ -5,11 +5,12 @@ engine in :data:`FEATURES` the same way. Ids match :data:`h3_app.capabilities.EN
 The order sets the order of Media's "Use in" destinations.
 """
 
-from . import fibo2, flux3, ltx, moss_image, music, qwen, yue2
+from . import fibo2, flux3, ltx, moss_image, music, qwen, remake, yue2
 from .feature import EngineDeps, EngineFeature
 
 FEATURES: tuple[EngineFeature, ...] = (
     ltx.FEATURE, qwen.FEATURE, flux3.FEATURE, moss_image.FEATURE, fibo2.FEATURE, music.FEATURE, yue2.FEATURE,
+    remake.FEATURE,
 )
 
 __all__ = ["FEATURES", "EngineDeps", "EngineFeature"]

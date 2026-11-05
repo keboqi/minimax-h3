@@ -154,9 +154,17 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         engine_actions = services.drama3_actions
         engine_views = {}
+        engine_handlers = {}
         for feature in FEATURES:
             engine_views[feature.id] = feature.build(getattr(app_views, feature.key), services.engine_deps)
-            feature.bind(engine_views[feature.id], services.engine_deps)
+            engine_handlers[feature.id] = feature.bind(engine_views[feature.id], services.engine_deps)
+        from .engines.remake import bind_h3_settings
+
+        bind_h3_settings(
+            engine_views["remake"], engine_handlers["remake"], h3_components.values,
+            # The task picker switches tabs itself, so a Tab select event wouldn't fire.
+            (demo.load, app_views.task.change), image_target=engine_views["qwen"].reference_images,
+        )
         drama3_components = build_drama3_view(
             app_views.drama3,
             engine_actions.drama3_speaker_names(),

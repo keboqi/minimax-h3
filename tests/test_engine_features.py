@@ -40,7 +40,7 @@ class EngineFeatureTests(unittest.TestCase):
                     self.assertTrue(hasattr(component, "h3_library_picker"))
         api_names = {fn.api_name for fn in demo.fns.values()}
         for name in ("generate_flux3", "generate_moss_image", "generate_fibo2", "generate_ltx25_video",
-                     "generate_qwen_image21", "generate_music3", "generate_yue2"):
+                     "generate_qwen_image21", "generate_music3", "generate_yue2", "generate_remake"):
             self.assertIn(name, api_names)
 
 

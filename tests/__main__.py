@@ -44,6 +44,7 @@ def run(args):
             "browser_voice_refs.py",
             "browser_auto_resolution.py",
             "browser_image_library.py",
+            "browser_remake.py",
             "browser_workspace.py",
             "browser_media_performance.py",
             "browser_media_deletion.py",

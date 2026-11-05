@@ -20,7 +20,7 @@ def bind_engine_readiness(view, family):
         inputs = [view.prompt, view.mode, view.reference_images]
 
         def missing(prompt, mode, references):
-            if not prompt.strip():
+            if not (prompt or "").strip():
                 return "Write an image prompt or edit instruction to start."
             if mode == "Image edit" and not references:
                 return "Add an image to edit."

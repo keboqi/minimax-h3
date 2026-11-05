@@ -50,6 +50,8 @@ ENGINES += (
                      "OpenMOSS 5B image generation and reference editing, with layout boxes and Turbo LoRAs."),
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
+    EngineCapability("remake", "Remake", ("Remake",),
+                     "Edit existing footage with Viggle Remake, running on your MiniMax H3 settings."),
     EngineCapability("storyboard", "Storyboard", ("Storyboard",),
                      "Long videos as scenes: each flows on from the last or cuts to a new shot, "
                      "generated with MiniMax H3 and joined into one video."),
@@ -60,7 +62,7 @@ ENGINES += (
                      "Translate a video's speech and dub it with each speaker's cloned voice: transcribe, "
                      "review every line, then dub with Drama 3."),
 )
-TASKS = ("Video", "Image", "Audio / Music", "Storyboard", "TTS", "Dub")
+TASKS = ("Video", "Image", "Audio / Music", "Remake", "Storyboard", "TTS", "Dub")
 # Navigation and preference restoration use the first engine as the default.
 DEFAULT_ENGINES = {"Image": "qwen", "Audio / Music": "music"}
 

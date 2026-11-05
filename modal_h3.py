@@ -46,6 +46,7 @@ PROMPT_FILES = (
     "prompt_drama3_guided_direction.txt",
     "prompt_drama3_guided_sound.txt",
     "prompt_moss_image.txt",
+    "prompt_remake.txt",
 )
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
@@ -188,6 +189,9 @@ _RUNTIME_LOCAL_MOUNTS = (
     *((LOCAL / "custom_nodes" / "H3LightVAE" / filename,
        COMFY / "custom_nodes" / "H3LightVAE" / filename)
       for filename in ("__init__.py", "nodes.py", "h3_vae.py", "UPSTREAM.md")),
+    *((LOCAL / "custom_nodes" / "H3Remake" / filename,
+       COMFY / "custom_nodes" / "H3Remake" / filename)
+      for filename in ("__init__.py", "nodes.py", "hold_audio.py", "UPSTREAM.md", "LICENSE-CODE")),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),

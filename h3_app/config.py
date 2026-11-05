@@ -69,6 +69,7 @@ class RuntimeConfig:
             "FLUX 3 Image Klein": self.script_dir / "prompts" / "prompt_flux3_t2i.txt",
             "FLUX 3 Image Klein edit": self.script_dir / "prompts" / "prompt_flux3_i2i.txt",
             "MOSS-Image": self.script_dir / "prompts" / "prompt_moss_image.txt",
+            "Viggle Remake": self.script_dir / "prompts" / "prompt_remake.txt",
             "Drama 3": self.script_dir / "prompts" / "prompt_drama3.txt",
             "Drama 3 direction": self.script_dir / "prompts" / "prompt_drama3_direction.txt",
         }

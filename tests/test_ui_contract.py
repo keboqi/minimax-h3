@@ -195,7 +195,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 22)
+        self.assertEqual(len(image_inputs), 26)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -219,7 +219,9 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 12)
+        self.assertEqual(len(choices), 16)
+        for slot in range(1, 5):
+            self.assertIn(f"Remake · Picture {slot}", choices)
         self.assertIn("MOSS-Image · Edit reference images (optional, up to 4)", choices)
         self.assertIn("Fibo 2.0 · Reference images (optional for Dev, up to 4)", choices)
         self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
@@ -671,7 +673,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
             ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
-             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Storyboard", "Soundstage", "Dub & Translate"],
+             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
         )
         task = next(
             c for c in self.config["components"]
@@ -679,7 +681,7 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [choice[0] for choice in task["props"]["choices"]],
-            ["Video", "Image", "Song", "Storyboard", "Soundstage", "Dub & Translate"],
+            ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
@@ -722,8 +724,8 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
-        self.assertEqual(len(models), 9)
+        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Remake, Drama 3, Dub & Translate
+        self.assertEqual(len(models), 10)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -734,7 +736,7 @@ class UiContractTests(unittest.TestCase):
             if component.get("props", {}).get("label") in ("Prompt writer", "Writer service")
             and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
-        self.assertEqual(len(writers), 8)
+        self.assertEqual(len(writers), 9)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
@@ -761,7 +763,7 @@ class UiContractTests(unittest.TestCase):
                 for c in self.config["components"]
                 if c.get("props", {}).get("label") == label
             ]
-            self.assertEqual(len(keys), 8, label)
+            self.assertEqual(len(keys), 9, label)
             for key in keys:
                 self.assertEqual(
                     hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label

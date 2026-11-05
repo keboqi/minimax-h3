@@ -21,6 +21,9 @@ class EngineDeps:
     models: Callable[[], Any] = lambda: None
     # The managed output behind a path Gradio may have copied into its cache.
     resolve_result: Callable[[Any], Any] = lambda path: path
+    # One run through the regular H3 generator: (values, remake, progress), and its defaults.
+    h3_take: Callable[..., Any] = lambda values, remake, progress: iter(())
+    h3_defaults: Callable[[], dict] = dict
 
 
 def _picker_destinations(label, inputs):

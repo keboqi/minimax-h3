@@ -998,6 +998,15 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-gallery-workspace > .column { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }
 }
+.h3-workspace .h3-setup-card [role="alert"] { margin: 0; color: #7a4f00; }
+.dark .h3-workspace .h3-setup-card [role="alert"] { color: #fcd34d; }
+/* Remake: what follows MiniMax H3, what Remake sets, and what it leaves out. */
+.h3-workspace .h3-remake-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.h3-workspace .h3-remake-settings > div { padding: 12px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-remake-settings h3 { margin: 0 0 8px; font-size: 14px; }
+.h3-workspace .h3-remake-settings ul { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.h3-workspace .h3-remake-settings li span { margin-left: 8px; padding: 0 7px; border-radius: 999px; background: #fbf1dc; color: #7a4f00; font-size: 12px; font-weight: 600; }
+.dark .h3-workspace .h3-remake-settings li span { background: #4a3a14; color: #fde7b0; }
 /* Storyboard: the page runs in this frame. */
 .h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {

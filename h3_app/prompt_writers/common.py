@@ -9,7 +9,7 @@ import requests
 
 from h3_app.catalog import GEMINI_PROMPT_MODELS, DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.errors import H3Error
-from h3_app.llm import gemini, openai_compatible, strip_code_fence
+from h3_app.llm import gemini, media_type, openai_compatible, strip_code_fence
 
 
 def uploaded_media_path(value: Any) -> Path | None:
@@ -144,7 +144,8 @@ def write_prompt(
         ]
         with gemini.Session(key) as session:
             for label, path in media:
-                parts.append({"text": f"The next uploaded image is {label}."})
+                noun = "video" if media_type(Path(path)).startswith("video/") else "image"
+                parts.append({"text": f"The next uploaded {noun} is {label}."})
                 parts.append(session.file_part(path))
             payload = session.generate(
                 model,

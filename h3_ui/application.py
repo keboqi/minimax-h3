@@ -330,6 +330,11 @@ def build_ref2va_graph(*, reference_images, reference_videos, reference_audios,
 build_ref2va_graph.__signature__ = _submission_signature(h3_workflow.build_ref2va_graph)
 
 
+def build_remake_graph(**settings) -> dict[str, Any]:
+    """Build a Remake graph, already staged, with a fresh output name."""
+    return h3_workflow.build_remake_graph(**settings, **_output_naming())
+
+
 def build_ltx25_graph(
     *,
     model_choice: str = DEFAULT_LTX25_MODEL,
@@ -707,6 +712,7 @@ def _generation_services() -> generation_services.GenerationServices:
             build_fl2va_graph=build_fl2va_graph,
             build_ltx25_graph=build_ltx25_graph,
             build_ref2va_graph=build_ref2va_graph,
+            build_remake_graph=build_remake_graph,
             build_upscale_graph=build_upscale_graph,
         ),
         media=generation_services.MediaServices(
@@ -891,6 +897,20 @@ def _engine_deps():
         interrupt=interrupt,
         models=lambda: MODELS,
         resolve_result=lambda path: H3.resolve_result_path(path),
+        h3_take=lambda values, remake, progress: _remake_take(values, remake, progress),
+        h3_defaults=lambda: storyboard_request_defaults(),
+    )
+
+
+def _remake_take(values, remake, progress):
+    """One Remake run through the regular H3 generator."""
+    yield from h3_generation.generate(
+        generation_requests.H3Request.from_values(values),
+        _generation_services(),
+        _runtime_config(),
+        run_context={},
+        progress=progress,
+        remake=remake,
     )
 
 
