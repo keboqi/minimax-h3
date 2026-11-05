@@ -180,7 +180,17 @@ class RemakeKeyframeUntil:
             return executor(x, timestep, context, transformer_options, minimax_payload=minimax_payload, **kwargs)
 
         m = model.clone()
-        m.add_wrapper_with_key(comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL, "viggle_remake_keyframe_until", release)
+        wrapper_type = comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL
+        key = "viggle_remake_keyframe_until"
+        m.add_wrapper_with_key(wrapper_type, key, release)
+        # Resolve conditioning before Spectrum (and other layout observers).
+        # Otherwise they cache the keyframe layout while the native forward
+        # receives fewer tokens, or forecast without running release at all.
+        wrappers = m.model_options["transformer_options"]["wrappers"]
+        wrappers[wrapper_type] = {
+            key: [release],
+            **{name: callbacks for name, callbacks in wrappers[wrapper_type].items() if name != key},
+        }
         return (m,)
 
 
