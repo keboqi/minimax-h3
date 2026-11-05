@@ -68,7 +68,7 @@ class RemakeConditioning:
                                                               "at that frame for the first part of the denoise."}),
                 "frames": ("INT", {"default": 124, "min": 90, "max": 345, "step": 17,
                                    "tooltip": "Output length at 24 fps, 17n+5."}),
-                "short_edge": ("INT", {"default": 480, "min": 480, "max": 1472, "step": 32,
+                "short_edge": ("INT", {"default": 480, "min": 480, "max": 736, "step": 32,
                                        "tooltip": "480 (832x480 for 16:9) or 736 (1280x736)."}),
             },
             "optional": {
@@ -89,10 +89,11 @@ class RemakeConditioning:
             audio=None, ref_2=None, ref_3=None, ref_4=None):
         nf, se = frames, short_edge
         refs = [r[:1, ..., :3] for r in (ref_1, ref_2, ref_3, ref_4) if r is not None]
-        pins = [int(p) for p in pins.replace(",", " ").split()]
+        # Local change: "-" leaves that reference unpinned.
+        pins = [None if p == "-" else int(p) for p in pins.replace(",", " ").split()]
         assert (nf - 5) % 17 == 0, f"frames must be 17n+5, got {nf}"
         assert len(pins) in (0, len(refs)), f"give one pin per reference image or none: {len(pins)} pins, {len(refs)} refs"
-        assert all(0 <= p < nf for p in pins), f"pins must be in [0, {nf})"
+        assert all(p is None or 0 <= p < nf for p in pins), f"pins must be in [0, {nf})"
 
         # the source on its canvas: as is when its short edge is short_edge and both sides are multiples of 32,
         # otherwise cover-cropped onto the 16:9-class canvas (832x480, 1280x736)
@@ -125,6 +126,8 @@ class RemakeConditioning:
         # keyframes on the output canvas: the first stretched, the rest cover-cropped
         keyframes = []
         for i, (r, p) in enumerate(zip(refs, pins)):
+            if p is None:
+                continue
             if (r.shape[1], r.shape[2]) != (h, w):
                 r = lanczos(r, w, h) if i == 0 else cover(r, w, h)
             keyframes.append({"resolved_frame_index": p, "latent": vae.encode(r)})

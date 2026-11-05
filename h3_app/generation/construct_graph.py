@@ -96,6 +96,8 @@ def construct_graph(
     storyboard: StoryboardGraph | None = None,
     remake: RemakeGraph | None = None,
 ) -> dict[str, Any]:
+    if remake is not None:
+        storyboard = StoryboardGraph(output_prefix=remake.output_prefix)
     options = graph_options(request, prepared, storyboard)
     if remake is not None:
         return services.workflows.build_remake_graph(

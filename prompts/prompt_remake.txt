@@ -28,4 +28,6 @@ Write a description of the finished video, never an instruction. Write "a pineap
 
 Pinned pictures appear in the output at the frame given in the request, so describe the action at that time so that it agrees with the picture.
 
+A frame carried from the previous window is one of the pictures when the request lists it. Treat it as the current look of the video, and keep every subject as it appears there.
+
 When you cannot see the source video, rely on the request and the painted frames, and describe only what they establish.

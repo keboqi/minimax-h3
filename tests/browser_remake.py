@@ -26,6 +26,16 @@ def wait_for(url, process):
     raise RuntimeError("The workspace fixture did not start.")
 
 
+def wait_for_remake_jobs(url, count):
+    """Wait until ``count`` Remake jobs have finished, so a stale status can't pass for this run."""
+    for _ in range(120):
+        jobs = [job for job in requests.get(f"{url}test/jobs", timeout=5).json() if job["family"] == "remake"]
+        if len(jobs) == count and all(job["state"] == "completed" for job in jobs):
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"Expected {count} finished Remake jobs, found {jobs}")
+
+
 def main(shots=None):
     with tempfile.TemporaryDirectory(prefix="h3-remake-browser-") as folder, socket.socket() as sock:
         root = Path(folder)
@@ -101,6 +111,40 @@ def main(shots=None):
                 page.get_by_text("Check alignment", exact=True).first.click()
                 page.get_by_role("button", name="Check alignment").last.click()
                 expect(page.get_by_text(re.compile("Can't measure this one"))).to_be_visible(timeout=20000)
+
+                # A selection one window can hold shows no windows; a longer one does.
+                expect(page.get_by_role("button", name="Split into windows")).to_be_hidden()
+                page.get_by_label("Longest window").click()
+                page.get_by_role("option", name="3.8 s (90 frames)").click()
+                expect(page.get_by_role("button", name="Split into windows")).to_be_visible(timeout=10000)
+                page.get_by_role("button", name="Split into windows").click()
+                expect(page.get_by_text("windows", exact=False).filter(has_text="rendered").first).to_be_visible(
+                    timeout=20000)
+                page.get_by_label("Edit request").fill("Turn the card into a robot")
+                page.get_by_role("button", name="Generate remake").click()
+                status = page.get_by_label("Generation progress").locator("visible=true").first
+                expect(status).to_have_value(re.compile("Combined"), timeout=60000)
+                if shots:
+                    page.screenshot(path=str(Path(shots) / "remake-windows.png"), full_page=True)
+
+                # The manual side: open a window, take its carried frame, regenerate it alone, combine.
+                choices = page.get_by_label("Window", exact=True)
+                choices.click()
+                page.get_by_role("option", name=re.compile(r"^2 ")).click()
+                expect(page.get_by_label("Remake prompt")).to_have_value(re.compile("Fixture window"), timeout=15000)
+                expect(page.get_by_label("Picture 1 frame")).to_be_hidden()
+                page.get_by_role("button", name="Copy carried frame to a slot").click()
+                expect(page.get_by_label("Picture 1 frame")).to_be_visible(timeout=10000)
+                expect(page.get_by_label("Picture 1 frame")).to_have_value(re.compile("[0-9]+"))
+                expect(page.get_by_label("Use the carried frame")).not_to_be_checked()
+                page.get_by_label("Remake prompt").fill("Edited window two.")
+                page.get_by_role("button", name="Regenerate this window").click()
+                wait_for_remake_jobs(url, 2)
+                expect(status).to_have_value(re.compile("Combined"), timeout=30000)
+                page.get_by_role("button", name="Combine final video").click()
+                expect(status).to_have_value(re.compile("Combined"), timeout=30000)
+                if shots:
+                    page.screenshot(path=str(Path(shots) / "remake-window2.png"), full_page=True)
 
                 page.get_by_role("button", name="Open MiniMax H3 settings →").click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Video", timeout=10000)

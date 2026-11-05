@@ -11,16 +11,15 @@ Storyboard. The agreed design is the
 
 1. Choose **Swap** to replace a character or subject, or **Edit** to change objects, background,
    weather or light. Each has its own LoRA and six-step schedule.
-2. Add the source and set **Start** and **End**. Length comes in steps of 17 frames, from 90 to 345
-   at 24 fps (3.75 to 14.4 seconds); Viggle recommends 294 or fewer. The selection is rounded down to
-   the nearest allowed length.
+2. Add the source and set **Start** and **End**. One render comes in steps of 17 frames, from 90 to 345
+   at 24 fps (3.75 to 14.4 seconds), and rounds down to the nearest allowed length. Longer selections
+   render in windows.
 3. Scrub to a frame and press **Extract frame**. It fills the first empty slot with its frame number.
 4. Press **Edit in Image**, which sends the frame to Qwen Image 2.1, and edit it there. Then bring the
    result back from Media with **Set as** › **Remake · Picture N**, or from the library picker on the
    slot, which keeps the frame number. Generate stays off while a slot holds the frame exactly as it was extracted.
 5. Keep **Pin every picture to its frame** on for clips with cuts, or when the composition matters.
-   Remake takes a pin for every picture or none, so there is no per-picture switch. Frame numbers count
-   from Start; moving Start shifts them so each stays on its source frame.
+   Frame numbers count from Start; moving Start shifts them so each stays on its source frame.
 6. If the editor moved the frame, use **Check alignment** and **Align to source**. It corrects a whole-frame
    shift or zoom from unchanged areas. It cannot fix a changed pose.
 7. Write an **Edit request**, press **Rewrite / enhance**, and accept the suggestion. Gemini reads the
@@ -30,6 +29,27 @@ Storyboard. The agreed design is the
 The canvas is always 16:9-class, in the source's orientation, so other shapes are center-cropped.
 The soundtrack needs no extraction: it stays clean through sampling and comes out in the result, and it
 guides mouth movement. A silent source stays silent.
+
+## Long sources
+
+One render holds a limited length, set by **Longest window** (9.4 s by default; lower it if long clips run out of
+memory). A selection that fits stays a single run. A longer one renders in windows, and a **Windows** panel appears:
+
+- Windows end on the source's cuts where they can. A shot too long for one window continues into the next, starting
+  **Mix frames** earlier so the overlap crossfades when joined.
+- **Smart** (on by default) needs a picture on window 1 and an edit request. Every later window takes the last frame
+  of the render before it, written with its prompt automatically. In a continuing window that frame is pinned to its
+  moment; after a cut it only passes on the look. Window 1's picture joins any window with no picture of its own.
+- Pick a window to change it. The Reference frames and Remake prompt editors follow your choice, and pins count from
+  the start of that window. **Copy carried frame to a slot** turns the carried frame into one you can edit.
+- **Regenerate this window** renders only that window and any others you changed. The window after it shows
+  *Earlier window changed*: its take still joins, and you decide whether to regenerate it.
+- **Combine final video** joins the takes and adds the source's soundtrack, so the audio has no seams. A run does this
+  itself when every window is rendered.
+
+A selection keeps its windows beside the renders in `h3/.remake`, so opening the same source and range again resumes
+it. Only the joined video reaches Media. Windows skip post-processing, so that they join as sampled; finish the joined
+video from Media.
 
 ## What follows MiniMax H3
 
@@ -45,9 +65,10 @@ other base as an untested pairing without blocking it. The Singularity profiles 
 files.
 
 Latent upscale is on by default in H3, so a default run samples at the canvas, doubles it (832×480 becomes
-1664×960) and refines the last steps of the schedule with the same Remake LoRA, with the conditioning rebuilt at
-the larger size and the audio held clean. This pairing is ours, not Viggle's, and Next run says so. Turn
-latent upscale off in MiniMax H3 for Viggle's exact recipe.
+1664×960) and refines the last two steps of the schedule with the same Remake LoRA and audio held clean. The
+reference stays at canvas size: rebuilding it at the doubled size made a 14 s clip about three times the largest
+regular H3 job. This pairing is ours, not Viggle's, and Next run says so. Turn latent upscale off in MiniMax H3
+for Viggle's exact recipe.
 
 ## How it runs
 
@@ -57,7 +78,8 @@ conditioning and sampling around the normal model stack:
 
 - `LoraLoaderBypassModelOnly` applies the LoRA, because merging into BF16 weights loses part of the update.
 - `RemakeConditioning`, `RemakeKeyframeUntil` and `RemakeNoise` come from Viggle, vendored in
-  `custom_nodes/H3Remake`. `UPSTREAM.md` there records the revision and the one local change.
+  `custom_nodes/H3Remake`. `UPSTREAM.md` there records the revision and the one local change, which lets a
+  carried frame be pinned while other pictures stay unpinned.
 - `request_overrides` selects FL2VA through First / last frame mode. The picture passed there is never
   used as a first frame.
 - The request asks for 10 steps to satisfy Normal generation's minimum. The real six-step schedule

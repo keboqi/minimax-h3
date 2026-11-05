@@ -46,7 +46,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, Song-specific controls and the session take history for Music 3 and YuE2 |
 | h3_ui/step_cards.py | The guided step strip shared by Soundstage and Dub & Translate, and the intro and card headings Song uses too |
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
-| h3_app/remake/ | Viggle Remake's run rules in model.py, source trimming and frame extraction in media.py, and frame alignment in align.py; `build_remake_graph` lives with the other H3 graphs |
+| h3_app/remake/ | Viggle Remake's run rules in model.py, source trimming, cut detection and joining in media.py, frame alignment in align.py, window planning in windows.py, saved windows in project.py and the window-by-window run in runner.py; `build_remake_graph` lives with the other H3 graphs |
 | h3_app/storyboard/ | Storyboard documents and outdated rules in model.py; shared storage, takes, versions and ffmpeg joining in service.py; hosted story expansion in writer.py and explicit scene separators in text.py |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |

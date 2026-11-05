@@ -203,7 +203,7 @@ def _gallery_paths(extensions, *, limit, runtime, exclude_thumbnails=False, stri
                         candidate = directory / entry.name
                         if entry.is_dir(follow_symlinks=False):
                             # Work, preview and staging folders; .dub-player holds a dub's player tracks.
-                            if entry.name not in {".processing", ".gallery_thumbnails", ".gallery-thumbnails", ".h3-workspace", ".dub-player", ".storyboard", ".soundstage"} and not candidate.is_relative_to(thumbnail_root):
+                            if entry.name not in {".processing", ".remake", ".gallery_thumbnails", ".gallery-thumbnails", ".h3-workspace", ".dub-player", ".storyboard", ".soundstage"} and not candidate.is_relative_to(thumbnail_root):
                                 directories.append(candidate)
                             continue
                         if candidate.suffix.lower() not in extensions:

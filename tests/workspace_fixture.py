@@ -9,6 +9,7 @@ import subprocess
 from PIL import Image
 import gradio as gr
 from h3_ui import application as app
+from h3_app.remake import runner as remake_runner
 from h3_app.jobs import CURRENT_JOB, JOBS, record_failure
 from threading import Event
 
@@ -35,6 +36,18 @@ def fake_generation(batch_count, *args):
     yield (*(gr.skip() for _ in range(7)), "Mock generation finished")
 
 
+def fake_remake_take(values, remake, progress):
+    """A window's take: its trimmed source, saved where the graph would save it."""
+    from h3_app.generation.results import GenerationUpdate
+
+    target = app.OUTPUT_DIR / f"{remake.output_prefix or 'h3/remake_fixture'}.mp4"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes((app._runtime_config().input_dir / remake.source_video).read_bytes())
+    yield GenerationUpdate(str(target), "Fixture remake completed")
+
+
+app._remake_take = fake_remake_take
+remake_runner.enhance_remake_prompt = lambda *args, **kwargs: ("summary:\nFixture window.", "Enhanced.")
 app.backend_status = lambda: "Connected browser test fixture"
 app.H3.generate_for_ui = fake_generation
 

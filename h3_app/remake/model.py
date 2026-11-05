@@ -33,7 +33,7 @@ SECTIONS = (
 )
 REMAKE_NODES = frozenset({
     "RemakeConditioning", "RemakeKeyframeUntil", "RemakeNoise", "RemakeHoldAudio",
-    "LoraLoaderBypassModelOnly", "ManualSigmas", "LoadVideo", "GetVideoComponents", "ImageScale",
+    "LoraLoaderBypassModelOnly", "ManualSigmas", "LoadVideo", "GetVideoComponents",
 })
 
 
@@ -44,8 +44,9 @@ class RemakeGraph:
     mode: str
     source_video: str
     pictures: tuple[str, ...]
-    pins: tuple[int, ...]
+    pins: tuple[int | None, ...]
     frames: int
+    output_prefix: str | None = None
 
     @property
     def lora_key(self) -> str:
@@ -78,13 +79,19 @@ def output_size(width: int, height: int, latent_upscale: bool) -> tuple[int, int
     return (width * 2, height * 2) if latent_upscale else (width, height)
 
 
-def check_pins(pins: tuple[int, ...], pictures: int, frames: int) -> None:
-    """Remake takes one pin per picture, or none at all."""
+def refine_tail_steps(sigmas: str, requested: int) -> int:
+    """Refinement steps below the keyframe hold: its conditioning stays at the sampled size."""
+    values = [float(value) for value in sigmas.split(",")]
+    return max(1, min(int(requested), sum(0 < value < KEYFRAME_UNTIL for value in values)))
+
+
+def check_pins(pins: tuple[int | None, ...], pictures: int, frames: int) -> None:
+    """One entry per picture, or none at all; ``None`` leaves a picture unpinned."""
     if not pins:
         return
     if len(pins) != pictures:
         raise H3Error("Pin every picture to a frame, or turn pinning off.")
-    if any(not 0 <= pin < frames for pin in pins):
+    if any(pin is not None and not 0 <= pin < frames for pin in pins):
         raise H3Error(f"Pins must be frames from 0 to {frames - 1} of the selection.")
 
 

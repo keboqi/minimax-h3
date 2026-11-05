@@ -61,6 +61,7 @@ from h3_models import MODEL_SPECS
 from h3_app.workflows.regenerate import add_regenerate_model
 from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 from h3_app.graph import Graph
+from h3_app.remake.model import refine_tail_steps
 from h3_app.model_types import ModelConfig, trt_vae_engine_name
 from h3_app.policy import (
     frame_length,
@@ -1461,7 +1462,8 @@ def build_remake_graph(
     """Viggle Remake on the selected H3 model stack. ``settings`` are :class:`H3GraphOptions`.
 
     ``source_video`` is already trimmed to ``frames`` at 24 fps on the sampled canvas. The model,
-    encoders, attention, memory and finishing are the regular H3 ones.
+    encoders, attention, memory and finishing are the regular H3 ones. Latent upscale refines with
+    the same conditioning: a reference at the doubled size would quadruple the job.
     """
     o = H3GraphOptions(**settings)
     graph = Graph()
@@ -1502,31 +1504,22 @@ def build_remake_graph(
         "audio_vae": audio_vae_ref,
         "audio": Graph.out(components, 1),
         "prompt": prompt,
-        "pins": ", ".join(str(int(pin)) for pin in pins),
+        "pins": (", ".join("-" if pin is None else str(int(pin)) for pin in pins)
+                 if any(pin is not None for pin in pins) else ""),
         "frames": int(frames),
         **{f"ref_{index}": Graph.out(graph.add("LoadImage", image=path))
            for index, path in enumerate(pictures, 1)},
     }
 
-    def conditioning(width: int, height: int):
-        source = Graph.out(components)
-        if (width, height) != (source_width, source_height):
-            source = Graph.out(graph.add(
-                "ImageScale", image=source, upscale_method="bicubic", width=width, height=height, crop="disabled",
-            ))
-        return graph.add("RemakeConditioning", **inputs, source=source, short_edge=min(width, height))
-
-    initial_node = conditioning(source_width, source_height)
-    target_node = initial_node
-    if o.latent_upscale_model_name is not None:
-        target_node = conditioning(target_width, target_height)
-    noise = graph.add("RemakeNoise", positive=Graph.out(initial_node), seed=int(o.seed))
+    node = graph.add("RemakeConditioning", **inputs, source=Graph.out(components),
+                     short_edge=min(source_width, source_height))
+    noise = graph.add("RemakeNoise", positive=Graph.out(node), seed=int(o.seed))
     steps = len(sigmas.split(",")) - 1
     finish_sampling(
         graph,
         model_ref=model_ref,
-        conditioning_ref=Graph.out(target_node),
-        latent_ref=Graph.out(target_node, 1),
+        conditioning_ref=Graph.out(node),
+        latent_ref=Graph.out(node, 1),
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
         seed=o.seed,
@@ -1535,14 +1528,13 @@ def build_remake_graph(
         turbo_variant=None,
         sampler_name="euler",
         filename_prefix=o.output_prefix or f"h3/remake_{output_stamp}",
-        initial_conditioning_ref=Graph.out(initial_node),
-        initial_latent_ref=Graph.out(initial_node, 1),
+        initial_conditioning_ref=Graph.out(node),
+        initial_latent_ref=Graph.out(node, 1),
         latent_upscale_model_name=o.latent_upscale_model_name,
         latent_upscale_precision=o.latent_upscale_precision,
         latent_upscale_width=target_width,
         latent_upscale_height=target_height,
-        # Refinement is a tail of the schedule, never all of it.
-        latent_upscale_refine_steps=min(int(o.latent_upscale_refine_steps), steps - 1),
+        latent_upscale_refine_steps=refine_tail_steps(sigmas, o.latent_upscale_refine_steps),
         veda_dense_tail=o.use_veda and resolve_sla_preset(o.sla_preset)[0] == "Quality",
         stage_model_offload=o.stage_model_offload,
         smart_stage_offload=o.smart_stage_offload,

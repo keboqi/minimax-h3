@@ -12,7 +12,8 @@ from . import common
 
 
 def remake_writer_context(mode: str, frames: int, width: int, height: int, pictures: int,
-                          pins: Sequence[int]) -> str:
+                          pins: Sequence[int | None], previous_prompt: str = "",
+                          carried_picture: int | None = None) -> str:
     lines = [
         f"Remake type: {mode}",
         f"Output duration: {frames / FPS:.3f} seconds ({frames} frames at {FPS} fps)",
@@ -22,8 +23,14 @@ def remake_writer_context(mode: str, frames: int, width: int, height: int, pictu
     ]
     lines += [
         f"<Picture {index}> is pinned at {pin / FPS:.3f} seconds (frame {pin})."
-        for index, pin in enumerate(pins, 1)
+        for index, pin in enumerate(pins, 1) if pin is not None
     ]
+    if carried_picture:
+        lines.append(f"<Picture {carried_picture}> is the frame carried from the previous window.")
+    if previous_prompt:
+        lines.append("This is one window of a longer video. The previous window's prompt follows. Keep every "
+                     "<Subject N> definition from it word for word, and carry on from where it ended:\n"
+                     + previous_prompt)
     return "\n".join(lines)
 
 
@@ -32,7 +39,7 @@ def enhance_remake_prompt(
     mode: str,
     source_clip: Any,
     pictures: Sequence[Any],
-    pins: Sequence[int],
+    pins: Sequence[int | None],
     frames: int,
     width: int,
     height: int,
@@ -44,9 +51,12 @@ def enhance_remake_prompt(
     openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
+    previous_prompt: str = "",
+    carried_picture: int | None = None,
 ) -> tuple[str, str]:
     """The writer's reply and its status; only Gemini reads the source clip itself."""
-    media = [(f"<Picture {index}>, a painted frame", path) for index, path in enumerate(pictures, 1)]
+    media = [(f"<Picture {index}>, the frame carried from the previous window" if index == carried_picture
+              else f"<Picture {index}>, a painted frame", path) for index, path in enumerate(pictures, 1)]
     if backend == "Gemini":
         media.insert(0, ("<Video 1>, the source video", source_clip))
     prompt, status = common.write_prompt(
@@ -60,7 +70,8 @@ def enhance_remake_prompt(
         openai_model=openai_model,
         openai_base_url=openai_base_url,
         media_values=media,
-        context=remake_writer_context(mode, frames, width, height, len(pictures), pins),
+        context=remake_writer_context(mode, frames, width, height, len(pictures), pins, previous_prompt,
+                                      carried_picture),
     )
     if "failed" in status:
         return prompt, status
