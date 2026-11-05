@@ -165,6 +165,12 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             # The task picker switches tabs itself, so a Tab select event wouldn't fire.
             (demo.load, app_views.task.change), image_target=engine_views["qwen"].reference_images,
         )
+        from functools import partial
+
+        from .remake_page import install_remake_page
+
+        demo.h3_routes = (*getattr(demo, "h3_routes", ()),
+                          partial(install_remake_page, handlers=engine_handlers["remake"], interrupt=services.interrupt))
         drama3_components = build_drama3_view(
             app_views.drama3,
             engine_actions.drama3_speaker_names(),
@@ -250,6 +256,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 services.refresh_media_page,
                 services.gallery_media_download_path,
             )
+            engine_handlers["remake"].library = services.storyboard_handlers.library
         destinations = {
             "H3 · Reference images": tuple(
                 component for component in h3_components.values.values()

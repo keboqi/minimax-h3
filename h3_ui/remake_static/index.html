@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remake</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="start" class="start" hidden>
+  <section class="drop" id="drop" aria-label="New remake">
+    <h1>Drop the video you want to change</h1>
+    <p class="muted">Its performance, camera and soundtrack carry over. A frame you repaint decides the new look.</p>
+    <button type="button" class="btn primary big" id="choose-video">Choose video</button>
+    <p class="small muted" id="upload-status" role="status"></p>
+  </section>
+  <section class="panel projects" aria-label="Projects">
+    <h2>Projects</h2>
+    <p class="small muted" id="no-projects">A selection long enough for windows saves itself here, with its own copy of the source.</p>
+    <div id="start-projects"></div>
+  </section>
+</div>
+
+<div id="editor" class="editor" hidden>
+  <section class="bar" aria-label="Remake project">
+    <div class="project-menu">
+      <button type="button" class="btn project-button" id="project-button" aria-expanded="false"></button>
+      <div class="menu" id="menu" hidden></div>
+    </div>
+    <div class="seg" role="group" aria-label="Remake type" id="mode"></div>
+    <label class="inline"><span class="small muted">Short edge</span><select id="short-edge" class="field tight"></select></label>
+    <div class="action">
+      <div class="readiness">
+        <div class="steps" id="steps"></div>
+        <p class="small muted" role="status" id="readiness"></p>
+      </div>
+      <button type="button" class="btn" id="stop" hidden>Interrupt</button>
+      <button type="button" class="btn primary big" id="primary"></button>
+    </div>
+  </section>
+  <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+
+  <div class="workarea">
+    <div class="main">
+      <section class="panel" aria-label="Viewer">
+        <div class="head">
+          <div class="seg" role="group" aria-label="Viewer" id="tabs"></div>
+          <span class="small muted mono" id="viewer-line"></span>
+        </div>
+        <div class="stage" id="stage">
+          <video id="source-video" playsinline preload="auto"></video>
+          <img id="fallback" alt="Source at this frame" hidden>
+          <video id="result-video" playsinline preload="auto" hidden></video>
+          <img id="align-image" alt="Comparison with the source frame" hidden>
+          <div class="stage-empty" id="stage-empty" hidden><strong>Nothing rendered here yet</strong><span id="empty-line"></span></div>
+          <div id="wipe-parts" hidden>
+            <div class="wipe-line" id="wipe-line"></div>
+            <span class="tag left">Source</span><span class="tag right">Result</span>
+            <input class="overlay" id="wipe" type="range" min="0" max="100" value="50" aria-label="Compare divider">
+          </div>
+        </div>
+        <div class="row line" id="align-bar" hidden>
+          <div class="seg" role="group" aria-label="Comparison view" id="align-views"></div>
+          <p class="grow small" id="align-note"></p>
+          <button type="button" class="btn primary" id="align-apply" hidden>Align to source</button>
+        </div>
+        <div class="row line" id="transport">
+          <button type="button" class="btn icon" id="play" aria-label="Play">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 1.5v11l9-5.5z"/></svg>
+          </button>
+          <button type="button" class="btn icon" id="back" aria-label="Back one frame">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 2.5L4.5 7 9 11.5"/></svg>
+          </button>
+          <button type="button" class="btn icon" id="next" aria-label="Forward one frame">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 2.5L9.5 7 5 11.5"/></svg>
+          </button>
+          <span class="mono small" id="timecode"></span>
+          <span class="grow"></span>
+          <span class="small muted" id="extract-hint"></span>
+          <button type="button" class="btn primary" id="extract">Extract frame</button>
+        </div>
+      </section>
+
+      <section class="panel timeline" aria-label="Timeline">
+        <div class="row">
+          <div class="row grow selection">
+            <label class="inline"><span class="small muted">Start</span><input id="start-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="Start (s)"></label>
+            <label class="inline"><span class="small muted">End</span><input id="end-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="End (s)"></label>
+            <div class="overview" aria-hidden="true"><div id="band"></div></div>
+            <span class="small muted mono" id="source-length"></span>
+          </div>
+          <div class="row" id="window-options" hidden>
+            <label class="inline check" title="Gives each window a frame from the render before it and writes its prompt from your edit request."><input type="checkbox" id="smart">Smart continue</label>
+            <label class="inline check" title="Turn off to reuse window 1's prompt, which often works for a single scene. A prompt you typed for a window stays."><input type="checkbox" id="auto-prompts">Prompt per window</label>
+          </div>
+          <label class="inline" title="The longest clip your GPU renders in one go. Lower it if long clips run out of memory."><span class="small muted">Longest window</span><select id="max-window" class="field tight" aria-label="Longest window"></select></label>
+        </div>
+        <p class="small muted" id="summary"></p>
+        <div class="tracks-scroll">
+          <div class="tracks" id="tracks">
+            <div class="strip" id="strip">
+              <div id="cuts"></div>
+              <input class="overlay" id="scrub" type="range" min="0" value="0" aria-label="Playhead, frame in selection">
+            </div>
+            <div class="wins" id="wins"></div>
+            <div class="marks" id="marks"></div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+        </div>
+        <div class="row line" id="final" hidden>
+          <strong class="small">Final video</strong>
+          <span class="grow small muted" id="final-line"></span>
+          <button type="button" class="btn" id="split" hidden>Split into windows</button>
+          <button type="button" class="btn" id="combine">Combine final video</button>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" id="inspector">
+      <div class="block">
+        <div class="row">
+          <h2 id="scope-title"></h2>
+          <span class="small muted mono grow" id="scope-time"></span>
+          <button type="button" class="btn" id="regenerate" hidden>Regenerate this window</button>
+        </div>
+        <p class="notice" id="notice" hidden></p>
+      </div>
+      <section class="block" aria-label="Reference frames">
+        <div class="row between">
+          <h3>Reference frames <span class="small muted" id="pic-count"></span></h3>
+          <label class="inline check" title="Holds each picture at its frame for the first four steps. Remake needs all pictures pinned or none."><input type="checkbox" id="pinned">Pin to frames</label>
+        </div>
+        <div class="pictures" id="pictures"></div>
+      </section>
+      <section class="block last" aria-label="Prompt">
+        <h3>Prompt</h3>
+        <label class="stack"><span class="small muted" id="request-label">Edit request</span>
+          <textarea id="request" class="field" rows="2" aria-label="Edit request" placeholder="Turn the dancer into a chrome robot. Keep the choreography."></textarea></label>
+        <div class="row">
+          <button type="button" class="btn" id="rewrite">Rewrite / enhance</button>
+          <span class="small muted grow" id="writer-line"></span>
+        </div>
+        <details>
+          <summary>Writer service &amp; keys</summary>
+          <div class="stack gap">
+            <label class="stack"><span class="small muted">Service</span><select id="writer-backend" class="field"><option>Gemini</option><option value="OpenAI compatible">OpenAI-compatible</option></select></label>
+            <label class="stack"><span class="small muted">Model</span><select id="writer-model" class="field"></select></label>
+            <label class="stack"><span class="small muted">API key, kept for this session</span><input id="writer-key" class="field" type="password" autocomplete="off"></label>
+            <label class="stack" id="writer-url-row" hidden><span class="small muted">Base URL</span><input id="writer-url" class="field" autocomplete="off"></label>
+          </div>
+        </details>
+        <div class="suggestion" id="suggestion-box" hidden>
+          <strong class="small">Suggested prompt</strong>
+          <pre class="mono" id="suggestion"></pre>
+          <div class="row">
+            <button type="button" class="btn primary" id="accept">Accept suggested prompt</button>
+            <button type="button" class="btn" id="keep">Keep original</button>
+          </div>
+        </div>
+        <label class="stack">
+          <span class="row tightrow"><span class="small muted grow" id="prompt-label">Remake prompt</span><span class="chip" id="origin"></span><span class="chip" id="sections"></span></span>
+          <textarea id="prompt" class="field mono prompt" rows="9" aria-label="Remake prompt" placeholder="subject_definitions:&#10;…&#10;&#10;summary:&#10;…"></textarea>
+        </label>
+        <div><button type="button" class="btn quiet" id="undo" hidden>Undo accepted prompt</button></div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="panel next-run" aria-label="Next run">
+    <div class="row">
+      <strong class="small">Next run</strong>
+      <span class="small" id="next-output"></span>
+      <span class="small muted" id="next-context"></span>
+    </div>
+    <div id="next-notes"></div>
+    <details>
+      <summary>What follows MiniMax H3</summary>
+      <div class="map">
+        <div><div class="small muted strong">Follows MiniMax H3</div>Base model, text encoder, video encoder and decoder, seed, attention, memory, acceleration, latent upscale, finishing on single clips</div>
+        <div><div class="small muted strong">Set by Remake</div>Swap or Edit LoRA, six-step Euler schedule, size, window length, reference conditioning, pins, clean source audio</div>
+        <div><div class="small muted strong">Not used here</div>Turbo LoRAs, steps and scheduler, Semantic Bridge, refinement LoRA choice, Variations</div>
+      </div>
+      <div class="row between">
+        <span class="small muted">Powered by <a href="https://huggingface.co/Viggle/Viggle-Remake" target="_blank" rel="noopener">Viggle Remake</a>, a model derivative of MiniMax H3 under the MiniMax H3 Community License.</span>
+        <button type="button" class="btn" id="open-settings">Open MiniMax H3 settings</button>
+      </div>
+    </details>
+  </section>
+</div>
+
+<div id="loading" class="loading" role="status">Opening Remake…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="library" class="library" aria-label="Media library"></dialog>
+<input id="video-input" type="file" accept="video/*" hidden>
+<input id="picture-input" type="file" accept="image/*" hidden>
+<script src="app.js"></script>
+</body>
+</html>

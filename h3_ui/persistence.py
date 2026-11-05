@@ -27,6 +27,7 @@ RESET_BROWSER_SETTINGS_JS = """
 }
 """
 EXTRA_FIELDS = {
+    "remake": (),  # The page keeps its own choices in the browser.
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
               "prompt_backend", "prompt_model", "openai_model", "upsampler", "cfg"),
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
@@ -36,7 +37,6 @@ EXTRA_FIELDS = {
     "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
                "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing", "writer_workflow", "max_batch_lines", "strict_source"),
-    "remake": ("mode", "short_edge", "max_window", "smart", "auto_prompts", "pin_frames", "prompt_backend", "prompt_model", "openai_model"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "prompt_enhancer",

@@ -54,7 +54,8 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/snapshot_preload.py | Modal's `h3-video` and `h3-soundstage` endpoints: loads the default H3 Video or Soundstage models before the workspace opens, then waits for the snapshot restore to start the UI |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
-| h3_ui/engines/remake.py | The Remake task: its view, handlers and the capture of the MiniMax H3 settings it follows |
+| h3_ui/engines/remake.py | The Remake task: what its page calls, and the hidden Gradio bridge for the API, the MiniMax H3 settings it follows, and Media and Image hand-offs |
+| h3_ui/remake_page.py, h3_ui/remake_static/ | The Remake page in its frame and its JSON API, outside Gradio like Storyboard's |
 | h3_ui/storyboard/ | The Storyboard page (`page/`, plain HTML, CSS and JS) and its JSON API (`page.py`, `payload.py`), outside Gradio; the tab that frames it, the scripted API and the H3 settings capture (`tab.py`); actions in `handlers.py`, whose take runner calls H3 generation with a `StoryboardGraph` that adds the continuation and latent-saving nodes |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |

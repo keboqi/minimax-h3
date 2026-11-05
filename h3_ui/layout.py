@@ -43,7 +43,7 @@ class AppViews:
     # Every top-level tab, in order; Jobs polls only while it is the open one.
     main_tabs: tuple = ()
     storyboard: gr.Column | None = None
-    remake: gr.Group | None = None
+    remake: gr.Column | None = None
 
 
 @dataclass(frozen=True)
@@ -138,7 +138,7 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                 with gr.Tab("Fibo 2.0", id="fibo2"):
                     fibo2 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Remake", id="remake"):
-                    remake = gr.Group(elem_classes=["h3-engine-view"])
+                    remake = gr.Column(elem_classes=["h3-engine-view"])
                 with gr.Tab("Storyboard", id="storyboard"):
                     storyboard = gr.Column(elem_classes=["h3-engine-view", "h3-storyboard-shell"])
                 with gr.Tab("Soundstage", id="drama3"):

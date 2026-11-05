@@ -73,8 +73,9 @@ class Run:
 
 
 class Runs:
-    def __init__(self):
+    def __init__(self, busy="This storyboard is already doing that."):
         self.lock = Lock()
+        self.busy = busy
         self.items: dict[str, Run] = {}
 
     def start(self, run: Run, work: Callable[[Run], None]) -> Run:
@@ -84,7 +85,7 @@ class Runs:
                         if item.finished_at is not None and item.finished_at < cutoff]:
                 del self.items[key]
             if self.active(run.owner, run.storyboard_id, run.kind):
-                raise H3Error("This storyboard is already doing that.")
+                raise H3Error(self.busy)
             self.items[run.id] = run
 
         def execute():

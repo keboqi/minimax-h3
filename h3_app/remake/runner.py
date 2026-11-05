@@ -250,6 +250,9 @@ class WindowRunner:
         write_snapshot(output, {"family": "Remake", "remake": {
             "windows": len(windows), "frames": project["frames"], "mix": project["mix"],
         }})
+        self.projects.edit(project, lambda current: current.update(combined={
+            "output": str(output), "takes": [window["take"] for window in windows],
+        }))
         return str(output)
 
     @staticmethod

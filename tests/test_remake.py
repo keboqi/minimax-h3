@@ -13,7 +13,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import gradio as gr
 import numpy as np
 import torch
 from PIL import Image, ImageChops
@@ -35,7 +34,7 @@ from h3_app.staging import file_content_sha256
 from h3_app.workflows import h3
 from h3_models import MODEL_SPECS
 from h3_ui.engines.feature import EngineDeps
-from h3_ui.engines.remake import READY, WINDOW_OUTPUTS, RemakeHandlers, next_run_card, readiness_message, selection_text
+from h3_ui.engines.remake import READY, RemakeHandlers, next_run_details, readiness_message, selection_text
 from h3_ui.h3.handlers import default_request
 from tests.workflow_cases import H3_DEFAULTS
 
@@ -326,8 +325,9 @@ class HandlerTests(unittest.TestCase):
             self.takes.append((values, remake))
             yield GenerationUpdate("result.mp4", "done")
 
+        runtime = SimpleNamespace(output_dir=self.root / "output", prompt_systems={"Viggle Remake": Path("x")})
         self.handlers = RemakeHandlers(EngineDeps(
-            runtime_config=lambda: None, generation_services=lambda: None, stage_file=stage, interrupt=lambda: None,
+            runtime_config=lambda: runtime, generation_services=lambda: None, stage_file=stage, interrupt=lambda: None,
             h3_take=take, h3_defaults=lambda: {**default_request(""), "model_profile": "Default"},
         ))
 
@@ -373,16 +373,13 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "frame number"):
             self.generate(picture_2=str(self.picture), pin_2=None)
 
-    def test_extract_fills_the_first_empty_slot_and_records_the_raw_frame(self):
-        result = self.handlers.extract(str(self.video), 0, 24, {}, str(self.picture), None, None, None)
-        pictures, pins, originals = result[:4], result[4:8], result[8]
-        self.assertTrue(pictures[1]["value"].endswith(".png"))
-        self.assertEqual(pins[1]["value"], 24)
-        self.assertNotIn("value", pictures[0])
-        self.assertEqual(list(originals), ["2"])
+    def test_extract_records_the_raw_frame(self):
+        result = self.handlers.extract("local", str(self.video), 0, 24)
+        self.assertTrue(result["path"].endswith(".png"))
+        self.assertEqual(result["pin"], 24)
         # A slot still holding that exact frame needs an edit before generating.
-        message = readiness_message(str(self.video), 0, 4.6, SIX_SECTIONS, True, originals,
-                                    [str(self.picture), pictures[1]["value"], None, None], [12, 24, None, None])
+        message = readiness_message(str(self.video), 0, 4.6, SIX_SECTIONS, True, {"2": result["original"]},
+                                    [str(self.picture), result["path"], None, None], [12, 24, None, None])
         self.assertEqual(message, "Edit Picture 2, or remove it.")
 
     def test_readiness_walks_through_the_steps(self):
@@ -406,39 +403,29 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("recommends", selection_text(0, 14))
         self.assertIn("at least", selection_text(0, 1))
 
-    def test_next_run_card_warns_on_undocumented_settings(self):
-        card = next_run_card({"model_profile": "Singularity", "latent_upscale": True}, EDIT, str(self.video), 0, 4.6,
-                             480, [str(self.picture)], True)
-        self.assertIn("Remake · Edit", card)
-        self.assertIn("1664 × 960", card)
-        self.assertIn("Untested pairing: Singularity", card)
-        documented = next_run_card({"model_profile": "Original"}, SWAP, str(self.video), 0, 4.6, 480, [], False)
-        self.assertNotIn("Untested", documented)
-
-    def test_moving_start_keeps_pins_on_their_source_frames(self):
-        self.assertEqual(self.handlers.start_moved(3, 2, 48, None, 10, 24), (3, 3.0, 24, None, None, 0))
-        self.assertEqual(self.handlers.start_moved(1, 2, 48, None, None, None), (1, 1.0, 72, None, None, None))
-        self.assertEqual(self.handlers.start_moved(None, 0, 48, None, None, None), (None, 0.0, 48, None, None, None))
+    def test_next_run_warns_on_undocumented_settings(self):
+        details = next_run_details({"model_profile": "Singularity", "latent_upscale": True}, EDIT, str(self.video), 0,
+                                   4.6, 480, 1, True)
+        self.assertEqual(details["context"][0], "Remake Edit LoRA")
+        self.assertIn("1664 × 960", details["output"])
+        self.assertIn("Untested pairing: Singularity", details["notes"][0])
+        documented = next_run_details({"model_profile": "Original"}, SWAP, str(self.video), 0, 4.6, 480, 0, False)
+        self.assertEqual(documented["notes"], [])
 
     def test_a_cleared_start_counts_as_zero(self):
         self.assertEqual(list(self.handlers.generate_remake(
             SWAP, str(self.video), None, 4.6, 480, SIX_SECTIONS, True, str(self.picture),
             None, None, None, 12, None, None, None,
         ))[-1], ("result.mp4", "done"))
-        self.assertTrue(self.handlers.preview_frame(str(self.video), None, 0).endswith(".png"))
+        self.assertTrue(self.handlers.extract("local", str(self.video), None, 0)["path"].endswith(".png"))
 
-    def test_alignment_measures_the_slot_chosen_when_applied(self):
+    def test_alignment_measures_the_picture_when_applied(self):
         extract_frame(self.video, 0.5, self.root / "frame.png")
         with Image.open(self.root / "frame.png") as frame:
             shifted = Image.fromarray(np.roll(np.asarray(frame.convert("RGB")), (6, -14), axis=(0, 1)))
         shifted.save(self.root / "shifted.png")
-        *updates, status = self.handlers.apply_alignment(
-            str(self.video), 0, "Picture 2", str(self.picture), str(self.root / "shifted.png"), None, None,
-            0, 12, None, None,
-        )
-        self.assertIn("Aligned", status)
-        self.assertNotIn("value", updates[0])
-        with Image.open(updates[1]["value"]) as aligned:
+        path = self.handlers.apply_alignment("local", str(self.video), 0, str(self.root / "shifted.png"), 12)
+        with Image.open(path) as aligned:
             remaining = measure_drift(load_image(self.root / "frame.png"), aligned)
         self.assertFalse(remaining.visible)
 
@@ -450,9 +437,9 @@ class HandlerTests(unittest.TestCase):
         with patch("h3_app.prompt_writers.common.write_prompt",
                    return_value=("robot", "Prompt enhancement failed: no key")):
             self.assertEqual(self.handlers.rewrite_prompt(
-                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
-                None, None, None,
-                12, None, None, None, "gemini-model", "", "Gemini", "", "model", None,
+                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True,
+                [str(self.picture), None, None, None], [12, None, None, None],
+                {"model": "gemini-model", "backend": "Gemini", "openai_model": "model"},
             ), ("", "Prompt enhancement failed: no key"))
 
     def test_rewrite_gives_gemini_the_clip_and_keeps_tags_in_order(self):
@@ -469,9 +456,9 @@ class HandlerTests(unittest.TestCase):
         )
         with patch("h3_app.prompt_writers.common.write_prompt", write):
             prompt, status = self.handlers.rewrite_prompt(
-                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True, str(self.picture),
-                None, None, None,
-                12, None, None, None, "gemini-model", "", "Gemini", "", "model", None,
+                "local", Selection(None, 0, 4.6, 480, 0, 226), 0, "robot", SWAP, str(self.video), True,
+                [str(self.picture), None, None, None], [12, None, None, None],
+                {"model": "gemini-model", "backend": "Gemini", "openai_model": "model"},
             )
         self.assertEqual((prompt, status), (SIX_SECTIONS, "Enhanced."))
         self.assertTrue(calls["clip_existed"])
@@ -845,36 +832,30 @@ class WindowRunTests(unittest.TestCase):
         states = [window["state"] for window in self.project()["windows"]]
         self.assertEqual(states[:2], ["done", "failed"])
 
-    def test_opening_a_window_saves_the_one_you_left(self):
+    def test_leaving_a_window_saves_it(self):
         self.run_windows(picture=str(self.picture))
-        project = self.project()
-        with patch.object(self.handlers, "_preview", return_value="frame.png"):
-            result = self.handlers.window_selected(
-                "local", self.selection(), 1, 0, "new prompt", True, str(self.picture), None, None, None,
-                12, None, None, None,
-            )
-        self.assertEqual(result[0], 1)
+        self.handlers.save_window("local", self.selection(), 0, "new prompt", True,
+                                  [str(self.picture), None, None, None], [12, None, None, None])
         window = self.project()["windows"][0]
         self.assertEqual((window["prompt"], window["state"]), ("new prompt", "changed"))
-        self.assertEqual(project["windows"][1]["render"][0] / 24, result[13])
 
-    def test_resuming_a_selection_fills_the_editor_instead_of_erasing_the_window(self):
+    def test_resuming_a_selection_returns_its_windows(self):
         self.run_windows(picture=str(self.picture))
         count = len(self.takes)
-        with patch.object(self.handlers, "_preview", return_value="frame.png"):
-            result = self.handlers.selection_changed("local", self.selection(), 0)
-        opened = result[4:]
+        state = self.handlers.selection_state("local", self.selection())
         saved = self.project()["windows"][0]
-        self.assertEqual(opened[1], saved["pictures"][0])
-        self.assertEqual(opened[5], 12)
-        self.assertEqual(opened[9], saved["prompt"])
-        self.run_windows(prompt=opened[9], picture=opened[1], pin=opened[5])
+        opened = state["project"]["windows"][0]
+        self.assertTrue(state["long"])
+        self.assertEqual(opened["pictures"], saved["pictures"])
+        self.assertEqual(opened["pins"], [12])
+        self.assertEqual(opened["prompt"], saved["prompt"])
+        self.run_windows(prompt=opened["prompt"], picture=opened["pictures"][0], pin=opened["pins"][0])
         self.assertEqual(len(self.takes), count)
 
-    def test_a_changed_selection_only_clears_a_later_windows_editor(self):
-        selection = Selection("unsaved", 0, 20, 480, 0, 226)
-        self.assertEqual(self.handlers.selection_changed("local", selection, 0, 0)[5], {"__type__": "update"})
-        self.assertIsNone(self.handlers.selection_changed("local", selection, 0, 2)[5])
+    def test_an_unsaved_selection_has_no_windows(self):
+        state = self.handlers.selection_state("local", Selection("unsaved", 0, 20, 480, 0, 226))
+        self.assertTrue(state["long"])
+        self.assertIsNone(state["project"])
 
     def test_smart_continues_from_window_ones_prompt_without_an_edit_request(self):
         updates = list(self.handlers.generate_remake(
@@ -892,30 +873,20 @@ class WindowRunTests(unittest.TestCase):
                 None, 226, "", True, 0, 0, True,
             ))
 
-    def test_opening_the_list_without_choosing_changes_nothing(self):
-        updates = self.handlers.window_selected("local", self.selection(), None, 0, "", True)
-        self.assertEqual(len(updates), WINDOW_OUTPUTS)
-        self.assertTrue(all(update == gr.update() for update in updates))
-
-    def test_the_list_fills_in_while_a_run_plans_windows(self):
-        self.assertEqual(self.handlers.window_list("local", self.selection())[1]["choices"], [])
-        self.run_windows(picture=str(self.picture))
-        self.assertEqual(len(self.handlers.window_list("local", self.selection())[1]["choices"]),
-                         len(self.project()["windows"]))
-
     def test_projects_list_newest_first_and_load_without_an_upload(self):
         self.run_windows(picture=str(self.picture))
-        choices = self.handlers.project_choices("local")["choices"]
-        self.assertEqual(len(choices), 1)
-        self.assertIn("source · 20.0 s", choices[0][0])
-        with patch.object(self.handlers, "_preview", return_value="frame.png"):
-            loaded = self.handlers.load_project("local", choices[0][1])
+        rows = self.handlers.project_rows("local")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "source")
+        self.assertTrue(rows[0]["meta"].startswith("20.0 s"))
+        loaded = self.handlers.load_project("local", rows[0]["key"])
         project = self.project()
-        self.assertEqual(loaded[0], project["source"])
-        self.assertEqual(loaded[2:9], (file_content_sha256(self.video), 0, 0, 20, 480, 0, 226))
-        self.assertEqual(loaded[9:14], (SWAP, "make a robot", True, True, True))
-        self.assertEqual(loaded[20], 0)
-        self.assertEqual(loaded[21], project["windows"][0]["pictures"][0])
+        self.assertEqual(loaded["source"], project["source"])
+        self.assertEqual(loaded["source_info"]["sha"], file_content_sha256(self.video))
+        self.assertEqual(loaded["selection"]["max_window"], 226)
+        self.assertEqual((loaded["mode"], loaded["request"], loaded["smart"], loaded["pinned"], loaded["auto_prompts"]),
+                         (SWAP, "make a robot", True, True, True))
+        self.assertEqual(loaded["windows"][0]["pictures"], project["windows"][0]["pictures"])
 
     def test_a_project_from_before_selections_were_saved_still_loads(self):
         self.run_windows(picture=str(self.picture))
@@ -925,9 +896,8 @@ class WindowRunTests(unittest.TestCase):
             del current["selection"], current["name"]
 
         self.handlers.runner.projects.edit(project, forget)
-        with patch.object(self.handlers, "_preview", return_value="frame.png"):
-            loaded = self.handlers.load_project("local", project["key"])
-        chosen = Selection(*loaded[2:4], loaded[5], *loaded[6:9])
+        loaded = self.handlers.load_project("local", project["key"])
+        chosen = Selection(**loaded["selection"])
         resumed = self.handlers.runner.saved("local", chosen)
         self.assertEqual(resumed["key"], project["key"])
         self.assertEqual(self.handlers.runner.plan("local", str(self.video), chosen)["key"], project["key"])
@@ -935,22 +905,19 @@ class WindowRunTests(unittest.TestCase):
     def test_renaming_and_deleting_a_project(self):
         self.run_windows(picture=str(self.picture))
         key = self.project()["key"]
-        update, status = self.handlers.rename_project("local", key, "Robot dance")
-        self.assertIn("Robot dance", update["choices"][0][0])
-        with self.assertRaises(gr.Error):
-            self.handlers.delete_project("local", key, False)
-        with patch("h3_ui.engines.remake.family_busy", return_value=True), self.assertRaises(gr.Error):
-            self.handlers.delete_project("local", key, True)
+        self.handlers.rename_project("local", key, "Robot dance")
+        self.assertEqual(self.handlers.project_rows("local")[0]["name"], "Robot dance")
+        with patch("h3_ui.engines.remake.family_busy", return_value=True), self.assertRaises(H3Error):
+            self.handlers.delete_project("local", key)
         with patch("h3_ui.engines.remake.family_busy", return_value=False):
-            update, confirmed, status = self.handlers.delete_project("local", key, True)
-        self.assertEqual(update["choices"], [])
-        self.assertIs(confirmed, False)
+            self.handlers.delete_project("local", key)
+        self.assertEqual(self.handlers.project_rows("local"), [])
         self.assertIsNone(self.project())
 
     def test_another_owner_cannot_see_a_project(self):
         self.run_windows(picture=str(self.picture))
-        self.assertEqual(self.handlers.project_choices("someone-else")["choices"], [])
-        with self.assertRaises(gr.Error):
+        self.assertEqual(self.handlers.project_rows("someone-else"), [])
+        with self.assertRaises(H3Error):
             self.handlers.load_project("someone-else", self.project()["key"])
 
     def test_generating_with_an_empty_editor_keeps_an_auto_prompt(self):
@@ -977,8 +944,7 @@ class WindowRunTests(unittest.TestCase):
 
     def test_marking_a_window_uses_changed_not_failed(self):
         self.run_windows(picture=str(self.picture))
-        self.handlers.mark_window("local", self.selection(), 1, "", True, None, None, None, None,
-                                  None, None, None, None)
+        self.handlers.mark_window("local", self.selection(), 1, "", True, [None] * 4, [None] * 4)
         self.assertEqual(self.project()["windows"][1]["state"], "changed")
 
     def test_rewrite_uses_the_open_windows_span(self):
@@ -988,8 +954,9 @@ class WindowRunTests(unittest.TestCase):
         with patch("h3_ui.engines.remake.enhance_remake_prompt", return_value=("text", "Enhanced.")) as write, \
                 patch("h3_ui.engines.remake.trim_source") as trim:
             self.handlers.rewrite_prompt(
-                "local", self.selection(), 1, "robot", SWAP, str(self.video), True, str(self.picture), None, None, None,
-                12, None, None, None, "gemini-model", "", "Gemini", "", "model", None,
+                "local", self.selection(), 1, "robot", SWAP, str(self.video), True,
+                [str(self.picture), None, None, None], [12, None, None, None],
+                {"model": "gemini-model", "backend": "Gemini", "openai_model": "model"},
             )
         self.assertEqual(trim.call_args.kwargs["start"], first / 24)
         self.assertEqual(trim.call_args.kwargs["frames"], last - first)

@@ -729,8 +729,8 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Remake, Drama 3, Dub & Translate
-        self.assertEqual(len(models), 10)
+        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
+        self.assertEqual(len(models), 9)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -741,7 +741,7 @@ class UiContractTests(unittest.TestCase):
             if component.get("props", {}).get("label") in ("Prompt writer", "Writer service")
             and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
-        self.assertEqual(len(writers), 9)
+        self.assertEqual(len(writers), 8)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
@@ -768,7 +768,7 @@ class UiContractTests(unittest.TestCase):
                 for c in self.config["components"]
                 if c.get("props", {}).get("label") == label
             ]
-            self.assertEqual(len(keys), 9, label)
+            self.assertEqual(len(keys), 8, label)
             for key in keys:
                 self.assertEqual(
                     hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label

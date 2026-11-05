@@ -76,4 +76,5 @@ def build_storyboard_tab(root, demo: gr.Blocks, handlers: StoryboardHandlers, *,
     if h3_values:
         _bind_settings_capture(handlers, h3_values, list(triggers))
     # Read by build_server, which owns the application these routes join.
-    demo.h3_routes = (partial(install_storyboard_page, handlers=handlers, gpu=gpu, interrupt=interrupt),)
+    demo.h3_routes = (*getattr(demo, "h3_routes", ()),
+                      partial(install_storyboard_page, handlers=handlers, gpu=gpu, interrupt=interrupt))

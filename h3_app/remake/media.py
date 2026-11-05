@@ -32,6 +32,21 @@ def extract_frame(video: str | Path, seconds: float, output: Path) -> Path:
     return output
 
 
+def filmstrip(video: str | Path, start: float, seconds: float, output: Path, count: int = 24) -> Path:
+    """One image of ``count`` evenly spaced frames, side by side, for the page's timeline."""
+    partial = output.with_suffix(".partial.jpg")
+    rate = count / max(float(seconds), 0.04)
+    run_media_process(
+        ["ffmpeg", "-y", "-v", "error", "-ss", f"{float(start):.3f}", "-t", f"{float(seconds):.3f}", "-i", str(video),
+         "-vf", f"fps={rate:.6f},scale=-2:72,tile={count}x1", "-frames:v", "1", "-q:v", "5", str(partial)],
+        timeout=120, partial_outputs=(partial,),
+    )
+    if not partial.is_file():
+        raise H3Error("Couldn't read frames from the source.")
+    partial.replace(output)
+    return output
+
+
 def detect_cuts(video: str | Path, start: float, seconds: float) -> list[int]:
     """Frames of the selection that start a new shot, with the scene score Viggle uses."""
     with tempfile.TemporaryDirectory(prefix="h3-remake-cuts-") as folder:
