@@ -13,6 +13,9 @@ from h3_app.processes import run_media_process
 
 from .model import FPS
 
+# A quarter second: more than a source's streams differ by, too little to hide a wrong selection.
+MAX_HELD_LAST_FRAMES = 6
+
 
 def frame_seconds(start: float, frame: int) -> float:
     return float(start or 0) + int(frame) / FPS
@@ -129,13 +132,15 @@ def trim_source(video: str | Path, output: Path, *, start: float, frames: int, w
     """Write exactly ``frames`` at 24 fps, cover-cropped to the canvas, keeping any soundtrack.
 
     This is the resize Viggle's sampler does with ffmpeg, and it keeps ComfyUI from
-    decoding full-size frames only to shrink them.
+    decoding full-size frames only to shrink them. A selection is measured by the container's
+    duration, which can outlast the video slightly, so a few missing frames repeat the last one.
     """
     partial = output.with_suffix(".partial.mp4")
     run_media_process(
         ["ffmpeg", "-y", "-v", "error", "-ss", f"{float(start):.3f}", "-i", str(video),
          "-t", f"{(frames + 2) / FPS:.3f}", "-map", "0:v:0", "-map", "0:a:0?",
-         "-vf", f"fps={FPS},scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
+         "-vf", f"fps={FPS},tpad=stop_mode=clone:stop={MAX_HELD_LAST_FRAMES},"
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
          "-frames:v", str(frames), "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-b:a", "320k", str(partial)],
         timeout=600, partial_outputs=(partial,),
@@ -143,6 +148,7 @@ def trim_source(video: str | Path, output: Path, *, start: float, frames: int, w
     written = probe_video_metadata(partial).frame_count
     if written < frames:
         partial.unlink(missing_ok=True)
-        raise H3Error(f"The source only has {written} frames after the start time; {frames} are needed.")
+        available = max(0, written - MAX_HELD_LAST_FRAMES)
+        raise H3Error(f"The source only has {available} frames after the start time; {frames} are needed.")
     partial.replace(output)
     return output

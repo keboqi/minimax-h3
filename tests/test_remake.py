@@ -285,8 +285,12 @@ class MediaTests(unittest.TestCase):
         self.assertAlmostEqual(metadata.fps, 24, places=2)
 
     def test_trim_past_the_end_says_how_many_frames_exist(self):
-        with self.assertRaisesRegex(H3Error, "only has"):
+        with self.assertRaisesRegex(H3Error, "only has 48 frames"):
             trim_source(self.video, self.root / "short.mp4", start=4, frames=107, width=832, height=480)
+
+    def test_trim_holds_the_last_frame_when_a_few_are_missing(self):
+        output = trim_source(self.video, self.root / "held.mp4", start=4, frames=50, width=832, height=480)
+        self.assertEqual(probe_video_metadata(output).frame_count, 50)
 
     def test_extract_writes_the_requested_frame(self):
         output = extract_frame(self.video, 1.0, self.root / "frame.png")
