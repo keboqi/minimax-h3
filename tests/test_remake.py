@@ -1031,6 +1031,14 @@ class NodeFileTests(unittest.TestCase):
         self.assertIn('"short_edge": ("INT", {"default": 480, "min": 480, "max": 736, "step": 32,', source)
         self.assertIn('None if p == "-" else int(p)', source)
 
+    def test_modal_mounts_every_node_file(self):
+        # The package imports all of them, so one left out loses every node.
+        root = Path(__file__).resolve().parents[1]
+        modal = (root / "modal_h3.py").read_text("utf-8")
+        mounted = modal[modal.index('"H3Remake" / filename)'):].split("\n", 2)[1]
+        for path in (root / "custom_nodes" / "H3Remake").glob("*.py"):
+            self.assertIn(f'"{path.name}"', mounted)
+
 
 if __name__ == "__main__":
     unittest.main()
