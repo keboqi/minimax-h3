@@ -19,7 +19,6 @@ from .h3.layout import (
     latent_upscale_layout_updates,
     fbcache_preset_defaults,
     input_image_frame_preset_updates,
-    select_all_image_frames,
 )
 from .h3.handlers import H3Handlers, H3Services, api_guide, mode_help, reference_prompt_help
 from h3_app.policy import input_image_upscale_dimensions
@@ -1113,8 +1112,6 @@ def build_ui() -> gr.Blocks:
             resolve_request_settings=H3.resolve_request_settings,
             result_format_layout_updates=result_format_layout_updates,
             result_settings_for_media=H3.result_settings_for_media,
-            save_selected_image_frames=MEDIA.save_selected_image_frames,
-            select_all_image_frames=select_all_image_frames,
             select_gallery_media=MEDIA.select_gallery_media,
             unload_all_models=unload_all_models,
             upscale_selected_input_images=MEDIA.upscale_selected_input_images,

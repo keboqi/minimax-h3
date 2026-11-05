@@ -77,16 +77,9 @@ class H3View:
     generation_upscale_resolution: gr.components.Component
     height: gr.components.Component
     help_text: gr.components.Component
-    image_clear_selection: gr.components.Component
-    image_frame_paths: gr.components.Component
     image_frames: gr.components.Component
     image_output: gr.components.Component
     image_output_group: gr.components.Component
-    image_save_selected: gr.components.Component
-    image_save_status: gr.components.Component
-    image_saved_files: gr.components.Component
-    image_select_all: gr.components.Component
-    image_selection: gr.components.Component
     image_vae: gr.components.Component
     input_upscale_downloads: gr.components.Component
     input_upscale_force_offload: gr.components.Component
@@ -223,16 +216,9 @@ H3_COMPONENT_ORDER = (
     "generation_upscale_resolution",
     "height",
     "help_text",
-    "image_clear_selection",
-    "image_frame_paths",
     "image_frames",
     "image_output",
     "image_output_group",
-    "image_save_selected",
-    "image_save_status",
-    "image_saved_files",
-    "image_select_all",
-    "image_selection",
     "image_vae",
     "input_upscale_downloads",
     "input_upscale_force_offload",

@@ -122,8 +122,6 @@ class BootstrapServices:
     resolve_request_settings: Callable
     result_format_layout_updates: Callable
     result_settings_for_media: Callable
-    save_selected_image_frames: Callable
-    select_all_image_frames: Callable
     select_gallery_media: Callable
     unload_all_models: Callable
     upscale_selected_input_images: Callable

@@ -684,7 +684,7 @@ class UiContractTests(unittest.TestCase):
             ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
         )
 
-    def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
+    def test_generated_media_outputs_are_display_only(self) -> None:
         labels = {
             "Generated image",
             "Generated images",
@@ -697,9 +697,14 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") in labels
         ]
-        self.assertEqual(len(outputs), 8)  # Includes Qwen, FLUX 3, MOSS-Image and Fibo images.
+        self.assertEqual(len(outputs), 9)  # Includes the single H3 image preview.
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
+
+        props = [component.get("props", {}) for component in self.config["components"]]
+        self.assertFalse(any(p.get("label") in {"Generated image frames", "Frames to save", "Saved image files"} for p in props))
+        self.assertFalse(any(p.get("value") == "Save selected frames" for p in props))
+        self.assertNotIn("/save_h3_image_frames", self.demo.get_api_info()["named_endpoints"])
 
     def test_fibo_endpoint_and_default_on_moss_acceleration_are_bound(self):
         fibo = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_fibo2")
@@ -1773,7 +1778,6 @@ class UiContractTests(unittest.TestCase):
             "select_gallery_media",
             "import_gallery_media",
             "confirm",
-            "save_selected_image_frames",
         }
         found = set()
         for event in self.demo.fns.values():

@@ -181,7 +181,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             fake.larry_turbo_lora,
         )
 
-    def test_save_selected_image_frames(self):
+    def test_resolve_saved_image_outputs(self):
         original_image_output_dir = vars(app)["OUTPUT_DIR"]
         with app.tempfile.TemporaryDirectory() as image_temp:
             image_root = app.Path(image_temp)
@@ -206,16 +206,6 @@ class ApplicationAdaptersTests(unittest.TestCase):
                     {"outputs": {"save": {"images": image_refs}}}, app.time.time(), 3
                 )
                 self.assertEqual(resolved_frames, staged_paths)
-                saved_frames, _ = app.MEDIA.save_selected_image_frames(
-                    resolved_frames, ["Frame 1", "Frame 3"]
-                )
-                self.assertEqual(
-                    [app.Path(path).name for path in saved_frames],
-                    ["frame_001.png", "frame_003.png"],
-                )
-                self.assertTrue(
-                    all((app.Path(path).is_file() for path in saved_frames))
-                )
             finally:
                 vars(app)["OUTPUT_DIR"] = original_image_output_dir
 
@@ -224,20 +214,20 @@ class ApplicationAdaptersTests(unittest.TestCase):
 
         def fake_image_generate(**_args: app.Any):
             yield None, "working"
-            yield ["frame-a.png", "frame-b.png"], "complete"
+            yield ["image.png"], "complete"
 
         vars(app)["generate"] = fake_image_generate
         try:
             image_args = [None] * len(_contracts.GENERATION_FIELDS)
             image_args[_contracts.GENERATION_FIELDS.index("result_format")] = "Image"
-            image_args[_contracts.GENERATION_FIELDS.index("image_frames")] = 2
+            image_args[_contracts.GENERATION_FIELDS.index("image_frames")] = 1
             image_args[_contracts.GENERATION_FIELDS.index("seed")] = -1
             ui_updates = list(app.H3.generate_for_ui(1, *image_args))
         finally:
             vars(app)["generate"] = original_ui_generate
         self.assertEqual(len(ui_updates), 2)
-        self.assertTrue(all((len(update) == 12 for update in ui_updates)))
-        self.assertEqual(ui_updates[-1][7], ["frame-a.png", "frame-b.png"])
+        self.assertTrue(all((len(update) == 8 for update in ui_updates)))
+        self.assertEqual(ui_updates[-1][5]["value"], "image.png")
         self.assertEqual(h3_ui.h3.handlers.video_batch_seeds(7, 1), [7])
         captured_batch_args: list[tuple[app.Any, ...]] = []
         original_generate_signature = _inspect.signature(original_ui_generate)
@@ -274,7 +264,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             all((args[reuse_index] is False for args in captured_batch_args))
         )
         self.assertEqual(len(batch_updates), 6)
-        self.assertTrue(all((len(update) == 12 for update in batch_updates)))
+        self.assertTrue(all((len(update) == 8 for update in batch_updates)))
 
     def test_official_ltx_workflow_inventory(self):
         self.assertEqual(_policy.ltx25_frame_length(5, 24), 121)

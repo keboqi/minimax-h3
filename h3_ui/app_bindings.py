@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from .contracts import AppComponents
 from .events.gallery import bind_gallery
 from .events.generation import bind_generation
-from .events.image_results import bind_image_results
 from .events.input_upscale import bind_input_upscale
 from .events.layout import bind_layout
 from .events.other_generation import bind_other_generation
@@ -41,7 +40,6 @@ def bind_app(
     bind_resolution(components, services, controller)
     input_upscale_event = bind_input_upscale(components, services)
     event, advanced_api_event = bind_generation(components, services)
-    bind_image_results(components, services)
     bind_prompt(components, services)
     api_event = bind_other_generation(components, services)
     for button, status, family, events in (

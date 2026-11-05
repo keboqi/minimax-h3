@@ -23,7 +23,7 @@ def fake_generation(batch_count, *args):
     job.variant_seeds[0] = 314159 if int(values["seed"]) < 0 else int(values["seed"])
     job.state = "running"
     job.stage = "Mock generation: " + values["prompt"]
-    yield (*(gr.skip() for _ in range(11)), job.stage)
+    yield (*(gr.skip() for _ in range(7)), job.stage)
     if values["prompt"] == "Request A":
         while not RELEASE_A.wait(0.05):
             job.check()
@@ -32,7 +32,7 @@ def fake_generation(batch_count, *args):
         time.sleep(0.1)
     if "fail" in values["prompt"]:
         record_failure(RuntimeError("Fixture variant failed"))
-    yield (*(gr.skip() for _ in range(11)), "Mock generation finished")
+    yield (*(gr.skip() for _ in range(7)), "Mock generation finished")
 
 
 app.backend_status = lambda: "Connected browser test fixture"

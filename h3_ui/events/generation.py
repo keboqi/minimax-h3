@@ -29,11 +29,7 @@ def bind_generation(
         components.output_4,
         components.image_output_group,
         components.image_output,
-        components.image_selection,
-        components.image_frame_paths,
-        components.image_saved_files,
         components.audio_output,
-        components.image_save_status,
         components.status,
     ]
     event = bind_gpu_action(

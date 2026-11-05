@@ -8,7 +8,6 @@ import time
 from typing import Any, Callable
 import uuid
 
-import re
 from h3_app.policy import normalize_paths
 from typing import Iterable
 from h3_app.catalog import INPUT_IMAGE_UPSCALE_SLOTS, MAX_REFERENCE_IMAGES
@@ -1162,44 +1161,3 @@ class MediaController:
             + "  \n".join(dimension_notes)
         )
         return (*component_updates, downloads, summary)
-
-    def save_selected_image_frames(
-        self,
-        frame_paths: Iterable[Any], selected_labels: Iterable[str]
-    ) -> tuple[list[str], str]:
-        paths = [Path(path).resolve() for path in normalize_paths(frame_paths)]
-        labels = list(selected_labels or [])
-        if not paths:
-            raise gr.Error("Generate image frames before saving a selection.")
-        if not labels:
-            raise gr.Error("Select at least one image frame to save.")
-        selected_indices: list[int] = []
-        for label in labels:
-            match = re.fullmatch("Frame\\s+(\\d+)", str(label).strip())
-            if not match:
-                raise gr.Error(f"Invalid frame selection: {label}")
-            index = int(match.group(1)) - 1
-            if index < 0 or index >= len(paths):
-                raise gr.Error(f"Frame selection is out of range: {label}")
-            if index not in selected_indices:
-                selected_indices.append(index)
-        staging_root = (self.services._runtime_config().output_dir / "h3" / "image_staging").resolve()
-        for index in selected_indices:
-            source = paths[index]
-            if not source.is_relative_to(staging_root) or not source.is_file():
-                raise gr.Error(
-                    "A selected frame is outside the H3 image staging directory."
-                )
-        destination = (
-            self.services._runtime_config().output_dir
-            / "h3"
-            / "images"
-            / f"selection_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-        )
-        destination.mkdir(parents=True, exist_ok=False)
-        saved: list[str] = []
-        for index in selected_indices:
-            target = destination / f"frame_{index + 1:03d}.png"
-            copy_media(paths[index], target)
-            saved.append(str(target))
-        return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")

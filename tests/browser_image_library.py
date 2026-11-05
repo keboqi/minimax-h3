@@ -39,7 +39,7 @@ app.backend_status = lambda: 'Connected browser test fixture'
 def generate(batch_count, *args):
     values = dict(zip(GENERATION_FIELDS, args, strict=True))
     Path(os.environ['H3_TEST_CAPTURE']).write_text(json.dumps(values), encoding='utf-8')
-    yield (*(gr.skip() for _ in range(11)), 'Library generation fixture completed: ' + values['prompt'])
+    yield (*(gr.skip() for _ in range(7)), 'Library generation fixture completed: ' + values['prompt'])
 app.H3.generate_for_ui = generate
 demo = app.build_ui().queue()
 for name in ('portrait.png', 'second.png'):

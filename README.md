@@ -111,10 +111,11 @@ backends; GPU inference and deployment are validated separately.
 
 ## What is included
 
-- Unified H3 video, image-frame, and audio result formats across text,
+- Unified H3 video, image, and audio result formats across text,
   first/last-frame, and reference-media conditioning
 - H3 Image uses Pruna P-H3-Image's eight-step LoRA on the selected FL2VA base,
-  with prompt upsampling and editing with up to eight images
+  with prompt upsampling and editing with up to eight images. Results are saved
+  automatically and shown in a single image preview with download support.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing

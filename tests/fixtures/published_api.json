@@ -94,11 +94,8 @@
         {"type": "type_10", "component": "Video"},
         {"type": "type_10", "component": "Video"},
         {"type": "type_10", "component": "Video"},
-        {"type": "type_46", "component": "Gallery"},
-        {"type": "type_47", "component": "Checkboxgroup"},
-        {"type": "type_48", "component": "File"},
+        {"type": "type_9", "component": "Image"},
         {"type": "type_10", "component": "Audio"},
-        {"type": "type_1", "component": "Markdown"},
         {"type": "type_1", "component": "Textbox"}
       ]
     },
@@ -147,15 +144,6 @@
       "returns": [
         {"type": "type_1", "component": "Textbox"},
         {"type": "type_1", "component": "Textbox"}
-      ]
-    },
-    "/save_h3_image_frames": {
-      "parameters": [
-        {"parameter_name": "selected_labels", "parameter_has_default": true, "parameter_default": [], "type": "type_47"}
-      ],
-      "returns": [
-        {"type": "type_48", "component": "File"},
-        {"type": "type_1", "component": "Markdown"}
       ]
     },
     "/upscale_h3_input_images": {

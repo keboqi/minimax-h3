@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any
 import gradio as gr
 from h3_ui.presentation import result_format_presentation
 from h3_app.errors import H3Error
@@ -300,11 +300,3 @@ def input_image_frame_preset_updates(
     if dimensions is None:
         return (gr.update(value=current_width), gr.update(value=current_height))
     return dimensions
-
-
-def image_frame_labels(frame_paths: Iterable[Any]) -> list[str]:
-    return [f"Frame {index + 1}" for index, _ in enumerate(frame_paths)]
-
-
-def select_all_image_frames(frame_paths: Iterable[Any]) -> list[str]:
-    return image_frame_labels(frame_paths)

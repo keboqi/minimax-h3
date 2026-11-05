@@ -33,7 +33,7 @@ from h3_app.provenance import read_snapshot, render_snapshot
 from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
 from h3_ui.settings_presentation import render_settings
 
-from .layout import image_frame_labels, start_frame_generation_resolution
+from .layout import start_frame_generation_resolution
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def default_request(prompt: str) -> dict[str, Any]:
 
 def api_guide() -> str:
     defaults = UI_DEFAULTS
-    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
+    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Images are saved automatically and can be downloaded from the result preview. API requests share the same single-job queue as the UI.\n"""
 
 
 class H3Handlers:
@@ -138,7 +138,7 @@ class H3Handlers:
                 ]
                 job.variant_seeds.update(enumerate(seeds))
         first_update = True
-        unchanged = (gr.update(),) * 7
+        unchanged = (gr.update(),) * 3
         for batch_index, batch_seed in enumerate(seeds):
             if job is not None:
                 job.variant = indices[batch_index]
@@ -159,12 +159,8 @@ class H3Handlers:
                     yield (
                         *video_updates,
                         gr.update(visible=result_format == "Image"),
-                        gr.update(value=[]),
-                        gr.update(choices=[], value=[]),
-                        [],
                         gr.update(value=None),
                         gr.update(value=None, visible=result_format == "Audio"),
-                        gr.update(value=""),
                         status,
                     )
                     if result is None:
@@ -174,25 +170,18 @@ class H3Handlers:
                     continue
                 if result_format == "Image":
                     paths = normalize_paths(result)
-                    labels = image_frame_labels(paths)
-                    gallery = [(path, label) for path, label in zip(paths, labels)]
                     yield (
                         *video_updates,
                         gr.update(visible=True),
-                        gr.update(value=gallery),
-                        gr.update(choices=labels, value=[]),
-                        paths,
-                        gr.update(value=None),
-                        gr.update(),
+                        gr.update(value=paths[0] if paths else None),
                         gr.update(),
                         status,
                     )
                 elif result_format == "Audio":
                     yield (
                         *video_updates,
-                        *unchanged[:5],
+                        *unchanged[:2],
                         gr.update(value=result, visible=True),
-                        gr.update(),
                         status,
                     )
                 else:
