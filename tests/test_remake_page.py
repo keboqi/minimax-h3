@@ -18,6 +18,7 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.remake import SECTIONS
 from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
+from h3_app.catalog import QWEN_IMAGE21_DEFAULTS
 from h3_ui.engines.feature import EngineDeps
 from h3_ui.engines.remake import RemakeHandlers
 from h3_ui.h3.handlers import default_request
@@ -56,6 +57,7 @@ class RemakePageTests(unittest.TestCase):
         self.handlers = RemakeHandlers(EngineDeps(
             runtime_config=lambda: self.runtime, generation_services=lambda: None, stage_file=self.stage,
             interrupt=lambda: None, h3_take=self.take, h3_defaults=lambda: default_request(""),
+            qwen_take=self.qwen_take,
         ))
         self.addCleanup(JOBS.callbacks.pop, "remake", None)
         app = FastAPI()
@@ -75,17 +77,17 @@ class RemakePageTests(unittest.TestCase):
         shutil.copy2(path, target)
         return str(target.relative_to(self.input_dir))
 
-    def take(self, values, remake, progress):
-        if remake is None:
-            self.edits.append(values)
-            if "fail" in values["prompt"]:
-                yield GenerationUpdate(None, "Error: no memory\n\ntimings")
-                return
-            target = self.output_dir / "h3" / "edited.png"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(values["first_image"], target)
-            yield GenerationUpdate([str(target)], "P-H3-Image complete")
+    def qwen_take(self, request, progress):
+        self.edits.append(request)
+        if "fail" in request.prompt:
+            yield GenerationUpdate([], "Error: no memory\n\ntimings")
             return
+        target = self.output_dir / "qwen" / "edited.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.input_dir / request.reference_images[0], target)
+        yield GenerationUpdate([str(target)], "Qwen Image 2.1 image 1/1 completed")
+
+    def take(self, values, remake, progress):
         target = self.output_dir / f"{remake.output_prefix or 'h3/single'}.mp4"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.input_dir / remake.source_video, target)
@@ -118,7 +120,7 @@ class RemakePageTests(unittest.TestCase):
 
     def test_the_edit_models_are_h3_and_qwen(self):
         models = self.ok(self.client.get(f"{API}/boot"))["edit_models"]
-        self.assertEqual([model["id"] for model in models], ["h3", "qwen"])
+        self.assertEqual([model["id"] for model in models], ["qwen", "h3"])
 
     def finished_edit(self):
         for _ in range(200):
@@ -128,16 +130,16 @@ class RemakePageTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail("The edit never finished.")
 
-    def test_a_quick_edit_runs_h3_on_the_picture_and_keeps_its_size(self):
+    def test_a_quick_edit_runs_qwen_on_the_picture_and_keeps_its_size(self):
         self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "make it blue"}))
         run = self.finished_edit()
         self.assertIsNone(run["error"])
         self.assertEqual(self.client.get(f"{API}/file", params={"path": run["result_url"]}).status_code, 200)
         self.assertNotEqual(run["result_url"], self.picture)
-        values = self.edits[0]
-        self.assertEqual((values["result_format"], values["mode"], values["prompt"]),
-                         ("Image", "First / last frame", "make it blue"))
-        self.assertEqual(values["image_edit_size"], "Match first image size")
+        edit = self.edits[0]
+        self.assertEqual((edit.mode, edit.prompt), ("Image edit", "make it blue"))
+        self.assertTrue(edit.match_input_size)
+        self.assertEqual(edit.turbo_variant, QWEN_IMAGE21_DEFAULTS["turbo_variant"])
         self.assertTrue(any(job.family == "remake_edit" for job in JOBS.records.values()))
 
     def test_a_failed_quick_edit_reports_why(self):

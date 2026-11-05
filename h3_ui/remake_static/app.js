@@ -42,7 +42,7 @@
   const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })();
   const savePrefs = () => {
     const kept = {mode: state.mode, outputEdge: state.shortEdge, maxWindow: state.maxWindow, smart: state.smart,
-                  editModel: $("edit-model").value,
+                  editWith: $("edit-model").value,
                   auto: state.auto, pinned: state.pinned, backend: $("writer-backend").value, model: $("writer-model").value};
     try { localStorage.setItem(PREFS, JSON.stringify(kept)); } catch { /* Private windows refuse it. */ }
   };
@@ -1039,7 +1039,8 @@
       $("short-edge").replaceChildren(h("option", {value: 0}, "Auto, match source"),
         ...state.boot.short_edges.map((edge) => h("option", {value: edge}, String(edge))));
       $("edit-model").replaceChildren(...state.boot.edit_models.map((model) => h("option", {value: model.id}, model.label)));
-      if (state.boot.edit_models.some((model) => model.id === prefs.editModel)) $("edit-model").value = prefs.editModel;
+      // Not `editModel`: that was saved for everyone, so it would hold them on the old default.
+      if (state.boot.edit_models.some((model) => model.id === prefs.editWith)) $("edit-model").value = prefs.editWith;
       $("max-window").replaceChildren(...state.boot.lengths.map((length) =>
         h("option", {value: length}, `${(length / fps()).toFixed(1)} s (${length} frames)`)));
       if (prefs.backend) $("writer-backend").value = prefs.backend;

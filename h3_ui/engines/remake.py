@@ -21,8 +21,9 @@ from typing import Any, Iterable, Mapping
 import gradio as gr
 
 from h3_app.capabilities import engines_for_task
-from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, H3_EDIT_SIZE_MATCH
+from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, QWEN_IMAGE21_DEFAULTS
 from h3_app.errors import H3Error
+from h3_app.generation.requests import QwenImage21Request
 from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_video_metadata
 from h3_app.progress import no_progress
@@ -56,9 +57,9 @@ FINISHING_CONTROLS = {
 DOCUMENTED_PROFILE = "Original"
 READY = "Ready to generate."
 RUN_BUTTON = "remake-generate"
-# The engines that can repaint a frame. H3 comes first: it edits on the model a run has already loaded.
+# The engines that can repaint a frame. Qwen comes first, as the default: it edits frames best.
 EDIT_MODELS = tuple(sorted((engine for engine in engines_for_task("Image") if engine.id in ("h3", "qwen")),
-                           key=lambda engine: engine.id != "h3"))
+                           key=lambda engine: engine.id != "qwen"))
 EDIT_BRIDGE = "remake-edit-bridge-{}"
 H3_MODE = "h3-conditioning-mode"
 SETTINGS_BRIDGE = "remake-settings-bridge"
@@ -69,6 +70,20 @@ FRAME = ('<iframe class="h3-remake-frame" src="/remake/" title="Remake" '
 SCRATCH_LIFETIME = 3600
 # Uploads and extracted frames of selections that never became a project.
 UPLOAD_LIFETIME = 7 * 24 * 3600
+
+
+def quick_edit_request(prompt: str, picture: str) -> QwenImage21Request:
+    """Qwen Image 2.1's Fast preset editing ``picture`` at its own size."""
+    defaults = QWEN_IMAGE21_DEFAULTS
+    return QwenImage21Request(
+        mode="Image edit", model_choice=defaults["model"], text_encoder_choice=defaults["text_encoder"], prompt=prompt,
+        negative_prompt="", reference_images=(picture,), width=defaults["width"], height=defaults["height"],
+        reference_resolution=defaults["reference_resolution"], match_input_size=True, seed=defaults["seed"],
+        steps=defaults["steps"], cfg=defaults["cfg"], sampler_name=defaults["sampler"],
+        scheduler=defaults["scheduler"], cache_device=defaults["cache_device"], cache_dtype=defaults["cache_dtype"],
+        attention_backend=defaults["attention_backend"], accelerator=defaults["accelerator"],
+        turbo_variant=defaults["turbo_variant"],
+    )
 
 
 def open_engine_js(task: str, engine: str, h3_mode: str | None = None) -> str:
@@ -603,16 +618,12 @@ class RemakeHandlers:
 
     # Quick edit ------------------------------------------------------------
     def quick_edit(self, picture, prompt, progress=no_progress):
-        """Repaint a picture from text with H3's image edit, keeping its size. Yields (image, status)."""
+        """Repaint a picture from text with Qwen Image 2.1, keeping its size. Yields (image, status)."""
         if not picture or not str(prompt or "").strip():
             raise H3Error("Write what to change in the frame.")
-        job = CURRENT_JOB.get()
-        owner = job.owner if job is not None else "local"
-        values = {**self.deps.h3_defaults(), **self.captured(owner), "result_format": "Image",
-                  "mode": "First / last frame", "first_image": picture, "last_image": None, "prompt": prompt,
-                  "image_edit_size": H3_EDIT_SIZE_MATCH}
+        staged = self.deps.stage_file(str(picture), "qwen_image21_references", reuse=True)
         result = None
-        for update in self.deps.h3_take(values, None, progress):
+        for update in self.deps.qwen_take(quick_edit_request(prompt, staged), progress):
             status = str(update.status).split("\n\n")[0]
             if status.startswith("Error:"):
                 raise H3Error(status.removeprefix("Error:").strip())
@@ -770,11 +781,16 @@ def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:
 
 @dataclass(frozen=True)
 class EditTarget:
-    """Where an edit model takes the frame: its input, and the H3 mode that shows that input."""
+    """Where an edit model takes the frame: its input, and the mode that shows that input.
+
+    ``h3_mode`` is clicked in the browser; ``mode`` is a control set to ``mode_value``.
+    """
 
     picture: Any
     multiple: bool = True
     h3_mode: str | None = None
+    mode: Any = None
+    mode_value: str | None = None
 
 
 def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHandlers) -> None:
@@ -784,9 +800,11 @@ def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHa
             return gr.update()
         return [path] if target.multiple else path
 
-    button.click(_with_request(outgoing, 0), outputs=target.picture, api_name=False, show_progress="hidden").then(
-        None, js=open_engine_js("Image", label, target.h3_mode), queue=False, api_name=False,
-    )
+    step = button.click(_with_request(outgoing, 0), outputs=target.picture, api_name=False, show_progress="hidden")
+    if target.mode is not None:
+        step = step.then(lambda: target.mode_value, outputs=target.mode, queue=False, api_name=False,
+                         show_progress="hidden")
+    step.then(None, js=open_engine_js("Image", label, target.h3_mode), queue=False, api_name=False)
 
 
 def bind_h3_settings(view: RemakeView, handlers: RemakeHandlers, h3_values: Mapping[str, Any], triggers,

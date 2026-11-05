@@ -134,6 +134,7 @@ from h3_app.generation import (
 )
 from h3_app.generation import (
     h3 as h3_generation,
+    qwen as qwen_generation,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -899,6 +900,7 @@ def _engine_deps():
         resolve_result=lambda path: H3.resolve_result_path(path),
         h3_take=lambda values, remake, progress: _remake_take(values, remake, progress),
         h3_defaults=lambda: storyboard_request_defaults(),
+        qwen_take=lambda request, progress: _qwen_take(request, progress),
     )
 
 
@@ -911,6 +913,13 @@ def _remake_take(values, remake, progress):
         run_context={},
         progress=progress,
         remake=remake,
+    )
+
+
+def _qwen_take(request, progress):
+    """One Qwen Image 2.1 run through the regular generator."""
+    yield from qwen_generation.generate_qwen_image21(
+        request, _generation_services(), _runtime_config(), progress=progress,
     )
 
 

@@ -90,7 +90,11 @@ def main(shots=None):
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-extracted.png"), full_page=True)
 
-                # The edit round trip: MiniMax H3 is the default, and edits on the frame as its first frame.
+                # Qwen Image 2.1 is the default.
+                expect(remake.get_by_label("Edit with")).to_have_value("qwen")
+
+                # The edit round trip: MiniMax H3 edits on the frame as its first frame.
+                remake.get_by_label("Edit with").select_option(label="MiniMax H3")
                 remake.get_by_role("button", name="Edit in Image").first.click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
                 expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
@@ -109,7 +113,9 @@ def main(shots=None):
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
                 expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
                     "Qwen Image 2.1", timeout=10000)
-                # The frame itself arrives, not just the task.
+                # It opens ready to edit, with the frame itself, not just the task.
+                expect(page.locator(".h3-engine-view:visible").get_by_label("Mode", exact=True)).to_have_value(
+                    "Image edit", timeout=10000)
                 page.locator(".h3-engine-view:visible").get_by_text("Reference images and editing").click()
                 references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
                     has=page.locator(".h3-input-thumbnails"))

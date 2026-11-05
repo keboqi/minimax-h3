@@ -24,6 +24,8 @@ class EngineDeps:
     # One run through the regular H3 generator: (values, remake, progress), and its defaults.
     h3_take: Callable[..., Any] = lambda values, remake, progress: iter(())
     h3_defaults: Callable[[], dict] = dict
+    # One run through the regular Qwen Image 2.1 generator: (request, progress).
+    qwen_take: Callable[..., Any] = lambda request, progress: iter(())
 
 
 def _picker_destinations(label, inputs):

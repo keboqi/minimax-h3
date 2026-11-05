@@ -166,7 +166,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (demo.load, app_views.task.change),
             edit_targets={
                 "h3": EditTarget(h3_components.values["first"], multiple=False, h3_mode="First / last frame"),
-                "qwen": EditTarget(engine_views["qwen"].reference_images),
+                "qwen": EditTarget(engine_views["qwen"].reference_images, mode=engine_views["qwen"].mode,
+                                   mode_value="Image edit"),
             },
         )
         from functools import partial

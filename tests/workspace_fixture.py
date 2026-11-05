@@ -40,19 +40,24 @@ def fake_remake_take(values, remake, progress):
     """A window's take: its trimmed source, saved where the graph would save it."""
     from h3_app.generation.results import GenerationUpdate
 
-    if remake is None:  # A quick edit: the picture, as an H3 image run names its output.
-        target = app.OUTPUT_DIR / "h3" / f"quick_edit_{time.time_ns()}.png"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (1280, 704), "orange").save(target)
-        yield GenerationUpdate([str(target)], "P-H3-Image complete")
-        return
     target = app.OUTPUT_DIR / f"{remake.output_prefix or 'h3/remake_fixture'}.mp4"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes((app._runtime_config().input_dir / remake.source_video).read_bytes())
     yield GenerationUpdate(str(target), "Fixture remake completed")
 
 
+def fake_qwen_take(request, progress):
+    """A quick edit: the picture, in the real output location."""
+    from h3_app.generation.results import GenerationUpdate
+
+    target = app.OUTPUT_DIR / "qwen_image21" / f"quick_edit_{time.time_ns()}.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1280, 704), "orange").save(target)
+    yield GenerationUpdate([str(target)], "Qwen Image 2.1 image 1/1 completed")
+
+
 app._remake_take = fake_remake_take
+app._qwen_take = fake_qwen_take
 remake_runner.enhance_remake_prompt = lambda *args, **kwargs: ("summary:\nFixture window.", "Enhanced.")
 app.backend_status = lambda: "Connected browser test fixture"
 app.H3.generate_for_ui = fake_generation

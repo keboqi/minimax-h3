@@ -18,11 +18,12 @@ on the right always shows the selection or the window under the playhead.
    14.4 seconds), and rounds down to the nearest allowed length. Longer selections render in windows.
 3. Move the playhead to a frame and press **Extract frame**. It fills the first empty slot with its frame number, and a
    numbered marker appears under the timeline.
-4. Type the change under the picture and press **Quick edit**. MiniMax H3's image edit repaints the frame right there at
-   its own size, and **Undo edit** brings the frame back. For more control, pick **MiniMax H3** or **Qwen Image 2.1** under
-   **Edit with** and press **Edit in Image**, which opens that model in the Image task with the frame loaded. **MiniMax H3**, the default, edits it as a first frame on the base model a run loads anyway, so no second
-   diffusion model has to load, though its image LoRA, text encoder and VAE download on first use. It keeps the frame's
-   size unless you change **Image edit size** there. Then bring the result
+4. Type the change under the picture and press **Quick edit**. Qwen Image 2.1's Fast preset repaints the frame right
+   there at its own size, and **Undo edit** brings the frame back. For more control, pick **Qwen Image 2.1** (the
+   default) or **MiniMax H3** under **Edit with** and press **Edit in Image**, which opens that model in the Image task
+   with the frame loaded. Qwen Image 2.1 opens in **Image edit** mode. **MiniMax H3** edits the frame as a first frame on
+   the base model a run loads anyway, so no second diffusion model has to load, though its image LoRA, text encoder and
+   VAE download on first use. It keeps the frame's size unless you change **Image edit size** there. Then bring the result
    back from Media with **Set as** › **Remake · Picture N**, or with **Choose the edited image** on the picture. Both keep
    the frame number. Generate stays off while a slot holds the frame exactly as it was extracted.
 5. Keep **Pin to frames** on for clips with cuts, or when the composition matters. Frame numbers count from Start;
