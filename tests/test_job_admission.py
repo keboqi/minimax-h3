@@ -61,6 +61,37 @@ class BusyUpdatesTests(unittest.TestCase):
         self.assertIsNone(self.updates("Generate", visible=False))
         self.assertIsNone(job_admission.busy_updates(None))
 
+    def test_dynamic_image_action_label_is_owned_by_mode_not_job_completion(self):
+        with gr.Blocks():
+            button = gr.Button("Generate image")
+            button.h3_dynamic_label = True
+            busy, idle = job_admission.busy_updates(button)
+        self.assertNotIn("value", busy)
+        self.assertNotIn("value", idle)
+
+
+class ResultMetadataTests(unittest.TestCase):
+    def test_metadata_uses_current_video_image_audio_positions(self):
+        from h3_app.jobs import CURRENT_JOB
+        from h3_ui.job_bindings import owned_generation
+
+        current = SimpleNamespace(owner="owner", family="image", has_gpu=True, check=lambda: None)
+        update = ("video.mp4", gr.skip(), gr.skip(), gr.skip(), gr.update(visible=True),
+                  gr.update(value="image.png"), gr.update(value="audio.wav"), "Completed")
+
+        def generate(prompt):
+            yield update
+
+        run = owned_generation(generate, "image", ("prompt",), metadata_output=True)
+        token = CURRENT_JOB.set(current)
+        try:
+            with (patch.object(job_admission, "require_owner", return_value="owner"),
+                  patch("h3_ui.job_bindings.render_snapshot", return_value="metadata") as snapshot):
+                self.assertEqual(list(run("fox", None)), [(*update, "metadata")])
+                snapshot.assert_called_once_with(["video.mp4", "image.png", "audio.wav"])
+        finally:
+            CURRENT_JOB.reset(token)
+
 
 if __name__ == "__main__":
     unittest.main()

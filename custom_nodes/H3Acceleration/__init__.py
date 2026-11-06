@@ -1731,28 +1731,6 @@ def _qwen21_target_tokens(latent_image):
     return height * width
 
 
-class H3MossEditReference:
-    """Fit a reference within 512 pixels, aligned for the FLUX.2 VAE."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"image": ("IMAGE",)}}
-
-    RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "resize"
-    CATEGORY = "image/transform"
-
-    def resize(self, image):
-        import comfy.utils
-
-        height, width = image.shape[1:3]
-        scale = min(1.0, 512 / max(width, height))
-        width = max(16, min(512, round(width * scale / 16) * 16))
-        height = max(16, min(512, round(height * scale / 16) * 16))
-        return (comfy.utils.common_upscale(image.movedim(-1, 1), width, height,
-                                           "lanczos", "disabled").movedim(1, -1),)
-
-
 class H3Flux3LayoutElements:
     @classmethod
     def INPUT_TYPES(cls):
@@ -2418,7 +2396,6 @@ NODE_CLASS_MAPPINGS = {
     "H3LatentUpscaleModelLoader": H3LatentUpscaleModelLoader,
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
-    "H3MossEditReference": H3MossEditReference,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,

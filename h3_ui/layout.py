@@ -44,6 +44,7 @@ class AppViews:
     main_tabs: tuple = ()
     storyboard: gr.Column | None = None
     remake: gr.Column | None = None
+    image: gr.Column | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])
                     generation_settings = gr.Column(elem_id="h3-fine-tune")
+                with gr.Tab("Image workspace", id="image"):
+                    image = gr.Column(elem_classes=["h3-engine-view"])
                 with gr.Tab("LTX 2.5", id="ltx"):
                     ltx25 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Qwen Image 2.1", id="qwen"):
@@ -181,6 +184,7 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
         (create_tab, gallery_tab, jobs_tab, system_tab, api_tab),
         storyboard=storyboard,
         remake=remake,
+        image=image,
     )
 
 
@@ -208,6 +212,9 @@ def bind_workspace_navigation(
         Restoration keeps the saved dimensions; only a task switch realigns
         them for the new result format.
         """
+        if task == "Image":
+            # Image has its own composer; visiting it must not rewrite Video settings.
+            return [gr.skip() for _ in (*controller.outputs, *layout_outputs)]
         values = list(values)
         session = values[-1]
         desired = FORMAT_FOR_TASK[task]
@@ -270,7 +277,7 @@ def bind_workspace_navigation(
         stage(settings_values[-1], task, selected)
         return (
             gr.update(choices=[(e.label, e.id) for e in choices], value=selected),
-            gr.update(selected=selected),
+            gr.update(selected="image" if task == "Image" else selected),
             detail,
             selected,
             *output_intent(task, settings_memory, settings_values),
@@ -312,7 +319,7 @@ def bind_workspace_navigation(
                 session.remember({"workspace.task": task, "workspace.engine": selected.id}),
             )
         return (
-            gr.update(selected=selected.id),
+            gr.update(selected="image" if task == "Image" else selected.id),
             selected.description,
             remembered,
             selected.id,
@@ -355,7 +362,7 @@ def bind_workspace_navigation(
                 value=selected.id,
                 interactive=True,
             ),
-            gr.update(selected=selected.id),
+            gr.update(selected="image" if task == "Image" else selected.id),
             selected.description,
             *output_intent(task, settings_memory, settings_values, snap=False),
             False,

@@ -232,7 +232,6 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "YuE2 defaults": (YUE2_MODEL_CHOICES[DEFAULT_YUE2_MODEL],),
         "FLUX 3 defaults": ("flux3_nvfp4", "flux3_text_encoder", "flux3_vae", "flux3_upsampler"),
         "MOSS-Image defaults": moss,
-        "MOSS-Image + editing": (*moss, "moss_image_edit_lora"),
         "MOSS-Image + Turbo LoRAs": (
             *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
         ),

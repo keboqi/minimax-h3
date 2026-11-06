@@ -37,8 +37,6 @@ class MossImageRequest:
     cfg: float = 1.0
     layout: str = ""
     accelerate: bool = True
-    reference_images: tuple[str, ...] = ()
-    edit_size: str = "Match first image size"
 
 
 @dataclass(frozen=True)

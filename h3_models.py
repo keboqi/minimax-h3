@@ -234,11 +234,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         local_filename="moss_image_sft_dmd_8step_lora.safetensors",
         expected_sha256="4abb14e39c1a59018907581e609f43616ec6810126144ec2b1d2e6f8969628fe",
     ),
-    "moss_image_edit_lora": ModelSpec(
-        MOSS_IMAGE_REPO, "loras", "loras/moss_image_edit_lora_rank_64_bf16.safetensors",
-        "MOSS-Image Edit LoRA",
-        expected_sha256="17a48b8c605dcffdedb92a2b887d18cf316505be90802717669fb6556098dcdf",
-    ),
     # Frozen v2.0 name: the canonical lora.safetensors is overwritten by later releases.
     "moss_image_4step_v2_lora": ModelSpec(
         MOSS_IMAGE_4STEP_REPO, "loras", "moss_image_sft_4step_v2.0.safetensors",
@@ -1026,6 +1021,14 @@ QWEN_IMAGE21_TURBO_MODES = {
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
 }
+
+def qwen_image21_reference_limit(variant: str) -> int:
+    """Combined-edit limit shared by request validation and composer guidance."""
+    unrestricted = {"Off", QWEN_IMAGE21_OFFICIAL_TURBO, QWEN_IMAGE21_LIGHTNING,
+                    QWEN_IMAGE21_LIGHTNING_6STEP, *QWEN_IMAGE21_PRUNA_MODES}
+    return 3 if variant in QWEN_IMAGE21_TURBO_MODES and variant not in unrestricted else 10
+
+
 QWEN_IMAGE21_PROMPT_ENHANCERS = {
     "INT8 ConvRot": ("qwen_image21_pe_t2i_int8", "qwen_image21_pe_i2i_int8"),
     "W4A8 (lower VRAM)": ("qwen_image21_pe_t2i_w4a8", "qwen_image21_pe_i2i_w4a8"),
@@ -1088,7 +1091,6 @@ MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_TEXT_ENCODER_CHOICES.values(),
     *MOSS_IMAGE_VAE_CHOICES.values(),
     *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
-    "moss_image_edit_lora",
 )
 FIBO2_PRECISION_BF16 = "BF16"
 FIBO2_PRECISION_INT8 = "INT8 ConvRot (lower VRAM)"

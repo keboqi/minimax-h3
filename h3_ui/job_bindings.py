@@ -115,7 +115,8 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                         RUN_CONTEXT.reset(run_token)
                         CURRENT_JOB.reset(job_token)
                     if metadata_output:
-                        for index in (0, 1, 2, 3, 7, 9):
+                        # Four videos, visibility group, image, audio, status.
+                        for index in (0, 1, 2, 3, 5, 6):
                             value = update[index]
                             if isinstance(value, dict):
                                 if "value" not in value:

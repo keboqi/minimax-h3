@@ -161,6 +161,16 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertEqual(restored["qwen_image21.turbo_variant"], QWEN_IMAGE21_LIGHTNING)
 
+    def test_common_image_mode_owns_qwen_edit_cache_controls(self):
+        layout = next(fn for fn in self.demo.fns.values()
+                      if getattr(fn.fn, "__module__", "") == "h3_ui.image_bindings"
+                      and getattr(fn.fn, "__name__", "") == "layout")
+        self.assertEqual([component.label for component in layout.outputs[-2:]],
+                         ["Edit KV cache device", "Edit KV cache precision"])
+        self.assertTrue(all(update["interactive"] for update in layout.fn("qwen", "Image edit")[-2:]))
+        self.assertFalse(any(update["interactive"] for update in layout.fn("qwen", "Text to image")[-2:]))
+        self.assertEqual(len(layout.fn("ltx", "Text to image")), len(layout.outputs))
+
     def test_media_enhancement_captures_only_supported_settings(self):
         method = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Method")
         choices = [c[1] for c in method["props"]["choices"]]
@@ -219,16 +229,14 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 16)
+        self.assertEqual(len(choices), 13)
         for slot in range(1, 5):
             self.assertIn(f"Remake · Picture {slot}", choices)
-        self.assertIn("MOSS-Image · Edit reference images (optional, up to 4)", choices)
-        self.assertIn("Fibo 2.0 · Reference images (optional for Dev, up to 4)", choices)
-        self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
+        self.assertIn("Image · Reference images", choices)
+        self.assertFalse(any(choice.startswith("MOSS-Image") for choice in choices))
         self.assertIn("H3 · First frame (auto resolution)", choices)
         self.assertIn("H3 · Reference images", choices)
         self.assertIn("LTX · End keyframe", choices)
-        self.assertIn("Qwen · Input / reference images", choices)
         self.assertIn("Music · Reference images", choices)
         self.assertFalse(dropdown["props"]["interactive"])
 
@@ -672,7 +680,7 @@ class UiContractTests(unittest.TestCase):
         children = self.find_layout_node(engine_tabs["id"])["children"]
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
-            ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
+            ["MiniMax H3", "Image workspace", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
              "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
         )
         task = next(
@@ -713,15 +721,13 @@ class UiContractTests(unittest.TestCase):
             "Reference images (optional for Dev, up to 4)", "Width", "Height", "Edit output size",
             "Seed (-1 random)", "Steps", "CFG"])
         moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
-        accelerate = self.components[moss["inputs"][-3]]
+        accelerate = self.components[moss["inputs"][-1]]
         self.assertEqual(accelerate["props"]["label"], "Accelerate with Spectrum")
         self.assertIs(accelerate["props"]["value"], True)
-        self.assertEqual(self.components[moss["inputs"][-2]]["props"]["label"],
-                         "Edit reference images (optional, up to 4)")
-        edit_size = self.components[moss["inputs"][-1]]["props"]
-        self.assertEqual((edit_size["label"], edit_size["value"]), ("Edit output size", "Match first image size"))
-        self.assertEqual([choice[1] for choice in edit_size["choices"]],
-                         ["Match first image size", "Max resolution (up to 2 MP)", "Use width and height above"])
+        moss_api = self.demo.get_api_info()["named_endpoints"]["/generate_moss_image"]
+        names = [parameter["parameter_name"] for parameter in moss_api["parameters"]]
+        self.assertNotIn("reference_images", names)
+        self.assertNotIn("edit_size", names)
 
     def test_all_gemini_prompt_writers_default_to_flash_lite_3_5(self) -> None:
         models = [
@@ -730,7 +736,7 @@ class UiContractTests(unittest.TestCase):
             if component.get("props", {}).get("label") == "Gemini model"
         ]
         # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
-        self.assertEqual(len(models), 9)
+        self.assertEqual(len(models), 10)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -741,7 +747,7 @@ class UiContractTests(unittest.TestCase):
             if component.get("props", {}).get("label") in ("Prompt writer", "Writer service")
             and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
-        self.assertEqual(len(writers), 8)
+        self.assertEqual(len(writers), 9)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
@@ -768,7 +774,7 @@ class UiContractTests(unittest.TestCase):
                 for c in self.config["components"]
                 if c.get("props", {}).get("label") == label
             ]
-            self.assertEqual(len(keys), 8, label)
+            self.assertEqual(len(keys), 9, label)
             for key in keys:
                 self.assertEqual(
                     hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label

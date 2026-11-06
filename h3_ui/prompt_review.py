@@ -92,7 +92,7 @@ def bind_review_action(trigger, callback, options, review, queue):
         return (*proposal[2], proposal[1], None, "Suggested prompt accepted.",
                 *([gr.update(visible=False), gr.update(visible=True)] if compact else []))
 
-    review.accept.click(
+    acceptance = review.accept.click(
         accept,
         inputs=[review.proposal, *inputs],
         outputs=[*drafts, review.previous, review.proposal, status, *toggle_outputs],
@@ -113,4 +113,5 @@ def bind_review_action(trigger, callback, options, review, queue):
         queue=False,
         api_name=False,
     )
+    event.acceptance = acceptance
     return event

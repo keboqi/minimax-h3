@@ -40,9 +40,24 @@ INT8 ConvRot or FP16 DiT plus the shared autoregressive encoder and audio decode
 on first use. It supports tagged song sections and a maximum duration of five
 minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 
+## Shared Image workspace
+
+Image uses one Generate/Edit composer for Qwen Image 2.1, FLUX 3 Image Klein,
+MiniMax H3, MOSS-Image and Fibo 2.0. Switching models retains the prompt,
+ordered references and current results. Output size, seed and optional model
+settings remain independent for each model. Uploads and Media-library inputs
+enter Edit mode; switching back to Generate keeps them inactive. Model and
+variant reference limits are checked without silently discarding inputs.
+Select a result and choose **Use selected result as edit input** to iterate.
+
+MiniMax H3 Image reads the existing H3 settings when submitted. Its model
+settings panel links to **Video → MiniMax H3**; the still-image workflow uses
+P-H3-Image's fixed eight-step sampling on the selected FL2VA base. Image inputs
+do not overwrite the Video composer's prompt, references or dimensions.
+
 ## Qwen Image 2.1
 
-The **Qwen Image 2.1** tab uses ComfyUI's native `TextEncodeQwenImage21`
+The **Qwen Image 2.1** model in the shared **Image** workspace uses ComfyUI's native `TextEncodeQwenImage21`
 workflow for both generation and editing. The INT8 ConvRot DiT and BF16 text encoder are
 selected by default; BF16 DiT and W4A8 encoder alternatives are available. The selected
 DiT, Qwen3-VL 8B encoder, and BF16 VAE download on first use from
@@ -138,17 +153,14 @@ hardware. The Fast, Normal, and Quality presets retain their existing settings.
 
 ## MOSS-Image
 
-To edit an image, add up to four reference images and describe the desired change.
-Adding references selects Turbo Off, 30 steps and CFG 4; the edit adapter downloads
-on first use. Reference images are scaled to a 512-pixel long edge for conditioning,
-while width and height control the output canvas. Layout boxes and Spectrum are
-not used for editing. SFT is the recommended starting model; multi-reference and
-Base-model quality should be evaluated independently.
+MOSS-Image supports text-to-image generation only; reference-image editing and
+its edit adapter have been removed. Select MOSS-Image in the shared **Image**
+workspace and open **Model settings** to adjust its options.
 
-The **MOSS-Image** tab runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
-on ComfyUI's native MOSS-Image support. Every file in
-[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image) is selectable and
-downloads on first use: the SFT or pretrained Base DiT in BF16 or INT8 ConvRot, a Qwen3.5 9B
+The MOSS-Image model runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
+on ComfyUI's native MOSS-Image support. Generation weights in
+[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image) are selectable and
+download on first use: the SFT or pretrained Base DiT in BF16 or INT8 ConvRot, a Qwen3.5 9B
 text encoder (INT8 ConvRot by default, W4A8 or BF16 optional) and the full or small FLUX.2
 VAE. The full VAE is the same file as FLUX 3's and is shared with it.
 **Fast** (default) uses INT8 SFT, the small VAE and the

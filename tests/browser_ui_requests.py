@@ -183,7 +183,7 @@ def run(report=False):
 
                 def task_switch():
                     page.locator(".h3-task-picker").get_by_label("Image", exact=True).check()
-                    expect(card).to_contain_text("Image")
+                    expect(page.get_by_role("heading", name="Image", exact=True)).to_be_visible()
 
                 counts["task switch"] = recorder.measure(page, task_switch)
                 counts["idle 10s"] = recorder.measure(
@@ -196,7 +196,7 @@ def run(report=False):
 
                 def saved_reload():
                     load()
-                    expect(card).to_contain_text("Image")
+                    expect(page.get_by_role("heading", name="Image", exact=True)).to_be_visible()
                     expect(card).to_contain_text("6 steps")
 
                 counts["saved reload"] = recorder.measure(page, saved_reload, quiet=3)

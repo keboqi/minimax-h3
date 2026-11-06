@@ -19,6 +19,7 @@ from h3_models import (
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_PRUNA_MODES,
     QWEN_IMAGE21_TURBO_MODES,
+    qwen_image21_reference_limit,
 )
 
 from h3_app.config import RuntimeConfig
@@ -166,7 +167,7 @@ def generate_qwen_image21(
         lightning = request.turbo_variant == QWEN_IMAGE21_LIGHTNING or lightning_6step
         pruna = request.turbo_variant in QWEN_IMAGE21_PRUNA_MODES
         viggle = turbo and not (official_turbo or lightning or pruna)
-        reference_limit = 3 if viggle else 10
+        reference_limit = qwen_image21_reference_limit(request.turbo_variant)
         separate_inputs = editing and bool(request.batch_edit_inputs)
         if not separate_inputs and len(references) > reference_limit:
             raise H3Error(

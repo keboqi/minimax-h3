@@ -16,7 +16,7 @@ ENGINES = (
         "h3",
         "MiniMax H3",
         ("Video", "Image", "Audio / Music"),
-        "Joint video/audio generation. Image and audio tasks decode those parts of the H3 result.",
+        "Video/audio generation and P-H3-Image still-image generation and editing.",
     ),
     EngineCapability(
         "ltx",
@@ -47,7 +47,7 @@ ENGINES += (
     EngineCapability("flux3", "FLUX 3 Image Klein", ("Image",),
                      "Distilled image generation and editing with up to ten references."),
     EngineCapability("moss_image", "MOSS-Image", ("Image",),
-                     "OpenMOSS 5B image generation and reference editing, with layout boxes and Turbo LoRAs."),
+                     "OpenMOSS 5B image generation, with layout boxes and Turbo LoRAs."),
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
     EngineCapability("remake", "Remake", ("Remake",),

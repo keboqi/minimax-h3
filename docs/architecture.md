@@ -10,7 +10,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 - Required adjustments are separate from manual differences. Native refinement forces acceleration Off; BF16 requires stage offload; the 500K decoder produces one frame.
 - Inactive preferences remain stored when switching output formats or attention implementations. They do not affect execution or the active modification count.
 - Readiness and execution details use the shared resolved settings. Prompt and conditioning requirements are checked separately.
-- Browser preferences use schema version 6 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration. Qwen technical settings, independent finishing models and workspace task/engine selection are included.
+- Browser preferences use schema version 12 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration. The common Image composer owns image intent and non-secret writer choices; hidden legacy Qwen mode preferences migrate to it. Qwen technical settings, independent finishing models and workspace task/engine selection are included.
 - Prompts, uploaded paths, credentials, outputs and transient confirmations are excluded from browser preferences.
 - Page load restores preferences, resolves settings and restores navigation in one response. Values equal to their defaults are not rewritten, so their change listeners stay idle.
 - Each settings edit returns its presentation and its preference save in the same direct (unqueued) response. The session's preference snapshot sends a save only when the allowlisted values changed. Controls outside H3 settings and navigation save through one direct request.
@@ -53,6 +53,9 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/application.py | Startup and runtime configuration, the ComfyUI and file effects controllers and engines receive, the full H3 `generate`, and the controller and handler singletons. Controllers never import it; tests patch its effects and find a name's owner with `tests/app_targets.py` |
 | h3_ui/snapshot_preload.py | Modal's `h3-video` and `h3-soundstage` endpoints: loads the default H3 Video or Soundstage models before the workspace opens, then waits for the snapshot restore to start the UI |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
+| h3_ui/image_workspace.py | Common Image view, model option placement and explicit preference components |
+| h3_ui/image_bindings.py | Common Image mode, reference actions, readiness, queue bindings and prompt review |
+| h3_ui/image_controller.py | Image draft validation and named option adapters to existing model handlers; H3 requests reuse current settings without capturing Video media |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
 | h3_ui/engines/remake.py | The Remake task: what its page calls, and the hidden Gradio bridge for the API, the MiniMax H3 settings it follows, and Media and Image hand-offs |
 | h3_ui/remake_page.py, h3_ui/remake_static/ | The Remake page in its frame and its JSON API, outside Gradio like Storyboard's |

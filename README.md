@@ -115,12 +115,13 @@ backends; GPU inference and deployment are validated separately.
   first/last-frame, and reference-media conditioning
 - H3 Image uses Pruna P-H3-Image's eight-step LoRA on the selected FL2VA base,
   with prompt upsampling and editing with up to eight images. Results are saved
-  automatically and shown in a single image preview with download support.
+  automatically and shown in the shared Image results with download support.
 - Audio results decode the native H3 stereo soundtrack without creating a video
-- A dedicated Qwen Image 2.1 tab for native text-to-image generation and
-  multi-reference image editing
-- A MOSS-Image tab for OpenMOSS SFT and Base text-to-image generation and reference-image
-  editing, with Fast, Balanced and Quality presets and optional Spectrum acceleration
+- One Image workspace for Qwen Image 2.1, FLUX 3, MiniMax H3, MOSS-Image and Fibo 2.0,
+  with a shared prompt, ordered editing references, results, and independent model settings
+- MiniMax H3 Image reuses the settings under Video → MiniMax H3; no duplicate video controls
+- MOSS-Image supports text-to-image generation only, with Fast, Balanced and Quality
+  presets and optional Spectrum acceleration
 - Fibo 2.0 Dev generation/editing and Edit Turbo, with ordered reference images
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation

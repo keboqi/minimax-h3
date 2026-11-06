@@ -158,6 +158,12 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         for feature in FEATURES:
             engine_views[feature.id] = feature.build(getattr(app_views, feature.key), services.engine_deps)
             engine_handlers[feature.id] = feature.bind(engine_views[feature.id], services.engine_deps)
+        from .image_workspace import build_image_workspace
+
+        image_workspace = build_image_workspace(
+            app_views.image, app_views, engine_views, engine_handlers, h3_components,
+            services.engine_deps, demo,
+        )
         from .engines.remake import EditTarget, bind_h3_settings
 
         bind_h3_settings(
@@ -165,8 +171,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             # The task picker switches tabs itself, so a Tab select event wouldn't fire.
             (demo.load, app_views.task.change),
             edit_targets={
-                "h3": EditTarget(h3_components.values["first"], multiple=False, h3_mode="First / last frame"),
-                "qwen": EditTarget(engine_views["qwen"].reference_images, mode=engine_views["qwen"].mode,
+                "h3": EditTarget(image_workspace.reference_images, mode=image_workspace.mode, mode_value="Image edit"),
+                "qwen": EditTarget(image_workspace.reference_images, mode=image_workspace.mode,
                                    mode_value="Image edit"),
             },
         )
@@ -242,6 +248,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         from .image_library import bind_image_library, build_media_image_destinations
 
         image_inputs = [
+            image_workspace.reference_images,
             *h3_components.values.values(),
             *(component for feature in FEATURES for component in feature.library_inputs(engine_views[feature.id])),
         ]
@@ -272,12 +279,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
                 destinations[f"H3 · {component.label}"] = component
         for feature in FEATURES:
-            destinations.update(feature.destinations_of(engine_views[feature.id]))
+            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2"}:
+                destinations.update(feature.destinations_of(engine_views[feature.id]))
+        destinations["Image · Reference images"] = image_workspace.reference_images
         build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
         )
-        for view in (*engine_views.values(), drama3_components):
+        for view in (*engine_views.values(), drama3_components, image_workspace):
             with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(
                     "Settings used will appear with the generated result."
@@ -350,6 +359,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             },
         )
         browser_settings = {
+            **{f"image.{name}": component
+               for name, component in image_workspace.preference_components().items()},
             **{
                 f"h3.{name}": component
                 for name, component in h3_components.values.items()

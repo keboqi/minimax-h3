@@ -10,7 +10,7 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 # Runs only in the browser: drop every saved H3 preference, then reload so the
 # page restores from the app defaults in a brand-new session.
 RESET_BROWSER_SETTINGS_JS = """
@@ -31,16 +31,15 @@ EXTRA_FIELDS = {
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
               "prompt_backend", "prompt_model", "openai_model", "upsampler", "cfg"),
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
-                   "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "openai_model", "accelerate",
-                   "edit_size"),
+                   "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "openai_model", "accelerate"),
     "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
     "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
                "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing", "writer_workflow", "max_batch_lines", "strict_source"),
     "workspace": ("task", "engine"),
+    "image": ("mode", "h3_width", "h3_height", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
     "qwen_image21": (
         "prompt_enhancer",
-        "mode",
         "model",
         "text_encoder",
         "width",
@@ -179,6 +178,17 @@ def restore_preferences(saved, components):
     if not isinstance(values, Mapping):
         values = {}
     version = payload.get("schema_version") if isinstance(payload.get("schema_version"), int) else 0
+    if version < 12 and values.get("workspace.task") == "Image":
+        # The common composer now owns intent and writer preferences. Hidden
+        # legacy mode controls must not restore conflicting edit-control state.
+        values = dict(values)
+        engine = values.get("workspace.engine", "qwen")
+        prefix = "qwen_image21" if engine == "qwen" else engine
+        if engine == "qwen" and "qwen_image21.mode" in values:
+            values.setdefault("image.mode", values["qwen_image21.mode"])
+        for name in ("prompt_backend", "prompt_model", "openai_model"):
+            if f"{prefix}.{name}" in values:
+                values.setdefault(f"image.{name}", values[f"{prefix}.{name}"])
     if version < 7 and values.get("drama3.voice_engine") == "Drama 3":
         # v7 made Qwen3-TTS VoiceDesign the default; older saves stored the previous default.
         values = {name: value for name, value in values.items() if name != "drama3.voice_engine"}

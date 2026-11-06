@@ -172,7 +172,7 @@ def busy_updates(component):
     busy_label = next((busy for verb, busy in BUSY_LABELS if label.startswith(verb)), None)
     busy = {"elem_classes": [*classes, BUSY_CLASS]}
     idle = {"elem_classes": classes}
-    if busy_label is not None:
+    if busy_label is not None and not getattr(component, "h3_dynamic_label", False):
         busy["value"], idle["value"] = busy_label, label
     return gr.update(**busy), gr.update(**idle)
 

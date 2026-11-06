@@ -83,19 +83,19 @@ def run():
                 # in the default Video task. Passwords and prompts stay blank.
                 choose_engine(page, "Image", "Qwen Image 2.1")
                 qwen = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
-                qwen.get_by_label("Seed (-1 random)", exact=True).fill("123")
-                qwen.get_by_label("Seed (-1 random)", exact=True).press("Tab")
-                qwen.get_by_text("Prompt writer / enhancer", exact=True).click()
+                qwen.get_by_label("Seed (-1 random)", exact=True).locator("visible=true").fill("123")
+                qwen.get_by_label("Seed (-1 random)", exact=True).locator("visible=true").press("Tab")
+                qwen.get_by_text("Prompt assistance", exact=True).click()
                 qwen.get_by_label("Temporary Gemini API key", exact=True).fill(
                     "fixture-secret"
                 )
                 page.wait_for_timeout(600)
                 page.reload(wait_until="domcontentloaded")
                 qwen = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
-                expect(qwen.get_by_label("Seed (-1 random)", exact=True)).to_have_value(
+                expect(qwen.get_by_label("Seed (-1 random)", exact=True).locator("visible=true")).to_have_value(
                     "123", timeout=15000
                 )
-                qwen.get_by_text("Prompt writer / enhancer", exact=True).click()
+                qwen.get_by_text("Prompt assistance", exact=True).click()
                 expect(
                     qwen.get_by_label("Temporary Gemini API key", exact=True)
                 ).to_have_value("")
@@ -105,25 +105,16 @@ def run():
                 # Hide engine-tab navigation using supported semantic roles.
                 h3 = page.locator("#h3-composer")
                 expect(h3.get_by_label("Prompt", exact=True)).to_be_visible()
-                # Input-derived Image output must remain authoritative with the
-                # workspace canvas controls present and closed expert controls.
+                # H3 Image uses the common input instead of modifying the Video composer.
                 first = ARTIFACTS / "first-fixture.png"
                 replacement = ARTIFACTS / "replacement-fixture.png"
                 Image.new("RGB", (768, 1152), "navy").save(first)
                 Image.new("RGB", (640, 960), "teal").save(replacement)
                 choose_engine(page, "Image", "MiniMax H3")
-                h3.get_by_label("First / last frame", exact=True).check()
-                page.locator('#first-frame-image input[type="file"]').set_input_files(
-                    str(first)
-                )
-                expect(page.locator(".h3-setup-card")).to_contain_text("768×1152")
-                output_settings = page.locator("#h3-output-settings")
-                expect(
-                    output_settings.get_by_label("Aspect ratio", exact=True)
-                ).to_be_disabled()
-                expect(
-                    output_settings.get_by_label("Size", exact=True)
-                ).to_be_disabled()
+                image_form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
+                image_form.get_by_label("Edit", exact=True).check()
+                image_form.locator('input[type="file"]').set_input_files(str(first))
+                expect(image_form.get_by_text("Up to 8 references per edit. Upload order is preserved.", exact=True)).to_be_visible()
                 page.locator(".h3-task-picker").get_by_label(
                     "Video", exact=True
                 ).check()
@@ -200,7 +191,7 @@ def run():
                     )
                     >= 2
                 )
-                h3.get_by_text("Prompt writer / enhancer", exact=True).click()
+                h3.get_by_text("Prompt assistance", exact=True).click()
                 prompt.fill("Preview original")
                 h3.get_by_role(
                     "button", name="Generate / enhance prompt", exact=True
@@ -235,7 +226,7 @@ def run():
                     "button", name="Undo accepted prompt", exact=True
                 ).click()
                 expect(prompt).to_have_value("Edited while previewing")
-                h3.get_by_text("Prompt writer / enhancer", exact=True).click()
+                h3.get_by_text("Prompt assistance", exact=True).click()
                 response_times = []
                 for index in range(5):
                     changed_at = time.perf_counter()
@@ -397,8 +388,8 @@ def run():
                     (
                         "Image",
                         "Qwen Image 2.1",
-                        "Prompt / edit instruction",
-                        "Generate with Qwen Image 2.1",
+                        "Image prompt",
+                        "Generate image",
                     ),
                     (
                         "Song",
@@ -413,6 +404,8 @@ def run():
                     open_create(page)
                     choose_engine(page, task, label)
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
+                    if task == "Image":
+                        form.get_by_label("Generate", exact=True).check()
                     form.get_by_label(field, exact=True).fill("Fixture request")
                     if task == "Song" and label == "YuE2":
                         # The studio shows brief, draft and Generate together; YuE2 needs lyrics too.
@@ -424,7 +417,7 @@ def run():
                 assert {
                     job["family"]
                     for job in requests.get(url + "/test/jobs", timeout=2).json()
-                } == {"h3", "ltx", "qwen_image21", "music", "yue2"}
+                } == {"h3", "ltx", "image", "music", "yue2"}
                 # One filtered gallery drives preview, shared annotations and comparison.
                 phase[0] = "Media image selection"
                 page.get_by_role("tab", name="Media", exact=True).click()
