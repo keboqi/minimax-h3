@@ -114,16 +114,20 @@ def run():
                 edit_prompt = page.locator('textarea[placeholder="Describe what to change and what to preserve."]:visible')
                 expect(edit_prompt).to_have_value("A paper bird")
                 choose_engine(page, "Image", "MOSS-Image")
-                expect(page.get_by_role("button", name="Edit image", exact=True)).to_be_disabled()
-                expect(page.get_by_text("MOSS-Image supports generation only. Choose Generate or another model.", exact=True)).to_be_visible()
-                page.get_by_label("Generate", exact=True).check()
+                expect(page.get_by_role("radio", name="Edit", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="Edit image", exact=True)).to_have_count(0)
+                expect(page.get_by_role("button", name="Use selected result as edit input")).to_have_count(0)
+                expect(page.get_by_text("Reference images, in order", exact=True)).not_to_be_visible()
+                expect(prompt).to_have_value("A paper bird")
+                expect(page.get_by_role("button", name="Generate image", exact=True)).to_be_enabled()
                 page.get_by_role("button", name="Generate image", exact=True).click()
                 expect(page.get_by_label("Generation progress", exact=True).locator("visible=true")).to_have_value(
                     "MOSS-Image · Fixture completed", timeout=20000)
                 assert captures[-1][0] == "moss_image"
                 assert "reference_images" not in captures[-1][1]
                 choose_engine(page, "Image", "Fibo 2.0")
-                page.get_by_label("Edit", exact=True).check()
+                expect(page.get_by_label("Edit", exact=True)).to_be_checked()
+                expect(page.get_by_role("button", name="Use selected result as edit input")).to_be_visible()
                 page.get_by_role("button", name="Edit image", exact=True).click()
                 expect(page.get_by_label("Generation progress", exact=True).locator("visible=true")).to_have_value(
                     "Fibo 2.0 · Fixture completed", timeout=20000)

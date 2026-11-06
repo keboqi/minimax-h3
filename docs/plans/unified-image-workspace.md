@@ -118,9 +118,10 @@ State rules:
 - Switching models preserves the draft. If references exceed the selected
   variant's limit, retain them and block submission with a concrete message;
   never truncate or reinterpret the inputs silently.
-- In Edit, MOSS remains identifiable as generation only and cannot run. Offer
-  switching intent to Generate; do not silently ignore references or change
-  the mode. Its reference inputs never reach a MOSS request.
+- MOSS shows a generation-only composer: hide the Generate/Edit selector,
+  references and result-to-edit actions. Preserve the shared edit draft and
+  restore it when switching back to an edit-capable model. Saved references
+  are explicitly marked inactive and never reach a MOSS request.
 - Fibo Edit Turbo cannot run in Generate. Show the reason and offer selecting
   Dev or switching to Edit; do not change the user's intent automatically.
 - A running job captures its model, draft, and effective settings at submission.

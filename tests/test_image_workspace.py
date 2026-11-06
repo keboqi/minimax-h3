@@ -14,13 +14,18 @@ from h3_app.generation.requests import H3Request
 from h3_models import QWEN_IMAGE21_OFFICIAL_TURBO, QWEN_IMAGE21_TURBO_MODES
 from h3_ui.image_controller import (
     GENERATION_METHODS, GENERATION_OPTIONS, ImageGenerationController,
-    draft_issue, h3_image_values, reference_limit, suggest_prompt,
+    draft_issue, h3_image_values, image_mode, reference_limit, suggest_prompt,
 )
 from h3_ui.image_bindings import move_reference
 from h3_ui.persistence import restore_preferences
 
 
 class ImageWorkspaceTests(unittest.TestCase):
+    def test_moss_keeps_the_edit_draft_inactive_while_other_models_preserve_intent(self):
+        self.assertEqual(image_mode("moss_image", "Image edit"), "Text to image")
+        self.assertEqual(image_mode("qwen", "Image edit"), "Image edit")
+        self.assertEqual(image_mode("fibo2", "Text to image"), "Text to image")
+
     def test_generation_does_not_validate_inactive_references(self):
         self.assertEqual(draft_issue("moss_image", "Text to image", "fox", ["a"] * 15), "")
         self.assertEqual(draft_issue("qwen", "Text to image", "fox", ["a"] * 15), "")

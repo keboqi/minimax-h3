@@ -6,7 +6,9 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
 from .engines.controls import QUIET
-from .image_controller import IMAGE_MODELS, ImageGenerationController, draft_issue, reference_limit, suggest_prompt
+from .image_controller import (
+    IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
+)
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
 
@@ -38,12 +40,14 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     output.change(lambda: None, outputs=selected, **QUIET)
     refs.change(lambda paths: "Image edit" if paths else gr.skip(), inputs=refs, outputs=mode, **QUIET)
 
-    def use_result(path):
+    def use_result(engine, path):
+        if engine == "moss_image":
+            raise gr.Error("MOSS-Image supports generation only. Choose an edit-capable model first.")
         if not path:
             raise gr.Error("Select an image result first.")
         return [path], "Image edit"
 
-    use.click(use_result, inputs=selected, outputs=[refs, mode], **QUIET)
+    use.click(use_result, inputs=[app_views.engine, selected], outputs=[refs, mode], **QUIET)
     h3.model_profile.change(
         lambda profile: f"Uses MiniMax H3 settings: **{profile}**.\n\nP-H3-Image uses 8 steps, Euler and CFG 1.",
         inputs=h3.model_profile, outputs=view.base_summary, **QUIET)
@@ -54,13 +58,21 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     edit_controls = [engine_views[engine].edit_size for engine in ("qwen", "flux3", "fibo2")]
     edit_controls.extend([engine_views["qwen"].batch_edit_inputs, engine_views["qwen"].reference_resolution])
     cache_controls = [engine_views["qwen"].cache_device, engine_views["qwen"].cache_dtype]
+    def edit_actions(engine):
+        if engine not in IMAGE_MODELS:
+            return gr.skip(), gr.skip()
+        return gr.update(visible=engine != "moss_image"), gr.update(visible=engine != "moss_image")
+
+    gr.on(triggers=[app_views.engine.change, demo.load], fn=edit_actions, inputs=app_views.engine,
+          outputs=[mode, view.result_edit_actions], trigger_mode="always_last", **QUIET)
+
     layout_outputs = [reference_panel, prompt, *size_groups.values(), *option_groups.values(),
                       *edit_controls, *cache_controls]
 
     def layout(engine, intent):
         if engine not in IMAGE_MODELS:
             return (gr.skip(),) * len(layout_outputs)
-        editing = intent == "Image edit"
+        editing = image_mode(engine, intent) == "Image edit"
         return (
             gr.update(visible=editing),
             gr.update(label="Edit instruction" if editing else "Image prompt",
@@ -78,6 +90,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     def readiness_state(engine, intent, text, paths, variant, fibo_model, separate):
         if engine not in IMAGE_MODELS:
             return (gr.skip(),) * 4
+        intent = image_mode(engine, intent)
         editing = intent == "Image edit"
         issue = draft_issue(engine, intent, text, paths, variant, fibo_model, separate)
         limit = reference_limit(engine, variant)
@@ -107,7 +120,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     def generate(engine, intent, text, paths, *values):
         captured = dict(zip(controller.fields, values, strict=True))
         try:
-            updates = controller.generate(engine, intent, text, paths, captured)
+            updates = controller.generate(engine, image_mode(engine, intent), text, paths, captured)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
         for result, message in updates:
@@ -135,7 +148,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
 
     def suggest_selected(engine, intent, text, paths, *values):
         try:
-            return suggest_prompt(handlers, engine, intent, text, paths, dict(zip(prompt_fields, values, strict=True)))
+            return suggest_prompt(handlers, engine, image_mode(engine, intent), text, paths,
+                                  dict(zip(prompt_fields, values, strict=True)))
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 

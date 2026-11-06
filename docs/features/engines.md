@@ -155,7 +155,9 @@ hardware. The Fast, Normal, and Quality presets retain their existing settings.
 
 MOSS-Image supports text-to-image generation only; reference-image editing and
 its edit adapter have been removed. Select MOSS-Image in the shared **Image**
-workspace and open **Model settings** to adjust its options.
+workspace and open **Model settings** to adjust its options. Its composer hides
+the edit selector, references and result-to-edit actions; switching back to an
+edit-capable model restores the saved edit draft.
 
 The MOSS-Image model runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
 on ComfyUI's native MOSS-Image support. Generation weights in

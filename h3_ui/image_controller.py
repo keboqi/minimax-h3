@@ -8,6 +8,11 @@ from h3_models import qwen_image21_reference_limit
 IMAGE_MODELS = ("qwen", "h3", "flux3", "moss_image", "fibo2")
 
 
+def image_mode(engine, intent):
+    """Generation-only models leave the shared edit draft inactive."""
+    return "Text to image" if engine == "moss_image" else intent
+
+
 def reference_limit(engine, variant="Off"):
     if engine == "qwen":
         return qwen_image21_reference_limit(variant)

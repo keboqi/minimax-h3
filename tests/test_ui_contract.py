@@ -170,6 +170,14 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(all(update["interactive"] for update in layout.fn("qwen", "Image edit")[-2:]))
         self.assertFalse(any(update["interactive"] for update in layout.fn("qwen", "Text to image")[-2:]))
         self.assertEqual(len(layout.fn("ltx", "Text to image")), len(layout.outputs))
+        moss = layout.fn("moss_image", "Image edit")
+        self.assertFalse(moss[0]["visible"])  # References
+        self.assertEqual(moss[1]["label"], "Image prompt")
+        edit_actions = next(fn.fn for fn in self.demo.fns.values()
+                            if getattr(fn.fn, "__module__", "") == "h3_ui.image_bindings"
+                            and getattr(fn.fn, "__name__", "") == "edit_actions")
+        self.assertTrue(all(not update["visible"] for update in edit_actions("moss_image")))
+        self.assertTrue(all(update["visible"] for update in edit_actions("qwen")))
 
     def test_media_enhancement_captures_only_supported_settings(self):
         method = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Method")

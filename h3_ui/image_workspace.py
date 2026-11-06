@@ -46,6 +46,7 @@ class ImageWorkspace:
     enhance_status: gr.Textbox
     selected_result: gr.State
     use_result: gr.Button
+    result_edit_actions: gr.Group
     reference_source: gr.Number
     reference_destination: gr.Number
     move_reference: gr.Button
@@ -126,8 +127,9 @@ def build_image_view(root, engine_views, h3):
                 output = gr.Gallery(label="Image results", columns=2, height=500, interactive=False, elem_id="h3-image-results")
                 output.h3_metadata_root = gr.Column()
                 selected = gr.State(None)
-                use = gr.Button("Use selected result as edit input")
-                gr.Markdown("Select a result, then use it as the starting image for your next edit.")
+                with gr.Group() as result_edit_actions:
+                    use = gr.Button("Use selected result as edit input")
+                    gr.Markdown("Select a result, then use it as the starting image for your next edit.")
         # Results precede optional settings in the mobile stack.
         with gr.Row(equal_height=False):
             with gr.Column(scale=3, min_width=320):
@@ -142,7 +144,8 @@ def build_image_view(root, engine_views, h3):
         h3_width=h3_width, h3_height=h3_height, h3_seed=h3_seed, reference_panel=reference_panel,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,
         base_summary=base, writer=writer, enhance=enhance, enhance_status=enhance_status,
-        selected_result=selected, use_result=use, reference_source=source, reference_destination=destination,
+        selected_result=selected, use_result=use, result_edit_actions=result_edit_actions,
+        reference_source=source, reference_destination=destination,
         move_reference=move,
     )
 
