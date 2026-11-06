@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+from importlib import metadata
 import os
 import shutil
 import stat
@@ -39,7 +41,7 @@ from h3_sources import (
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
-from h3_models import prune_hf_cache, sync_models, write_json_atomic
+from h3_models import prune_hf_cache, read_json, sync_models, write_json_atomic
 from h3_node_patches import (
     TRT_VAE_NODE_REF,
     TRT_VAE_NODE_REPO,
@@ -82,6 +84,78 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLED_ACCEL_NODE = SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 _UV_CMD: list[str] | None = None
+_SETUP_REPOSITORIES: dict[str, dict] = {}
+
+
+def _environment_fingerprint() -> list:
+    """Detect package installs/removals without importing Torch or CUDA."""
+    return sorted((dist.metadata.get("Name", ""), dist.version,
+                   str(dist.locate_file(""))) for dist in metadata.distributions())
+
+
+def _setup_inputs() -> dict[str, str]:
+    paths = (Path(__file__).resolve(), SCRIPT_DIR / "h3_requirements.py",
+             SCRIPT_DIR / "h3_sources.py", SCRIPT_DIR / "h3_node_patches.py",
+             BUNDLED_ACCEL_NODE)
+    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+
+
+def _repository_state(dest: Path, required_paths: tuple[str, ...]) -> dict:
+    """Record local source integrity; no fetches or destructive checkout operations."""
+    head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"],
+                          text=True, capture_output=True, timeout=30)
+    if head.returncode:
+        raise OSError(f"Cannot inspect repository {dest}")
+    # Include every tracked file so an incomplete checkout cannot pass merely
+    # because its entry points survived. Patches are recorded after setup.
+    tracked = subprocess.run(["git", "-C", str(dest), "ls-files", "-z"],
+                             text=True, capture_output=True, check=True, timeout=30)
+    paths = set(tracked.stdout.split("\0")) - {""}
+    paths.update(required_paths)
+    files = {}
+    for relative in sorted(paths):
+        path = dest / relative
+        stat = path.stat()
+        files[relative] = [stat.st_size, stat.st_mtime_ns]
+    return {"head": head.stdout.strip(), "required_paths": list(required_paths), "files": files}
+
+
+def setup_is_current(install_dir: Path) -> bool:
+    """Reuse only a successfully provisioned environment with unchanged inputs."""
+    state = read_json(install_dir / ".setup-state.json", {})
+    if not isinstance(state, dict):
+        return False
+    try:
+        if (state.get("inputs") != _setup_inputs()
+                or state.get("python") != sys.executable
+                or state.get("environment") != [list(item) for item in _environment_fingerprint()]
+                or not isinstance(state.get("repositories"), dict)
+                or not state["repositories"]):
+            return False
+        installed_node = install_dir / "ComfyUI" / "custom_nodes" / "H3Acceleration" / "__init__.py"
+        if hashlib.sha256(installed_node.read_bytes()).hexdigest() != state["bundled_node"]:
+            return False
+        if not comfy_frontend_package_is_ready():
+            return False
+        for name, saved in state["repositories"].items():
+            if not isinstance(saved, dict):
+                return False
+            if _repository_state(Path(name), tuple(saved["required_paths"])) != saved:
+                return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        return False
+
+
+def record_setup_state(install_dir: Path) -> None:
+    repositories = {name: _repository_state(Path(name), tuple(repo["required_paths"]))
+                    for name, repo in _SETUP_REPOSITORIES.items()}
+    write_json_atomic(install_dir / ".setup-state.json", {
+        "inputs": _setup_inputs(), "python": sys.executable,
+        "environment": _environment_fingerprint(), "repositories": repositories,
+        "bundled_node": hashlib.sha256((install_dir / "ComfyUI" / "custom_nodes" /
+                                       "H3Acceleration" / "__init__.py").read_bytes()).hexdigest(),
+    })
 
 
 def run(
@@ -248,6 +322,7 @@ def sync_git_repo(
     clean_untracked: bool = True,
 ) -> None:
     """Synchronize a repo and repair incomplete mounted worktrees."""
+    _SETUP_REPOSITORIES[str(dest)] = {"required_paths": required_paths}
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fetch_ref = ref or "HEAD"
@@ -1086,7 +1161,10 @@ def ensure_root_entrypoints() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-dir", default="h3")
-    parser.add_argument("--skip-env", action="store_true")
+    parser.add_argument("--skip-env", action="store_true",
+                        help="Compatibility flag; skipping setup requires a valid success record")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Ignore the successful setup record and recheck sources/dependencies")
     parser.add_argument(
         "--prune-cache",
         action="store_true",
@@ -1110,19 +1188,17 @@ def main() -> None:
     comfy = install_dir / "ComfyUI"
     install_dir.mkdir(parents=True, exist_ok=True)
 
-    if not args.skip_env:
-        install_environment(comfy)
-    elif not (comfy / "main.py").is_file():
-        raise RuntimeError("--skip-env requires an existing ComfyUI installation")
-    elif not torch_stack_matches():
-        found = current_torch_version()
-        print(
-            f"[h3-setup] Existing Torch {found} is incompatible with the "
-            f"prebuilt SageAttention wheel; restoring "
-            f"{TORCH_VERSION}+cu130",
-            flush=True,
-        )
-        install_pinned_torch_stack()
+    if not args.refresh and setup_is_current(install_dir):
+        print("[h3-setup] Setup inputs, packages and source files are unchanged; reusing installation", flush=True)
+        sync_model_inventory(install_dir, comfy)
+        return
+    # Never leave a previous success record after a failed or interrupted repair.
+    (install_dir / ".setup-state.json").unlink(missing_ok=True)
+    _SETUP_REPOSITORIES.clear()
+
+    # A stale/missing record needs a full dependency check, even when an older
+    # launcher passes --skip-env. Only a validated record can skip installation.
+    install_environment(comfy)
 
     if not numpy_stack_matches():
         found = current_numpy_version()
@@ -1136,10 +1212,9 @@ def main() -> None:
     ensure_sageattention(install_dir)
     sync_external_nodes(
         comfy,
-        install_requirements=not args.skip_env,
+        install_requirements=True,
     )
-    if not args.skip_env:
-        uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
+    uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():
@@ -1147,6 +1222,7 @@ def main() -> None:
     ensure_tensorrt()
     install_bundled_nodes(comfy)
     sync_model_inventory(install_dir, comfy)
+    record_setup_state(install_dir)
 
 
 if __name__ == "__main__":

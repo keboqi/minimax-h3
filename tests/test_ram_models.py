@@ -25,11 +25,12 @@ def symlinks_work(folder: Path) -> bool:
         return False
 
 
-class RamModelTests(unittest.TestCase):
+class RamModelFixture:
+    requires_symlinks = True
     def setUp(self):
         self._tmp = TemporaryDirectory(prefix="h3-ram-")
         self.root = Path(self._tmp.name)
-        if not symlinks_work(self.root):
+        if self.requires_symlinks and not symlinks_work(self.root):
             self.skipTest("symlinks unavailable")
         self.ram = self.root / "shm"
         self.disk = self.root / "disk"
@@ -80,6 +81,9 @@ class RamModelTests(unittest.TestCase):
             h3_models._download_model(plan, token=None, log_prefix="[test]")
         return output.getvalue()
 
+
+
+class RamModelTests(RamModelFixture, unittest.TestCase):
     def test_a_routed_model_lands_in_ram_behind_a_symlink(self):
         h3_models.route_to_ram(["h3_model"])
         plan = self.plan()
@@ -194,6 +198,114 @@ class RamModelTests(unittest.TestCase):
         h3_models.route_to_ram(["h3_model"])
         with patch.dict(os.environ, {h3_models.RAM_MODELS_ENV: ""}):
             self.assertIsNone(h3_models._reserve_ram(self.plan()))
+
+
+class RamResumeTests(RamModelFixture, unittest.TestCase):
+    requires_symlinks = False
+
+    def test_invalid_completed_blob_is_discarded_for_a_clean_retry(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan()
+        cache = h3_models._model_download_cache(self.ram, plan)
+
+        def bad_download(**kwargs):
+            blob = Path(kwargs["cache_dir"]) / "blob"
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"bad")
+            return str(blob)
+
+        hub = types.SimpleNamespace(hf_hub_download=bad_download)
+        with patch.dict(sys.modules, {"huggingface_hub": hub}), self.assertRaisesRegex(RuntimeError, "size mismatch"):
+            self.run_download(plan)
+        self.assertFalse(cache.exists())
+        self.assertEqual(h3_models._ram_reserved, 0)
+
+    def test_reservations_in_other_processes_reduce_available_headroom(self):
+        @contextlib.contextmanager
+        def shared(_root):
+            yield {str(os.getpid() + 1000): 40 * GIB}
+
+        with patch.object(h3_models, "_shared_ram_reservations", shared):
+            self.assertIsNone(h3_models.reserve_ram_bytes(40 * GIB))
+            self.assertEqual(h3_models._ram_reserved, 0)
+
+    def test_linux_reservation_ledger_drops_dead_processes(self):
+        self.ram.mkdir()
+        ledger = self.ram / ".h3-ram-reservations.json"
+        h3_models.write_json_atomic(ledger, {"123": 100, "456": 200, "invalid": 1})
+        exists = Path.exists
+
+        def process_exists(path):
+            if path.as_posix().startswith("/proc/"):
+                return path.as_posix() == "/proc/123"
+            return exists(path)
+
+        # Exercise the Linux ledger on Windows too; the OS lock itself has
+        # separate cross-process regression coverage.
+        linux_os = types.SimpleNamespace(name="posix", replace=os.replace)
+        with (patch.object(h3_models, "os", linux_os),
+              patch.object(h3_models, "model_manifest_lock", return_value=contextlib.nullcontext()),
+              patch.object(Path, "exists", process_exists)):
+            with h3_models._shared_ram_reservations(self.ram) as reservations:
+                self.assertEqual(reservations, {"123": 100})
+                reservations["789"] = 300
+        self.assertEqual(h3_models.read_json(ledger, {}), {"123": 100, "789": 300})
+
+    def test_interrupted_transfer_keeps_partial_cache_and_retry_reuses_it(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan(payload=b"complete weights")
+        cache = h3_models._model_download_cache(self.ram, plan)
+        partial = cache / "models--org--repo" / "blobs" / "abc.incomplete"
+
+        def interrupted(**kwargs):
+            self.assertEqual(Path(kwargs["cache_dir"]), cache)
+            partial.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_bytes(b"complete ")
+            raise KeyboardInterrupt()
+
+        hub = types.SimpleNamespace(hf_hub_download=interrupted)
+        with patch.dict(sys.modules, {"huggingface_hub": hub}), self.assertRaises(KeyboardInterrupt):
+            self.run_download(plan)
+        self.assertTrue(partial.is_file())
+        self.assertFalse(plan["dest"].exists())
+        self.assertEqual(h3_models._ram_reserved, 0)
+
+        def resumed(**kwargs):
+            self.assertEqual(Path(kwargs["cache_dir"]), cache)
+            self.assertEqual(partial.read_bytes(), b"complete ")
+            partial.write_bytes(partial.read_bytes() + b"weights")
+            return str(partial)
+
+        hub.hf_hub_download = resumed
+        # Exercise retry/publication even on Windows without symlink rights.
+        def link_file(path, target, target_is_directory=False):
+            os.link(target, path)
+
+        with patch.dict(sys.modules, {"huggingface_hub": hub}), patch.object(Path, "symlink_to", link_file):
+            self.run_download(plan)
+        self.assertEqual(plan["dest"].read_bytes(), b"complete weights")
+        self.assertFalse(cache.exists())
+        self.assertEqual(h3_models._ram_reserved, 0)
+
+    def test_different_revisions_never_resume_each_others_partial_bytes(self):
+        plan = self.plan()
+        cache = h3_models._model_download_cache(self.ram, plan)
+        plan["revision"] = "rev2"
+        self.assertNotEqual(cache, h3_models._model_download_cache(self.ram, plan))
+
+    def test_partial_cache_reserves_only_remaining_ram(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan()
+        plan["size"] = 40 * GIB
+        cache = h3_models._model_download_cache(self.ram, plan)
+        # Simulate already allocated bytes without writing gigabytes of test data.
+        with patch.object(h3_models, "_directory_bytes", return_value=10 * GIB) as count:
+            self.assertEqual(h3_models._reserve_ram(plan), self.ram)
+        count.assert_called_once_with(cache)
+        self.assertEqual(h3_models._ram_reserved, 30 * GIB)
+        h3_models._release_ram(plan["ram_reserved_bytes"])
+        self.assertEqual(h3_models._ram_reserved, 0)
+
 
 
 if __name__ == "__main__":

@@ -1180,6 +1180,7 @@ PRELOAD_MODEL_KEYS = (
 
 
 _MANIFEST_THREAD_LOCK = RLock()
+_PATH_THREAD_LOCKS: dict[str, RLock] = {}
 
 
 @contextmanager
@@ -1187,7 +1188,10 @@ def model_manifest_lock(path: Path):
     """Coordinate installers and UI preparation across threads and processes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
-    with _MANIFEST_THREAD_LOCK, lock_path.open("a+b") as handle:
+    # A global thread lock would serialize unrelated model transfers too.
+    with _MANIFEST_THREAD_LOCK:
+        thread_lock = _PATH_THREAD_LOCKS.setdefault(os.path.normcase(str(lock_path.absolute())), RLock())
+    with thread_lock, lock_path.open("a+b") as handle:
         if handle.tell() == 0:
             handle.write(b"0")
             handle.flush()
@@ -1718,13 +1722,24 @@ def _reserve_ram(plan: dict[str, Any]) -> Path | None:
     key = plan["key"]
     if not (key in _ram_keys or key.startswith(_RAM_KEY_PREFIXES)):
         return None
-    return reserve_ram_bytes(plan.get("size"))
+    size = plan.get("size")
+    root = ram_models_dir()
+    if root is not None and isinstance(size, int) and size > 0 and "spec" in plan:
+        # Partial cache bytes already occupy RAM; reserve only what is left.
+        cache = _model_download_cache(root, plan)
+        try:
+            remaining = max(1, size - _directory_bytes(cache))
+        except OSError:
+            return None
+        plan["ram_reserved_bytes"] = remaining
+        return reserve_ram_bytes(remaining)
+    return reserve_ram_bytes(size)
 
 
 def reserve_ram_bytes(size: int | None) -> Path | None:
     """H3_RAM_MODELS_DIR with ``size`` bytes reserved there, or None when RAM is off or short.
 
-    The headroom counts reservations still downloading (in this process), so parallel
+    The headroom counts reservations still downloading (across processes on Linux), so parallel
     downloads cannot all claim the same free space; release with _release_ram.
     """
     global _ram_reserved
@@ -1732,22 +1747,52 @@ def reserve_ram_bytes(size: int | None) -> Path | None:
     if root is None or not isinstance(size, int) or size <= 0:
         return None
     with _ram_lock:
+        previous = _ram_reserved
         try:
             root.mkdir(parents=True, exist_ok=True)
-            free = shutil.disk_usage(root).free
+            with _shared_ram_reservations(root) as reservations:
+                free = shutil.disk_usage(root).free
+                reserved = _ram_reserved + sum(
+                    value for pid, value in reservations.items() if pid != str(os.getpid()))
+                if (free - reserved < size + RAM_DIR_HEADROOM_BYTES
+                        or _available_memory() - reserved < size + RAM_HEADROOM_BYTES):
+                    return None
+                _ram_reserved += size
+                reservations[str(os.getpid())] = _ram_reserved
         except OSError:
+            _ram_reserved = previous
             return None
-        if (free - _ram_reserved < size + RAM_DIR_HEADROOM_BYTES
-                or _available_memory() - _ram_reserved < size + RAM_HEADROOM_BYTES):
-            return None
-        _ram_reserved += size
         return root
+
+
+@contextmanager
+def _shared_ram_reservations(root: Path | None):
+    """Linux tmpfs users in separate processes share the same headroom budget."""
+    if root is None or os.name == "nt":
+        yield {}
+        return
+    path = root / ".h3-ram-reservations.json"
+    with model_manifest_lock(path):
+        saved = read_json(path, {})
+        live = {pid: size for pid, size in saved.items()
+                if pid.isdecimal() and isinstance(size, int) and size >= 0
+                and Path(f"/proc/{pid}").exists()} if isinstance(saved, dict) else {}
+        try:
+            yield live
+        finally:
+            write_json_atomic(path, live)
 
 
 def _release_ram(size: int) -> None:
     global _ram_reserved
     with _ram_lock:
         _ram_reserved = max(0, _ram_reserved - size)
+        try:
+            with _shared_ram_reservations(ram_models_dir()) as reservations:
+                reservations[str(os.getpid())] = _ram_reserved
+        except OSError:
+            # A missing/full tmpfs must not mask the original transfer failure.
+            pass
 
 
 def hub_snapshot_bytes(repo_id: str, revision: str | None = None, token: str | None = None) -> int | None:
@@ -1810,6 +1855,29 @@ def ram_directory(target: Path, size: int | None, *, log=print, new: bool = True
         _release_ram(size)
 
 
+def _model_download_cache(root: Path, plan: dict[str, Any]) -> Path:
+    """Private, resumable cache shared only by requests for this exact source."""
+    spec = plan["spec"]
+    identity = json.dumps([str(plan["dest"].absolute()), spec.repo_id, spec.filename,
+                           plan["revision"], plan.get("identity")], separators=(",", ":"))
+    return root / ".hf-download-cache" / hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _directory_bytes(path: Path) -> int:
+    """Count allocated bytes once (Hub snapshots may link to their blobs)."""
+    total = 0
+    seen = set()
+    for item in path.rglob("*"):
+        if item.is_symlink() or not item.is_file():
+            continue
+        stat = item.stat()
+        identity = (stat.st_dev, stat.st_ino)
+        if identity not in seen:
+            seen.add(identity)
+            total += getattr(stat, "st_blocks", (stat.st_size + 511) // 512) * 512
+    return total
+
+
 def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, root: Path) -> str:
     """Download into RAM and point the ComfyUI path at it; the bytes never reach the disk."""
     from huggingface_hub import hf_hub_download
@@ -1820,31 +1888,37 @@ def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, r
     ram_dest.parent.mkdir(parents=True, exist_ok=True)
     # A private Hub cache per download, also in RAM: parallel workers never share
     # (or remove) each other's snapshot folders.
-    cache_dir = root / ".hf-download-cache" / plan["key"]
+    cache_dir = _model_download_cache(root, plan)
     temporary_model = ram_dest.with_name(ram_dest.name + ".partial")
     temporary_link = logical_dest.with_name(logical_dest.name + ".ram-link-partial")
     print(f"{log_prefix} downloading {logical_dest.name} into RAM", flush=True)
     try:
-        shutil.rmtree(cache_dir, ignore_errors=True)
         cached = Path(hf_hub_download(repo_id=spec.repo_id, filename=spec.filename,
                                       revision=plan["revision"], token=token, cache_dir=str(cache_dir)))
-        if cached.stat().st_size != plan["size"]:
-            raise RuntimeError(f"Downloaded size mismatch for {spec.filename}: "
-                               f"{cached.stat().st_size} != {plan['size']}")
-        _verify_pinned_model(cached, spec)
+        try:
+            if cached.stat().st_size != plan["size"]:
+                raise RuntimeError(f"Downloaded size mismatch for {spec.filename}: "
+                                   f"{cached.stat().st_size} != {plan['size']}")
+            _verify_pinned_model(cached, spec)
+        except Exception:
+            # A completed but invalid blob cannot be resumed; let the retry
+            # fetch it again rather than repeatedly returning the bad cache hit.
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            raise
         temporary_model.unlink(missing_ok=True)
         os.link(cached.resolve(), temporary_model)
         os.replace(temporary_model, ram_dest)
         temporary_link.unlink(missing_ok=True)
         temporary_link.symlink_to(ram_dest)
         os.replace(temporary_link, logical_dest)
-        plan["cached_path"] = cached  # removed below; the batch cleanup then finds nothing
+        plan["cached_path"] = cached  # The caller's later cache cleanup becomes a no-op.
+        # Preserve incomplete Hub transfers on failure, including interruption.
+        shutil.rmtree(cache_dir, ignore_errors=True)
         print(f"{log_prefix} ready {logical_dest.name} (in RAM: {ram_dest})", flush=True)
         return plan["key"]
     finally:
         temporary_model.unlink(missing_ok=True)
         temporary_link.unlink(missing_ok=True)
-        shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def _download_model(
@@ -1862,7 +1936,7 @@ def _download_model(
         try:
             return _download_to_ram(plan, token, log_prefix, ram_root)
         finally:
-            _release_ram(plan["size"])
+            _release_ram(plan.get("ram_reserved_bytes", plan["size"]))
     root = ram_models_dir()
     if root is not None and (plan["key"] in _ram_keys or plan["key"].startswith(_RAM_KEY_PREFIXES)):
         print(f"{log_prefix} {dest.name}: not enough free RAM; downloading to disk", flush=True)
@@ -1876,6 +1950,7 @@ def _download_model(
             filename=spec.filename,
             revision=plan["revision"],
             token=token,
+            **({"cache_dir": str(plan["cache_dir"])} if "cache_dir" in plan else {}),
         )
     )
     expected = plan["size"]
@@ -2028,119 +2103,82 @@ def sync_models(
     if model_keys == ():
         # Only the catalog: no manifest change, so no waiting on a background download's lock.
         return build_model_config(Path(manifest_path).name)
-    with model_manifest_lock(Path(manifest_path)):
-        token = resolve_hf_token(token)
-        root = Path(root)
-        manifest_path = Path(manifest_path)
-        manifest = read_json(
-            manifest_path,
-            {"schema_version": 1, "files": {}},
-        )
+    root = Path(root).resolve()
+    manifest_path = Path(manifest_path)
+    selected_keys = tuple(dict.fromkeys(MODEL_SPECS if model_keys is None else model_keys))
+    unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
+    if unknown:
+        raise KeyError("Unknown model keys: " + ", ".join(unknown))
+    token = resolve_hf_token(token)
+    repo_ids = sorted({
+        (MODEL_SPECS[key].repo_id, MODEL_SPECS[key].revision)
+        if MODEL_SPECS[key].revision else MODEL_SPECS[key].repo_id
+        for key in selected_keys
+    }, key=str)
+    # Network metadata and transfers never hold the manifest lock.
+    repo_results = _fetch_repositories(repo_ids, token, metadata_workers)
+    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+
+    def load_manifest():
+        manifest = read_json(manifest_path, {"schema_version": 1, "files": {}})
         if not isinstance(manifest, dict):
             manifest = {"schema_version": 1, "files": {}}
         if not isinstance(manifest.get("files"), dict):
             manifest["files"] = {}
+        return manifest
 
-        selected_keys = tuple(MODEL_SPECS if model_keys is None else model_keys)
-        unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
-        if unknown:
-            raise KeyError("Unknown model keys: " + ", ".join(unknown))
-        selected_specs = {key: MODEL_SPECS[key] for key in selected_keys}
-        repo_ids = sorted({
-            (spec.repo_id, spec.revision) if spec.revision else spec.repo_id
-            for spec in selected_specs.values()
-        }, key=str)
-        repo_results = _fetch_repositories(
-            repo_ids,
-            token,
-            metadata_workers,
-        )
-
-        plans = [
-            _plan_model(
-                root=root,
-                manifest=manifest,
-                repo_results=repo_results,
-                key=key,
-                spec=spec,
-                log_prefix=log_prefix,
-            )
-            for key, spec in selected_specs.items()
-        ]
-
-        stale = [plan for plan in plans if plan["needs_download"]]
-        downloaded_keys: set[str] = set()
-        download_failures: list[tuple[str, Exception]] = []
-        if stale:
-            # hf_xet reads this when its first transfer starts; set it before then.
-            os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-            workers = max(1, min(download_workers, len(stale)))
-            print(
-                f"{log_prefix} downloading {len(stale)} model files "
-                f"with {workers} parallel workers",
-                flush=True,
-            )
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {
-                    pool.submit(_download_model, plan, token, log_prefix, False): plan
-                    for plan in stale
-                }
-                for future in as_completed(futures):
-                    plan = futures[future]
-                    try:
-                        downloaded_keys.add(future.result())
-                    except Exception as exc:
-                        download_failures.append((plan["key"], exc))
-
-            # Hub snapshot directories are shared by files in a repository.
-            # Removing them while another worker is linking its blob can raise
-            # FileNotFoundError inside hf_hub_download.
-            for plan in stale:
-                if plan["key"] in downloaded_keys:
-                    _remove_hf_cache(
-                        plan["cached_path"], plan=plan, log_prefix=log_prefix
-                    )
-
-        files_manifest = manifest.setdefault("files", {})
-        for plan in plans:
+    def sync_one(key):
+        spec = MODEL_SPECS[key]
+        # Lock the destination, not the catalog key: aliases share one transfer.
+        dest = root / spec.folder / spec.local_name
+        lock_id = hashlib.sha256(os.path.normcase(str(dest.absolute())).encode()).hexdigest()
+        with model_manifest_lock(root / ".model-locks" / lock_id):
+            with model_manifest_lock(manifest_path):
+                manifest = load_manifest()
+            plan = _plan_model(root=root, manifest=manifest, repo_results=repo_results,
+                               key=key, spec=spec, log_prefix=log_prefix)
             if not plan["remote_ok"]:
-                continue
-            # Record successful workers even when a sibling worker failed. This
-            # prevents a completed multi-gigabyte file from being downloaded again
-            # merely because the parallel batch could not finish every model.
-            if plan["needs_download"] and plan["key"] not in downloaded_keys:
-                continue
-            spec: ModelSpec = plan["spec"]
-            dest: Path = plan["dest"]
-            files_manifest[plan["manifest_key"]] = {
-                "repo_id": spec.repo_id,
-                "filename": spec.filename,
-                "local_path": plan["manifest_key"],
-                "source": spec.source,
-                "repo_revision": plan["revision"],
-                "blob_id": plan["blob_id"],
-                "sha256": plan["sha256"],
-                "size": (
-                    plan["size"] if plan["size"] is not None else dest.stat().st_size
-                ),
-                "remote_identity": plan["identity"],
-            }
+                return
+            if plan["needs_download"]:
+                # A private cache prevents another batch pruning a shared Hub
+                # snapshot while this transfer is still using it.
+                plan["cache_dir"] = _model_download_cache(root, plan)
+                _download_model(plan, token, log_prefix, False)
+            with model_manifest_lock(manifest_path):
+                # Merge with the latest entries, including unrelated transfers
+                # that completed since planning started.
+                manifest = load_manifest()
+                manifest["files"][plan["manifest_key"]] = {
+                    "repo_id": spec.repo_id,
+                    "filename": spec.filename,
+                    "local_path": plan["manifest_key"],
+                    "source": spec.source,
+                    "repo_revision": plan["revision"],
+                    "blob_id": plan["blob_id"],
+                    "sha256": plan["sha256"],
+                    "size": plan["size"] if plan["size"] is not None else dest.stat().st_size,
+                    "remote_identity": plan["identity"],
+                }
+                manifest.update(schema_version=1, repo_id=MODEL_REPO,
+                                checked_at_unix=int(time.time()))
+                write_json_atomic(manifest_path, manifest)
+            if plan["needs_download"]:
+                _remove_hf_cache(plan["cached_path"], plan=plan, log_prefix=log_prefix)
+                shutil.rmtree(plan["cache_dir"], ignore_errors=True)
 
-        manifest["schema_version"] = 1
-        manifest["repo_id"] = MODEL_REPO
-        manifest["checked_at_unix"] = int(time.time())
-        write_json_atomic(manifest_path, manifest)
-
-        if download_failures:
-            details = "; ".join(
-                f"{key} ({MODEL_SPECS[key].repo_id}): {exc}"
-                for key, exc in download_failures
-            )
-            raise RuntimeError(
-                f"{len(download_failures)} model download(s) failed: {details}"
-            ) from download_failures[0][1]
-
-        return build_model_config(manifest_path.name)
+    workers = max(1, min(download_workers, len(selected_keys)))
+    failures = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(sync_one, key): key for key in selected_keys}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                failures.append((futures[future], exc))
+    if failures:
+        details = "; ".join(f"{key} ({MODEL_SPECS[key].repo_id}): {exc}" for key, exc in failures)
+        raise RuntimeError(f"{len(failures)} model download(s) failed: {details}") from failures[0][1]
+    return build_model_config(manifest_path.name)
 
 
 def validate_config_files(

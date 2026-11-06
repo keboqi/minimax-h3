@@ -11,11 +11,12 @@ from h3_app import model_service
 
 
 class HfCacheCleanupTests(unittest.TestCase):
-    def test_batch_defers_cache_cleanup_until_all_downloads_finish(self):
+    def test_concurrent_downloads_use_private_caches_before_cleanup(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             finished = set()
             cleaned = []
+            caches = {}
             keys = ("ltx25_video_vae", "ltx25_audio_vae")
 
             def plan_model(**kwargs):
@@ -36,6 +37,7 @@ class HfCacheCleanupTests(unittest.TestCase):
 
             def download(plan, _token, _log_prefix, cleanup_cache):
                 self.assertFalse(cleanup_cache)
+                caches[plan["key"]] = plan["cache_dir"]
                 plan["dest"].write_bytes(b"data")
                 plan["cached_path"] = root / "cache" / plan["key"]
                 finished.add(plan["key"])
@@ -43,7 +45,7 @@ class HfCacheCleanupTests(unittest.TestCase):
 
             def cleanup(_cached, plan, log_prefix):
                 self.assertEqual(log_prefix, "[h3-models]")
-                self.assertEqual(finished, set(keys))
+                self.assertIn(plan["key"], finished)
                 cleaned.append(plan["key"])
 
             with (
@@ -60,6 +62,7 @@ class HfCacheCleanupTests(unittest.TestCase):
                     download_workers=2,
                 )
             self.assertEqual(set(cleaned), set(keys))
+            self.assertEqual(len(set(caches.values())), len(keys))
 
     def test_ltx_cache_failure_does_not_claim_authentication_failed(self):
         runtime = SimpleNamespace(
