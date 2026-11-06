@@ -108,7 +108,7 @@ def resolve_seedvr2_input_upscale_outputs(
     *,
     context: OutputContext,
 ) -> dict[str, Path]:
-    """Resolve named stills written by SeedVR2 or CQ image processing."""
+    """Resolve named stills written by Media image enhancement workflows."""
     output_root = (context.config.output_dir / "h3" / "input_upscale").resolve()
     candidates = _history_output_candidates(
         history, IMAGE_EXTENSIONS, directory=output_root, context=context

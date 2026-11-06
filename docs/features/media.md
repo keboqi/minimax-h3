@@ -33,7 +33,16 @@ music on or off and original or translated subtitles. Both are read from files k
 beside the output on the volume (the settings snapshot, and the dub's
 `.dub-player/<name>/` tracks with `player.json`), so the Library Console shows them
 too. A dub's player tracks are removed once both its audio and video are deleted.
-Image mode offers the one-step **SeedVR2 2x** workflow and
+**RelayVSR 2x** and **RelayVSR 4x** are available for both videos and images.
+They multiply the original width and height by exactly 2 or 4. Target-resolution
+presets are hidden for these methods; no input or output resizing is added.
+Each downloads its own INT8 model and matching Flash decoder on first use.
+Video runs preserve the source frame rate, frame count and audio. RelayVSR is
+designed for video; still images use a single-frame input. No scene prompt is needed.
+Update setup and restart ComfyUI (or rebuild/redeploy the Modal image) to load
+the native RelayVSR nodes and matching comfy-kitchen dependency.
+
+Image mode also offers the one-step **SeedVR2 2x** workflow and
 **LTX-2.5 CQ Image Enhancer**, using the same target-resolution presets.
 CQ resizes the selected still to fit the target, then generatively restores
 detail using the dedicated image LoRA, the LTX development INT8 model, a

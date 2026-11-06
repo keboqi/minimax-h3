@@ -89,6 +89,18 @@ class ModelSpec:
 
 MODEL_SPECS: dict[str, ModelSpec] = {
     **{
+        f"relayvsr_{scale}x_{part}": ModelSpec(
+            "Comfy-Org/RelayVSR", folder, f"{folder}/{filename}",
+            f"RelayVSR {scale}x · ComfyUI",
+            revision="340486a3adf9544e660e9146911c3ced59e58dd3",
+        )
+        for scale in (2, 4)
+        for part, folder, filename in (
+            ("dit", "diffusion_models", f"relayvsr_x{scale}{'_lightx2v' if scale == 2 else ''}_int8_convrot.safetensors"),
+            ("vae", "vae", f"relayvsr_flash_vae_x{scale}_fp32.safetensors"),
+        )
+    },
+    **{
         key: ModelSpec(
             "PrunaAI/P-H3-Image-Comfy", folder, f"{folder}/{filename}",
             "Pruna P-H3-Image · ComfyUI", revision="44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543",
@@ -919,7 +931,11 @@ SEEDVR2_UPSCALE_MODEL_KEYS = (
     *SEEDVR2_MODEL_CHOICES.values(),
     "seedvr2_vae",
 )
+RELAYVSR_MODEL_KEYS = tuple(
+    f"relayvsr_{scale}x_{part}" for scale in (2, 4) for part in ("dit", "vae")
+)
 LAZY_POSTPROCESS_MODEL_KEYS = (
+    *RELAYVSR_MODEL_KEYS,
     *SEEDVR2_UPSCALE_MODEL_KEYS,
     "ltx25_pixel_upscaler_x2",
     "ltx25_decompression",
@@ -2180,6 +2196,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        *RELAYVSR_MODEL_KEYS,
         "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
         "pika_flex_fl2va_lora", "pika_flex_ref2va_lora",
         *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,

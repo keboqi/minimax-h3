@@ -24,11 +24,13 @@ from h3_app.catalog import (
     LTX25_POSTPROCESS_MODELS,
     LTX25_SAME_RESOLUTION_OPTIONS,
     POSTPROCESS_OPTIONS,
+    RELAYVSR_OPTIONS,
     SEEDVR2_UPSCALE,
     UPSCALE_RESOLUTION_PRESETS,
     VIDEO_EXTENSIONS,
 )
 from h3_app.errors import H3Error
+from h3_app.workflows.relayvsr import build_relayvsr_graph, relayvsr_model_keys, required_relayvsr_nodes
 from h3_app.jobs import record_failure
 from h3_app.provenance import copy_media, score_path, snapshot_path
 from h3_app.status import progress_status
@@ -64,6 +66,7 @@ class MediaServices:
     ensure_ltx25_upscale_models: Callable[..., bool]
     ensure_seedvr2_upscale_models: Callable[..., bool]
     ensure_cq_image_enhance_models: Callable[[], bool]
+    ensure_model_keys: Callable[..., bool]
     ensure_h3_regenerate_models: Callable[..., bool]
     build_seedvr2_image_upscale_graph: Callable[..., dict]
     build_cq_image_enhance_graph: Callable[..., dict]
@@ -585,7 +588,7 @@ class MediaController:
                     "Video", result, option, time.monotonic() - started, request
                 )
                 return
-            models = self.services.load_model_config()
+            models = None if option in RELAYVSR_OPTIONS else self.services.load_model_config()
             if option == H3_REFINEMENT:
                 metadata = self.services.probe_video_metadata(source)
                 target_width, target_height = self.services.upscale_target_dimensions(
@@ -608,6 +611,10 @@ class MediaController:
                     models, option, **({"refinement": h3_refinement or {}} if option == H3_REFINEMENT else {})
                 )
                 stage_bucket = "h3_regenerate"
+            elif option in RELAYVSR_OPTIONS:
+                yield self.gallery_media_progress_result(f"Checking {option} models")
+                downloaded = self.services.ensure_model_keys(relayvsr_model_keys(option))
+                stage_bucket = "relayvsr_upscale"
             elif option == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {seedvr2_model}"
                 yield self.gallery_media_progress_result(
@@ -635,13 +642,16 @@ class MediaController:
                     f"{option} models downloaded"
                 )
             metadata = metadata if option == H3_REFINEMENT else self.services.probe_video_metadata(source)
-            target_width, target_height = (
-                (metadata.width, metadata.height)
-                if option in LTX25_SAME_RESOLUTION_OPTIONS
-                else self.services.upscale_target_dimensions(
+            if option in RELAYVSR_OPTIONS:
+                scale = RELAYVSR_OPTIONS[option]
+                target_width, target_height = metadata.width * scale, metadata.height * scale
+                ltx25_prompt = ""
+            elif option in LTX25_SAME_RESOLUTION_OPTIONS:
+                target_width, target_height = metadata.width, metadata.height
+            else:
+                target_width, target_height = self.services.upscale_target_dimensions(
                     metadata.width, metadata.height, upscale_resolution
                 )
-            )
 
             def completed_video(result):
                 # Snapshot publication also indexes the finished asset and prepares
@@ -756,25 +766,30 @@ class MediaController:
             if not selected_image:
                 raise H3Error("Select a gallery image first.")
             cq_image = option == LTX25_CQ_IMAGE_ENHANCER
-            family = "CQ image enhancement" if cq_image else "SeedVR2 image upscale"
-            if option not in {SEEDVR2_UPSCALE, LTX25_CQ_IMAGE_ENHANCER}:
+            relay = option in RELAYVSR_OPTIONS
+            if option not in {SEEDVR2_UPSCALE, LTX25_CQ_IMAGE_ENHANCER} | set(RELAYVSR_OPTIONS):
                 raise H3Error(
                     f"Unsupported image enhancement method: {option}"
                 )
             source = self.managed_gallery_image_path(selected_image)
-            try:
-                frame_width, frame_height = UPSCALE_RESOLUTION_PRESETS[
-                    str(upscale_resolution)
-                ]
-            except KeyError as exc:
-                raise H3Error(
-                    f"Unknown upscale resolution preset: {upscale_resolution}"
-                ) from exc
-            source_width, source_height, target_width, target_height, scale_by = (
-                self.services.input_image_upscale_dimensions(
-                    source, frame_width, frame_height
+            if relay:
+                from PIL import Image, ImageOps
+
+                family = model_name = option
+                with Image.open(source) as still:
+                    source_width, source_height = ImageOps.exif_transpose(still).size
+                scale_by = RELAYVSR_OPTIONS[option]
+                target_width, target_height = source_width * scale_by, source_height * scale_by
+            else:
+                family = "CQ image enhancement" if cq_image else "SeedVR2 image upscale"
+                model_name = "LTX-2.5 Dev INT8 + CQ image LoRA" if cq_image else seedvr2_model
+                try:
+                    frame_width, frame_height = UPSCALE_RESOLUTION_PRESETS[str(upscale_resolution)]
+                except KeyError as exc:
+                    raise H3Error(f"Unknown upscale resolution preset: {upscale_resolution}") from exc
+                source_width, source_height, target_width, target_height, scale_by = (
+                    self.services.input_image_upscale_dimensions(source, frame_width, frame_height)
                 )
-            )
             if cq_image:
                 scale_by = min(frame_width / source_width, frame_height / source_height)
                 target_width = max(1, min(frame_width, round(source_width * scale_by)))
@@ -792,21 +807,26 @@ class MediaController:
                 f"Preparing `{source.name}` for {family}"
             )
             available = set(self.services.object_info())
-            required = (
-                required_cq_image_enhance_nodes()
-                if cq_image else required_seedvr2_image_upscale_nodes()
-            )
+            if relay:
+                required = required_relayvsr_nodes(image=True)
+            elif cq_image:
+                required = required_cq_image_enhance_nodes()
+            else:
+                required = required_seedvr2_image_upscale_nodes()
             missing = required - available
             if missing:
                 raise H3Error(
                     f"{family} requires current ComfyUI nodes: "
                     + ", ".join(sorted(missing))
                 )
-            models = None if cq_image else self.services.load_model_config()
-            downloaded = (
-                self.services.ensure_cq_image_enhance_models()
-                if cq_image else self.services.ensure_seedvr2_upscale_models(models, seedvr2_model)
-            )
+            models = None
+            if relay:
+                downloaded = self.services.ensure_model_keys(relayvsr_model_keys(option))
+            elif cq_image:
+                downloaded = self.services.ensure_cq_image_enhance_models()
+            else:
+                models = self.services.load_model_config()
+                downloaded = self.services.ensure_seedvr2_upscale_models(models, seedvr2_model)
             if downloaded:
                 yield self.gallery_media_progress_result(
                     f"{family} models downloaded"
@@ -822,7 +842,12 @@ class MediaController:
             output_token = uuid.uuid4().hex
             if cq_image:
                 output_token = f"cq_image_{output_token}"
-            if cq_image:
+            if relay:
+                graph = build_relayvsr_graph(
+                    option=option, source=staged, seed=actual_seed, image=True,
+                    output_token=output_token,
+                )
+            elif cq_image:
                 graph = self.services.build_cq_image_enhance_graph(
                     source_image=staged, seed=actual_seed,
                     target_width=target_width, target_height=target_height,
@@ -877,7 +902,7 @@ class MediaController:
                         "source": source.name,
                         "source_resolution": f"{source_width}×{source_height}",
                         "target_resolution": f"{target_width}×{target_height}",
-                        "model": "LTX-2.5 Dev INT8 + CQ image LoRA" if cq_image else seedvr2_model,
+                        "model": model_name,
                         "method": option,
                         "seed": actual_seed,
                     },

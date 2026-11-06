@@ -14,6 +14,7 @@ from h3_app.catalog import (
     LTX25_TILED_UPSCALE,
     H3_REFINEMENT,
     H3_REGENERATE_MODELS,
+    RELAYVSR_OPTIONS,
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
@@ -180,7 +181,7 @@ def bind_gallery_view(
             gr.update(value=False),
             gr.update(
                 choices=(
-                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER]
+                    [seedvr_option, *RELAYVSR_OPTIONS, LTX25_CQ_IMAGE_ENHANCER]
                     if value == "Image" else video_postprocess_options
                 ),
                 value=seedvr_option,
@@ -294,7 +295,7 @@ def bind_gallery_view(
             ),
             gr.update(
                 visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER)
-                and value not in LTX25_SAME_RESOLUTION_OPTIONS
+                and value not in LTX25_SAME_RESOLUTION_OPTIONS and value not in RELAYVSR_OPTIONS
             ),
             gr.update(visible=value in ltx_options),
         ),

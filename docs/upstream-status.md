@@ -1,5 +1,18 @@
 # Upstream status
 
+## Native RelayVSR added — 2026-11-06
+
+`COMFY_REF` pins `2f8943324e1eae89a5ee6c7db93602299246b5f1`, including
+[native RelayVSR (#17511)](https://github.com/Comfy-Org/ComfyUI/pull/17511).
+This is 11 commits ahead of the previous pin and retains adaptive SeedVR2 VAE slicing.
+Kitchen moves to 0.2.41 for `window_attention`; frontend stays at 1.58.5.
+Media exposes separate native 2x and 4x options for videos and single images,
+without input/output resizing or target-resolution presets. Only the selected
+INT8 checkpoint and matching Flash decoder download on first use, from pinned
+`Comfy-Org/RelayVSR` revision `340486a3adf9544e660e9146911c3ced59e58dd3`.
+Video graphs reuse the source audio and FPS. GPU inference and quality comparisons
+remain unverified. Reprovision local ComfyUI or rebuild/redeploy Modal to apply it.
+
 ## ComfyUI SeedVR2 VAE pin updated — 2026-11-04
 
 `COMFY_REF` now pins `56f179f6c50dad0c4c860ae4da427415c8e86415`, including

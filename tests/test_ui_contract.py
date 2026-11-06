@@ -518,6 +518,12 @@ class UiContractTests(unittest.TestCase):
         )
         def callback(option):
             return self.demo.fns[change["id"]].fn(option)
+        for option in _catalog.RELAYVSR_OPTIONS:
+            self.assertIn(option, choices)
+            self.assertEqual(
+                [u["visible"] for u in callback(option)],
+                [True, False, False, False, False],
+            )
         for option in (
             _catalog.LTX25_DECOMPRESSION,
             _catalog.LTX25_DEBLUR,
@@ -604,7 +610,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(updates[2]["visible"])
         self.assertTrue(updates[5]["visible"])
         self.assertEqual(updates[7]["choices"], [
-            _catalog.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
+            _catalog.SEEDVR2_UPSCALE, *_catalog.RELAYVSR_OPTIONS, _catalog.LTX25_CQ_IMAGE_ENHANCER,
         ])
         self.assertTrue(updates[9]["visible"])
 
@@ -1924,7 +1930,7 @@ class UiContractTests(unittest.TestCase):
             inventory.assert_called_once_with("Image", "old", False, limit=48, engine="", sort="newest")
             self.assertEqual([update["visible"] for update in switched[:3]], [False, True, False])
             self.assertEqual(switched[7]["choices"], [
-                _catalog.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
+                _catalog.SEEDVR2_UPSCALE, *_catalog.RELAYVSR_OPTIONS, _catalog.LTX25_CQ_IMAGE_ENHANCER,
             ])
             inventory.reset_mock()
             filtered = event.fn(

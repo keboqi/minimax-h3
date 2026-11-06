@@ -17,12 +17,14 @@ from h3_app.catalog import (
     LTX25_UPSCALE,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
+    RELAYVSR_OPTIONS,
     H3_REFINEMENT,
     H3_REGENERATE_MODELS,
 )
 from h3_app.refinement import resolve_refinement
 from h3_app.errors import H3Error
 from h3_app.workflows.regenerate import build_h3_regenerate_graph, required_h3_regenerate_nodes
+from h3_app.workflows.relayvsr import build_relayvsr_graph, required_relayvsr_nodes
 from h3_app.graph import Graph
 from h3_app.model_types import (
     ModelConfig,
@@ -677,6 +679,8 @@ def build_ltx25_tiled_upscale_graph(
 
 
 def required_upscale_nodes(option: str, models: ModelConfig | None = None, refinement=None) -> set[str]:
+    if option in RELAYVSR_OPTIONS:
+        return required_relayvsr_nodes()
     if option in H3_REGENERATE_MODELS or option == H3_REFINEMENT:
         return required_h3_regenerate_nodes(models, (refinement or {}) if option == H3_REFINEMENT else None)
     if option == LTX25_TILED_UPSCALE:
@@ -803,6 +807,11 @@ def build_upscale_graph(
     refinement=None,
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI post-processing workflow and return its sampler steps."""
+    if option in RELAYVSR_OPTIONS:
+        return build_relayvsr_graph(
+            option=option, source=source_video, seed=seed, fps=fps,
+            output_token=f"{output_stamp}_{output_nonce}",
+        ), 1
     if option in H3_REGENERATE_MODELS or option == H3_REFINEMENT:
         if width is None or height is None:
             raise H3Error("H3 Regenerate requires the source video dimensions.")
