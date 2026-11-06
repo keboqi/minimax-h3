@@ -302,6 +302,7 @@ def window_payload(window: Mapping[str, Any]) -> dict[str, Any]:
         "index": window["index"], "own": window["own"], "render": window["render"], "hold": window.get("hold", 0),
         "kind": kind, "state": window["state"], "state_name": STATE_NAMES[window["state"]],
         "pictures": window["pictures"], "pins": window["pins"], "prompt": window["prompt"],
+        "originals": window.get("originals", []),
         "prompt_auto": window["prompt_auto"], "take": window["take"], "carried": window["carried"],
         "carried_pin": window["carried_pin"], "use_carried": window["use_carried"],
     }
@@ -447,13 +448,13 @@ class RemakeHandlers:
     def selection_state(self, owner, selection: Selection) -> dict[str, Any]:
         """The selection's line, and its saved windows if it was split before."""
         long = needs_windows(selection.start, selection.end, selection.max_window)
-        project = self.runner.saved(owner, selection) if long else None
+        project = self.runner.saved(owner, selection)
         return {"text": selection_text(selection.start, selection.end, selection.max_window), "long": long,
                 "project": project_payload(project) if project is not None else None}
 
     # Projects --------------------------------------------------------------
     def project_rows(self, owner) -> list[dict[str, Any]]:
-        """Every saved long Remake, newest first."""
+        """Every saved Remake, newest first."""
         rows = []
         for project in self.runner.projects.list(owner):
             windows = project["windows"]
@@ -509,6 +510,23 @@ class RemakeHandlers:
         if not video:
             raise H3Error("Add a source video first.")
         return project_payload(self.runner.plan(owner, video, selection))
+
+    def save_project(self, owner, selection, video, index, prompt, use_carried, pictures, pins, options):
+        """Keep preparation for any selection so Studio can reopen it."""
+        if options.get("mode", SWAP) not in (SWAP, EDIT):
+            raise H3Error("Remake type must be Swap or Edit.")
+        if not video:
+            raise H3Error("Add a source video first.")
+        runner = self.runner
+        project = runner.plan(owner, video, selection)
+        project = runner.store_editor(
+            project, index, prompt, use_carried, pictures, pins,
+            options={"mode": options.get("mode", SWAP), "request": str(options.get("request") or ""),
+                     "smart": bool(options.get("smart", True)), "pinned": bool(options.get("pinned", True)),
+                     "auto_prompts": bool(options.get("auto_prompts", True))},
+            originals=options.get("originals") or {},
+        )
+        return project_payload(project)
 
     def save_window(self, owner, selection, index, prompt, use_carried, pictures, pins) -> dict[str, Any]:
         """Keep a window's edits, as the page does before it leaves that window."""
@@ -649,11 +667,11 @@ class RemakeHandlers:
             raise H3Error("Add a source video.")
         job = CURRENT_JOB.get()
         owner = job.owner if job is not None else "local"
-        if needs_windows(start, end, max_window):
+        sha = source_sha or file_content_sha256(Path(source_video))
+        selection = Selection(sha, start, end, short_edge, mix, max_window)
+        if needs_windows(start, end, max_window) or self.runner.saved(owner, selection) is not None:
             yield None, "Scanning the source for cuts"
             runner = self.runner
-            sha = source_sha or file_content_sha256(Path(source_video))
-            selection = Selection(sha, start, end, short_edge, mix, max_window)
             project = runner.plan(owner, source_video, selection)
             project = runner.store_editor(project, window_index, prompt, use_carried, *slots)
             project = runner.projects.edit(project, lambda current: current.update(

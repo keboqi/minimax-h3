@@ -68,16 +68,22 @@ def _spool(upload: UploadFile, directory: str, allowed) -> Path:
     return path
 
 
-def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None) -> None:
+def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None, gpu: bool = True) -> None:
     runs = Runs(busy="A Remake is already running.")
     edits = Runs(busy="A quick edit is already running.")
     callback = owned_generation(handlers.generate_remake, "remake")
     # The Gradio bridge registers an equal callback; without it, retries still need one.
-    JOBS.callbacks.setdefault("remake", callback)
+    if gpu:
+        JOBS.callbacks.setdefault("remake", callback)
     edit_callback = owned_generation(handlers.quick_edit, "remake_edit")
     # The Jobs tab retries a quick edit through this.
-    JOBS.register_callback("remake_edit", edit_callback)
+    if gpu:
+        JOBS.register_callback("remake_edit", edit_callback)
     api = "/remake/api"
+
+    def require_gpu():
+        if not gpu:
+            raise H3Error("Open this project in Studio to render or edit frames on the GPU.")
 
     def owner_of(request: Request) -> str:
         return request_owner(request, JOBS.store)
@@ -149,9 +155,9 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     def boot(request: Request):
         owner = owner_of(request)
         return {
-            "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
+            "gpu": gpu, "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
             "short_edges": list(SHORT_EDGES), "short_edge": DEFAULT_SHORT_EDGE,
-            "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS],
+            "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS] if gpu else [],
             "lengths": list(LENGTHS), "max_window": DEFAULT_WINDOW_FRAMES,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS), "openai_model": DEFAULT_OPENAI_PROMPT_MODEL},
@@ -233,6 +239,14 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         owner = owner_of(request)
         handlers.delete_project(owner, key)
         return {"projects": handlers.project_rows(owner)}
+
+    @app.post(f"{api}/save", include_in_schema=False)
+    @guarded
+    def save_project(request: Request, body: dict = Body(...)):
+        owner, pictures, pins = editor_of(request, body)
+        return handlers.save_project(owner, _selection(body), body.get("video"),
+                                     int(body.get("window") or 0), body.get("prompt", ""),
+                                     bool(body.get("use_carried")), pictures, pins, body)
 
     # Windows ---------------------------------------------------------------
     @app.post(f"{api}/split", include_in_schema=False)
@@ -318,6 +332,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/send-to-image", include_in_schema=False)
     @guarded
     def send_to_image(request: Request, body: dict = Body(...)):
+        require_gpu()
         handlers.send_to_image(owner_of(request), str(body.get("path") or ""), body.get("model"))
         return {"ok": True}
 
@@ -365,6 +380,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/generate", include_in_schema=False)
     @guarded
     def generate(request: Request, body: dict = Body(...)):
+        require_gpu()
         owner, pictures, pins = editor_of(request, body)
         chosen = _selection(body)
         writer = body.get("writer") or {}
@@ -397,6 +413,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/interrupt", include_in_schema=False)
     @guarded
     def stop(request: Request):
+        require_gpu()
         owner = owner_of(request)
         message = interrupted(request, runs.active(owner, RUN_KEY, "generate"), "remake")
         return {"message": message, "run": run_payload(owner)}
@@ -405,6 +422,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/quick-edit", include_in_schema=False)
     @guarded
     def quick_edit(request: Request, body: dict = Body(...)):
+        require_gpu()
         owner = owner_of(request)
         picture, prompt = body.get("picture"), str(body.get("prompt") or "").strip()
         handlers.require_readable(owner, picture)
@@ -433,6 +451,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/quick-edit/interrupt", include_in_schema=False)
     @guarded
     def stop_quick_edit(request: Request):
+        require_gpu()
         owner = owner_of(request)
         message = interrupted(request, edits.active(owner, EDIT_KEY, "edit"), "remake_edit")
         return {"message": message, "run": edit_payload(owner)}

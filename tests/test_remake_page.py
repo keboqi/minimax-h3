@@ -122,6 +122,112 @@ class RemakePageTests(unittest.TestCase):
         models = self.ok(self.client.get(f"{API}/boot"))["edit_models"]
         self.assertEqual([model["id"] for model in models], ["qwen", "h3"])
 
+    def workshop_client(self):
+        from h3_ui.remake_workshop import build_remake_workshop
+        import gradio as gr
+
+        with gr.Blocks() as ui:
+            handlers = build_remake_workshop(gr.Tab("Remake"), ui, self.runtime)
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        for install in ui.h3_routes:
+            install(app)
+        client = TestClient(app)
+        client.cookies.update(self.client.cookies)
+        return client, handlers
+
+    def test_workshop_refuses_gpu_actions_without_submitting_jobs(self):
+        client, _ = self.workshop_client()
+        boot = self.ok(client.get(f"{API}/boot"))
+        self.assertFalse(boot["gpu"])
+        self.assertEqual(boot["edit_models"], [])
+        jobs = len(JOBS.records)
+        for route in ("generate", "quick-edit", "send-to-image", "interrupt", "quick-edit/interrupt"):
+            response = client.post(f"{API}/{route}", json={})
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("Studio", response.text)
+        self.assertEqual(len(JOBS.records), jobs)
+
+    def test_workshop_short_project_reopens_in_studio_and_renders(self):
+        client, _ = self.workshop_client()
+        with self.video.open("rb") as handle:
+            source = self.ok(client.post(f"{API}/source", files={"file": ("dance.mp4", handle)}))
+        body = self.editor(source, mode="Edit", smart=False, pinned=False, auto_prompts=False)
+        frame = self.ok(client.post(f"{API}/extract", json={**body, "base": 0, "frame": 12}))
+        self.assertEqual(client.get(f"{API}/file", params={"path": frame["path"]}).status_code, 200)
+        with Path(self.picture).open("rb") as handle:
+            edited = self.ok(client.post(f"{API}/picture", files={"file": ("edited.png", handle)}))["path"]
+        body["slots"][0]["path"] = edited
+        saved = self.ok(client.post(f"{API}/save", json=body))
+        self.assertEqual(len(saved["windows"]), 1)
+        Path(source["path"]).unlink()
+        Path(edited).unlink()
+        loaded = self.ok(self.client.post(f"{API}/projects/{saved['key']}/load"))
+        self.assertEqual(loaded["mode"], "Edit")
+        self.assertEqual(loaded["request"], "robot")
+        self.assertFalse(loaded["smart"])
+        self.assertFalse(loaded["pinned"])
+        self.assertFalse(loaded["auto_prompts"])
+        window = loaded["windows"][0]
+        self.assertEqual(window["prompt"], SIX_SECTIONS)
+        self.assertEqual(window["pins"], [12])
+        self.assertTrue(Path(window["pictures"][0]).is_file())
+        body.update(video=loaded["source_info"]["path"], selection=loaded["selection"],
+                    slots=[{"path": window["pictures"][0], "pin": 12}, None, None, None])
+        selected = self.ok(self.client.post(f"{API}/selection", json=body))
+        self.assertEqual(selected["project"]["key"], saved["key"])
+        self.ok(self.client.post(f"{API}/generate", json=body))
+        run = self.finished_run()
+        self.assertIsNone(run["error"])
+        rendered = self.ok(self.client.get(f"{API}/projects/{saved['key']}"))
+        self.assertEqual(rendered["rendered"], 1)
+
+    def test_workshop_keeps_each_windows_materials(self):
+        client, _ = self.workshop_client()
+        source = self.source()
+        body = self.editor(source, selection=self.selection(source, end=12))
+        first = self.ok(client.post(f"{API}/save", json=body))
+        self.assertGreater(len(first["windows"]), 1)
+        body.update(window=1, prompt="second window", use_carried=False)
+        self.ok(client.post(f"{API}/save", json=body))
+        loaded = self.ok(self.client.post(f"{API}/projects/{first['key']}/load"))
+        self.assertEqual(loaded["windows"][0]["prompt"], SIX_SECTIONS)
+        self.assertEqual(loaded["windows"][1]["prompt"], "second window")
+        self.assertFalse(loaded["windows"][1]["use_carried"])
+        self.assertEqual(loaded["windows"][1]["pins"], [12])
+        self.assertTrue(Path(loaded["windows"][1]["pictures"][0]).is_file())
+
+    def test_saved_short_selections_use_supported_frames_from_the_selection_start(self):
+        source = self.source()
+        for seconds, frames in ((6, 141), (8.7, 192), (10, 226)):
+            with self.subTest(seconds=seconds):
+                chosen = {**self.selection(source, end=seconds + 1), "start": 1}
+                body = self.editor(source, selection=chosen)
+                saved = self.ok(self.client.post(f"{API}/save", json=body))
+                self.assertEqual(saved["frames"], frames)
+                self.assertEqual(saved["windows"][0]["render"], [0, frames])
+                self.assertEqual(saved["selection"], chosen)
+
+    def test_saving_and_reopening_preserves_unedited_frame_markers(self):
+        source = self.source()
+        body = self.editor(source)
+        frame = self.ok(self.client.post(f"{API}/extract", json={**body, "base": 0, "frame": 12}))
+        # Empty slots are compressed when saving, so markers must follow their pictures.
+        body.update(slots=[None, {"path": frame["path"], "pin": 12}, None, None],
+                    originals={"2": frame["original"]})
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        loaded = self.ok(self.client.post(f"{API}/projects/{saved['key']}/load"))
+        window = loaded["windows"][0]
+        self.assertEqual(window["originals"], [frame["original"]])
+        body.update(slots=[{"path": window["pictures"][0], "pin": 12}, None, None, None],
+                    originals={"1": window["originals"][0]})
+        checked = self.ok(self.client.post(f"{API}/check", json=body))
+        self.assertFalse(checked["ready"])
+        self.assertIn("Edit Picture 1", checked["message"])
+        body.update(slots=[{"path": self.picture, "pin": 12}, None, None, None], originals={})
+        replaced = self.ok(self.client.post(f"{API}/save", json=body))
+        self.assertEqual(replaced["windows"][0]["originals"], [None])
+
     def finished_edit(self):
         for _ in range(200):
             run = self.ok(self.client.get(f"{API}/quick-edit/run"))["run"]
@@ -177,7 +283,7 @@ class RemakePageTests(unittest.TestCase):
         foreign = {"slots": [{"path": str(secret), "pin": 0}, None, None, None]}
         selection = self.selection(source)
         project = self.ok(self.client.post(f"{API}/split", json={"selection": selection, "video": source["path"]}))
-        for route in ("check", "generate", "window/save", "window/mark", "rewrite"):
+        for route in ("check", "generate", "save", "window/save", "window/mark", "rewrite"):
             with self.subTest(route=route):
                 response = self.client.post(f"{API}/{route}", json=self.editor(source, selection=selection, **foreign))
                 self.assertEqual(response.status_code, 400, response.text)

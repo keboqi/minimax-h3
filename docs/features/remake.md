@@ -9,6 +9,17 @@ Storyboard. The agreed design is the
 
 ## Using it
 
+Remake is also available in **Workshop** for CPU-only preparation. Import a video, select its range,
+extract and pin keyframes, upload reference images, and prepare prompts. Use **Download frame** to
+edit a frame in another application, then **Upload edited frame** to replace it while keeping its pin.
+CPU alignment checks and prompt writing remain available; Quick edit, Edit in Image, and GPU rendering
+are available in Studio.
+
+Press **Save project** to keep the source, frames, pins, prompts, and project options, including for a
+clip that fits in one window. Reopen the project from Remake's Projects list in Studio to render it.
+Workshop and Studio must use the same data folders and workspace identity. On Modal, stop the GPU
+endpoint before preparing projects in Workshop and restart it afterwards to see the saved files.
+
 The tab opens on a drop area and your **Projects**. Once a source is in, a viewer sits above a timeline, and the panel
 on the right always shows the selection or the window under the playhead.
 

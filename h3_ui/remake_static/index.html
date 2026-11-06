@@ -22,6 +22,7 @@
 </div>
 
 <div id="editor" class="editor" hidden>
+  <p id="workshop-note" class="notice" hidden>Prepare and save this project here, then reopen it in Studio to render on the GPU. Download frames to edit elsewhere, then upload the edited images.</p>
   <section class="bar" aria-label="Remake project">
     <div class="project-menu">
       <button type="button" class="btn project-button" id="project-button" aria-expanded="false"></button>
@@ -34,6 +35,7 @@
         <div class="steps" id="steps"></div>
         <p class="small muted" role="status" id="readiness"></p>
       </div>
+      <button type="button" class="btn" id="save-project">Save project</button>
       <button type="button" class="btn" id="stop" hidden>Interrupt</button>
       <button type="button" class="btn primary big" id="primary"></button>
     </div>

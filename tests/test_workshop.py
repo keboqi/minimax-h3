@@ -225,7 +225,7 @@ class ModelManagerTests(unittest.TestCase):
         # there shifts the tabs after it: Storyboard then showed over Sound Stage.
         tabs = next(block for block in blocks if isinstance(block, gr.Tabs))
         self.assertEqual([child.label for child in tabs.children],
-                         ["Models", "Media library", "Storyboard", "Sound Stage", "Dub & Translate"])
+                         ["Models", "Media library", "Storyboard", "Remake", "Sound Stage", "Dub & Translate"])
         self.assertTrue(all(isinstance(child, gr.Tab) for child in tabs.children))
         enhance = [block for block in blocks if getattr(block, "label", None) == "Enhance selected media"]
         self.assertEqual([block.visible for block in enhance], [False])
@@ -249,7 +249,7 @@ class ModelManagerTests(unittest.TestCase):
         })
         ui = manager_module.build_ui(None, (runtime, default_store(runtime.outputs_dir)))
         labels = {getattr(block, "label", None) for block in ui.blocks.values()}
-        self.assertTrue({"Media library", "Storyboard"} <= labels)
+        self.assertTrue({"Media library", "Storyboard", "Remake"} <= labels)
         self.assertNotIn("Models", labels)
         buttons = {block.value for block in ui.blocks.values() if type(block).__name__ == "Button"}
         self.assertNotIn("Reload shared volume", buttons)

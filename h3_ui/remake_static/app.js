@@ -78,6 +78,7 @@
   };
 
   // Timing -----------------------------------------------------------------
+  const gpu = () => state.boot?.gpu !== false;
   const fps = () => state.boot.fps;
   const clock = (frames) => {
     const seconds = frames / fps();
@@ -131,10 +132,10 @@
   };
   // Saves run one at a time: moving quickly across windows must keep them in order.
   let saving = Promise.resolve();
-  const saveWindow = () => {
-    if (!state.project) return Promise.resolve();
+  const saveWindow = (create = false) => {
+    if (!state.project && !create) return Promise.resolve();
     const body = editor();
-    saving = saving.catch(() => {}).then(() => post("/window/save", body));
+    saving = saving.catch(() => {}).then(() => post("/save", body));
     return saving;
   };
   const changed = () => { queueCheck(); savePrefs(); };
@@ -142,7 +143,8 @@
   const loadEditor = (window) => {
     const pictures = window.pictures ?? [];
     state.slots = [0, 1, 2, 3].map((index) => (pictures[index]
-      ? {path: pictures[index], pin: window.pins?.[index] ?? null} : null));
+      ? {path: pictures[index], pin: window.pins?.[index] ?? null,
+         original: window.originals?.[index], untouched: Boolean(window.originals?.[index])} : null));
     $("prompt").value = window.prompt ?? "";
     state.useCarried = window.use_carried ?? true;
     state.suggestion = "";
@@ -233,6 +235,7 @@
   });
 
   const openProject = safely(async (key) => {
+    await saveWindow();
     const data = await post(`/projects/${key}/load`);
     const chosen = data.selection;
     Object.assign(state, {start: chosen.start, lastStart: chosen.start, end: chosen.end, shortEdge: chosen.short_edge,
@@ -246,13 +249,14 @@
     if (data.note) toast(data.note);
   });
 
-  const closeProject = () => {
+  const closeProject = safely(async ({save = true} = {}) => {
+    if (save) await saveWindow();
     state.source = null;
     state.project = null;
     state.menu = false;
     showEditor(false);
-    renderStart();
-  };
+    await refreshProjects();
+  });
 
   const refreshProjects = safely(async () => {
     state.boot.projects = (await request("GET", "/projects")).projects;
@@ -502,10 +506,11 @@
           ? h("div", {className: "row"},
             h("span", {className: "small muted grow"}, "Deletes its renders and copy of the source. Combined videos stay in Media."),
             button("Delete project", safely(async () => {
+              await saving;
               const data = await request("DELETE", `/projects/${row.key}`);
               state.boot.projects = data.projects;
               state.confirming = null;
-              if (open) closeProject();
+              if (open) await closeProject({save: false});
               renderMenu();
             })),
             button("Keep it", () => { state.confirming = null; renderMenu(); }, "btn quiet"))
@@ -554,7 +559,8 @@
       else { label = "All windows rendered"; blocked = true; }
     } else if (state.output) label = "Generate again";
     action.textContent = running() ? "Generating…" : label;
-    action.disabled = blocked || running();
+    action.disabled = !gpu() || blocked || running();
+    if (!gpu()) action.textContent = "Render in Studio";
     $("stop").hidden = !running();
   };
 
@@ -745,13 +751,15 @@
             if (state.alignSlot === index) { state.alignSlot = null; state.view = "source"; renderViewer(); }
             afterPictures();
           }, "btn quiet mini", {"aria-label": `Remove picture ${index + 1}`})),
-        quickRow,
+        gpu() ? quickRow : null,
         editing ? h("p", {className: "small muted", id: "quick-status", role: "status"}, state.quick.status) : null,
         h("div", {className: "row tightrow"}, pinField,
           slot.before ? button("Undo edit", () => replacePicture(index, slot.before.path, {untouched: slot.before.untouched}))
             : null,
           // Still offered once sent: the frame can go to another model.
-          button("Edit in Image", () => sendToImage(index)),
+          gpu() ? button("Edit in Image", () => sendToImage(index)) : null,
+          h("a", {className: "btn", href: fileUrl(slot.path), download: `frame-${index + 1}.png`}, "Download frame"),
+          button("Upload edited frame", () => { state.target = index; $("picture-input").click(); }),
           slot.sent ? button("Choose the edited image", () => openLibrary(index), "btn primary") : null,
           slot.untouched ? (slot.sent ? null : button("Replace", () => openLibrary(index)))
             : button("Check alignment", () => {
@@ -828,7 +836,7 @@
     const open = openWindow();
     $("scope-title").textContent = state.project ? `Window ${state.index + 1}` : "Selection";
     $("scope-time").textContent = `${clock(open.own[0])}–${clock(open.own[1])}${state.project ? ` · ${open.kind} · ${open.state_name}` : ""}`;
-    $("regenerate").hidden = !state.project;
+    $("regenerate").hidden = !gpu() || !state.project;
     $("regenerate").disabled = running() || !state.check?.ready;
     let notice = "";
     if (open.state === "outdated") {
@@ -923,6 +931,17 @@
     $("next").addEventListener("click", () => setFrame(state.frame + 1));
     $("play").addEventListener("click", () => setPlaying(!state.playing));
     $("extract").addEventListener("click", extractFrame);
+    $("save-project").addEventListener("click", safely(async () => {
+      const control = $("save-project");
+      control.disabled = true;
+      try {
+        state.project = await saveWindow(true);
+        await refreshProjects();
+        renderAll();
+        queueCheck();
+        toast(gpu() ? "Project saved." : "Project saved. Reopen it in Studio to render.");
+      } finally { control.disabled = false; }
+    }));
     $("primary").addEventListener("click", primary);
     $("regenerate").addEventListener("click", regenerate);
     $("combine").addEventListener("click", combine);
@@ -1033,6 +1052,10 @@
     window.addEventListener("resize", queueFit);
     try {
       state.boot = await request("GET", "/boot");
+      $("workshop-note").hidden = gpu();
+      $("edit-model").closest("label").hidden = !gpu();
+      $("open-settings").hidden = !gpu();
+      if (!gpu()) $("no-projects").textContent = "Save any selection as a project, then reopen it in Studio to render.";
       state.shortEdge = prefs.outputEdge ?? state.boot.short_edge;
       state.maxWindow = prefs.maxWindow ?? state.boot.max_window;
       Object.assign(state, {mode: prefs.mode ?? "Swap", smart: prefs.smart ?? true, auto: prefs.auto ?? true, pinned: prefs.pinned ?? true});

@@ -15,12 +15,12 @@ from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.provenance import write_snapshot
 
 from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
-from .model import FPS, RemakeGraph, RenderSize, check_pins, render_size, request_overrides
+from .model import FPS, RemakeGraph, RenderSize, check_pins, frames_for_seconds, render_size, request_overrides
 from .project import (
     DONE, FAILED, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor, store_picture,
     window_inputs,
 )
-from .windows import plan_windows, selection_frames
+from .windows import needs_windows, plan_windows, selection_frames
 
 
 class Selection(NamedTuple):
@@ -94,6 +94,8 @@ class WindowRunner:
         if saved is not None:
             return saved
         start, total = float(selection.start or 0), selection_frames(selection.start, selection.end)
+        if not needs_windows(selection.start, selection.end, selection.max_window):
+            total = min(frames_for_seconds(total / FPS), selection.max_window)
         metadata = probe_video_metadata(Path(video))
         if total > int(metadata.duration * FPS) + 1:
             raise H3Error("The selection runs past the end of the source.")
@@ -104,14 +106,22 @@ class WindowRunner:
                 "has_audio": bool(metadata.has_audio), "name": Path(video).stem, "selection": selection._asdict()}
         return self.projects.create(owner, selection.key, video, data, plans)
 
-    def store_editor(self, project, index, prompt, use_carried, pictures, pins) -> dict[str, Any]:
+    def store_editor(self, project, index, prompt, use_carried, pictures, pins, *,
+                     options=None, originals=None) -> dict[str, Any]:
         """Save the editor's filled slots to a window."""
         kept = [(path, pin) for path, pin in zip(pictures, pins) if path]
         stored = [store_picture(project, path) for path, _pin in kept]
-        return self.projects.edit(project, lambda current: save_editor(
-            current["windows"][int(index)], stored, [None if pin is None else int(pin) for _path, pin in kept],
-            prompt, use_carried,
-        ))
+
+        def update(current):
+            window = current["windows"][int(index)]
+            save_editor(window, stored, [None if pin is None else int(pin) for _path, pin in kept],
+                        prompt, use_carried)
+            if originals is not None:
+                window["originals"] = [originals.get(str(slot)) for slot, path in enumerate(pictures, 1) if path]
+            if options is not None:
+                current.update(options)
+
+        return self.projects.edit(project, update)
 
     def run(self, project: dict[str, Any], options: RunOptions, progress) -> Iterator[tuple[str | None, str]]:
         """Render every window that needs it, in order, then join them. Finished windows are kept."""
