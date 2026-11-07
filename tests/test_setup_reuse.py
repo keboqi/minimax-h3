@@ -1,6 +1,8 @@
 """A successful setup can be reused only while its sources and packages match."""
 
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -26,6 +28,9 @@ class SetupReuseTests(unittest.TestCase):
         bundled = self.comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
         bundled.parent.mkdir(parents=True)
         bundled.write_text("# installed node\n")
+        for name in setup.BUNDLED_NODE_PACKAGES:
+            shutil.copytree(setup.SCRIPT_DIR / "custom_nodes" / name, self.comfy / "custom_nodes" / name,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         self.packages = [["fixture", "1", "site-packages"]]
         for mocked in (
             patch.object(setup, "_environment_fingerprint", side_effect=lambda: self.packages),
@@ -66,6 +71,33 @@ class SetupReuseTests(unittest.TestCase):
             self.assertFalse(setup.setup_is_current(self.install))
         (self.comfy / "custom_nodes" / "H3Acceleration" / "__init__.py").unlink()
         self.assertFalse(setup.setup_is_current(self.install))
+
+    def test_stale_or_missing_bundled_package_invalidates_record(self):
+        for name in setup.BUNDLED_NODE_PACKAGES:
+            with self.subTest(name=name):
+                installed = self.comfy / "custom_nodes" / name / "__init__.py"
+                original = installed.read_bytes()
+                installed.write_bytes(original + b"# older copy\n")
+                self.assertFalse(setup.setup_is_current(self.install))
+                installed.unlink()
+                self.assertFalse(setup.setup_is_current(self.install))
+                installed.write_bytes(original)
+                self.assertTrue(setup.setup_is_current(self.install))
+
+    def test_tracked_path_absent_at_record_time_does_not_fail_setup(self):
+        (self.comfy / "requirements.txt").unlink()
+        setup.record_setup_state(self.install)
+        self.assertTrue(setup.setup_is_current(self.install))
+
+    def test_dangling_tracked_symlink_does_not_fail_setup(self):
+        link = self.comfy / "dangling"
+        try:
+            os.symlink("absent-target", link)
+        except OSError:
+            self.skipTest("symlinks are unavailable here")
+        self.git("add", "dangling")
+        setup.record_setup_state(self.install)
+        self.assertTrue(setup.setup_is_current(self.install))
 
     def test_malformed_record_triggers_repair(self):
         (self.install / ".setup-state.json").write_text("[]")

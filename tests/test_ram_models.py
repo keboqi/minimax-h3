@@ -9,7 +9,7 @@ import sys
 from tempfile import TemporaryDirectory
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import h3_models
 
@@ -219,6 +219,89 @@ class RamResumeTests(RamModelFixture, unittest.TestCase):
             self.run_download(plan)
         self.assertFalse(cache.exists())
         self.assertEqual(h3_models._ram_reserved, 0)
+
+    def plain_download(self):
+        """Hub stand-in without symlinks, which Windows may not permit."""
+        def fake(**_kwargs):
+            blob = self.disk / "hf-cache" / "blob"
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"weights")
+            return str(blob)
+
+        return patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(hf_hub_download=fake)})
+
+    def partial_ram_transfer(self, plan):
+        cache = h3_models._model_download_cache(self.ram, plan)
+        partial = cache / "models--org--repo" / "blobs" / "abc.incomplete"
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(b"partial")
+        return cache
+
+    def test_invalid_blob_in_private_disk_cache_is_discarded_for_a_clean_retry(self):
+        plan = self.plan()
+        plan["cache_dir"] = h3_models._model_download_cache(self.disk / "models", plan)
+
+        def bad_download(**kwargs):
+            blob = Path(kwargs["cache_dir"]) / "blob"
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"bad")
+            return str(blob)
+
+        hub = types.SimpleNamespace(hf_hub_download=bad_download)
+        with patch.dict(sys.modules, {"huggingface_hub": hub}), self.assertRaisesRegex(RuntimeError, "size mismatch"):
+            self.run_download(plan)
+        self.assertFalse(plan["cache_dir"].exists())
+
+    def test_invalid_blob_in_shared_hub_cache_is_left_alone(self):
+        plan = self.plan()
+        blob = self.disk / "hf-cache" / "blob"
+        blob.parent.mkdir(parents=True)
+        blob.write_bytes(b"bad")
+        hub = types.SimpleNamespace(hf_hub_download=lambda **_kwargs: str(blob))
+        with patch.dict(sys.modules, {"huggingface_hub": hub}), self.assertRaisesRegex(RuntimeError, "size mismatch"):
+            self.run_download(plan)
+        self.assertTrue(blob.exists())
+
+    def test_disk_fallback_releases_the_partial_ram_transfer_it_replaced(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan()
+        cache = self.partial_ram_transfer(plan)
+        self.memory.stop()
+        with patch.object(h3_models, "_available_memory", return_value=10 * GIB):
+            with self.plain_download():
+                self.run_download(plan)
+        self.memory.start()
+        self.assertEqual(plan["dest"].read_bytes(), b"weights")
+        self.assertFalse(cache.parent.exists())
+
+    def test_failed_disk_fallback_keeps_the_partial_ram_transfer(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan()
+        cache = self.partial_ram_transfer(plan)
+        self.memory.stop()
+        hub = types.SimpleNamespace(hf_hub_download=Mock(side_effect=OSError("network")))
+        with (patch.object(h3_models, "_available_memory", return_value=10 * GIB),
+              patch.dict(sys.modules, {"huggingface_hub": hub}),
+              self.assertRaisesRegex(OSError, "network")):
+            self.run_download(plan)
+        self.memory.start()
+        self.assertTrue(cache.exists())
+
+    def test_a_changed_source_drops_superseded_partial_transfers_before_reserving(self):
+        h3_models.route_to_ram(["h3_model"])
+        plan = self.plan()
+        superseded = self.partial_ram_transfer(plan)
+        plan["revision"] = "rev2"
+        current = self.partial_ram_transfer(plan)
+        self.assertEqual(superseded.parent, current.parent)
+
+        def reserve(_plan):
+            self.assertFalse(superseded.exists())
+            self.assertTrue(current.exists())
+            return None
+
+        with patch.object(h3_models, "_reserve_ram", side_effect=reserve), self.plain_download():
+            self.run_download(plan)
 
     def test_reservations_in_other_processes_reduce_available_headroom(self):
         @contextlib.contextmanager

@@ -1856,11 +1856,29 @@ def ram_directory(target: Path, size: int | None, *, log=print, new: bool = True
 
 
 def _model_download_cache(root: Path, plan: dict[str, Any]) -> Path:
-    """Private, resumable cache shared only by requests for this exact source."""
+    """Private, resumable cache shared only by requests for this exact source.
+
+    Grouped by destination, so a transfer can find ones its source has superseded.
+    """
     spec = plan["spec"]
-    identity = json.dumps([str(plan["dest"].absolute()), spec.repo_id, spec.filename,
-                           plan["revision"], plan.get("identity")], separators=(",", ":"))
-    return root / ".hf-download-cache" / hashlib.sha256(identity.encode()).hexdigest()
+    dest = str(plan["dest"].absolute())
+    source = json.dumps([spec.repo_id, spec.filename, plan["revision"], plan.get("identity")],
+                        separators=(",", ":"))
+    return (root / ".hf-download-cache" / hashlib.sha256(dest.encode()).hexdigest()
+            / hashlib.sha256(source.encode()).hexdigest())
+
+
+def _clear_download_caches(cache: Path) -> None:
+    """Drop every transfer for ``cache``'s destination; callers hold its lock."""
+    shutil.rmtree(cache.parent, ignore_errors=True)
+
+
+def _drop_superseded_caches(cache: Path) -> None:
+    """A changed source can never resume these bytes; only this cache remains useful."""
+    if cache.parent.is_dir():
+        for sibling in cache.parent.iterdir():
+            if sibling != cache:
+                shutil.rmtree(sibling, ignore_errors=True)
 
 
 def _directory_bytes(path: Path) -> int:
@@ -1903,7 +1921,7 @@ def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, r
         except Exception:
             # A completed but invalid blob cannot be resumed; let the retry
             # fetch it again rather than repeatedly returning the bad cache hit.
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            _clear_download_caches(cache_dir)
             raise
         temporary_model.unlink(missing_ok=True)
         os.link(cached.resolve(), temporary_model)
@@ -1913,7 +1931,7 @@ def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, r
         os.replace(temporary_link, logical_dest)
         plan["cached_path"] = cached  # The caller's later cache cleanup becomes a no-op.
         # Preserve incomplete Hub transfers on failure, including interruption.
-        shutil.rmtree(cache_dir, ignore_errors=True)
+        _clear_download_caches(cache_dir)
         print(f"{log_prefix} ready {logical_dest.name} (in RAM: {ram_dest})", flush=True)
         return plan["key"]
     finally:
@@ -1931,13 +1949,18 @@ def _download_model(
 
     spec: ModelSpec = plan["spec"]
     dest: Path = plan["dest"]
+    root = ram_models_dir()
+    ram_cache = _model_download_cache(root, plan) if root is not None else None
+    # Before reserving, so superseded partial bytes do not count against headroom.
+    for cache in (ram_cache, plan.get("cache_dir")):
+        if cache is not None:
+            _drop_superseded_caches(cache)
     ram_root = _reserve_ram(plan)
     if ram_root is not None:
         try:
             return _download_to_ram(plan, token, log_prefix, ram_root)
         finally:
             _release_ram(plan.get("ram_reserved_bytes", plan["size"]))
-    root = ram_models_dir()
     if root is not None and (plan["key"] in _ram_keys or plan["key"].startswith(_RAM_KEY_PREFIXES)):
         print(f"{log_prefix} {dest.name}: not enough free RAM; downloading to disk", flush=True)
     # A RAM copy an earlier download left behind; the disk file replaces its link below.
@@ -1954,12 +1977,19 @@ def _download_model(
         )
     )
     expected = plan["size"]
-    if expected is not None and cached.stat().st_size != expected:
-        raise RuntimeError(
-            f"Downloaded size mismatch for {spec.filename}: "
-            f"{cached.stat().st_size} != {expected}"
-        )
-    _verify_pinned_model(cached, spec)
+    try:
+        if expected is not None and cached.stat().st_size != expected:
+            raise RuntimeError(
+                f"Downloaded size mismatch for {spec.filename}: "
+                f"{cached.stat().st_size} != {expected}"
+            )
+        _verify_pinned_model(cached, spec)
+    except Exception:
+        # A private cache would return this bad blob to every retry, and
+        # prune_hf_cache cannot reach it. Never touch the shared Hub cache here.
+        if "cache_dir" in plan:
+            _clear_download_caches(plan["cache_dir"])
+        raise
 
     tmp = dest.with_suffix(dest.suffix + ".partial")
     try:
@@ -1977,6 +2007,9 @@ def _download_model(
         tmp.unlink(missing_ok=True)
     if stale_ram is not None and root is not None and stale_ram.is_relative_to(root.resolve()):
         stale_ram.unlink(missing_ok=True)
+    if ram_cache is not None:
+        # A partial RAM transfer that this disk copy replaced would never resume.
+        _clear_download_caches(ram_cache)
     # Concurrent downloads from this repository may still be creating snapshot
     # links. The batch caller defers cleanup until every worker has finished.
     plan["cached_path"] = cached
@@ -2164,7 +2197,7 @@ def sync_models(
                 write_json_atomic(manifest_path, manifest)
             if plan["needs_download"]:
                 _remove_hf_cache(plan["cached_path"], plan=plan, log_prefix=log_prefix)
-                shutil.rmtree(plan["cache_dir"], ignore_errors=True)
+                _clear_download_caches(plan["cache_dir"])
 
     workers = max(1, min(download_workers, len(selected_keys)))
     failures = []

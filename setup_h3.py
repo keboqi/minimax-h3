@@ -82,6 +82,7 @@ from h3_requirements import (
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLED_ACCEL_NODE = SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
+BUNDLED_NODE_PACKAGES = ("H3LightVAE", "H3Remake")
 
 _UV_CMD: list[str] | None = None
 _SETUP_REPOSITORIES: dict[str, dict] = {}
@@ -115,9 +116,29 @@ def _repository_state(dest: Path, required_paths: tuple[str, ...]) -> dict:
     files = {}
     for relative in sorted(paths):
         path = dest / relative
-        stat = path.stat()
-        files[relative] = [stat.st_size, stat.st_mtime_ns]
+        try:
+            # lstat: a tracked symlink is intact even when its target is absent.
+            stat = path.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            # Upstream or a patch may legitimately lack a tracked path. Required
+            # paths were checked by sync_git_repo; a later loss still changes this.
+            files[relative] = None
+        else:
+            files[relative] = [stat.st_size, stat.st_mtime_ns]
     return {"head": head.stdout.strip(), "required_paths": list(required_paths), "files": files}
+
+
+def _bundled_packages_installed(comfy: Path) -> bool:
+    """Whether ComfyUI has every file install_bundled_nodes would copy, unchanged."""
+    for name in BUNDLED_NODE_PACKAGES:
+        source = SCRIPT_DIR / "custom_nodes" / name
+        for path in source.rglob("*"):
+            relative = path.relative_to(source)
+            if not path.is_file() or path.suffix == ".pyc" or "__pycache__" in relative.parts:
+                continue
+            if path.read_bytes() != (comfy / "custom_nodes" / name / relative).read_bytes():
+                return False
+    return True
 
 
 def setup_is_current(install_dir: Path) -> bool:
@@ -134,6 +155,8 @@ def setup_is_current(install_dir: Path) -> bool:
             return False
         installed_node = install_dir / "ComfyUI" / "custom_nodes" / "H3Acceleration" / "__init__.py"
         if hashlib.sha256(installed_node.read_bytes()).hexdigest() != state["bundled_node"]:
+            return False
+        if not _bundled_packages_installed(install_dir / "ComfyUI"):
             return False
         if not comfy_frontend_package_is_ready():
             return False
