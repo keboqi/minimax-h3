@@ -93,18 +93,17 @@ def main(shots=None):
                 # Qwen Image 2.1 is the default.
                 expect(remake.get_by_label("Edit with")).to_have_value("qwen")
 
-                # The edit round trip: MiniMax H3 edits on the frame as its first frame.
+                # The edit round trip: MiniMax H3 edits on the frame in the shared Image workspace.
                 remake.get_by_label("Edit with").select_option(label="MiniMax H3")
                 remake.get_by_role("button", name="Edit in Image").first.click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
                 expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
                     "MiniMax H3", timeout=10000)
-                expect(page.get_by_label("First / last frame")).to_be_checked(timeout=10000)
-                # The edit keeps the frame's size, not the start-frame cap's.
-                # The frame shows, and the edit keeps its size on the grid, not the start-frame cap's.
-                expect(page.locator("#first-frame-image img").first).to_be_visible(timeout=10000)
-                expect(page.get_by_text("1280×704", exact=True).locator("visible=true").first).to_be_visible(
+                expect(page.locator(".h3-engine-view:visible").get_by_label("Edit", exact=True)).to_be_checked(
                     timeout=10000)
+                references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
+                    has=page.locator(".h3-input-thumbnails"))
+                expect(references.locator(".h3-input-thumbnails img").first).to_be_visible(timeout=10000)
                 picker.filter(has_text="Remake").click()
 
                 # Any other model still opens with the frame.
@@ -114,20 +113,21 @@ def main(shots=None):
                 expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
                     "Qwen Image 2.1", timeout=10000)
                 # It opens ready to edit, with the frame itself, not just the task.
-                expect(page.locator(".h3-engine-view:visible").get_by_label("Mode", exact=True)).to_have_value(
-                    "Image edit", timeout=10000)
-                page.locator(".h3-engine-view:visible").get_by_text("Reference images and editing").click()
+                expect(page.locator(".h3-engine-view:visible").get_by_label("Edit", exact=True)).to_be_checked(
+                    timeout=10000)
                 references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
                     has=page.locator(".h3-input-thumbnails"))
                 expect(references.locator(".h3-input-thumbnails img").first).to_be_visible(timeout=10000)
                 expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
                 if shots:
                     page.screenshot(path=str(Path(shots) / "qwen-thumbnails.png"), full_page=True)
-                # Adding one and clicking a thumbnail away both reach the input the request reads.
+                # Adding one and clicking the × on a thumbnail both reach the input the request reads.
                 references.locator('.h3-input-files input[type="file"]').first.set_input_files(str(extra))
                 expect(references.locator(".h3-input-files tbody tr")).to_have_count(2, timeout=10000)
                 expect(references.locator(".h3-input-thumbnails img")).to_have_count(2, timeout=10000)
-                references.locator(".h3-input-thumbnails .thumbnail-item").first.click()
+                thumb = references.locator(".h3-input-thumbnails .thumbnail-item").first
+                thumb.scroll_into_view_if_needed()
+                thumb.click(position={"x": thumb.bounding_box()["width"] - 14, "y": 14})
                 expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
                 picker.filter(has_text="Remake").click()
                 expect(readiness).to_contain_text("Edit Picture 1")
@@ -205,7 +205,7 @@ def main(shots=None):
                 page.get_by_role("option", name="Remake · Picture 2", exact=True).click()
                 media.get_by_role("button", name="Set image", exact=True).click()
                 picker.filter(has_text="Remake").click()
-                remake.locator(".project-row", has_text="source").first.click()
+                # Session persistence reopens the project automatically after reload.
                 expect(remake.locator("#summary")).to_contain_text("rendered", timeout=20000)
                 expect(remake.locator(".pic strong", has_text="Picture 2")).to_be_visible(timeout=20000)
                 if shots:

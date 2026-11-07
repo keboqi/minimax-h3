@@ -6,6 +6,7 @@
   const PULSE_MS = 2500;
   const CHECK_DELAY_MS = 200;
   const PREFS = "h3-remake-prefs";
+  const SESSION = {project: "h3-remake-project", window: "h3-remake-window"};
   const BRIDGE = {edit: (model) => `remake-edit-bridge-${model}`, settings: "remake-settings-bridge"};
   const QUEUED = ["pending", "changed", "failed"];
   const $ = (id) => document.getElementById(id);
@@ -31,24 +32,35 @@
   const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 6.5l2.8 2.8L10 3.5"/></svg>';
   const CROSS = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>';
   const CHEVRON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 4l4 4 4-4"/></svg>';
+  const PLAY_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 1.5v11l9-5.5z"/></svg>';
+  const PAUSE_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 2h3v10H3zM8 2h3v10H8z"/></svg>';
+  const VOLUME_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5.2h2.6L8 2.5v9L4.6 8.8H2z" fill="currentColor"/><path d="M10 4.5a3.5 3.5 0 0 1 0 5M11.6 2.8a6 6 0 0 1 0 8.4" stroke-linecap="round"/></svg>';
+  const MUTE_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5.2h2.6L8 2.5v9L4.6 8.8H2z" fill="currentColor"/><path d="M9.8 5l3 4M12.8 5l-3 4" stroke-linecap="round"/></svg>';
+
+  const stored = {
+    get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { sessionStorage.setItem(key, value); } catch { /* Private windows refuse it. */ } },
+    remove(key) { try { sessionStorage.removeItem(key); } catch { /* Private windows refuse it. */ } },
+  };
 
   const state = {
     boot: null, source: null, start: 0, end: 0, lastStart: 0, shortEdge: 480, maxWindow: 226, mix: 0,
     long: false, text: "", project: null, index: 0, frame: 0, mode: "Swap", pinned: true, smart: true, auto: true,
     slots: [null, null, null, null], useCarried: true, suggestion: "", previous: null, view: "source", wipe: 50,
     alignSlot: null, alignView: "Overlay", check: null, run: null, runSeen: -1, output: null, playing: false,
+    muted: false, saveLabel: "All changes saved",
     menu: false, renaming: null, confirming: null, target: null, settings: null, quick: null,
   };
   const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })();
   const savePrefs = () => {
     const kept = {mode: state.mode, outputEdge: state.shortEdge, maxWindow: state.maxWindow, smart: state.smart,
-                  editWith: $("edit-model").value,
+                  editWith: $("edit-model").value, muted: state.muted,
                   auto: state.auto, pinned: state.pinned, backend: $("writer-backend").value, model: $("writer-model").value};
     try { localStorage.setItem(PREFS, JSON.stringify(kept)); } catch { /* Private windows refuse it. */ }
   };
 
-  const request = async (method, path, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
+  const request = async (method, path, body, {form = false, keepalive = false} = {}) => {
+    const options = {method, credentials: "same-origin", keepalive};
     if (form) options.body = body;
     else if (body !== undefined) {
       options.headers = {"Content-Type": "application/json"};
@@ -60,14 +72,27 @@
     if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
     return data;
   };
-  const post = (path, body) => request("POST", path, body);
+  const post = (path, body, extra) => request("POST", path, body, extra);
   const fileUrl = (path) => `${API}/file?path=${encodeURIComponent(path)}`;
+
+  // In the tab the frame is taller than the window, so what's visible is only part of it.
+  const visibleArea = () => {
+    const frame = window.frameElement;
+    if (!frame) return {top: 0, bottom: innerHeight};
+    try {
+      const box = frame.getBoundingClientRect();
+      return {top: Math.max(0, -box.top), bottom: Math.min(innerHeight, window.parent.innerHeight - box.top)};
+    } catch {
+      return {top: 0, bottom: innerHeight};
+    }
+  };
 
   let toastTimer;
   const toast = (message, error = false) => {
     const node = $("toast");
     node.textContent = message;
     node.className = error ? "toast error" : "toast";
+    node.style.bottom = `${Math.max(20, innerHeight - visibleArea().bottom + 20)}px`;
     node.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
@@ -120,6 +145,15 @@
   });
 
   // Saving and checking ----------------------------------------------------
+  const setSaveLabel = (label) => {
+    state.saveLabel = label;
+    const node = $("save-state");
+    if (node) {
+      node.textContent = label;
+      node.hidden = !state.project;
+    }
+  };
+
   let checkTimer;
   const queueCheck = () => {
     clearTimeout(checkTimer);
@@ -132,11 +166,21 @@
   };
   // Saves run one at a time: moving quickly across windows must keep them in order.
   let saving = Promise.resolve();
-  const saveWindow = (create = false) => {
+  const saveWindow = (create = false, {keepalive = false} = {}) => {
     if (!state.project && !create) return Promise.resolve();
+    setSaveLabel("Saving…");
     // Autosave belongs to the open project, even while a selection change is pending.
     const body = {...editor(), project: create ? null : state.project.key};
-    saving = saving.catch(() => {}).then(() => post("/save", body));
+    saving = saving.catch(() => {}).then(async () => {
+      try {
+        const result = await post("/save", body, {keepalive});
+        setSaveLabel("All changes saved");
+        return result;
+      } catch (error) {
+        setSaveLabel("Couldn't save");
+        throw error;
+      }
+    });
     return saving;
   };
   // A save can finish after the selection has moved on to another project.
@@ -153,6 +197,11 @@
     } catch (error) {
       toast(`This window's latest edits weren't saved: ${error.message}`, true);
     }
+  };
+  const flushNow = () => {
+    if (!state.project || !state.source) return;
+    const body = {...editor(), project: state.project.key};
+    post("/save", body, {keepalive: true}).catch(() => {});
   };
   const changed = () => { queueCheck(); savePrefs(); };
 
@@ -175,6 +224,7 @@
     adoptSaved(await saveWindow());
     if (state.project?.key !== key) return;
     state.index = index;
+    stored.set(SESSION.window, String(index));
     loadEditor(openWindow());
     renderAll();
     queueCheck();
@@ -192,12 +242,14 @@
   const showEditor = (open) => {
     $("editor").hidden = !open;
     $("start").hidden = open;
+    queueFit();
   };
   const applySelection = (data) => {
     state.text = data.text;
     state.long = data.long;
     const previous = state.project?.key;
     state.project = data.project;
+    if (data.project) stored.set(SESSION.project, data.project.key);
     if (data.project && data.project.key !== previous) {
       state.index = 0;
       loadEditor(openWindow());
@@ -216,8 +268,19 @@
     queueCheck();
   });
 
+  const applyStageAspect = (width, height) => {
+    if (width > 0 && height > 0) {
+      $("stage").style.aspectRatio = `${width} / ${height}`;
+    } else {
+      $("stage").style.aspectRatio = "";
+    }
+  };
+
   const showSource = (source) => {
     state.source = source;
+    applyStageAspect(source.width, source.height);
+    $("audio-note").textContent = source.has_audio === false ? "No audio" : source.audio_note ? "Audio kept" : "";
+    $("audio-note").title = source.audio_note ?? "";
     const video = $("source-video");
     delete video.dataset.failed;
     video.src = fileUrl(source.path);
@@ -226,6 +289,8 @@
   };
 
   const useSource = safely(async (source) => {
+    stored.remove(SESSION.project);
+    stored.remove(SESSION.window);
     state.start = state.lastStart = 0;
     state.end = source.end;
     state.mix = 0;
@@ -251,23 +316,36 @@
     }
   });
 
-  const openProject = safely(async (key) => {
+  const openProject = safely(async (key, {initialWindow = 0} = {}) => {
     await autosave();
     const data = await post(`/projects/${key}/load`);
     const chosen = data.selection;
+    const targetWindow = Math.max(0, Math.min((data.windows?.length || 1) - 1, Number(initialWindow) || 0));
     Object.assign(state, {start: chosen.start, lastStart: chosen.start, end: chosen.end, shortEdge: chosen.short_edge,
                           mix: chosen.mix, maxWindow: chosen.max_window, mode: data.mode, smart: data.smart,
-                          pinned: data.pinned, auto: data.auto_prompts, long: true, project: data, index: 0,
-                          frame: 0, output: data.output, view: "source", menu: false});
+                          pinned: data.pinned, auto: data.auto_prompts, long: true, project: data, index: targetWindow,
+                          frame: data.windows?.[targetWindow]?.own?.[0] ?? 0, output: data.output, view: "source",
+                          menu: false, saveLabel: "All changes saved"});
+    stored.set(SESSION.project, data.key);
+    stored.set(SESSION.window, String(targetWindow));
     $("request").value = data.request;
     loadEditor(openWindow());
     showSource(data.source_info);
     await refreshSelection();
+    if (targetWindow > 0 && state.project && targetWindow < state.project.windows.length) {
+      state.index = targetWindow;
+      state.frame = openWindow().own[0];
+      loadEditor(openWindow());
+      renderAll();
+      queueCheck();
+    }
     if (data.note) toast(data.note);
   });
 
   const closeProject = safely(async ({save = true} = {}) => {
     if (save) await autosave();
+    stored.remove(SESSION.project);
+    stored.remove(SESSION.window);
     state.source = null;
     state.project = null;
     state.menu = false;
@@ -295,8 +373,9 @@
 
   const replacePicture = (index, path, {before = null, untouched = false} = {}) => {
     const slot = state.slots[index];
+    const previous = before ?? (slot?.path ? {path: slot.path, untouched: Boolean(slot.untouched)} : null);
     // A picture for an empty slot belongs at the playhead, like an extracted frame.
-    state.slots[index] = {...slot, path, pin: slot?.pin ?? playheadPin(), untouched, sent: false, align: null, before};
+    state.slots[index] = {...slot, path, pin: slot?.pin ?? playheadPin(), untouched, sent: false, align: null, before: previous};
     afterPictures();
     measure(index);
   };
@@ -319,6 +398,21 @@
       }
     }).catch(() => {});
   };
+
+  const uploadPictureFile = safely(async (file, targetSlot = null) => {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    const {path} = await request("POST", "/picture", form, {form: true});
+    const slot = targetSlot ?? state.target;
+    state.target = null;
+    if (slot !== null && slot !== undefined && state.slots[slot]) {
+      replacePicture(slot, path);
+    } else {
+      state.target = slot;
+      addPicture(path);
+    }
+  });
 
   const extractFrame = safely(async () => {
     const index = emptySlot();
@@ -371,14 +465,24 @@
     bridge.click();
   });
 
+  const useLatestFromLibrary = safely(async (slot) => {
+    const {items} = await request("GET", "/library?limit=1");
+    if (!items.length) throw new Error("No images in Media yet.");
+    const {path} = await post("/picture/library", {source: items[0].path});
+    if (slot !== null && slot !== undefined && state.slots[slot]) replacePicture(slot, path);
+    else { state.target = slot; addPicture(path); }
+  });
+
   const openLibrary = safely(async (slot = null) => {
     state.target = slot;
     const dialog = $("library");
     const grid = h("div", {className: "library-grid"});
     const search = async (query = "") => {
       const {items} = await request("GET", `/library?limit=60&query=${encodeURIComponent(query)}`);
-      grid.replaceChildren(...items.map((item) => h("button", {
-        type: "button", title: item.caption, "aria-label": item.caption || "Image",
+      grid.replaceChildren(...items.map((item, idx) => h("button", {
+        type: "button", className: idx === 0 && !query ? "latest" : "",
+        title: idx === 0 && !query ? `${item.caption || "Latest image"} (Newest)` : item.caption,
+        "aria-label": item.caption || "Image",
         onclick: safely(async () => {
           const {path} = await post("/picture/library", {source: item.path});
           dialog.close();
@@ -395,12 +499,20 @@
       h("div", {}, button("Upload an image", () => { dialog.close(); $("picture-input").click(); })),
     );
     await search();
+    const area = visibleArea();
+    dialog.style.marginTop = `${Math.max(16, area.top + 24)}px`;
     dialog.showModal();
   });
 
   // Running ----------------------------------------------------------------
   const queue = () => (state.project ? state.project.windows.filter((window) => QUEUED.includes(window.state)) : []);
   const allTaken = () => Boolean(state.project) && state.project.windows.every((window) => window.take);
+
+  const activeRenderingWindow = () => {
+    if (!running()) return -1;
+    const match = /^Window\s+(\d+)\s+of\s+\d+/i.exec(state.run?.status || "");
+    return match ? Number(match[1]) - 1 : -1;
+  };
 
   const startRun = safely(async () => {
     const {run} = await post("/generate", editor());
@@ -459,6 +571,8 @@
         queueCheck();
         refreshProjects();
       });
+    } else if (state.project) {
+      renderTimeline();
     }
     clearTimeout(pollTimer);
     if (run?.active) {
@@ -564,6 +678,7 @@
         done ? svg(CHECK) : h("span", {className: "dot"}), label);
     }));
     $("readiness").textContent = check?.message ?? "";
+    setSaveLabel(state.saveLabel);
 
     const action = $("primary");
     const waiting = queue().length;
@@ -610,6 +725,17 @@
     }
   };
 
+  const renderMute = () => {
+    const muteBtn = $("mute");
+    if (!muteBtn) return;
+    muteBtn.replaceChildren(svg(state.muted ? MUTE_SVG : VOLUME_SVG));
+    muteBtn.setAttribute("aria-label", state.muted ? "Unmute" : "Mute");
+    muteBtn.setAttribute("aria-pressed", String(state.muted));
+    for (const video of [$("source-video"), $("result-video")]) {
+      video.muted = state.muted || video !== activeVideo();
+    }
+  };
+
   const renderViewer = () => {
     const view = state.view;
     const align = view === "align";
@@ -650,6 +776,7 @@
       $("align-note").textContent = check?.note ?? "Measuring…";
       $("align-apply").hidden = check?.state !== "shifted";
     }
+    renderMute();
     seekVideos();
   };
 
@@ -668,12 +795,14 @@
     const open = openWindow();
     const marks = [];
     state.slots.forEach((slot, index) => {
-      if (slot && slot.pin !== null && slot.pin !== undefined) marks.push({slot: index + 1, at: open.render[0] + slot.pin, untouched: slot.untouched, window: state.index});
+      if (slot && slot.pin !== null && slot.pin !== undefined) {
+        marks.push({slot: index + 1, slotIndex: index, at: open.render[0] + slot.pin, untouched: slot.untouched, window: state.index});
+      }
     });
     windows().forEach((window, index) => {
       if (index === state.index) return;
       (window.pins ?? []).forEach((pin, slot) => {
-        if (pin !== null) marks.push({slot: slot + 1, at: window.render[0] + pin, window: index});
+        if (pin !== null) marks.push({slot: slot + 1, slotIndex: slot, at: window.render[0] + pin, window: index});
       });
     });
     return marks;
@@ -702,25 +831,72 @@
     $("summary").replaceChildren(...bold(`${line}${state.project ? " · hatched frames are held from the window before" : ""}`));
 
     $("cuts").replaceChildren(...windows().slice(1).filter((window) => window.kind === "new shot")
-      .map((window) => h("div", {className: "cut", style: `left:${window.own[0] / last * 100}%`})));
+      .map((window) => h("div", {className: "cut", title: `Scene cut at frame ${window.own[0]} (${clock(window.own[0])})`,
+                                 style: `left:${window.own[0] / last * 100}%`})));
+    const activeWin = activeRenderingWindow();
     $("wins").replaceChildren(...windows().map((window, index) => {
       const span = window.own[1] - window.own[0];
       const label = state.project ? String(index + 1) : state.long ? "Not split yet" : "One render";
-      const node = h("button", {type: "button", className: `win ${window.state}`, "aria-pressed": String(index === state.index),
+      const isRendering = index === activeWin;
+      const holdTitle = window.hold
+        ? `First ${window.hold} frames held from window ${index} (${clock(window.render[0])}–${clock(window.own[0])}) for a seamless join.`
+        : "";
+      const node = h("button", {type: "button", className: `win ${window.state}${isRendering ? " rendering" : ""}`,
+                                "aria-pressed": String(index === state.index),
+                                title: holdTitle || `${state.project ? `Window ${index + 1} (${clock(window.own[0])}–${clock(window.own[1])})` : "Selection"}`,
                                 "aria-label": `${state.project ? `Window ${index + 1}, ${window.kind}, ` : ""}${window.state_name}`,
                                 onclick: () => setFrame(window.own[0])},
         window.hold ? h("span", {className: "hold", style: `width:${window.hold / span * 100}%`}) : null,
         h("span", {className: "top"}, h("strong", {}, label), state.project ? h("span", {className: "kind"}, window.kind) : null),
-        h("span", {className: "state"}, window.state_name));
+        h("span", {className: "state"}, isRendering ? "Rendering…" : window.state_name),
+        isRendering ? h("span", {className: "bar"}, h("i")) : null);
       node.style.left = `calc(${window.own[0] / frames * 100}% + 2px)`;
       node.style.width = `calc(${span / frames * 100}% - 4px)`;
       return node;
     }));
     $("marks").replaceChildren(...pinMarks().map((mark) => {
+      const isCurrentWindow = mark.window === state.index;
       const node = button(String(mark.slot), () => setFrame(mark.at), `pinmark${mark.untouched ? " unedited" : ""}`,
-        {title: `Picture ${mark.slot} at frame ${mark.at}`, "aria-label": `Picture ${mark.slot}`});
+        {title: `Picture ${mark.slot} at frame ${mark.at} (${clock(mark.at)})${isCurrentWindow ? " · drag to move pin" : ""}`,
+         "aria-label": `Picture ${mark.slot}`});
       node.style.left = `${Math.min(100, mark.at / last * 100)}%`;
       node.dataset.frame = mark.at;
+      if (isCurrentWindow) {
+        node.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          event.stopPropagation();
+          const track = $("marks");
+          const rect = track.getBoundingClientRect();
+          const open = openWindow();
+          const windowSpan = open.render[1] - open.render[0];
+          let moved = false;
+          const onMove = (moveEvent) => {
+            moved = true;
+            const ratio = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
+            const globalFrame = Math.round(ratio * last);
+            const newPin = Math.max(0, Math.min(windowSpan - 1, globalFrame - open.render[0]));
+            const slot = state.slots[mark.slotIndex];
+            if (slot && slot.pin !== newPin) {
+              slot.pin = newPin;
+              slot.align = null;
+              const newAt = open.render[0] + newPin;
+              node.style.left = `${Math.min(100, newAt / last * 100)}%`;
+              node.dataset.frame = newAt;
+              setFrame(newAt, {follow: false});
+            }
+          };
+          const onUp = () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            if (moved) {
+              afterPictures();
+              measure(mark.slotIndex);
+            }
+          };
+          window.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onUp);
+        });
+      }
       return node;
     }));
     $("final").hidden = !state.long;
@@ -734,16 +910,41 @@
     renderPlayhead();
   };
 
+  const bindSlotDrop = (node, slotIndex) => {
+    node.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      node.classList.add("over");
+    });
+    node.addEventListener("dragleave", () => node.classList.remove("over"));
+    node.addEventListener("drop", (event) => {
+      event.preventDefault();
+      node.classList.remove("over");
+      const file = event.dataTransfer?.files?.[0];
+      if (file) uploadPictureFile(file, slotIndex);
+    });
+  };
+
   const pictureRow = (slot, index) => {
-    const pinField = state.pinned ? h("label", {className: "inline"}, h("span", {className: "small muted"}, "Frame"),
-      h("input", {className: "field tight mono", type: "number", min: 0, value: slot.pin ?? "",
-                  "aria-label": `Picture ${index + 1} frame`,
-                  onchange: (event) => {
-                    slot.pin = event.target.value === "" ? null : Number(event.target.value);
-                    slot.align = null;
-                    afterPictures();
-                    measure(index);
-                  }})) : null;
+    const open = openWindow();
+    const pinTime = slot.pin !== null && slot.pin !== undefined ? clock(open.render[0] + Number(slot.pin)) : "";
+    const pinField = state.pinned ? h("span", {className: "inline tightrow"},
+      h("label", {className: "inline"}, h("span", {className: "small muted"}, "Frame"),
+        h("input", {className: "field tight mono", type: "number", min: 0, value: slot.pin ?? "",
+                    "aria-label": `Picture ${index + 1} frame`,
+                    onchange: (event) => {
+                      slot.pin = event.target.value === "" ? null : Number(event.target.value);
+                      slot.align = null;
+                      afterPictures();
+                      measure(index);
+                    }})),
+      pinTime ? h("span", {className: "small muted mono"}, pinTime) : null,
+      button("Pin here", () => {
+        const windowSpan = open.render[1] - open.render[0];
+        slot.pin = Math.max(0, Math.min(windowSpan - 1, playheadPin()));
+        slot.align = null;
+        afterPictures();
+        measure(index);
+      }, "btn compact", {title: `Set Picture ${index + 1}'s frame pin to the playhead (frame ${playheadPin()})`})) : null;
     const status = slot.untouched ? ["Not edited", "chip warn"] : slot.align?.state === "shifted" ? ["Shifted", "chip warn"]
       : slot.align?.state === "lined_up" ? ["Lined up", "chip good"] : ["Edited", "chip"];
     const editing = state.quick?.index === index;
@@ -756,8 +957,39 @@
         ? button("Interrupt", safely(async () => toast((await post("/quick-edit/interrupt")).message)))
         : button("Quick edit", () => quickEdit(index), slot.untouched ? "btn primary" : "btn",
           {disabled: Boolean(state.quick)}));
-    return h("div", {className: `pic${state.view === "align" && state.alignSlot === index ? " on" : ""}`},
-      h("img", {src: fileUrl(slot.path), alt: `Picture ${index + 1}`}),
+
+    const img = h("img", {src: fileUrl(slot.path), alt: `Picture ${index + 1}`});
+    const badge = slot.before ? h("span", {className: "peek-badge"}, "Hold: before") : null;
+    const thumbWrap = h("div", {
+      className: "thumb-wrap",
+      title: slot.before
+        ? "Click to seek playhead to this frame · Hold to peek at original before edit"
+        : "Click to seek playhead to this frame · Drop an image here to replace",
+      onclick: () => {
+        if (slot.pin !== null && slot.pin !== undefined) setFrame(open.render[0] + Number(slot.pin), {follow: false});
+      },
+      onpointerdown: () => {
+        if (slot.before) {
+          img.src = fileUrl(slot.before.path);
+          if (badge) badge.textContent = "Original";
+        }
+      },
+      onpointerup: () => {
+        if (slot.before) {
+          img.src = fileUrl(slot.path);
+          if (badge) badge.textContent = "Hold: before";
+        }
+      },
+      onpointerleave: () => {
+        if (slot.before) {
+          img.src = fileUrl(slot.path);
+          if (badge) badge.textContent = "Hold: before";
+        }
+      },
+    }, img, badge);
+
+    const card = h("div", {className: `pic${state.view === "align" && state.alignSlot === index ? " on" : ""}`},
+      thumbWrap,
       h("div", {className: "body"},
         h("div", {className: "row tightrow"},
           h("strong", {className: "small"}, `Picture ${index + 1}`), h("span", {className: status[1]}, status[0]),
@@ -776,7 +1008,8 @@
           gpu() ? button("Edit in Image", () => sendToImage(index)) : null,
           h("a", {className: "btn", href: fileUrl(slot.path), download: `frame-${index + 1}.png`}, "Download frame"),
           button("Upload edited frame", () => { state.target = index; $("picture-input").click(); }),
-          slot.sent ? button("Choose the edited image", () => openLibrary(index), "btn primary") : null,
+          slot.sent ? button("Use latest from Media", () => useLatestFromLibrary(index), "btn primary") : null,
+          slot.sent ? button("Choose the edited image", () => openLibrary(index), "btn") : null,
           slot.untouched ? (slot.sent ? null : button("Replace", () => openLibrary(index)))
             : button("Check alignment", () => {
               state.alignSlot = index;
@@ -786,6 +1019,8 @@
               renderPictures();
               measure(index, state.alignView);
             }))));
+    bindSlotDrop(card, index);
+    return card;
   };
 
   const carriedRow = () => {
@@ -813,15 +1048,34 @@
   };
 
   const renderPictures = () => {
+    const active = document.activeElement;
+    const focusLabel = active && $("pictures").contains(active) ? active.getAttribute("aria-label") : null;
+    const selectionStart = focusLabel && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    const selectionEnd = focusLabel && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+
     const rows = [];
     if (state.project && state.index > 0 && state.smart) rows.push(carriedRow());
     state.slots.forEach((slot, index) => { if (slot) rows.push(pictureRow(slot, index)); });
     const empty = emptySlot();
     if (empty >= 0) {
-      rows.push(h("div", {className: "empty-slot"}, h("span", {}, `Picture ${empty + 1} is empty`),
-        h("span", {className: "row tightrow"}, button("From Media", () => openLibrary()))));
+      const emptyNode = h("div", {className: "empty-slot"},
+        h("span", {}, `Picture ${empty + 1} is empty · drop or paste an image`),
+        h("span", {className: "row tightrow"},
+          button("Upload", () => { state.target = empty; $("picture-input").click(); }),
+          button("From Media", () => openLibrary())));
+      bindSlotDrop(emptyNode, empty);
+      rows.push(emptyNode);
     }
     $("pictures").replaceChildren(...rows);
+    if (focusLabel) {
+      const restored = [...$("pictures").querySelectorAll("[aria-label]")].find((el) => el.getAttribute("aria-label") === focusLabel);
+      if (restored && !restored.disabled) {
+        restored.focus();
+        if (selectionStart !== null && typeof restored.setSelectionRange === "function") {
+          try { restored.setSelectionRange(selectionStart, selectionEnd); } catch { /* number inputs don't support setSelectionRange */ }
+        }
+      }
+    }
     const count = state.slots.filter(Boolean).length;
     $("pic-count").textContent = `${count} of 4`;
     $("pinned").checked = state.pinned;
@@ -832,12 +1086,16 @@
   const renderPromptMeta = () => {
     const text = $("prompt").value;
     const open = openWindow();
-    const count = state.boot.sections.filter((name) => new RegExp(`^\\s*${name}\\s*:`, "m").test(text)).length;
+    const present = state.boot.sections.filter((name) => new RegExp(`^\\s*${name}\\s*:`, "m").test(text));
+    const missing = state.boot.sections.filter((name) => !present.includes(name));
+    const count = present.length;
     const written = open.prompt_auto && text === open.prompt;
     $("origin").textContent = !text.trim() ? "Not written yet" : written ? "Written, replaced on render" : "Typed by you, stays";
     $("origin").className = text.trim() && !written ? "chip good" : "chip";
     $("sections").textContent = `${count} of 6 sections`;
     $("sections").className = count === 6 ? "chip good" : "chip";
+    $("sections").title = missing.length ? `Missing sections: ${missing.join(", ")}` : "All 6 Viggle Remake prompt sections present";
+    $("insert-template").hidden = count === 6;
     $("prompt-label").textContent = state.project ? `Remake prompt for window ${state.index + 1}` : "Remake prompt";
     $("request-label").textContent = state.project ? "Edit request, for the whole project" : "Edit request";
     $("suggestion-box").hidden = !state.suggestion;
@@ -882,11 +1140,12 @@
     state.playing = playing;
     const videos = [$("source-video"), $("result-video")].filter((video) => !video.hidden && video.src);
     for (const video of videos) {
-      video.muted = video !== activeVideo();
+      video.muted = state.muted || video !== activeVideo();
       if (playing) video.play().catch(() => {});
       else video.pause();
     }
     $("play").setAttribute("aria-label", playing ? "Pause" : "Play");
+    $("play").replaceChildren(svg(playing ? PAUSE_SVG : PLAY_SVG));
     if (!playing) setFrame(state.frame);
   };
   const followPlayback = (event) => {
@@ -900,21 +1159,32 @@
     renderPlayhead();
   };
 
+  const applyStartChange = (newStart) => {
+    const start = Math.max(0, Math.round(Number(newStart) * 100) / 100 || 0);
+    // Pins count from Start, so each stays on its source frame.
+    const moved = Math.round((start - state.lastStart) * fps());
+    for (const slot of state.slots) {
+      if (slot && slot.pin !== null && slot.pin !== undefined) slot.pin = slot.pin >= moved ? slot.pin - moved : null;
+    }
+    state.start = state.lastStart = start;
+    refreshSelection();
+  };
+
+  const applyEndChange = (newEnd) => {
+    const duration = state.source?.duration || 9999;
+    state.end = Math.min(duration, Math.max(state.start + 0.5, Math.round((Number(newEnd) || 0) * 100) / 100));
+    refreshSelection();
+  };
+
   // Wiring -----------------------------------------------------------------
   const bind = () => {
     $("choose-video").addEventListener("click", () => $("video-input").click());
     $("video-input").addEventListener("change", (event) => { upload(event.target.files[0]); event.target.value = ""; });
-    $("picture-input").addEventListener("change", safely(async (event) => {
-      const form = new FormData();
-      form.append("file", event.target.files[0]);
+    $("picture-input").addEventListener("change", (event) => {
+      const file = event.target.files[0];
       event.target.value = "";
-      const {path} = await request("POST", "/picture", form, {form: true});
-      if (state.target !== null && state.slots[state.target]) {
-        const index = state.target;
-        state.target = null;
-        replacePicture(index, path);
-      } else addPicture(path);
-    }));
+      uploadPictureFile(file);
+    });
     const drop = $("drop");
     drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -924,20 +1194,140 @@
       upload(event.dataTransfer.files[0]);
     });
 
+    document.addEventListener("paste", (event) => {
+      if (!state.source) return;
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+      const items = [...(event.clipboardData?.items || [])];
+      const imageItem = items.find((item) => item.type.startsWith("image/"));
+      if (imageItem) {
+        event.preventDefault();
+        uploadPictureFile(imageItem.getAsFile());
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      if (state.menu && event.target.isConnected && !event.target.closest(".project-menu")) {
+        state.menu = false;
+        renderMenu();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.menu) {
+        state.menu = false;
+        renderMenu();
+        return;
+      }
+      if (!state.source || $("editor").hidden || $("library").open) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (event.key === " ") {
+        event.preventDefault();
+        setPlaying(!state.playing);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        if (state.playing) setPlaying(false);
+        setFrame(state.frame - (event.shiftKey ? 10 : 1));
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        if (state.playing) setPlaying(false);
+        setFrame(state.frame + (event.shiftKey ? 10 : 1));
+      } else if (event.key === "e" || event.key === "E") {
+        if (!$("extract").disabled) {
+          event.preventDefault();
+          extractFrame();
+        }
+      } else if (event.key === "m" || event.key === "M") {
+        event.preventDefault();
+        state.muted = !state.muted;
+        renderMute();
+        savePrefs();
+      } else if (event.key === "[") {
+        event.preventDefault();
+        applyStartChange(videoStart() + state.frame / fps());
+      } else if (event.key === "]") {
+        event.preventDefault();
+        applyEndChange(videoStart() + (state.frame + 1) / fps());
+      } else if (event.key === "1") {
+        state.view = "source";
+        renderViewer();
+      } else if (event.key === "2") {
+        state.view = "result";
+        renderViewer();
+      } else if (event.key === "3") {
+        state.view = "compare";
+        renderViewer();
+      }
+    });
+
     $("project-button").addEventListener("click", () => { state.menu = !state.menu; renderMenu(); });
     $("short-edge").addEventListener("change", (event) => { state.shortEdge = Number(event.target.value); savePrefs(); refreshSelection(); });
     $("max-window").addEventListener("change", (event) => { state.maxWindow = Number(event.target.value); savePrefs(); refreshSelection(); });
-    $("start-time").addEventListener("change", (event) => {
-      const start = Math.max(0, Number(event.target.value) || 0);
-      // Pins count from Start, so each stays on its source frame.
-      const moved = Math.round((start - state.lastStart) * fps());
-      for (const slot of state.slots) {
-        if (slot && slot.pin !== null && slot.pin !== undefined) slot.pin = slot.pin >= moved ? slot.pin - moved : null;
+    $("start-time").addEventListener("change", (event) => applyStartChange(event.target.value));
+    $("end-time").addEventListener("change", (event) => applyEndChange(event.target.value));
+    $("set-start").addEventListener("click", () => applyStartChange(videoStart() + state.frame / fps()));
+    $("set-end").addEventListener("click", () => applyEndChange(videoStart() + (state.frame + 1) / fps()));
+
+    $("overview").addEventListener("pointerdown", (event) => {
+      if (!state.source || event.button !== 0) return;
+      const bar = $("overview");
+      const rect = bar.getBoundingClientRect();
+      const duration = state.source.duration || 1;
+      const edge = event.target.dataset?.edge;
+      const initialStart = state.start;
+      const initialEnd = state.end;
+      const span = Math.max(0.5, initialEnd - initialStart);
+      const startX = event.clientX;
+      let dragged = false;
+
+      if (!edge && event.target !== $("band")) {
+        const clickTime = Math.max(0, Math.min(duration - span, (event.clientX - rect.left) / Math.max(1, rect.width) * duration - span / 2));
+        state.start = Math.round(clickTime * 10) / 10;
+        state.end = Math.min(duration, Math.round((state.start + span) * 10) / 10);
+        $("start-time").value = state.start;
+        $("end-time").value = state.end;
+        $("band").style.left = `${state.start / duration * 100}%`;
+        $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
+        dragged = true;
       }
-      state.start = state.lastStart = start;
-      refreshSelection();
+
+      const onMove = (moveEvent) => {
+        dragged = true;
+        const deltaSec = (moveEvent.clientX - startX) / Math.max(1, rect.width) * duration;
+        if (edge === "start") {
+          state.start = Math.max(0, Math.min(state.end - 0.5, Math.round((initialStart + deltaSec) * 10) / 10));
+        } else if (edge === "end") {
+          state.end = Math.min(duration, Math.max(state.start + 0.5, Math.round((initialEnd + deltaSec) * 10) / 10));
+        } else {
+          const nextStart = Math.max(0, Math.min(duration - span, Math.round((initialStart + deltaSec) * 10) / 10));
+          state.start = nextStart;
+          state.end = Math.min(duration, Math.round((nextStart + span) * 10) / 10);
+        }
+        $("start-time").value = state.start;
+        $("end-time").value = state.end;
+        $("band").style.left = `${state.start / duration * 100}%`;
+        $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (dragged) {
+          const moved = Math.round((state.start - state.lastStart) * fps());
+          for (const slot of state.slots) {
+            if (slot && slot.pin !== null && slot.pin !== undefined) slot.pin = slot.pin >= moved ? slot.pin - moved : null;
+          }
+          state.lastStart = state.start;
+          refreshSelection();
+        }
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
     });
-    $("end-time").addEventListener("change", (event) => { state.end = Number(event.target.value) || 0; refreshSelection(); });
+
     $("smart").addEventListener("change", (event) => { state.smart = event.target.checked; renderPictures(); changed(); });
     $("auto-prompts").addEventListener("change", (event) => { state.auto = event.target.checked; changed(); });
     $("pinned").addEventListener("change", (event) => { state.pinned = event.target.checked; renderPictures(); changed(); });
@@ -946,12 +1336,18 @@
     $("back").addEventListener("click", () => setFrame(state.frame - 1));
     $("next").addEventListener("click", () => setFrame(state.frame + 1));
     $("play").addEventListener("click", () => setPlaying(!state.playing));
+    $("mute").addEventListener("click", () => {
+      state.muted = !state.muted;
+      renderMute();
+      savePrefs();
+    });
     $("extract").addEventListener("click", extractFrame);
     $("save-project").addEventListener("click", safely(async () => {
       const control = $("save-project");
       control.disabled = true;
       try {
         state.project = await saveWindow(true);
+        stored.set(SESSION.project, state.project.key);
         await refreshProjects();
         renderAll();
         queueCheck();
@@ -963,6 +1359,7 @@
     $("combine").addEventListener("click", combine);
     $("split").addEventListener("click", safely(async () => {
       state.project = await post("/split", {selection: selection(), video: state.source.path});
+      stored.set(SESSION.project, state.project.key);
       state.index = 0;
       renderAll();
       queueCheck();
@@ -1021,6 +1418,18 @@
       queueCheck();
       autosave();
     });
+    $("insert-template").addEventListener("click", () => {
+      const current = $("prompt").value;
+      const missing = state.boot.sections.filter((name) => !new RegExp(`^\\s*${name}\\s*:`, "m").test(current));
+      if (!missing.length) return;
+      state.previous = current;
+      const block = missing.map((name) => `${name}:\n`).join("\n");
+      $("prompt").value = current.trim() ? `${current.trimEnd()}\n\n${block}` : block;
+      renderPromptMeta();
+      queueCheck();
+      autosave();
+      $("prompt").focus();
+    });
     $("open-settings").addEventListener("click", () => {
       window.parent.document.getElementById(BRIDGE.settings)?.click();
     });
@@ -1034,12 +1443,12 @@
     $("writer-model").value = models.includes(prefs.model) ? prefs.model : openai ? firstOther : firstGemini;
   };
 
-  // In the tab, the frame grows to fit, so the app's page is the only thing that scrolls.
+  // In the tab, the frame grows or shrinks to fit, so the app's page is the only thing that scrolls.
   const fitFrame = () => {
     const frame = window.frameElement;
     if (!frame) return;
-    const height = document.documentElement.scrollHeight;
-    if (height > frame.offsetHeight) frame.style.height = `${height}px`;
+    const height = Math.max(860, document.body.scrollHeight + 24);
+    if (Math.abs(frame.offsetHeight - height) > 4) frame.style.height = `${height}px`;
   };
   let fitQueued = false;
   const queueFit = () => {
@@ -1063,6 +1472,7 @@
     try {
       new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
     } catch { /* Framed by another origin. */ }
+    window.addEventListener("beforeunload", flushNow);
     new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"]});
     document.addEventListener("toggle", queueFit, true);
     window.addEventListener("resize", queueFit);
@@ -1074,7 +1484,8 @@
       if (!gpu()) $("no-projects").textContent = "Save any selection as a project, then reopen it in Studio to render.";
       state.shortEdge = prefs.outputEdge ?? state.boot.short_edge;
       state.maxWindow = prefs.maxWindow ?? state.boot.max_window;
-      Object.assign(state, {mode: prefs.mode ?? "Swap", smart: prefs.smart ?? true, auto: prefs.auto ?? true, pinned: prefs.pinned ?? true});
+      Object.assign(state, {mode: prefs.mode ?? "Swap", smart: prefs.smart ?? true, auto: prefs.auto ?? true,
+                            pinned: prefs.pinned ?? true, muted: Boolean(prefs.muted)});
       $("short-edge").replaceChildren(h("option", {value: 0}, "Auto, match source"),
         ...state.boot.short_edges.map((edge) => h("option", {value: edge}, String(edge))));
       $("edit-model").replaceChildren(...state.boot.edit_models.map((model) => h("option", {value: model.id}, model.label)));
@@ -1084,9 +1495,15 @@
         h("option", {value: length}, `${(length / fps()).toFixed(1)} s (${length} frames)`)));
       if (prefs.backend) $("writer-backend").value = prefs.backend;
       fillWriterModels();
+      renderMute();
       bind();
       renderStart();
-      showEditor(false);
+      const savedKey = stored.get(SESSION.project);
+      if (savedKey && state.boot.projects.some((row) => row.key === savedKey)) {
+        await openProject(savedKey, {initialWindow: Number(stored.get(SESSION.window) || 0)});
+      } else {
+        showEditor(false);
+      }
       if (state.boot.run) watchRun(state.boot.run);
       pulse();
     } catch (error) {

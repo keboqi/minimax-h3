@@ -35,6 +35,7 @@
         <div class="steps" id="steps"></div>
         <p class="small muted" role="status" id="readiness"></p>
       </div>
+      <span class="small muted" id="save-state" role="status" hidden></span>
       <button type="button" class="btn" id="save-project">Save project</button>
       <button type="button" class="btn" id="stop" hidden>Interrupt</button>
       <button type="button" class="btn primary big" id="primary"></button>
@@ -56,7 +57,7 @@
           <img id="align-image" alt="Comparison with the source frame" hidden>
           <div class="stage-empty" id="stage-empty" hidden><strong>Nothing rendered here yet</strong><span id="empty-line"></span></div>
           <div id="wipe-parts" hidden>
-            <div class="wipe-line" id="wipe-line"></div>
+            <div class="wipe-line" id="wipe-line"><span class="wipe-handle" aria-hidden="true">‹ ›</span></div>
             <span class="tag left">Source</span><span class="tag right">Result</span>
             <input class="overlay" id="wipe" type="range" min="0" max="100" value="50" aria-label="Compare divider">
           </div>
@@ -67,28 +68,36 @@
           <button type="button" class="btn primary" id="align-apply" hidden>Align to source</button>
         </div>
         <div class="row line" id="transport">
-          <button type="button" class="btn icon" id="play" aria-label="Play">
+          <button type="button" class="btn icon" id="play" aria-label="Play" title="Play / Pause (Space)">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 1.5v11l9-5.5z"/></svg>
           </button>
-          <button type="button" class="btn icon" id="back" aria-label="Back one frame">
+          <button type="button" class="btn icon" id="back" aria-label="Back one frame" title="Back one frame (←)">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 2.5L4.5 7 9 11.5"/></svg>
           </button>
-          <button type="button" class="btn icon" id="next" aria-label="Forward one frame">
+          <button type="button" class="btn icon" id="next" aria-label="Forward one frame" title="Forward one frame (→)">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 2.5L9.5 7 5 11.5"/></svg>
           </button>
+          <button type="button" class="btn icon" id="mute" aria-label="Mute" title="Mute / Unmute (M)"></button>
           <span class="mono small" id="timecode"></span>
+          <span class="small muted" id="audio-note"></span>
           <span class="grow"></span>
           <span class="small muted" id="extract-hint"></span>
-          <button type="button" class="btn primary" id="extract">Extract frame</button>
+          <button type="button" class="btn primary" id="extract" title="Extract frame at playhead (E)">Extract frame</button>
         </div>
       </section>
 
       <section class="panel timeline" aria-label="Timeline">
         <div class="row">
           <div class="row grow selection">
-            <label class="inline"><span class="small muted">Start</span><input id="start-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="Start (s)"></label>
-            <label class="inline"><span class="small muted">End</span><input id="end-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="End (s)"></label>
-            <div class="overview" aria-hidden="true"><div id="band"></div></div>
+            <span class="inline tightrow">
+              <label class="inline"><span class="small muted">Start</span><input id="start-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="Start (s)"></label>
+              <button type="button" class="btn mini mono" id="set-start" title="Set start to playhead ([)" aria-label="Set start to playhead">[</button>
+            </span>
+            <span class="inline tightrow">
+              <label class="inline"><span class="small muted">End</span><input id="end-time" class="field tight mono num" type="number" min="0" step="0.5" aria-label="End (s)"></label>
+              <button type="button" class="btn mini mono" id="set-end" title="Set end to playhead (])" aria-label="Set end to playhead">]</button>
+            </span>
+            <div class="overview" id="overview" title="Drag to move or resize selection"><div id="band"><span class="handle left" data-edge="start"></span><span class="handle right" data-edge="end"></span></div></div>
             <span class="small muted mono" id="source-length"></span>
           </div>
           <div class="row" id="window-options" hidden>
@@ -164,7 +173,10 @@
           <span class="row tightrow"><span class="small muted grow" id="prompt-label">Remake prompt</span><span class="chip" id="origin"></span><span class="chip" id="sections"></span></span>
           <textarea id="prompt" class="field mono prompt" rows="9" aria-label="Remake prompt" placeholder="subject_definitions:&#10;…&#10;&#10;summary:&#10;…"></textarea>
         </label>
-        <div><button type="button" class="btn quiet" id="undo" hidden>Undo accepted prompt</button></div>
+        <div class="row tightrow">
+          <button type="button" class="btn quiet" id="insert-template">Insert 6-section template</button>
+          <button type="button" class="btn quiet" id="undo" hidden>Undo accepted prompt</button>
+        </div>
       </section>
     </aside>
   </div>

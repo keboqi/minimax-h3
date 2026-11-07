@@ -428,6 +428,7 @@ class RemakeHandlers:
         metadata = probe_video_metadata(path)
         return {
             "path": str(path), "sha": sha or file_content_sha256(path), "name": name or path.stem,
+            "width": metadata.width, "height": metadata.height, "has_audio": bool(metadata.has_audio),
             "info": f"{metadata.width}×{metadata.height} · {metadata.fps:.2f} fps · {metadata.duration:.2f} s",
             "audio_note": ("Source audio found. It stays in the result and guides mouth movement."
                            if metadata.has_audio else "No audio in this source, so the result stays silent."),
