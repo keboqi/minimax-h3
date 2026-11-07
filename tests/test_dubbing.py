@@ -636,6 +636,54 @@ class SessionTests(Workspace):
         self.assertEqual([found.id for found in sessions.same_source(second)], [first.id])
 
 
+class TranslationMatchingTests(Workspace):
+    def setUp(self):
+        super().setUp()
+        source = self.root / "talk.wav"
+        source.write_bytes(b"data")
+        self.session = sessions.create(self.runtime, source, video=False)
+        self.session.segments = [
+            {"start": 1, "end": 2, "speaker": "speaker1", "source": "Yes", "translation": "One"},
+            {"start": 1, "end": 2, "speaker": "speaker2", "source": "Yes", "translation": "Two"},
+        ]
+        self.session.save()
+
+    def test_pasted_reply_updates_only_the_selected_speaker(self):
+        request = pipeline.translation_request(self.session, [0], "French")[1]
+        result = pipeline.apply_translation_reply(self.session.id, request, '["Oui"]', runtime=self.runtime)
+        self.assertEqual([line["translation"] for line in result.session.segments], ["Oui", "Two"])
+        self.assertIn("Applied 1 translation(s)", result.message)
+        self.assertNotIn("line(s) were left", result.message)
+
+    def test_pasted_replies_keep_distinct_results_after_a_line_is_inserted(self):
+        request = pipeline.translation_request(self.session, None, "French")[1]
+        sessions.update_segments(self.runtime, self.session.id, [
+            {"start": 0, "end": 0.5, "source": "Before", "translation": "Avant"},
+            *self.session.segments,
+        ])
+        result = pipeline.apply_translation_reply(self.session.id, request, '["Oui !", "Oui ?"]',
+                                                  runtime=self.runtime)
+        self.assertEqual([line["translation"] for line in result.session.segments], ["Avant", "Oui !", "Oui ?"])
+        self.assertIn("Applied 2 translation(s)", result.message)
+
+    def test_duplicate_lines_receive_at_most_one_result_each(self):
+        lines = self.session.segments
+        lines[1]["speaker"] = "speaker1"
+        self.session.segments = lines
+        self.session.save()
+        request = pipeline.translation_request(self.session, None, "French")[1]
+        result = pipeline.apply_translation_reply(self.session.id, request, '["Oui !", "Oui ?"]',
+                                                  runtime=self.runtime)
+        self.assertEqual([line["translation"] for line in result.session.segments], ["Oui !", "Oui ?"])
+
+    def test_automatic_translation_updates_only_the_selected_speaker(self):
+        request = pipeline.AnalyzeRequest("", target_language="French", translator=pipeline.TRANSLATOR_GEMINI)
+        with patch.object(pipeline.gemini, "translate", return_value=["Oui"]):
+            result = list(pipeline.retranslate(self.session.id, [0], request,
+                                               runtime=self.runtime, free_gpu=None))[-1]
+        self.assertEqual([line["translation"] for line in result.session.segments], ["Oui", "Two"])
+
+
 class HandlerTests(Workspace):
     def setUp(self):
         super().setUp()
@@ -2278,7 +2326,7 @@ class DubRenderTests(Workspace):
         self.assertIn('"seconds": 2.4', prompt)
         self.assertIn("exactly 2 strings", prompt)
         picked = pipeline.translation_request(session, [1], "German")[1]
-        self.assertEqual(picked["lines"], [[lines[1]["start"], lines[1]["source"]]])
+        self.assertEqual(picked["lines"], [[1, lines[1]["start"], lines[1]["speaker"], lines[1]["source"]]])
 
         def apply(reply, using=request):
             return pipeline.apply_translation_reply(session.id, using, reply, runtime=self.runtime)

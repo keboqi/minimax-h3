@@ -638,22 +638,31 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
     # The editor may have saved lines meanwhile: apply each translation to the line that still
-    # has the same start and original text, on top of the latest saved lines.
-    _save_translations(session, {(lines[i]["start"], lines[i]["source"]): text
+    # has the same start, speaker and original text, on top of the latest saved lines.
+    _save_translations(session, {_translation_key(i, lines[i]): text
                                  for i, text in zip(indices, translated)}, target)
 
 
+def _translation_key(index: int, line: dict) -> tuple:
+    return index, line["start"], line["speaker"], line["source"]
+
+
 def _save_translations(session: sessions.Session, results: dict, target: str) -> int:
-    """Apply ``{(start, source): text}`` to the lines that still match; returns how many did."""
+    """Match each result to one line, preferring its old position; skip ambiguous matches."""
     applied = 0
 
     def apply(latest: sessions.Session) -> None:
         nonlocal applied
         updated = latest.segments
-        for line in updated:
-            text = results.get((line["start"], line["source"]))
-            if text is not None:
-                line["translation"] = text
+        used = set()
+        for (index, start, speaker, source), text in results.items():
+            matches = [i for i, line in enumerate(updated)
+                       if i not in used and (line["start"], line["speaker"], line["source"])
+                       == (start, speaker, source)]
+            chosen = index if index in matches else matches[0] if len(matches) == 1 else None
+            if chosen is not None:
+                updated[chosen]["translation"] = text
+                used.add(chosen)
                 applied += 1
         latest.segments = updated
         latest.data["target_language"] = target
@@ -680,7 +689,7 @@ def translation_request(session: sessions.Session, indices: list[int] | None, ta
         source_language=session.data.get("source_language", ""), notes=str(notes or ""),
         seconds=[lines[i]["end"] - lines[i]["start"] for i in chosen], style=style_text(style))
     return prompt, {"session": session.id, "target": target,
-                    "lines": [[lines[i]["start"], lines[i]["source"]] for i in chosen]}
+                    "lines": [list(_translation_key(i, lines[i])) for i in chosen]}
 
 
 def apply_translation_reply(session_id: str, request: dict | None, reply: str, *, runtime) -> Analysis:
@@ -691,6 +700,8 @@ def apply_translation_reply(session_id: str, request: dict | None, reply: str, *
         raise H3Error("Paste the chat model's JSON reply first.")
     session = sessions.load(runtime, session_id)
     keys = [tuple(line) for line in request["lines"]]
+    if any(len(key) != 4 for key in keys):
+        raise H3Error("Copy the prompt again before applying translations.")
     try:
         texts = segment_tools.parse_translation_reply(reply, len(keys))
     except ValueError as exc:
