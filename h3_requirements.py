@@ -27,6 +27,8 @@ HUGGINGFACE_HUB_REQUIREMENT = "huggingface-hub>=1.5,<2"
 KERNELS_VERSION = "0.16.0"
 # Transformers 5.15-5.17 accept kernels 0.16; 5.18 and later require 0.17.
 TRANSFORMERS_REQUIREMENT = "transformers>=4.57.1,<5.18"
+DIFFUSERS_REQUIREMENT = "diffusers>=0.36,<0.37"
+OPENCV_VERSION = "4.11.0.86"
 # Pinned LTXVideo uses torch.nn.functional.pad instead of Kornia's removed
 # pyramid.pad export.
 KORNIA_VERSION = "0.8.3"
@@ -93,12 +95,21 @@ ABI_CONSTRAINTS = (
     f"numpy=={NUMPY_VERSION}",
     f"scipy=={SCIPY_VERSION}",
 )
-# Node installs must not move Transformers and kernels apart.
+# Node installs must not move Transformers and kernels apart. They use --upgrade,
+# often with --no-deps, so a package a node lists without a version needs its limit
+# here: otherwise it jumps past what the rest of the environment requires.
 INSTALL_CONSTRAINTS = (
     *ABI_CONSTRAINTS,
     HUGGINGFACE_HUB_REQUIREMENT,
     TRANSFORMERS_REQUIREMENT,
     f"kernels=={KERNELS_VERSION}",
+    DIFFUSERS_REQUIREMENT,
+    "pillow<13",  # Gradio's own limit.
+    # All three distributions share the cv2 folder, so they must match. Newer
+    # releases require NumPy 2, and --no-deps steps would not notice.
+    f"opencv-python=={OPENCV_VERSION}",
+    f"opencv-python-headless=={OPENCV_VERSION}",
+    f"opencv-contrib-python=={OPENCV_VERSION}",
 )
 
 PINNED_REQUIREMENTS = frozenset(
@@ -542,6 +553,11 @@ def selftest() -> None:
         "huggingface-hub>=1.5,<2",
         "transformers>=4.57.1,<5.18",
         "kernels==0.16.0",
+        "diffusers>=0.36,<0.37",
+        "pillow<13",
+        "opencv-python==4.11.0.86",
+        "opencv-python-headless==4.11.0.86",
+        "opencv-contrib-python==4.11.0.86",
     )
     assert KORNIA_VERSION == "0.8.3"
     assert KORNIA_RS_VERSION == "0.1.14"
