@@ -17,6 +17,7 @@ where rounding drops part of the update and the output comes out softer.
 import torch
 
 import comfy.audio
+import comfy.ldm.minimax.model
 import comfy.nested_tensor
 import comfy.patcher_extension
 import comfy.utils
@@ -174,7 +175,12 @@ class RemakeKeyframeUntil:
             p = minimax_payload or {}
             if p.get("keyframes") and float(timestep.flatten()[0]) / 1000 < keyframe_until:
                 refs = p.get("refs") or []
-                minimax_payload = dict(p, keyframes=None, layout=None,
+                # Observers read the layout, and Spectrum's own rebuild of a missing one passes an argument
+                # PackedLayout does not take, so build what the native forward would: the same patch-padded signature.
+                video, audio = x[0], x[1]
+                t, h, w = (-(-size // patch) * patch for size, patch in zip(video.shape[-3:], executor.class_obj.patch_size))
+                layout = comfy.ldm.minimax.model.PackedLayout(context.shape[1], t, h, w, audio.shape[-1], refs=refs)
+                minimax_payload = dict(p, keyframes=None, layout=layout,
                                        cond_video_latents=[r["latent"] for r in refs if "latent" in r],
                                        cond_audio_latents=[r["audio_latent"] for r in refs if r.get("audio_latent") is not None])
             return executor(x, timestep, context, transformer_options, minimax_payload=minimax_payload, **kwargs)

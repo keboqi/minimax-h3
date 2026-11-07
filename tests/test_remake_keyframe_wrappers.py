@@ -26,6 +26,27 @@ class Timestep(float):
         return [self]
 
 
+class Latent:
+    def __init__(self, *shape):
+        self.shape = shape
+
+
+class PackedLayout:
+    # The native signature: Spectrum's rebuild fails here because it adds frame_count.
+    def __init__(self, text_len, latent_t, latent_h, latent_w, audio_t, keyframes=None, refs=None):
+        self.signature = (text_len, latent_t, latent_h, latent_w, audio_t)
+        self.keyframes, self.refs = keyframes, refs
+
+
+class Executor:
+    def __init__(self, call):
+        self.call = call
+        self.class_obj = SimpleNamespace(patch_size=(1, 2, 2))
+
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
+
+
 def execute(model, payload, sigma, *, forecast=False):
     wrappers = model.wrappers["diffusion_model"]
     callbacks = [callback for group in wrappers.values() for callback in group]
@@ -36,9 +57,10 @@ def execute(model, payload, sigma, *, forecast=False):
     def call(index, *args, **kwargs):
         if index == len(callbacks):
             return native(*args, **kwargs)
-        return callbacks[index](lambda *a, **k: call(index + 1, *a, **k), *args, **kwargs)
+        return callbacks[index](Executor(lambda *a, **k: call(index + 1, *a, **k)), *args, **kwargs)
 
-    return call(0, None, Timestep(sigma * 1000), None, {"forecast": forecast},
+    x = [Latent(1, 24, 7, 45, 81), Latent(1, 32, 300)]  # Odd height and width pad up to the 2x2 patch.
+    return call(0, x, Timestep(sigma * 1000), Latent(1, 64, 5120), {"forecast": forecast},
                 minimax_payload=payload, denoise_mask="held audio")
 
 
@@ -50,8 +72,10 @@ class KeyframeWrapperTests(unittest.TestCase):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         node = next(item for item in tree.body if isinstance(item, ast.ClassDef)
                     and item.name == "RemakeKeyframeUntil")
-        namespace = {"comfy": SimpleNamespace(patcher_extension=SimpleNamespace(
-            WrappersMP=SimpleNamespace(DIFFUSION_MODEL="diffusion_model")))}
+        namespace = {"comfy": SimpleNamespace(
+            ldm=SimpleNamespace(minimax=SimpleNamespace(model=SimpleNamespace(PackedLayout=PackedLayout))),
+            patcher_extension=SimpleNamespace(
+                WrappersMP=SimpleNamespace(DIFFUSION_MODEL="diffusion_model")))}
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
         cls.node = namespace["RemakeKeyframeUntil"]()
 
@@ -83,7 +107,9 @@ class KeyframeWrapperTests(unittest.TestCase):
                         self.assertIs(effective, payload)
                     else:
                         self.assertIsNone(effective["keyframes"])
-                        self.assertIsNone(effective["layout"])
+                        self.assertEqual(effective["layout"].signature, (64, 7, 46, 82, 300))
+                        self.assertIsNone(effective["layout"].keyframes)
+                        self.assertIs(effective["layout"].refs, refs)
                         self.assertEqual(effective["cond_video_latents"], ["source", "picture"])
                         self.assertEqual(effective["cond_audio_latents"], ["audio"])
         self.assertEqual(payload["keyframes"], ["pin"])
@@ -98,7 +124,7 @@ class KeyframeWrapperTests(unittest.TestCase):
         self.assertIs(execute(twice, payload, 0.5)[0], payload)
         pinned = {"keyframes": ["pin"], "layout": "pinned", "refs": []}
         self.assertIs(execute(twice, pinned, 0.85)[0], pinned)
-        self.assertIsNone(execute(twice, pinned, 0.79)[0]["layout"])
+        self.assertIsNone(execute(twice, pinned, 0.79)[0]["keyframes"])
 
 
 if __name__ == "__main__":
