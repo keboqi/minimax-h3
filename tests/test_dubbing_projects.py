@@ -1,6 +1,7 @@
 """Workshop/Studio handoff keeps drafts, edited lines, settings and completed results."""
 import os
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -70,7 +71,12 @@ class DubbingProjectTests(unittest.TestCase):
     def test_workshop_and_studio_share_source_and_settings(self):
         with gr.Blocks() as cpu:
             view = build_dubbing_workshop(gr.Tab("Dub & Translate"), cpu, self.runtime)
-        gpu_controls = (view.analyze, view.run, view.preview, view.new_take, view.retranslate, view.align_words)
+        gpu_controls = (view.run, view.preview, view.new_take, view.align_words)
+        self.assertTrue(view.analyze.visible and view.retranslate.visible and view.prepare_audio.visible)
+        self.assertEqual(view.pipeline.value, pipeline.PIPELINE_GEMINI)
+        self.assertEqual(view.translator.value, pipeline.TRANSLATOR_GEMINI)
+        self.assertIn(pipeline.PIPELINE_MANUAL, view.pipeline.html_template)
+        self.assertNotIn(pipeline.PIPELINE_LOCAL, view.pipeline.html_template)
         self.assertTrue(all(not control.visible for control in gpu_controls))
         self.assertFalse(any(fn.concurrency_id == "h3-gpu" for fn in cpu.fns.values()))
         targets = {target[0] for fn in cpu.fns.values() for target in fn.targets}
@@ -99,7 +105,44 @@ class DubbingProjectTests(unittest.TestCase):
         run = Mock()
         with self.assertRaisesRegex(H3Error, "Studio"):
             self.actions._gpu(run)
+        with self.assertRaisesRegex(H3Error, "Studio"):
+            self.actions._cloud(run, without_gpu=False)
         run.assert_not_called()
+
+    def test_workshop_runs_cloud_steps_without_the_gpu(self):
+        analyzed = sessions.create(self.runtime, self.source, video=False)
+        finished = pipeline.Analysis(analyzed, "Done")
+        with patch.object(pipeline, "analyze", return_value=iter([finished])) as analyze:
+            updates = list(self.actions.analyze_source(
+                str(self.source), None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_MANUAL, "Auto-detect",
+                "French", True, pipeline.TRANSLATOR_GEMINI, True, .35, "model", "", "", manual_reply="[]"))
+        self.assertEqual(updates[-1][0], analyzed.id)
+        request = analyze.call_args.args[0]
+        self.assertTrue(request.cloud_only)
+        self.assertEqual(request.manual_reply, "[]")
+        self.assertIsNone(analyze.call_args.kwargs["free_gpu"])
+        with patch.object(pipeline, "retranslate", return_value=iter([finished])) as retranslate:
+            list(self.actions.translate_lines(analyzed.id, {}, "French", pipeline.TRANSLATOR_GEMINI, "model", "", ""))
+        retranslate.assert_called_once()
+        with patch.object(pipeline, "retranslate") as retranslate:
+            failed = list(self.actions.translate_lines(analyzed.id, {}, "French", pipeline.TRANSLATOR_HYMT, "model",
+                                                       "", ""))
+        self.assertIn("Studio", failed[-1][2])
+        retranslate.assert_not_called()
+
+    def test_prepared_audio_is_copied_out_of_the_private_session(self):
+        speech = self.root / "workspace-speech.mp3"
+        speech.write_bytes(b"mp3")
+        with patch.object(pipeline, "prepare_speech", return_value=iter(["Working", speech])):
+            updates = list(self.actions.prepare_speech(str(self.source), None, True, "Balanced (BS-Roformer)", True,
+                                                       "French"))
+        self.assertEqual(updates[1][1], "Working")
+        copied = Path(updates[-1][0])
+        self.addCleanup(shutil.rmtree, copied.parent, ignore_errors=True)
+        self.assertEqual(copied.name, "interview-speech.mp3")
+        self.assertNotEqual(copied.parent, speech.parent)
+        self.assertEqual(copied.read_bytes(), b"mp3")
+        self.assertIn("Upload", list(self.actions.prepare_speech(None, None, True, "x", True, "French"))[-1][1])
 
     def test_replaced_project_sessions_expire_but_current_session_survives(self):
         draft = projects.save(self.runtime, "Interview", "", self.source, {})

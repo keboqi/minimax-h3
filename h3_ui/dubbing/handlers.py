@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
+import shutil
+import tempfile
 import threading
 import time
 from typing import Any, Callable
@@ -17,7 +19,7 @@ import gradio as gr
 
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
-from h3_app.dubbing import pipeline, segments as segment_tools, session as sessions
+from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
 
@@ -78,6 +80,12 @@ class DubbingHandlers:
             raise H3Error("Open this project in Studio to transcribe, translate or generate audio.")
         return run(runtime=self._runtime(), free_gpu=self.services.free_gpu, hf_token=self._hf_token())
 
+    def _cloud(self, run, *, without_gpu: bool):
+        """A step Workshop may run too when ``without_gpu``: it then only reaches ffmpeg and Gemini."""
+        if self.services.gpu or not without_gpu:
+            return self._gpu(run)
+        return run(runtime=self._runtime(), free_gpu=None, hf_token=None)
+
     def _failed(self, exc: BaseException) -> str:
         if isinstance(exc, JobCancelled):
             raise exc
@@ -118,13 +126,12 @@ class DubbingHandlers:
         return presenters.plan_html(self._plan_steps(separate, separator_model, reuse, transcription, translate,
                                                      translator, target_language))
 
-    @staticmethod
-    def _plan_steps(separate, separator_model, reuse, transcription, translate, translator, target_language):
+    def _plan_steps(self, separate, separator_model, reuse, transcription, translate, translator, target_language):
         return presenters.plan_steps(
             separate=bool(separate), separator_model=str(separator_model or ""), reuse=bool(reuse),
             transcription=str(transcription or pipeline.PIPELINE_LOCAL), translate=bool(translate),
             translator=str(translator or pipeline.TRANSLATOR_HYMT),
-            target_language=str(target_language or "").strip())
+            target_language=str(target_language or "").strip(), cloud_only=not self.services.gpu)
 
     def options_label(self, separate, separator_model, reuse, transcription, aligner, merge_gap):
         return gr.update(label=presenters.options_label(
@@ -416,7 +423,8 @@ class DubbingHandlers:
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
-                       reuse=True, refine_timestamps=True, translation_context=False, project=None):
+                       reuse=True, refine_timestamps=True, translation_context=False, project=None,
+                       manual_reply=""):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -429,8 +437,9 @@ class DubbingHandlers:
                 str(chosen), transcription, str(target_language or "").strip(), source_language, bool(translate),
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
                 str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps),
-                bool(translation_context))
-            for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
+                bool(translation_context), str(manual_reply or ""), not self.services.gpu)
+            for update in self._cloud(lambda **kw: pipeline.analyze(request, **kw),
+                                      without_gpu=transcription in pipeline.CLOUD_PIPELINES):
                 if isinstance(update, pipeline.Analysis):
                     session = update.session
                     message = update.message
@@ -467,7 +476,8 @@ class DubbingHandlers:
                                               translator=translator, gemini_model=gemini_model,
                                               api_key=str(api_key or ""), notes=str(notes or ""),
                                               translation_context=bool(translation_context))
-            for update in self._gpu(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw)):
+            for update in self._cloud(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw),
+                                      without_gpu=translator == pipeline.TRANSLATOR_GEMINI):
                 if isinstance(update, pipeline.Analysis):
                     yield (presenters.board_value(update.session, board),
                            segment_tools.to_rows(update.session.segments), update.message)
@@ -475,6 +485,58 @@ class DubbingHandlers:
                     yield gr.skip(), gr.skip(), update
         except Exception as exc:
             yield gr.skip(), gr.skip(), self._failed(exc)
+
+    # -- Chat models, by hand -------------------------------------------------
+
+    def source_prompt(self, target_language, translate, notes):
+        """The prompt to send a chat model with the audio; ``notes`` carry the wanted style."""
+        target = str(target_language or "").strip()
+        if translate and not target:
+            raise gr.Error("Choose the language to dub into.")
+        return dub_gemini.transcribe_prompt(target_language=target, translate=bool(translate),
+                                            ignore_non_speech=True, notes=str(notes or ""))
+
+    def prepare_speech(self, source, library, separate, separator_model, reuse, target_language):
+        """Outputs: audio file, status. Studio attaches the vocals; Workshop the soundtrack, or stems it has."""
+        yield None, "Preparing the audio…"
+        try:
+            chosen = source or library
+            if not chosen:
+                raise H3Error("Upload a video or audio file, or pick one from Media.")
+            request = pipeline.AnalyzeRequest(
+                str(chosen), pipeline.PIPELINE_MANUAL, str(target_language or "").strip(), separate=bool(separate),
+                separator_model=separator_model, reuse=bool(reuse), cloud_only=not self.services.gpu)
+            for update in self._cloud(lambda **kw: pipeline.prepare_speech(request, **kw), without_gpu=True):
+                if isinstance(update, Path):
+                    # Sessions are private: only this copy of the audio may be downloaded.
+                    copy = Path(tempfile.mkdtemp(prefix="h3-dub-speech-")) / f"{Path(chosen).stem}-speech.mp3"
+                    shutil.copy2(update, copy)
+                    yield str(copy), "Attach this audio in the chat with the prompt."
+                else:
+                    yield gr.skip(), update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
+
+    def lines_prompt(self, session_id, board, target_language, notes):
+        """Outputs: hidden prompt, the record of its lines, line status. Picked lines, else every line."""
+        try:
+            session = sessions.load(self._runtime(), session_id)
+            picked = [index for index in presenters.board_picks(board) if index < len(session.segments)] or None
+            prompt, request = pipeline.translation_request(session, picked, target_language, notes)
+        except H3Error as exc:
+            raise gr.Error(str(exc)) from exc
+        return prompt, request, f"Copied a prompt for {len(request['lines'])} line(s) into {request['target']}."
+
+    def apply_lines_reply(self, session_id, request, reply, board):
+        """Outputs: board, table rows, line status."""
+        try:
+            update = pipeline.apply_translation_reply(session_id, request, reply, runtime=self._runtime())
+        except H3Error as exc:
+            return gr.skip(), gr.skip(), f"**Not saved:** {exc}"
+        return (presenters.board_value(update.session, board), segment_tools.to_rows(update.session.segments),
+                update.message)
+
+    # -- Generation ---------------------------------------------------------
 
     def _dub_request(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
                      background_volume=100, keep_original=True, regenerate="", word_timing=False):

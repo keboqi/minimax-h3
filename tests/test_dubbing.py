@@ -1009,7 +1009,8 @@ class HandlerTests(Workspace):
                                                 view.notes, view.translation_context])
         self.assertFalse(view.translation_context.value)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertEqual(analysis.inputs[-2:], [view.translation_context, view.project.active])
+        self.assertEqual(analysis.inputs[-3:], [view.translation_context, view.project.active, view.manual_reply])
+        self.assertIs(view.prepare_audio.h3_stop, view.stop_analyze)
         config = demo.get_config_file()
         self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
                             for dep in config["dependencies"]))
@@ -2083,6 +2084,146 @@ class DubRenderTests(Workspace):
         calls.clear()
         self.analyze(video, separate=True, calls=calls, reuse=False)
         self.assertEqual(calls, ["separate", "transcribe", "translate"])
+
+    REPLY = """Here it is:
+```json
+{"speakers": [{"id": "speaker1", "description": "young woman"}, {"id": "speaker2", "description": "older man"}],
+ "segments": [
+  {"start": "00:00.200", "end": "00:02.600", "speaker": "speaker1", "source_text": "First line here.",
+   "translated_text": "Salut toi."},
+  {"start": "00:02.800", "end": "00:03.600", "speaker": "speaker2", "source_text": "Second.",
+   "translated_text": ""}]}
+```"""
+
+    def test_pasted_reply_stands_in_for_transcription(self):
+        calls = []
+        session = self.analyze(self.make_video(), separate=True, calls=calls, pipeline=pipeline.PIPELINE_MANUAL,
+                               manual_reply=self.REPLY)
+        # Only separation reaches this server's models; the line left empty waits in Review lines.
+        self.assertEqual(calls, ["separate"])
+        self.assertEqual([s["translation"] for s in session.segments], ["Salut toi.", ""])
+        self.assertEqual(session.data["speakers"], {"speaker1": "young woman", "speaker2": "older man"})
+        self.assertTrue(pipeline.speaker_settings_available(session))
+        calls.clear()
+        again = self.analyze(self.make_video(), separate=True, calls=calls, pipeline=pipeline.PIPELINE_MANUAL,
+                             manual_reply=self.REPLY.replace("Salut toi.", "Coucou."))
+        self.assertEqual(again.segments[0]["translation"], "Coucou.")  # a new reply is never an old transcript
+
+    def test_a_bad_pasted_reply_stops_before_any_slow_step(self):
+        for reply, message in (("", "Paste"), ("no json here", "could not be read"), ("[]", "no timed lines")):
+            with self.subTest(reply=reply), self.assertRaisesRegex(H3Error, message), \
+                    patch.object(pipeline.sessions, "create", side_effect=AssertionError("started")):
+                next(pipeline.analyze(pipeline.AnalyzeRequest("a.wav", pipeline=pipeline.PIPELINE_MANUAL,
+                                                              manual_reply=reply),
+                                      runtime=self.runtime, free_gpu=None))
+        late = '[{"start": "09:00.000", "end": "09:01.000", "source_text": "Too late."}]'
+        with self.assertRaisesRegex(H3Error, "past the end"):
+            self.analyze(self.make_video(), separate=False, pipeline=pipeline.PIPELINE_MANUAL, manual_reply=late)
+
+    def test_gemini_transcription_carries_the_notes_and_keeps_old_cache_keys(self):
+        from h3_app.dubbing import gemini as dub_gemini
+
+        plain = dub_gemini.transcribe_prompt(target_language="French", translate=True, ignore_non_speech=True)
+        styled = dub_gemini.transcribe_prompt(target_language="French", translate=True, ignore_non_speech=True,
+                                              notes="For children aged 8 to 12.")
+        self.assertEqual(styled, plain + " Translation notes: For children aged 8 to 12.")
+        self.assertNotIn("children", dub_gemini.transcribe_prompt(
+            target_language="", translate=False, ignore_non_speech=True, notes="For children aged 8 to 12."))
+        key = lambda **settings: json.loads(pipeline._transcript_key(pipeline.AnalyzeRequest(
+            "a", pipeline=pipeline.PIPELINE_GEMINI, **settings)))
+        self.assertNotIn("notes", key())
+        self.assertEqual(key(notes="Formal")["notes"], "Formal")
+
+    def test_workshop_analysis_leaves_separation_and_hymt_to_studio(self):
+        video = self.make_video()
+        calls = []
+        session = self.analyze(video, separate=True, calls=calls, pipeline=pipeline.PIPELINE_MANUAL,
+                               manual_reply=self.REPLY, cloud_only=True)
+        self.assertEqual(calls, [])
+        self.assertEqual(session.data[pipeline.SEPARATE_LATER], "Balanced (BS-Roformer)")
+        self.assertIsNone(session.path("vocals"))
+        self.assertEqual(session.segments[1]["translation"], "")
+        with self.assertRaisesRegex(H3Error, "Workshop"):
+            next(pipeline.analyze(pipeline.AnalyzeRequest(str(video), cloud_only=True),
+                                  runtime=self.runtime, free_gpu=None))
+        # A line edited in Workshop survives the separation Studio then runs before voicing.
+        lines = session.segments
+        lines[1]["translation"] = "Deux."
+        sessions.update_segments(self.runtime, session.id, lines)
+
+        def fake_tools(op, payload, runtime, **_kwargs):
+            calls.append(op)
+            out = Path(payload["output_dir"])
+            out.mkdir(parents=True, exist_ok=True)
+            for name in ("vocals", "backing"):
+                shutil.copyfile(payload["input"], out / f"{name}.wav")
+            return {name: str(out / f"{name}.wav") for name in ("vocals", "backing")}
+
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools), \
+                patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        self.assertEqual(calls, ["separate"])
+        saved = sessions.load(self.runtime, session.id)
+        self.assertEqual(saved.segments[1]["translation"], "Deux.")
+        self.assertTrue(saved.path("vocals").is_file())
+        self.assertNotIn(pipeline.SEPARATE_LATER, saved.data)
+        self.assertIsInstance(result, pipeline.Dub)
+
+    def test_prepared_audio_hands_its_stems_to_the_analysis(self):
+        video = self.make_video()
+        calls = []
+
+        def fake_tools(op, payload, runtime, **_kwargs):
+            calls.append(op)
+            out = Path(payload["output_dir"])
+            out.mkdir(parents=True, exist_ok=True)
+            for name in ("vocals", "backing"):
+                shutil.copyfile(payload["input"], out / f"{name}.wav")
+            return {name: str(out / f"{name}.wav") for name in ("vocals", "backing")}
+
+        request = pipeline.AnalyzeRequest(str(video), pipeline.PIPELINE_MANUAL)
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools):
+            speech = list(pipeline.prepare_speech(request, runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertEqual(speech.suffix, ".mp3")
+        self.assertGreater(speech.stat().st_size, 0)
+        self.assertEqual(sessions.recent(self.runtime), [])  # no lines, so nothing to reopen
+        calls.clear()
+        session = self.analyze(video, separate=True, calls=calls, pipeline=pipeline.PIPELINE_MANUAL,
+                               manual_reply=self.REPLY)
+        self.assertEqual(calls, [])
+        self.assertTrue(session.path("vocals").is_file())
+
+    def test_pasted_translations_reach_the_copied_lines_after_edits(self):
+        session = self.analyze(self.make_video(), separate=False, calls=[], translate=False)
+        lines = session.segments
+        prompt, request = pipeline.translation_request(session, None, "German", "For children aged 8 to 12.")
+        self.assertIn("German", prompt)
+        self.assertIn("For children aged 8 to 12.", prompt)
+        self.assertIn('"seconds": 2.4', prompt)
+        self.assertIn("exactly 2 strings", prompt)
+        picked = pipeline.translation_request(session, [1], "German")[1]
+        self.assertEqual(picked["lines"], [[lines[1]["start"], lines[1]["source"]]])
+
+        def apply(reply, using=request):
+            return pipeline.apply_translation_reply(session.id, using, reply, runtime=self.runtime)
+
+        with self.assertRaisesRegex(H3Error, "Copy the prompt"):
+            apply("[]", None)
+        with self.assertRaisesRegex(H3Error, "Copy the prompt"):
+            apply("[]", {**request, "session": "other"})
+        with self.assertRaisesRegex(H3Error, "Paste"):
+            apply(" ")
+        with self.assertRaisesRegex(H3Error, "Expected 2"):
+            apply('["Eins"]')
+        # The second line was edited after copying: it is reported, not overwritten.
+        edited = [dict(line) for line in lines]
+        edited[1]["source"] = "Changed."
+        sessions.update_segments(self.runtime, session.id, edited)
+        result = apply('```json\n["Eins", "Zwei"]\n```')
+        self.assertEqual([s["translation"] for s in result.session.segments], ["Eins", ""])
+        self.assertIn("1 line(s) were left", result.message)
+        self.assertEqual(result.session.data["target_language"], "German")
 
     def test_unseparated_dub_then_separate_subtitle_export(self):
         session = self.analyze(self.make_video(), separate=False)

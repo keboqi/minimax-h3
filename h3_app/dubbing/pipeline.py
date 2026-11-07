@@ -48,9 +48,12 @@ PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
 PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
 PIPELINE_NEMOTRON = "Local: Nemotron Transcribe + Hy-MT"
 PIPELINE_GEMINI = "Gemini (cloud)"
-PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI)
+PIPELINE_MANUAL = "Chat model (paste its reply)"
+PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL)
 # Transcriptions that tell speakers apart, so each speaker can get its own voice and volume.
-SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI})
+SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL})
+# Transcriptions that need no GPU on this server, so Workshop can run them.
+CLOUD_PIPELINES = frozenset({PIPELINE_GEMINI, PIPELINE_MANUAL})
 TRANSLATOR_HYMT = "Hy-MT 1.8B (local)"
 TRANSLATOR_GEMINI = "Gemini"
 TRANSLATORS = (TRANSLATOR_HYMT, TRANSLATOR_GEMINI)
@@ -106,6 +109,8 @@ OUTPUT_MP3 = ("-c:a", "libmp3lame", "-b:a", "192k")
 # generated, or Smart timing found them still too long in the last dub.
 TAKE_PROBLEMS = "take_problems"
 TIMING_PROBLEMS = "timing_problems"
+# Session key: the separator a Workshop analysis left for Studio's first preview or dub.
+SEPARATE_LATER = "separate_later"
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +139,10 @@ class AnalyzeRequest:
     refine_timestamps: bool = True
     # Hy-MT translates each line with the lines before it, numbered, and keeps the last one. Off by default.
     translation_context: bool = False
+    # PIPELINE_MANUAL: the chat model's reply, used instead of transcribing.
+    manual_reply: str = ""
+    # Workshop has no GPU: separation waits for Studio, and Hy-MT leaves its lines untranslated.
+    cloud_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -268,45 +277,117 @@ def is_video(path: str | Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[str | Analysis]:
-    if request.pipeline not in PIPELINES:
-        raise H3Error(f"Unknown transcription pipeline: {request.pipeline}")
-    target_language = str(request.target_language or "").strip()
-    if request.translate and not target_language:
-        raise H3Error("Choose the language to dub into.")
-    if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and not request.aligner:
-        raise H3Error("Enable Qwen3 word timing before refining it with Align.")
+def manual_transcript(reply: str) -> dict:
+    """The transcript in a chat model's pasted reply, read before any slow step can start."""
+    if not str(reply or "").strip():
+        raise H3Error("Paste the chat model's JSON reply first.")
+    try:
+        found, speakers = segment_tools.parse_transcript_reply(reply)
+    except ValueError as exc:
+        raise H3Error(f"The pasted reply could not be read: {exc}") from exc
+    if not found:
+        raise H3Error("The pasted reply has no timed lines.")
+    return {"segments": found, "speakers": speakers}
+
+
+def _stems(session: sessions.Session, model: str, donor: sessions.Session | None, *, runtime, free_gpu,
+           hf_token=None) -> Iterator[str]:
+    """Vocals and backing in the session folder: an earlier session's, else separated now."""
+    if donor is not None:
+        yield "Reusing the separated vocals from an earlier analysis of this file"
+        return {key: _link_or_copy(donor.path(key), session.root / f"{key}.wav") for key in ("vocals", "backing")}
+    reply = yield from blocking(
+        "Separating vocals from the background",
+        lambda report: tools.run("separate", {"input": str(session.path("audio")),
+                                              "output_dir": str(session.root / "stems"), "model": model},
+                                 runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
+    stems = {key: _to_pcm(Path(reply[key]), session.root / f"{key}.wav", action=f"Saving the {key} stem")
+             for key in ("vocals", "backing")}
+    shutil.rmtree(session.root / "stems", ignore_errors=True)  # converted copies replace the raw stems
+    return stems
+
+
+def _open_source(request: AnalyzeRequest, *, manual: dict | None = None, runtime, free_gpu,
+                 hf_token=None) -> Iterator[str]:
+    """A new session with the soundtrack and, when asked for, its stems.
+
+    Returns the session, earlier sessions of the same file and what was reused from them.
+    """
     session = sessions.create(runtime, request.source, video=is_video(request.source))
-    session.data.update(pipeline=request.pipeline, target_language=target_language,
+    session.data.update(pipeline=request.pipeline, target_language=str(request.target_language or "").strip(),
                         source_language=_language(request.source_language))
     yield "Extracting the soundtrack"
     audio = _to_pcm(session.path("source"), session.root / "audio.wav", action="Extracting the soundtrack")
     session.set_file("audio", audio)
     session.data["duration"] = round(probe_audio_seconds(audio) or 0.0, 3)
     session.save()
+    if manual is not None and session.data["duration"] and manual["segments"][-1]["start"] >= session.data["duration"]:
+        raise H3Error(f"The reply's last line starts at {segment_tools.format_time(manual['segments'][-1]['start'])}, "
+                      "past the end of this source. Was it made from this file's audio?")
     earlier = sessions.same_source(session) if request.reuse else []
     reused = []
-
     if request.separate:
         donor = _earlier_stems(earlier, request.separator_model)
-        if donor is not None:
-            yield "Reusing the separated vocals from an earlier analysis of this file"
-            for key in ("vocals", "backing"):
-                session.set_file(key, _link_or_copy(donor.path(key), session.root / f"{key}.wav"))
-            reused.append("separated vocals")
+        if donor is None and request.cloud_only:
+            yield "Leaving vocal separation for Studio"
+            session.data[SEPARATE_LATER] = request.separator_model
         else:
-            reply = yield from blocking(
-                "Separating vocals from the background",
-                lambda report: tools.run("separate", {"input": str(audio), "output_dir": str(session.root / "stems"),
-                                                      "model": request.separator_model},
-                                         runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
-            for key in ("vocals", "backing"):
-                session.set_file(key, _to_pcm(Path(reply[key]), session.root / f"{key}.wav",
-                                              action=f"Saving the {key} stem"))
-            shutil.rmtree(session.root / "stems", ignore_errors=True)  # converted copies replace the raw stems
-        session.data["separator_model"] = request.separator_model
+            stems = yield from _stems(session, request.separator_model, donor, runtime=runtime, free_gpu=free_gpu,
+                                      hf_token=hf_token)
+            for key, path in stems.items():
+                session.set_file(key, path)
+            session.data["separator_model"] = request.separator_model
+            if donor is not None:
+                reused.append("separated vocals")
         session.save()
+    return session, earlier, reused
 
+
+def _speech_mp3(session: sessions.Session) -> Path:
+    return _ffmpeg(["-i", str(session.speech_audio), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
+                   session.root / "speech.mp3", action="Preparing audio for Gemini")
+
+
+def prepare_speech(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[str | Path]:
+    """The audio to attach in a chat model, ending in its path.
+
+    Its stems stay in a session of their own, which the analysis of this file then reuses.
+    """
+    session, _earlier, _reused = yield from _open_source(request, runtime=runtime, free_gpu=free_gpu,
+                                                         hf_token=hf_token)
+    yield _speech_mp3(session)
+
+
+def finish_separation(session: sessions.Session, *, runtime, free_gpu, hf_token=None) -> Iterator[str]:
+    """Separate what a Workshop analysis left for Studio, keeping the lines edited since."""
+    model = session.data.get(SEPARATE_LATER)
+    if not model:
+        return
+    stems = yield from _stems(session, model, _earlier_stems(sessions.same_source(session), model),
+                              runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+
+    def apply(latest: sessions.Session) -> None:
+        for key, path in stems.items():
+            latest.set_file(key, path)
+        latest.data["separator_model"] = model
+        latest.data.pop(SEPARATE_LATER, None)
+
+    sessions.modify(session, apply)
+
+
+def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[str | Analysis]:
+    if request.pipeline not in PIPELINES:
+        raise H3Error(f"Unknown transcription pipeline: {request.pipeline}")
+    if request.cloud_only and request.pipeline not in CLOUD_PIPELINES:
+        raise H3Error("Workshop analyzes with Gemini or a pasted reply; open this project in Studio for the others.")
+    target_language = str(request.target_language or "").strip()
+    if request.translate and not target_language:
+        raise H3Error("Choose the language to dub into.")
+    if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and not request.aligner:
+        raise H3Error("Enable Qwen3 word timing before refining it with Align.")
+    manual = manual_transcript(request.manual_reply) if request.pipeline == PIPELINE_MANUAL else None
+    session, earlier, reused = yield from _open_source(request, manual=manual, runtime=runtime, free_gpu=free_gpu,
+                                                       hf_token=hf_token)
     key = _transcript_key(request)
     transcript = _earlier_transcript(earlier, key)
     speech = session.speech_audio
@@ -339,15 +420,17 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         # The words and who spoke when stay with the transcript: edits never change what was heard.
         transcript = {**found, "speakers": {speaker: "" for speaker in
                                             dict.fromkeys(s["speaker"] for s in found["segments"])}}
+    elif request.pipeline == PIPELINE_MANUAL:
+        yield "Reading the pasted reply"
+        transcript = manual
     elif request.pipeline == PIPELINE_GEMINI:
-        upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
-                         session.root / "speech.mp3", action="Preparing audio for Gemini")
+        upload = _speech_mp3(session)
         found, speakers, _raw = yield from blocking(
             f"Transcribing{' and translating' if request.translate else ''} with {request.gemini_model}",
             lambda _report: gemini.transcribe(upload, model=request.gemini_model, api_key=request.api_key,
                                               target_language=target_language, translate=request.translate,
                                               ignore_non_speech=request.ignore_non_speech,
-                                              custom_prompt=""))
+                                              notes=request.notes))
         transcript = {"segments": found, "speakers": speakers}
     else:
         reply = yield from blocking(
@@ -375,10 +458,11 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if transcript.get("language") and not session.data.get("source_language"):
         session.data["source_language"] = transcript["language"]
     session.save()
-    if request.translate:
+    # A pasted reply calls no model, so it needs no key: lines it left empty wait in Review lines.
+    if request.translate and request.pipeline != PIPELINE_MANUAL:
         # Gemini may already have translated; the translator fills every line still without one.
         missing = [i for i, s in enumerate(session.segments) if s["source"] and not s["translation"]]
-        if missing:
+        if missing and (request.translator == TRANSLATOR_GEMINI or not request.cloud_only):
             yield from _translate(session, missing, request, runtime=runtime, free_gpu=free_gpu,
                                   hf_token=hf_token)
     count = len(session.segments)
@@ -391,6 +475,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                     "Reuse earlier results to redo them.")
     if transcript.get("refinement"):
         message += " " + transcript["refinement"]["summary"]
+    if session.data.get(SEPARATE_LATER):
+        message += " Studio separates the vocals before the first preview or dub."
     yield Analysis(session, message + translation_advice(session.segments) + length_advice(session.segments))
 
 
@@ -407,6 +493,10 @@ def _transcript_key(request: AnalyzeRequest) -> str:
     elif request.pipeline == PIPELINE_GEMINI:
         settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
                         target=str(request.target_language or "").strip() if request.translate else "")
+        if request.translate and str(request.notes or "").strip():
+            settings["notes"] = str(request.notes).strip()
+    elif request.pipeline == PIPELINE_MANUAL:
+        settings.update(reply=hashlib.sha256(str(request.manual_reply).encode("utf-8")).hexdigest())
     else:
         settings.update(language=_language(request.source_language), aligner=bool(request.aligner),
                         merge_gap=round(float(request.merge_gap), 3))
@@ -526,18 +616,67 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
         translated = reply["texts"]
     # The editor may have saved lines meanwhile: apply each translation to the line that still
     # has the same start and original text, on top of the latest saved lines.
-    results = {(lines[i]["start"], lines[i]["source"]): text for i, text in zip(indices, translated)}
+    _save_translations(session, {(lines[i]["start"], lines[i]["source"]): text
+                                 for i, text in zip(indices, translated)}, target)
+
+
+def _save_translations(session: sessions.Session, results: dict, target: str) -> int:
+    """Apply ``{(start, source): text}`` to the lines that still match; returns how many did."""
+    applied = 0
 
     def apply(latest: sessions.Session) -> None:
+        nonlocal applied
         updated = latest.segments
         for line in updated:
             text = results.get((line["start"], line["source"]))
             if text is not None:
                 line["translation"] = text
+                applied += 1
         latest.segments = updated
         latest.data["target_language"] = target
 
     sessions.modify(session, apply)
+    return applied
+
+
+def translation_request(session: sessions.Session, indices: list[int] | None, target_language: str,
+                        notes: str = "") -> tuple[str, dict]:
+    """A prompt to copy for these lines (all without a choice), and what its reply will answer.
+
+    The answer is matched to the lines by that record, so edits made meanwhile cannot misplace it.
+    """
+    lines = session.segments
+    chosen = [i for i in (range(len(lines)) if indices is None else indices) if lines[i]["source"]]
+    target = str(target_language or "").strip() or session.data.get("target_language") or ""
+    if not chosen:
+        raise H3Error("No line has original text to translate.")
+    if not target:
+        raise H3Error("Choose the language to dub into.")
+    prompt = gemini.translation_prompt(
+        [lines[i]["source"] for i in chosen], target_language=target,
+        source_language=session.data.get("source_language", ""), notes=str(notes or ""),
+        seconds=[lines[i]["end"] - lines[i]["start"] for i in chosen])
+    return prompt, {"session": session.id, "target": target,
+                    "lines": [[lines[i]["start"], lines[i]["source"]] for i in chosen]}
+
+
+def apply_translation_reply(session_id: str, request: dict | None, reply: str, *, runtime) -> Analysis:
+    """Save a chat model's translations for the lines ``translation_request`` copied."""
+    if not isinstance(request, dict) or request.get("session") != session_id:
+        raise H3Error("Copy the prompt for this session first.")
+    if not str(reply or "").strip():
+        raise H3Error("Paste the chat model's JSON reply first.")
+    session = sessions.load(runtime, session_id)
+    keys = [tuple(line) for line in request["lines"]]
+    try:
+        texts = segment_tools.parse_translation_reply(reply, len(keys))
+    except ValueError as exc:
+        raise H3Error(f"The pasted reply could not be read: {exc}") from exc
+    applied = _save_translations(session, {key: text for key, text in zip(keys, texts) if text}, request["target"])
+    skipped = len(keys) - applied
+    return Analysis(session, f"Applied {applied} translation(s) into {request['target']}."
+                    + (f" {skipped} line(s) were left: edited since copying, or empty in the reply." if skipped else "")
+                    + translation_advice(session.segments) + length_advice(session.segments))
 
 
 def retranslate(session_id: str, indices: list[int] | None, request, *, runtime, free_gpu,
@@ -1266,6 +1405,7 @@ def original_line(session_id: str, index: int, *, runtime) -> LinePreview:
 
 def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token=None) -> Iterator[str | LinePreview]:
     session = sessions.load(runtime, request.session_id)
+    yield from finish_separation(session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     lines = session.segments
     if not 0 <= index < len(lines):
         raise H3Error(f"No line {index + 1}; the table has {len(lines)} line(s).")
@@ -1612,6 +1752,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     chosen = [i for i, segment in enumerate(lines) if segment.get("dub", True) and segment["translation"]]
     if not chosen:
         raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
+    yield from finish_separation(session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+    lines = session.segments
     duration = float(session.data.get("duration") or 0.0) or max(s["end"] for s in lines) + 1.0
     planned = _plan(session, chosen, request.voice_mode, runtime)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)

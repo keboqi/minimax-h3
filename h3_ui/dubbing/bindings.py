@@ -1,4 +1,7 @@
-"""Dub & Translate event bindings: GPU steps run as owned jobs; edits save directly."""
+"""Dub & Translate event bindings: GPU steps run as owned jobs; edits save directly.
+
+Workshop binds the steps that reach only ffmpeg and Gemini as plain events.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +10,22 @@ from types import SimpleNamespace
 import gradio as gr
 
 from .view import (
-    DubbingView, advanced_label, gemini_visibility, local_visibility, opened_session_js, speed_visibility,
+    COPY_LINES_ID, COPY_LINES_LABEL, COPY_SOURCE_ID, COPY_SOURCE_LABEL, DubbingView, advanced_label, gemini_visibility,
+    local_visibility, manual_visibility, opened_session_js, speed_visibility,
 )
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 
+from ..clipboard import copy_js
 from ..job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 _QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
+
+
+def _job(trigger, callback, family, *, gpu, **options):
+    """A step Studio runs as an owned GPU job and Workshop as a plain event, which needs no GPU."""
+    if gpu:
+        return bind_gpu_action(trigger, owned_generation(callback, family), **options)
+    return trigger(callback, **{**options, "api_name": False}, concurrency_limit=2)
 
 
 def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, actions, gpu=True) -> None:
@@ -30,26 +42,33 @@ def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, ac
         actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
         concurrency_limit=1, show_progress="minimal", api_name=False,
     )
-    if not gpu:
-        return
-
-    analyzed = bind_gpu_action(
-        view.analyze.click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
+    analyzed = _job(
+        view.analyze.click, actions.analyze_source, FAMILY_ANALYZE, gpu=gpu,
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
                 view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps,
-                view.translation_context, view.project.active],
+                view.translation_context, view.project.active, view.manual_reply],
         outputs=[view.session, view.board, view.lines, view.analyze_status, view.plan], show_progress="minimal",
         api_name="dub_analyze_source",
     )
-    translated = bind_gpu_action(
-        view.retranslate.click, owned_generation(actions.translate_lines, FAMILY_LINES),
+    prepared = _job(
+        view.prepare_audio.click, actions.prepare_speech, FAMILY_ANALYZE, gpu=gpu,
+        inputs=[view.source, view.library, view.separate, view.separator_model, view.reuse, view.target_language],
+        outputs=[view.speech_file, view.analyze_status], show_progress="minimal", api_name=False,
+    )
+    translated = _job(
+        view.retranslate.click, actions.translate_lines, FAMILY_LINES, gpu=gpu,
         inputs=[view.session, view.board, view.target_language, view.translator, view.gemini_model,
                 view.api_key, view.notes, view.translation_context],
         outputs=[view.board, view.lines, view.line_status], show_progress="minimal", api_name=False,
     )
     translated.then(actions.focus_line, inputs=[view.session, view.board], outputs=inspector_outputs(view),
                     **_QUIET).then(**_readiness(view, actions))
+    if not gpu:
+        for stop, status, events in ((view.stop_analyze, view.analyze_status, [analyzed, prepared]),
+                                     (view.stop_preview, view.line_status, [translated])):
+            stop.click(lambda: "Interrupted.", outputs=status, cancels=events, queue=False, api_name=False)
+        return
     line_inputs = [view.session, view.line_numbers, view.voice_mode, view.preset, view.timing, view.max_speed,
                    view.parallel]
     previewed = bind_gpu_action(
@@ -83,7 +102,7 @@ def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, ac
                                   outputs=inspector_outputs(view), **_QUIET).then(**_readiness(view, actions))
     # Each Interrupt stops only its own step's family, so stopping a preview leaves a running dub alone.
     for stop, status, family, events in (
-        (view.stop_analyze, view.analyze_status, FAMILY_ANALYZE, [analyzed]),
+        (view.stop_analyze, view.analyze_status, FAMILY_ANALYZE, [analyzed, prepared]),
         (view.stop_preview, view.line_status, FAMILY_LINES, [translated, previewed, retaken]),
         (view.stop, view.status, FAMILY_DUB, [dubbed]),
         (view.stop_align_words, view.alignment_status, FAMILY_WORDS, [aligned]),
@@ -140,6 +159,11 @@ def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
                          **_QUIET)
     view.translator.change(gemini_visibility, inputs=[view.pipeline, view.translator], outputs=view.gemini,
                            **_QUIET)
+    view.pipeline.choose(manual_visibility, inputs=view.pipeline, outputs=view.manual, **_QUIET)
+    view.copy_source_prompt.click(
+        actions.source_prompt, inputs=[view.target_language, view.translate, view.notes],
+        outputs=view.source_prompt, **_QUIET,
+    ).success(fn=None, js=copy_js(COPY_SOURCE_ID, COPY_SOURCE_LABEL), inputs=view.source_prompt, api_name=False)
     view.pipeline.choose(local_visibility, inputs=view.pipeline, outputs=view.local, **_QUIET)
     view.pipeline.choose(local_visibility,
                          inputs=view.pipeline, outputs=view.refine_timestamps, **_QUIET)
@@ -190,6 +214,15 @@ def _bind_review(view: DubbingView, *, actions) -> None:
     view.board.dub(actions.toggle_dub, **changed).then(**focus).then(**readiness)
     view.add_line.click(actions.add_line, **changed).then(**focus).then(**readiness)
     view.delete_line.click(actions.delete_line, **changed).then(**focus).then(**readiness)
+
+    # Copying records which lines the prompt covers; the pasted reply fills those lines.
+    view.copy_lines_prompt.click(
+        actions.lines_prompt, inputs=[view.session, view.board, view.target_language, view.notes],
+        outputs=[view.lines_prompt, view.lines_request, view.line_status], **_QUIET,
+    ).success(fn=None, js=copy_js(COPY_LINES_ID, COPY_LINES_LABEL), inputs=view.lines_prompt, api_name=False)
+    view.apply_lines_reply.click(
+        actions.apply_lines_reply, inputs=[view.session, view.lines_request, view.lines_reply, view.board],
+        outputs=[view.board, view.lines, view.line_status], **_QUIET).then(**focus).then(**readiness)
 
     # The inspector saves a field once it is left (times also on Enter), so a half-typed time
     # does not move the line; the speaker and Dub save when changed.

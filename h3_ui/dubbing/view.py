@@ -6,12 +6,16 @@ opens Review lines.
 
 - Source: the file (uploaded, from Media, or an earlier session), its languages
   and how to find the lines; the action card lists the analysis steps and marks
-  the one running.
+  the one running. A chat model can stand in for Gemini's API: copy the prompt,
+  take the audio, paste the reply.
 - Review lines: a board of every line (filters, a timeline per speaker, picks and
   Dub switches) beside an inspector that edits the focused line. The plain table
   stays available for bulk edits.
 - Dub: a card per speaker, voices, timing and mix; the action card says what the
   dub will do and plays the result.
+
+Workshop (``gpu=False``) shows the steps that need no GPU: Gemini, pasted replies
+and editing. Studio's voice steps stay hidden there.
 """
 
 from __future__ import annotations
@@ -22,8 +26,8 @@ from typing import Sequence
 import gradio as gr
 
 from h3_app.dubbing.pipeline import (
-    PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES,
-    TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
+    CLOUD_PIPELINES, PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MANUAL, PIPELINE_MOSS, PIPELINE_NEMOTRON,
+    SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES, TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
     VOICE_MODES, VOICE_PRESETS,
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
@@ -35,6 +39,8 @@ from .projects import ProjectControls
 
 SOURCE, LINES, DUB = range(3)
 STEPS_ID = "h3-dub-steps"
+COPY_SOURCE_ID, COPY_SOURCE_LABEL = "h3-dub-copy-source-prompt", "Copy prompt"
+COPY_LINES_ID, COPY_LINES_LABEL = "h3-dub-copy-lines-prompt", "Copy translation prompt"
 DEFAULT_SEPARATOR = "Balanced (BS-Roformer)"
 TRANSCRIPTIONS = (
     (PIPELINE_LOCAL, "Qwen3-ASR on this server",
@@ -45,6 +51,8 @@ TRANSCRIPTIONS = (
      "Complex conversations with overlapping speakers, speaker labels and word timing. Up to 60 minutes."),
     (PIPELINE_GEMINI, "Gemini (cloud)",
      "Cloud transcription and translation with speaker labels. Uploads the vocals; needs an API key."),
+    (PIPELINE_MANUAL, "Gemini by hand",
+     "Run the prompt yourself in Gemini or any chat model, tune it there, and paste the reply. No API key."),
 )
 TIMING_CHOICES = (
     (TIMING_SMART, "Smart timing",
@@ -148,6 +156,19 @@ class DubbingView:
     align_words: gr.Button
     stop_align_words: gr.Button
     alignment_status: gr.Markdown
+    # A chat model by hand: the transcript on Source, translations on Review lines.
+    manual: gr.Group
+    copy_source_prompt: gr.Button
+    source_prompt: gr.Textbox
+    prepare_audio: gr.Button
+    speech_file: gr.File
+    manual_reply: gr.Textbox
+    copy_lines_prompt: gr.Button
+    lines_prompt: gr.Textbox
+    # Which lines the copied prompt covers, so its reply reaches them after later edits.
+    lines_request: gr.State
+    lines_reply: gr.Textbox
+    apply_lines_reply: gr.Button
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -173,10 +194,11 @@ def opened_session_js(steps: StepStrip) -> str:
     )
 
 
-def default_plan() -> str:
+def default_plan(gpu: bool = True) -> str:
     return presenters.plan_html(presenters.plan_steps(
-        separate=True, separator_model=DEFAULT_SEPARATOR, reuse=True, transcription=PIPELINE_LOCAL, translate=True,
-        translator=TRANSLATOR_HYMT, target_language="English"))
+        separate=True, separator_model=DEFAULT_SEPARATOR, reuse=True,
+        transcription=PIPELINE_LOCAL if gpu else PIPELINE_GEMINI, translate=True,
+        translator=TRANSLATOR_HYMT if gpu else TRANSLATOR_GEMINI, target_language="English", cloud_only=not gpu))
 
 
 def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default_gemini_model: str,
@@ -188,9 +210,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
               "own voice.", "DUB STUDIO")
         project = ProjectControls.build()
         if not gpu:
-            gr.Markdown("Prepare and save a project here, then load it in Studio to analyze or generate. "
-                        "Return to Workshop to edit lines, play results and download files. "
-                        "Line edits save automatically; Save project keeps the source and settings.")
+            gr.Markdown("Analyze and translate here with Gemini or a pasted reply, or save a project and load it "
+                        "in Studio to use this server's models. Studio generates the voices, and separates the "
+                        "vocals first when Workshop could not. Return here to edit lines, play results and download "
+                        "files. Line edits save automatically; Save project keeps the source and settings.")
         session = gr.Textbox(visible=False)
         steps = step_strip(STEPS_ID)
         with steps.tabs:
@@ -231,20 +254,35 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                  "that line's translation. Can help with pronouns and tone; slower.")
                         card_heading("How to find the lines",
                                      "Finds who speaks when, transcribes every line and translates it.")
-                        pipeline = widgets.choice_cards(TRANSCRIPTIONS, PIPELINE_LOCAL, label="Transcription",
-                                                        name="h3-dub-transcription")
+                        first_pipeline = PIPELINE_LOCAL if gpu else PIPELINE_GEMINI
+                        first_translator = TRANSLATOR_HYMT if gpu else TRANSLATOR_GEMINI
+                        pipeline = widgets.choice_cards(
+                            [card for card in TRANSCRIPTIONS if gpu or card[0] in CLOUD_PIPELINES], first_pipeline,
+                            label="Transcription", name="h3-dub-transcription")
+                        with gr.Group(visible=False) as manual:
+                            gr.Markdown("Copy the prompt into Gemini or any chat model and attach the audio. Tune "
+                                        "the prompt there as you like; **Translation notes** above go into it, such "
+                                        "as a style for an age range. Paste the JSON reply below, then analyze.",
+                                        elem_classes=["h3-song-hint"])
+                            with gr.Row():
+                                copy_source_prompt = gr.Button(COPY_SOURCE_LABEL, size="sm", elem_id=COPY_SOURCE_ID)
+                                prepare_audio = gr.Button("Prepare audio", size="sm")
+                            source_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
+                            speech_file = gr.File(label="Audio to attach", interactive=False, height=72)
+                            manual_reply = gr.Textbox(label="Reply", lines=6, max_lines=14,
+                                                      placeholder='{"speakers": [...], "segments": [...]}')
                         with gr.Row(equal_height=True):
-                            translator = gr.Dropdown(list(TRANSLATORS), value=TRANSLATOR_HYMT, label="Translator")
+                            translator = gr.Dropdown(list(TRANSLATORS), value=first_translator, label="Translator")
                             translate = gr.Checkbox(True, label="Translate now",
                                                     info="Off: transcribe only; translate while reviewing.")
-                        with gr.Group(visible=False) as gemini:
+                        with gr.Group(visible=not gpu) as gemini:
                             gemini_model = gr.Dropdown(list(gemini_models), value=default_gemini_model,
                                                        label="Gemini model")
                             api_key = gr.Textbox(label="Gemini API key for this session", type="password",
                                                  placeholder="Uses GEMINI_API_KEY when empty")
                         with gr.Accordion(presenters.options_label(
                                 separate=True, separator_model=DEFAULT_SEPARATOR, reuse=True,
-                                transcription=PIPELINE_LOCAL, aligner=True, merge_gap=0.35),
+                                transcription=first_pipeline, aligner=True, merge_gap=0.35),
                                 open=False, elem_classes=["h3-dub-options"]) as options:
                             separate = gr.Checkbox(True, label="Separate vocals from the background",
                                                    info="Keeps music and effects under the dub and gives clean "
@@ -255,7 +293,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             reuse = gr.Checkbox(True, label="Reuse earlier results for this file",
                                                 info="An earlier analysis of the same file with the same settings "
                                                      "lends its separated vocals and transcript. Off: redo both.")
-                            with gr.Group() as local:
+                            with gr.Group(visible=gpu) as local:
                                 aligner = gr.Checkbox(True, label="Word timing with Qwen3-ForcedAligner",
                                                       info="Splits long speech into subtitle-sized lines at "
                                                            "sentence ends.")
@@ -264,17 +302,17 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                       info="Speech separated by a shorter pause is transcribed "
                                                            "together.")
                             refine_timestamps = gr.Checkbox(True, label="Refine speech boundaries with Align (experimental)",
-                                info="Uses [Desert Ant Labs Align](https://desertant.com/models/align/). "
+                                visible=gpu, info="Uses [Desert Ant Labs Align](https://desertant.com/models/align/). "
                                      "Refines Qwen's word timing on speech chunks. Keeps original timing on "
                                      "failure. Requires Linux and Node.js 22+.")
                     with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
                         card_heading("Analyze", "Review lines opens when it is done.")
-                        plan = gr.HTML(default_plan())
+                        plan = gr.HTML(default_plan(gpu))
                         with gr.Column(elem_classes=["h3-action-dock"]):
                             with gr.Row(elem_classes=["h3-generation-buttons"]):
                                 analyze = gr.Button("Analyze source", variant="primary", scale=3,
                                                     elem_classes=["h3-primary-action"])
-                                stop_analyze = gr.Button("Interrupt", scale=1, interactive=False)
+                                stop_analyze = gr.Button("Interrupt", scale=1, interactive=not gpu)
                             analyze_status = gr.Markdown(elem_classes=["h3-dub-status"])
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("Review lines →", LINES)
@@ -316,7 +354,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             preview = gr.Button("Preview", variant="primary")
                             new_take = gr.Button("New take")
                             retranslate = gr.Button("Translate again")
-                            stop_preview = gr.Button("Interrupt", interactive=False)
+                            stop_preview = gr.Button("Interrupt", interactive=not gpu)
                         line_status = gr.Markdown(elem_classes=["h3-dub-status"])
                         original_audio = gr.Audio(label="Original segment", type="numpy", interactive=False)
                         preview_audio = gr.Audio(label="Dub preview", type="numpy",
@@ -326,6 +364,18 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                     "Generate dub reuses the newest saved take. With lines picked on the board, these use "
                                     "them; Translate again with none fills the untranslated lines.",
                                     elem_classes=["h3-song-hint"])
+                        with gr.Accordion("Translate by hand in a chat model", open=False,
+                                          elem_classes=["h3-dub-options"]):
+                            gr.Markdown("Copies a prompt for the picked lines, or every line when none are picked, "
+                                        "with **Translation notes** and each line's time. Change the style in the "
+                                        "chat, for example for children aged 8 to 12, then paste its JSON reply.",
+                                        elem_classes=["h3-song-hint"])
+                            copy_lines_prompt = gr.Button(COPY_LINES_LABEL, size="sm", elem_id=COPY_LINES_ID)
+                            lines_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
+                            lines_request = gr.State(None)
+                            lines_reply = gr.Textbox(label="Reply", lines=5, max_lines=12,
+                                                     placeholder='["First line", "Second line"]')
+                            apply_lines_reply = gr.Button("Apply pasted translations", size="sm")
                         with gr.Row(elem_classes=["h3-dub-line-edits"]):
                             add_line = gr.Button("Add a line after", size="sm")
                             delete_line = gr.Button("Delete line", size="sm", variant="stop")
@@ -408,11 +458,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                     exported_video = gr.File(label="Video with burned-in subtitles", interactive=False)
     run.h3_stop = stop
     align_words.h3_stop = stop_align_words
-    analyze.h3_stop = stop_analyze
+    analyze.h3_stop = prepare_audio.h3_stop = stop_analyze
     preview.h3_stop = new_take.h3_stop = retranslate.h3_stop = stop_preview
     if not gpu:
-        for control in (analyze, stop_analyze, preview, new_take, retranslate, stop_preview,
-                        run, stop, align_words, stop_align_words):
+        for control in (preview, new_take, run, stop, align_words, stop_align_words):
             control.visible = False
     return DubbingView(
         project, steps, session, source, library, refresh_library, media_tab, sessions_tab, recent, source_card,
@@ -425,13 +474,18 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
         export_source, export_subtitles, exported_video, export_status, word_timing, align_words, stop_align_words,
-        alignment_status,
+        alignment_status, manual, copy_source_prompt, source_prompt, prepare_audio, speech_file, manual_reply,
+        copy_lines_prompt, lines_prompt, lines_request, lines_reply, apply_lines_reply,
     )
 
 
 def gemini_visibility(pipeline: str, translator: str):
     """The Gemini model and key matter when Gemini transcribes or translates."""
     return gr.update(visible=pipeline == PIPELINE_GEMINI or translator == TRANSLATOR_GEMINI)
+
+
+def manual_visibility(pipeline: str):
+    return gr.update(visible=pipeline == PIPELINE_MANUAL)
 
 
 def local_visibility(pipeline: str):

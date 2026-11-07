@@ -13,7 +13,13 @@ lines** and **Dub**. A finished analysis opens Review lines.
 named projects and their sessions are kept beyond the usual 14-day session cleanup.
 API keys are never saved in projects.
 
-Open Studio and **Load project** to analyze the source, translate, preview voices,
+Workshop can also analyze and translate, because **Gemini (cloud)**, **Gemini by
+hand** and translating with Gemini need no GPU here. It leaves vocal separation to
+Studio, unless an earlier analysis of the same file has the stems: Studio then
+separates before the first preview or dub, and the lines stay as edited. Lines a
+Hy-MT translator would fill stay untranslated; use Gemini, or Studio.
+
+Open Studio and **Load project** to analyze with this server's models, preview voices,
 generate the dub or align words. Completed analysis updates the project selected
 when analysis started. If another save has replaced its session in the meantime,
 the new analysis stays open for review and can be kept with **Save project**.
@@ -21,8 +27,8 @@ the new analysis stays open for review and can be kept with **Save project**.
 Return to Workshop and load that same project to edit lines, assign speaker voices,
 listen to the original, review the latest completed dub, download audio/video and
 subtitles, or export a video with burned-in subtitles. Line and speaker edits save
-automatically. Workshop has no model actions; transcription, automatic translation,
-voice generation and word alignment run in Studio.
+automatically. Local transcription, Hy-MT translation, voice generation and word
+alignment run in Studio.
 
 On Modal, stop Studio before using Workshop and restart it after saving, so both
 apps see the latest shared files.
@@ -78,9 +84,21 @@ audible.
   returns timed lines with speaker labels and their translations. The key comes
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
 
+- **Gemini by hand** runs the same request yourself, in Gemini or any chat model,
+  so you can tune the prompt, for example with a style for an age range. No API key
+  is needed. **Copy prompt** copies it with your languages and **Translation
+  notes**. **Prepare audio** makes an MP3 to attach (the vocals when separating in
+  Studio, and that separation is reused by the analysis). Paste the JSON reply in
+  **Reply**, then **Analyze source**; the lines are checked before anything slow
+  starts. Timestamps must come from this file's audio, so keep them exact when
+  editing the prompt. Nothing here calls a model: lines the reply left untranslated
+  wait in Review lines.
+
 **Translator** chooses who translates lines Gemini left empty, and lines later
 in **Translate again**. **Translation notes** pass names, terms and tone to the
-translator. Turn off **Translate now** to transcribe only.
+translator and to Gemini's transcription; a new note makes Gemini transcribe again
+instead of reusing an earlier transcript. Turn off **Translate now** to transcribe
+only.
 
 **Refine speech boundaries with Align (experimental)** adds
 [Desert Ant Labs Align](https://desertant.com/models/align/) after local
@@ -162,6 +180,13 @@ use the focused line:
 - **Translate again** retranslates the picked lines. With none picked, it fills
   lines that have no translation, or translates every line when **Dub into**
   has changed since the last translation.
+
+**Translate by hand in a chat model** does this without an API key, also in Workshop.
+**Copy translation prompt** copies the picked lines, or every line when none
+are picked, with their times and **Translation notes**. Change the style in the
+chat, paste the JSON array in **Reply**, then **Apply pasted translations**. Replies
+reach the lines that were copied, even after other edits; a line edited since
+copying is left as it is. Long sessions may fit better a few dozen lines at a time.
 
 ## 3 · Dub
 

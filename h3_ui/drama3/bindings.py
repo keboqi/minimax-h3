@@ -11,6 +11,7 @@ from h3_ui.drama3.speaker_library import bind_speaker_library, bind_voice_takes
 from h3_app.drama3.voice_design import ENGINE_QWEN
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from h3_app.jobs import JobCancelled
+from ..clipboard import copy_js
 from ..job_bindings import GPU_QUEUE, bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from h3_ui.engines.controls import (
     QUIET,
@@ -174,25 +175,7 @@ def _bind_script_mode(view, actions):
     )
 
 
-_COPY_PROMPT_JS = """async (prompt) => {
-  if (!prompt) return;
-  try {
-    await navigator.clipboard.writeText(prompt);
-  } catch (_error) {
-    const area = document.createElement('textarea');
-    area.value = prompt;
-    document.body.appendChild(area);
-    area.select();
-    document.execCommand('copy');
-    area.remove();
-  }
-  const button = document.getElementById('h3-drama3-copy-prompt');
-  if (button) {
-    const label = 'Copy full writer prompt';
-    button.textContent = 'Copied';
-    setTimeout(() => { button.textContent = label; }, 1500);
-  }
-}"""
+_COPY_PROMPT_JS = copy_js("h3-drama3-copy-prompt", "Copy full writer prompt")
 
 
 def _writer_slot_inputs(view):

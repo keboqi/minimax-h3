@@ -84,16 +84,17 @@ def bind_projects(view, actions, load_trigger):
 
     def refresh_settings(separate, separator, reuse, pipeline, translate, translator, target, aligner,
                          merge_gap, timing, parallel, regenerate):
-        from .view import advanced_label, gemini_visibility, local_visibility, speed_visibility
+        from .view import advanced_label, gemini_visibility, local_visibility, manual_visibility, speed_visibility
 
         return (actions.analysis_plan(separate, separator, reuse, pipeline, translate, translator, target),
                 actions.options_label(separate, separator, reuse, pipeline, aligner, merge_gap),
                 gemini_visibility(pipeline, translator), local_visibility(pipeline), local_visibility(pipeline),
-                speed_visibility(timing), advanced_label(parallel, regenerate), gr.update(visible=bool(separate)))
+                speed_visibility(timing), advanced_label(parallel, regenerate), gr.update(visible=bool(separate)),
+                manual_visibility(pipeline))
 
     loaded.then(refresh_settings,
                 inputs=[view.separate, view.separator_model, view.reuse, view.pipeline, view.translate,
                         view.translator, view.target_language, view.aligner, view.merge_gap, view.timing,
                         view.parallel, view.regenerate],
                 outputs=[view.plan, view.options, view.gemini, view.local, view.refine_timestamps,
-                         view.max_speed, view.advanced, view.separator_model], **quiet)
+                         view.max_speed, view.advanced, view.separator_model, view.manual], **quiet)

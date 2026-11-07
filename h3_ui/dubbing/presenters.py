@@ -224,23 +224,26 @@ def source_card(path, *, probe=None) -> str:
 
 
 def plan_steps(*, separate: bool, separator_model: str, reuse: bool, transcription: str, translate: bool,
-               translator: str, target_language: str) -> list[tuple[str, str, str]]:
-    """The analysis steps as ``(key, title, detail)``."""
+               translator: str, target_language: str, cloud_only: bool = False) -> list[tuple[str, str, str]]:
+    """The analysis steps as ``(key, title, detail)``; Workshop leaves the GPU's steps to Studio."""
     steps = []
     if separate:
         steps.append((SEPARATION, "Separate vocals",
+                      f"{separator_model} · in Studio, before the first preview or dub" if cloud_only else
                       separator_model + (" · reused when this file was analyzed before" if reuse else "")))
     detail = {pipeline.PIPELINE_LOCAL: "Qwen3-ASR with word timing, on this server",
               pipeline.PIPELINE_MOSS: "MOSS, telling speakers apart, on this server",
               pipeline.PIPELINE_NEMOTRON: "Nemotron, with speakers, overlaps and word timing, on this server",
-              pipeline.PIPELINE_GEMINI: "Gemini, telling speakers apart"}.get(transcription, transcription)
-    steps.append((TRANSCRIPTION, "Transcribe" + (" and translate" if transcription == pipeline.PIPELINE_GEMINI
+              pipeline.PIPELINE_GEMINI: "Gemini, telling speakers apart",
+              pipeline.PIPELINE_MANUAL: "From the pasted reply"}.get(transcription, transcription)
+    steps.append((TRANSCRIPTION, "Transcribe" + (" and translate" if transcription in pipeline.CLOUD_PIPELINES
                                                  and translate else ""), detail))
-    if translate:
+    if translate and transcription != pipeline.PIPELINE_MANUAL:
         target = target_language or "the chosen language"
+        hymt = "Hy-MT2 in Studio" if cloud_only else "Hy-MT2 on this server"
         steps.append((TRANSLATION, f"Translate into {target}",
                       "Gemini fills any line it left" if transcription == pipeline.PIPELINE_GEMINI
-                      else ("Hy-MT2 on this server" if translator == pipeline.TRANSLATOR_HYMT else "Gemini")))
+                      else (hymt if translator == pipeline.TRANSLATOR_HYMT else "Gemini")))
     return steps
 
 
@@ -251,7 +254,7 @@ def step_for_status(status: str) -> str | None:
         return SEPARATION
     if "translat" in text and "transcrib" not in text:
         return TRANSLATION
-    if any(word in text for word in ("transcrib", "speakers", "speech", "gemini", "align")):
+    if any(word in text for word in ("transcrib", "speakers", "speech", "gemini", "align", "pasted")):
         return TRANSCRIPTION
     return None
 
