@@ -1939,6 +1939,23 @@ def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, r
         temporary_link.unlink(missing_ok=True)
 
 
+def _shared_hub_file(plan: dict[str, Any], token: str | None) -> Path | None:
+    """A complete, valid copy already in the shared Hub cache; never touches the network."""
+    from huggingface_hub import hf_hub_download
+
+    spec: ModelSpec = plan["spec"]
+    try:
+        cached = Path(hf_hub_download(repo_id=spec.repo_id, filename=spec.filename, revision=plan["revision"],
+                                      token=token, local_files_only=True))
+        if plan["size"] is not None and cached.stat().st_size != plan["size"]:
+            return None
+        _verify_pinned_model(cached, spec)
+    except Exception:
+        # A miss, a pruned entry or a bad copy all just mean downloading it.
+        return None
+    return cached
+
+
 def _download_model(
     plan: dict[str, Any],
     token: str | None,
@@ -1967,29 +1984,31 @@ def _download_model(
     stale_ram = dest.resolve() if dest.is_symlink() else None
     print(f"{log_prefix} downloading {dest.name}", flush=True)
 
-    cached = Path(
-        hf_hub_download(
-            repo_id=spec.repo_id,
-            filename=spec.filename,
-            revision=plan["revision"],
-            token=token,
-            **({"cache_dir": str(plan["cache_dir"])} if "cache_dir" in plan else {}),
-        )
-    )
-    expected = plan["size"]
-    try:
-        if expected is not None and cached.stat().st_size != expected:
-            raise RuntimeError(
-                f"Downloaded size mismatch for {spec.filename}: "
-                f"{cached.stat().st_size} != {expected}"
+    cached = _shared_hub_file(plan, token) if "cache_dir" in plan else None
+    if cached is None:
+        cached = Path(
+            hf_hub_download(
+                repo_id=spec.repo_id,
+                filename=spec.filename,
+                revision=plan["revision"],
+                token=token,
+                **({"cache_dir": str(plan["cache_dir"])} if "cache_dir" in plan else {}),
             )
-        _verify_pinned_model(cached, spec)
-    except Exception:
-        # A private cache would return this bad blob to every retry, and
-        # prune_hf_cache cannot reach it. Never touch the shared Hub cache here.
-        if "cache_dir" in plan:
-            _clear_download_caches(plan["cache_dir"])
-        raise
+        )
+        expected = plan["size"]
+        try:
+            if expected is not None and cached.stat().st_size != expected:
+                raise RuntimeError(
+                    f"Downloaded size mismatch for {spec.filename}: "
+                    f"{cached.stat().st_size} != {expected}"
+                )
+            _verify_pinned_model(cached, spec)
+        except Exception:
+            # A private cache would return this bad blob to every retry, and
+            # prune_hf_cache cannot reach it. Never touch the shared Hub cache here.
+            if "cache_dir" in plan:
+                _clear_download_caches(plan["cache_dir"])
+            raise
 
     tmp = dest.with_suffix(dest.suffix + ".partial")
     try:
@@ -2177,24 +2196,28 @@ def sync_models(
                 # snapshot while this transfer is still using it.
                 plan["cache_dir"] = _model_download_cache(root, plan)
                 _download_model(plan, token, log_prefix, False)
-            with model_manifest_lock(manifest_path):
-                # Merge with the latest entries, including unrelated transfers
-                # that completed since planning started.
-                manifest = load_manifest()
-                manifest["files"][plan["manifest_key"]] = {
-                    "repo_id": spec.repo_id,
-                    "filename": spec.filename,
-                    "local_path": plan["manifest_key"],
-                    "source": spec.source,
-                    "repo_revision": plan["revision"],
-                    "blob_id": plan["blob_id"],
-                    "sha256": plan["sha256"],
-                    "size": plan["size"] if plan["size"] is not None else dest.stat().st_size,
-                    "remote_identity": plan["identity"],
-                }
-                manifest.update(schema_version=1, repo_id=MODEL_REPO,
-                                checked_at_unix=int(time.time()))
-                write_json_atomic(manifest_path, manifest)
+            entry = {
+                "repo_id": spec.repo_id,
+                "filename": spec.filename,
+                "local_path": plan["manifest_key"],
+                "source": spec.source,
+                "repo_revision": plan["revision"],
+                "blob_id": plan["blob_id"],
+                "sha256": plan["sha256"],
+                "size": plan["size"] if plan["size"] is not None else dest.stat().st_size,
+                "remote_identity": plan["identity"],
+            }
+            # An up-to-date file needs no lock or write; this destination's lock
+            # keeps its entry from changing since it was planned.
+            if plan["needs_download"] or manifest["files"].get(plan["manifest_key"]) != entry:
+                with model_manifest_lock(manifest_path):
+                    # Merge with the latest entries, including unrelated transfers
+                    # that completed since planning started.
+                    manifest = load_manifest()
+                    manifest["files"][plan["manifest_key"]] = entry
+                    manifest.update(schema_version=1, repo_id=MODEL_REPO,
+                                    checked_at_unix=int(time.time()))
+                    write_json_atomic(manifest_path, manifest)
             if plan["needs_download"]:
                 _remove_hf_cache(plan["cached_path"], plan=plan, log_prefix=log_prefix)
                 _clear_download_caches(plan["cache_dir"])

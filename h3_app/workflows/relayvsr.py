@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from h3_app.catalog import RELAYVSR_OPTIONS
+from h3_app.catalog import RELAYVSR_MAX_OUTPUT_SIDE, RELAYVSR_OPTIONS
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
 from h3_models import MODEL_SPECS
@@ -14,6 +14,14 @@ def relayvsr_model_keys(option: str) -> tuple[str, str]:
     except KeyError as exc:
         raise H3Error(f"Unknown RelayVSR method: {option}") from exc
     return f"relayvsr_{scale}x_dit", f"relayvsr_{scale}x_vae"
+
+
+def check_relayvsr_size(option: str, width: int, height: int) -> None:
+    """Refuse an output too large to finish, before downloading models or using the GPU."""
+    scale = RELAYVSR_OPTIONS[option]
+    if max(width, height) * scale > RELAYVSR_MAX_OUTPUT_SIDE:
+        raise H3Error(f"{option} would produce {width * scale}×{height * scale}, over the "
+                      f"{RELAYVSR_MAX_OUTPUT_SIDE}-pixel limit. Use a lower scale or a smaller source.")
 
 
 def required_relayvsr_nodes(*, image: bool = False) -> set[str]:

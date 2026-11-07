@@ -9,7 +9,10 @@ from unittest.mock import Mock
 from PIL import Image
 
 from h3_app.catalog import GENERATION_POSTPROCESS_OPTIONS, POSTPROCESS_OPTIONS, RELAYVSR_OPTIONS
-from h3_app.workflows.relayvsr import build_relayvsr_graph, relayvsr_model_keys, required_relayvsr_nodes
+from h3_app.errors import H3Error
+from h3_app.workflows.relayvsr import (
+    build_relayvsr_graph, check_relayvsr_size, relayvsr_model_keys, required_relayvsr_nodes,
+)
 from h3_app.workflows.upscale import build_upscale_graph, required_upscale_nodes
 from h3_models import LAZY_POSTPROCESS_MODEL_KEYS, MODEL_SPECS, PRELOAD_MODEL_KEYS
 from h3_ui.media_controller import MediaController
@@ -124,6 +127,47 @@ class RelayVSRTests(unittest.TestCase):
                 self.assertEqual(settings["target_resolution"], f"{853 * scale}×{479 * scale}")
                 self.assertEqual(settings["prompt"], "")
                 self.assertEqual(services.build_upscale_graph.call_args.kwargs["fps"], 29.97)
+
+    def test_oversized_output_is_refused_only_past_the_limit(self):
+        check_relayvsr_size("RelayVSR 4x", 2048, 1080)
+        check_relayvsr_size("RelayVSR 2x", 3840, 4096)
+        for option, width, height in (("RelayVSR 4x", 3840, 2160), ("RelayVSR 4x", 1080, 2049),
+                                      ("RelayVSR 2x", 4097, 2160)):
+            with self.subTest(option=option, width=width, height=height), self.assertRaisesRegex(H3Error, "8192"):
+                check_relayvsr_size(option, width, height)
+
+    def test_oversized_video_fails_before_downloading_or_submitting(self):
+        services = SimpleNamespace(
+            object_info=Mock(return_value=dict.fromkeys(required_relayvsr_nodes())),
+            ensure_model_keys=Mock(side_effect=AssertionError("must not download")),
+            probe_video_metadata=Mock(return_value=SimpleNamespace(width=3840, height=2160, fps=30)),
+            submit_prompt=Mock(side_effect=AssertionError("must not submit")),
+        )
+        controller = MediaController(services)
+        controller.managed_video_path = Mock(return_value=Path("source.mp4"))
+        controller.gallery_media_progress_result = lambda status: status
+        result = list(controller._postprocess_selected_video(
+            "source.mp4", "RelayVSR 4x", 42, "unused", "unused", "", False, "unused preset",
+            request=Mock(), progress=Mock(),
+        ))
+        self.assertIn("15360×8640", result[-1])
+
+    def test_oversized_image_fails_before_downloading_or_submitting(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "large.png"
+            Image.new("RGB", (2049, 16)).save(source)
+            services = SimpleNamespace(
+                object_info=Mock(return_value=dict.fromkeys(required_relayvsr_nodes(image=True))),
+                ensure_model_keys=Mock(side_effect=AssertionError("must not download")),
+            )
+            controller = MediaController(services)
+            controller.managed_gallery_image_path = Mock(return_value=source)
+            controller.gallery_media_progress_result = lambda status: status
+            result = list(controller.postprocess_selected_gallery_image(
+                str(source), "RelayVSR 4x", 42, "unused", False, "unused preset",
+                request=Mock(), progress=Mock(),
+            ))
+            self.assertIn("8196×64", result[-1])
 
     def test_missing_native_nodes_fail_before_downloading_or_submitting(self):
         option = next(iter(RELAYVSR_OPTIONS))

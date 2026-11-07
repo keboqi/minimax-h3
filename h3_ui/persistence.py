@@ -178,11 +178,12 @@ def restore_preferences(saved, components):
     if not isinstance(values, Mapping):
         values = {}
     version = payload.get("schema_version") if isinstance(payload.get("schema_version"), int) else 0
-    if version < 12 and values.get("workspace.task") == "Image":
+    if version < 12:
         # The common composer now owns intent and writer preferences. Hidden
         # legacy mode controls must not restore conflicting edit-control state.
         values = dict(values)
-        engine = values.get("workspace.engine", "qwen")
+        # Another task's engine says nothing about images; Qwen is their default.
+        engine = values.get("workspace.engine", "qwen") if values.get("workspace.task") == "Image" else "qwen"
         prefix = "qwen_image21" if engine == "qwen" else engine
         if engine == "qwen" and "qwen_image21.mode" in values:
             values.setdefault("image.mode", values["qwen_image21.mode"])

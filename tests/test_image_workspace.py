@@ -97,6 +97,19 @@ class ImageWorkspaceTests(unittest.TestCase):
         self.assertEqual(restored["image.mode"], "Text to image")
 
 
+    def test_image_preferences_migrate_when_another_task_was_last_open(self):
+        components = {
+            "image.mode": SimpleNamespace(value="Text to image", choices=["Text to image", "Image edit"]),
+            "image.prompt_backend": SimpleNamespace(value="Gemini", choices=["Gemini", "OpenAI-compatible"]),
+        }
+        restored, _ = restore_preferences({"schema_version": 11, "values": {
+            "workspace.task": "Video", "workspace.engine": "ltx", "qwen_image21.mode": "Image edit",
+            "qwen_image21.prompt_backend": "OpenAI-compatible",
+        }}, components)
+        self.assertEqual(restored["image.mode"], "Image edit")
+        self.assertEqual(restored["image.prompt_backend"], "OpenAI-compatible")
+
+
 class ImageGenerationControllerTests(unittest.TestCase):
     def setUp(self):
         self.views = {

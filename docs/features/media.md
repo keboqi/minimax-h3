@@ -37,6 +37,7 @@ too. A dub's player tracks are removed once both its audio and video are deleted
 They multiply the original width and height by exactly 2 or 4. Target-resolution
 presets are hidden for these methods; no input or output resizing is added.
 Each downloads its own INT8 model and matching Flash decoder on first use.
+An output wider or taller than 8192 pixels is refused before anything downloads.
 Video runs preserve the source frame rate, frame count and audio. RelayVSR is
 designed for video; still images use a single-frame input. No scene prompt is needed.
 Update setup and restart ComfyUI (or rebuild/redeploy the Modal image) to load

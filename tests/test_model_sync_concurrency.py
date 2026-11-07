@@ -72,6 +72,8 @@ class ModelSyncConcurrencyTests(unittest.TestCase):
                 return "revision", {"shared": SimpleNamespace(size=7, blob_id="blob", lfs=None)}
 
             def download(**kwargs):
+                if kwargs.get("local_files_only"):
+                    raise FileNotFoundError("not in the shared cache")
                 calls.append(kwargs)
                 started.set()
                 if not release.wait(5):
@@ -101,6 +103,33 @@ class ModelSyncConcurrencyTests(unittest.TestCase):
                 first.result(timeout=5)
                 second.result(timeout=5)
             self.assertEqual(len(calls), 1)
+
+    def test_up_to_date_files_do_not_rewrite_the_manifest(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = models.ModelSpec("test/repo", "weights", "shared", "test")
+
+            def download(**kwargs):
+                if kwargs.get("local_files_only"):
+                    raise FileNotFoundError("not in the shared cache")
+                cache = Path(kwargs["cache_dir"])
+                cache.mkdir(parents=True, exist_ok=True)
+                result = cache / "blob"
+                result.write_bytes(b"weights")
+                return str(result)
+
+            with (patch.dict(models.MODEL_SPECS, {"first": spec}),
+                  patch.object(models, "MIN_VALID_MODEL_BYTES", 0),
+                  patch.object(models, "_fetch_repo", return_value=(
+                      "revision", {"shared": SimpleNamespace(size=7, blob_id="blob", lfs=None)})),
+                  patch("huggingface_hub.hf_hub_download", side_effect=download) as hub,
+                  patch.object(models, "write_json_atomic", wraps=models.write_json_atomic) as write):
+                for expected_writes in (1, 1):
+                    models.sync_models(root=root, manifest_path=root / "manifest.json",
+                                       token="test", model_keys=["first"])
+                    manifest = [call for call in write.call_args_list if call.args[0].name == "manifest.json"]
+                    self.assertEqual(len(manifest), expected_writes)
+            self.assertEqual(hub.call_count, 2)  # One shared-cache check and one transfer, first time only.
 
     def test_failed_sibling_does_not_erase_a_successful_commit(self):
         with TemporaryDirectory() as directory:

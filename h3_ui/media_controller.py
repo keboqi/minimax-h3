@@ -30,7 +30,9 @@ from h3_app.catalog import (
     VIDEO_EXTENSIONS,
 )
 from h3_app.errors import H3Error
-from h3_app.workflows.relayvsr import build_relayvsr_graph, relayvsr_model_keys, required_relayvsr_nodes
+from h3_app.workflows.relayvsr import (
+    build_relayvsr_graph, check_relayvsr_size, relayvsr_model_keys, required_relayvsr_nodes,
+)
 from h3_app.jobs import record_failure
 from h3_app.provenance import copy_media, score_path, snapshot_path
 from h3_app.status import progress_status
@@ -612,6 +614,8 @@ class MediaController:
                 )
                 stage_bucket = "h3_regenerate"
             elif option in RELAYVSR_OPTIONS:
+                metadata = self.services.probe_video_metadata(source)
+                check_relayvsr_size(option, metadata.width, metadata.height)
                 yield self.gallery_media_progress_result(f"Checking {option} models")
                 downloaded = self.services.ensure_model_keys(relayvsr_model_keys(option))
                 stage_bucket = "relayvsr_upscale"
@@ -641,7 +645,8 @@ class MediaController:
                 yield self.gallery_media_progress_result(
                     f"{option} models downloaded"
                 )
-            metadata = metadata if option == H3_REFINEMENT else self.services.probe_video_metadata(source)
+            if option != H3_REFINEMENT and option not in RELAYVSR_OPTIONS:
+                metadata = self.services.probe_video_metadata(source)
             if option in RELAYVSR_OPTIONS:
                 scale = RELAYVSR_OPTIONS[option]
                 target_width, target_height = metadata.width * scale, metadata.height * scale
@@ -778,6 +783,7 @@ class MediaController:
                 family = model_name = option
                 with Image.open(source) as still:
                     source_width, source_height = ImageOps.exif_transpose(still).size
+                check_relayvsr_size(option, source_width, source_height)
                 scale_by = RELAYVSR_OPTIONS[option]
                 target_width, target_height = source_width * scale_by, source_height * scale_by
             else:

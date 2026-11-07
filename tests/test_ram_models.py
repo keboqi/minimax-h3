@@ -230,6 +230,44 @@ class RamResumeTests(RamModelFixture, unittest.TestCase):
 
         return patch.dict(sys.modules, {"huggingface_hub": types.SimpleNamespace(hf_hub_download=fake)})
 
+    def shared_hub(self, shared_bytes):
+        """A shared cache holding ``shared_bytes``, plus a network download of the right bytes."""
+        transfers = []
+        shared = self.disk / "hf-cache" / "shared-blob"
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        shared.write_bytes(shared_bytes)
+
+        def fake(**kwargs):
+            if kwargs.get("local_files_only"):
+                return str(shared)
+            transfers.append(kwargs["cache_dir"])
+            blob = Path(kwargs["cache_dir"]) / "blob"
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"weights")
+            return str(blob)
+
+        hub = types.SimpleNamespace(hf_hub_download=fake)
+        return patch.dict(sys.modules, {"huggingface_hub": hub}), transfers
+
+    def test_a_complete_shared_cache_file_is_reused_without_a_transfer(self):
+        plan = self.plan()
+        plan["cache_dir"] = h3_models._model_download_cache(self.disk / "models", plan)
+        hub, transfers = self.shared_hub(b"weights")
+        with hub:
+            self.run_download(plan)
+        self.assertEqual(transfers, [])
+        self.assertEqual(plan["dest"].read_bytes(), b"weights")
+
+    def test_an_invalid_shared_cache_file_is_ignored_and_kept(self):
+        plan = self.plan()
+        plan["cache_dir"] = h3_models._model_download_cache(self.disk / "models", plan)
+        hub, transfers = self.shared_hub(b"short")
+        with hub:
+            self.run_download(plan)
+        self.assertEqual(transfers, [str(plan["cache_dir"])])
+        self.assertEqual(plan["dest"].read_bytes(), b"weights")
+        self.assertTrue((self.disk / "hf-cache" / "shared-blob").exists())
+
     def partial_ram_transfer(self, plan):
         cache = h3_models._model_download_cache(self.ram, plan)
         partial = cache / "models--org--repo" / "blobs" / "abc.incomplete"
