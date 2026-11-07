@@ -42,11 +42,11 @@ SCENE_FIELDS = frozenset({
 })
 PROFILE_FIELDS = tuple(name for name in GENERATION_FIELDS if name not in SCENE_FIELDS)
 # A take's playable video must be the raw H3 output its latent decodes to.
-PROFILE_OVERRIDES = {"postprocess": "None"}
+PROFILE_OVERRIDES = {"postprocess": "None", "face_refine": False}
 # Finishing and reference-size settings that Storyboard takes from the request defaults.
 DEFAULTED_FIELDS = frozenset({
     "postprocess", "upscale_force_offload", "upscale_resolution", "seedvr2_model", "ltx25_model",
-    "ref_image_size",
+    "ref_image_size", "face_refine", "face_refine_strength",
 })
 
 

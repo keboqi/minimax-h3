@@ -92,6 +92,9 @@ class H3View:
     input_upscale_seed: gr.components.Component
     input_upscale_slots: gr.components.Component
     input_upscale_status: gr.components.Component
+    face_refine: gr.components.Component
+    face_refine_settings: gr.components.Component
+    face_refine_strength: gr.components.Component
     large_resolution: gr.components.Component
     last: gr.components.Component
     latent_upscale: gr.components.Component
@@ -232,6 +235,9 @@ H3_COMPONENT_ORDER = (
     "input_upscale_seed",
     "input_upscale_slots",
     "input_upscale_status",
+    "face_refine",
+    "face_refine_settings",
+    "face_refine_strength",
     "large_resolution",
     "last",
     "latent_upscale",

@@ -30,6 +30,13 @@ def bind_layout(components: AppComponents, services: BootstrapServices) -> None:
         queue=False,
         show_progress="hidden",
     )
+    components.face_refine.change(
+        lambda enabled: gr.update(visible=bool(enabled)),
+        inputs=components.face_refine,
+        outputs=components.face_refine_settings,
+        queue=False,
+        show_progress="hidden",
+    )
     components.latent_upscale_method.change(
         lambda method: (
             gr.update(interactive=method not in H3_REGENERATE_MODELS),

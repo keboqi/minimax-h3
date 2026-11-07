@@ -186,7 +186,7 @@ class RegenerateGraphTests(unittest.TestCase):
                     else:
                         request = SimpleNamespace(media=SimpleNamespace(prompt="A bird flies"), finishing=SimpleNamespace(
                             postprocess=option, ltx25_model="unused", seedvr2_model="unused",
-                            upscale_resolution="2560 × 2560", upscale_force_offload=False))
+                            upscale_resolution="2560 × 2560", upscale_force_offload=False, face_refine=False))
                         services = SimpleNamespace(
                             models=SimpleNamespace(**mocks), media=SimpleNamespace(**mocks),
                             execution=SimpleNamespace(**mocks), workflows=SimpleNamespace(build_upscale_graph=build))

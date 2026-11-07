@@ -51,6 +51,7 @@ from h3_app.progress import ProgressCallback
 from h3_app.settings import ResolvedSettings
 from h3_app.status import progress_status
 from h3_app.workflows.h3 import required_nodes_for, turbo_required_nodes
+from h3_app.workflows.face_refine import REQUIRED_FACE_REFINE_NODES
 from h3_app.workflows.upscale import required_upscale_nodes
 from h3_models import MODEL_SPECS
 
@@ -433,6 +434,12 @@ def _check_backend_extras(request, services, available, *, use_lightvae, started
             ),
         )
         services.models.ensure_h3_semantic_bridge()
+    missing_face_nodes = (REQUIRED_FACE_REFINE_NODES - available) if request.finishing.face_refine else None
+    if missing_face_nodes:
+        raise H3Error(
+            "Face refine requires current ComfyUI nodes: " + ", ".join(sorted(missing_face_nodes))
+            + ". Update provisioning and restart ComfyUI."
+        )
     if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
         missing_upscale_nodes = (
             required_upscale_nodes(request.finishing.postprocess, models) - available

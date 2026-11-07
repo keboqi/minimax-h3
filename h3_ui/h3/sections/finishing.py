@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class FinishingSection:
+    face_refine: gr.components.Component
+    face_refine_settings: gr.components.Component
+    face_refine_strength: gr.components.Component
     ltx25_model: gr.components.Component
     generation_force_offload: gr.components.Component
     generation_ltx25_note: gr.components.Component
@@ -144,7 +147,34 @@ def build_finishing_section(
                     "the next generation."
                 ),
             )
+        gr.Markdown("**Face refine**")
+        face_refine = gr.Checkbox(
+            value=defaults["face_refine"],
+            label="Refine small faces after generation",
+            info=(
+                "Turn on for wide shots with distant faces. Re-renders the largest face up "
+                "close and blends it back before any upscaling, adding an extra H3 pass per "
+                "video. Keeps the clip unchanged if no face is found. The detector and "
+                "8-step LoRA download on first use."
+            ),
+        )
+        with gr.Group(visible=defaults["face_refine"]) as face_refine_settings:
+            face_refine_strength = gr.Slider(
+                0.2,
+                0.6,
+                value=defaults["face_refine_strength"],
+                step=0.05,
+                label="Face refine strength",
+                info=(
+                    "How much of the face H3 may redraw. Very small faces get the full "
+                    "amount and larger ones about a third of it. Higher fixes more "
+                    "but can drift from the original face."
+                ),
+            )
     return FinishingSection(
+        face_refine=face_refine,
+        face_refine_settings=face_refine_settings,
+        face_refine_strength=face_refine_strength,
         ltx25_model=ltx25_model,
         generation_force_offload=generation_force_offload,
         generation_ltx25_note=generation_ltx25_note,

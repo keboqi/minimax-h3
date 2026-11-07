@@ -144,6 +144,7 @@ backends; GPU inference and deployment are validated separately.
 - Optional model offload at every H3 stage boundary, automatically required for BF16
 - Default-on reuse of unchanged prompt and image/audio/video conditioning through
   content-addressed ComfyUI input staging
+- Optional [face refine](docs/features/h3.md#face-refine) pass for small faces in wide shots
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale, LTX-2.5 decompression/deblur, and frame interpolation
 - Selectable SeedVR2 target-frame preprocessing for start/end frames and reference
   images, with downloadable results and no forced downscaling

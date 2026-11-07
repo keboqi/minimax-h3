@@ -100,6 +100,8 @@ class FinishingSettings:
     postprocess: str = "None"
     latent_upscale_refine_lora: str = "Same as generation"
     latent_upscale_method: str = "Full-frame refinement"
+    face_refine: bool = False
+    face_refine_strength: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -221,8 +223,8 @@ def resolve_settings(
     if fmt not in {"Video", "Image", "Audio"}:
         issues.append("Choose Video, Image, or Audio output.")
     if fmt != "Video":
-        inactive.update({"postprocess", "batch_count"})
-        finishing = replace(finishing, postprocess="None")
+        inactive.update({"postprocess", "batch_count", "face_refine", "face_refine_strength"})
+        finishing = replace(finishing, postprocess="None", face_refine=False)
         output = replace(output, batch_count=1)
     if fmt == "Image":
         finishing = replace(finishing, latent_upscale=False)
@@ -283,6 +285,8 @@ def resolve_settings(
         )
         sampling = replace(sampling, latent_upscale_refine_steps=refine_steps)
         inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
+    if not finishing.face_refine:
+        inactive.add("face_refine_strength")
     if generation_mode != "Turbo":
         inactive.add("turbo_variant")
     if sampling.attention_mode not in {"Sol-Attn", "Auto"}:

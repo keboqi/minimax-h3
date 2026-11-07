@@ -32,6 +32,8 @@ from h3_sources import (
     VEDA_REPO,
     SOL_REF,
     SOL_REPO,
+    FACE_REFINE_REF,
+    FACE_REFINE_REPO,
     SPECTRUM_REF,
     SPECTRUM_REPO,
     SPECTRUM_QWEN_REF,
@@ -58,6 +60,7 @@ from h3_requirements import (
     COMFY_REF,
     GRADIO_VERSION,
     PEDALBOARD_VERSION,
+    ULTRALYTICS_VERSION,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     HUGGINGFACE_HUB_REQUIREMENT,
     DIFFUSERS_REQUIREMENT,
@@ -778,6 +781,7 @@ def install_environment(comfy: Path) -> None:
             "uvicorn>=0.30",
             f"wsproto=={WSPROTO_VERSION}",
             f"pedalboard=={PEDALBOARD_VERSION}",
+            f"ultralytics=={ULTRALYTICS_VERSION}",
             "Pillow>=10",
             *VIDEO_DOWNLOAD_REQUIREMENTS,
             "--constraint",
@@ -901,6 +905,13 @@ def sync_external_nodes(
     )
     if install_requirements:
         install_custom_node_requirements(veda / "requirements.txt")
+
+    # Its requirements stay uninstalled on purpose: largest-face tracking never reaches
+    # insightface or scenedetect, and ultralytics is pinned with the app packages.
+    sync_git_repo(
+        FACE_REFINE_REPO, comfy / "custom_nodes" / "ComfyUI-H3-FaceRefine", ref=FACE_REFINE_REF,
+        required_paths=("__init__.py", "nodes.py"),
+    )
 
     spectrum = comfy / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
     sync_git_repo(

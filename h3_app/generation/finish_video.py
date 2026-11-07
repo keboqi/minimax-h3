@@ -10,6 +10,7 @@ from typing import Generator
 from h3_app.catalog import (
     COMFY_UPSCALE_OPTIONS,
     H3_REGENERATE_MODELS,
+    LIGHTX2V_8STEP_TURBO,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
 )
@@ -17,12 +18,16 @@ from h3_app.policy import upscale_target_dimensions
 from h3_app.progress import ProgressCallback
 from h3_app.jobs import CURRENT_JOB, record_failure
 from h3_app.provenance import write_snapshot
+from h3_app.refinement import FACE_REFINE_STEPS
 from h3_app.status import StageTimings, progress_status
 
 from .preparation import PreparedH3
 from .requests import H3Request
 from .results import GenerationUpdate
 from .services import GenerationServices
+
+# H3FaceTrackCrop's wording when a clip has nothing to track.
+NO_FACE_ERROR = "No face detected in any frame"
 
 
 def make_finishing_retry(request, prepared, services, execution_snapshot):
@@ -67,6 +72,67 @@ def make_finishing_retry(request, prepared, services, execution_snapshot):
     return finish_again
 
 
+def refine_faces(
+    request: H3Request,
+    prepared: PreparedH3,
+    services: GenerationServices,
+    source: Path,
+    client_id: str,
+    started: float,
+    timings: StageTimings,
+    progress: ProgressCallback,
+) -> Generator[GenerationUpdate, None, Path]:
+    """Re-render the largest face and return the new clip, or the source if none is found."""
+    timings.transition("Refining faces")
+    yield GenerationUpdate(None, progress_status("Checking face refine models", started=started))
+    downloaded = [
+        services.models.ensure_model_keys(("face_yolov8m",)),
+        services.models.ensure_turbo_lora(prepared.models, LIGHTX2V_8STEP_TURBO, request.media.mode),
+        services.models.ensure_base_video_vae(prepared.models),
+    ]
+    if any(downloaded):
+        yield GenerationUpdate(None, progress_status("Face refine models downloaded", started=started))
+    graph = services.workflows.build_face_refine_graph(
+        source_video=services.media.stage_file(str(source), "h3_face_refine"),
+        seed=prepared.actual_seed,
+        models=prepared.models,
+        prompt=request.media.prompt,
+        fps=services.media.probe_video_metadata(source).fps,
+        strength=request.finishing.face_refine_strength,
+        refinement=request.values(),
+        output_nonce=client_id,
+    )
+    queued_at = time.time()
+    prompt_id = services.execution.submit_prompt(graph, client_id)
+    try:
+        for stage, completed, total, step, step_total in services.execution.poll_comfy_progress(
+            prompt_id, graph
+        ):
+            if stage == "Generating video and audio":
+                stage = "Refining faces"
+            timings.transition(stage)
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total:
+                progress((completed, total), desc=stage)
+            yield GenerationUpdate(None, progress_status(
+                stage, started=started, completed_nodes=completed, total_nodes=total,
+                step=step, step_total=step_total,
+                configured_steps=FACE_REFINE_STEPS if step is not None else None,
+                detail=f"Face refine job `{prompt_id}`",
+            ))
+        return services.media.resolve_output(
+            services.execution.wait_for_history(prompt_id), queued_at
+        )
+    except Exception as exc:
+        if NO_FACE_ERROR not in str(exc):
+            raise
+    yield GenerationUpdate(None, progress_status(
+        "Face refine found no face; keeping the clip as generated", started=started,
+    ))
+    return source
+
+
 def finish_video(
     request: H3Request,
     prepared: PreparedH3,
@@ -77,6 +143,10 @@ def finish_video(
     timings: StageTimings,
     progress: ProgressCallback,
 ) -> Generator[GenerationUpdate, None, Path]:
+    if request.finishing.face_refine:
+        source = yield from refine_faces(
+            request, prepared, services, source, client_id, started, timings, progress
+        )
     if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
         if request.finishing.postprocess in H3_REGENERATE_MODELS:
             stage_bucket = "h3_regenerate"

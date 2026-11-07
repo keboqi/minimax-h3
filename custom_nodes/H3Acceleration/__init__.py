@@ -28,6 +28,10 @@ import comfy.utils
 import comfy.weight_adapter
 import folder_paths
 
+# ComfyUI-H3-FaceRefine's face picker routes read any path a request names. Prism never
+# uses them, and ComfyUI can be reachable by others, so confine them to ComfyUI's folder.
+os.environ.setdefault("H3_FACEREFINE_STRICT_PATHS", "1")
+
 
 LIGHTX_LORA_PATTERN = re.compile(
     r"^(diffusion_model\.(?:blocks\.\d+|token_refiner\.blocks\.\d+)\."
@@ -2389,6 +2393,49 @@ class H3LoadAVLatent:
         return (latent,)
 
 
+class H3SourceAudioLatent:
+    """Hold a clip's own soundtrack clean, so H3 redraws video against the real speech."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {"latent": ("LATENT",), "audio_vae": ("VAE",)},
+            "optional": {"audio": ("AUDIO",)},
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "hold"
+    CATEGORY = "H3/Regenerate"
+
+    def hold(self, latent, audio_vae, audio=None):
+        import comfy.audio
+
+        samples = latent["samples"]
+        if not getattr(samples, "is_nested", False) or len(samples.tensors) != 2:
+            raise ValueError("Source audio expects a MiniMax H3 AV latent")
+        video, template = samples.tensors
+        rate, frame_samples = 32000, 800  # H3 audio: 40 latent frames/sec at 32 kHz.
+        length = template.shape[-1] * frame_samples
+        wave = torch.zeros(2, length)
+        if audio is not None:
+            wave = audio["waveform"][0].float()
+            wave = wave.repeat(2, 1) if wave.shape[0] == 1 else wave[:2]
+            if int(audio["sample_rate"]) != rate:
+                wave = comfy.audio.resample(wave, int(audio["sample_rate"]), rate)
+        # Exact latent frames here: VAE.encode would centre-crop and shift the speech.
+        wave = F.pad(wave, (0, max(0, length - wave.shape[1])))[:, :length]
+        encoded = audio_vae.encode(wave[None].movedim(1, -1))
+        encoded = F.pad(encoded, (0, max(0, template.shape[-1] - encoded.shape[-1])))
+        encoded = encoded[..., :template.shape[-1]].to(video)
+        return ({
+            **latent,
+            "samples": comfy.nested_tensor.NestedTensor((video, encoded)),
+            "noise_mask": comfy.nested_tensor.NestedTensor((
+                torch.ones_like(video), torch.zeros_like(encoded),
+            )),
+        },)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -2396,6 +2443,7 @@ NODE_CLASS_MAPPINGS = {
     "H3LatentUpscaleModelLoader": H3LatentUpscaleModelLoader,
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
+    "H3SourceAudioLatent": H3SourceAudioLatent,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,

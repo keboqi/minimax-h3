@@ -124,6 +124,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         expected_sha256="de3745ceb7d8d5c20898dd8fa3a05f1c0b00089ccd55297b2a8bab95c766b0e0",
         revision="912b6e38b2092ec4d2e86d24183e0d59ea059d48",
     ),
+    "face_yolov8m": ModelSpec(
+        "Bingsu/adetailer", "ultralytics/bbox", "face_yolov8m.pt",
+        "ADetailer · YOLOv8m face detector",
+        expected_sha256="717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f",
+        revision="53cc19de382014514d9d4038601d261a7faa9b7b",
+    ),
     "remake_swap_lora": ModelSpec(
         "Viggle/Viggle-Remake", "loras", "comfyui/viggle_remake_swap_comfyui.safetensors",
         "Viggle Remake · Swap LoRA for ComfyUI",
@@ -1128,6 +1134,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
     "h3_regenerate_refiner_16",
     "h3_regenerate_refiner_384",
+    "face_yolov8m",
     "remake_swap_lora",
     "remake_edit_lora",
     *FLUX3_MODEL_KEYS,
@@ -2318,6 +2325,7 @@ def selftest() -> None:
         "video_vae_sol_int8",
         "h3_regenerate_refiner_16",
         "h3_regenerate_refiner_384",
+        "face_yolov8m",
         "remake_swap_lora",
         "remake_edit_lora",
         "video_vae_trt_encoder",

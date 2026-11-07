@@ -463,6 +463,7 @@ H3_REFINEMENT_COMPILER_GUARD_NODE = "H3RefinementCompilerGuard"
 
 
 H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
+H3_SOURCE_AUDIO_LATENT_NODE = "H3SourceAudioLatent"
 
 
 H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
@@ -730,6 +731,8 @@ UI_DEFAULTS = {
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
+    "face_refine": False,
+    "face_refine_strength": 0.4,
 }
 
 

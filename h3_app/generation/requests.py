@@ -172,6 +172,8 @@ class H3FinishingInputs:
     seedvr2_model: str
     ltx25_model: str
     latent_upscale_refine_lora: str = "Same as generation"
+    face_refine: bool = False
+    face_refine_strength: float = 0.4
 
 
 @dataclass

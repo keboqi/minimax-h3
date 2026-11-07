@@ -72,6 +72,8 @@ COMFY_FRONTEND_VERSION = "1.58.5"
 WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
+# Face refine's YOLO face detector. AGPL-3.0, used as an installed runtime dependency.
+ULTRALYTICS_VERSION = "8.4.188"
 GRADIO_VERSION = "6.31.0"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",

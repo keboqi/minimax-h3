@@ -83,6 +83,8 @@ GENERATION_FIELDS = (
     "use_sol_vae",
     "auto_megapixels",
     "image_edit_size",
+    "face_refine",
+    "face_refine_strength",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -163,6 +165,8 @@ GENERATION_COMPONENTS = (
     "use_sol_vae",
     "auto_megapixels",
     "image_edit_size",
+    "face_refine",
+    "face_refine_strength",
 )
 
 
@@ -191,6 +195,8 @@ class GenerationArguments:
             args = (*args, "1 MP")
         if len(args) == GENERATION_FIELDS.index("image_edit_size"):
             args = (*args, H3_EDIT_SIZE_MATCH)
+        if len(args) == GENERATION_FIELDS.index("face_refine"):
+            args = (*args, False, 0.4)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

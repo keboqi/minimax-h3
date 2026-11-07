@@ -21,6 +21,8 @@ SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"
 # The original Saganaki22 repository became unavailable. This public fork retains
 # the exact reviewed v0.6.2 commit, so the node code and graph contract stay fixed.
 SOL_REPO = "https://github.com/wildparky/ComfyUI-sol-attn.git"
+FACE_REFINE_REF = "d8521d14fe0d721d80cd9417fff5a559cbc21aba"  # v1.1.2
+FACE_REFINE_REPO = "https://github.com/Carasibana/ComfyUI-H3-FaceRefine.git"
 SPECTRUM_REF = "806fe498d574a726fecb8818917f00a4b993fd77"  # v0.2.29
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_QWEN_REF = "ddb5470f3a885fd912e2b01aa8e20f9768148e42"

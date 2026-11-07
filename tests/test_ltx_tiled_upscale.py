@@ -104,7 +104,7 @@ class TiledUpscaleTests(unittest.TestCase):
                         finishing=SimpleNamespace(
                             postprocess=LTX25_TILED_UPSCALE,
                             ltx25_model=DEFAULT_LTX25_MODEL, seedvr2_model="unused",
-                            upscale_resolution="3840 × 3840", upscale_force_offload=False,
+                            upscale_resolution="3840 × 3840", upscale_force_offload=False, face_refine=False,
                         ),
                     )
                     prepared = SimpleNamespace(models=Mock(), actual_seed=42,

@@ -1,8 +1,8 @@
 """Resolve the shared native H3 controls for existing-video refinement."""
 
 from h3_app.catalog import (
-    UI_DEFAULTS, H3_REGENERATE_MODELS, SAME_REFINEMENT_LORA,
-    REFINEMENT_LORA_SETTINGS, PIKA_FLEX,
+    UI_DEFAULTS, H3_LATENT_UPSCALE_STANDARD, H3_REGENERATE_MODELS, LIGHTX2V_8STEP_TURBO,
+    SAME_REFINEMENT_LORA, REFINEMENT_LORA_SETTINGS, PIKA_FLEX,
 )
 from h3_app.errors import H3Error
 from h3_app.contracts import GENERATION_FIELDS, GENERATION_COMPONENTS
@@ -17,7 +17,7 @@ from h3_app.policy import (
 _SOURCE_FIELDS = {"first_image", "last_image", "duration", "width", "height",
                   "result_format", "image_frames", "image_vae", "batch_count", "postprocess",
                   "upscale_resolution", "seedvr2_model", "ltx25_model",
-                  "latent_upscale"}
+                  "latent_upscale", "face_refine", "face_refine_strength"}
 H3_REFINEMENT_FIELDS = tuple(name for name in GENERATION_FIELDS
     if name not in _SOURCE_FIELDS and (name == "ref_image_size" or not name.startswith(("ref_image_", "ref_video_", "ref_audio_", "fl2va_audio_"))))
 H3_REFINEMENT_INPUTS = tuple(dict(zip(GENERATION_FIELDS, GENERATION_COMPONENTS))[name]
@@ -38,6 +38,21 @@ def refinement_settings(values):
                     "cache_mode", "use_trt_vae", "use_int8_vae", "use_lynnreal_vae", "use_sol_vae",
                     "video_encoder", "lightvae_decoder", "semantic_bridge", "semantic_bridge_alpha")}}
     return settings
+
+
+# The face pass has one tested recipe, whatever produced the clip. TensorRT stays off
+# because its decoder engines are built for fixed sizes and the crop canvas varies.
+FACE_REFINE_STEPS = 8
+_FACE_REFINE_OVERRIDES = {
+    "generation_mode": "Turbo", "turbo_variant": LIGHTX2V_8STEP_TURBO, "steps": FACE_REFINE_STEPS,
+    "scheduler": "simple", "latent_upscale_refine_lora": SAME_REFINEMENT_LORA,
+    "latent_upscale_method": H3_LATENT_UPSCALE_STANDARD,
+    "latent_upscale_refine_steps": FACE_REFINE_STEPS - 1, "use_trt_vae": False,
+}
+
+
+def resolve_face_refinement(values, models):
+    return resolve_refinement({**values, **_FACE_REFINE_OVERRIDES}, models)
 
 
 def resolve_refinement(values, models):

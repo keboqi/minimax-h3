@@ -119,6 +119,7 @@ from h3_app.model_types import ModelConfig, h3_text_encoder_settings, model_file
 from h3_app import model_service
 import h3_app.workflows.ltx as ltx_workflow
 import h3_app.workflows.h3 as h3_workflow
+from h3_app.workflows.face_refine import build_h3_face_refine_graph
 import h3_app.workflows.upscale as upscale_workflow
 from h3_app.execution import ExecutionRunner, PromptId, Submission
 import h3_app.staging as staging
@@ -715,6 +716,7 @@ def _generation_services() -> generation_services.GenerationServices:
             build_ref2va_graph=build_ref2va_graph,
             build_remake_graph=build_remake_graph,
             build_upscale_graph=build_upscale_graph,
+            build_face_refine_graph=build_h3_face_refine_graph,
         ),
         media=generation_services.MediaServices(
             postprocess_video=postprocess_video,
@@ -850,6 +852,8 @@ def generate(
     use_sol_vae: bool = False,
     auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     image_edit_size: str = "Match first image size",
+    face_refine: bool = False,
+    face_refine_strength: float = 0.4,
     progress=gr.Progress(track_tqdm=False),
 ):
     values = dict(locals())

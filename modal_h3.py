@@ -118,6 +118,8 @@ from h3_sources import (  # noqa: E402
     VEDA_REPO,
     SOL_REF,
     SOL_REPO,
+    FACE_REFINE_REF,
+    FACE_REFINE_REPO,
     SPECTRUM_REF,
     SPECTRUM_REPO,
     SPECTRUM_QWEN_REF,
@@ -149,6 +151,7 @@ from h3_requirements import (  # noqa: E402
     COMFY_REF,
     GRADIO_VERSION,
     PEDALBOARD_VERSION,
+    ULTRALYTICS_VERSION,
     HUGGINGFACE_HUB_REQUIREMENT,
     DIFFUSERS_REQUIREMENT,
     INSTALL_CONSTRAINTS,
@@ -295,6 +298,10 @@ def build(revision: str) -> None:
     veda_dir = Path(COMFY) / "custom_nodes" / "Veda-on-ComfyUI"
     _clone(VEDA_REPO, veda_dir, ref=VEDA_REF)
     _print_git_revision(veda_dir)
+
+    face_refine_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-H3-FaceRefine"
+    _clone(FACE_REFINE_REPO, face_refine_dir, ref=FACE_REFINE_REF)
+    _print_git_revision(face_refine_dir)
 
     spectrum_dir = (
         Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
@@ -455,6 +462,7 @@ def build(revision: str) -> None:
         "uvicorn>=0.30",
         f"wsproto=={WSPROTO_VERSION}",
         f"pedalboard=={PEDALBOARD_VERSION}",
+        f"ultralytics=={ULTRALYTICS_VERSION}",
         "Pillow>=10",
         *VIDEO_DOWNLOAD_REQUIREMENTS,
         f"numpy=={NUMPY_VERSION}",

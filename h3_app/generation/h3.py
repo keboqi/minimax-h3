@@ -162,6 +162,10 @@ def generate(
             cache_mode=prepared.effective_cache_mode,
             stage_model_offload=prepared.effective_stage_offload,
             postprocess=request.finishing.postprocess,
+            face_refine=request.finishing.face_refine,
+            face_refine_strength=(
+                request.finishing.face_refine_strength if request.finishing.face_refine else None
+            ),
             latent_upscale=request.finishing.latent_upscale,
             latent_upscale_refine_steps=request.finishing.latent_upscale_refine_steps,
             latent_upscale_refine_lora=request.finishing.latent_upscale_refine_lora,
@@ -364,7 +368,8 @@ def generate(
         if storyboard_outputs is not None:
             storyboard_outputs.update(_storyboard_latents(runtime, history))
         job = CURRENT_JOB.get()
-        if job is not None and request.finishing.postprocess != "None":
+        finishing_needed = request.finishing.postprocess != "None" or request.finishing.face_refine
+        if job is not None and finishing_needed:
             # Retain only process-local policy objects, never model weights.
             # The callback starts directly at finishing with the same seed.
             job.recoverable_sources[job.variant] = str(source)

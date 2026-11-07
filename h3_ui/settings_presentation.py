@@ -19,6 +19,8 @@ LABELS = {
     "scheduler": "Scheduler",
     "latent_upscale_refine_steps": "Refinement steps",
     "latent_upscale_refine_lora": "Refinement LoRA",
+    "face_refine": "Face refine",
+    "face_refine_strength": "Face refine strength",
     "auto_megapixels": "Start-frame cap",
     "image_edit_size": "Image edit size",
     "sol_tau": "Sol tau",
@@ -50,6 +52,8 @@ FINE_TUNE_TABS = {
     "encoder_small_input": "Memory & decoding",
     "latent_upscale_refine_steps": "Upscale & finish",
     "latent_upscale_refine_lora": "Upscale & finish",
+    "face_refine": "Upscale & finish",
+    "face_refine_strength": "Upscale & finish",
 }
 
 
@@ -141,6 +145,8 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         if finishing.latent_upscale
         else "Native refinement off"
     )
+    if finishing.face_refine:
+        enhancement += f" · Face refine {finishing.face_refine_strength:g}"
     if finishing.postprocess != "None":
         enhancement += f" · {finishing.postprocess}"
     output_details = detail("Result", f"{fmt} · {length}") + detail("Seed policy", seed)

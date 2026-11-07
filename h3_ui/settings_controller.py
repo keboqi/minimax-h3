@@ -47,6 +47,8 @@ SETTING_NAMES = tuple(
             "latent_upscale_method",
             "ltx25_model",
             "generation_postprocess",
+            "face_refine",
+            "face_refine_strength",
             "generation_seedvr2_model",
             "generation_force_offload",
             "generation_upscale_resolution",
@@ -350,7 +352,7 @@ class SettingsController:
                 props["visible"] = fmt == "Video"
             if name == "latent_upscale":
                 props["interactive"] = fmt == "Video"
-            if name == "generation_postprocess":
+            if name in {"generation_postprocess", "face_refine"}:
                 props["interactive"] = fmt == "Video"
             presentation[name] = {
                 key: value for key, value in props.items() if key != "value"

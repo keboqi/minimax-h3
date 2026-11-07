@@ -252,6 +252,7 @@ class WorkflowsServices:
     build_ref2va_graph: BuildRef2VaGraph
     build_remake_graph: Callable[..., dict[str, Any]]
     build_upscale_graph: BuildUpscaleGraph
+    build_face_refine_graph: Callable[..., dict[str, Any]]
 
 
 @dataclass(frozen=True)
