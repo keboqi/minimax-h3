@@ -1008,6 +1008,10 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-input-files { min-height: 48px; }
 .h3-input-thumbnails, .h3-input-thumbnails .grid-wrap, .h3-input-thumbnails .grid-container { height: auto !important; min-height: 0 !important; max-height: none !important; }
 .h3-input-thumbnails .grid-wrap { padding-top: 28px; }
+/* Each caption is the name a prompt uses, so keep it whole on a small tile. */
+.h3-tagged-thumbnails .thumbnail-item { position: relative; }
+.h3-tagged-thumbnails .thumbnail-item::after { content: "×"; position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0, 0, 0, .65); color: #fff; font-size: 16px; line-height: 22px; text-align: center; }
+.h3-input-thumbnails .caption-label { max-width: calc(100% - 8px); overflow: visible; white-space: normal; overflow-wrap: anywhere; text-align: center; }
 /* Storyboard: the page runs in this frame. */
 .h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {

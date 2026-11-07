@@ -132,12 +132,51 @@ def run():
                 expect(page.get_by_label("Generation progress", exact=True).locator("visible=true")).to_have_value(
                     "Fibo 2.0 · Fixture completed", timeout=20000)
                 assert captures[-1][0] == "fibo2" and len(captures[-1][1]["reference_images"]) == 1
+                captions = page.locator(".h3-input-thumbnails .caption-label").locator("visible=true")
+                expect(captions).to_have_text(["<image_1>"])
+                choose_engine(page, "Image", "MiniMax H3")
+                expect(captions).to_have_text(["<Picture 1>"])
+                # A click adds the name at the cursor and keeps both the image and the draft.
+                thumbnail = page.locator(".h3-tagged-thumbnails .thumbnail-item").locator("visible=true")
+                edit_prompt.fill("Make like the sky")
+                edit_prompt.evaluate("area => area.setSelectionRange(5, 5)")
+                thumbnail.click()
+                expect(edit_prompt).to_have_value("Make <Picture 1> like the sky")
+                expect(thumbnail).to_have_count(1)
+                edit_prompt.fill("A paper bird")
+                # FLUX 3's name belongs in Layout boxes, whose settings open for it.
+                choose_engine(page, "Image", "FLUX 3 Image Klein")
+                expect(captions).to_have_text(["<ref_image_0>"])
+                thumbnail.click()
+                expect(page.locator("#h3-flux3-layout textarea")).to_have_value("<ref_image_0> ")
+                expect(edit_prompt).to_have_value("A paper bird")
+                page.locator("#h3-flux3-layout textarea").fill("")
+                page.get_by_text("Model settings", exact=True).click()
                 choose_engine(page, "Image", "MiniMax H3")
                 page.get_by_role("button", name="Edit image", exact=True).click()
                 expect(page.get_by_label("Generation progress", exact=True).locator("visible=true")).to_have_value(
                     "MiniMax H3 · Fixture completed", timeout=20000)
                 assert captures[-1][0] == "h3" and captures[-1][1]["ref_image_1"]
+                # A preset fills the size and takes priority over the first image's size.
+                edit_size = page.get_by_label("Match first image size", exact=True).locator("visible=true")
+                expect(edit_size).to_be_checked()
+                page.get_by_label("8M resolution preset", exact=True).locator("visible=true").click()
+                page.get_by_role("option", name="8M · 16:9 · 3872×2176").click()
+                expect(page.get_by_label("Use width and height above", exact=True).locator("visible=true")).to_be_checked()
+                edits = len(captures)
+                page.get_by_role("button", name="Edit image", exact=True).click()
+                deadline = time.monotonic() + 20
+                while len(captures) == edits and time.monotonic() < deadline:
+                    page.wait_for_timeout(100)
+                assert (captures[-1][1]["width"], captures[-1][1]["height"]) == (3872, 2176), captures[-1][1]
+                page.wait_for_timeout(1500)
+                expect(page.get_by_label("Generation progress", exact=True).locator("visible=true")).to_have_value(
+                    "MiniMax H3 · Fixture completed", timeout=20000)
                 page.screenshot(path=str(ARTIFACTS / "desktop.png"), full_page=True)
+                # The × is what removes an image.
+                thumbnail.scroll_into_view_if_needed()
+                thumbnail.click(position={"x": thumbnail.bounding_box()["width"] - 14, "y": 14})
+                expect(thumbnail).to_have_count(0, timeout=10000)
                 page.get_by_text("Model settings", exact=True).click()
                 page.get_by_role("button", name="Open Video → MiniMax H3 settings").click()
                 expect(page.locator(".h3-task-picker").get_by_label("Video", exact=True)).to_be_checked()

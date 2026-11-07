@@ -20,6 +20,7 @@ from h3_ui.engines import FEATURES
 from h3_ui.engines.controls import settings_components
 from h3_ui.drama3.view import DRAMA3_CAST_JS, DRAMA3_SCRIPT_HIGHLIGHT_JS, build_drama3_view
 from h3_ui import audio_probe_cache
+from h3_ui.image_library import REFERENCE_TAG_JS
 from h3_ui.result_views import load_result_view_scripts
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled or
@@ -398,6 +399,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                   show_progress="hidden", api_name=False)
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
         demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
+        demo.load(None, js=REFERENCE_TAG_JS, api_name=False)
         load_result_view_scripts(demo)
         demo.load(None, js=DRAMA3_SCRIPT_HIGHLIGHT_JS, api_name=False)
         demo.load(None, js=DRAMA3_CAST_JS, api_name=False)

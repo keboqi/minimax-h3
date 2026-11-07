@@ -2,10 +2,12 @@
 
 from html import escape
 from math import isfinite
+from types import SimpleNamespace
 import gradio as gr
 from h3_app.capabilities import engines_for_task
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
-from .engines.controls import QUIET
+from .engines.controls import QUIET, bind_resolution_presets
 from .image_controller import (
     IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
 )
@@ -55,8 +57,14 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     state_inputs = [app_views.engine, mode, prompt, refs, engine_views["qwen"].turbo_variant,
                     engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs]
 
+    # As in the other engines, a chosen preset takes priority over the first image's size.
+    bind_resolution_presets(
+        SimpleNamespace(width=view.h3_width, height=view.h3_height, resolution_small=view.h3_resolution_small,
+                        resolution_large=view.h3_resolution_large),
+        extra_outputs=(view.h3_edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
+
     edit_controls = [engine_views[engine].edit_size for engine in ("qwen", "flux3", "fibo2")]
-    edit_controls.extend([engine_views["qwen"].batch_edit_inputs, engine_views["qwen"].reference_resolution])
+    edit_controls.extend([view.h3_edit_size, engine_views["qwen"].batch_edit_inputs, engine_views["qwen"].reference_resolution])
     cache_controls = [engine_views["qwen"].cache_device, engine_views["qwen"].cache_dtype]
     def edit_actions(engine):
         if engine not in IMAGE_MODELS:
@@ -100,8 +108,11 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             note += " First image is the target; use `<image1>`, `<image2>`, … for multiple references."
         if engine == "fibo2":
             note += " Plain text or VGL JSON supported; refer to images as `<image_1>`, `<image_2>`, …"
+        if editing and engine == "h3":
+            note += " Refer to images as `<Picture 1>`, `<Picture 2>`, …"
         if editing and engine == "flux3":
-            note += " Layout descriptions can refer to `<ref_image_0>`, `<ref_image_1>`, …"
+            note += (" Layout descriptions can refer to `<ref_image_0>`, `<ref_image_1>`, …; "
+                     "clicking an image adds its name to Layout boxes.")
         if not editing and paths:
             note += f" {len(paths)} saved reference(s) are inactive in Generate mode."
         ready = issue or f"Ready to {'edit' if editing else 'generate'} with {labels[engine]}."

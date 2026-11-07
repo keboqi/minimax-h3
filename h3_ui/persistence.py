@@ -37,7 +37,7 @@ EXTRA_FIELDS = {
                "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing", "writer_workflow", "max_batch_lines", "strict_source"),
     "workspace": ("task", "engine"),
-    "image": ("mode", "h3_width", "h3_height", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
+    "image": ("mode", "h3_width", "h3_height", "h3_edit_size", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
     "qwen_image21": (
         "prompt_enhancer",
         "model",

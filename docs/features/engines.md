@@ -188,6 +188,16 @@ OpenAI-compatible model** follows OpenMOSS's
 the selected LLM returns a caption or a pixel Layout draft for the current width and height,
 and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
 
+## Reference names
+
+In the Image workspace, each reference thumbnail shows the name the selected
+model uses for it, and renumbers when images are removed or moved: `<Picture 1>`
+for MiniMax H3, `<image1>` for Qwen Image 2.1, `<image_1>` for Fibo 2.0, and
+`<ref_image_0>` for FLUX 3 layout descriptions. Qwen shows names only with two
+or more inputs edited together, because it refers to a single input naturally.
+Click a thumbnail to add its name at the prompt's cursor (FLUX 3 names go to
+Layout boxes); click its × to remove the image, or press Delete while it has focus.
+
 ## Fibo 2.0
 
 **Fibo 2.0** offers **Dev** for text-to-image and editing (30 steps, CFG 5 by default),

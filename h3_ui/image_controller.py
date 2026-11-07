@@ -1,9 +1,11 @@
 """Image draft policies and named adapters to existing generation handlers."""
 
+from h3_app.catalog import H3_EDIT_SIZE_CAP, H3_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MANUAL
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from h3_app.errors import H3Error
 from h3_app.generation.requests import H3Request
 from h3_models import qwen_image21_reference_limit
+from .h3.layout import start_frame_generation_resolution
 
 IMAGE_MODELS = ("qwen", "h3", "flux3", "moss_image", "fibo2")
 
@@ -17,6 +19,17 @@ def reference_limit(engine, variant="Off"):
     if engine == "qwen":
         return qwen_image21_reference_limit(variant)
     return {"h3": 8, "flux3": 10, "moss_image": 0, "fibo2": 4}[engine]
+
+
+def reference_tag(engine, index, count, separate=False):
+    """How a prompt names the reference at a 1-based position, or None where it has no name.
+
+    Qwen refers to a lone input naturally, and separate editing gives each run one input.
+    """
+    if engine == "qwen":
+        return f"<image{index}>" if count > 1 and not separate else None
+    return {"h3": f"<Picture {index}>", "flux3": f"<ref_image_{index - 1}>",
+            "fibo2": f"<image_{index}>"}.get(engine)
 
 
 def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False):
@@ -38,6 +51,16 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
         if not (engine == "qwen" and separate) and len(references) > limit:
             return f"This model supports up to {limit} references per edit. Remove inputs or choose another model."
     return ""
+
+
+def h3_image_size(edit_size, references, width, height):
+    """An edit's output size: the sliders, or the first reference's ratio at its size or toward 8 MP."""
+    if not references or edit_size == QWEN_EDIT_SIZE_MANUAL:
+        return width, height
+    return start_frame_generation_resolution(
+        references[:1], alignment=32, auto_megapixels="8 MP",
+        edit_size=H3_EDIT_SIZE_MATCH if edit_size == H3_EDIT_SIZE_MATCH else H3_EDIT_SIZE_CAP,
+    )
 
 
 def h3_image_values(settings, prompt, references, width, height, seed):
@@ -110,7 +133,8 @@ class ImageGenerationController:
             and not field.startswith(("ref_image_", "ref_video_", "ref_audio_", "fl2va_audio_"))
         }
         self.fields.update({f"h3__{name}": component for name, component in self.h3_fields.items()})
-        self.fields.update(image__width=view.h3_width, image__height=view.h3_height, image__seed=view.h3_seed)
+        self.fields.update(image__width=view.h3_width, image__height=view.h3_height, image__seed=view.h3_seed,
+                           image__edit_size=view.h3_edit_size)
 
     def generate(self, engine, mode, prompt, references, captured):
         options = {name: captured[f"{engine}__{name}"] for name, _ in GENERATION_OPTIONS.get(engine, ())}
@@ -124,8 +148,9 @@ class ImageGenerationController:
             from h3_app.generation.ph3_image import generate_ph3_image
 
             settings = {name: captured[f"h3__{name}"] for name in self.h3_fields}
-            values = h3_image_values(settings, prompt, active_references, captured["image__width"],
-                                     captured["image__height"], captured["image__seed"])
+            width, height = h3_image_size(captured["image__edit_size"], active_references,
+                                          captured["image__width"], captured["image__height"])
+            values = h3_image_values(settings, prompt, active_references, width, height, captured["image__seed"])
             return generate_ph3_image(H3Request.from_values(values), self.deps.generation_services(),
                                       self.deps.runtime_config())
         options["prompt"] = prompt

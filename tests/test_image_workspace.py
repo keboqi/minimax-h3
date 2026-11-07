@@ -1,22 +1,30 @@
 """Shared image draft validation and H3 settings isolation."""
 
+import tempfile
 import unittest
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import gradio as gr
+from PIL import Image
 
-from h3_app.catalog import UI_DEFAULTS
+from h3_app.catalog import (
+    H3_EDIT_SIZE_MATCH, H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_EDIT_SIZE_MAX,
+    QWEN_EDIT_SIZE_MANUAL, UI_DEFAULTS,
+)
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from h3_app.errors import H3Error
 from h3_app.generation.requests import H3Request
 from h3_models import QWEN_IMAGE21_OFFICIAL_TURBO, QWEN_IMAGE21_TURBO_MODES
 from h3_ui.image_controller import (
     GENERATION_METHODS, GENERATION_OPTIONS, ImageGenerationController,
-    draft_issue, h3_image_values, image_mode, reference_limit, suggest_prompt,
+    draft_issue, h3_image_size, h3_image_values, image_mode, reference_limit, reference_tag, suggest_prompt,
 )
+from h3_ui.engines.controls import resolution_preset_values
 from h3_ui.image_bindings import move_reference
+from h3_ui.image_library import _thumbnail_items
 from h3_ui.persistence import restore_preferences
 
 
@@ -110,6 +118,28 @@ class ImageWorkspaceTests(unittest.TestCase):
         self.assertEqual(restored["image.prompt_backend"], "OpenAI-compatible")
 
 
+class ReferenceTagTests(unittest.TestCase):
+    def test_each_model_names_a_reference_its_own_way(self):
+        for engine, tags in (("h3", ("<Picture 1>", "<Picture 2>")), ("qwen", ("<image1>", "<image2>")),
+                             ("fibo2", ("<image_1>", "<image_2>")), ("flux3", ("<ref_image_0>", "<ref_image_1>"))):
+            with self.subTest(engine=engine):
+                self.assertEqual(tuple(reference_tag(engine, i, 2) for i in (1, 2)), tags)
+
+    def test_a_tag_shows_only_where_a_prompt_can_use_it(self):
+        self.assertIsNone(reference_tag("qwen", 1, 1))
+        self.assertIsNone(reference_tag("qwen", 1, 3, True))
+        self.assertEqual(reference_tag("h3", 1, 1), "<Picture 1>")
+        self.assertIsNone(reference_tag("moss_image", 1, 2))
+        self.assertIsNone(reference_tag("ltx", 1, 2))
+
+    def test_thumbnails_keep_order_and_follow_the_model(self):
+        tag = lambda index, count, model, separate: reference_tag(model, index, count, separate)
+        self.assertEqual(_thumbnail_items(["a", "b"], tag, "h3", False),
+                         [("a", "<Picture 1>"), ("b", "<Picture 2>")])
+        self.assertEqual(_thumbnail_items(None, tag, "h3", False), [])
+        self.assertEqual(_thumbnail_items(["a"]), ["a"])
+
+
 class ImageGenerationControllerTests(unittest.TestCase):
     def setUp(self):
         self.views = {
@@ -120,7 +150,7 @@ class ImageGenerationControllerTests(unittest.TestCase):
                          for engine, method in GENERATION_METHODS.items()}
         h3 = SimpleNamespace(**{component: UI_DEFAULTS.get(field)
                                for field, component in zip(GENERATION_FIELDS, GENERATION_COMPONENTS, strict=True)})
-        image = SimpleNamespace(h3_width=1024, h3_height=1024, h3_seed=27)
+        image = SimpleNamespace(h3_width=1024, h3_height=1024, h3_seed=27, h3_edit_size=QWEN_EDIT_SIZE_MANUAL)
         self.controller = ImageGenerationController(self.views, self.handlers, h3, image, Mock())
         self.values = {**self.controller.fields, "qwen__turbo_variant": "Off", "qwen__batch_edit_inputs": False,
                        "fibo2__model_choice": "Dev"}
@@ -138,6 +168,43 @@ class ImageGenerationControllerTests(unittest.TestCase):
         kwargs = self.handlers["flux3"].generate_flux3.call_args.kwargs
         self.assertEqual(kwargs["width"], "flux3:width")
         self.assertEqual(kwargs["reference_images"], ["a", "b"])
+
+    def test_h3_edit_size_follows_the_first_reference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = Path(directory, "first.png"), Path(directory, "second.png")
+            Image.new("RGB", (1920, 1080)).save(first)
+            Image.new("RGB", (100, 900)).save(second)
+            references, sliders = [str(first), str(second)], (1024, 1024)
+            self.assertEqual(h3_image_size(H3_EDIT_SIZE_MATCH, references, *sliders), (1920, 1088))
+            self.assertEqual(h3_image_size(QWEN_EDIT_SIZE_MANUAL, references, *sliders), sliders)
+            width, height = h3_image_size(H3_IMAGE_EDIT_SIZE_MAX, references, *sliders)
+            self.assertEqual((width % 32, height % 32), (0, 0))
+            self.assertAlmostEqual(width / height, 16 / 9, delta=0.02)
+            self.assertAlmostEqual(width * height / 1_000_000, 8, delta=0.5)
+        # Generation has no first image, so every choice uses the sliders.
+        self.assertEqual(h3_image_size(H3_EDIT_SIZE_MATCH, [], *sliders), sliders)
+
+    def test_h3_edit_dispatch_uses_the_resolved_size(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("h3_app.generation.ph3_image.generate_ph3_image", return_value=iter(())) as generate:
+            first = Path(directory, "first.png")
+            Image.new("RGB", (1920, 1080)).save(first)
+            self.controller.generate("h3", "Image edit", "edit", [str(first)], {
+                **self.values, "image__width": 1024, "image__height": 1024, "image__seed": 27,
+                "image__edit_size": H3_EDIT_SIZE_MATCH,
+            })
+        request = generate.call_args.args[0]
+        self.assertEqual((request.output.width, request.output.height), (1920, 1088))
+
+    def test_h3_resolution_presets_stay_on_the_grid_and_near_their_size(self):
+        for presets, megapixels in ((H3_IMAGE_4M_RESOLUTION_PRESETS, 4), (H3_IMAGE_8M_RESOLUTION_PRESETS, 8)):
+            for name in presets:
+                with self.subTest(name=name):
+                    width, height = resolution_preset_values(name)
+                    ratio_width, ratio_height = map(int, name.split(" · ")[1].split(":"))
+                    self.assertEqual((width % 32, height % 32), (0, 0))
+                    self.assertAlmostEqual(width / height, ratio_width / ratio_height, delta=0.01)
+                    self.assertAlmostEqual(width * height / 1_000_000, megapixels, delta=0.5)
 
     def test_moss_generation_never_receives_an_edit_parameter(self):
         self.controller.generate("moss_image", "Text to image", "bird", ["inactive"], self.values)

@@ -23,27 +23,97 @@ def _remove_thumbnail(paths, event: gr.SelectData):
     return [path for index, path in enumerate(paths or []) if index != event.index]
 
 
-def _bind_thumbnails(files):
+# A named thumbnail adds its name at the prompt's cursor. Only its × (or Delete on a focused
+# thumbnail) reaches Gradio's select event, which removes the image. FLUX 3's names belong in
+# layout descriptions, so they go to that box, opening its settings if needed.
+REFERENCE_TAG_JS = r"""
+() => {
+  if (window.h3ReferenceTags) return;
+  window.h3ReferenceTags = true;
+  const item = (node) => node.closest?.(".h3-tagged-thumbnails .thumbnail-item");
+  const shown = (selector) => {
+    const area = document.querySelector(selector);
+    return area?.offsetParent ? area : null;
+  };
+  const insert = (area, tag) => {
+    const start = area.selectionStart, end = area.selectionEnd;
+    const before = area.value.slice(0, start), after = area.value.slice(end);
+    const text = (before && !/\s$/.test(before) ? " " : "") + tag + (/^\s/.test(after) ? "" : " ");
+    area.focus();
+    area.setSelectionRange(start, end);
+    // insertText keeps Ctrl+Z working and fires the input event Gradio reads.
+    if (!document.execCommand("insertText", false, text)) {
+      area.setRangeText(text, start, end, "end");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+  const addToLayout = (tag, tries = 40) => {
+    const area = shown("#h3-flux3-layout textarea");
+    if (area) return insert(area, tag);
+    if (tries === 40) {
+      [...document.querySelectorAll(".label-wrap")]
+        .find((header) => header.offsetParent && header.textContent.includes("Model settings"))?.click();
+    }
+    if (tries) setTimeout(() => addToLayout(tag, tries - 1), 25);
+  };
+  let removing = false;
+  document.addEventListener("click", (event) => {
+    const thumbnail = item(event.target);
+    if (!thumbnail || removing) return;
+    const box = thumbnail.getBoundingClientRect();
+    if (event.detail && event.clientX > box.right - 28 && event.clientY < box.top + 28) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const tag = thumbnail.querySelector(".caption-label")?.textContent.trim();
+    if (!tag) return;
+    if (tag.startsWith("<ref_image_")) return addToLayout(tag);
+    const prompt = shown("#h3-image-prompt textarea");
+    if (prompt) insert(prompt, tag);
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    const thumbnail = item(event.target);
+    if (!thumbnail || event.key !== "Delete") return;
+    removing = true;
+    thumbnail.click();
+    removing = false;
+  });
+}
+"""
+
+
+def _thumbnail_items(paths, tag=None, *tag_values):
+    paths = list(paths or [])
+    if tag is None:
+        return paths
+    return [(path, tag(index, len(paths), *tag_values)) for index, path in enumerate(paths, 1)]
+
+
+def _bind_thumbnails(files, tags=None):
     """Show a multi-file input's images as thumbnails instead of its filenames; a click removes one.
 
     Gradio's Gallery reports no deletions, so the file input stays the value and the way to add.
+    ``tags`` is (components, tag): tag(index, count, *values) captions each image, updating as they change.
     """
-    gallery = gr.Gallery(label="Click an image to remove it", interactive=False, allow_preview=False, columns=4,
+    components, tag = tags or ((), None)
+    gallery = gr.Gallery(label="Click an image to add its name to the prompt; × removes it" if tag else
+                         "Click an image to remove it", interactive=False, allow_preview=False, columns=4,
                          fit_columns=False, height="auto", object_fit="cover", buttons=[], visible=False,
-                         elem_classes=["h3-input-thumbnails"])
-    files.change(lambda paths: gr.update(value=list(paths or []), visible=bool(paths)), inputs=files, outputs=gallery,
-                 queue=False, api_name=False, show_progress="hidden")
+                         elem_classes=["h3-input-thumbnails", *(["h3-tagged-thumbnails"] if tag else [])])
+    gr.on([control.change for control in (files, *components)],
+          lambda paths, *values: gr.update(value=_thumbnail_items(paths, tag, *values), visible=bool(paths)),
+          inputs=[files, *components], outputs=gallery, queue=False, api_name=False, show_progress="hidden",
+          trigger_mode="always_last")
     gallery.select(_remove_thumbnail, inputs=files, outputs=files, queue=False, api_name=False, show_progress="hidden")
 
 
-def _build_input(component_type, *, thumbnails=False, **kwargs):
+def _build_input(component_type, *, thumbnails=False, thumbnail_tags=None, **kwargs):
     visible = kwargs.get("visible", True)
     with gr.Column(visible=visible, elem_classes=["h3-image-library-input"]) as container:
         if thumbnails:
             kwargs["elem_classes"] = ["h3-input-files"]
         component = component_type(**kwargs)
         if thumbnails:
-            _bind_thumbnails(component)
+            _bind_thumbnails(component, thumbnail_tags)
         with gr.Accordion("Choose from media library", open=False) as panel:
             query = gr.Textbox(
                 value="", label="Search library images", placeholder="Filename, tags or settings"
@@ -68,8 +138,8 @@ def build_image_input(**kwargs):
     return _build_input(gr.Image, **kwargs)
 
 
-def build_image_file_input(*, thumbnails=False, **kwargs):
-    return _build_input(gr.File, thumbnails=thumbnails, **kwargs)
+def build_image_file_input(*, thumbnails=False, thumbnail_tags=None, **kwargs):
+    return _build_input(gr.File, thumbnails=thumbnails, thumbnail_tags=thumbnail_tags, **kwargs)
 
 
 def select_library_image(paths, current, event, *, validate_path, multiple=False):

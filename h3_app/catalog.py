@@ -779,6 +779,17 @@ DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "1 MP"
 H3_EDIT_SIZE_MATCH = "Match first image size"
 H3_EDIT_SIZE_CAP = "Scale to the start-frame cap"
 H3_EDIT_SIZE_MAX_PIXELS = AUTO_RESOLUTION_MEGAPIXEL_PRESETS["8 MP"]
+# The Image workspace's H3 edit choices; the manual choice is QWEN_EDIT_SIZE_MANUAL.
+H3_IMAGE_EDIT_SIZE_MAX = "Max resolution (up to 8 MP)"
+# Pruna recommends 8 MP for generation (2912×2912 square) and 4 or 8 MP for edits.
+H3_IMAGE_4M_RESOLUTION_PRESETS = (
+    "4M · 1:1 · 2048×2048", "4M · 4:3 · 2304×1728", "4M · 3:2 · 2496×1664", "4M · 16:9 · 2720×1536",
+    "4M · 3:4 · 1728×2304", "4M · 2:3 · 1664×2496", "4M · 9:16 · 1536×2720",
+)
+H3_IMAGE_8M_RESOLUTION_PRESETS = (
+    "8M · 1:1 · 2912×2912", "8M · 4:3 · 3360×2528", "8M · 3:2 · 3552×2368", "8M · 16:9 · 3872×2176",
+    "8M · 3:4 · 2528×3360", "8M · 2:3 · 2368×3552", "8M · 9:16 · 2176×3872",
+)
 
 
 # Set on a job after a canvas transform: its derived frame is already the size.

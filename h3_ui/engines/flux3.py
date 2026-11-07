@@ -141,7 +141,7 @@ def build_flux3_view(root):
                         inputs=model, outputs=[steps, cfg], queue=False, api_name=False)
                     seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 with gr.Accordion("Layout boxes (optional)", open=False):
-                    layout = gr.Textbox(label="Layout boxes", lines=4,
+                    layout = gr.Textbox(label="Layout boxes", lines=4, elem_id="h3-flux3-layout",
                         placeholder='[{"bbox": [100, 100, 700, 450], "desc": "a red bicycle"}]',
                         info="JSON list. bbox is [top, left, bottom, right] on a 0–1000 grid. "
                              "Boxes guide placement; they are not pixel masks. Use type text and text for lettering. "
