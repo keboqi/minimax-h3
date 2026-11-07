@@ -197,6 +197,48 @@ class RemakePageTests(unittest.TestCase):
         self.assertEqual(loaded["windows"][1]["pins"], [12])
         self.assertTrue(Path(loaded["windows"][1]["pictures"][0]).is_file())
 
+    def test_autosave_updates_the_open_project_and_never_creates_one(self):
+        source = self.source()
+        body = self.editor(source)
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        projects = self.ok(self.client.get(f"{API}/projects"))["projects"]
+        moved = self.selection(source, end=6)
+        self.ok(self.client.post(f"{API}/save", json={
+            **body, "project": saved["key"], "selection": moved, "prompt": "still the open project"}))
+        rows = self.ok(self.client.get(f"{API}/projects"))["projects"]
+        self.assertEqual([row["key"] for row in rows], [row["key"] for row in projects])
+        loaded = self.ok(self.client.post(f"{API}/projects/{saved['key']}/load"))
+        self.assertEqual(loaded["windows"][0]["prompt"], "still the open project")
+
+    def test_autosave_does_not_recreate_a_deleted_project(self):
+        source = self.source()
+        body = self.editor(source)
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        self.ok(self.client.delete(f"{API}/projects/{saved['key']}"))
+        response = self.client.post(f"{API}/save", json={**body, "project": saved["key"]})
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(self.ok(self.client.get(f"{API}/projects"))["projects"], [])
+
+    def test_save_refuses_a_path_as_project_key(self):
+        source = self.source()
+        body = self.editor(source)
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        for key in (f"../{saved['key']}", "..", f"x/../{saved['key']}", 7):
+            with self.subTest(key=key):
+                response = self.client.post(f"{API}/save", json={**body, "project": key})
+                self.assertEqual(response.status_code, 400, response.text)
+
+    def test_save_refuses_a_window_outside_the_project(self):
+        source = self.source()
+        body = self.editor(source)
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        for window in (len(saved["windows"]), -1):
+            with self.subTest(window=window):
+                response = self.client.post(f"{API}/save", json={
+                    **body, "project": saved["key"], "window": window})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn("no longer part", response.text)
+
     def test_saved_short_selections_use_supported_frames_from_the_selection_start(self):
         source = self.source()
         for seconds, frames in ((6, 141), (8.7, 192), (10, 226)):

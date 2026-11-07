@@ -134,9 +134,25 @@
   let saving = Promise.resolve();
   const saveWindow = (create = false) => {
     if (!state.project && !create) return Promise.resolve();
-    const body = editor();
+    // Autosave belongs to the open project, even while a selection change is pending.
+    const body = {...editor(), project: create ? null : state.project.key};
     saving = saving.catch(() => {}).then(() => post("/save", body));
     return saving;
+  };
+  // A save can finish after the selection has moved on to another project.
+  const adoptSaved = (project) => {
+    if (!project || project.key !== state.project?.key) return false;
+    state.project = project;
+    return true;
+  };
+  // Reports a failure instead of raising it. Leaving never depended on saving, so a
+  // save that keeps failing must not trap anyone in a project.
+  const autosave = async () => {
+    try {
+      await saveWindow();
+    } catch (error) {
+      toast(`This window's latest edits weren't saved: ${error.message}`, true);
+    }
   };
   const changed = () => { queueCheck(); savePrefs(); };
 
@@ -155,8 +171,9 @@
 
   const goToWindow = safely(async (index) => {
     if (index === state.index || !state.project) return;
-    const project = await saveWindow();
-    state.project = project ?? state.project;
+    const key = state.project.key;
+    adoptSaved(await saveWindow());
+    if (state.project?.key !== key) return;
     state.index = index;
     loadEditor(openWindow());
     renderAll();
@@ -235,7 +252,7 @@
   });
 
   const openProject = safely(async (key) => {
-    await saveWindow();
+    await autosave();
     const data = await post(`/projects/${key}/load`);
     const chosen = data.selection;
     Object.assign(state, {start: chosen.start, lastStart: chosen.start, end: chosen.end, shortEdge: chosen.short_edge,
@@ -250,7 +267,7 @@
   });
 
   const closeProject = safely(async ({save = true} = {}) => {
-    if (save) await saveWindow();
+    if (save) await autosave();
     state.source = null;
     state.project = null;
     state.menu = false;
@@ -296,8 +313,7 @@
     renderTimeline();
     changed();
     saveWindow()?.then((project) => {
-      if (project) {
-        state.project = project;
+      if (adoptSaved(project)) {
         renderTimeline();
         renderAction();
       }
@@ -506,7 +522,7 @@
           ? h("div", {className: "row"},
             h("span", {className: "small muted grow"}, "Deletes its renders and copy of the source. Combined videos stay in Media."),
             button("Delete project", safely(async () => {
-              await saving;
+              await saving.catch(() => {});
               const data = await request("DELETE", `/projects/${row.key}`);
               state.boot.projects = data.projects;
               state.confirming = null;
@@ -787,7 +803,7 @@
           h("label", {className: "inline check"}, h("input", {type: "checkbox", checked: state.useCarried, onchange: (event) => {
             state.useCarried = event.target.checked;
             changed();
-            saveWindow();
+            autosave();
           }}), "Use the carried frame"),
           button("Copy to a slot", safely(async () => {
             const data = await post("/window/carried", {selection: selection(), window: state.index});
@@ -971,7 +987,7 @@
     });
     $("request").addEventListener("input", queueCheck);
     $("prompt").addEventListener("input", () => { renderPromptMeta(); queueCheck(); });
-    $("prompt").addEventListener("change", () => { saveWindow(); });
+    $("prompt").addEventListener("change", autosave);
     $("writer-backend").addEventListener("change", () => { fillWriterModels(); renderPromptMeta(); savePrefs(); });
     $("writer-model").addEventListener("change", savePrefs);
     $("edit-model").addEventListener("change", savePrefs);
@@ -995,7 +1011,7 @@
       state.suggestion = "";
       renderPromptMeta();
       queueCheck();
-      saveWindow();
+      autosave();
     });
     $("keep").addEventListener("click", () => { state.suggestion = ""; renderPromptMeta(); });
     $("undo").addEventListener("click", () => {
@@ -1003,7 +1019,7 @@
       state.previous = null;
       renderPromptMeta();
       queueCheck();
-      saveWindow();
+      autosave();
     });
     $("open-settings").addEventListener("click", () => {
       window.parent.document.getElementById(BRIDGE.settings)?.click();

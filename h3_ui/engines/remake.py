@@ -468,7 +468,9 @@ class RemakeHandlers:
         return rows
 
     def _named_project(self, owner, key):
-        project = self.runner.projects.load(owner, key) if key else None
+        # A key from a request body, unlike a route segment, could hold a path.
+        named = isinstance(key, str) and key != ".." and Path(key).name == key
+        project = self.runner.projects.load(owner, key) if named else None
         if project is None:
             raise H3Error("Pick a project first.")
         return project
@@ -512,13 +514,20 @@ class RemakeHandlers:
         return project_payload(self.runner.plan(owner, video, selection))
 
     def save_project(self, owner, selection, video, index, prompt, use_carried, pictures, pins, options):
-        """Keep preparation for any selection so Studio can reopen it."""
+        """Keep preparation for any selection so Studio can reopen it.
+
+        ``project`` in ``options`` names an open project for autosave, which only
+        ever updates it; without one, the selection's project is created if needed.
+        """
         if options.get("mode", SWAP) not in (SWAP, EDIT):
             raise H3Error("Remake type must be Swap or Edit.")
         if not video:
             raise H3Error("Add a source video first.")
         runner = self.runner
-        project = runner.plan(owner, video, selection)
+        key = options.get("project")
+        project = self._named_project(owner, key) if key else runner.plan(owner, video, selection)
+        if not 0 <= index < len(project["windows"]):
+            raise H3Error("That window is no longer part of this project.")
         project = runner.store_editor(
             project, index, prompt, use_carried, pictures, pins,
             options={"mode": options.get("mode", SWAP), "request": str(options.get("request") or ""),
