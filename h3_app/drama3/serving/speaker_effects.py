@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import numpy as np
-from scipy import signal
 
 SPEAKER_EFFECTS: tuple[str, ...] = (
     # Communication & Tech
@@ -337,6 +336,8 @@ def _try_apply_pedalboard(
 def _highpass(audio: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
     nyq = 0.5 * rate
     norm = min(max(cutoff_hz / nyq, 0.001), 0.99)
+    from scipy import signal
+
     sos = signal.butter(2, norm, btype="highpass", output="sos")
     return signal.sosfilt(sos, audio).astype(np.float32, copy=False)
 
@@ -344,6 +345,8 @@ def _highpass(audio: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
 def _lowpass(audio: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
     nyq = 0.5 * rate
     norm = min(max(cutoff_hz / nyq, 0.001), 0.99)
+    from scipy import signal
+
     sos = signal.butter(2, norm, btype="lowpass", output="sos")
     return signal.sosfilt(sos, audio).astype(np.float32, copy=False)
 
@@ -441,6 +444,8 @@ def _pitch_shift_preserve_len(audio: np.ndarray, semitones: float) -> np.ndarray
     from fractions import Fraction
 
     ratio = Fraction(2.0 ** (-semitones / 12.0)).limit_denominator(200)  # output/input length
+    from scipy import signal
+
     resampled = signal.resample_poly(np.asarray(audio, dtype=np.float32), ratio.numerator, ratio.denominator)
     return _wsola_stretch(resampled, audio.size)
 
