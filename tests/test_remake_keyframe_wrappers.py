@@ -9,13 +9,16 @@ import unittest
 
 class Model:
     def __init__(self):
-        self.model_options = {"transformer_options": {"wrappers": {"diffusion_model": {}}}}
+        # Like ModelPatcher: wrappers stay here until the sampler merges them into
+        # transformer_options, which has no "wrappers" entry while nodes run.
+        self.model_options = {"transformer_options": {}}
+        self.wrappers = {}
 
     def clone(self):
         return copy.deepcopy(self)
 
     def add_wrapper_with_key(self, kind, key, callback):
-        self.model_options["transformer_options"]["wrappers"][kind].setdefault(key, []).append(callback)
+        self.wrappers.setdefault(kind, {}).setdefault(key, []).append(callback)
 
 
 class Timestep(float):
@@ -24,7 +27,7 @@ class Timestep(float):
 
 
 def execute(model, payload, sigma, *, forecast=False):
-    wrappers = model.model_options["transformer_options"]["wrappers"]["diffusion_model"]
+    wrappers = model.wrappers["diffusion_model"]
     callbacks = [callback for group in wrappers.values() for callback in group]
 
     def native(x, timestep, context, options, *, minimax_payload, **kwargs):
@@ -85,8 +88,7 @@ class KeyframeWrapperTests(unittest.TestCase):
                         self.assertEqual(effective["cond_audio_latents"], ["audio"])
         self.assertEqual(payload["keyframes"], ["pin"])
         self.assertEqual(payload["layout"], "pinned layout")
-        self.assertEqual(list(original.model_options["transformer_options"]["wrappers"]["diffusion_model"]),
-                         ["spectrum"])
+        self.assertEqual(list(original.wrappers["diffusion_model"]), ["spectrum"])
 
     def test_no_pins_and_reapplying_the_node(self):
         original = Model()

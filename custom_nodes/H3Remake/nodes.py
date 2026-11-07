@@ -186,10 +186,10 @@ class RemakeKeyframeUntil:
         # Resolve conditioning before Spectrum (and other layout observers).
         # Otherwise they cache the keyframe layout while the native forward
         # receives fewer tokens, or forecast without running release at all.
-        wrappers = m.model_options["transformer_options"]["wrappers"]
-        wrappers[wrapper_type] = {
+        # ModelPatcher holds them in .wrappers; the sampler merges them, in this order, at run time.
+        m.wrappers[wrapper_type] = {
             key: [release],
-            **{name: callbacks for name, callbacks in wrappers[wrapper_type].items() if name != key},
+            **{name: callbacks for name, callbacks in m.wrappers[wrapper_type].items() if name != key},
         }
         return (m,)
 
