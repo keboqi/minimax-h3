@@ -58,6 +58,7 @@ class Run:
     kind: str
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     job_id: str | None = None  # The generation job, once accepted.
+    project: str | None = None  # The Remake project it renders, once it has one.
     status: str = "Waiting for the GPU…"
     # Rises each time the storyboard changed, so the page knows to read it again.
     revision: int = 0
@@ -69,7 +70,7 @@ class Run:
     def public(self, scene_id) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "status": self.status, "revision": self.revision,
                 "active": self.finished_at is None, "error": self.error, "scene_id": scene_id,
-                "result_url": self.result_url, "message": self.message}
+                "project": self.project, "result_url": self.result_url, "message": self.message}
 
 
 class Runs:
@@ -437,6 +438,9 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def delete_take(storyboard_id: str, scene_id: str, take_id: str, request: Request):
         owner = owner_of(request)
+        # A running scene may be reading this take's latent, whichever take is in use by now.
+        if runs.active(owner, storyboard_id, "generate") is not None:
+            raise H3Error("Wait for generation to finish before deleting a take.")
         handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
         return payload(owner, storyboard_id)
 

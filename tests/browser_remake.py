@@ -140,6 +140,7 @@ def main(shots=None):
                 expect(readiness).to_contain_text("Rewrite your request", timeout=30000)
                 remake.get_by_role("button", name="Undo edit").click()
                 expect(readiness).to_contain_text("Edit Picture 1", timeout=10000)
+                expect(remake.get_by_role("button", name="Undo edit")).to_have_count(0)
 
                 remake.get_by_label("Remove picture 1").click()
                 expect(readiness).to_contain_text("Extract a frame", timeout=10000)
@@ -155,6 +156,50 @@ def main(shots=None):
                 remake.get_by_role("button", name="Check alignment").click()
                 expect(remake.locator("#align-note")).to_contain_text("Can't measure this one", timeout=20000)
                 remake.get_by_role("button", name="Source", exact=True).click()
+
+                # A shaky click on a pin seeks and leaves it where it is; a real drag moves it.
+                pin_field = remake.get_by_label("Picture 1 frame")
+                pin_field.fill("20")
+                pin_field.press("Tab")
+                mark = remake.locator(".pinmark").first
+                mark.scroll_into_view_if_needed()
+                box = mark.bounding_box()
+                x, y = box["x"] + box["width"] - 3, box["y"] + box["height"] / 2
+                page.mouse.move(x, y)
+                page.mouse.down()
+                page.mouse.move(x + 2, y)
+                page.mouse.up()
+                expect(pin_field).to_have_value("20")
+                page.mouse.move(x, y)
+                page.mouse.down()
+                page.mouse.move(x + 60, y, steps=4)
+                page.mouse.up()
+                expect(pin_field).not_to_have_value("20")
+
+                # Space works the focused control instead of playing.
+                remake.locator("#back").click()
+                page.keyboard.press("Tab")
+                page.keyboard.press("Space")
+                expect(remake.locator("#play")).to_have_attribute("aria-label", "Play")
+
+                # Setting Start keeps the playhead on its source frame, so a second press changes nothing.
+                pin_field.fill("0")
+                pin_field.press("Tab")
+                remake.locator(".pinmark").first.click()
+                for _ in range(10):
+                    page.keyboard.press("ArrowRight")
+                page.keyboard.press("BracketLeft")
+                expect(remake.locator("#start-time")).to_have_value("0.42")
+                page.keyboard.press("BracketLeft")
+                page.wait_for_timeout(300)
+                expect(remake.locator("#start-time")).to_have_value("0.42")
+                expect(remake.locator("#timecode")).to_have_text("Source 00:00.4")
+                remake.locator("#start-time").fill("0")
+                remake.locator("#start-time").press("Tab")
+                expect(remake.locator("#start-time")).to_have_value("0")
+                expect(pin_field).to_have_value("")
+                pin_field.fill("0")
+                pin_field.press("Tab")
 
                 # A selection one window can hold shows no windows; a longer one does.
                 expect(remake.get_by_role("button", name="Split into windows")).to_be_hidden()
@@ -190,6 +235,24 @@ def main(shots=None):
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-window2.png"), full_page=True)
 
+                # One click can't quietly leave the open project.
+                asked = []
+                page.on("dialog", lambda dialog: (asked.append(dialog.message), dialog.dismiss()))
+                overview = remake.locator("#overview")
+                overview.scroll_into_view_if_needed()
+                start_before = remake.locator("#start-time").input_value()
+                end_before = remake.locator("#end-time").input_value()
+                box = overview.bounding_box()
+                x, y = box["x"] + box["width"] - 3, box["y"] + box["height"] / 2
+                page.mouse.move(x, y)
+                page.mouse.down()
+                page.mouse.move(x - 40, y, steps=4)
+                page.mouse.up()
+                expect(remake.locator("#start-time")).to_have_value(start_before)
+                expect(remake.locator("#end-time")).to_have_value(end_before)
+                expect(remake.locator("#summary")).to_contain_text("rendered")
+                assert asked and "leaves the open project" in asked[0], asked
+
                 # A project reopens after a reload, with nothing to upload and nothing to render again.
                 page.reload()
                 expect(picker.first).to_be_visible(timeout=60000)
@@ -223,6 +286,16 @@ def main(shots=None):
                     overflow = page.evaluate("document.documentElement.scrollWidth - innerWidth")
                     assert overflow <= 1, overflow
                     page.screenshot(path=str(Path(shots) / "remake-phone.png"), full_page=True)
+                    page.set_viewport_size({"width": 1440, "height": 1000})
+
+                # A project that can't reopen leaves the start page, not an empty one.
+                page.route("**/projects/*/load", lambda route: route.fulfill(
+                    status=400, content_type="application/json", body='{"error": "The source is gone."}'))
+                page.reload()
+                expect(picker.first).to_be_visible(timeout=60000)
+                picker.filter(has_text="Remake").click()
+                expect(remake.get_by_role("heading", name="Drop the video you want to change")).to_be_visible(
+                    timeout=30000)
                 assert not errors, errors
                 browser.close()
         finally:

@@ -232,6 +232,7 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(done["scenes"][0]["in_use"], other)
         self.assertEqual(done["scenes"][1]["state"], "outdated")
         old_take = first["takes"][0]["id"]
+        self.assertEqual(done["scenes"][0]["takes"][0]["continued_by"], [2])
         after_delete = self.client.delete(self.scene_url(board, 0, f"/takes/{old_take}")).json()
         self.assertEqual([t["id"] for t in after_delete["scenes"][0]["takes"]], [other])
 
@@ -318,6 +319,35 @@ class StoryboardPageTests(unittest.TestCase):
             [(family, job_id)] = self.interrupted
             self.assertEqual(family, "storyboard")
             self.assertEqual(JOBS.records[job_id].family, "storyboard")
+        finally:
+            release.set()
+        self.wait_for_run(board)
+
+    def test_a_take_stays_while_this_storyboard_generates(self):
+        started, release = Event(), Event()
+        finish = self.fake_take
+
+        def held(values, graph, outputs):
+            if started.is_set():
+                started.clear()
+                release.wait(10)
+            yield from finish(values, graph, outputs)
+
+        board = self.create()
+        url = f"{API}/boards/{board['id']}"
+        self.client.post(f"{url}/generate", json={"action": "scene", "scene_id": board["scenes"][0]["id"]})
+        self.wait_for_run(board)
+        take = self.client.get(url).json()["scenes"][0]["takes"][0]["id"]
+        self.handlers.services = replace(self.handlers.services, generate_take=held)
+        started.set()
+        self.client.post(f"{url}/generate", json={"action": "scene", "scene_id": board["scenes"][0]["id"]})
+        deadline = time.monotonic() + 10
+        while started.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        try:
+            response = self.client.delete(self.scene_url(board, 0, f"/takes/{take}"))
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Wait for generation", response.json()["error"])
         finally:
             release.set()
         self.wait_for_run(board)

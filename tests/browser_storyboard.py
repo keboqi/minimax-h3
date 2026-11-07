@@ -174,6 +174,8 @@ def check(context, url):
     first_take.click()
     expect(page.get_by_role("button", name="Delete take")).to_be_visible()
     page.get_by_role("button", name="Delete take").click()
+    expect(page.get_by_role("alertdialog", name="Delete take")).to_contain_text("Scene 2")
+    page.get_by_role("button", name="Delete permanently").click()
     expect(first_take).to_have_count(0)
 
     # Interrupt stops a run and hands the buttons back.

@@ -39,7 +39,7 @@
 
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
-    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null,
+    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
     includeOutdated: true, fullVideo: null, saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
   };
@@ -290,11 +290,12 @@
     const row = item.takes.map((take) => chip(
       `Take ${take.number}${take.id === item.in_use ? " · in use" : ""}`,
       shown?.id === take.id,
-      () => { state.previewTake = take.id; state.question = null; renderPreview(); renderTakes(); },
+      () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
     ));
     if (shown && shown.id !== item.in_use) {
       row.push(button("Use this take", useTake, "btn quiet"));
-      row.push(button("Delete take", () => deleteTake(shown), "btn sm danger"));
+      row.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
+        {disabled: busy, title: busy ? "Wait for generation to finish." : "Delete this take for good"}));
     }
     if (shown) {
       row.push(h("span", {className: "take-meta mono"},
@@ -309,12 +310,25 @@
         {disabled: blocked || busy, id: "generate-scene"}));
     }
     $("take-row").replaceChildren(...row);
+    const doomed = shown?.id === state.deletingTake && shown.id !== item.in_use ? shown : null;
     $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
       h("p", {}, state.question),
       state.boot.gpu && button("Switch and regenerate them", () => confirmTake(true), "btn primary"),
       button("Switch, regenerate later", () => confirmTake(false)),
       button("Cancel", () => { state.question = null; renderTakes(); }),
+    )] : doomed ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Delete take"},
+      h("p", {}, deleteQuestion(doomed)),
+      button("Delete permanently", () => deleteTake(doomed), "btn danger"),
+      button("Cancel", () => { state.deletingTake = null; renderTakes(); }),
     )] : []));
+  };
+
+  const deleteQuestion = (take) => {
+    const later = take.continued_by;
+    const scenesNote = later.length
+      ? ` Scene ${later.join(" and ")} ${later.length === 1 ? "was" : "were"} made from it, and will stay out of date until regenerated.`
+      : "";
+    return `Delete take ${take.number} for good? Its video can't be recovered.${scenesNote}`;
   };
 
   const useSeed = (seed) => {
@@ -325,6 +339,7 @@
   };
 
   const deleteTake = async (take) => {
+    state.deletingTake = null;
     const data = await act(
       () => request("DELETE", sceneUrl(`/takes/${take.id}`)),
       `Deleted take ${take.number}.`,
@@ -493,6 +508,7 @@
     state.sceneId = sceneId;
     state.previewTake = null;
     state.question = null;
+    state.deletingTake = null;
     state.panel = null;
     state.confirmProfile = false;
     stored.set("h3-storyboard-scene", sceneId);
@@ -919,7 +935,6 @@
             update("prompt_writer_backend", next);
             geminiGroup.hidden = next !== "Gemini";
             openaiGroup.hidden = next === "Gemini";
-            queueFit();
           }},
             ["Gemini", "OpenAI-compatible"].map((name) => h("option", {selected: name === backend}, name)))),
         geminiGroup,
@@ -1166,6 +1181,7 @@
     state.previewKey = null;
     state.previewTake = null;
     state.question = null;
+    state.deletingTake = null;
     state.panel = null;
     state.confirmProfile = false;
     state.fullVideo = null;
@@ -1186,14 +1202,20 @@
   };
 
   // In the tab, the frame sizes to fit the active view so only the parent window scrolls.
+  // It never ends above the window's bottom edge: that would move the page under the reader,
+  // so a shorter view gives the space back as they scroll up.
   const fitFrame = () => {
     const frame = window.frameElement;
-    if (!frame) return;
+    if (!frame || frame.offsetParent === null) return;
     const active = $("editor").hidden ? $("start") : $("editor");
-    const height = Math.max(860, Math.ceil(active.getBoundingClientRect().height));
+    let height = Math.max(860, Math.ceil(active.getBoundingClientRect().height));
+    let scrollY = null;
+    try {
+      scrollY = window.parent.scrollY;
+      const toWindowBottom = Math.ceil(window.parent.innerHeight - frame.getBoundingClientRect().top);
+      height = Math.max(height, Math.min(frame.offsetHeight, toWindowBottom));
+    } catch { /* Framed by another origin. */ }
     if (Math.abs(height - frame.offsetHeight) > 2) {
-      let scrollY = null;
-      try { scrollY = window.parent.scrollY; } catch { /* Framed by another origin. */ }
       frame.style.height = `${height}px`;
       if (scrollY !== null) {
         try { window.parent.scrollTo({top: scrollY, behavior: "instant"}); } catch { /* Framed by another origin. */ }
@@ -1223,9 +1245,14 @@
       new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
     } catch { /* Framed by another origin. */ }
     window.addEventListener("beforeunload", flushNow);
-    new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true});
-    document.addEventListener("toggle", queueFit, true);
+    // Anything that changes a view's height reaches the frame, or the frame would clip it.
+    const views = new ResizeObserver(queueFit);
+    views.observe($("editor"));
+    views.observe($("start"));
     window.addEventListener("resize", queueFit);
+    try {
+      window.parent.addEventListener("scroll", queueFit, {passive: true});
+    } catch { /* Framed by another origin. */ }
     try {
       state.boot = await request("GET", `${API}/boot`);
       $("gpu-note").hidden = state.boot.gpu;

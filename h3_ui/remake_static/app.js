@@ -5,6 +5,8 @@
   const POLL_MS = 1500;
   const PULSE_MS = 2500;
   const CHECK_DELAY_MS = 200;
+  const DRAG_PX = 4;
+  const MIN_SELECTION_S = 0.5;
   const PREFS = "h3-remake-prefs";
   const SESSION = {project: "h3-remake-project", window: "h3-remake-window"};
   const BRIDGE = {edit: (model) => `remake-edit-bridge-${model}`, settings: "remake-settings-bridge"};
@@ -373,7 +375,9 @@
 
   const replacePicture = (index, path, {before = null, untouched = false} = {}) => {
     const slot = state.slots[index];
-    const previous = before ?? (slot?.path ? {path: slot.path, untouched: Boolean(slot.untouched)} : null);
+    // Undoing passes ``before: false``: the picture it replaces isn't kept to undo again.
+    const previous = before === false ? null
+      : before ?? (slot?.path ? {path: slot.path, untouched: Boolean(slot.untouched)} : null);
     // A picture for an empty slot belongs at the playhead, like an extracted frame.
     state.slots[index] = {...slot, path, pin: slot?.pin ?? playheadPin(), untouched, sent: false, align: null, before: previous};
     afterPictures();
@@ -508,14 +512,16 @@
   const queue = () => (state.project ? state.project.windows.filter((window) => QUEUED.includes(window.state)) : []);
   const allTaken = () => Boolean(state.project) && state.project.windows.every((window) => window.take);
 
+  let shownRendering = -1;
   const activeRenderingWindow = () => {
     if (!running()) return -1;
+    if (state.run.project && state.run.project !== state.project?.key) return -1;
     const match = /^Window\s+(\d+)\s+of\s+\d+/i.exec(state.run?.status || "");
     return match ? Number(match[1]) - 1 : -1;
   };
 
   const startRun = safely(async () => {
-    const {run} = await post("/generate", editor());
+    const {run} = await post("/generate", {...editor(), project: state.project?.key});
     watchRun(run);
   });
 
@@ -571,7 +577,7 @@
         queueCheck();
         refreshProjects();
       });
-    } else if (state.project) {
+    } else if (state.project && activeRenderingWindow() !== shownRendering) {
       renderTimeline();
     }
     clearTimeout(pollTimer);
@@ -808,6 +814,14 @@
     return marks;
   };
 
+  const showSelection = () => {
+    const duration = state.source?.duration || 1;
+    $("band").style.left = `${state.start / duration * 100}%`;
+    $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
+    $("start-time").value = state.start;
+    $("end-time").value = state.end;
+  };
+
   const renderTimeline = () => {
     const last = Math.max(1, total() - 1);
     const frames = total();
@@ -815,13 +829,9 @@
     if (state.source) {
       const seconds = frames / fps();
       $("strip").style.backgroundImage = `url("${API}/strip?path=${encodeURIComponent(state.source.path)}&start=${start}&seconds=${seconds}")`;
-      const duration = state.source.duration || 1;
-      $("band").style.left = `${state.start / duration * 100}%`;
-      $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
-      $("source-length").textContent = `${duration.toFixed(1)} s source`;
+      $("source-length").textContent = `${(state.source.duration || 1).toFixed(1)} s source`;
     }
-    $("start-time").value = state.start;
-    $("end-time").value = state.end;
+    showSelection();
     $("short-edge").value = state.shortEdge;
     $("max-window").value = state.maxWindow;
     $("smart").checked = state.smart;
@@ -834,6 +844,7 @@
       .map((window) => h("div", {className: "cut", title: `Scene cut at frame ${window.own[0]} (${clock(window.own[0])})`,
                                  style: `left:${window.own[0] / last * 100}%`})));
     const activeWin = activeRenderingWindow();
+    shownRendering = activeWin;
     $("wins").replaceChildren(...windows().map((window, index) => {
       const span = window.own[1] - window.own[0];
       const label = state.project ? String(index + 1) : state.long ? "Not split yet" : "One render";
@@ -869,10 +880,14 @@
           const rect = track.getBoundingClientRect();
           const open = openWindow();
           const windowSpan = open.render[1] - open.render[0];
+          const startX = event.clientX;
+          const grab = startX - rect.left - mark.at / last * rect.width;
           let moved = false;
           const onMove = (moveEvent) => {
+            // A shaky click is still a click, and seeks.
+            if (!moved && Math.abs(moveEvent.clientX - startX) < DRAG_PX) return;
             moved = true;
-            const ratio = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
+            const ratio = Math.max(0, Math.min(1, (moveEvent.clientX - grab - rect.left) / Math.max(1, rect.width)));
             const globalFrame = Math.round(ratio * last);
             const newPin = Math.max(0, Math.min(windowSpan - 1, globalFrame - open.render[0]));
             const slot = state.slots[mark.slotIndex];
@@ -1002,7 +1017,7 @@
         gpu() ? quickRow : null,
         editing ? h("p", {className: "small muted", id: "quick-status", role: "status"}, state.quick.status) : null,
         h("div", {className: "row tightrow"}, pinField,
-          slot.before ? button("Undo edit", () => replacePicture(index, slot.before.path, {untouched: slot.before.untouched}))
+          slot.before ? button("Undo edit", () => replacePicture(index, slot.before.path, {before: false, untouched: slot.before.untouched}))
             : null,
           // Still offered once sent: the frame can go to another model.
           gpu() ? button("Edit in Image", () => sendToImage(index)) : null,
@@ -1159,20 +1174,37 @@
     renderPlayhead();
   };
 
-  const applyStartChange = (newStart) => {
-    const start = Math.max(0, Math.round(Number(newStart) * 100) / 100 || 0);
-    // Pins count from Start, so each stays on its source frame.
-    const moved = Math.round((start - state.lastStart) * fps());
+  // Pins and the playhead count from Start, so each stays on its source frame.
+  const followStart = () => {
+    const moved = Math.round((state.start - state.lastStart) * fps());
     for (const slot of state.slots) {
       if (slot && slot.pin !== null && slot.pin !== undefined) slot.pin = slot.pin >= moved ? slot.pin - moved : null;
     }
-    state.start = state.lastStart = start;
+    state.frame = Math.max(0, state.frame - moved);
+    state.lastStart = state.start;
+  };
+
+  const selectionLocked = () => {
+    if (running()) toast("Wait for the render to finish before changing the selection.", true);
+    return running();
+  };
+  // A new selection leaves the open project's windows, so a single key or click asks first.
+  const leavesProject = () => Boolean(state.project)
+    && !confirm("Change the selection? This leaves the open project, which stays saved in Projects.");
+  const selectionRefused = (ask) => selectionLocked() || (ask && leavesProject());
+
+  const applyStartChange = (newStart, {ask = false} = {}) => {
+    if (selectionRefused(ask)) { showSelection(); return; }
+    const start = Math.max(0, Math.round(Number(newStart) * 100) / 100 || 0);
+    state.start = Math.min(start, Math.max(0, state.end - MIN_SELECTION_S));
+    followStart();
     refreshSelection();
   };
 
-  const applyEndChange = (newEnd) => {
+  const applyEndChange = (newEnd, {ask = false} = {}) => {
+    if (selectionRefused(ask)) { showSelection(); return; }
     const duration = state.source?.duration || 9999;
-    state.end = Math.min(duration, Math.max(state.start + 0.5, Math.round((Number(newEnd) || 0) * 100) / 100));
+    state.end = Math.min(duration, Math.max(state.start + MIN_SELECTION_S, Math.round((Number(newEnd) || 0) * 100) / 100));
     refreshSelection();
   };
 
@@ -1223,6 +1255,9 @@
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (event.repeat && !event.key.startsWith("Arrow")) return;
+      // Space belongs to a focused control; playback has the rest of the page.
+      if (event.key === " " && event.target.closest("button, a, summary")) return;
       if (event.key === " ") {
         event.preventDefault();
         setPlaying(!state.playing);
@@ -1246,10 +1281,10 @@
         savePrefs();
       } else if (event.key === "[") {
         event.preventDefault();
-        applyStartChange(videoStart() + state.frame / fps());
+        applyStartChange(videoStart() + state.frame / fps(), {ask: true});
       } else if (event.key === "]") {
         event.preventDefault();
-        applyEndChange(videoStart() + (state.frame + 1) / fps());
+        applyEndChange(videoStart() + (state.frame + 1) / fps(), {ask: true});
       } else if (event.key === "1") {
         state.view = "source";
         renderViewer();
@@ -1267,11 +1302,11 @@
     $("max-window").addEventListener("change", (event) => { state.maxWindow = Number(event.target.value); savePrefs(); refreshSelection(); });
     $("start-time").addEventListener("change", (event) => applyStartChange(event.target.value));
     $("end-time").addEventListener("change", (event) => applyEndChange(event.target.value));
-    $("set-start").addEventListener("click", () => applyStartChange(videoStart() + state.frame / fps()));
-    $("set-end").addEventListener("click", () => applyEndChange(videoStart() + (state.frame + 1) / fps()));
+    $("set-start").addEventListener("click", () => applyStartChange(videoStart() + state.frame / fps(), {ask: true}));
+    $("set-end").addEventListener("click", () => applyEndChange(videoStart() + (state.frame + 1) / fps(), {ask: true}));
 
     $("overview").addEventListener("pointerdown", (event) => {
-      if (!state.source || event.button !== 0) return;
+      if (!state.source || event.button !== 0 || selectionLocked()) return;
       const bar = $("overview");
       const rect = bar.getBoundingClientRect();
       const duration = state.source.duration || 1;
@@ -1280,21 +1315,18 @@
       const initialEnd = state.end;
       const span = Math.max(0.5, initialEnd - initialStart);
       const startX = event.clientX;
-      let dragged = false;
+      let dragging = false;
 
       if (!edge && event.target !== $("band")) {
         const clickTime = Math.max(0, Math.min(duration - span, (event.clientX - rect.left) / Math.max(1, rect.width) * duration - span / 2));
         state.start = Math.round(clickTime * 10) / 10;
         state.end = Math.min(duration, Math.round((state.start + span) * 10) / 10);
-        $("start-time").value = state.start;
-        $("end-time").value = state.end;
-        $("band").style.left = `${state.start / duration * 100}%`;
-        $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
-        dragged = true;
+        showSelection();
       }
 
       const onMove = (moveEvent) => {
-        dragged = true;
+        if (!dragging && Math.abs(moveEvent.clientX - startX) < DRAG_PX) return;
+        dragging = true;
         const deltaSec = (moveEvent.clientX - startX) / Math.max(1, rect.width) * duration;
         if (edge === "start") {
           state.start = Math.max(0, Math.min(state.end - 0.5, Math.round((initialStart + deltaSec) * 10) / 10));
@@ -1305,23 +1337,21 @@
           state.start = nextStart;
           state.end = Math.min(duration, Math.round((nextStart + span) * 10) / 10);
         }
-        $("start-time").value = state.start;
-        $("end-time").value = state.end;
-        $("band").style.left = `${state.start / duration * 100}%`;
-        $("band").style.width = `${Math.min(100, (state.end - state.start) / duration * 100)}%`;
+        showSelection();
       };
 
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
-        if (dragged) {
-          const moved = Math.round((state.start - state.lastStart) * fps());
-          for (const slot of state.slots) {
-            if (slot && slot.pin !== null && slot.pin !== undefined) slot.pin = slot.pin >= moved ? slot.pin - moved : null;
-          }
-          state.lastStart = state.start;
-          refreshSelection();
+        if (state.start === initialStart && state.end === initialEnd) return;
+        if (leavesProject()) {
+          state.start = initialStart;
+          state.end = initialEnd;
+          showSelection();
+          return;
         }
+        followStart();
+        refreshSelection();
       };
 
       window.addEventListener("pointermove", onMove);
@@ -1501,7 +1531,10 @@
       const savedKey = stored.get(SESSION.project);
       if (savedKey && state.boot.projects.some((row) => row.key === savedKey)) {
         await openProject(savedKey, {initialWindow: Number(stored.get(SESSION.window) || 0)});
-      } else {
+      }
+      if (!state.source) {
+        stored.remove(SESSION.project);
+        stored.remove(SESSION.window);
         showEditor(false);
       }
       if (state.boot.run) watchRun(state.boot.run);

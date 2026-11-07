@@ -407,7 +407,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
                     run.result_url = handlers.grant(owner, output)
                 run.revision += 1
 
-        runs.start(Run(owner, RUN_KEY, "generate"), work)
+        runs.start(Run(owner, RUN_KEY, "generate", project=body.get("project")), work)
         return {"run": run_payload(owner)}
 
     @app.post(f"{api}/interrupt", include_in_schema=False)
