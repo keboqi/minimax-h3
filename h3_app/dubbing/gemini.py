@@ -23,19 +23,21 @@ TRANSCRIBE_PROMPT = (
     "{translated_clause}. "
     "Timestamps cut the audio for voice cloning, so they must be exact: start at the first syllable, end at "
     "the last, with no padding and no rounding to whole seconds. Keep each segment under about 12 seconds, "
-    "splitting long speeches at sentence ends.{notes}"
+    "splitting long speeches at sentence ends.{style}{notes}"
 )
 NON_SPEECH = ("Ignore laughter, shouts, singing, crowd noise and background voices that are not clear "
               "dialogue. ")
 TRANSLATE_PROMPT = (
-    "Translate each line of this {source}video dialogue into natural, spoken {target} that a voice actor can "
-    "dub. {timing} Keep names, numbers and tone.{notes} Return only a JSON array with exactly {count} strings, "
+    "Translate each line of this {source}video dialogue into spoken {target} that a voice actor can "
+    "dub.{style} {timing} Keep names and numbers.{notes} Return only a JSON array with exactly {count} strings, "
     "in order.\n\nLines:\n{lines}"
 )
+# Hy-MT2's documented wording for a style, which Hy-MT's prompt shares.
+STYLE = " The translation style must strictly conform to [{style}]."
 SAME_LENGTH = "Keep each translation about as long to say as the original so it fits the same timing."
 TIMED = ("Each line gives its text and the seconds it lasts on screen. The translation is dubbed into exactly "
          "that time, so it must be comfortable to say in it (about 2.5 words or 4.5 CJK characters a second); "
-         "prefer shorter, natural wording over a literal translation when a line is short on time.")
+         "prefer shorter wording over a literal translation when a line is short on time.")
 
 
 def _model(model: str) -> str:
@@ -55,25 +57,32 @@ def _generate(session: gemini.Session, model: str, parts: list[dict], *, json_re
     return text
 
 
-def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speech: bool, notes: str = "") -> str:
+def _style(style: str) -> str:
+    style = str(style or "").strip()
+    return STYLE.format(style=style) if style else ""
+
+
+def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speech: bool, notes: str = "",
+                      style: str = "") -> str:
     """The prompt sent with the audio, also what a person copies into a chat model."""
     notes = str(notes or "").strip()
     return TRANSCRIBE_PROMPT.format(
-        translate_clause=f" and translate it into {target_language} with natural, conversational wording that "
+        translate_clause=f" and translate it into {target_language} with wording that "
                          "can be said in the same time as the original line, since it is dubbed over it."
         if translate else " in its original language without translating it.",
         non_speech=NON_SPEECH if ignore_non_speech else "",
         translated_clause=f" (the {target_language} translation)" if translate else " (an empty string)",
+        style=_style(style) if translate else "",
         notes=f" Translation notes: {notes}" if translate and notes else "",
     )
 
 
 def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, translate: bool,
-               ignore_non_speech: bool, notes: str = "") -> tuple[list[dict], dict[str, str], str]:
+               ignore_non_speech: bool, notes: str = "", style: str = "") -> tuple[list[dict], dict[str, str], str]:
     """Segments, speaker descriptions and the raw reply for one audio file."""
     key = gemini.api_key(api_key)
     prompt = transcribe_prompt(target_language=target_language, translate=translate,
-                               ignore_non_speech=ignore_non_speech, notes=notes)
+                               ignore_non_speech=ignore_non_speech, notes=notes, style=style)
     with gemini.Session(key) as session:
         raw = _generate(session, _model(model), [{"text": prompt}, session.file_part(Path(audio))],
                         json_reply=True)
@@ -87,7 +96,7 @@ def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, t
 
 
 def translation_prompt(texts: list[str], *, target_language: str, source_language: str = "", notes: str = "",
-                       seconds: list[float] | None = None) -> str:
+                       seconds: list[float] | None = None, style: str = "") -> str:
     """The translation request, also what a person copies into a chat model.
 
     ``seconds``, one per line, is how long each line lasts; the translations are worded to fit it.
@@ -97,18 +106,19 @@ def translation_prompt(texts: list[str], *, target_language: str, source_languag
              if timed else texts)
     return TRANSLATE_PROMPT.format(
         source=f"{source_language} " if source_language else "", target=target_language,
-        timing=TIMED if timed else SAME_LENGTH,
+        style=_style(style), timing=TIMED if timed else SAME_LENGTH,
         notes=f" Context: {notes.strip()}" if notes.strip() else "", count=len(texts),
         lines=json.dumps(lines, ensure_ascii=False, indent=0),
     )
 
 
 def translate(texts: list[str], *, model: str, api_key: str, target_language: str,
-              source_language: str = "", notes: str = "", seconds: list[float] | None = None) -> list[str]:
+              source_language: str = "", notes: str = "", seconds: list[float] | None = None,
+              style: str = "") -> list[str]:
     """Translate lines in order as one request, so names and tone stay consistent."""
     key = gemini.api_key(api_key)
     prompt = translation_prompt(texts, target_language=target_language, source_language=source_language,
-                                notes=notes, seconds=seconds)
+                                notes=notes, seconds=seconds, style=style)
     with gemini.Session(key) as session:
         raw = _generate(session, _model(model), [{"text": prompt}], json_reply=True)
     try:

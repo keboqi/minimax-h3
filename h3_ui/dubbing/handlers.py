@@ -19,11 +19,12 @@ import gradio as gr
 
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
-from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions
+from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
 
 from . import presenters
+from .share import share_path
 from ..result_views import dub_html, panel_update
 
 LIBRARY_LIMIT = 200
@@ -38,6 +39,13 @@ class DubbingServices:
     # (mode) -> newest-first managed media paths for "Video" or "Audio".
     list_media: Callable[[str], list]
     gpu: bool = True
+
+
+def _origin(request) -> str:
+    """This app's address as the browser sees it, so a link can be copied elsewhere."""
+    headers = getattr(request, "headers", None) or {}
+    host = headers.get("x-forwarded-host") or headers.get("host")
+    return f"{headers.get('x-forwarded-proto') or 'http'}://{host}" if host else ""
 
 
 def _line_key(index: int, line: dict) -> dict:
@@ -424,7 +432,7 @@ class DubbingHandlers:
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
                        reuse=True, refine_timestamps=True, translation_context=False, project=None,
-                       manual_reply=""):
+                       manual_reply="", style=pipeline.DEFAULT_STYLE):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -437,7 +445,7 @@ class DubbingHandlers:
                 str(chosen), transcription, str(target_language or "").strip(), source_language, bool(translate),
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
                 str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps),
-                bool(translation_context), str(manual_reply or ""), not self.services.gpu)
+                bool(translation_context), str(manual_reply or ""), not self.services.gpu, str(style or ""))
             for update in self._cloud(lambda **kw: pipeline.analyze(request, **kw),
                                       without_gpu=transcription in pipeline.CLOUD_PIPELINES):
                 if isinstance(update, pipeline.Analysis):
@@ -464,7 +472,7 @@ class DubbingHandlers:
             yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc), presenters.plan_html(steps)
 
     def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes,
-                        translation_context=False):
+                        translation_context=False, style=pipeline.DEFAULT_STYLE):
         """Translate the picked lines again; with none picked, fill the untranslated ones.
 
         Outputs: board, table rows, line status.
@@ -475,7 +483,8 @@ class DubbingHandlers:
             request = pipeline.AnalyzeRequest("", target_language=str(target_language or "").strip(),
                                               translator=translator, gemini_model=gemini_model,
                                               api_key=str(api_key or ""), notes=str(notes or ""),
-                                              translation_context=bool(translation_context))
+                                              translation_context=bool(translation_context),
+                                              style=str(style or ""))
             for update in self._cloud(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw),
                                       without_gpu=translator == pipeline.TRANSLATOR_GEMINI):
                 if isinstance(update, pipeline.Analysis):
@@ -488,13 +497,14 @@ class DubbingHandlers:
 
     # -- Chat models, by hand -------------------------------------------------
 
-    def source_prompt(self, target_language, translate, notes):
-        """The prompt to send a chat model with the audio; ``notes`` carry the wanted style."""
+    def source_prompt(self, target_language, translate, notes, style=pipeline.DEFAULT_STYLE):
+        """The prompt to send a chat model with the audio."""
         target = str(target_language or "").strip()
         if translate and not target:
             raise gr.Error("Choose the language to dub into.")
         return dub_gemini.transcribe_prompt(target_language=target, translate=bool(translate),
-                                            ignore_non_speech=True, notes=str(notes or ""))
+                                            ignore_non_speech=True, notes=str(notes or ""),
+                                            style=pipeline.style_text(style))
 
     def prepare_speech(self, source, library, separate, separator_model, reuse, target_language):
         """Outputs: audio file, status. Studio attaches the vocals; Workshop the soundtrack, or stems it has."""
@@ -517,12 +527,12 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def lines_prompt(self, session_id, board, target_language, notes):
+    def lines_prompt(self, session_id, board, target_language, notes, style=pipeline.DEFAULT_STYLE):
         """Outputs: hidden prompt, the record of its lines, line status. Picked lines, else every line."""
         try:
             session = sessions.load(self._runtime(), session_id)
             picked = [index for index in presenters.board_picks(board) if index < len(session.segments)] or None
-            prompt, request = pipeline.translation_request(session, picked, target_language, notes)
+            prompt, request = pipeline.translation_request(session, picked, target_language, notes, style)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
         return prompt, request, f"Copied a prompt for {len(request['lines'])} line(s) into {request['target']}."
@@ -625,6 +635,42 @@ class DubbingHandlers:
                     yield gr.skip(), update
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
+
+    # -- Share ---------------------------------------------------------------
+
+    def _shared_output(self, session_id):
+        """The session's finished dub and its title, or None before there is one."""
+        session = self._session(session_id)
+        output = session.data.get("last_output") if session else None
+        return (Path(output), str(session.data.get("name") or "")) if output else None
+
+    def _share_view(self, output, request, status=""):
+        """Outputs: link, create button, stop button, status."""
+        token = shares.find(self._runtime(), output) if output else None
+        return (gr.update(value=_origin(request) + share_path(token) if token else "", visible=token is not None),
+                gr.update(interactive=output is not None, visible=token is None), gr.update(visible=token is not None),
+                status)
+
+    def share_state(self, session_id, request: gr.Request = None):
+        """The opened session's link, if its dub has one."""
+        found = self._shared_output(session_id)
+        return self._share_view(found[0] if found else None, request)
+
+    def create_share(self, session_id, request: gr.Request = None):
+        found = self._shared_output(session_id)
+        try:
+            if found is None:
+                raise H3Error("Generate the dub in Studio first.")
+            shares.create(self._runtime(), *found)
+        except (H3Error, OSError) as exc:
+            return self._share_view(found[0] if found else None, request, f"**Not shared:** {exc}")
+        return self._share_view(found[0], request, "Link ready. It lasts until you stop sharing or delete this dub.")
+
+    def stop_share(self, session_id, request: gr.Request = None):
+        found = self._shared_output(session_id)
+        if found is not None:
+            shares.revoke(self._runtime(), found[0])
+        return self._share_view(found[0] if found else None, request, "Sharing stopped; the link no longer works.")
 
     def export_subtitles(self, source):
         """Export the completed dub without regenerating voices or replacing the player."""

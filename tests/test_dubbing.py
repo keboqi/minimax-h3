@@ -1009,7 +1009,9 @@ class HandlerTests(Workspace):
                                                 view.notes, view.translation_context])
         self.assertFalse(view.translation_context.value)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertEqual(analysis.inputs[-3:], [view.translation_context, view.project.active, view.manual_reply])
+        self.assertEqual(analysis.inputs[-4:], [view.translation_context, view.project.active, view.manual_reply,
+                                                view.style])
+        self.assertEqual(view.style.value, "Precise")
         self.assertIs(view.prepare_audio.h3_stop, view.stop_analyze)
         config = demo.get_config_file()
         self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
@@ -2133,6 +2135,79 @@ class DubRenderTests(Workspace):
             "a", pipeline=pipeline.PIPELINE_GEMINI, **settings)))
         self.assertNotIn("notes", key())
         self.assertEqual(key(notes="Formal")["notes"], "Formal")
+
+    def test_translation_style_reaches_hymt_and_gemini(self):
+        from h3_app.dubbing import gemini as dub_gemini
+
+        self.assertEqual(pipeline.style_text(""), pipeline.TRANSLATION_STYLES["Precise"])
+        self.assertEqual(pipeline.style_text(" Children "), pipeline.TRANSLATION_STYLES["Children"])
+        self.assertEqual(pipeline.style_text("for adults over 60"), "for adults over 60")
+        wanted = "The translation style must strictly conform to [for adults over 60]."
+        self.assertIn(wanted, tools_worker.translation_prompt("Hi", "French", style="for adults over 60"))
+        self.assertIn(wanted, tools_worker.translation_prompt("Hi", "French", "Before", style="for adults over 60"))
+        self.assertNotIn("style must", tools_worker.translation_prompt("Hi", "French"))
+        self.assertIn(wanted, dub_gemini.translation_prompt(["Hi"], target_language="French",
+                                                            style="for adults over 60"))
+        self.assertIn(wanted, dub_gemini.transcribe_prompt(target_language="French", translate=True,
+                                                           ignore_non_speech=True, style="for adults over 60"))
+        self.assertNotIn("style must", dub_gemini.transcribe_prompt(target_language="", translate=False,
+                                                                    ignore_non_speech=True, style="Formal"))
+        # Style is sent to the worker; the default leaves Gemini's transcript cache key as it was.
+        key = lambda **settings: json.loads(pipeline._transcript_key(pipeline.AnalyzeRequest(
+            "a", pipeline=pipeline.PIPELINE_GEMINI, **settings)))
+        self.assertNotIn("style", key())
+        self.assertNotIn("style", key(style=""))
+        self.assertEqual(key(style="Formal")["style"], pipeline.TRANSLATION_STYLES["Formal"])
+        self.assertNotIn("style", key(style="Formal", translate=False))
+        session = self.analyze(self.make_video(), separate=False, calls=[], translate=False)
+        prompt, _request = pipeline.translation_request(session, None, "French", style="Teens")
+        self.assertIn(pipeline.TRANSLATION_STYLES["Teens"], prompt)
+        calls = []
+
+        def fake_tools(op, payload, runtime, **_kwargs):
+            calls.append(payload)
+            return {"texts": ["Un", "Deux"]}
+
+        request = pipeline.AnalyzeRequest("", target_language="French", style="Teens")
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools):
+            list(pipeline.retranslate(session.id, None, request, runtime=self.runtime, free_gpu=lambda: None))
+        self.assertEqual(calls[0]["style"], pipeline.TRANSLATION_STYLES["Teens"])
+
+    def test_hymt_retry_keeps_the_style_and_drops_the_notes(self):
+        import torch
+
+        prompts = []
+
+        class Encoded(dict):
+            def to(self, _device):
+                return self
+
+        class Tokenizer:
+            pad_token_id = 0
+
+            def apply_chat_template(self, messages, **_kwargs):
+                prompts.append(messages[0]["content"])
+                return messages[0]["content"]
+
+            def __call__(self, batch, **_kwargs):
+                return Encoded(input_ids=torch.zeros((len(batch), 1), dtype=int),
+                               attention_mask=torch.ones((len(batch), 1), dtype=int))
+
+            def decode(self, *_args, **_kwargs):
+                return "" if len(prompts) == 1 else "Bonjour"  # the first attempt fails its check
+
+        model = SimpleNamespace(device="cpu", generate=lambda input_ids, **_kwargs: input_ids)
+        worker = tools_worker.Worker.__new__(tools_worker.Worker)
+        worker.progress = lambda _message: None
+        worker.torch = lambda: torch
+        worker._translator = lambda: (Tokenizer(), model)
+        reply = worker.translate({"texts": ["Hello"], "target_language": "French", "notes": "Keep Mei.",
+                                  "style": "formal"})
+        self.assertEqual(reply["texts"], ["Bonjour"])
+        self.assertEqual(len(prompts), 2)
+        self.assertTrue(all("conform to [formal]" in prompt for prompt in prompts))
+        self.assertIn("Keep Mei.", prompts[0])
+        self.assertNotIn("Keep Mei.", prompts[1])
 
     def test_workshop_analysis_leaves_separation_and_hymt_to_studio(self):
         video = self.make_video()

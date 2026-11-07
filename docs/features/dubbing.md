@@ -40,7 +40,7 @@ one **From Media** (an upload and a Media pick replace each other), or open an
 **Earlier session**. The card below shows the picked file's kind, length and
 size. To use an online video, first download it in **Media → Download from a
 URL** (see below). Choose the **Spoken language**, the language to **Dub into**
-(any language can be typed), and any **Translation notes**.
+(any language can be typed), a **Translation style** and any **Translation notes**.
 
 **Earlier session** lists analyzed sessions; opening one restores its edited
 lines and dub language, for example after reloading the page, and opens Review
@@ -85,9 +85,9 @@ audible.
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
 
 - **Gemini by hand** runs the same request yourself, in Gemini or any chat model,
-  so you can tune the prompt, for example with a style for an age range. No API key
-  is needed. **Copy prompt** copies it with your languages and **Translation
-  notes**. **Prepare audio** makes an MP3 to attach (the vocals when separating in
+  so you can tune the prompt further. No API key is needed. **Copy prompt** copies
+  it with your languages, **Translation style** and **Translation notes**.
+  **Prepare audio** makes an MP3 to attach (the vocals when separating in
   Studio, and that separation is reused by the analysis). Paste the JSON reply in
   **Reply**, then **Analyze source**; the lines are checked before anything slow
   starts. Timestamps must come from this file's audio, so keep them exact when
@@ -95,10 +95,15 @@ audible.
   wait in Review lines.
 
 **Translator** chooses who translates lines Gemini left empty, and lines later
-in **Translate again**. **Translation notes** pass names, terms and tone to the
-translator and to Gemini's transcription; a new note makes Gemini transcribe again
-instead of reusing an earlier transcript. Turn off **Translate now** to transcribe
-only.
+in **Translate again**. **Translation style** tells Hy-MT and Gemini how the
+translation should read: Precise (the default), Natural, Formal, Casual, Dramatic,
+Children, Teens or Older adults, or type your own, such as *for adults over 60,
+warm and unhurried*. **Translation notes** are reference for names and terms. Both
+reach the translator and Gemini's transcription; a new note or style makes Gemini
+transcribe again instead of reusing an earlier transcript. A style applies to
+lines translated after it is chosen: to restyle existing lines, pick them and use
+**Translate again**.
+Turn off **Translate now** to transcribe only.
 
 **Refine speech boundaries with Align (experimental)** adds
 [Desert Ant Labs Align](https://desertant.com/models/align/) after local
@@ -183,8 +188,8 @@ use the focused line:
 
 **Translate by hand in a chat model** does this without an API key, also in Workshop.
 **Copy translation prompt** copies the picked lines, or every line when none
-are picked, with their times and **Translation notes**. Change the style in the
-chat, paste the JSON array in **Reply**, then **Apply pasted translations**. Replies
+are picked, with their times, **Translation style** and **Translation notes**.
+Fine-tune it in the chat, paste the JSON array in **Reply**, then **Apply pasted translations**. Replies
 reach the lines that were copied, even after other edits; a line edited since
 copying is left as it is. Long sessions may fit better a few dozen lines at a time.
 
@@ -306,6 +311,27 @@ few edits voices only the changed lines. Results go to Media
 (`gradio_outputs/dubbing`): the MP4 when the source is a video, the MP3 mix, and
 `.srt` files for the translation and the original. Each result records its
 settings.
+
+## Share a dub
+
+In Workshop, a finished dub has a **Share** card in the Dub step. **Create share
+link** makes a view-only page: the player with its voice, music and subtitle
+choices, the lines following playback, and word-by-word highlighting when the dub
+has word timing. It leaves out the editing notes, such as failed takes. The page
+fits desktops, tablets and phones, with the lines beside the picture on wide
+screens and below it on narrow ones.
+
+Anyone with the link can watch without signing in, and it is not listed anywhere.
+**Stop sharing** ends it at once; deleting the dub from Media ends it too. A link
+follows its dub, so a later word alignment appears on the page.
+
+Links are served by Workshop, so:
+
+- On Modal, opening a link starts Workshop if it is asleep, and the first load
+  takes a moment. Avoid this while Studio runs, as the two share a volume.
+- `H3_MODAL_PROXY_AUTH=1` puts every Workshop URL behind Modal's proxy tokens, so
+  viewers without one cannot open links.
+- On Colab, links use the session's public URL and end with it.
 
 ## Download from a URL
 

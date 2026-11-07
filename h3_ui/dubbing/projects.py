@@ -37,7 +37,7 @@ def bind_projects(view, actions, load_trigger):
     runtime = actions.services.runtime_config
     controls = view.project
     # Never persist credentials. Speaker choices and edited lines live in the session itself.
-    keys = ("source_language", "target_language", "notes", "pipeline", "translate", "translator",
+    keys = ("source_language", "target_language", "style", "notes", "pipeline", "translate", "translator",
             "gemini_model", "separate", "separator_model", "reuse", "aligner", "merge_gap",
             "refine_timestamps", "translation_context", "voice_mode", "preset", "timing", "max_speed",
             "speech_volume", "background_volume", "keep_original", "regenerate", "parallel", "word_timing")

@@ -152,6 +152,8 @@ const bind = (root) => {
   on(voice, "loadedmetadata", render);
   on(play, "click", () => {
     if (!voice.paused) { voice.pause(); return; }
+    // Phones allow audio to start only inside the tap itself, so the music starts here too.
+    if (music) music.play().catch(() => {});
     voice.play().then(() => { state.textContent = ""; })
       .catch(() => { state.textContent = "Playback unavailable. Check browser codec support."; });
   });
@@ -252,22 +254,28 @@ def _take_warning(lines: list[dict]) -> str:
             f'Lines {", ".join(failed)}. Retry these lines in Review lines, then generate the dub again.</div>')
 
 
-def player_html(player: Player, *, key: str) -> str:
-    """The player for one dub; ``key`` keeps its radio group apart from earlier players on the page."""
-    dub, original = file_url(player.dub), file_url(player.original)
+def player_html(player: Player, *, key: str, url=file_url, viewer: bool = False) -> str:
+    """The player for one dub; ``key`` keeps its radio group apart from earlier players on the page.
+
+    ``url`` gives a track's address. ``viewer`` is the shared page, which leaves out what only
+    the dub's editor can act on: failed takes, missing word timing and vocal separation.
+    """
+    dub, original = url(player.dub), url(player.original)
     target = _language(player.target_language, "translated")
     source = _language(player.source_language, "original")
     if player.video is not None:
         screen = (f'<video data-picture muted playsinline preload="metadata" '
-                  f'src="{escape(file_url(player.video), quote=True)}"></video>')
+                  f'src="{escape(url(player.video), quote=True)}"></video>')
     else:
         screen = '<div class="h3-dub-player-poster" aria-hidden="true">Audio</div>'
-    music = (f'<audio data-music preload="metadata" src="{escape(file_url(player.music), quote=True)}"></audio>'
+    music = (f'<audio data-music preload="metadata" src="{escape(url(player.music), quote=True)}"></audio>'
              if player.music is not None else "")
     toggle = ('<label class="h3-dub-player-check"><input type="checkbox" data-music-toggle checked> '
               'Background music</label>' if player.music is not None else
               '<label class="h3-dub-player-check"><input type="checkbox" checked disabled> '
               'Background music <span>(needs vocal separation)</span></label>')
+    if viewer and player.music is None:
+        toggle = ""
     speakers = len({cue["speaker"] for cue in player.lines}) > 1
     cues = "".join(
         f'<li data-start="{cue["start"]:.3f}" data-end="{cue["end"]:.3f}" '
@@ -277,16 +285,16 @@ def player_html(player: Player, *, key: str) -> str:
         + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">'
         f'{word_spans_html(cue["translation"], cue.get("translation_words"))}</span>'
         f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span>'
-        + _take_note(cue) + _word_timing_note(cue, player.word_timing) + '</span></li>'
+        + ("" if viewer else _take_note(cue) + _word_timing_note(cue, player.word_timing)) + '</span></li>'
         for cue in player.lines)
     group = escape(f"h3-dub-voice-{key}", quote=True)
-    note = ("" if player.music is not None else
+    note = ("" if viewer or player.music is not None else
             '<p class="h3-dub-player-note">This source was analyzed without vocal separation, so the dub plays '
             "as one mix with its background.</p>")
     revision = hashlib.sha256(cues.encode()).hexdigest()[:16]
     return (
         f'<div class="h3-dub-player" data-revision="{revision}" data-duration="{player.duration:.3f}" data-subtitles="translation">'
-        f'{_take_warning(player.lines)}'
+        f'{"" if viewer else _take_warning(player.lines)}'
         f'<div class="h3-dub-player-screen">{screen}<div class="h3-dub-player-caption" aria-hidden="true">'
         '<span data-caption-translation></span><span data-caption-source></span></div></div>'
         f'<audio data-voice preload="metadata" src="{escape(dub, quote=True)}"></audio>{music}'

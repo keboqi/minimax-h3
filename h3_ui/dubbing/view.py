@@ -26,8 +26,8 @@ from typing import Sequence
 import gradio as gr
 
 from h3_app.dubbing.pipeline import (
-    CLOUD_PIPELINES, PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MANUAL, PIPELINE_MOSS, PIPELINE_NEMOTRON,
-    SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES, TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
+    CLOUD_PIPELINES, DEFAULT_STYLE, PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MANUAL, PIPELINE_MOSS, PIPELINE_NEMOTRON,
+    SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES, TIMING_MATCH, TRANSLATION_STYLES, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
     VOICE_MODES, VOICE_PRESETS,
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
@@ -169,6 +169,12 @@ class DubbingView:
     lines_request: gr.State
     lines_reply: gr.Textbox
     apply_lines_reply: gr.Button
+    style: gr.Dropdown
+    share: gr.Group
+    create_share: gr.Button
+    stop_share: gr.Button
+    share_url: gr.Textbox
+    share_status: gr.Markdown
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -245,9 +251,12 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             target_language = gr.Dropdown(list(TARGET_LANGUAGES), value="English",
                                                           label="Dub into", allow_custom_value=True, min_width=160,
                                                           info="Type any language not listed.")
+                        style = gr.Dropdown(list(TRANSLATION_STYLES), value=DEFAULT_STYLE, label="Translation style",
+                                            allow_custom_value=True,
+                                            info="For Hy-MT and Gemini. Type your own, e.g. 'for adults over 60, "
+                                                 "warm and unhurried'.")
                         notes = gr.Textbox(label="Translation notes (optional)", lines=2,
-                                           placeholder="Names, terms or tone to keep, e.g. 'Keep the name Mei; "
-                                                       "casual tone.'")
+                                           placeholder="Names and terms to keep, e.g. 'Keep the name Mei.'")
                         translation_context = gr.Checkbox(
                             False, label="Include previous lines (Hy-MT)",
                             info="Hy-MT translates each line together with the two before it, then keeps only "
@@ -261,8 +270,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             label="Transcription", name="h3-dub-transcription")
                         with gr.Group(visible=False) as manual:
                             gr.Markdown("Copy the prompt into Gemini or any chat model and attach the audio. Tune "
-                                        "the prompt there as you like; **Translation notes** above go into it, such "
-                                        "as a style for an age range. Paste the JSON reply below, then analyze.",
+                                        "the prompt there as you like; **Translation style** and **Translation "
+                                        "notes** above go into it. Paste the JSON reply below, then analyze.",
                                         elem_classes=["h3-song-hint"])
                             with gr.Row():
                                 copy_source_prompt = gr.Button(COPY_SOURCE_LABEL, size="sm", elem_id=COPY_SOURCE_ID)
@@ -367,8 +376,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         with gr.Accordion("Translate by hand in a chat model", open=False,
                                           elem_classes=["h3-dub-options"]):
                             gr.Markdown("Copies a prompt for the picked lines, or every line when none are picked, "
-                                        "with **Translation notes** and each line's time. Change the style in the "
-                                        "chat, for example for children aged 8 to 12, then paste its JSON reply.",
+                                        "with **Translation style**, **Translation notes** and each line's time. "
+                                        "Fine-tune it in the chat, then paste its JSON reply.",
                                         elem_classes=["h3-song-hint"])
                             copy_lines_prompt = gr.Button(COPY_LINES_LABEL, size="sm", elem_id=COPY_LINES_ID)
                             lines_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
@@ -456,6 +465,15 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                  interactive=False)
                     export_status = gr.Markdown()
                     exported_video = gr.File(label="Video with burned-in subtitles", interactive=False)
+                    with gr.Group(visible=not gpu) as share:
+                        card_heading("Share", "A view-only page with the player and synced subtitles, for any "
+                                              "screen. Anyone with the link can watch it, without signing in.")
+                        share_url = gr.Textbox(label="View-only link", interactive=False, visible=False,
+                                               buttons=["copy"])
+                        with gr.Row():
+                            create_share = gr.Button("Create share link", variant="primary", interactive=False)
+                            stop_share = gr.Button("Stop sharing", variant="stop", visible=False)
+                        share_status = gr.Markdown(elem_classes=["h3-dub-status"])
     run.h3_stop = stop
     align_words.h3_stop = stop_align_words
     analyze.h3_stop = prepare_audio.h3_stop = stop_analyze
@@ -475,7 +493,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         parallel, readiness, run, stop, status, player, video, audio, files,
         export_source, export_subtitles, exported_video, export_status, word_timing, align_words, stop_align_words,
         alignment_status, manual, copy_source_prompt, source_prompt, prepare_audio, speech_file, manual_reply,
-        copy_lines_prompt, lines_prompt, lines_request, lines_reply, apply_lines_reply,
+        copy_lines_prompt, lines_prompt, lines_request, lines_reply, apply_lines_reply, style, share,
+        create_share, stop_share, share_url, share_status,
     )
 
 

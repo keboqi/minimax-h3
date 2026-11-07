@@ -94,6 +94,18 @@ REFERENCE_RANGE = (3.0, 15.0)
 REFERENCE_PAD = 0.08
 LINE_GAP = 0.05
 GEMINI_TRANSLATE_BATCH = 60
+# Translation styles for Hy-MT and Gemini; anything else typed is used as written.
+TRANSLATION_STYLES = {
+    "Precise": "precise and faithful to the original meaning, without embellishment",
+    "Natural": "natural, everyday spoken language",
+    "Formal": "formal and polite",
+    "Casual": "casual and friendly",
+    "Dramatic": "expressive and cinematic, like a film dub",
+    "Children": "simple words and short sentences for children aged 6 to 12",
+    "Teens": "lively, modern language for teenagers",
+    "Older adults": "clear, respectful language for older adults",
+}
+DEFAULT_STYLE = "Precise"
 # Each fitted take is one ffmpeg run; these many run at once while the dub is laid out.
 TIMING_WORKERS = max(1, min(8, os.cpu_count() or 4))
 # Hy-MT sees this many earlier lines of the dialogue as background for each line.
@@ -143,6 +155,8 @@ class AnalyzeRequest:
     manual_reply: str = ""
     # Workshop has no GPU: separation waits for Studio, and Hy-MT leaves its lines untranslated.
     cloud_only: bool = False
+    # A name in TRANSLATION_STYLES, or the viewer's own wording.
+    style: str = DEFAULT_STYLE
 
 
 @dataclass(frozen=True)
@@ -275,6 +289,12 @@ def is_video(path: str | Path) -> bool:
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
+
+
+def style_text(style: str) -> str:
+    """The instruction for a preset or typed style; empty means the default."""
+    style = str(style or "").strip() or DEFAULT_STYLE
+    return TRANSLATION_STYLES.get(style, style)
 
 
 def manual_transcript(reply: str) -> dict:
@@ -430,7 +450,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
             lambda _report: gemini.transcribe(upload, model=request.gemini_model, api_key=request.api_key,
                                               target_language=target_language, translate=request.translate,
                                               ignore_non_speech=request.ignore_non_speech,
-                                              notes=request.notes))
+                                              notes=request.notes, style=style_text(request.style)))
         transcript = {"segments": found, "speakers": speakers}
     else:
         reply = yield from blocking(
@@ -495,6 +515,9 @@ def _transcript_key(request: AnalyzeRequest) -> str:
                         target=str(request.target_language or "").strip() if request.translate else "")
         if request.translate and str(request.notes or "").strip():
             settings["notes"] = str(request.notes).strip()
+        # Precise adds nothing, so transcripts from before styles stay reusable.
+        if request.translate and style_text(request.style) != style_text(DEFAULT_STYLE):
+            settings["style"] = style_text(request.style)
     elif request.pipeline == PIPELINE_MANUAL:
         settings.update(reply=hashlib.sha256(str(request.manual_reply).encode("utf-8")).hexdigest())
     else:
@@ -602,7 +625,7 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
                 lambda _report, batch=batch, first=first: gemini.translate(
                     batch, model=request.gemini_model, api_key=request.api_key, target_language=target,
                     source_language=session.data.get("source_language", ""), notes=request.notes,
-                    seconds=seconds[first:first + len(batch)]))
+                    seconds=seconds[first:first + len(batch)], style=style_text(request.style)))
     else:
         # Hy-MT translates one line at a time; the lines before it give it the conversation so far.
         contexts = ["\n".join(s["source"] for s in lines[max(0, i - CONTEXT_LINES):i] if s["source"])
@@ -611,7 +634,7 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
         reply = yield from blocking(
             f"Translating {len(texts)} line(s) into {target} with Hy-MT",
             lambda report: tools.run("translate", {"texts": texts, "contexts": contexts, "target_language": target,
-                                                   "notes": request.notes},
+                                                   "notes": request.notes, "style": style_text(request.style)},
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
     # The editor may have saved lines meanwhile: apply each translation to the line that still
@@ -640,7 +663,7 @@ def _save_translations(session: sessions.Session, results: dict, target: str) ->
 
 
 def translation_request(session: sessions.Session, indices: list[int] | None, target_language: str,
-                        notes: str = "") -> tuple[str, dict]:
+                        notes: str = "", style: str = DEFAULT_STYLE) -> tuple[str, dict]:
     """A prompt to copy for these lines (all without a choice), and what its reply will answer.
 
     The answer is matched to the lines by that record, so edits made meanwhile cannot misplace it.
@@ -655,7 +678,7 @@ def translation_request(session: sessions.Session, indices: list[int] | None, ta
     prompt = gemini.translation_prompt(
         [lines[i]["source"] for i in chosen], target_language=target,
         source_language=session.data.get("source_language", ""), notes=str(notes or ""),
-        seconds=[lines[i]["end"] - lines[i]["start"] for i in chosen])
+        seconds=[lines[i]["end"] - lines[i]["start"] for i in chosen], style=style_text(style))
     return prompt, {"session": session.id, "target": target,
                     "lines": [[lines[i]["start"], lines[i]["source"]] for i in chosen]}
 

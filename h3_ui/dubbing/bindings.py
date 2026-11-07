@@ -47,7 +47,7 @@ def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, ac
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
                 view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps,
-                view.translation_context, view.project.active, view.manual_reply],
+                view.translation_context, view.project.active, view.manual_reply, view.style],
         outputs=[view.session, view.board, view.lines, view.analyze_status, view.plan], show_progress="minimal",
         api_name="dub_analyze_source",
     )
@@ -59,12 +59,16 @@ def bind_dubbing(view: DubbingView, *, task=None, create_tab, interrupt=None, ac
     translated = _job(
         view.retranslate.click, actions.translate_lines, FAMILY_LINES, gpu=gpu,
         inputs=[view.session, view.board, view.target_language, view.translator, view.gemini_model,
-                view.api_key, view.notes, view.translation_context],
+                view.api_key, view.notes, view.translation_context, view.style],
         outputs=[view.board, view.lines, view.line_status], show_progress="minimal", api_name=False,
     )
     translated.then(actions.focus_line, inputs=[view.session, view.board], outputs=inspector_outputs(view),
                     **_QUIET).then(**_readiness(view, actions))
     if not gpu:
+        share = [view.share_url, view.create_share, view.stop_share, view.share_status]
+        view.session.change(actions.share_state, inputs=view.session, outputs=share, **_QUIET)
+        view.create_share.click(actions.create_share, inputs=view.session, outputs=share, **_QUIET)
+        view.stop_share.click(actions.stop_share, inputs=view.session, outputs=share, **_QUIET)
         for stop, status, events in ((view.stop_analyze, view.analyze_status, [analyzed, prepared]),
                                      (view.stop_preview, view.line_status, [translated])):
             stop.click(lambda: "Interrupted.", outputs=status, cancels=events, queue=False, api_name=False)
@@ -161,7 +165,7 @@ def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
                            **_QUIET)
     view.pipeline.choose(manual_visibility, inputs=view.pipeline, outputs=view.manual, **_QUIET)
     view.copy_source_prompt.click(
-        actions.source_prompt, inputs=[view.target_language, view.translate, view.notes],
+        actions.source_prompt, inputs=[view.target_language, view.translate, view.notes, view.style],
         outputs=view.source_prompt, **_QUIET,
     ).success(fn=None, js=copy_js(COPY_SOURCE_ID, COPY_SOURCE_LABEL), inputs=view.source_prompt, api_name=False)
     view.pipeline.choose(local_visibility, inputs=view.pipeline, outputs=view.local, **_QUIET)
@@ -217,7 +221,7 @@ def _bind_review(view: DubbingView, *, actions) -> None:
 
     # Copying records which lines the prompt covers; the pasted reply fills those lines.
     view.copy_lines_prompt.click(
-        actions.lines_prompt, inputs=[view.session, view.board, view.target_language, view.notes],
+        actions.lines_prompt, inputs=[view.session, view.board, view.target_language, view.notes, view.style],
         outputs=[view.lines_prompt, view.lines_request, view.line_status], **_QUIET,
     ).success(fn=None, js=copy_js(COPY_LINES_ID, COPY_LINES_LABEL), inputs=view.lines_prompt, api_name=False)
     view.apply_lines_reply.click(

@@ -136,19 +136,22 @@ def context_window(text: str, background: str = "") -> list[str]:
     return lines + [" ".join(str(text).split())]
 
 
-def translation_prompt(text: str, target: str, background: str = "", *, notes: str = "") -> str:
+def translation_prompt(text: str, target: str, background: str = "", *, notes: str = "", style: str = "") -> str:
     """Separate reference material from the sole line whose words may be output.
+
+    ``style`` is an instruction, in the wording of Hy-MT2's Style template; notes stay reference.
 
     With background, the earlier lines are translated too, numbered, so each translation stays on
     its own line; ``window_translation`` then keeps only the last one.
     """
     reference = f"[Translation Notes - Reference Only]\n{notes}\n[/Translation Notes]\n" if notes else ""
+    manner = f"The translation style must strictly conform to [{style}].\n" if style else ""
     if background:
         window = context_window(text, background)
         numbered = "\n".join(f"{number}. {line}" for number, line in enumerate(window, 1))
         rules = (
             f"Translate the {len(window)} numbered lines of [Source Text] into {target} for spoken dialogue. "
-            "They are consecutive lines of one conversation.\n"
+            f"They are consecutive lines of one conversation.\n{manner}"
             f"Output exactly {len(window)} numbered lines, one per source line, in the same order and with the "
             "same numbers. Never merge, split, skip, or reorder lines: each translation contains only what "
             "its own source line says.\n"
@@ -160,7 +163,7 @@ def translation_prompt(text: str, target: str, background: str = "", *, notes: s
             "If a line is already in the target language, return it unchanged.\n")
         return rules + reference + f"[Source Text]\n{numbered}\n[/Source Text]"
     rules = (
-        f"Translate only [Source Text] into {target} for spoken dialogue.\n"
+        f"Translate only [Source Text] into {target} for spoken dialogue.\n{manner}"
         "Output only the translated dialogue, without introductions, explanations, translator notes, "
         "alternatives, labels, or Markdown. Do not add quotation marks unless they occur in the source.\n"
         "Use reference material only to resolve names, pronouns, terminology, and tone. "
@@ -599,13 +602,15 @@ class Worker:
         contexts += [""] * (len(texts) - len(contexts))
         target = str(request.get("target_language") or "English")
         notes = str(request.get("notes") or "").strip()
+        style = str(request.get("style") or "").strip()
         tokenizer, model = self._translator()
         torch = self.torch()
 
         def generate(batch, *, background: bool):
             prompts = [tokenizer.apply_chat_template(
                 [{"role": "user", "content": translation_prompt(
-                    text, target, contexts[index] if background else "", notes=notes if background else "")}],
+                    text, target, contexts[index] if background else "", notes=notes if background else "",
+                    style=style)}],
                 tokenize=False, add_generation_prompt=True) for index, text in batch]
             encoded = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
             sampling = (dict(do_sample=True, temperature=0.7, top_k=20, top_p=0.6)
