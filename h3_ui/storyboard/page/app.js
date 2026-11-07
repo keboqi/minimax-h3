@@ -39,6 +39,7 @@
 
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
+    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null,
     includeOutdated: true, fullVideo: null, saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
   };
@@ -191,9 +192,18 @@
     else renderInspectorDerived();
   };
 
+  const closePanel = () => {
+    if (!state.panel) return;
+    state.panel = null;
+    state.confirmProfile = false;
+    renderTopbar();
+    renderInspector();
+  };
+
   const renderTopbar = () => {
     const panelButton = (name, label) => chip(label, state.panel === name, () => {
       state.panel = state.panel === name ? null : name;
+      state.confirmProfile = false;
       renderTopbar();
       renderInspector();
     });
@@ -225,6 +235,12 @@
         {"aria-label": "Next scene", disabled: index === scenes().length - 1}),
       h("h1", {id: "scene-heading"}, `Scene ${item.number} · ${item.title || "Untitled scene"}`),
       h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
+      h("div", {className: "stage-actions"},
+        button("Insert scene after", () => addScene(item.id), "btn sm"),
+        button("Duplicate scene", duplicateScene, "btn sm"),
+        button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
+        button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
+        button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})),
     );
     renderPreview();
     const notes = [];
@@ -276,7 +292,16 @@
       shown?.id === take.id,
       () => { state.previewTake = take.id; state.question = null; renderPreview(); renderTakes(); },
     ));
-    if (shown && shown.id !== item.in_use) row.push(button("Use this take", useTake, "btn quiet"));
+    if (shown && shown.id !== item.in_use) {
+      row.push(button("Use this take", useTake, "btn quiet"));
+      row.push(button("Delete take", () => deleteTake(shown), "btn sm danger"));
+    }
+    if (shown) {
+      row.push(h("span", {className: "take-meta mono"},
+        `Seed ${shown.seed}`,
+        button("Use seed", () => useSeed(shown.seed), "btn sm",
+          {title: "Set this scene's seed to this take's seed"})));
+    }
     row.push(h("div", {className: "grow"}));
     if (state.boot.gpu) {
       row.push(button(item.takes.length ? "Generate another take" : "Generate this scene",
@@ -290,6 +315,24 @@
       button("Switch, regenerate later", () => confirmTake(false)),
       button("Cancel", () => { state.question = null; renderTakes(); }),
     )] : []));
+  };
+
+  const useSeed = (seed) => {
+    edit("seed", seed);
+    const input = $("scene-seed");
+    if (input) input.value = String(seed);
+    toast(`Scene seed set to ${seed}.`);
+  };
+
+  const deleteTake = async (take) => {
+    const data = await act(
+      () => request("DELETE", sceneUrl(`/takes/${take.id}`)),
+      `Deleted take ${take.number}.`,
+    );
+    if (!data) return;
+    state.previewTake = null;
+    state.question = null;
+    applyBoard(data, {keepInspector: true});
   };
 
   const useTake = async () => {
@@ -315,26 +358,93 @@
   };
 
   const stateClass = (item) => (item.state_label === "Needs input" ? "state-needs" : `state-${item.state}`);
+  const statePrefix = (item, isRunning) => {
+    if (isRunning) return "● ";
+    if (item.state === "done") return "✓ ";
+    if (item.state === "outdated") return "↻ ";
+    if (item.state_label === "Needs input") return "! ";
+    return "○ ";
+  };
+
+  const toggleSceneLink = async (item) => {
+    const url = `${API}/boards/${state.board.id}/scenes/${item.id}`;
+    await flush();
+    await saves;
+    const data = await act(() => request("PATCH", url, {link: item.flow ? "cut" : "flow"}));
+    if (data) applyBoard(data, {keepInspector: item.id !== state.sceneId});
+  };
+
+  const dropSceneOn = async (targetSceneId) => {
+    const fromId = state.dragSceneId;
+    state.dragSceneId = null;
+    if (!fromId || fromId === targetSceneId) return;
+    const list = scenes();
+    const fromIndex = list.findIndex((item) => item.id === fromId);
+    const toIndex = list.findIndex((item) => item.id === targetSceneId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+    await flush();
+    await saves;
+    const data = await act(() => request("POST", `${API}/boards/${state.board.id}/scenes/${fromId}/move`,
+      {offset: toIndex - fromIndex}));
+    if (data) applyBoard(data, {keepInspector: true});
+  };
 
   const renderStrip = () => {
     const running = activeGenerate()?.scene_id;
     const items = [];
     scenes().forEach((item, index) => {
-      if (index && !item.flow) items.push(h("div", {className: "cut", "aria-hidden": "true"}));
+      if (index > 0) {
+        items.push(h("button", {
+          type: "button",
+          className: `link-toggle ${item.flow ? "flow" : "cut"}`,
+          title: item.flow
+            ? `Scene ${item.number} continues scene ${item.number - 1}. Click to start fresh (cut).`
+            : `Scene ${item.number} starts fresh (cut). Click to continue scene ${item.number - 1}.`,
+          "aria-label": item.flow
+            ? `Transition to scene ${item.number}: continues scene ${item.number - 1}. Click to switch to fresh start.`
+            : `Transition to scene ${item.number}: fresh start. Click to switch to continue scene ${item.number - 1}.`,
+          onclick: () => toggleSceneLink(item),
+        }, item.flow ? "→" : "✂"));
+      }
       const thumb = h("span", {className: "thumb"});
       if (item.thumb) thumb.style.backgroundImage = `url("${item.thumb}")`;
-      items.push(h("button", {
-        type: "button", className: "frame", "aria-current": String(item.id === state.sceneId), "data-scene": item.id,
+      const isRunning = item.id === running;
+      const durationText = item.flow
+        ? `${item.seconds}s (+${Number(item.added_seconds.toFixed(1))}s)`
+        : `${item.seconds}s`;
+      const card = h("button", {
+        type: "button", className: "frame", draggable: true,
+        "aria-current": String(item.id === state.sceneId), "data-scene": item.id,
         "aria-label": `Scene ${item.number}, ${item.title}, ${item.seconds} seconds, ${item.state_label}. ${item.summary}`,
         onclick: () => select(item.id),
+        ondragstart: (event) => {
+          state.dragSceneId = item.id;
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+        },
+        ondragover: (event) => {
+          if (!state.dragSceneId || state.dragSceneId === item.id) return;
+          event.preventDefault();
+          card.classList.add("drag-over");
+        },
+        ondragleave: () => card.classList.remove("drag-over"),
+        ondrop: (event) => {
+          event.preventDefault();
+          card.classList.remove("drag-over");
+          dropSceneOn(item.id);
+        },
+        ondragend: () => {
+          state.dragSceneId = null;
+          document.querySelectorAll("#strip .frame.drag-over").forEach((node) => node.classList.remove("drag-over"));
+        },
       }, thumb,
-      item.id === running ? h("span", {className: "bar"}, h("i")) : null,
+      isRunning ? h("span", {className: "bar"}, h("i")) : null,
       h("span", {className: "title"}, `${item.number} · ${item.title || "Untitled scene"}`),
       h("span", {className: "meta"},
-        h("span", {className: stateClass(item)}, item.id === running ? "Generating" : item.state_label),
-        h("span", {className: "mono"}, `${item.seconds}s`))));
+        h("span", {className: stateClass(item)}, `${statePrefix(item, isRunning)}${isRunning ? "Generating" : item.state_label}`),
+        h("span", {className: "mono"}, durationText)));
+      items.push(card);
     });
-    items.push(button("Add scene", addScene, "add-frame"));
+    items.push(button("Add scene", () => addScene(), "add-frame"));
     $("strip").replaceChildren(...items);
   };
 
@@ -366,7 +476,14 @@
 
   const renderFullVideo = () => {
     $("full-video").replaceChildren(...(state.fullVideo
-      ? [h("video", {src: state.fullVideo, controls: true, preload: "metadata", "aria-label": "Full video"})] : []));
+      ? [h("div", {className: "full-video-panel"},
+          h("div", {className: "full-video-head"},
+            h("strong", {className: "small"}, "Full storyboard video"),
+            h("span", {className: "small muted"}, "Continuing scenes drop their repeated opening; fresh starts cut."),
+            h("div", {className: "grow"}),
+            h("a", {className: "btn sm", href: state.fullVideo, download: `${state.board.name || "storyboard"}.mp4`}, "Download"),
+            button("Close", () => { state.fullVideo = null; renderFullVideo(); }, "btn sm")),
+          h("video", {src: state.fullVideo, controls: true, preload: "metadata", "aria-label": "Full video"}))] : []));
   };
 
   // Moving between scenes -------------------------------------------------
@@ -377,6 +494,7 @@
     state.previewTake = null;
     state.question = null;
     state.panel = null;
+    state.confirmProfile = false;
     stored.set("h3-storyboard-scene", sceneId);
     document.querySelectorAll("#strip .frame").forEach((frame) => {
       frame.setAttribute("aria-current", String(frame.dataset.scene === sceneId));
@@ -392,6 +510,11 @@
   };
   document.addEventListener("keydown", (event) => {
     if ($("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === "Escape" && state.panel && !$("library").open) {
+      closePanel();
+      event.preventDefault();
+      return;
+    }
     if (event.target.closest("input, textarea, select, video, audio, dialog")) return;
     if (event.key === "ArrowLeft") { step(-1); event.preventDefault(); }
     if (event.key === "ArrowRight") { step(1); event.preventDefault(); }
@@ -415,13 +538,44 @@
     const check = $("checklist");
     if (check) check.replaceWith(checklist(item));
     const previews = $("tag-hint");
-    if (previews) previews.textContent = tagHint(item);
+    if (previews) previews.replaceWith(tagHintNode(item));
   };
 
   const checklist = (item) => (item.issues.length
     ? h("div", {className: "needs", id: "checklist"}, h("ul", {}, item.issues.map((issue) => h("li", {}, issue))))
     : h("div", {className: "ready", id: "checklist"}, "Ready to generate."));
-  const tagHint = (item) => (item.tags.length ? `In the prompt: ${item.tags.join(", ")}` : "Tick cast or add an image, video or audio.");
+
+  const insertIntoPrompt = (snippet) => {
+    const textarea = document.querySelector("#inspector textarea");
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const before = textarea.value.slice(0, start);
+    const after = textarea.value.slice(end);
+    const padBefore = before.length && !/\s$/.test(before) ? " " : "";
+    const padAfter = after.length && !/^\s|^[.,;!?]/.test(after) ? " " : "";
+    const next = `${before}${padBefore}${snippet}${padAfter}${after}`;
+    textarea.value = next;
+    edit("prompt", next);
+    textarea.focus();
+    const cursor = (before + padBefore + snippet).length;
+    textarea.setSelectionRange(cursor, cursor);
+  };
+
+  const tagHintNode = (item) => {
+    if (!item.tags.length) {
+      return h("p", {className: "small muted", id: "tag-hint"}, "Tick cast or add an image, video or audio.");
+    }
+    const chips = item.tags.map((entry) => {
+      const match = entry.match(/<Picture \d+>/);
+      const tag = match ? match[0] : entry;
+      return button(`+ ${entry}`, () => insertIntoPrompt(tag), "tag-chip",
+        {title: `Insert ${tag} into prompt`});
+    });
+    return h("div", {className: "tag-bar", id: "tag-hint"},
+      h("span", {className: "small muted"}, `In the prompt (click to insert): ${item.tags.join(", ")}`),
+      h("div", {className: "chips"}, chips));
+  };
 
   const textField = (label, field, attributes = {}, tag = "input") => h("label", {className: "field"}, label,
     h(tag, {value: scene()[field] ?? "", oninput: (event) => {
@@ -444,6 +598,8 @@
   const scenePanel = () => {
     const item = scene();
     const [low, high] = state.boot.seconds;
+    const previousPrompt = state.previousPrompts.get(item.id);
+    const canUndoPrompt = previousPrompt !== undefined && previousPrompt !== item.prompt;
     const inputs = [
       h("p", {className: "small muted"}, item.context),
       textField("Scene title", "title", {maxLength: 120}),
@@ -470,7 +626,7 @@
         castPictures(item),
         mediaSlot("Extra images", "ref_images", {multiple: true}),
         mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true}),
-        h("p", {className: "small muted", id: "tag-hint"}, tagHint(item)),
+        tagHintNode(item),
       ],
       item.mode !== "Text to video" && mediaSlot(
         item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
@@ -480,7 +636,13 @@
       textField("Prompt", "prompt", {rows: 14, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
       h("div", {className: "row"},
         h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
-        state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm")),
+        h("div", {className: "chips"},
+          canUndoPrompt && button("Undo rewrite", () => {
+            state.previousPrompts.delete(item.id);
+            edit("prompt", previousPrompt);
+            renderInspector();
+          }, "btn sm"),
+          state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm"))),
       h("label", {className: "field"}, h("span", {id: "seconds-label"}, `Length: ${item.seconds} s`),
         h("input", {type: "range", min: low, max: high, step: 1, value: item.seconds, oninput: (event) => {
           edit("seconds", Number(event.target.value));
@@ -499,16 +661,11 @@
               h("select", {onchange: (event) => edit("takes_per_run", Number(event.target.value))},
                 Array.from({length: state.boot.max_takes}, (_, i) => h("option", {value: i + 1, selected: i + 1 === item.takes_per_run}, String(i + 1)))))),
           h("label", {className: "field"}, "Seed (-1 is random)",
-            h("input", {type: "number", step: 1, value: item.seed,
+            h("input", {type: "number", step: 1, id: "scene-seed", value: item.seed,
               onchange: (event) => {
                 const seed = Number.parseInt(event.target.value, 10);
                 edit("seed", Number.isNaN(seed) ? -1 : seed);
-              }})),
-          h("div", {className: "chips"},
-            button("Duplicate scene", duplicateScene, "btn sm"),
-            button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
-            button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
-            button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})))),
+              }})))),
     ];
     return [h("div", {className: "scene-columns"}, h("div", {className: "column"}, inputs), h("div", {className: "column"}, writing))];
   };
@@ -516,13 +673,20 @@
   // The ticked cast, first in the prompt's picture order; the scene's own images follow below.
   const castPictures = (item) => {
     const ticked = item.pictures.slice(0, item.pictures.length - item.ref_images.length);
-    return ticked.length ? h("div", {className: "tiles"}, ticked.map((picture) => h("div", {className: "tile"},
-      h("img", {src: picture.thumb, alt: picture.tag, loading: "lazy"}), h("span", {className: "tag"}, picture.tag)))) : null;
+    return ticked.length ? h("div", {className: "tiles"}, ticked.map((picture) => {
+      const match = picture.tag.match(/<Picture \d+>/);
+      const tag = match ? match[0] : picture.tag;
+      return h("div", {className: "tile"},
+        h("img", {src: picture.thumb, alt: picture.tag, loading: "lazy",
+          title: `Click to insert ${tag} into prompt`, onclick: () => insertIntoPrompt(tag)}),
+        button(picture.tag, () => insertIntoPrompt(tag), "tag", {title: `Insert ${tag} into prompt`}));
+    })) : null;
   };
 
-  const addScene = async () => {
+  const addScene = async (afterId = null) => {
     await flush();
-    const data = await act(() => request("POST", boardUrl("/scenes")));
+    const body = afterId ? {after: afterId} : {};
+    const data = await act(() => request("POST", boardUrl("/scenes"), body));
     if (!data) return;
     state.sceneId = data.scene_id;
     state.previewTake = null;
@@ -551,13 +715,17 @@
   const enhance = async (event) => {
     const control = event.currentTarget;
     control.disabled = true;
+    const currentScene = scene();
+    const sceneId = currentScene.id;
+    const previousPrompt = currentScene.prompt;
     const url = sceneUrl("/enhance");
     await flush();
     await saves;
     const data = await act(() => request("POST", url, {writer: writerSettings()}));
     control.disabled = false;
     if (!data) return;
-    toast("Prompt improved. Edit it further if you like.");
+    state.previousPrompts.set(sceneId, previousPrompt);
+    toast("Prompt improved. Edit it further or click Undo rewrite.");
     applyBoard(data);
   };
 
@@ -591,12 +759,30 @@
     const value = item[field];
     const list = Array.isArray(value) ? value : value ? [value] : [];
     const pictures = ACCEPT[field] === "image/*";
-    const tiles = list.map((media) => {
+    const castOffset = Math.max(0, item.pictures.length - item.ref_images.length);
+    const tiles = list.map((media, index) => {
       if (field === "ref_audios") {
-        return h("div", {className: "audio-line"}, h("audio", {src: media.url, controls: true, preload: "metadata", "aria-label": media.name}),
+        const audioTag = `<Audio ${index + 1}>`;
+        return h("div", {className: "audio-line"},
+          button(audioTag, () => insertIntoPrompt(audioTag), "tag-chip mono",
+            {title: `Insert ${audioTag} into prompt`}),
+          h("audio", {src: media.url, controls: true, preload: "metadata", "aria-label": media.name}),
           button("Remove", () => removeMedia(field, media.path), "btn sm"));
       }
-      return h("div", {className: "tile"}, h("img", {src: media.thumb || media.poster, alt: media.name, loading: "lazy"}), removeButton(field, media.path));
+      if (field === "ref_videos") {
+        return h("div", {className: "tile video-tile"},
+          h("video", {src: media.url, poster: media.poster, preload: "none", controls: true, muted: true, "aria-label": media.name}),
+          removeButton(field, media.path),
+          h("span", {className: "tag"}, media.name));
+      }
+      const picTag = field === "ref_images" ? `<Picture ${castOffset + index + 1}>` : null;
+      return h("div", {className: "tile"},
+        h("img", {
+          src: media.thumb || media.poster, alt: media.name, loading: "lazy",
+          ...(picTag ? {title: `Click to insert ${picTag} into prompt`, onclick: () => insertIntoPrompt(picTag)} : {}),
+        }),
+        removeButton(field, media.path),
+        picTag ? button(picTag, () => insertIntoPrompt(picTag), "tag", {title: `Insert ${picTag} into prompt`}) : null);
     });
     const drop = h("div", {className: "drop",
       ondragover: (event) => { event.preventDefault(); drop.classList.add("over"); },
@@ -607,7 +793,7 @@
         uploadMedia(field, [...event.dataTransfer.files]);
       },
     },
-    tiles.length ? h("div", {className: field === "ref_audios" ? "" : "tiles"}, tiles) : null,
+    tiles.length ? h("div", {className: field === "ref_audios" ? "audio-list" : "tiles"}, tiles) : null,
     h("div", {className: "slot-actions"},
       button(list.length && !multiple ? "Replace" : "Upload", async () => uploadMedia(field, await pickFiles(ACCEPT[field], multiple)), "btn sm"),
       pictures && state.boot.library && button("Media library", () => openLibrary((path) => libraryMedia(field, path)), "btn sm")));
@@ -648,6 +834,10 @@
   };
 
   // Panels ----------------------------------------------------------------
+  const panelHead = (title) => h("div", {className: "panel-head"},
+    h("h2", {}, title),
+    button(`← Back to scene ${scene().number}`, closePanel, "btn sm"));
+
   const castPanel = () => {
     const name = h("input", {maxLength: 80, placeholder: "Mei"});
     const add = async (fill) => {
@@ -659,7 +849,7 @@
       if (data) applyBoard(data);
     };
     return [
-      h("h2", {}, "Cast"),
+      panelHead("Cast"),
       h("p", {className: "small muted"}, "Add a picture of each person. Scenes using Reference media can then tick them, so they look the same in every scene."),
       state.board.cast.length ? state.board.cast.map((member) => h("div", {className: "list-row"},
         h("img", {src: member.thumb, alt: "", loading: "lazy"}),
@@ -681,7 +871,7 @@
   const versionsPanel = () => {
     const label = h("input", {maxLength: 80});
     return [
-      h("h2", {}, "Versions"),
+      panelHead("Versions"),
       h("p", {className: "small muted"}, "Save the scene list to come back to, or branch it into a new storyboard."),
       h("label", {className: "field"}, "Version name", label),
       button("Save version", async () => {
@@ -710,34 +900,58 @@
       h("input", {value: values[name] ?? "", oninput: (event) => update(name, event.target.value), ...attributes}));
     const backend = values.prompt_writer_backend || "Gemini";
     const model = values.gemini_prompt_model || writer.gemini_default;
+    const geminiGroup = h("div", {className: "details-body", style: "padding-top:0", hidden: backend !== "Gemini"},
+      h("label", {className: "field"}, "Gemini model",
+        h("select", {onchange: (event) => update("gemini_prompt_model", event.target.value)},
+          writer.gemini_models.map((name) => h("option", {selected: name === model}, name)))),
+      input("Gemini API key (optional)", "gemini_api_key", {type: "password", autocomplete: "off"}));
+    const openaiGroup = h("div", {className: "details-body", style: "padding-top:0", hidden: backend === "Gemini"},
+      input("OpenAI-compatible model", "openai_model", {placeholder: writer.openai_models[0]}),
+      input("OpenAI-compatible API key (optional)", "openai_api_key", {type: "password", autocomplete: "off"}),
+      input("Base URL (optional)", "openai_base_url"));
     return h("details", {},
       h("summary", {}, "Prompt writer"),
       h("div", {className: "details-body"},
         h("p", {className: "small muted"}, "Rewrite / extend uses Gemini or an OpenAI-compatible service. Leave a key empty to use the server's key."),
         h("label", {className: "field"}, "Writer service",
-          h("select", {onchange: (event) => update("prompt_writer_backend", event.target.value)},
+          h("select", {onchange: (event) => {
+            const next = event.target.value;
+            update("prompt_writer_backend", next);
+            geminiGroup.hidden = next !== "Gemini";
+            openaiGroup.hidden = next === "Gemini";
+            queueFit();
+          }},
             ["Gemini", "OpenAI-compatible"].map((name) => h("option", {selected: name === backend}, name)))),
-        h("label", {className: "field"}, "Gemini model",
-          h("select", {onchange: (event) => update("gemini_prompt_model", event.target.value)},
-            writer.gemini_models.map((name) => h("option", {selected: name === model}, name)))),
-        input("Gemini API key (optional)", "gemini_api_key", {type: "password", autocomplete: "off"}),
-        input("OpenAI-compatible model", "openai_model", {placeholder: writer.openai_models[0]}),
-        input("OpenAI-compatible API key (optional)", "openai_api_key", {type: "password", autocomplete: "off"}),
-        input("Base URL (optional)", "openai_base_url")));
+        geminiGroup,
+        openaiGroup));
+  };
+
+  const applyProfileNow = async () => {
+    state.confirmProfile = false;
+    const data = await act(() => request("POST", boardUrl("/profile")),
+      "Applied your current MiniMax H3 settings. Scenes made with the old ones are out of date.");
+    if (data) applyBoard(data);
   };
 
   const settingsPanel = () => {
     const name = h("input", {value: state.board.name, maxLength: 120});
     return [
-      h("h2", {}, "Storyboard settings"),
+      panelHead("Storyboard settings"),
       state.board.settings && h("p", {className: "small muted"}, `Uses: ${state.board.settings}`),
       state.boot.gpu && [
-        button("Use my current MiniMax H3 settings", async () => {
-          const data = await act(() => request("POST", boardUrl("/profile")),
-            "Applied your current MiniMax H3 settings. Scenes made with the old ones are out of date.");
-          if (data) applyBoard(data);
+        button("Use my current MiniMax H3 settings", () => {
+          if (state.board.done > 0 && !state.confirmProfile) {
+            state.confirmProfile = true;
+            renderInspector();
+            return;
+          }
+          applyProfileNow();
         }),
-        h("p", {className: "small muted"}, "Scenes made with the old settings will need generating again."),
+        state.confirmProfile ? h("div", {className: "confirm", role: "alertdialog", "aria-label": "Apply MiniMax H3 settings"},
+          h("p", {}, `Applying your current MiniMax H3 settings will mark ${state.board.done} generated scene(s) out of date.`),
+          button("Apply settings", applyProfileNow, "btn primary"),
+          button("Cancel", () => { state.confirmProfile = false; renderInspector(); }))
+          : h("p", {className: "small muted"}, "Scenes made with the old settings will need generating again."),
       ],
       h("label", {className: "field"}, "Storyboard name", name),
       button("Rename", async () => {
@@ -859,6 +1073,7 @@
     const root = $("start");
     root.hidden = false;
     let connect = "flow";
+    let previousStory = null;
     const name = h("input", {placeholder: "Rooftop chase", maxLength: 120});
     const story = h("textarea", {rows: 14, placeholder: "---8---\n\nWide shot over neon rooftops at dusk. Mei stands at the edge as sirens close in.\n\n---6---\n\nShe sprints and leaps across the gap to the next roof.\n\n---5---\n\nClose-up: she lands hard and catches her breath.", oninput: () => preview()});
     const usual = h("input", {type: "range", min: state.boot.seconds[0], max: state.boot.seconds[1], step: 1, value: 10,
@@ -868,6 +1083,14 @@
     const previewRoot = h("div", {style: "display:contents"});
     const connectChips = h("div", {className: "chip-grid two"});
     const status = h("p", {className: "small muted", role: "status"});
+    const undoBtn = button("Undo rewrite", () => {
+      if (previousStory === null) return;
+      story.value = previousStory;
+      previousStory = null;
+      undoBtn.hidden = true;
+      status.textContent = "Restored your original story.";
+      preview();
+    }, "btn sm", {hidden: true});
     const renderConnect = () => connectChips.replaceChildren(
       chip("Continue one into the next", connect === "flow", () => { connect = "flow"; renderConnect(); preview(); }),
       chip("Every scene starts fresh", connect === "cut", () => { connect = "cut"; renderConnect(); preview(); }));
@@ -885,12 +1108,15 @@
     };
     const rewrite = async (event) => {
       const control = event.currentTarget;
+      const before = story.value;
       control.disabled = true;
       status.textContent = "Rewriting…";
       const data = await act(() => request("POST", `${API}/rewrite`, {story: story.value, connect, seconds: Number(usual.value), count: Number(count.value), writer: writerSettings()}));
       control.disabled = false;
       status.textContent = "";
       if (!data) return;
+      previousStory = before;
+      undoBtn.hidden = false;
       story.value = data.story;
       status.textContent = `Wrote ${count.value} scenes; each ---N--- line gives the next scene's length. Review or edit them, then choose Create storyboard.`;
       preview();
@@ -913,7 +1139,8 @@
           h("label", {className: "field"}, usualLabel, usual),
           h("div", {className: "chips", style: "align-items:flex-end"},
             h("label", {className: "field"}, "Scenes to write", count),
-            button("Rewrite / extend into scenes", rewrite)),
+            button("Rewrite / extend into scenes", rewrite),
+            undoBtn),
           status, writerForm()),
         h("aside", {className: "start-preview", "aria-label": "Scene preview"},
           h("fieldset", {}, h("legend", {}, "How should the scenes connect?"), connectChips),
@@ -940,6 +1167,7 @@
     state.previewTake = null;
     state.question = null;
     state.panel = null;
+    state.confirmProfile = false;
     state.fullVideo = null;
     stored.set("h3-storyboard-board", data.id);
     const saved = stored.get("h3-storyboard-scene");
@@ -957,13 +1185,20 @@
     if (data) showBoard(data);
   };
 
-  // In the tab, the frame grows to fit, so the app's page is the only thing that scrolls.
-  // It only grows: a frame that followed each scene's height would move the page on every switch.
+  // In the tab, the frame sizes to fit the active view so only the parent window scrolls.
   const fitFrame = () => {
     const frame = window.frameElement;
     if (!frame) return;
-    const height = document.documentElement.scrollHeight;
-    if (height > frame.offsetHeight) frame.style.height = `${height}px`;
+    const active = $("editor").hidden ? $("start") : $("editor");
+    const height = Math.max(860, Math.ceil(active.getBoundingClientRect().height));
+    if (Math.abs(height - frame.offsetHeight) > 2) {
+      let scrollY = null;
+      try { scrollY = window.parent.scrollY; } catch { /* Framed by another origin. */ }
+      frame.style.height = `${height}px`;
+      if (scrollY !== null) {
+        try { window.parent.scrollTo({top: scrollY, behavior: "instant"}); } catch { /* Framed by another origin. */ }
+      }
+    }
   };
   let fitQueued = false;
   const queueFit = () => {

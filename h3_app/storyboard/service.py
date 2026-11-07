@@ -389,6 +389,26 @@ class StoryboardService:
             scene["in_use"] = take_id
         return self.change(owner, storyboard_id, edit)[0]
 
+    def delete_take(self, owner, storyboard_id, scene_id, take_id):
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            scene = board["scenes"][self.scene_index(board, scene_id)]
+            if take_id not in scene["takes"]:
+                raise H3Error("That take belongs to another scene.")
+            if scene["in_use"] == take_id:
+                raise H3Error("Switch to another take before deleting this one.")
+            scene["takes"] = [item for item in scene["takes"] if item != take_id]
+            in_version = any(
+                take_id in item.get("takes", ()) or item.get("in_use") == take_id
+                for version in board.get("versions", ())
+                for item in version.get("scenes", ())
+            )
+            removed = None if in_version else board["takes"].pop(take_id, None)
+            self.save(owner, storyboard_id, board)
+            if removed is not None:
+                self._unlink_take_files(removed, self._used_take_files())
+            return board
+
     def set_queue(self, owner, storyboard_id, scene_ids):
         def edit(board):
             board["queue"] = list(scene_ids)
@@ -441,17 +461,28 @@ class StoryboardService:
                     if value not in used:
                         Path(value).unlink(missing_ok=True)
             for take in board["takes"].values():
-                for value in (take["video"], take["latent"], take.get("stage_latent")):
-                    if value and value not in used:
-                        path = Path(value) if Path(value).is_absolute() else self.output_path(value)
-                        path.unlink(missing_ok=True)
-                        Path(str(path) + ".settings.json").unlink(missing_ok=True)
+                self._unlink_take_files(take, used)
             preview = self.preview_path(storyboard_id)
             preview.unlink(missing_ok=True)
             try:
                 preview.parent.rmdir()  # Only when no branch still keeps takes there.
             except OSError:
                 pass
+
+    def _used_take_files(self) -> set[str]:
+        used = set()
+        for other_owner, other_id in self._all_ids():
+            other = self.store.storyboard(other_owner, other_id)
+            for take in other["takes"].values():
+                used |= {take["video"], take["latent"], take.get("stage_latent")}
+        return used
+
+    def _unlink_take_files(self, take: dict[str, Any], used: set[str]) -> None:
+        for value in (take["video"], take["latent"], take.get("stage_latent")):
+            if value and value not in used:
+                path = Path(value) if Path(value).is_absolute() else self.output_path(value)
+                path.unlink(missing_ok=True)
+                Path(str(path) + ".settings.json").unlink(missing_ok=True)
 
     def _all_ids(self):
         with self.store.connect() as db:

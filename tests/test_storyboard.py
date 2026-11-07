@@ -247,6 +247,32 @@ class StoryboardServiceTests(unittest.TestCase):
         self.assertFalse(video.is_file())
         self.assertFalse((self.runtime.output_dir / latent).is_file())
 
+    def test_delete_take_removes_unused_take_and_protects_take_in_use(self):
+        storyboard_id = self.service.create("a", "Chase", profile())
+        document = self.service.load("a", storyboard_id)
+        scene_id = document["scenes"][0]["id"]
+        inputs = sb.scene_inputs(document, 0)
+        v1 = self.runtime.output_dir / "h3/.storyboard/x/t1.mp4"
+        l1 = "h3/.storyboard/x/t1.safetensors"
+        v2 = self.runtime.output_dir / "h3/.storyboard/x/t2.mp4"
+        l2 = "h3/.storyboard/x/t2.safetensors"
+        write_latent(self.runtime.output_dir / l1, 0)
+        write_latent(self.runtime.output_dir / l2, 0)
+        v1.write_bytes(b"mp4-1")
+        v2.write_bytes(b"mp4-2")
+        self.service.record_take("a", storyboard_id, scene_id, "t1", video=v1, latents={"latent": l1},
+                                 seed=1, inputs=inputs)
+        self.service.record_take("a", storyboard_id, scene_id, "t2", video=v2, latents={"latent": l2},
+                                 seed=2, inputs=inputs)
+        with self.assertRaisesRegex(H3Error, "Switch to another take"):
+            self.service.delete_take("a", storyboard_id, scene_id, "t1")
+        self.service.delete_take("a", storyboard_id, scene_id, "t2")
+        after = self.service.load("a", storyboard_id)
+        self.assertEqual(after["scenes"][0]["takes"], ["t1"])
+        self.assertNotIn("t2", after["takes"])
+        self.assertFalse(v2.is_file())
+        self.assertTrue(v1.is_file())
+
     def test_backup_restore_keeps_storyboards_and_relocates_cast_pictures(self):
         from h3_app.workspace_admin import backup_workspace, restore_workspace
 

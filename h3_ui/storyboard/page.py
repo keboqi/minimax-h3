@@ -286,9 +286,9 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes", include_in_schema=False)
     @guarded
-    def add_scene(storyboard_id: str, request: Request):
+    def add_scene(storyboard_id: str, request: Request, body: dict = Body(default={})):
         owner = owner_of(request)
-        _, scene_id = handlers.service.add_scene(owner, storyboard_id)
+        _, scene_id = handlers.service.add_scene(owner, storyboard_id, after=body.get("after"))
         return {**payload(owner, storyboard_id), "scene_id": scene_id}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/duplicate", include_in_schema=False)
@@ -432,6 +432,13 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         question = handlers.use_take(owner, storyboard_id, scene_id, body.get("take_id"),
                                      confirmed=bool(body.get("confirmed")))
         return {**payload(owner, storyboard_id), "question": question}
+
+    @app.delete(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}", include_in_schema=False)
+    @guarded
+    def delete_take(storyboard_id: str, scene_id: str, take_id: str, request: Request):
+        owner = owner_of(request)
+        handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
+        return payload(owner, storyboard_id)
 
     @app.post(f"{api}/boards/{{storyboard_id}}/versions", include_in_schema=False)
     @guarded

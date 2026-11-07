@@ -169,6 +169,13 @@ def check(context, url):
     page.get_by_role("button", name="Switch, regenerate later").click()
     expect(page.locator('#strip [aria-label^="Scene 2,"] .meta')).to_contain_text("Out of date")
 
+    # An unused take can be previewed and deleted, and its seed is shown.
+    first_take = page.get_by_role("button", name="Take 1", exact=True)
+    first_take.click()
+    expect(page.get_by_role("button", name="Delete take")).to_be_visible()
+    page.get_by_role("button", name="Delete take").click()
+    expect(first_take).to_have_count(0)
+
     # Interrupt stops a run and hands the buttons back.
     assert context.request.post(url + "/test/hold").ok
     page.get_by_role("button", name=re.compile(r"Generate all remaining scenes")).click()
@@ -177,17 +184,28 @@ def check(context, url):
     expect(page.locator("#run-status")).to_have_count(0, timeout=15000)
     expect(page.get_by_role("button", name=re.compile(r"Generate all remaining scenes"))).to_be_enabled()
 
-    # Cast pictures upload, and a scene ticks them.
+    # Filmstrip connector toggles how a scene starts directly from the strip.
+    connector = page.get_by_role("button", name=re.compile(r"Transition to scene 2:"))
+    connector.click()
+    expect(page.get_by_role("button", name=re.compile(r"Transition to scene 2: fresh start"))).to_be_visible()
+    connector.click()
+    expect(page.get_by_role("button", name=re.compile(r"Transition to scene 2: continues"))).to_be_visible()
+
+    # Cast pictures upload, Escape returns to the scene, and clicking a tag chip inserts into the prompt.
     page.get_by_role("button", name="Cast", exact=True).click()
     page.get_by_label("Name", exact=True).fill("Mei")
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Upload picture").click()
     chooser.value.set_files(picture())
     expect(page.locator("#inspector").get_by_text("Mei", exact=True)).to_be_visible(timeout=10000)
+    page.keyboard.press("Escape")
+    expect(page.get_by_label("Scene title")).to_be_visible()
     page.get_by_role("button", name=re.compile(r"Scene 7, ")).click()
     page.get_by_role("button", name="References", exact=False).first.click()
     page.get_by_role("button", name="Mei", exact=True).click()
     expect(page.locator("#tag-hint")).to_contain_text("Mei = <Picture 1>")
+    page.get_by_role("button", name="+ Mei = <Picture 1>").click()
+    expect(page.get_by_label("Prompt", exact=True)).to_have_value(re.compile(r"<Picture 1>"))
     assert not errors, errors
 
 

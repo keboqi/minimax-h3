@@ -113,6 +113,9 @@ class StoryboardPageTests(unittest.TestCase):
         board = self.create()
         added = self.client.post(f"{API}/boards/{board['id']}/scenes").json()
         self.assertEqual(added["scene_id"], added["scenes"][-1]["id"])
+        inserted = self.client.post(f"{API}/boards/{board['id']}/scenes",
+                                    json={"after": board["scenes"][0]["id"]}).json()
+        self.assertEqual(inserted["scene_id"], inserted["scenes"][1]["id"])
         copied = self.client.post(self.scene_url(board, 0, "/duplicate")).json()
         self.assertEqual(copied["scenes"][1]["id"], copied["scene_id"])
         moved = self.client.post(self.scene_url(board, 0, "/move"), json={"offset": 2}).json()
@@ -228,6 +231,9 @@ class StoryboardPageTests(unittest.TestCase):
         done = self.client.post(self.scene_url(board, 0, "/use-take"), json={"take_id": other, "confirmed": True}).json()
         self.assertEqual(done["scenes"][0]["in_use"], other)
         self.assertEqual(done["scenes"][1]["state"], "outdated")
+        old_take = first["takes"][0]["id"]
+        after_delete = self.client.delete(self.scene_url(board, 0, f"/takes/{old_take}")).json()
+        self.assertEqual([t["id"] for t in after_delete["scenes"][0]["takes"]], [other])
 
     def enhancing_handlers(self):
         """Handlers whose writer checks each call against the real one and keeps its settings."""
