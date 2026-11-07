@@ -52,7 +52,9 @@ _FACE_REFINE_OVERRIDES = {
 
 
 def resolve_face_refinement(values, models):
-    return resolve_refinement({**values, **_FACE_REFINE_OVERRIDES}, models)
+    config = resolve_refinement({**values, **_FACE_REFINE_OVERRIDES}, models)
+    # Refinement steps must stay below the schedule, but this pass samples all of it.
+    return {**config, "steps": FACE_REFINE_STEPS}
 
 
 def resolve_refinement(values, models):

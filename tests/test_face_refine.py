@@ -1,18 +1,20 @@
 """Opt-in face pass: off by default, wired to the pack's contract, safe without a face."""
 
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from h3_app import catalog
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS, GenerationArguments
-from h3_app.generation.finish_video import NO_FACE_ERROR, finish_video
+from h3_app.generation.finish_video import NO_FACE_ERROR, finish_video, make_finishing_retry
+from h3_app.jobs import CURRENT_JOB, Job
 from h3_app.model_types import ModelConfig, ModelProfile
 from h3_app.settings import GenerationRequest, resolve_settings
 from h3_app.storyboard import model as storyboard
 from h3_app.workflows.face_refine import REQUIRED_FACE_REFINE_NODES, build_h3_face_refine_graph
-from h3_app.refinement import H3_REFINEMENT_FIELDS
+from h3_app.refinement import FACE_REFINE_STEPS, H3_REFINEMENT_FIELDS, resolve_face_refinement
 from h3_models import MODEL_SPECS
 
 
@@ -47,6 +49,16 @@ class FaceRefineSettingsTests(unittest.TestCase):
                 {**catalog.UI_DEFAULTS, "face_refine": True, "result_format": result}))
             self.assertIs(plan.effective.finishing.face_refine, expected, result)
 
+    def test_strength_outside_the_range_is_refused_before_generating(self):
+        for strength in (None, "0.4", True, 0, 0.1, 0.7, float("nan")):
+            plan = resolve_settings(GenerationRequest.from_values(
+                {**catalog.UI_DEFAULTS, "face_refine": True, "face_refine_strength": strength}))
+            self.assertTrue(any("Face refine strength" in issue for issue in plan.issues), strength)
+            self.assertEqual(plan.effective.finishing.face_refine_strength, 0.4)
+        plan = resolve_settings(GenerationRequest.from_values(
+            {**catalog.UI_DEFAULTS, "face_refine": True, "face_refine_strength": 0.6}))
+        self.assertFalse(plan.issues)
+
     def test_existing_video_refinement_and_storyboard_takes_ignore_it(self):
         self.assertNotIn("face_refine", H3_REFINEMENT_FIELDS)
         self.assertIs(storyboard.PROFILE_OVERRIDES["face_refine"], False)
@@ -74,6 +86,12 @@ class FaceRefineGraphTests(unittest.TestCase):
         self.assertFalse({"H3RegeneratePrepareLatent", "MiniMaxH3TRTVAELoader"}
                          & {node["class_type"] for node in graph.values()})
 
+    def test_the_stack_plans_for_every_sampled_step(self):
+        config = models()
+        config.turbo_lora_for = lambda mode, variant: "turbo8.safetensors"
+        resolved = resolve_face_refinement({**catalog.UI_DEFAULTS, "generation_mode": "Normal"}, config)
+        self.assertEqual(resolved["steps"], FACE_REFINE_STEPS)
+
     def test_canvas_and_length_follow_the_tracker(self):
         graph = self.build()
         track = link_id(graph, "H3FaceTrackCrop")
@@ -96,6 +114,13 @@ class FaceRefineGraphTests(unittest.TestCase):
         self.assertEqual(stitch["base_images"], [link_id(graph, "GetVideoComponents"), 0])
         self.assertEqual(stitch["refined_crops"], [link_id(graph, "VAEDecode"), 0])
 
+    def test_attention_follows_the_server_backend(self):
+        sol = catalog.SOL_ATTENTION_NODE
+        forced = {"attention_mode": "Sol-Attn"}
+        classes = lambda **values: {node["class_type"] for node in self.build(**values).values()}
+        self.assertIn(sol, classes(**forced))
+        self.assertNotIn(sol, classes(**forced, _attention_backend="comfy-kitchen"))
+
     def test_reference_mode_uses_the_reference_node(self):
         graph = self.build(mode="Reference media")
         self.assertIn("audio_vae", by_class(graph, "MiniMaxH3ReferenceToVideo"))
@@ -106,7 +131,7 @@ class FaceRefineGraphTests(unittest.TestCase):
 
 
 class FaceRefineFinishingTests(unittest.TestCase):
-    def run_finish(self, *, face_refine=True, history=None, postprocess="None"):
+    def run_finish(self, *, face_refine=True, history=None, postprocess="None", job=None, face_refined=False):
         source, refined = Path("source.mp4"), Path("refined.mp4")
         finishing = SimpleNamespace(
             face_refine=face_refine, face_refine_strength=0.45, postprocess=postprocess)
@@ -116,7 +141,7 @@ class FaceRefineFinishingTests(unittest.TestCase):
         build = Mock(return_value={"1": {"class_type": "LoadVideo", "inputs": {}}})
         media = SimpleNamespace(
             stage_file=Mock(return_value="staged.mp4"),
-            probe_video_metadata=Mock(return_value=SimpleNamespace(fps=24.0)),
+            probe_video_metadata=Mock(return_value=SimpleNamespace(fps=24.0, duration=12.5)),
             resolve_output=Mock(return_value=refined),
             postprocess_video=Mock(side_effect=lambda path, option: path))
         services = SimpleNamespace(
@@ -130,13 +155,17 @@ class FaceRefineFinishingTests(unittest.TestCase):
         timings = SimpleNamespace(transition=Mock())
         generator = finish_video(
             request, SimpleNamespace(actual_seed=7, models=models()), services, source,
-            "client", 0.0, timings, lambda *a, **k: None)
+            "client", 0.0, timings, lambda *a, **k: None, face_refined=face_refined)
         statuses = []
-        while True:
-            try:
-                statuses.append(next(generator))
-            except StopIteration as stop:
-                return stop.value, services, build, statuses
+        token = CURRENT_JOB.set(job)
+        try:
+            while True:
+                try:
+                    statuses.append(next(generator))
+                except StopIteration as stop:
+                    return stop.value, services, build, statuses
+        finally:
+            CURRENT_JOB.reset(token)
 
     def test_disabled_runs_nothing(self):
         result, services, build, _ = self.run_finish(face_refine=False)
@@ -148,6 +177,7 @@ class FaceRefineFinishingTests(unittest.TestCase):
         result, services, build, _ = self.run_finish()
         self.assertEqual(result, Path("refined.mp4"))
         self.assertEqual(build.call_args.kwargs["strength"], 0.45)
+        self.assertEqual(build.call_args.kwargs["refinement"]["_source_duration"], 12.5)
         services.models.ensure_model_keys.assert_called_once_with(("face_yolov8m",))
         services.media.postprocess_video.assert_called_once_with(Path("refined.mp4"), "None")
 
@@ -155,6 +185,44 @@ class FaceRefineFinishingTests(unittest.TestCase):
         history = Mock(side_effect=RuntimeError(f"{NO_FACE_ERROR}. Lower `confidence`"))
         result, _, _, _ = self.run_finish(history=history)
         self.assertEqual(result, Path("source.mp4"))
+
+    def test_a_clip_already_refined_is_not_refined_again(self):
+        result, _, build, _ = self.run_finish(face_refined=True)
+        self.assertEqual(result, Path("source.mp4"))
+        build.assert_not_called()
+
+    def test_the_refined_clip_becomes_the_retained_source(self):
+        job = Mock(variant=0, recoverable_sources={0: "source.mp4"})
+        self.run_finish(job=job)
+        self.assertEqual(job.recoverable_sources[0], "refined.mp4")
+
+    def test_no_face_settles_the_stage_and_keeps_the_retained_source(self):
+        job = Mock(variant=0, recoverable_sources={0: "source.mp4"})
+        self.run_finish(job=job, history=Mock(side_effect=RuntimeError(NO_FACE_ERROR)))
+        job.settle_prompt.assert_called_once_with("job")
+        self.assertEqual(job.recoverable_sources[0], "source.mp4")
+
+    def test_settling_a_prompt_closes_its_ledger_entry(self):
+        job = SimpleNamespace(prompt_id="job", persist=Mock(), ledger=[
+            {"prompt_id": "job", "state": "submitted"}, {"prompt_id": "other", "state": "submitted"}])
+        Job.settle_prompt(job, "job")
+        self.assertIsNone(job.prompt_id)
+        self.assertEqual([entry["state"] for entry in job.ledger], ["completed", "submitted"])
+
+    def test_retry_skips_the_pass_only_for_a_refined_clip(self):
+        module = importlib.import_module("h3_app.generation.finish_video")
+        seen = []
+
+        def fake_finish(*args, **kwargs):
+            seen.append(kwargs["face_refined"])
+            return Path("out.mp4")
+            yield
+
+        with patch.object(module, "finish_video", fake_finish), patch.object(module, "write_snapshot"):
+            retry = make_finishing_retry(Mock(), SimpleNamespace(actual_seed=1), Mock(), {}, raw_source="raw.mp4")
+            for retained in ("raw.mp4", "refined.mp4"):
+                list(retry(retained, None))
+        self.assertEqual(seen, [False, True])
 
     def test_other_failures_still_surface(self):
         with self.assertRaisesRegex(RuntimeError, "out of memory"):

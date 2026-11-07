@@ -121,13 +121,8 @@ class Submission:
     def history(self):
         if self._completed_history is None:
             self._completed_history = self._wait_history(self.prompt_id)
-            if self.job and self.job.prompt_id == self.prompt_id:
-                self.job.prompt_id = None
             if self.job:
-                for entry in self.job.ledger:
-                    if entry["prompt_id"] == self.prompt_id:
-                        entry["state"] = "completed"
-                self.job.persist()
+                self.job.settle_prompt(self.prompt_id)
         return self._completed_history
 
     def close(self):

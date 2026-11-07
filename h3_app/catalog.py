@@ -734,6 +734,7 @@ UI_DEFAULTS = {
     "face_refine": False,
     "face_refine_strength": 0.4,
 }
+FACE_REFINE_STRENGTH_RANGE = (0.2, 0.6)
 
 
 SPECTRUM_DEFAULT_INPUTS = {

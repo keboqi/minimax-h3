@@ -734,6 +734,7 @@ class WindowRunTests(unittest.TestCase):
         return Selection(file_content_sha256(self.video), 0, 20, 480, 0, 226)
 
     def test_a_long_selection_renders_every_window_and_joins_them(self):
+        self.handlers.settings["local"] = {"postprocess": "SeedVR2", "face_refine": True}
         updates = self.run_windows(picture=str(self.picture))
         final, status = updates[-1]
         metadata = probe_video_metadata(Path(final))
@@ -743,7 +744,8 @@ class WindowRunTests(unittest.TestCase):
         project = self.project()
         self.assertGreater(len(project["windows"]), 1)
         self.assertTrue(all(window["state"] == "done" for window in project["windows"]))
-        self.assertTrue(all(values["postprocess"] == "None" for values, _ in self.takes))
+        self.assertTrue(all(values["postprocess"] == "None" and values["face_refine"] is True
+                            for values, _ in self.takes))
         first, second = self.takes[0][1], self.takes[1][1]
         self.assertEqual(first.pins, (12,))
         # Window 2: the frame carried from window 1 and window 1's picture set the look; held frames fix the start.

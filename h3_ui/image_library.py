@@ -24,8 +24,9 @@ def _remove_thumbnail(paths, event: gr.SelectData):
 
 
 # A named thumbnail adds its name at the prompt's cursor. Only its × (or Delete on a focused
-# thumbnail) reaches Gradio's select event, which removes the image. FLUX 3's names belong in
-# layout descriptions, so they go to that box, opening its settings if needed.
+# thumbnail) reaches Gradio's select event, which removes the image, as does any click on an
+# unnamed one. FLUX 3's names belong in layout descriptions, so they go to that box, opening
+# its settings if needed.
 REFERENCE_TAG_JS = r"""
 () => {
   if (window.h3ReferenceTags) return;
@@ -62,10 +63,10 @@ REFERENCE_TAG_JS = r"""
     if (!thumbnail || removing) return;
     const box = thumbnail.getBoundingClientRect();
     if (event.detail && event.clientX > box.right - 28 && event.clientY < box.top + 28) return;
-    event.preventDefault();
-    event.stopPropagation();
     const tag = thumbnail.querySelector(".caption-label")?.textContent.trim();
     if (!tag) return;
+    event.preventDefault();
+    event.stopPropagation();
     if (tag.startsWith("<ref_image_")) return addToLayout(tag);
     const prompt = shown("#h3-image-prompt textarea");
     if (prompt) insert(prompt, tag);
@@ -81,11 +82,21 @@ REFERENCE_TAG_JS = r"""
 """
 
 
+NAME_THUMBNAILS = "Click an image to add its name to the prompt; × removes it"
+REMOVE_THUMBNAILS = "Click an image to remove it"
+
+
 def _thumbnail_items(paths, tag=None, *tag_values):
     paths = list(paths or [])
     if tag is None:
         return paths
     return [(path, tag(index, len(paths), *tag_values)) for index, path in enumerate(paths, 1)]
+
+
+def _thumbnail_update(tag, paths, *tag_values):
+    items = _thumbnail_items(paths, tag, *tag_values)
+    named = any(isinstance(item, tuple) and item[1] for item in items)
+    return gr.update(value=items, visible=bool(paths), label=NAME_THUMBNAILS if named else REMOVE_THUMBNAILS)
 
 
 def _bind_thumbnails(files, tags=None):
@@ -95,12 +106,11 @@ def _bind_thumbnails(files, tags=None):
     ``tags`` is (components, tag): tag(index, count, *values) captions each image, updating as they change.
     """
     components, tag = tags or ((), None)
-    gallery = gr.Gallery(label="Click an image to add its name to the prompt; × removes it" if tag else
-                         "Click an image to remove it", interactive=False, allow_preview=False, columns=4,
+    gallery = gr.Gallery(label=REMOVE_THUMBNAILS, interactive=False, allow_preview=False, columns=4,
                          fit_columns=False, height="auto", object_fit="cover", buttons=[], visible=False,
                          elem_classes=["h3-input-thumbnails", *(["h3-tagged-thumbnails"] if tag else [])])
     gr.on([control.change for control in (files, *components)],
-          lambda paths, *values: gr.update(value=_thumbnail_items(paths, tag, *values), visible=bool(paths)),
+          lambda paths, *values: _thumbnail_update(tag, paths, *values),
           inputs=[files, *components], outputs=gallery, queue=False, api_name=False, show_progress="hidden",
           trigger_mode="always_last")
     gallery.select(_remove_thumbnail, inputs=files, outputs=files, queue=False, api_name=False, show_progress="hidden")

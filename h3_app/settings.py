@@ -184,6 +184,19 @@ class ResolvedSettings:
         }
 
 
+def _face_refine_strength_issue(value) -> str | None:
+    from .catalog import FACE_REFINE_STRENGTH_RANGE
+
+    low, high = FACE_REFINE_STRENGTH_RANGE
+    valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and low <= value <= high
+    )
+    return None if valid else f"Face refine strength must be a number between {low} and {high}."
+
+
 def resolve_settings(
     request: GenerationRequest, context: ResolutionContext = ResolutionContext()
 ) -> ResolvedSettings:
@@ -287,6 +300,9 @@ def resolve_settings(
         inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
     if not finishing.face_refine:
         inactive.add("face_refine_strength")
+    elif strength_issue := _face_refine_strength_issue(finishing.face_refine_strength):
+        issues.append(strength_issue)
+        finishing = replace(finishing, face_refine_strength=FinishingSettings.face_refine_strength)
     if generation_mode != "Turbo":
         inactive.add("turbo_variant")
     if sampling.attention_mode not in {"Sol-Attn", "Auto"}:

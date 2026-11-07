@@ -104,6 +104,15 @@ class Job:
                 break
         self.persist()
 
+    def settle_prompt(self, prompt_id):
+        """Close a stage that has ended, so it no longer counts as in flight."""
+        if self.prompt_id == prompt_id:
+            self.prompt_id = None
+        for entry in self.ledger:
+            if entry["prompt_id"] == prompt_id:
+                entry["state"] = "completed"
+        self.persist()
+
     def observe_submission(self, prompt_id, token, graph):
         seeds = {
             f"{node_id}.{key}": value

@@ -289,7 +289,7 @@ class JobRegistryTests(unittest.TestCase):
             prepared = SimpleNamespace(actual_seed=42)
             services = Mock()
 
-            def finish(request, prepared, services, path, *_):
+            def finish(request, prepared, services, path, *_, **__):
                 self.assertEqual(path.read_bytes(), b"complete H3 source")
                 self.assertEqual(prepared.actual_seed, 42)
                 self.assertEqual(request.finishing.ltx25_model, "Original model")

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
-from h3_app.catalog import REFINEMENT_LORA_CHOICES
+from h3_app.catalog import FACE_REFINE_STRENGTH_RANGE, REFINEMENT_LORA_CHOICES
 
 if TYPE_CHECKING:
     from ..services import H3ViewServices
@@ -160,8 +160,7 @@ def build_finishing_section(
         )
         with gr.Group(visible=defaults["face_refine"]) as face_refine_settings:
             face_refine_strength = gr.Slider(
-                0.2,
-                0.6,
+                *FACE_REFINE_STRENGTH_RANGE,
                 value=defaults["face_refine_strength"],
                 step=0.05,
                 label="Face refine strength",

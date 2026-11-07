@@ -192,7 +192,7 @@ class WindowRunner:
                                                      project.get("latent_upscale")).upscale(
                 values.get("latent_upscale")),
         ))
-        # Each window must join as sampled; finishing belongs on the joined video.
+        # Upscaling would change the size windows join at. Face refine keeps it, so it runs per window.
         values["postprocess"] = "None"
         prefix = Path(project["folder"]).relative_to(Path(self.runtime().output_dir)).as_posix()
         remake = RemakeGraph(

@@ -30,8 +30,11 @@ from .services import GenerationServices
 NO_FACE_ERROR = "No face detected in any frame"
 
 
-def make_finishing_retry(request, prepared, services, execution_snapshot):
-    """Start at finishing using the retained source and resolved model policy."""
+def make_finishing_retry(request, prepared, services, execution_snapshot, raw_source=None):
+    """Start at finishing using the retained source and resolved model policy.
+
+    A retained clip other than ``raw_source`` already has its faces refined.
+    """
     saved_request = request.copy()
 
     def finish_again(retained_source, _request):
@@ -55,6 +58,7 @@ def make_finishing_retry(request, prepared, services, execution_snapshot):
                 started,
                 timings,
                 lambda *args, **kwargs: None,
+                face_refined=raw_source is not None and source != Path(raw_source),
             )
             write_snapshot(result, execution_snapshot)
             yield GenerationUpdate(
@@ -83,6 +87,7 @@ def refine_faces(
     progress: ProgressCallback,
 ) -> Generator[GenerationUpdate, None, Path]:
     """Re-render the largest face and return the new clip, or the source if none is found."""
+    job = CURRENT_JOB.get()
     timings.transition("Refining faces")
     yield GenerationUpdate(None, progress_status("Checking face refine models", started=started))
     downloaded = [
@@ -92,14 +97,15 @@ def refine_faces(
     ]
     if any(downloaded):
         yield GenerationUpdate(None, progress_status("Face refine models downloaded", started=started))
+    metadata = services.media.probe_video_metadata(source)
     graph = services.workflows.build_face_refine_graph(
         source_video=services.media.stage_file(str(source), "h3_face_refine"),
         seed=prepared.actual_seed,
         models=prepared.models,
         prompt=request.media.prompt,
-        fps=services.media.probe_video_metadata(source).fps,
+        fps=metadata.fps,
         strength=request.finishing.face_refine_strength,
-        refinement=request.values(),
+        refinement={**request.values(), "_source_duration": metadata.duration},
         output_nonce=client_id,
     )
     queued_at = time.time()
@@ -121,12 +127,20 @@ def refine_faces(
                 configured_steps=FACE_REFINE_STEPS if step is not None else None,
                 detail=f"Face refine job `{prompt_id}`",
             ))
-        return services.media.resolve_output(
+        refined = services.media.resolve_output(
             services.execution.wait_for_history(prompt_id), queued_at
         )
     except Exception as exc:
         if NO_FACE_ERROR not in str(exc):
             raise
+    else:
+        # A later failure keeps this clip, so a retry doesn't repeat the pass.
+        if job is not None:
+            job.recoverable_sources[job.variant] = str(refined)
+            job.persist()
+        return refined
+    if job is not None:
+        job.settle_prompt(prompt_id)
     yield GenerationUpdate(None, progress_status(
         "Face refine found no face; keeping the clip as generated", started=started,
     ))
@@ -142,8 +156,10 @@ def finish_video(
     started: float,
     timings: StageTimings,
     progress: ProgressCallback,
+    *,
+    face_refined: bool = False,
 ) -> Generator[GenerationUpdate, None, Path]:
-    if request.finishing.face_refine:
+    if request.finishing.face_refine and not face_refined:
         source = yield from refine_faces(
             request, prepared, services, source, client_id, started, timings, progress
         )

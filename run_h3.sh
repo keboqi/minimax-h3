@@ -509,6 +509,9 @@ log "Setup finished after ${SECONDS}s; starting ComfyUI at $COMFY_URL"
 log "Memory profile: $COMFYUI_MEMORY_MODE"
 (
   cd "$COMFY_DIR"
+  # ComfyUI-H3-FaceRefine's face picker routes read any path a request names. Prism never
+  # uses them, and ComfyUI can be reachable by others, so confine them to ComfyUI's folder.
+  export H3_FACEREFINE_STRICT_PATHS="${H3_FACEREFINE_STRICT_PATHS:-1}"
   exec "$PYTHON_BIN" -u main.py \
     --listen "$COMFY_HOST" \
     --port "$COMFY_PORT" \

@@ -30,6 +30,16 @@ class ApplicationAdaptersTests(unittest.TestCase):
         catalog.start()
         self.addCleanup(catalog.stop)
 
+    def test_face_refine_graph_uses_the_server_attention_backend(self):
+        with (
+            unittest.mock.patch.object(app, "SERVER_ATTENTION_BACKEND", "comfy-kitchen"),
+            unittest.mock.patch.object(app, "build_h3_face_refine_graph") as build,
+        ):
+            app.build_face_refine_graph(refinement={"mode": "Reference media"}, seed=7)
+        build.assert_called_once_with(
+            refinement={"mode": "Reference media", "_attention_backend": "comfy-kitchen"}, seed=7,
+        )
+
     def test_h3_openai_writer(self):
         with (
             unittest.mock.patch.dict(

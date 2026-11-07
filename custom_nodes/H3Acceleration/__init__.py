@@ -28,10 +28,6 @@ import comfy.utils
 import comfy.weight_adapter
 import folder_paths
 
-# ComfyUI-H3-FaceRefine's face picker routes read any path a request names. Prism never
-# uses them, and ComfyUI can be reachable by others, so confine them to ComfyUI's folder.
-os.environ.setdefault("H3_FACEREFINE_STRICT_PATHS", "1")
-
 
 LIGHTX_LORA_PATTERN = re.compile(
     r"^(diffusion_model\.(?:blocks\.\d+|token_refiner\.blocks\.\d+)\."

@@ -374,7 +374,7 @@ def generate(
             # The callback starts directly at finishing with the same seed.
             job.recoverable_sources[job.variant] = str(source)
             job.finishing_callbacks[job.variant] = make_finishing_retry(
-                request, prepared, services, execution_snapshot
+                request, prepared, services, execution_snapshot, raw_source=source,
             )
             job.finishing_offsets[job.variant] = sum(
                 entry["variant"] == job.variant for entry in job.ledger
@@ -382,17 +382,19 @@ def generate(
         write_snapshot(
             source, {**execution_snapshot, "stage": "H3 output before post-processing"}
         )
-        if request.finishing.postprocess != "None":
+        if finishing_needed:
+            finishing_name = (
+                "Face refine" if request.finishing.postprocess == "None"
+                else request.finishing.postprocess
+            )
             if job is not None:
                 job.state = "finishing"
-                job.stage = f"Finishing: {request.finishing.postprocess}"
-            timings.transition(f"Post-processing: {request.finishing.postprocess}")
+                job.stage = f"Finishing: {finishing_name}"
+            timings.transition(f"Post-processing: {finishing_name}")
             progress(0, desc="Post-processing video")
             yield GenerationUpdate(
                 None,
-                progress_status(
-                    f"Post-processing: {request.finishing.postprocess}", started=started
-                ),
+                progress_status(f"Post-processing: {finishing_name}", started=started),
             )
         result = yield from finish_video(
             request, prepared, services, source, client_id, started, timings, progress
@@ -410,6 +412,9 @@ def generate(
         )
     except Exception as exc:
         record_failure(exc)
+        job = CURRENT_JOB.get()
+        if job is not None:
+            fallback_video = job.recoverable_sources.get(job.variant, fallback_video)
         fallback = str(fallback_video) if fallback_video is not None else None
         suffix = " The completed H3 video is still available." if fallback else ""
         if "Failed to deserialize TensorRT engine" in str(

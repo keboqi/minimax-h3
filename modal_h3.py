@@ -994,6 +994,9 @@ def start_comfy() -> subprocess.Popen:
     )
 
     env = service_env()
+    # ComfyUI-H3-FaceRefine's face picker routes read any path a request names. Prism never
+    # uses them, so confine them to ComfyUI's folder.
+    env.setdefault("H3_FACEREFINE_STRICT_PATHS", "1")
 
     comfy_args = [
         "python",

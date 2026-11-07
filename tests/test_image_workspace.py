@@ -24,7 +24,7 @@ from h3_ui.image_controller import (
 )
 from h3_ui.engines.controls import resolution_preset_values
 from h3_ui.image_bindings import move_reference
-from h3_ui.image_library import _thumbnail_items
+from h3_ui.image_library import NAME_THUMBNAILS, REMOVE_THUMBNAILS, _thumbnail_items, _thumbnail_update
 from h3_ui.persistence import restore_preferences
 
 
@@ -130,6 +130,9 @@ class ReferenceTagTests(unittest.TestCase):
         self.assertIsNone(reference_tag("qwen", 1, 3, True))
         self.assertEqual(reference_tag("h3", 1, 1), "<Picture 1>")
         self.assertIsNone(reference_tag("moss_image", 1, 2))
+        tag = lambda index, count, model, separate: reference_tag(model, index, count, separate)
+        self.assertEqual(_thumbnail_update(tag, ["a.png"], "qwen", False)["label"], REMOVE_THUMBNAILS)
+        self.assertEqual(_thumbnail_update(tag, ["a.png"], "h3", False)["label"], NAME_THUMBNAILS)
         self.assertIsNone(reference_tag("ltx", 1, 2))
 
     def test_thumbnails_keep_order_and_follow_the_model(self):

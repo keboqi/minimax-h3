@@ -570,6 +570,7 @@ def prepare_h3(
     if not request.media.prompt.strip():
         raise H3Error("Prompt is required.")
     request.finishing.postprocess = effective.finishing.postprocess
+    request.finishing.face_refine = effective.finishing.face_refine
     request.finishing.latent_upscale = effective.finishing.latent_upscale
     generation_frames = (
         selected_image_sampling_length(

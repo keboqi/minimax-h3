@@ -436,6 +436,12 @@ def build_seedvr2_image_upscale_graph(
 required_upscale_nodes = upscale_workflow.required_upscale_nodes
 
 
+def build_face_refine_graph(*, refinement: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    return build_h3_face_refine_graph(
+        refinement={**refinement, "_attention_backend": SERVER_ATTENTION_BACKEND}, **kwargs,
+    )
+
+
 def build_upscale_graph(
     *,
     option: str,
@@ -716,7 +722,7 @@ def _generation_services() -> generation_services.GenerationServices:
             build_ref2va_graph=build_ref2va_graph,
             build_remake_graph=build_remake_graph,
             build_upscale_graph=build_upscale_graph,
-            build_face_refine_graph=build_h3_face_refine_graph,
+            build_face_refine_graph=build_face_refine_graph,
         ),
         media=generation_services.MediaServices(
             postprocess_video=postprocess_video,
