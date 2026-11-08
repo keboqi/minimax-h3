@@ -53,6 +53,13 @@ without asking the server for anything, and the address keeps the screen (`#scri
 `#mix`). The page and the tab share saved projects: a project saved in the tab opens here, and
 the tab's **Load project** picks up what the page saved.
 
+The CPU Workshop serves the page too, at the same `/soundstage/`, linked from its Sound Stage tab.
+There it prepares projects: write and rewrite the script, cast speakers and sounds (describe,
+upload, transcripts, saved voices and the Voice library), set the speech and video settings, and
+play a mix already made. The top bar says **Prepare only**; anything that needs the GPU (speaking,
+Auto, making voices or sounds, transcribing, word timing, new voices and the illustrated video)
+is off and says to open the project in Studio, where the same project continues.
+
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
 
@@ -264,7 +271,8 @@ or loads it when needed. Skipped slots do not require their generation model.
 ## Script writer and cast
 
 Workshop's **Sound Stage** tab supports writing, applying external replies, editing cast and sound
-briefs, and silent preview on CPU. Enter a **Project name** and click **Save project**. Saving
+briefs, and silent preview on CPU; so does the Soundstage page it links to, which saves as you go.
+Enter a **Project name** and click **Save project**. Saving
 under the same name updates the draft. In Studio, select that name under **Saved Sound Stage
 projects** and click **Load project** to continue with Auto or manual generation.
 

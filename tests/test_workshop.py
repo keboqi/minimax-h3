@@ -354,6 +354,46 @@ class ModelManagerTests(unittest.TestCase):
             self.assertNotIn(resource, arguments)
         self.assertNotIn("sync_models", ast.unparse(functions["prepare_runtime_models"]))
 
+    def test_workshop_serves_the_soundstage_page_for_preparing_without_a_gpu(self):
+        import gradio as gr
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
+        from h3_ui.drama3.workshop import build_soundstage_workshop
+        from h3_ui.media_console import media_runtime
+
+        data = Path(self.temp.name)
+        runtime = media_runtime(data, data / "app")
+        store = WorkspaceStore(data / "workspace")
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        JOBS.store = store
+        with gr.Blocks() as cpu:
+            build_soundstage_workshop(gr.Tab("Sound Stage"), cpu, runtime, store)
+        app = FastAPI()
+        install_owner_cookie(app, store)
+        for install in cpu.h3_routes:
+            install(app)
+        client = TestClient(app)
+        api = "/soundstage/api"
+        self.assertEqual(client.get("/soundstage/").status_code, 200)
+        boot = client.get(f"{api}/boot").json()
+        self.assertFalse(boot["gpu"])
+        self.assertIsNone(boot["video"])  # Drawing a video needs the GPU endpoint.
+        # Writing and casting work here; the project is the same one Studio opens.
+        self.assertEqual(client.post(f"{api}/projects", json={"name": "Chapter one"}).status_code, 200)
+        name = {"name": "Chapter one"}
+        client.patch(f"{api}/project/script", params=name, json={"text": "Mia: Hello."})
+        project = client.patch(f"{api}/project/slot", params={**name, "kind": "voice", "slot": 0},
+                               json={"save_name": "Mia", "description": "A bright vendor."}).json()
+        self.assertEqual(project["speakers"][0]["name"], "Mia")
+        self.assertEqual(store.soundstage_project("Chapter one")[0]["text"], "Mia: Hello.")
+        # Everything that needs the GPU says where to do it.
+        for path, body in (("/speak", {"action": "generate"}), ("/auto", {}), ("/words", None),
+                           ("/project/make", {"target": "prepare"})):
+            reply = client.post(f"{api}{path}", params=name, json=body if body is not None else {}).json()
+            self.assertIn("Studio", reply.get("error", ""), path)
+
     def test_soundstage_project_round_trip_from_workshop_to_studio(self):
         import gradio as gr
         from h3_app.workspace_store import WorkspaceStore

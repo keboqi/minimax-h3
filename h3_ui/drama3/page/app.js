@@ -22,8 +22,13 @@
   const shortMode = (mode) => (mode === state.boot.advanced ? "Advanced" : "Basic");
 
   // -- Helpers ---------------------------------------------------------------
+  const NO_GPU = "This needs the GPU: open the project in Studio to run it.";
+
   function h(tag, attrs = {}, ...children) {
     const element = document.createElement(tag);
+    if (attrs["data-gpu"] !== undefined && state.boot && !state.boot.gpu) {
+      attrs = {...attrs, disabled: true, title: NO_GPU};
+    }
     for (const [key, value] of Object.entries(attrs)) {
       if (value === undefined || value === null || value === false) continue;
       if (key === "class") element.className = value;
@@ -140,7 +145,8 @@
     }, shortMode(option))));
     const gpu = $("gpu");
     gpu.dataset.ready = String(state.boot.gpu);
-    gpu.textContent = state.boot.gpu ? "GPU ready" : "No GPU here";
+    gpu.textContent = state.boot.gpu ? "GPU ready" : "Prepare only";
+    gpu.title = state.boot.gpu ? "" : "No GPU here: write, cast and manage voices, then speak the project in Studio.";
   }
 
   function renderSteps() {
@@ -323,7 +329,7 @@
       take && take.text !== line.text ? h("p", {class: "muted small"}, `Spoken in one take with: “${take.text}”`) : null,
       take?.warnings.length ? h("ul", {class: "warnings"}, take.warnings.map((warning) => h("li", {}, warning))) : null,
       h("div", {class: "inspector-actions"},
-        h("button", {type: "button", class: "btn btn-primary", id: "regenerate", disabled: !take || !state.boot.gpu || isRunning(),
+        h("button", {type: "button", class: "btn btn-primary", id: "regenerate", "data-gpu": true, disabled: !take || !state.boot.gpu || isRunning(),
                      onclick: () => speak("regenerate", take.key)}, "Regenerate line"),
         h("button", {type: "button", class: "btn", onclick: () => seek(line.start, true)}, "Play in mix")),
       h("p", {class: "muted small"}, "Regenerate makes a new take of this line, then remixes.")].filter(Boolean));
@@ -442,7 +448,7 @@
               planning ? "Planning…" : rows.length ? "Plan again" : "Plan shots"),
             drawing
               ? h("button", {type: "button", class: "btn", onclick: interruptVideo}, "Interrupt")
-              : h("button", {type: "button", class: "btn btn-primary", disabled: !rows.length || planning || !state.boot.gpu,
+              : h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: !rows.length || planning || !state.boot.gpu,
                              title: rows.length ? "" : "Plan shots first", onclick: renderVideoJob}, "Generate illustrated video")),
           note,
           h("details", {class: "more"},
@@ -585,7 +591,7 @@
       h("span", {class: "muted small"}, "Times this mix's words from its saved takes, without speaking or remixing. "
         + "Lines already timed are kept; missing ones are tried again."),
       h("button", {type: "button", class: "btn btn-small", style: {alignSelf: "flex-start"},
-                   disabled: isRunning() || !state.boot.gpu, onclick: repairWords},
+                   "data-gpu": true, disabled: isRunning() || !state.boot.gpu, onclick: repairWords},
         aligning ? "Aligning…" : timed ? "Repair word timing" : "Time every word"));
   }
 
@@ -702,7 +708,7 @@
           + "The saved clip stays until you keep one."),
         h("div", {class: "row-buttons"}, count,
           working ? h("button", {type: "button", class: "btn btn-small", onclick: () => api("/library/takes/interrupt", {method: "POST", body: {run: takes.id}}).then((reply) => toast(reply.message), (error) => toast(error.message))}, "Interrupt")
-            : h("button", {type: "button", class: "btn btn-small", disabled: !state.boot.gpu, onclick: () => tryVoices(picked, Number(count.value), description.value, transcript.value)},
+            : h("button", {type: "button", class: "btn btn-small", "data-gpu": true, onclick: () => tryVoices(picked, Number(count.value), description.value, transcript.value)},
                 "Generate new voices")),
         takes && takes.key === picked.key ? h("p", {class: `slot-note${takes.error ? " error" : ""}`}, takes.error || takes.status) : null,
         takes && takes.key === picked.key ? h("div", {class: "takes"}, takes.takes.map((url, index) => url ? h("div", {class: "take-row"},
@@ -845,6 +851,7 @@
     $("speak").textContent = result ? "Speak again" : "Speak";
     $("speak").disabled = running || !state.boot.gpu;
     $("remix").disabled = running || !state.boot.gpu || !result;
+    $("speak").title = $("remix").title = state.boot.gpu ? "" : NO_GPU;
     $("remix").hidden = !result;
     $("interrupt").hidden = !running;
     const regenerate = $("regenerate");
@@ -1607,7 +1614,7 @@
         qwen ? field("Language", h("select", {onchange: (event) => save({language: event.target.value})},
           state.boot.languages.map((language) => h("option", {selected: language === speaker.language}, language)))) : null,
         h("div", {class: "row-buttons"},
-          h("button", {type: "button", class: "btn btn-primary", disabled: busy, onclick: () => make("voice", slot)},
+          h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy, onclick: () => make("voice", slot)},
             working ? "Generating…" : speaker.source === "clip" ? "Generate a new voice" : "Generate voice")));
     } else if (chosen === "upload") {
       parts.push(h("div", {class: "row-buttons"},
@@ -1629,7 +1636,7 @@
         parts.push(field("Exact transcript of the clip", h("textarea", {rows: 3, value: speaker.transcript,
           placeholder: "Every word the clip says", oninput: (event) => save({transcript: event.target.value})})));
         parts.push(h("div", {class: "row-buttons"},
-          h("button", {type: "button", class: "btn btn-small", disabled: busy, onclick: () => make("transcribe", slot)},
+          h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy, onclick: () => make("transcribe", slot)},
             state.castRun?.active && state.castRun.target === `transcribe:${slot}` ? "Transcribing…" : "Transcribe"),
           h("button", {type: "button", class: "btn btn-small", onclick: () => saveToLibrary("voice", slot)},
             `Save to ${state.project.cast_settings.speaker_group}`),
@@ -1678,7 +1685,7 @@
         field("Length in seconds", h("input", {type: "number", min: 1, max: 47, value: sound.duration, disabled: sound.source === "saved",
           oninput: (event) => event.target.value && save({duration: Number(event.target.value)})})),
         h("div", {class: "row-buttons"},
-          h("button", {type: "button", class: "btn btn-primary", disabled: busy, onclick: () => make("sound", slot)},
+          h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy, onclick: () => make("sound", slot)},
             working ? "Generating…" : sound.ready ? "Generate a new clip" : "Generate sound")));
     } else if (chosen === "upload") {
       parts.push(h("div", {class: "row-buttons"}, h("button", {type: "button", class: "btn", onclick: () => chooseClip("sound", slot)},
@@ -1744,6 +1751,11 @@
     const make = $("make-missing");
     make.hidden = running || !total;
     make.disabled = !state.boot.gpu;
+    make.title = state.boot.gpu ? "" : NO_GPU;
+    if (!state.boot.gpu && total && !running) {
+      make.hidden = true;
+      detail.textContent += " · Make them when you open the project in Studio.";
+    }
     make.textContent = `Make the missing ${total}`;
     $("cast-interrupt").hidden = !state.castRun?.active;  // Auto has its own, in the top bar.
     $("to-script").hidden = false;
