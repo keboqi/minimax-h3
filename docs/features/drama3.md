@@ -30,9 +30,13 @@ portraits, with the scene as the first input so its composition stays. Props and
 are never image inputs: an edit model handed a location or a multi-view sheet copies it
 instead of drawing a new scene. When a model has fewer input slots than a shot needs, the
 characters the planner mentions first win. MOSS-Image uses the text prompts throughout.
-The export uses the finished soundtrack and saves the video to Media. The newest video for a
-mix shows whenever the mix is loaded; if the page lost its connection during a long export,
-click **Show the latest video for this mix**.
+The export uses the finished soundtrack and saves the video to Media. Once a mix has a video,
+an **Audio / Video** switch appears above the Speak result: Video shows the illustrated video in
+the player's place with the mix's subtitles laid over it, lighting word by word like the list
+below, which follows the video too. **Subtitles on the video** turns the overlay off, and
+switching pauses whichever player is hidden. The newest video for a mix shows whenever the mix
+is loaded; if the page lost its connection during a long export, click **Show the latest
+video for this mix**.
 
 ## Compose and generate
 

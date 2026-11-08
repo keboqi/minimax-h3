@@ -766,6 +766,11 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-player-caption > span { max-width: 100%; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .62); color: #ffffff; font-size: 15px; line-height: 1.4; white-space: pre-line; }
 .h3-workspace .h3-dub-player-caption > span:empty { display: none; }
 .h3-workspace .h3-dub-player-caption [data-caption-source] { color: #d7e3de; font-size: 13px; }
+/* A Sound Stage result's illustrated video: the same captioned screen, with native controls (bottom bar
+   stays clear of the captions) and a subtitles switch with the download beside it. */
+.h3-workspace .h3-stage-video .h3-dub-player-caption { bottom: 14%; }
+.h3-workspace .h3-stage-video-options { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-top: 8px; font-size: 13px; }
+.h3-workspace .h3-stage-video-options label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
 .h3-workspace .h3-dub-player-transport { display: flex; align-items: center; gap: 10px; }
 .h3-workspace .h3-dub-player-transport button { min-width: 72px; min-height: 40px; border: 0; border-radius: 10px; background: var(--h3-accent); color: var(--h3-surface); font-weight: 600; cursor: pointer; }
 .h3-workspace .h3-dub-player-transport input { flex: 1; min-width: 0; accent-color: var(--h3-accent); }

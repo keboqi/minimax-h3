@@ -138,6 +138,18 @@ class IllustratedMixTests(unittest.TestCase):
             # The resumed shot is still matched to the saved portrait.
             self.assertEqual(controller.generate.call_args.args[3], [out["d2"], out["p_mara"]])
 
+    def test_stage_video_carries_the_mix_id_for_its_subtitles(self):
+        from h3_ui.drama3.stage_video import stage_video_html
+
+        self.assertEqual(stage_video_html(None), "")
+        name = f"Rain_{'e' * 32}_illustrated_12345678.mp4"
+        page = stage_video_html(f"/data/output/drama3/{name}", url=lambda path: f"/file={path.name}")
+        # The subtitle panel of the same mix has this id, so the overlay reads its lines.
+        self.assertIn(f'data-media="{"e" * 32}"', page)
+        self.assertIn(f'<video controls playsinline preload="metadata" src="/file={name}">', page)
+        self.assertIn('<span data-caption></span>', page)
+        self.assertIn(f'download="{name}"', page)
+
     def test_latest_export_is_the_newest_video_made_from_this_mix(self):
         import os
 

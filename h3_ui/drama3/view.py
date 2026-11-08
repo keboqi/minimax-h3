@@ -163,6 +163,8 @@ class Drama3View:
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
     visual_root: gr.Column | None = None
+    result_mode_root: gr.Column | None = None
+    result_video_root: gr.Column | None = None
     steps: StepStrip | None = None
     load_example: gr.Button | None = None
     load_example_zh: gr.Button | None = None
@@ -739,7 +741,10 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             steps.button("Review lines →", REVIEW, variant="primary")
                         gr.Markdown("Every production is also saved to **Media**.", elem_classes=["h3-song-hint"])
                 with gr.Column(elem_classes=[*STAGE, "h3-drama3-result"]):
+                    # The Audio/Video switch and the illustrated video share the result's place.
+                    result_mode_root = gr.Column() if gpu else None
                     output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
+                    result_video_root = gr.Column(visible=False) if gpu else None
                     subtitles = soundstage_panel()
                     output.h3_metadata_root = gr.Column()
                     visual_root = gr.Column() if gpu else None
@@ -871,6 +876,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         take_audio=take_audio,
         subtitles=subtitles,
         visual_root=visual_root,
+        result_mode_root=result_mode_root,
+        result_video_root=result_video_root,
         steps=steps,
         load_example=load_example,
         load_example_zh=load_example_zh,

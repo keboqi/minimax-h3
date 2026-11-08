@@ -22,6 +22,8 @@ from h3_app.drama3.visuals import FPS, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.clipboard import copy_js
+from h3_ui.drama3.stage_video import ELEM_CLASS as STAGE_VIDEO_CLASS
+from h3_ui.drama3.stage_video import STAGE_VIDEO_JS, stage_video_html
 from h3_ui.engines.controls import QUIET, generation_actions, writer_inputs
 from h3_ui.image_controller import reference_limit, reference_tag
 from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -166,9 +168,9 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
             saved = finished["portraits"].get(key)
             if saved and Path(saved).is_file():
                 drawn[key] = saved
-                yield None, f"{label} · Reused from the interrupted export"
+                yield gr.skip(), f"{label} · Reused from the interrupted export"
                 continue
-            yield None, label
+            yield gr.skip(), label
             drawn[key] = yield from _stream(
                 controller.generate(engine, "Text to image", portraits[key], [], square), label)
             finished["portraits"][key] = drawn[key]
@@ -182,10 +184,10 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
         draft = None
         if index < len(done) and Path(done[index]).is_file():
             path = done[index]
-            yield None, f"{label} · Reused from the interrupted export"
+            yield gr.skip(), f"{label} · Reused from the interrupted export"
         else:
             del done[index:]
-            yield None, label
+            yield gr.skip(), label
             path = yield from _stream(controller.generate(engine, "Text to image", shot.prompt, [], captured), label)
             if who:
                 draft, label = path, f"{label} · Matching " + ", ".join(who)
@@ -278,9 +280,15 @@ def bind_visual_export(view, controller, deps):
                                  info="Draws one portrait per character, then repaints each scene's characters to "
                                       "match it after the scene is drawn. MOSS-Image uses text prompts only.")
         run, stop, status = generation_actions("Generate illustrated video")
-        video = gr.Video(label="Illustrated mix", interactive=False)
+        # The job's video lands here; it is shown beside the speech result, under the Audio/Video switch.
+        video = gr.Video(visible=False, interactive=False)
         show_latest = gr.Button("Show the latest video for this mix", size="sm")
         source = gr.State(None)
+    with view.result_mode_root:
+        result_mode = gr.Radio(["Audio", "Video"], value="Audio", show_label=False, visible=False,
+                               elem_classes=["h3-drama3-result-mode"])
+    with view.result_video_root:
+        stage = gr.HTML("", js_on_load=STAGE_VIDEO_JS, elem_classes=[STAGE_VIDEO_CLASS])
 
     def select_mix(path):
         """Show the plan and newest video saved with this mix, so a loaded project picks up where it left off."""
@@ -304,7 +312,23 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("No illustrated video has been exported from this mix yet.")
         return str(latest)
 
-    show_latest.click(show_latest_video, inputs=source, outputs=video, **QUIET)
+    show_latest.click(show_latest_video, inputs=source, outputs=video, **QUIET).success(
+        lambda: "Video", outputs=result_mode, **QUIET)
+
+    def show_video(path, mode):
+        """Offer the switch once this mix has a video; without one the result is the audio again."""
+        mode = mode if path else "Audio"
+        return stage_video_html(path), gr.update(visible=bool(path), value=mode)
+
+    video.change(show_video, inputs=[video, result_mode], outputs=[stage, result_mode], **QUIET)
+
+    def switch_result(mode):
+        return gr.update(visible=mode != "Video"), gr.update(visible=mode == "Video")
+
+    # Pause whichever player is being hidden, so the audio and the video never play over each other.
+    result_mode.change(switch_result, inputs=result_mode, outputs=[view.output, view.result_video_root],
+                       js="(mode) => { document.querySelectorAll('.h3-drama3-result :is(audio, video)')"
+                          ".forEach((media) => media.pause()); return mode; }", **QUIET)
     preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET)
     style.input(preset_for, inputs=style, outputs=preset, **QUIET)
 
@@ -413,5 +437,6 @@ def bind_visual_export(view, controller, deps):
                                          "use_visual_references", *controller.fields)),
                             inputs=[source, engine, style, limit, continuity, *controller.fields.values()],
                             outputs=[video, status], api_name=False, show_progress="minimal")
+    event.success(lambda: "Video", outputs=result_mode, **QUIET)
     stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
         None, cancels=[event], **QUIET)
