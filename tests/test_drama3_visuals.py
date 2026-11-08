@@ -257,14 +257,16 @@ class IllustratedMixTests(unittest.TestCase):
     def test_copied_prompt_and_pasted_reply_follow_the_built_in_planner(self):
         from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt
 
-        settings = {"duration": 10, "title": "Rain", "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
+        settings = {"duration": 10, "title": "Rain", "chunks": [{"name": "Ana", "lines": [
+            {"text": "Hi", "start": 0, "end": 2, "words": [{"text": "Hi", "start": 0.1, "end": 0.4}]}]}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
         prompt = full_plan_prompt(settings, "ink wash", 2, runtime=runtime)
         system, request = prompt.split("\n\n----- USER REQUEST -----\n\n")
         self.assertTrue(system.startswith("You are the visual director"))
         request = json.loads(request)
         self.assertEqual((request["art_direction"], request["min_shots"], request["max_shots"]), ("ink wash", 2, 5))
-        self.assertEqual(request["cues"][0]["text"], "Hi")
+        # Line times only: word timings would bloat the request without helping the planner.
+        self.assertEqual(request["cues"], [{"start": 0, "end": 2, "speaker": "Ana", "text": "Hi"}])
         plan = {"art_style": "ink", "characters": {"ana": "Ana, red scarf"},
                 "shots": [{"start": 0, "transition": "cut", "beat": "Hello", "prompt": "@ana waves"},
                           {"start": 4, "transition": "dissolve", "beat": "Rain", "prompt": "Rain falls"}]}

@@ -8,8 +8,7 @@ Every image shows exactly one moment: one framing, one action, never panels or a
 beat holds several moments (a question and its answer, an action and the reaction), give each its
 own image. Split when the listener learns something that changes what should be shown: a reveal, a
 reaction, a change of place or time, or a meaningful shift of perspective. A long narrated line can
-contain several beats. Prefer supplied word or cue times for those boundaries. When word timing is
-missing, estimate the beat within the line. Use pauses for anticipation or aftermath. Aim for a new
+contain several beats: estimate where each falls within the line's start and end. Use pauses for anticipation or aftermath. Aim for a new
 image every 3 to 8 seconds of story, and hold longer only on a deliberate pause. Use at least
 min_shots images and add more wherever the story needs them, never more than max_shots. Pick "cut" or "dissolve" for each incoming shot from how the two
 moments relate: dissolve for passing time or drifting thought, cut for action and reveals.

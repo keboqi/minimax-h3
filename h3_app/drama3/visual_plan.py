@@ -21,9 +21,9 @@ def _timeline(settings, duration):
 
     for chunk in settings.get("chunks") or []:
         for line in chunk.get("lines") or [chunk]:
+            # Line times are enough to place beats; per-word timings would bloat the request.
             if line.get("text"):
-                add(line, speaker=chunk.get("name") or chunk.get("speaker"), text=line["text"],
-                    **({"words": [[w["start"], w["text"]] for w in line["words"]]} if line.get("words") else {}))
+                add(line, speaker=chunk.get("name") or chunk.get("speaker"), text=line["text"])
     for sound in settings.get("sounds") or []:
         add(sound, sound=sound.get("name"), description=sound.get("description"), loop=bool(sound.get("loop")))
     if not cues:

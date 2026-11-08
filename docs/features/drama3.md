@@ -10,7 +10,7 @@ Choose an Image-tab model and a **Style preset** (ink and watercolor, graphic no
 anime, Chinese ink wash, picture book, painterly realism, woodcut, retro pulp or pixel art).
 The preset fills **Art direction**; edit it to add the cast, setting or era, and the preset
 switches to Custom.
-**Plan shots** sends the mix's timed dialogue, available word timings and sound cues to
+**Plan shots** sends the mix's timed dialogue lines and sound cues (not per-word timings) to
 the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art style and a
 continuity bible of the recurring characters, props and locations, then splits the story into
 single-moment widescreen images with cuts and dissolves. **Minimum shots** is a floor: the
