@@ -179,5 +179,5 @@ def build_image_workspace(root, app_views, engine_views, handlers, h3, deps, dem
     from .image_bindings import bind_image_workspace
 
     view = build_image_view(root, app_views.engine, engine_views, h3)
-    bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo)
-    return view
+    controller = bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo)
+    return view, controller

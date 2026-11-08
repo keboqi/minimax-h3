@@ -495,13 +495,14 @@ def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | Non
 
 
 # Where things play in a render, in samples: a chunk's (start, end, its lines' (start, end) inside
-# the take) keyed by chunk index, and a sound cue's (start, end, {name, loop}) keyed ("sound", id).
+# the take) keyed by chunk index, and a sound cue's (start, end, metadata) keyed ("sound", id).
 Spans = dict[int | tuple[str, int], tuple[int, int, list[tuple[int, int]] | dict]]
 
 
 def _sound_span(node: SoundNode, length: int) -> tuple[tuple[str, int], tuple[int, int, dict]]:
     """A ``spans`` entry for a sound cue playing ``length`` samples from where its block starts."""
-    return ("sound", id(node)), (0, length, {"name": node.name or node.description, "loop": node.loop})
+    info = {"name": node.name or node.description, "description": node.description, "loop": node.loop}
+    return ("sound", id(node)), (0, length, info)
 
 
 def _place_reactions(node, tracks, track_spans, rate):

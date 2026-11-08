@@ -162,6 +162,7 @@ class Drama3View:
     prepare_status: gr.Markdown | None = None
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
+    visual_root: gr.Column | None = None
     steps: StepStrip | None = None
     load_example: gr.Button | None = None
     load_example_zh: gr.Button | None = None
@@ -741,6 +742,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                     subtitles = soundstage_panel()
                     output.h3_metadata_root = gr.Column()
+                    visual_root = gr.Column() if gpu else None
                 sampling_controls = [temperature, top_p, top_k]
                 presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)
                 sampling_preset.input(fn=None, js=f"(name) => ({presets_js})[name]",
@@ -868,6 +870,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         title=title,
         take_audio=take_audio,
         subtitles=subtitles,
+        visual_root=visual_root,
         steps=steps,
         load_example=load_example,
         load_example_zh=load_example_zh,

@@ -5,6 +5,20 @@ scripts, cast voices, stage sound effects and music, review individual takes,
 and remix the result. Speech generation is powered by Fish Audio Drama 3.
 Open **Create → Soundstage** to begin.
 
+After generating a mix, open **Speak → Illustrated video** to export a 720p MP4.
+Choose an Image-tab model and describe the cast, setting, or drawing style in **Art direction**.
+**Plan shots** sends the mix's timed dialogue, available word timings and sound cues to
+the Gemini or OpenAI-compatible writer selected on **Script**. It chooses visual beats,
+cuts and dissolves within your **Maximum shots** budget. Review the times and prompts
+before clicking **Generate illustrated video**. Every prompt carries the shared art
+direction and the recurring character, setting and prop descriptions relevant to that shot.
+**Use earlier illustrations as visual references** is on by default. When a subject returns,
+Qwen, P-H3-Image, FLUX 3 and Fibo Dev can use its first illustrated appearance as an edit
+reference, even after a scene change. A shot with no returning subjects starts from text.
+The planner prioritizes subjects when the model has fewer reference slots than the shot needs.
+MOSS-Image uses the text prompts throughout.
+The export uses the finished soundtrack and saves the video to Media.
+
 ## Compose and generate
 
 Soundstage works in four steps, laid out like Dub & Translate: **Script**,

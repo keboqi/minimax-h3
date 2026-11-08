@@ -179,3 +179,4 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     suggestion.acceptance.success(accepted_suggestion, inputs=[app_views.engine, prompt, enhance_status],
                                   outputs=[engine_views["flux3"].expand_prompt, engine_views["moss_image"].layout],
                                   **QUIET)
+    return controller

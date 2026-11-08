@@ -72,6 +72,7 @@ class RuntimeConfig:
             "Viggle Remake": self.script_dir / "prompts" / "prompt_remake.txt",
             "Drama 3": self.script_dir / "prompts" / "prompt_drama3.txt",
             "Drama 3 direction": self.script_dir / "prompts" / "prompt_drama3_direction.txt",
+            "Drama 3 visuals": self.script_dir / "prompts" / "prompt_drama3_visuals.txt",
         }
 
     @classmethod

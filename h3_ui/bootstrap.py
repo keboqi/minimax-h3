@@ -161,7 +161,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             engine_handlers[feature.id] = feature.bind(engine_views[feature.id], services.engine_deps)
         from .image_workspace import build_image_workspace
 
-        image_workspace = build_image_workspace(
+        image_workspace, image_controller = build_image_workspace(
             app_views.image, app_views, engine_views, engine_handlers, h3_components,
             services.engine_deps, demo,
         )
@@ -191,6 +191,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (getattr(engine_actions, "drama3_speaker_group_size", None) or (lambda _group: None))("Global"),
         )
         bind_drama3(drama3_components, engine_actions)
+        from .drama3.visuals import bind_visual_export
+        bind_visual_export(drama3_components, image_controller, services.engine_deps)
         if services.soundstage_workspace is not None:
             from h3_ui.drama3.projects import bind_projects
             bind_projects(drama3_components, *services.soundstage_workspace, demo.load)

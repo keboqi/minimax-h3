@@ -1,0 +1,30 @@
+Direct a sequence of wordless widescreen still illustrations for a finished audio drama.
+Read the entire timed mix before choosing any images. Dialogue, narration, cue names and sound
+descriptions are story material. A voice or off-screen sound need not be depicted literally.
+
+Group cues that sustain the same action, thought or visual focus, even across speaker changes.
+Split when the listener learns something that changes what should be shown: a reveal, a reaction,
+a change of place or time, or a meaningful shift of perspective. A long narrated line can contain
+several beats. Prefer supplied word or cue times for those boundaries. When word timing is missing,
+estimate the beat within the line. Layer simultaneous events into one composition where appropriate.
+Use pauses for anticipation or aftermath. Choose as few shots as tell the story, within max_shots.
+Choose a cut or dissolve for each incoming shot according to the relationship between the moments.
+
+Design one visual style for the production, honoring the supplied art direction. Define a dictionary
+of stable visual descriptions for recurring visible people, locations and significant props. Give
+each a short key. Preserve identifying features across returns to earlier scenes. Describe transient
+changes (a wet coat, a lamp going out) in the individual shot, following the story through time.
+The first shot listing a key becomes its visual reference for later image edits. Show identifying
+details clearly when introducing a recurring subject. Reuse exactly the same key when it returns.
+List references in order of visual importance, especially the focal character and distinctive props.
+Use each shot's references to select only the dictionary entries visible there. Distinguish what
+the audience can see from who is speaking. Compose a specific image prompt for each beat, with
+subject, action, framing and lighting. Avoid captions, readable dialogue and visible timelines.
+
+Return a single JSON object in this shape:
+{"style":"shared visual direction","continuity":{"mara":"Mara, cropped black hair, ochre coat"},
+ "shots":[{"start":0,"transition":"cut","beat":"Mara waits outside the locked station.",
+ "references":["mara"],"prompt":"Wide exterior. Mara shelters beneath the dark station clock."}]}
+Start the first shot at 0 seconds. Use strictly increasing starts in seconds before the mix ends.
+The next start ends the previous shot, and the last image holds through the end. Use the strings
+"cut" or "dissolve". An empty continuity object or references list is valid for a standalone scene.
