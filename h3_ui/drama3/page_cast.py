@@ -171,6 +171,24 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             store.save_soundstage_project(name, data)
             return result
 
+    def match_saved(data: dict, slot: int) -> None:
+        """Give a voiceless speaker the saved voice of the same name in the group (or Global), as the tab does."""
+        preset = data.get(f"voice_{slot}_preset")
+        if _is_saved(preset, UPLOAD_VOICE) or clip(data.get(f"voice_{slot}_audio")):
+            return
+        name = data.get(f"voice_{slot}_save_name") or ""
+        if not name.strip() or runtime is None:
+            return
+        try:
+            saved = drama3_speakers.speaker_matcher(runtime(), _setting(data, "speaker_group"))(name)
+        except (H3Error, OSError):
+            return
+        if saved:
+            data[f"voice_{slot}_preset"] = saved.key
+            data[f"voice_{slot}_save_name"] = saved.name
+            if saved.description:
+                data[f"voice_{slot}_description"] = saved.description
+
     def slot_of(kind: str, slot) -> int:
         slot = int(slot)
         if not 0 <= slot < (DRAMA3_VOICE_SLOTS if kind == "voice" else DRAMA3_SOUND_SLOTS):
@@ -197,9 +215,14 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             raise H3Error("Unknown voice generator.")
 
         def change(data):
+            group_before = _setting(data, "speaker_group")
             for key, kind in CAST_SETTINGS.items():
                 if key in body:
                     data[key] = kind(body[key])
+            if _setting(data, "speaker_group") != group_before:
+                # A new group's saved voices fill the speakers that have none, as the tab matches them.
+                for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
+                    match_saved(data, slot)
 
         edit(name, change)
         return payload(owner_of(request), name)
@@ -218,6 +241,8 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                     data[f"{prefix}_{key}"] = cast(body[key])
             if body.get("source") == "upload":
                 data[f"{prefix}_preset"] = upload
+            elif kind == "voice" and "save_name" in body:
+                match_saved(data, slot)
 
         edit(name, change)
         return payload(owner_of(request), name)

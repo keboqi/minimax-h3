@@ -102,7 +102,16 @@ their own. **Add speaker** and **Add sound** open a new slot.
   **Upload clip** takes a few seconds of clean speech; a new clip needs its exact transcript, which
   **Transcribe** fills with Qwen3-ASR. **Saved voice** picks one from the selected group or Global.
   A clip plays in the panel; **Save to** keeps it in the group shown at the top of Voices, and the
-  speaker then uses the saved voice. **New group** starts a group for a series or book.
+  speaker then uses the saved voice. **New group** starts a group for a series or book. Typing a
+  speaker's name that the group (or Global) has a saved voice for gives a speaker without a clip
+  that voice, and choosing another group does the same for every such speaker, as the tab does.
+- **Voice library** opens the saved speakers and sounds. Pick a group and a saved speaker to hear
+  it, edit its name, description and transcript (**Save changes**; a name another speaker in the
+  group has is refused), **Copy to group**, or **Delete** it; **Delete this group** removes a group
+  and its speakers (Global stays). **Try new voices** designs one to four new voices from the
+  description and transcript with the Cast's voice generator, leaving the saved clip alone until
+  **Keep this voice** replaces it. Saved sounds can be heard and deleted. A renamed voice stays in
+  use by the project's speakers; speakers using a deleted one lose it and need another.
 - **A sound** is described with its length and generated with Stable Audio 3 Medium, uploaded, or
   picked from the saved sounds; **Save to library** keeps a clip for other projects.
 - **Generator settings** hold the voice generator (Qwen3-TTS VoiceDesign or Drama 3), the
@@ -129,7 +138,10 @@ The page opens a generated project here and shows:
 - **How it sounds**: the speech preset and word-by-word subtitles, saved with the project.
   **Speech settings** below them hold the tab's sliders: temperature, top-p, top-k, parallel
   requests, retries per chunk and maximum audio frames per take. Changing a sampling value makes
-  the preset **Custom**; values outside a slider's range are kept at its end.
+  the preset **Custom**; values outside a slider's range are kept at its end. **Word timing**
+  says how many of the mix's lines have their words timed, and **Time every word** (or **Repair
+  word timing**) aligns the mix from its saved takes without speaking or remixing: lines already
+  timed are kept and missing ones are tried again.
 
 The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Remix** and
 **Interrupt**. They speak the project as last saved, on the same job path as the tab, and the page

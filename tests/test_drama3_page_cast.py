@@ -58,7 +58,9 @@ class CastFixture(unittest.TestCase):
                                                       generation_services=lambda: None, free_gpu=lambda: None))
         actions = dataclasses.replace(Drama3Actions.of(self.handlers, interrupt=lambda *args, **kwargs: ""),
                                       generate_drama3_voice=self.fake_voice, generate_drama3_sound=self.fake_sound,
-                                      transcribe_drama3_voice=self.fake_transcribe, generate_drama3=self.fake_speak)
+                                      transcribe_drama3_voice=self.fake_transcribe, generate_drama3=self.fake_speak,
+                                      repair_drama3_words=self.fake_words,
+                                      generate_drama3_voice_takes=self.fake_takes)
         # Everything missing goes through the tab's prepare handler, which calls these.
         self.handlers.generate_drama3_voices = self.fake_voices
         self.handlers.generate_drama3_sounds = self.fake_sounds
@@ -107,6 +109,37 @@ class CastFixture(unittest.TestCase):
         self.store.mark_soundstage_generated(values[-1], str(mix))
         yield GenerationUpdate(None, "Speaking…")
         yield GenerationUpdate(str(mix), "Done.")
+
+    def fake_words(self, output):
+        self.calls.append(("words", output))
+        if getattr(self, "words_fail", False):
+            yield gr.skip(), "Word alignment unavailable: the aligner is not installed"
+            return
+        yield gr.skip(), "Aligning 1 take…"
+        yield "<div></div>", "Aligned 1 of 1 takes."
+
+    def fake_takes(self, key, count, description, transcript, *settings):
+        self.calls.append(("takes", key, count, settings[0]))
+        clips = [None] * 4
+        yield (*[gr.update(value=None) for _ in clips], gr.skip(), None, "Generating…")
+        for index in range(count):
+            clips[index] = str(write_wav(self.made / f"try_{index}.wav", seconds=0.2 + index / 10))
+        brief = {"key": key, "description": description, "transcript": transcript}
+        yield (*[gr.update(value=clip, visible=index < count) for index, clip in enumerate(clips)], gr.skip(), brief,
+               f"Generated {count} of {count} new voices.")
+
+    def voiced_mia(self, group="Global"):
+        """Mia with an uploaded clip and transcript, saved to ``group``; returns her saved key."""
+        self.patch_slot("voice", 0, save_name="Mia", description="A bright vendor.", transcript="Fresh plums.")
+        with write_wav(self.root / "mine.wav").open("rb") as handle:
+            self.ok(self.client.post(f"{API}/project/slot/upload", params={**NAME, "kind": "voice", "slot": 0},
+                                     files={"file": ("mine.wav", handle, "audio/wav")}))
+        self.patch_slot("voice", 0, transcript="Fresh plums.")
+        if group != "Global":
+            self.ok(self.client.post(f"{API}/library/groups", json={"name": group}))
+            self.ok(self.client.patch(f"{API}/project/cast-settings", params=NAME, json={"speaker_group": group}))
+        self.ok(self.client.post(f"{API}/project/slot/save", params={**NAME, "kind": "voice", "slot": 0}, json={}))
+        return self.store.soundstage_project("Night Market")[0]["voice_0_preset"]
 
     def wait_speech(self):
         for _ in range(300):
@@ -362,6 +395,98 @@ class Drama3PageAutoTests(CastFixture):
         self.assertIsNone(settings["preset"])  # Custom.
         saved, _ = self.store.soundstage_project("Night Market")
         self.assertEqual((saved["parallel"], saved["temperature"]), (32, 1.3))
+
+
+class Drama3PageLibraryTests(CastFixture):
+    """Word timing for a mix, managing saved speakers and sounds, and trying new voices."""
+
+    def test_word_timing_is_repaired_from_the_saved_takes(self):
+        refused = self.client.post(f"{API}/words", params=NAME)
+        self.assertIn("Speak the project first", refused.json()["error"])
+        mix = write_wav(self.made / "mix.wav")
+        self.store.mark_soundstage_generated("Night Market", str(mix))
+        run = self.ok(self.client.post(f"{API}/words", params=NAME))["run"]
+        self.assertEqual(run["task"], "words")
+        run = self.wait_speech()
+        self.assertEqual((run["status"], run["error"]), ("Aligned 1 of 1 takes.", None))
+        self.assertEqual(self.calls[-1], ("words", str(mix)))
+        self.words_fail = True
+        self.ok(self.client.post(f"{API}/words", params=NAME))
+        self.assertEqual(self.wait_speech()["error"], "the aligner is not installed")
+
+    def test_a_renamed_saved_speaker_stays_in_use_and_a_deleted_one_is_let_go(self):
+        key = self.voiced_mia("Lantern Lane")
+        listed = self.ok(self.client.get(f"{API}/library/manage", params={"group": "Lantern Lane"}))
+        self.assertEqual([(speaker["name"], speaker["transcript"]) for speaker in listed["speakers"]], [("Mia", "Fresh plums.")])
+        self.assertEqual(self.client.get(f"{API}/library/clip", params={"kind": "voice", "key": key}).status_code, 200)
+        renamed = self.ok(self.client.post(f"{API}/library/speaker/update", json={
+            "key": key, "name": "Mia Chen", "description": "A bright plum seller.", "transcript": "Fresh plums.",
+            "project": "Night Market"}))
+        self.assertIn("Mia Chen", renamed["message"])
+        self.assertEqual(renamed["project"]["speakers"][0]["saved_name"], "Mia Chen")
+        self.assertEqual(self.store.soundstage_project("Night Market")[0]["voice_0_preset"], renamed["key"])
+        copied = self.ok(self.client.post(f"{API}/library/speaker/copy", json={"key": renamed["key"], "group": "Global"}))
+        self.assertIn('to "Global"', copied["message"])
+        self.ok(self.client.post(f"{API}/library/speaker/delete", json={"key": renamed["key"], "project": "Night Market"}))
+        self.assertEqual(self.store.soundstage_project("Night Market")[0]["voice_0_preset"], UPLOAD_VOICE)
+        self.assertEqual(self.ok(self.client.get(f"{API}/library/manage", params={"group": "Lantern Lane"}))["speakers"], [])
+
+    def test_deleting_a_group_lets_go_of_its_voices(self):
+        self.voiced_mia("Lantern Lane")
+        refused = self.client.post(f"{API}/library/group/delete", json={"group": "Global"})
+        self.assertIn("cannot be deleted", refused.json()["error"])
+        data = self.ok(self.client.post(f"{API}/library/group/delete", json={"group": "Lantern Lane", "project": "Night Market"}))
+        self.assertIn("1 saved speakers", data["message"])
+        saved, _ = self.store.soundstage_project("Night Market")
+        self.assertEqual((saved["voice_0_preset"], saved["speaker_group"]), (UPLOAD_VOICE, "Global"))
+        self.assertNotIn("Lantern Lane", self.ok(self.client.get(f"{API}/library/manage"))["groups"])
+
+    def test_a_saved_sound_is_deleted_and_let_go(self):
+        with write_wav(self.root / "rain.wav").open("rb") as handle:
+            self.ok(self.client.post(f"{API}/project/slot/upload", params={**NAME, "kind": "sound", "slot": 0},
+                                     files={"file": ("rain.wav", handle, "audio/wav")}))
+        self.patch_slot("sound", 0, save_name="rain", description="Steady rain")
+        self.ok(self.client.post(f"{API}/project/slot/save", params={**NAME, "kind": "sound", "slot": 0}, json={}))
+        data = self.ok(self.client.post(f"{API}/library/sound/delete", json={"name": "rain", "project": "Night Market"}))
+        self.assertEqual(self.ok(self.client.get(f"{API}/library/manage"))["sounds"], [])
+        # The slot lets go of the deleted saved sound and keeps its own clip.
+        self.assertEqual(data["project"]["sounds"][0]["source"], "clip")
+
+    def test_trying_new_voices_and_keeping_one(self):
+        key = self.voiced_mia()
+        before = self.client.get(f"{API}/library/clip", params={"kind": "voice", "key": key}).content
+        refused = self.client.post(f"{API}/library/speaker/takes", json={"key": key, "count": 2, "description": "", "transcript": "x"})
+        self.assertIn("voice description", refused.json()["error"])
+        run = self.ok(self.client.post(f"{API}/library/speaker/takes", json={
+            "key": key, "count": 2, "description": "Warmer, slower.", "transcript": "Fresh plums.", "project": "Night Market"}))["takes_run"]
+        for _ in range(300):
+            run = self.ok(self.client.get(f"{API}/library/takes", params={"run": run["id"]}))["takes_run"]
+            if not run["active"]:
+                break
+            time.sleep(0.02)
+        self.assertIsNone(run["error"])
+        self.assertEqual(self.calls[-1], ("takes", key, 2, "Qwen3-TTS VoiceDesign"))
+        self.assertEqual(len([take for take in run["takes"] if take]), 2)
+        self.assertEqual(self.client.get(run["takes"][1]).status_code, 200)
+        kept = self.ok(self.client.post(f"{API}/library/speaker/use-take", json={"run": run["id"], "index": 1, "project": "Night Market"}))
+        self.assertIn("now uses voice 2", kept["message"])
+        after = self.client.get(f"{API}/library/clip", params={"kind": "voice", "key": key}).content
+        self.assertNotEqual(before, after)
+        listed = self.ok(self.client.get(f"{API}/library/manage"))["speakers"][0]
+        self.assertEqual(listed["description"], "Warmer, slower.")
+
+    def test_a_typed_name_takes_the_saved_voice_of_that_name(self):
+        self.voiced_mia()
+        project = self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "voice"}, json={"add": True}))
+        project = self.patch_slot("voice", 1, save_name="mia")
+        second = project["speakers"][1]
+        self.assertEqual((second["source"], second["name"], second["ready"]), ("saved", "Mia", True))
+        # A speaker with a clip of its own keeps it.
+        self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "voice"}, json={"add": True}))
+        with write_wav(self.root / "own.wav").open("rb") as handle:
+            self.ok(self.client.post(f"{API}/project/slot/upload", params={**NAME, "kind": "voice", "slot": 2},
+                                     files={"file": ("own.wav", handle, "audio/wav")}))
+        self.assertEqual(self.patch_slot("voice", 2, save_name="Mia")["speakers"][2]["source"], "clip")
 
 
 if __name__ == "__main__":

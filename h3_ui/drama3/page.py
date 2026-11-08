@@ -30,6 +30,7 @@ from ..subtitle_words import word_pieces
 from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
 from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
+from .page_library import install_library_routes
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line, timeline_data
 
@@ -52,13 +53,15 @@ class SpeakRun(Run):
     """Speaking, or Auto, which rewrites, makes the cast and speaks in turn (``stage``)."""
 
     auto: bool = False
+    task: str = "speak"  # "speak", or "words" for word alignment
     stage: str | None = None
     family: str | None = None  # The running job's family, which Interrupt names.
     slots: dict[str, str] = field(default_factory=dict)
     stop_requested: bool = False
 
     def public(self, scene_id) -> dict[str, Any]:
-        return {**super().public(scene_id), "auto": self.auto, "stage": self.stage, "slots": dict(self.slots)}
+        return {**super().public(scene_id), "auto": self.auto, "task": self.task, "stage": self.stage,
+                "slots": dict(self.slots)}
 
 
 def _value(data: dict, key: str):
@@ -206,6 +209,13 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 "video": video_payload(name, data, result, video_export.engines) if video_export else None,
                 "video_run": video_run.public(None) if video_run is not None else None}
 
+    def voice_settings(data: dict) -> list:
+        """The Cast's voice generator with the speech sampling, as the tab's voice tries use them."""
+        from h3_app.drama3.voice_design import ENGINE_QWEN
+
+        return [data.get("voice_engine") or ENGINE_QWEN, *(_value(data, key) for key in
+                                                           ("temperature", "top_p", "top_k", "max_frames", "parallel"))]
+
     def auto_running(owner, name) -> str | None:
         run = runs.active(owner, name, RUN_KIND)
         return "Auto is running; it makes the voices and sounds itself." if getattr(run, "auto", False) else None
@@ -244,6 +254,9 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=lambda value: _clip(clips, value),
                                     runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running)
+    install_library_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
+                           payload=payload, runtime=runtime_config, voice_settings=voice_settings, gpu=gpu,
+                           interrupt=interrupt)
     if video_export is not None:
         video_runs = install_video_routes(app, video_export, api=api, store=store, owner_of=owner_of,
                                           session_of=session_of, payload=payload, project=project, gpu=gpu,
@@ -393,6 +406,37 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             speak_job(run, owner, session, name, GENERATE)
 
         runs.start(SpeakRun(owner, name, RUN_KIND, auto=True, stage="script"), work)
+        return {"run": run_payload(owner, name)}
+
+    @app.post(f"{api}/words", include_in_schema=False)
+    @guarded
+    def repair_words(name: str, request: Request):
+        """Time every word of the mix from its saved takes, without speaking or remixing again."""
+        if not gpu:
+            raise H3Error("Open Soundstage in Studio to align words on the GPU.")
+        if actions.repair_drama3_words is None:
+            raise H3Error("Word alignment isn't available here.")
+        owner = owner_of(request)
+        _, result = project(name)
+        if result is None:
+            raise H3Error("Speak the project first.")
+        session = session_of(request)
+        callback = owned_generation(actions.repair_drama3_words, "drama3_words")
+
+        def work(run):
+            job = JOBS.accept(owner, "drama3_words", [result], callback=callback, key=uuid.uuid4().hex)
+            run.job_id, run.family = job.id, "drama3_words"
+            for update in execute_accepted(job.id, session):
+                status = str(update[1] or "") if len(update) > 1 else ""
+                if status:
+                    run.status = status.splitlines()[0]
+                if status.startswith("Word alignment unavailable"):
+                    run.error = status.removeprefix("Word alignment unavailable:").strip()
+            run.revision += 1
+
+        run = SpeakRun(owner, name, RUN_KIND, task="words")
+        run.status = "Aligning words…"
+        runs.start(run, work)
         return {"run": run_payload(owner, name)}
 
     @app.post(f"{api}/interrupt", include_in_schema=False)

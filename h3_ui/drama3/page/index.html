@@ -133,6 +133,7 @@
               <select id="speaker-group"></select>
             </label>
             <button type="button" class="btn btn-small" id="new-group">New group</button>
+            <button type="button" class="btn btn-small" id="open-library">Voice library</button>
           </div>
           <div class="cast-grid" id="cast-grid"></div>
         </section>
@@ -176,6 +177,7 @@
           <p class="muted small">Used the next time you speak or remix this project.</p>
           <div class="seg" role="group" aria-label="Speech preset" id="presets"></div>
           <label class="check"><input type="checkbox" id="word-timing"> Word-by-word subtitles</label>
+          <div class="word-repair" id="word-repair"></div>
           <details class="more speech-settings">
             <summary>Speech settings</summary>
             <div class="more-body" id="speech-settings"></div>
@@ -216,6 +218,15 @@
       <button type="submit" class="btn btn-primary">Create</button>
     </div>
   </form>
+</dialog>
+<dialog id="library-dialog" class="dialog library-dialog" aria-labelledby="library-title">
+  <div class="library-head">
+    <h2 id="library-title">Voice library</h2>
+    <div class="seg" role="group" aria-label="Library" id="library-tabs"></div>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-icon" id="library-close" aria-label="Close">×</button>
+  </div>
+  <div class="library-body" id="library-body"></div>
 </dialog>
 <input id="clip-input" type="file" accept="audio/*" hidden>
 <audio id="mix-audio" preload="metadata"></audio>
