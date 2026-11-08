@@ -47,10 +47,11 @@ video for this mix**.
 
 Soundstage is moving to a page of its own at `/soundstage/`, outside Gradio, as Remake and
 Storyboard did; the tab links to it under the project controls. The page's design is the
-[Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi). So far it holds
-**Script** and **Mix & review**; Cast & sounds is still edited in the tab (load the project there,
-change voices or sounds, then save it). The step bar moves between the screens without asking
-the server for anything, and the address keeps the screen (`#script`, `#mix`).
+[Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi). It holds all
+three steps: **Script**, **Cast & sounds** and **Mix & review**. The step bar moves between them
+without asking the server for anything, and the address keeps the screen (`#script`, `#cast`,
+`#mix`). The page and the tab share saved projects: a project saved in the tab opens here, and
+the tab's **Load project** picks up what the page saved.
 
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
@@ -76,7 +77,31 @@ as the tab does.
   checked like the built-in writer.
 
 The bar at the bottom shows the script's estimated timeline, with no audio, and leads on to
-Cast & sounds in the tab or to Mix & review.
+Cast & sounds or Mix & review.
+
+### Cast & sounds
+
+A card per speaker shows its color, how many lines it has, and whether its voice is ready; the
+**Sounds & music** table lists each sound with whether the script loops it or plays it once, its
+length and whether it has a clip. Click a card or a row to edit it on the right; edits save on
+their own. **Add speaker** and **Add sound** open a new slot.
+
+- **A speaker's voice** comes from one of three places. **Describe** takes a voice description
+  and the line it reads (and a language with Qwen3-TTS VoiceDesign), then **Generate voice**.
+  **Upload clip** takes a few seconds of clean speech; a new clip needs its exact transcript, which
+  **Transcribe** fills with Qwen3-ASR. **Saved voice** picks one from the selected group or Global.
+  A clip plays in the panel; **Save to** keeps it in the group shown at the top of Voices, and the
+  speaker then uses the saved voice. **New group** starts a group for a series or book.
+- **A sound** is described with its length and generated with Stable Audio 3 Medium, uploaded, or
+  picked from the saved sounds; **Save to library** keeps a clip for other projects.
+- **Generator settings** hold the voice generator (Qwen3-TTS VoiceDesign or Drama 3), the
+  transcript model, and whether **Make the missing** skips speakers and sounds that have a clip.
+
+The bar at the bottom counts what still needs making before speaking, by name, and **Make the
+missing** makes every missing voice, then (for an Advanced script) every missing sound, in one
+job. Each clip lands in its slot as soon as it is made; the cards say what each slot is waiting
+for, and **Interrupt** stops the job. One such job runs per project at a time, and like speaking
+it carries on if the page is closed.
 
 ### Mix & review
 

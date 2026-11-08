@@ -13,8 +13,8 @@
 
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, poll: null, busy: false,
                  screen: "script", saving: null, saveTimer: null, writing: false, writerResult: null,
-                 estimate: null, estimateTimer: null};
-  const SCREENS = ["script", "mix"];
+                 estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null};
+  const SCREENS = ["script", "cast", "mix"];
   const shortMode = (mode) => (mode === state.boot.advanced ? "Advanced" : "Basic");
 
   // -- Helpers ---------------------------------------------------------------
@@ -30,6 +30,8 @@
         }
       }
       else if (key.startsWith("on")) element.addEventListener(key.slice(2), value);
+      // A textarea ignores a value attribute; every field takes the property.
+      else if (key === "value") element.value = value;
       else if (key in element && typeof value !== "string") element[key] = value;
       else element.setAttribute(key, value === true ? "" : value);
     }
@@ -323,12 +325,20 @@
 
   function renderActions() {
     const onScript = state.screen === "script";
+    const onCast = state.screen === "cast";
     $("estimate").hidden = !onScript;
     $("action-text").hidden = onScript;
-    for (const id of ["speak", "remix", "interrupt"]) if (onScript) $(id).hidden = true;
-    $("to-mix").hidden = !onScript;
+    for (const id of ["speak", "remix", "interrupt"]) if (state.screen !== "mix") $(id).hidden = true;
+    for (const id of ["to-script", "cast-interrupt", "make-missing"]) $(id).hidden = !onCast;
+    $("to-mix").hidden = state.screen === "mix";
     $("to-cast").hidden = !onScript;
-    if (onScript) { renderEstimate(); return; }
+    if (onScript) {
+      $("to-mix").className = "btn";
+      $("to-mix").textContent = "Mix & review";
+      renderEstimate();
+      return;
+    }
+    if (onCast) { renderCastActions(); return; }
     $("speak").hidden = false;
     const project = state.project;
     const result = project.result;
@@ -372,9 +382,11 @@
   function renderAll() {
     $("screen-script").hidden = state.screen !== "script";
     $("screen-mix").hidden = state.screen !== "mix";
+    $("screen-cast").hidden = state.screen !== "cast";
     renderHeader();
     renderSteps();
     renderScript();
+    if (state.screen === "cast") renderCast();
     renderPlayer();
     renderFilters();
     renderLines();
@@ -500,13 +512,18 @@
   // -- Projects and runs -----------------------------------------------------
   async function loadProject(name, {keepPick = false} = {}) {
     await flushScript();
+    await flushSlots();
     const project = await api(`/project?name=${encodeURIComponent(name)}`);
     const switched = state.project?.name !== project.name;
     const changed = switched || state.project?.result?.version !== project.result?.version;
     state.project = project;
     state.run = project.run;
+    state.castRun = project.cast_run;
     if (!keepPick || !project.result || state.picked >= project.result.lines.length) state.picked = 0;
     if (switched) {
+      state.castPick = null;
+      state.castSource = null;
+      library = null;
       state.writerResult = null;
       state.estimate = null;
       if (!location.hash) state.screen = project.result ? "mix" : "script";
@@ -524,9 +541,11 @@
       }
       lastActive = -1;
     }
+    if (switched || !library) await loadLibrary(project.cast_settings.speaker_group);
     renderAll();
     if (switched) queueEstimate(0);
     if (isRunning()) poll();
+    if (castRunning()) pollCast();
   }
 
   function show(screen) {
@@ -535,6 +554,7 @@
     state.screen = screen;
     if (location.hash !== `#${screen}`) history.replaceState(null, "", `#${screen}`);
     if (screen !== "mix") { mix.pause(); takeAudio.pause(); }
+    if (screen !== "cast") flushSlots();
     renderAll();
     if (screen === "script") queueEstimate(0);
   }
@@ -891,6 +911,518 @@
     }
   }
 
+  // -- Cast & sounds ---------------------------------------------------------
+  let library = null;
+  async function loadLibrary(group) {
+    try {
+      library = await api(`/library?group=${encodeURIComponent(group || "Global")}`);
+    } catch (error) {
+      library = {groups: ["Global"], speakers: [], sounds: [], error: error.message};
+    }
+    return library;
+  }
+
+  function castRunning() { return Boolean(state.castRun?.active); }
+  function slotNote(kind, slot) {
+    const run = state.castRun;
+    return run?.slots?.[`${kind}:${slot}`] || null;
+  }
+  function slotWorking(kind, slot) {
+    const run = state.castRun;
+    if (!run?.active) return false;
+    if (run.target === `${kind}:${slot}` || (kind === "voice" && run.target === `transcribe:${slot}`)) return true;
+    return run.target === "prepare" && Boolean(slotNote(kind, slot)) && !/^(Voice generated|Sound generated|Skipped)/.test(slotNote(kind, slot));
+  }
+
+  /** Each speaker's tone and script lines, by name, from the saved script. */
+  function speakerLines() {
+    const text = state.project.script.text;
+    const tones = new Map(scriptSpeakers(text).map((speaker) => [speaker.name.toLowerCase(), speaker.tone]));
+    const lines = new Map();
+    for (const line of text.split("\n")) {
+      const match = NAME.exec(line);
+      if (!match) continue;
+      const key = match[2].trim().toLowerCase();
+      if (!lines.has(key)) lines.set(key, []);
+      lines.get(key).push(line.slice(match[0].length).replace(TOKEN, "").replace(/\s+/g, " ").trim());
+    }
+    return {tones, lines};
+  }
+
+  function missingItems() {
+    const project = state.project;
+    const voices = project.speakers.filter((speaker) => !speaker.ready && (speaker.save_name || speaker.description));
+    const advanced = project.script.script_mode === state.boot.advanced;
+    const sounds = advanced ? project.sounds.filter((sound) => !sound.ready) : [];
+    return {voices, sounds};
+  }
+
+  function pickSlot(kind, slot) {
+    flushSlots();
+    state.castPick = {kind, slot};
+    renderCastLists();
+    renderSlotEditor(true);
+  }
+
+  function ensurePick() {
+    const project = state.project;
+    const pick = state.castPick;
+    const exists = pick && (pick.kind === "voice" ? project.speakers : project.sounds).some((item) => item.slot === pick.slot);
+    if (exists) return;
+    const first = project.speakers.find((speaker) => !speaker.ready) ?? project.speakers[0];
+    state.castPick = first ? {kind: "voice", slot: first.slot} : null;
+  }
+
+  function renderCast() {
+    ensurePick();
+    const settings = state.project.cast_settings;
+    const select = $("speaker-group");
+    const groups = library?.groups?.length ? library.groups : [settings.speaker_group || "Global"];
+    select.replaceChildren(...[...new Set([...groups, settings.speaker_group])].map((group) =>
+      h("option", {value: group, selected: group === settings.speaker_group}, group)));
+    renderCastLists();
+    renderSlotEditor(false);
+    renderGeneratorSettings();
+  }
+
+  function renderCastLists() {
+    const project = state.project;
+    const {tones, lines} = speakerLines();
+    const ready = project.speakers.filter((speaker) => speaker.ready).length;
+    $("voices-count").textContent = `${ready} of ${project.speakers.length} ready`;
+    const pick = state.castPick;
+    const cards = project.speakers.map((speaker) => {
+      const key = speaker.name.toLowerCase();
+      const tone = tones.get(key) ?? String(speaker.slot % 8);
+      const count = lines.get(key)?.length ?? 0;
+      const working = slotWorking("voice", speaker.slot);
+      const source = speaker.source === "saved" ? `Saved voice${speaker.missing ? " (missing)" : ""}`
+        : speaker.source === "clip" ? (speaker.transcript ? "Own clip · transcript ready" : "Own clip · needs a transcript")
+        : speaker.description ? "Has a description" : "Needs a description";
+      return h("button", {
+        type: "button", class: `cast-card${working ? " working" : ""}`,
+        "aria-pressed": String(pick?.kind === "voice" && pick.slot === speaker.slot),
+        onclick: () => pickSlot("voice", speaker.slot),
+      },
+      h("span", {class: "cast-card-head"}, h("i", {style: {background: toneColor(tone)}}), h("strong", {}, speaker.name),
+        h("span", {}, count ? `${count} line${count > 1 ? "s" : ""}` : "no lines")),
+      h("span", {class: speaker.ready ? "ready" : "missing"}, working ? "Working…" : speaker.ready ? "Voice ready" : "No voice yet"),
+      h("span", {class: "note"}, working ? (slotNote("voice", speaker.slot) || "Waiting for the GPU…") : source));
+    });
+    const canAdd = project.speakers.length < state.boot.slots.voices;
+    $("cast-grid").replaceChildren(...cards, canAdd ? h("button", {type: "button", class: "cast-add", onclick: () => resizeSlots("voice", true)},
+      svg("M12 5v14M5 12h14"), "Add speaker") : null);
+
+    const advanced = project.script.script_mode === state.boot.advanced;
+    const sounds = project.sounds;
+    $("sounds-count").textContent = sounds.length ? `${sounds.filter((sound) => sound.ready).length} of ${sounds.length} ready` : "";
+    $("sounds-note").textContent = advanced ? "Missing sounds are also made while speaking."
+                                            : "Basic scripts don't use sounds; switch to Advanced to hear them.";
+    const table = $("sound-table");
+    if (!sounds.length) {
+      table.replaceChildren(h("tbody", {}, h("tr", {}, h("td", {class: "sounds-empty"},
+        advanced ? "No sounds yet. Sound tags in an Advanced script get a slot here, or add one."
+                 : "No sounds. An Advanced script's sound tags get a slot here."))));
+    } else {
+      table.replaceChildren(
+        h("thead", {}, h("tr", {}, ["Sound", "Kind", "Length", "Clip"].map((label) => h("th", {scope: "col"}, label)))),
+        h("tbody", {}, sounds.map((sound) => {
+          const selected = pick?.kind === "sound" && pick.slot === sound.slot;
+          const working = slotWorking("sound", sound.slot);
+          const kind = sound.loop === true ? ["kind-loop", "Loop"] : sound.loop === false ? ["kind-shot", "One-shot"] : ["kind-unused", "Not in script"];
+          const cell = (...content) => h("td", {}, h("button", {type: "button", class: "row", tabindex: "-1",
+                                                                onclick: () => pickSlot("sound", sound.slot)}, ...content));
+          return h("tr", {"aria-selected": String(selected)},
+            h("td", {}, h("button", {type: "button", class: "row", onclick: () => pickSlot("sound", sound.slot)},
+              h("strong", {}, sound.name || `Sound ${sound.slot + 1}`))),
+            cell(h("span", {class: `kind ${kind[0]}`}, kind[1])),
+            cell(h("span", {class: "num muted"}, `${sound.duration} s`)),
+            cell(h("span", {class: working ? "" : sound.ready ? "state-ready" : "state-missing"},
+              working ? "Working…" : sound.ready ? (sound.source === "saved" ? "Saved sound" : "Ready") : "Missing")));
+        })));
+    }
+    $("add-sound").disabled = sounds.length >= state.boot.slots.sounds;
+  }
+
+  function field(label, input) {
+    return h("label", {class: "field"}, h("span", {class: "label"}, label), input);
+  }
+
+  function renderSlotEditor(force) {
+    const box = $("slot-editor");
+    // Leave the editor alone while something in it is being typed in.
+    if (!force && box.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
+    const pick = state.castPick;
+    if (!pick) {
+      box.replaceChildren(h("h2", {}, "Pick a speaker or sound"), h("p", {class: "muted small"}, "Its voice or clip is made and checked here."));
+      return;
+    }
+    box.replaceChildren(...(pick.kind === "voice" ? voiceEditor(pick.slot) : soundEditor(pick.slot)).filter(Boolean));
+  }
+
+  function noteBox(kind, slot) {
+    const note = slotNote(kind, slot);
+    if (!note) return null;
+    return h("p", {class: `slot-note${/failed/i.test(note) ? " error" : ""}`}, note);
+  }
+
+  function sourceSwitch(kind, slot, current, labels) {
+    return h("div", {class: "seg", role: "group", "aria-label": kind === "voice" ? "Voice source" : "Sound source"},
+      labels.map(([id, label]) => h("button", {
+        type: "button", "aria-pressed": String(current === id),
+        onclick: () => { state.castSource = {...(state.castSource || {}), [`${kind}:${slot}`]: id}; renderSlotEditor(true); },
+      }, label)));
+  }
+
+  function voiceEditor(slot) {
+    const speaker = state.project.speakers.find((item) => item.slot === slot);
+    if (!speaker) return [];
+    const {tones, lines} = speakerLines();
+    const key = speaker.name.toLowerCase();
+    const tone = tones.get(key) ?? String(slot % 8);
+    const chosen = state.castSource?.[`voice:${slot}`] ?? (speaker.source === "clip" && !speaker.description ? "upload" : speaker.source === "saved" ? "saved" : "describe");
+    const working = slotWorking("voice", slot);
+    const busy = castRunning() || !state.boot.gpu;
+    const qwen = state.project.cast_settings.voice_engine === state.boot.qwen_engine;
+    const save = (body) => saveSlot("voice", slot, body);
+    const parts = [
+      h("div", {class: "slot-head"},
+        h("i", {style: {background: toneColor(tone)}}),
+        h("input", {value: speaker.save_name || speaker.saved_name || "", placeholder: `Speaker ${slot}`, "aria-label": "Speaker name",
+                    disabled: speaker.source === "saved", oninput: (event) => save({save_name: event.target.value})}),
+        h("span", {class: `slot-chip ${speaker.ready ? "ready" : "missing"}`}, speaker.ready ? "Voice ready" : "No voice")),
+      sourceSwitch("voice", slot, chosen, [["describe", "Describe"], ["upload", "Upload clip"], ["saved", "Saved voice"]]),
+    ];
+    if (chosen === "describe") {
+      parts.push(
+        field("Voice description", h("textarea", {rows: 4, value: speaker.description, disabled: speaker.source === "saved",
+          placeholder: "Who they are and how they sound: age, tone, pace, accent.", oninput: (event) => save({description: event.target.value})})),
+        field("Line it reads", h("input", {value: speaker.preview_text, placeholder: "A sentence or two in their voice",
+          oninput: (event) => save({preview_text: event.target.value})})),
+        qwen ? field("Language", h("select", {onchange: (event) => save({language: event.target.value})},
+          state.boot.languages.map((language) => h("option", {selected: language === speaker.language}, language)))) : null,
+        h("div", {class: "row-buttons"},
+          h("button", {type: "button", class: "btn btn-primary", disabled: busy, onclick: () => make("voice", slot)},
+            working ? "Generating…" : speaker.source === "clip" ? "Generate a new voice" : "Generate voice")));
+    } else if (chosen === "upload") {
+      parts.push(h("div", {class: "row-buttons"},
+        h("button", {type: "button", class: "btn", onclick: () => chooseClip("voice", slot)},
+          speaker.source === "clip" ? "Upload a different clip" : "Upload a clip"),
+        h("span", {class: "muted small"}, "A few seconds of clean speech.")));
+    } else {
+      const options = library?.speakers ?? [];
+      parts.push(options.length
+        ? field("Saved voice", h("select", {onchange: (event) => event.target.value && useSaved("voice", slot, event.target.value)},
+            h("option", {value: ""}, "Choose a saved voice…"),
+            options.map((option) => h("option", {value: option.key, selected: option.key === speaker.preset},
+              option.group === "Global" ? option.name : `${option.name} · ${option.group}`))))
+        : h("p", {class: "muted small"}, library?.error || "No saved voices yet. Save a speaker's voice to reuse it in other projects."));
+    }
+    if (speaker.clip) {
+      parts.push(h("audio", {controls: true, preload: "none", src: speaker.clip}));
+      if (speaker.source === "clip") {
+        parts.push(field("Exact transcript of the clip", h("textarea", {rows: 3, value: speaker.transcript,
+          placeholder: "Every word the clip says", oninput: (event) => save({transcript: event.target.value})})));
+        parts.push(h("div", {class: "row-buttons"},
+          h("button", {type: "button", class: "btn btn-small", disabled: busy, onclick: () => make("transcribe", slot)},
+            state.castRun?.active && state.castRun.target === `transcribe:${slot}` ? "Transcribing…" : "Transcribe"),
+          h("button", {type: "button", class: "btn btn-small", onclick: () => saveToLibrary("voice", slot)},
+            `Save to ${state.project.cast_settings.speaker_group}`),
+          h("button", {type: "button", class: "btn btn-small", onclick: () => removeClip("voice", slot)}, "Remove clip")));
+      } else {
+        parts.push(h("p", {class: "muted small"}, `Uses the saved voice “${speaker.saved_name}”. Its transcript: ${speaker.transcript || "none"}`),
+          h("div", {class: "row-buttons"}, h("button", {type: "button", class: "btn btn-small",
+            onclick: () => saveSlot("voice", slot, {source: "upload"}, {now: true})}, "Stop using the saved voice")));
+      }
+    } else if (speaker.missing) {
+      parts.push(h("p", {class: "slot-note error"}, "Its saved voice is no longer in the library. Choose another or make a new one."));
+    }
+    parts.push(noteBox("voice", slot));
+    const spoken = lines.get(key) ?? [];
+    parts.push(h("div", {class: "slot-lines"},
+      h("span", {class: "label"}, spoken.length ? `${speaker.name}'s lines` : `${speaker.name} has no lines in the script`),
+      spoken.slice(0, 3).map((line) => h("p", {}, line)),
+      spoken.length > 3 ? h("span", {class: "muted small"}, `and ${spoken.length - 3} more`) : null));
+    if (slot === state.project.speakers.at(-1).slot && state.project.speakers.length > 1) {
+      parts.push(h("button", {type: "button", class: "danger-link", onclick: () => resizeSlots("voice", false)}, "Remove this speaker slot"));
+    }
+    return parts;
+  }
+
+  function soundEditor(slot) {
+    const sound = state.project.sounds.find((item) => item.slot === slot);
+    if (!sound) return [];
+    const chosen = state.castSource?.[`sound:${slot}`] ?? (sound.source === "saved" ? "saved" : sound.source === "clip" && !sound.description ? "upload" : "describe");
+    const working = slotWorking("sound", slot);
+    const busy = castRunning() || !state.boot.gpu;
+    const save = (body) => saveSlot("sound", slot, body);
+    const kind = sound.loop === true ? "Looped in the script" : sound.loop === false ? "Plays once in the script" : "Not in the script";
+    const parts = [
+      h("div", {class: "slot-head"},
+        h("i", {style: {background: sound.loop ? "var(--bed)" : "var(--cue)"}}),
+        h("input", {value: sound.save_name, placeholder: "Sound name, as the script's tag names it", "aria-label": "Sound name",
+                    disabled: sound.source === "saved", oninput: (event) => save({save_name: event.target.value})}),
+        h("span", {class: `slot-chip ${sound.ready ? "ready" : "missing"}`}, sound.ready ? "Clip ready" : "No clip")),
+      h("p", {class: "muted small"}, kind),
+      sourceSwitch("sound", slot, chosen, [["describe", "Describe"], ["upload", "Upload clip"], ["saved", "Saved sound"]]),
+    ];
+    if (chosen === "describe") {
+      parts.push(
+        field("What it sounds like", h("textarea", {rows: 3, value: sound.description, disabled: sound.source === "saved",
+          placeholder: "Steady rain on canvas awnings, distant traffic", oninput: (event) => save({description: event.target.value})})),
+        field("Length in seconds", h("input", {type: "number", min: 1, max: 47, value: sound.duration, disabled: sound.source === "saved",
+          oninput: (event) => event.target.value && save({duration: Number(event.target.value)})})),
+        h("div", {class: "row-buttons"},
+          h("button", {type: "button", class: "btn btn-primary", disabled: busy, onclick: () => make("sound", slot)},
+            working ? "Generating…" : sound.ready ? "Generate a new clip" : "Generate sound")));
+    } else if (chosen === "upload") {
+      parts.push(h("div", {class: "row-buttons"}, h("button", {type: "button", class: "btn", onclick: () => chooseClip("sound", slot)},
+        sound.source === "clip" ? "Upload a different clip" : "Upload a clip")));
+    } else {
+      const options = library?.sounds ?? [];
+      parts.push(options.length
+        ? field("Saved sound", h("select", {onchange: (event) => event.target.value && useSaved("sound", slot, event.target.value)},
+            h("option", {value: ""}, "Choose a saved sound…"),
+            options.map((option) => h("option", {value: option.key, selected: option.key === sound.preset}, option.name))))
+        : h("p", {class: "muted small"}, library?.error || "No saved sounds yet. Save a clip to reuse it."));
+    }
+    if (sound.clip) {
+      parts.push(h("audio", {controls: true, preload: "none", src: sound.clip}));
+      parts.push(h("div", {class: "row-buttons"},
+        sound.source === "clip" ? h("button", {type: "button", class: "btn btn-small", onclick: () => saveToLibrary("sound", slot)}, "Save to library") : null,
+        sound.source === "clip" ? h("button", {type: "button", class: "btn btn-small", onclick: () => removeClip("sound", slot)}, "Remove clip")
+          : h("button", {type: "button", class: "btn btn-small", onclick: () => saveSlot("sound", slot, {source: "upload"}, {now: true})},
+              "Stop using the saved sound")));
+    }
+    parts.push(noteBox("sound", slot));
+    return parts;
+  }
+
+  function renderGeneratorSettings() {
+    const settings = state.project.cast_settings;
+    const save = (key, parse = (event) => event.target.value) => (event) => saveCastSettings({[key]: parse(event)});
+    $("generator-settings").replaceChildren(
+      field("Voice generator", h("select", {onchange: save("voice_engine")},
+        state.boot.voice_engines.map((engine) => h("option", {selected: engine === settings.voice_engine}, engine)))),
+      h("p", {class: "muted small"}, "Qwen3-TTS VoiceDesign designs a voice from its description; Drama 3 designs it on SGLang-Omni with the speech settings."),
+      field("Transcript model", h("select", {onchange: save("asr_model")},
+        state.boot.asr_models.map((model) => h("option", {selected: model === settings.asr_model}, model)))),
+      h("label", {class: "check"}, h("input", {type: "checkbox", checked: settings.skip_existing,
+        onchange: save("skip_existing", (event) => event.target.checked)}), "Make the missing skips speakers with a voice"),
+      h("label", {class: "check"}, h("input", {type: "checkbox", checked: settings.skip_existing_sounds,
+        onchange: save("skip_existing_sounds", (event) => event.target.checked)}), "Make the missing skips sounds with a clip"));
+  }
+
+  function renderCastActions() {
+    const {voices, sounds} = missingItems();
+    const total = voices.length + sounds.length;
+    const running = castRunning();
+    const title = $("action-title");
+    const detail = $("action-detail");
+    detail.classList.remove("error");
+    if (running) {
+      title.textContent = "Making voices and sounds…";
+      detail.textContent = state.castRun.status || "Waiting for the GPU…";
+    } else if (state.castRun?.error) {
+      title.textContent = "That didn't work";
+      detail.textContent = state.castRun.error;
+      detail.classList.add("error");
+    } else if (total) {
+      title.textContent = `${total} thing${total > 1 ? "s" : ""} to make before speaking`;
+      detail.textContent = [...voices.map((speaker) => `${speaker.name}'s voice`), ...sounds.map((sound) => sound.name)].join(" · ");
+    } else {
+      title.textContent = state.project.speakers.some((speaker) => speaker.ready) ? "Cast ready" : "No cast yet";
+      detail.textContent = state.project.speakers.some((speaker) => speaker.ready)
+        ? "Every speaker has a voice. Speak the project in Mix & review."
+        : "Rewrite the script to fill the cast, or add speakers and give them voices.";
+    }
+    const make = $("make-missing");
+    make.hidden = running || !total;
+    make.disabled = !state.boot.gpu;
+    make.textContent = `Make the missing ${total}`;
+    $("cast-interrupt").hidden = !running;
+    $("to-script").hidden = false;
+    $("to-mix").hidden = false;
+    $("to-mix").className = `btn${total || running ? "" : " btn-primary"}`;
+    $("to-mix").textContent = "Next: mix & review";
+  }
+
+  // Slot edits save on their own, a moment after typing stops.
+  const slotEdits = new Map();
+  let slotTimer = null;
+  function saveSlot(kind, slot, body, {now = false} = {}) {
+    const key = `${kind}:${slot}`;
+    slotEdits.set(key, {...(slotEdits.get(key) || {}), ...body});
+    state.saving = "pending";
+    renderSaveState();
+    clearTimeout(slotTimer);
+    slotTimer = setTimeout(flushSlots, now ? 0 : 700);
+  }
+
+  async function flushSlots() {
+    clearTimeout(slotTimer);
+    slotTimer = null;
+    const edits = [...slotEdits.entries()];
+    slotEdits.clear();
+    if (!edits.length || !state.project) return;
+    const name = state.project.name;
+    state.saving = "saving";
+    renderSaveState();
+    try {
+      let project = null;
+      for (const [key, body] of edits) {
+        const [kind, slot] = key.split(":");
+        project = await api(`/project/slot?name=${encodeURIComponent(name)}&kind=${kind}&slot=${slot}`, {method: "PATCH", body});
+      }
+      if (state.project.name !== name) return;
+      castAnswered(project);
+      state.saving = slotEdits.size ? "pending" : "saved";
+      renderSaveState();
+    } catch (error) {
+      state.saving = "failed";
+      renderSaveState();
+      toast(`Not saved: ${error.message}`);
+    }
+  }
+
+  /** The project changed on the server: keep the screen, refresh what it shows. */
+  function castAnswered(project, {editor = false} = {}) {
+    if (!project) return;
+    const {message, ...rest} = project;
+    Object.assign(state.project, {...rest, run: state.project.run});
+    if (project.cast_run !== undefined) state.castRun = project.cast_run;
+    renderSteps();
+    if (state.screen === "cast") {
+      renderCastLists();
+      renderSlotEditor(editor);
+      renderCastActions();
+    }
+    if (message) toast(message);
+  }
+
+  async function castCall(path, options, {editor = true} = {}) {
+    await flushSlots();
+    try {
+      const project = await api(named(path), options);
+      castAnswered(project, {editor});
+      return project;
+    } catch (error) {
+      toast(error.message);
+      return null;
+    }
+  }
+
+  async function saveCastSettings(body) {
+    const project = await castCall("/project/cast-settings", {method: "PATCH", body});
+    if (project && body.speaker_group) { await loadLibrary(body.speaker_group); renderCast(); }
+    else if (project) renderSlotEditor(true);
+  }
+
+  function resizeSlots(kind, add) {
+    castCall(`/project/slots?kind=${kind}`, {method: "POST", body: {add}}).then((project) => {
+      if (!project) return;
+      const list = kind === "voice" ? project.speakers : project.sounds;
+      if (add && list.length) pickSlot(kind, list.at(-1).slot);
+      else { state.castPick = null; renderCast(); }
+    });
+  }
+
+  function useSaved(kind, slot, key) {
+    state.castSource = {...(state.castSource || {}), [`${kind}:${slot}`]: "saved"};
+    castCall(`/project/slot/use-saved?kind=${kind}&slot=${slot}`, {method: "POST", body: {key}});
+  }
+
+  function saveToLibrary(kind, slot) {
+    castCall(`/project/slot/save?kind=${kind}&slot=${slot}`, {method: "POST", body: {}}).then(() => {
+      loadLibrary(state.project.cast_settings.speaker_group).then(() => renderSlotEditor(true));
+    });
+  }
+
+  function removeClip(kind, slot) {
+    castCall(`/project/slot/clip?kind=${kind}&slot=${slot}`, {method: "DELETE"});
+  }
+
+  let clipTarget = null;
+  function chooseClip(kind, slot) {
+    clipTarget = {kind, slot};
+    const input = $("clip-input");
+    input.value = "";
+    input.click();
+  }
+
+  async function uploadClip(file) {
+    if (!clipTarget || !file) return;
+    const {kind, slot} = clipTarget;
+    await flushSlots();
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const response = await fetch(`${API}${named(`/project/slot/upload?kind=${kind}&slot=${slot}`)}`, {method: "POST", body: form});
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || data.detail || "Upload failed.");
+      castAnswered(data, {editor: true});
+      toast(kind === "voice" ? "Clip uploaded. Add its exact transcript, or click Transcribe." : "Clip uploaded.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function make(target, slot) {
+    if (castRunning()) return;
+    await flushSlots();
+    try {
+      const data = await api(named("/project/make"), {method: "POST", body: {target, slot}});
+      state.castRun = data.cast_run;
+      renderCastLists();
+      renderSlotEditor(true);
+      renderCastActions();
+      pollCast();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function interruptCast() {
+    try {
+      toast((await api(named("/project/make/interrupt"), {method: "POST"})).message);
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  let castPollTimer = null;
+  function pollCast() {
+    clearTimeout(castPollTimer);
+    castPollTimer = setTimeout(async () => {
+      const name = state.project.name;
+      try {
+        const project = await api(`/project?name=${encodeURIComponent(name)}`);
+        if (state.project.name !== name) return;
+        const before = state.castRun;
+        castAnswered(project);
+        if (state.screen !== "cast") renderSteps();
+        if (project.cast_run?.active) { pollCast(); return; }
+        if (before?.active) toast(project.cast_run?.error ? `Stopped: ${project.cast_run.error}` : (project.cast_run?.status || "Done."));
+        renderSlotEditor(true);
+      } catch (error) {
+        toast(error.message);
+        pollCast();
+      }
+    }, POLL_MS);
+  }
+
+  async function newGroup() {
+    const name = prompt("Name the speaker group, such as a series or book:");
+    if (!name || !name.trim()) return;
+    try {
+      const data = await api("/library/groups", {method: "POST", body: {name: name.trim()}});
+      library = {...(library || {}), groups: data.groups};
+      await saveCastSettings({speaker_group: data.group});
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   async function saveSettings(values) {
     try {
       const project = await api(named("/project/settings"), {method: "PATCH", body: values});
@@ -982,6 +1514,14 @@
     });
     for (const screen of SCREENS) $(`step-${screen}`).addEventListener("click", () => show(screen));
     $("to-mix").addEventListener("click", () => show("mix"));
+    $("to-cast").addEventListener("click", () => show("cast"));
+    $("to-script").addEventListener("click", () => show("script"));
+    $("make-missing").addEventListener("click", () => make("prepare"));
+    $("cast-interrupt").addEventListener("click", interruptCast);
+    $("new-group").addEventListener("click", newGroup);
+    $("add-sound").addEventListener("click", () => resizeSlots("sound", true));
+    $("speaker-group").addEventListener("change", (event) => saveCastSettings({speaker_group: event.target.value}));
+    $("clip-input").addEventListener("change", (event) => uploadClip(event.target.files[0]));
     window.addEventListener("hashchange", () => show(location.hash.slice(1)));
     $("speak").addEventListener("click", () => speak("generate"));
     $("remix").addEventListener("click", () => speak("remix"));
@@ -998,7 +1538,7 @@
     document.addEventListener("click", (event) => {
       if (!event.target.closest("#examples")) $("examples").open = false;
     });
-    document.addEventListener("visibilitychange", () => { if (document.hidden) flushScript(); });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { flushScript(); flushSlots(); } });
     document.addEventListener("keydown", (event) => {
       if (state.screen !== "mix" || event.target.closest("input, select, textarea, button") || !state.project?.result) return;
       if (event.key === " ") { event.preventDefault(); if (mix.paused) mix.play(); else mix.pause(); }

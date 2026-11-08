@@ -248,3 +248,56 @@ button.step:hover { background: var(--raised); }
 .dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .dialog form { display: flex; flex-direction: column; gap: 16px; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Cast & sounds */
+.cast-main { flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.inline-field { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.inline-field select { min-height: 36px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font-weight: 600; }
+.cast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; padding: 16px 18px 18px; }
+.cast-card { display: flex; flex-direction: column; gap: 8px; min-height: 104px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); text-align: left; }
+.cast-card:hover { background: var(--raised); }
+.cast-card[aria-pressed="true"] { border: 2px solid var(--accent); padding: 11px 13px; background: var(--selected); }
+.cast-card-head { display: flex; align-items: center; gap: 8px; width: 100%; }
+.cast-card-head i { width: 12px; height: 12px; flex: none; border-radius: 50%; }
+.cast-card-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.cast-card-head span { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.cast-card .ready { font-size: 13px; color: var(--accent); font-weight: 600; }
+.cast-card .missing { font-size: 13px; color: var(--warn); font-weight: 600; }
+.cast-card .note { font-size: 12px; color: var(--muted); }
+.cast-card.working .note { color: var(--accent); }
+.cast-add { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 104px; border: 1px dashed var(--line); border-radius: 10px;
+  background: transparent; color: var(--muted); font-weight: 600; }
+.cast-add:hover { background: var(--raised); color: var(--text); }
+.table-wrap { overflow-x: auto; }
+.sound-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 14px; }
+.sound-table th { padding: 10px 18px 6px; text-align: left; font-size: 12px; font-weight: 650; color: var(--muted); }
+.sound-table td { padding: 0; border-top: 1px solid var(--line-soft); }
+.sound-table tr[aria-selected="true"] td { background: var(--selected); }
+.sound-table button.row { display: block; width: 100%; min-height: 44px; padding: 10px 18px; border: 0; background: transparent; text-align: left; }
+.sound-table tr:hover td { background: var(--raised); }
+.kind { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.kind-loop { background: var(--new-bg); color: var(--new); }
+.kind-shot { background: var(--warn-bg); color: var(--warn); }
+.kind-unused { background: var(--reused-bg); color: var(--reused); }
+.state-ready { color: var(--accent); font-weight: 600; }
+.state-missing { color: var(--warn); font-weight: 600; }
+.card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--line-soft); }
+.sounds-empty { padding: 18px; color: var(--muted); }
+
+.slot-editor { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.slot-head { display: flex; align-items: center; gap: 10px; }
+.slot-head i { width: 14px; height: 14px; flex: none; border-radius: 50%; }
+.slot-head input { flex: 1; min-width: 0; min-height: 36px; padding: 0; border: 0; background: transparent; font-size: 18px; font-weight: 650; }
+.slot-chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.slot-chip.ready { background: var(--accent-soft); color: var(--accent); }
+.slot-chip.missing { background: var(--warn-bg); color: var(--warn); }
+.slot-editor audio { width: 100%; height: 40px; }
+.slot-editor .row-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot-note { padding: 8px 10px; border-radius: 8px; background: var(--raised); font-size: 13px; }
+.slot-note.error { background: var(--flag-bg); color: var(--flag); }
+.slot-lines { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.slot-lines p { padding: 7px 10px; border-radius: 8px; background: var(--raised); font-size: 13px; }
+.danger-link { align-self: flex-start; border: 0; background: none; padding: 4px 0; color: var(--flag); font-size: 13px; text-decoration: underline; }
+.generator-settings { padding: 14px 18px; }
+.generator-settings summary { cursor: pointer; font-weight: 650; font-size: 14px; min-height: 32px; display: flex; align-items: center; }

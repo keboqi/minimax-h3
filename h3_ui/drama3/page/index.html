@@ -31,16 +31,15 @@
       <span class="step-text"><strong>Script</strong><span id="script-summary"></span></span>
     </button>
     <span class="step-arrow" aria-hidden="true"></span>
-    <a class="step" id="step-cast" href="/" target="_top" title="Voices and sounds are edited in the Soundstage tab for now">
+    <button type="button" class="step" id="step-cast" data-screen="cast">
       <span class="step-dot" aria-hidden="true">2</span>
-      <span class="step-text"><strong>Cast &amp; sounds ↗</strong><span id="cast-summary"></span></span>
-    </a>
+      <span class="step-text"><strong>Cast &amp; sounds</strong><span id="cast-summary"></span></span>
+    </button>
     <span class="step-arrow" aria-hidden="true"></span>
     <button type="button" class="step" id="step-mix" data-screen="mix">
       <span class="step-dot" aria-hidden="true">3</span>
       <span class="step-text"><strong>Mix &amp; review</strong><span id="mix-summary"></span></span>
     </button>
-    <span class="steps-note">Cast &amp; sounds is still edited in the Soundstage tab: load the project there, then save it.</span>
   </nav>
 
   <!-- Script -->
@@ -102,6 +101,41 @@
     </div>
   </main>
 
+  <!-- Cast & sounds -->
+  <main class="main" id="screen-cast" hidden>
+    <div class="columns">
+      <div class="cast-main">
+        <section class="card" aria-labelledby="voices-title">
+          <div class="card-head">
+            <h2 id="voices-title">Voices <span class="muted" id="voices-count"></span></h2>
+            <span class="spacer"></span>
+            <label class="inline-field">Saved to
+              <select id="speaker-group"></select>
+            </label>
+            <button type="button" class="btn btn-small" id="new-group">New group</button>
+          </div>
+          <div class="cast-grid" id="cast-grid"></div>
+        </section>
+        <section class="card" aria-labelledby="sounds-title">
+          <div class="card-head">
+            <h2 id="sounds-title">Sounds &amp; music <span class="muted" id="sounds-count"></span></h2>
+            <span class="spacer"></span>
+            <span class="muted small" id="sounds-note"></span>
+          </div>
+          <div class="table-wrap"><table class="sound-table" id="sound-table"></table></div>
+          <div class="card-foot"><button type="button" class="btn btn-small" id="add-sound">Add sound</button></div>
+        </section>
+      </div>
+      <aside class="side">
+        <section class="card slot-editor" id="slot-editor" aria-live="polite"></section>
+        <details class="card generator-settings">
+          <summary>Generator settings</summary>
+          <div class="more-body" id="generator-settings"></div>
+        </details>
+      </aside>
+    </div>
+  </main>
+
   <!-- Mix & review -->
   <main class="main" id="screen-mix" hidden>
     <section class="card player" id="player" aria-label="Mix"></section>
@@ -137,8 +171,11 @@
       <button type="button" class="btn" id="interrupt" hidden>Interrupt</button>
       <button type="button" class="btn" id="remix">Remix</button>
       <button type="button" class="btn btn-primary" id="speak">Speak</button>
+      <button type="button" class="btn" id="to-script" hidden>Back to script</button>
+      <button type="button" class="btn" id="cast-interrupt" hidden>Interrupt</button>
+      <button type="button" class="btn btn-primary" id="make-missing" hidden>Make the missing</button>
       <button type="button" class="btn" id="to-mix" hidden>Mix &amp; review</button>
-      <a class="btn btn-primary" id="to-cast" href="/" target="_top" hidden>Next: cast &amp; sounds ↗</a>
+      <button type="button" class="btn btn-primary" id="to-cast" hidden>Next: cast &amp; sounds</button>
     </div>
   </footer>
 </div>
@@ -155,6 +192,7 @@
     </div>
   </form>
 </dialog>
+<input id="clip-input" type="file" accept="audio/*" hidden>
 <audio id="mix-audio" preload="metadata"></audio>
 <audio id="take-audio" preload="none"></audio>
 <script src="app.js"></script>

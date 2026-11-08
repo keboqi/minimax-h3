@@ -26,6 +26,7 @@ from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from ..subtitle_words import word_pieces
 from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
+from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
 from .page_script import boot_payload, install_script_routes, script_payload
 from .result_view import clean_line, timeline_data
 
@@ -68,35 +69,6 @@ def generation_values(name: str, data: dict, clips: Path) -> list[Any]:
     values += [data.get(f"voice_{slot}_save_name") or "" for slot in range(DRAMA3_VOICE_SLOTS)]
     values += [bool(_value(data, "word_timing")), name]
     return values
-
-
-def _cast(data: dict, clips: Path) -> list[dict]:
-    """The project's speakers and whether each has a voice, in slot order."""
-    shown = int(data.get("shown_slots") or 1)
-    cast = []
-    for slot in range(min(shown, DRAMA3_VOICE_SLOTS)):
-        preset = data.get(f"voice_{slot}_preset")
-        saved = bool(preset) and preset != UPLOAD_VOICE
-        ready = saved or _clip(clips, data.get(f"voice_{slot}_audio")) is not None
-        name = data.get(f"voice_{slot}_save_name") or (preset if saved else "")
-        if not name and not ready:
-            continue  # An empty slot is no speaker yet.
-        cast.append({"slot": slot, "name": name or f"Speaker {slot}", "ready": ready})
-    return cast
-
-
-def _sounds(data: dict, clips: Path) -> list[dict]:
-    shown = int(data.get("shown_sound_slots") or 1)
-    sounds = []
-    for slot in range(min(shown, DRAMA3_SOUND_SLOTS)):
-        preset = data.get(f"sound_{slot}_preset")
-        saved = bool(preset) and preset != UPLOAD_SOUND
-        name = data.get(f"sound_{slot}_save_name") or (preset if saved else "") or data.get(f"sound_{slot}_description")
-        if not name:
-            continue
-        sounds.append({"slot": slot, "name": name,
-                       "ready": saved or _clip(clips, data.get(f"sound_{slot}_audio")) is not None})
-    return sounds
 
 
 def _take_status(chunk: dict) -> str:
@@ -148,15 +120,19 @@ def _preset(data: dict) -> str | None:
                  if tuple(float(value) for value in values) == current), None)
 
 
-def project_payload(name: str, data: dict, result, clips: Path) -> dict:
+def project_payload(name: str, data: dict, result, clips: Path, runtime=None) -> dict:
     text = str(_value(data, "text"))
+    speakers = speakers_payload(name, data, lambda value: _clip(clips, value), runtime)
     return {
         "name": name,
         "title": _value(data, "title"),
         "script_mode": _value(data, "script_mode"),
         "lines": sum(1 for line in text.splitlines() if line.strip()),
-        "cast": _cast(data, clips),
-        "sounds": _sounds(data, clips),
+        # The speakers who are someone: named, or with a voice.
+        "cast": [speaker for speaker in speakers if speaker["save_name"] or speaker["saved_name"] or speaker["ready"]],
+        "speakers": speakers,
+        "sounds": sounds_payload(name, data, lambda value: _clip(clips, value)),
+        "cast_settings": cast_settings(data),
         "settings": {"temperature": float(_value(data, "temperature")), "top_p": float(_value(data, "top_p")),
                      "top_k": int(_value(data, "top_k")), "word_timing": bool(_value(data, "word_timing")),
                      "preset": _preset(data)},
@@ -166,7 +142,8 @@ def project_payload(name: str, data: dict, result, clips: Path) -> dict:
 
 
 def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_dir: Callable[[], Path],
-                            gpu: bool = True, interrupt=None) -> None:
+                            runtime_config: Callable[[], Any] | None = None, gpu: bool = True,
+                            interrupt=None) -> None:
     """Serve the page at ``/soundstage/`` and its API under ``/soundstage/api``.
 
     ``actions`` holds Soundstage's speech actions; ``store`` keeps the saved projects and
@@ -199,7 +176,11 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     def payload(owner, name):
         data, result = project(name)
-        return {**project_payload(name, data, result, clips), "run": run_payload(owner, name)}
+        cast_run = cast_runs.latest(owner, name) if cast_runs is not None else None
+        return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
+                "cast_run": cast_run.public(None) if cast_run is not None else None}
+
+    cast_runs = None
 
     # The page --------------------------------------------------------------
     @app.get("/soundstage", include_in_schema=False)
@@ -223,10 +204,13 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         return {"gpu": gpu,
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
-                **boot_payload()}
+                **boot_payload(), **cast_boot_payload()}
 
     install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload,
                           clip=lambda value: _clip(clips, value))
+    cast_runs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
+                                    payload=payload, clips=clips, clip=lambda value: _clip(clips, value),
+                                    runtime=runtime_config, gpu=gpu, interrupt=interrupt)
 
     # Projects --------------------------------------------------------------
     @app.get(f"{api}/project", include_in_schema=False)
