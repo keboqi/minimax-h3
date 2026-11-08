@@ -15,11 +15,14 @@ the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art
 continuity bible of the recurring characters, props and locations, then splits the story into
 single-moment widescreen images with cuts and dissolves. **Minimum shots** is a floor: the
 planner adds images wherever the story needs them, up to one per 2 seconds of mix.
-Planning shows its elapsed time and stops after 5 minutes if the writer hasn't answered.
+Planning shows its elapsed time and stops after 5 minutes if the writer hasn't answered. A
+reply that arrives later is still saved, unless a newer plan was started or pasted by then.
 To use any other chat model, open **Use another chat model**, click **Copy full planner
 prompt**, paste the model's JSON reply and click **Apply pasted plan**; it is checked like the
 built-in planner's. Either way the plan is saved beside the mix for the current Art direction
-and Minimum shots, so a reloaded project keeps it. Review the times and prompts, then click
+and Minimum shots, so a reloaded project keeps it. The Shot plan table only lists the plan
+Generate would use: after changing either setting it empties and says the saved plan was made
+for other settings. Review the times and prompts, then click
 **Generate illustrated video**, which starts drawing at once; without a matching plan it says
 so instead of planning on its own.
 Every scene is drawn from its text first, with the character, prop and location descriptions

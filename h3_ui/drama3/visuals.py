@@ -7,8 +7,10 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 import json
 import re
 from collections import OrderedDict
+from itertools import count
 from pathlib import Path
 from shutil import which
+from threading import Lock
 
 import gradio as gr
 
@@ -230,6 +232,30 @@ def read_plan(audio, style=None, limit=None):
     return saved
 
 
+# The newest planning run per mix. A run only saves its plan while it is still the newest, so a slow
+# writer's late reply never replaces a plan made or pasted after that run started.
+_PLAN_RUNS: dict[str, int] = {}
+_PLAN_LOCK = Lock()
+_RUN_IDS = count(1)
+
+
+def claim_plan(audio):
+    """Start a planning run for this mix; runs started before it can no longer save."""
+    with _PLAN_LOCK:
+        run = next(_RUN_IDS)
+        _PLAN_RUNS[str(Path(audio))] = run
+    return run
+
+
+def save_plan(audio, style, limit, plan, run):
+    """Save a run's plan unless a newer run started since; True when it was saved."""
+    with _PLAN_LOCK:
+        if _PLAN_RUNS.get(str(Path(audio))) != run:
+            return False
+        write_plan(audio, style, limit, plan)
+        return True
+
+
 def plan_rows(saved, duration, shots=None):
     """Shot plan table rows from compiled shots, or from a saved plan."""
     if shots is None:
@@ -239,6 +265,30 @@ def plan_rows(saved, duration, shots=None):
             return []
     return [[round(s.first / FPS, 3), round((s.first + s.frames) / FPS, 3),
              "Dissolve" if s.dissolve else "Cut", s.beat, s.prompt] for s in shots]
+
+
+PLAN_LABEL = "Shot plan"
+STALE_PLAN_LABEL = ("Shot plan · The saved plan was made for a different Art direction or Minimum shots. "
+                    "Plan again, or set them back.")
+
+
+def plan_table(audio, style, limit):
+    """The shot table for the plan Generate would use with these settings.
+
+    A plan saved for other settings stays on disk but isn't shown, so the table never lists shots
+    that Generate would refuse; the label says why it's empty.
+    """
+    saved = read_plan(audio) if audio else None
+    if saved is None:
+        return gr.update(value=[], label=PLAN_LABEL)
+    try:
+        current = read_plan(audio, style, limit)
+    except (TypeError, ValueError):
+        current = None
+    duration = ((read_snapshot(audio) or {}).get("settings") or {}).get("duration")
+    if current is None or not duration:
+        return gr.update(value=[], label=STALE_PLAN_LABEL if current is None else PLAN_LABEL)
+    return gr.update(value=plan_rows(current, float(duration)), label=PLAN_LABEL)
 
 
 def bind_visual_export(view, controller, deps):
@@ -282,20 +332,23 @@ def bind_visual_export(view, controller, deps):
     with view.result_video_root:
         stage = gr.HTML("", js_on_load=STAGE_VIDEO_JS, elem_classes=[STAGE_VIDEO_CLASS])
 
-    def select_mix(path):
+    def select_mix(path, style, limit):
         """Show the plan and newest video saved with this mix, so a loaded project picks up where it left off."""
         name = Path(path).name if path else None
-        rows, latest = [], None
-        if name:
-            audio = Path(deps.resolve_result(name))
-            saved = read_plan(audio)
-            duration = ((read_snapshot(audio) or {}).get("settings") or {}).get("duration")
-            if saved is not None and duration:
-                rows = plan_rows(saved, float(duration))
-            latest = latest_export(audio)
-        return name, str(latest) if latest else None, rows
+        audio = Path(deps.resolve_result(name)) if name else None
+        latest = latest_export(audio) if audio else None
+        return name, str(latest) if latest else None, plan_table(audio, style, limit)
 
-    view.output.change(select_mix, inputs=view.output, outputs=[source, video, preview], **QUIET)
+    view.output.change(select_mix, inputs=[view.output, style, limit], outputs=[source, video, preview], **QUIET)
+
+    def refresh_table(result_name, style, limit):
+        return plan_table(Path(deps.resolve_result(result_name)) if result_name else None, style, limit)
+
+    # Editing Art direction or Minimum shots switches the table to the plan Generate would use, if any.
+    # User events only: a .change listener here would loop back through the components that set them.
+    table = dict(fn=refresh_table, inputs=[source, style, limit], outputs=preview, **QUIET)
+    style.input(**table)
+    limit.release(**table)
 
     def show_latest_video(result_name):
         # A long export keeps running if the page loses its connection; its video still lands here.
@@ -320,7 +373,8 @@ def bind_visual_export(view, controller, deps):
     # Pause whichever player is being hidden, so the audio and the video never play over each other.
     result_mode.change(switch_result, inputs=result_mode, outputs=[view.output, view.result_video_root],
                        js=PAUSE_JS.format(scope=".h3-drama3-result"), **QUIET)
-    preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET)
+    preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET).then(
+        **table)
     style.input(preset_for, inputs=style, outputs=preset, **QUIET)
 
     def load_mix(result_name):
@@ -332,23 +386,26 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("The saved Sound Stage mix could not be found.")
         return audio, snapshot["settings"]
 
-    def prepare(result_name, style, limit, *writer):
+    def prepare(result_name, style, limit, run, *writer):
         audio, settings = load_mix(result_name)
         try:
             plan, shots = plan_shots(settings, style, int(limit), *writer, runtime=deps.runtime_config())
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
-        write_plan(audio, style, limit, plan)
+        if not save_plan(audio, style, limit, plan, run):
+            raise gr.Error("A newer shot plan was started or pasted while this one was planning, "
+                           "so this reply was dropped.")
         return plan_rows(None, None, shots)
 
     def plan_live(result_name, style, limit, *writer):
         """Plan in the background, reporting elapsed time; the writer can take minutes on a long mix."""
-        load_mix(result_name)
+        audio, _ = load_mix(result_name)
+        run = claim_plan(audio)
         model = writer[4] if len(writer) > 4 and writer[2] == "OpenAI-compatible" else writer[0]
         started = time.monotonic()
         # No ``with``: leaving it would wait for a writer that never answers.
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-shot-plan")
-        future = pool.submit(prepare, result_name, style, limit, *writer)
+        future = pool.submit(prepare, result_name, style, limit, run, *writer)
         pool.shutdown(wait=False)
         while True:
             try:
@@ -358,13 +415,14 @@ def bind_visual_export(view, controller, deps):
                 elapsed = int(time.monotonic() - started)
                 if elapsed >= PLAN_TIMEOUT:
                     # The writer's own retries can run for ten minutes; stop waiting long before that.
-                    # A reply that still arrives later is saved as this mix's plan.
+                    # A reply that still arrives later is saved as this mix's plan, unless a newer
+                    # plan was started or pasted by then.
                     raise gr.Error(f"{model} hasn't returned a shot plan after {elapsed // 60} minutes, so "
                                    "planning stopped. Try again, pick another writer model, or use Copy full "
                                    "planner prompt with any chat model and paste its reply.") from None
                 yield gr.skip(), (f"Planning shots with {model}… {elapsed // 60}m{elapsed % 60:02d}s. "
                                   f"A long mix can take a few minutes; this stops at {PLAN_TIMEOUT // 60} minutes.")
-        yield rows, f"Planned {len(rows)} shots in {int(time.monotonic() - started)}s."
+        yield gr.update(value=rows, label=PLAN_LABEL),             f"Planned {len(rows)} shots in {int(time.monotonic() - started)}s."
 
     bind_prompt_action(plan_button.click, plan_live, inputs=[source, style, limit, *writer_inputs(view.writer)],
                        outputs=[preview, status], api_name=False, show_progress="minimal")
@@ -388,8 +446,9 @@ def bind_visual_export(view, controller, deps):
             plan, shots = check_plan_reply(reply, settings, style, int(limit))
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
-        write_plan(audio, style, limit, plan)
-        return plan_rows(None, None, shots), f"Applied the pasted {len(shots)}-shot plan."
+        # Claiming a run drops the reply of any planning still running for this mix.
+        save_plan(audio, style, limit, plan, claim_plan(audio))
+        return gr.update(value=plan_rows(None, None, shots), label=PLAN_LABEL), f"Applied the pasted {len(shots)}-shot plan."
 
     apply_plan.click(apply_pasted_plan, inputs=[pasted_plan, source, style, limit], outputs=[preview, status],
                      **QUIET)

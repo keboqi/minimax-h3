@@ -211,6 +211,38 @@ class IllustratedMixTests(unittest.TestCase):
             # The plan file is hidden, so it never shows up as a result beside the mix.
             self.assertEqual([p.name for p in Path(tmp).iterdir() if not p.name.startswith(".")], [])
 
+    def test_late_planner_reply_never_replaces_a_newer_plan(self):
+        from h3_ui.drama3.visuals import claim_plan, read_plan, save_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mix = Path(tmp) / f"mix_{'c' * 32}.mp3"
+            slow = claim_plan(mix)
+            pasted = claim_plan(mix)  # A pasted plan, or a second Plan click, while the first still runs.
+            self.assertTrue(save_plan(mix, "ink", 16, {"shots": "pasted"}, pasted))
+            self.assertFalse(save_plan(mix, "ink", 16, {"shots": "late"}, slow))
+            self.assertEqual(read_plan(mix)["plan"], {"shots": "pasted"})
+            # Another mix's runs are independent.
+            other = Path(tmp) / f"mix_{'d' * 32}.mp3"
+            self.assertTrue(save_plan(other, "ink", 16, {"shots": "own"}, claim_plan(other)))
+
+    def test_shot_table_shows_only_the_plan_generate_would_use(self):
+        from h3_app.provenance import write_snapshot
+        from h3_ui.drama3.visuals import PLAN_LABEL, STALE_PLAN_LABEL, plan_table, write_plan
+
+        plan = {"style": "ink", "shots": [{"start": 0, "transition": "cut", "beat": "Open", "prompt": "A door"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            mix = Path(tmp) / f"mix_{'e' * 32}.mp3"
+            mix.write_bytes(b"")
+            write_snapshot(mix, {"family": "Sound Stage", "settings": {"duration": 3.0}})
+            self.assertEqual(plan_table(mix, "Comic", 16)["value"], [])
+            self.assertEqual(plan_table(None, "Comic", 16)["label"], PLAN_LABEL)
+            write_plan(mix, "Comic", 16, plan)
+            current = plan_table(mix, "Comic ", 16.0)
+            self.assertEqual((len(current["value"]), current["label"]), (1, PLAN_LABEL))
+            for style, limit in (("Oil paint", 16), ("Comic", 8)):
+                stale = plan_table(mix, style, limit)
+                self.assertEqual((stale["value"], stale["label"]), ([], STALE_PLAN_LABEL))
+
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
