@@ -794,7 +794,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-cue-speaker { flex: none; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 1px; }
 .h3-workspace .h3-dub-cue-text { display: flex; flex-direction: column; min-width: 0; }
 .h3-workspace .h3-dub-cue-source { font-size: 12px; opacity: .8; }
-/* Soundstage: Song's three-step strip (Script, Cast & sounds, Mix & review) with sticky action
+/* Soundstage: Song's four-step strip (Script, Cast & sounds, Speak, Review lines) with sticky action
    cards, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
 .h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
@@ -950,13 +950,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-stage-side:nth-last-child(1) { left: 100%; }
 .h3-workspace .h3-drama3-lines { gap: 10px; }
 .h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }
-/* Mix & review: Generate speech, its progress and the way back sit in one bar pinned to the window's
-   bottom, so the next move stays in reach below a long list of lines. */
-.h3-workspace .h3-drama3-mix-bar { flex-direction: row !important; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
-.h3-workspace .h3-drama3-mix-bar > * { flex: 1 1 300px !important; min-width: 0 !important; margin: 0 !important; }
-.h3-workspace .h3-drama3-mix-bar > .h3-song-step-nav { flex: 0 1 220px !important; padding-top: 0; border-top: 0; }
-.h3-workspace .h3-drama3-mix-bar > .h3-song-hint { flex-basis: 100% !important; }
-.h3-workspace .h3-drama3-mix-bar textarea { max-height: 4.8em; }
 /* Clip, unlike hidden, does not create the scroll container that would pin the stage in place.
    Top level, because Gradio scopes rules inside @media under .gradio-container, which then never match it. */
 .gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
@@ -964,7 +957,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-drama3-stage { position: sticky; top: 12px; }
   /* A long result is taller than the window; pinned, its end would stay out of reach. */
   .h3-workspace .h3-drama3-stage.h3-drama3-result { position: static; }
-  .h3-workspace .h3-drama3-mix-bar { position: sticky; bottom: 0; z-index: 5; box-shadow: 0 -6px 18px rgba(0, 0, 0, .08); }
 }
 @media (max-width: 767px) {
   .h3-workspace .h3-drama3.h3-engine-view { padding: 6px; }

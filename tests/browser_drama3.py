@@ -124,7 +124,7 @@ def run():
                 # The removed slot came back cleared.
                 expect(panel).to_contain_text("16 speakers · 15 with a voice")
                 expect(form.locator("button", has_text="Speaker 15")).not_to_contain_text("Character")
-                measure("open a step", lambda: form.get_by_role("tab", name="Mix & review").click())
+                measure("open a step", lambda: form.get_by_role("tab", name="Speak").click())
                 measure("speech preset", lambda: form.get_by_label("Expressive", exact=True).check())
                 assert not errors, errors
                 browser.close()
