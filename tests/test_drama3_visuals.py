@@ -208,6 +208,16 @@ class IllustratedMixTests(unittest.TestCase):
                 self.assertTrue(all("yellow coat" in s.prompt for s in shots[:2]))
                 self.assertNotIn("yellow coat", shots[-1].prompt)
 
+    def test_style_presets_fill_art_direction_and_edits_become_custom(self):
+        from h3_ui.drama3.visuals import CUSTOM_STYLE, DEFAULT_STYLE, STYLE_PRESETS, preset_for
+
+        self.assertIn(DEFAULT_STYLE, STYLE_PRESETS)
+        self.assertNotIn(CUSTOM_STYLE, STYLE_PRESETS)
+        for name, text in STYLE_PRESETS.items():
+            self.assertEqual(preset_for(f" {text} "), name)
+        self.assertEqual(preset_for(STYLE_PRESETS["Film noir"] + " Set in 1940s Shanghai."), CUSTOM_STYLE)
+        self.assertEqual(preset_for(""), CUSTOM_STYLE)
+
     def test_plan_below_the_minimum_asks_to_plan_again(self):
         settings = {"duration": 30, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         plan = {"art_style": "ink", "shots": [{"start": 0, "transition": "cut", "beat": "Hi", "prompt": "Ana"}]}

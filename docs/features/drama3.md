@@ -6,7 +6,10 @@ and remix the result. Speech generation is powered by Fish Audio Drama 3.
 Open **Create → Soundstage** to begin.
 
 After generating a mix, open **Speak → Illustrated video** to export a 720p MP4.
-Choose an Image-tab model and describe the cast, setting, or drawing style in **Art direction**.
+Choose an Image-tab model and a **Style preset** (ink and watercolor, graphic novel, film noir,
+anime, Chinese ink wash, picture book, painterly realism, woodcut, retro pulp or pixel art).
+The preset fills **Art direction**; edit it to add the cast, setting or era, and the preset
+switches to Custom.
 **Plan shots** sends the mix's timed dialogue, available word timings and sound cues to
 the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art style and a
 continuity bible of the recurring characters, props and locations, then splits the story into

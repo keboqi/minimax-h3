@@ -28,6 +28,37 @@ _FINISHED_LIMIT = 8
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
                "moss_image": (1344, 768), "fibo2": (1344, 768)}
+# Starting points for Art direction; the planner builds its full production style on top.
+STYLE_PRESETS = {
+    "Ink and watercolor": "Cinematic ink and watercolor illustration: confident brush-pen linework, loose "
+                          "transparent washes, paper texture, muted palette with one warm accent per scene.",
+    "Graphic novel": "Modern graphic novel art: precise inked contours, heavy spot blacks and cross-hatching, "
+                     "flat digital color with dramatic rim light, grounded realistic anatomy.",
+    "Film noir": "Black-and-white film noir: hard single-source light, deep shadows, venetian-blind patterns, "
+                 "rain-slick streets, high contrast with fine film grain.",
+    "Anime": "Hand-painted Japanese animation look: clean cel-shaded characters, lush painted backgrounds, "
+             "soft bloom, saturated skies and expressive faces.",
+    "Chinese ink wash": "Traditional Chinese ink wash painting: expressive brushstrokes on rice paper, "
+                        "graded grey ink, generous empty space, small touches of cinnabar and indigo.",
+    "Picture book": "Warm children's picture book illustration: gouache and colored pencil, rounded friendly "
+                    "shapes, soft daylight, cozy textured details.",
+    "Painterly realism": "Cinematic painterly realism like film concept art: realistic proportions, "
+                         "atmospheric depth, volumetric light, rich color grading.",
+    "Woodcut": "Bold woodcut print: carved black lines, rough grain texture, two-color palette of black and "
+               "deep red on cream paper, strong silhouettes.",
+    "Retro pulp": "1950s pulp magazine art: dynamic poses, saturated halftone color, painted gouache "
+                  "rendering, dramatic low angles.",
+    "Pixel art": "Detailed 16-bit pixel art: limited palette, crisp dithering, side-lit scenes, cinematic "
+                 "widescreen composition.",
+}
+DEFAULT_STYLE = "Ink and watercolor"
+CUSTOM_STYLE = "Custom"
+
+
+def preset_for(text):
+    """The preset an Art direction text matches, or Custom once it's been edited."""
+    text = (text or "").strip()
+    return next((name for name, value in STYLE_PRESETS.items() if value == text), CUSTOM_STYLE)
 _SHEET_NOTES = {
     "characters": "keep the same face, hairstyle, build and outfit",
     "props": "keep the same shape, colors and markings",
@@ -188,7 +219,9 @@ def bind_visual_export(view, controller, deps):
     with view.visual_root, gr.Accordion("Illustrated video", open=False):
         engine = gr.Dropdown([(item.label, item.id) for item in engines_for_task("Image")],
                              value="qwen", label="Image model", info="Uses this model’s settings from the Image tab.")
-        style = gr.Textbox(label="Art direction", value="Cinematic ink and watercolor illustration",
+        preset = gr.Dropdown([*STYLE_PRESETS, CUSTOM_STYLE], value=DEFAULT_STYLE, label="Style preset",
+                             info="Fills Art direction. Edit the text to make it your own.")
+        style = gr.Textbox(label="Art direction", value=STYLE_PRESETS[DEFAULT_STYLE], lines=2,
                            placeholder="Describe the cast, setting and illustration style.")
         limit = gr.Slider(1, 64, value=16, step=1, label="Minimum shots",
                           info="One moment per image. The planner uses at least this many and adds more "
@@ -218,6 +251,8 @@ def bind_visual_export(view, controller, deps):
         return name, None, rows
 
     view.output.change(select_mix, inputs=view.output, outputs=[source, video, preview], **QUIET)
+    preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET)
+    style.input(preset_for, inputs=style, outputs=preset, **QUIET)
 
     def load_mix(result_name):
         if not result_name:
