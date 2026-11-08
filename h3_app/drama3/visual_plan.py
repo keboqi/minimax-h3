@@ -77,10 +77,19 @@ def _mentions(keys):
     return re.compile(rf"@({names})(?:\s*[(（]([^)）]*)[)）])?") if names else None
 
 
-def expand_prompt(prompt, known):
+_SLOT = re.compile(r"⟦([^⟦⟧]+)⟧")
+
+
+def fill_tags(text, tags):
+    """Put each subject's reference tag in its slot after the name; drop the slots of the rest."""
+    return _SLOT.sub(lambda match: f" {tags[match.group(1)]}" if match.group(1) in tags else "", text)
+
+
+def expand_prompt(prompt, known, slots=False):
     """Inline each subject's anchor where the shot mentions it, keeping the shot's current state.
 
-    Returns the expanded text and the mentioned keys in order of first mention.
+    With ``slots``, each name is followed by ⟦key⟧ for ``fill_tags``. Returns the expanded text and
+    the mentioned keys in order of first mention.
     """
     pattern = _mentions(known)
     mentioned = []
@@ -93,7 +102,8 @@ def expand_prompt(prompt, known):
         # A state can mention another subject: @mara(holding @radio).
         state = pattern.sub(inline, state)
         anchor = known[key][1]
-        return f"{key} ({anchor}; {state})" if state else f"{key} ({anchor})"
+        name = f"{key}⟦{key}⟧" if slots else key
+        return f"{name} ({anchor}; {state})" if state else f"{name} ({anchor})"
 
     text = pattern.sub(inline, prompt)
     # An @word the bible never defined is ordinary text.
@@ -142,12 +152,14 @@ def compile_plan(plan, duration, art_direction, limit):
         if not isinstance(listed, list):
             raise H3Error(f"Shot {i} has an invalid references list.")
         references = tuple(dict.fromkeys([*mentioned, *(k for k in listed if isinstance(k, str) and k in known)]))
+        tagged, _ = expand_prompt(row["prompt"].strip(), known, slots=True)
         if not mentioned:
             scene = "\n".join([scene, *(f"{key} ({known[key][1]})" for key in references)])
+            tagged = "\n".join([tagged, *(f"{key}⟦{key}⟧ ({known[key][1]})" for key in references)])
         prompt = "\n".join(filter(None, [SHOT_LINE, scene, f"Art style: {art_style.strip()}", art_direction]))
         frames = end - first
         dissolve = first > 0 and frames > 1 and row["transition"] == "dissolve"
-        shots.append(Shot(first, frames, dissolve, prompt, row["beat"], references))
+        shots.append(Shot(first, frames, dissolve, prompt, row["beat"], references, tagged))
     return shots
 
 

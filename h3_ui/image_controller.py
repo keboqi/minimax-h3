@@ -24,10 +24,11 @@ def reference_limit(engine, variant="Off"):
 def reference_tag(engine, index, count, separate=False):
     """How a prompt names the reference at a 1-based position, or None where it has no name.
 
-    Qwen refers to a lone input naturally, and separate editing gives each run one input.
+    A lone Qwen input is <image1> too, so its thumbnail can still add a name to the prompt;
+    separate editing gives each run a different single input, so no one name fits them all.
     """
     if engine == "qwen":
-        return f"<image{index}>" if count > 1 and not separate else None
+        return None if separate and count > 1 else f"<image{index}>"
     return {"h3": f"<Picture {index}>", "flux3": f"<ref_image_{index - 1}>",
             "fibo2": f"<image_{index}>"}.get(engine)
 

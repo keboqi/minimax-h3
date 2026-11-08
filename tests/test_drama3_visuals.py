@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from h3_app.drama3.visual_plan import compile_plan, expand_prompt, plan_shots, sheet_prompt, subjects
+from h3_app.drama3.visual_plan import (compile_plan, expand_prompt, fill_tags, plan_shots, sheet_prompt,
+                                      subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_ui.drama3.visuals import illustrate_shots, latest_export, match_characters
@@ -71,15 +72,18 @@ class IllustratedMixTests(unittest.TestCase):
                              ("h3", ("<Picture 1>", "<Picture 2>", "<Picture 3>")),
                              ("fibo2", ("<image_1>", "<image_2>", "<image_3>"))):
             with self.subTest(engine=engine):
-                match_characters(controller, engine, "scene.png", {"mara": "m.png", "jo": "j.png"}, "A goodbye",
-                                 {})
+                shot = Shot(0, FPS, False, "plain", "A goodbye", ("mara", "station", "jo"),
+                            "mara⟦mara⟧ (Mara, ochre coat) hugs jo⟦jo⟧ (Jo) at station⟦station⟧ (old station).")
+                match_characters(controller, engine, "scene.png", {"mara": "m.png", "jo": "j.png"}, shot, {})
                 _, mode, prompt, paths, _ = controller.generate.call_args.args
                 self.assertEqual((mode, paths), ("Image edit", ["scene.png", "m.png", "j.png"]))
-                self.assertIn(f"Keep {tags[0]} as it is", prompt)
-                self.assertIn(f"Make mara in the scene match the portrait in {tags[1]}", prompt)
-                self.assertIn(f"Make jo in the scene match the portrait in {tags[2]}", prompt)
-                self.assertIn("Never add the portraits as extra figures", prompt)
-                self.assertTrue(prompt.endswith("The moment shown: A goodbye"))
+                self.assertIn(f"{tags[0]} is the finished scene. Keep its composition", prompt)
+                self.assertIn(f"mara {tags[1]}: the same face, hairstyle and outfit.", prompt)
+                self.assertIn(f"jo {tags[2]}: the same face", prompt)
+                self.assertIn("Never add the references as extra figures", prompt)
+                # Tags sit inline after each matched name; a location gets no tag.
+                self.assertTrue(prompt.endswith(f"Scene: mara {tags[1]} (Mara, ochre coat) hugs jo {tags[2]} (Jo) "
+                                                "at station (old station)."))
 
     def test_text_only_models_and_disabled_matching_draw_scenes_from_text(self):
         shot = Shot(0, FPS, False, "Street", references=("mara",))
@@ -169,6 +173,9 @@ class IllustratedMixTests(unittest.TestCase):
         portrait = sheet_prompt("characters", "mara", "Mara, cropped black hair", "ink", "")
         self.assertIn("Portrait of mara: Mara, cropped black hair", portrait)
         self.assertIn("Only this one view", portrait)
+        self.assertNotIn("⟦", shot.prompt)
+        self.assertIn("mara⟦mara⟧ (Mara, cropped black hair; smiling) in alley⟦alley⟧", shot.tagged)
+        self.assertEqual(fill_tags("mara⟦mara⟧ and alley⟦alley⟧.", {"mara": "<image2>"}), "mara <image2> and alley.")
         nested, keys = expand_prompt("@mara(holding @radio) waits.", known)
         self.assertEqual(nested, "mara (Mara, cropped black hair; holding radio (bakelite radio)) waits.")
         self.assertEqual(keys, ("mara", "radio"))

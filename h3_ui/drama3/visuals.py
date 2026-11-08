@@ -3,6 +3,7 @@
 import glob
 import hashlib
 import json
+import re
 from collections import OrderedDict
 from pathlib import Path
 from shutil import which
@@ -12,7 +13,7 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-from h3_app.drama3.visual_plan import compile_plan, plan_shots, sheet_prompt, shot_cap, subjects
+from h3_app.drama3.visual_plan import compile_plan, fill_tags, plan_shots, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
@@ -96,21 +97,25 @@ def widescreen(engine, captured):
     _size(engine, captured, *_WIDESCREEN.get(engine, (1344, 768)))
 
 
-def match_characters(controller, engine, scene, portraits, beat, captured):
+def match_characters(controller, engine, scene, portraits, shot, captured):
     """Repaint a finished scene's characters from their portraits, keeping everything else.
 
     The scene is the first input, so an edit model that leans toward its input keeps the scene's
-    composition; the portraits only steer faces, hair and outfits.
+    composition; the portraits only steer faces, hair and outfits. Each portrait's tag (<image2>,
+    <Picture 2>...) also sits right after that character's name in the scene text, the way the
+    Image tab's clickable reference names do, so the model knows which input is which person.
     """
     count = len(portraits) + 1
     scene_tag = reference_tag(engine, 1, count) or "the first image"
-    lines = [f"Keep {scene_tag} as it is: the same composition, camera, poses, setting, lighting and art style."]
-    for position, key in enumerate(portraits, 2):
-        tag = reference_tag(engine, position, count) or f"reference image {position}"
-        lines.append(f"Make {key} in the scene match the portrait in {tag}: the same face, hairstyle and outfit.")
-    lines.append("Change nothing else. Never add the portraits as extra figures, panels or insets.")
-    if beat:
-        lines.append(f"The moment shown: {beat}")
+    tags = {key: reference_tag(engine, position, count) or f"(reference image {position})"
+            for position, key in enumerate(portraits, 2)}
+    lines = [f"{scene_tag} is the finished scene. Keep its composition, camera, poses, setting, lighting and "
+             "art style.", "Repaint only these people so each matches their reference:"]
+    lines += [f"{key} {tag}: the same face, hairstyle and outfit." for key, tag in tags.items()]
+    lines.append("Change nothing else. Never add the references as extra figures, panels or insets.")
+    scene_text = re.sub(r"[ \t]+", " ", fill_tags(shot.tagged, tags)).strip() if shot.tagged else shot.beat
+    if scene_text:
+        lines.append(f"Scene: {scene_text}")
     return controller.generate(engine, "Image edit", "\n".join(lines), [scene, *portraits.values()], captured)
 
 
@@ -177,7 +182,7 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
             if who:
                 draft, label = path, f"{label} · Matching " + ", ".join(who)
                 path = yield from _stream(
-                    match_characters(controller, engine, draft, who, shot.beat, captured), label)
+                    match_characters(controller, engine, draft, who, shot, captured), label)
             done.append(path)
         images.append(path)
         shot_records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,

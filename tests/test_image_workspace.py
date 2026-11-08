@@ -126,12 +126,15 @@ class ReferenceTagTests(unittest.TestCase):
                 self.assertEqual(tuple(reference_tag(engine, i, 2) for i in (1, 2)), tags)
 
     def test_a_tag_shows_only_where_a_prompt_can_use_it(self):
-        self.assertIsNone(reference_tag("qwen", 1, 1))
+        # A lone Qwen reference is still clickable as <image1>; separate runs each see another single input.
+        self.assertEqual(reference_tag("qwen", 1, 1), "<image1>")
+        self.assertEqual(reference_tag("qwen", 1, 1, True), "<image1>")
         self.assertIsNone(reference_tag("qwen", 1, 3, True))
         self.assertEqual(reference_tag("h3", 1, 1), "<Picture 1>")
         self.assertIsNone(reference_tag("moss_image", 1, 2))
         tag = lambda index, count, model, separate: reference_tag(model, index, count, separate)
-        self.assertEqual(_thumbnail_update(tag, ["a.png"], "qwen", False)["label"], REMOVE_THUMBNAILS)
+        self.assertEqual(_thumbnail_update(tag, ["a.png"], "qwen", False)["label"], NAME_THUMBNAILS)
+        self.assertEqual(_thumbnail_update(tag, ["a.png", "b.png"], "qwen", True)["label"], REMOVE_THUMBNAILS)
         self.assertEqual(_thumbnail_update(tag, ["a.png"], "h3", False)["label"], NAME_THUMBNAILS)
         self.assertIsNone(reference_tag("ltx", 1, 2))
 

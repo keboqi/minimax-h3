@@ -20,6 +20,9 @@ class Shot:
     prompt: str
     beat: str = ""
     references: tuple[str, ...] = ()
+    # The scene text with a slot after each subject's name, ⟦key⟧, where an edit puts that subject's
+    # reference tag (<image2>, <Picture 2>...) so the model knows which input is which person.
+    tagged: str = ""
 
 
 def _encode(arguments):
