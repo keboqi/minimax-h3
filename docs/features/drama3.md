@@ -15,9 +15,13 @@ the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art
 continuity bible of the recurring characters, props and locations, then splits the story into
 single-moment widescreen images with cuts and dissolves. **Minimum shots** is a floor: the
 planner adds images wherever the story needs them, up to one per 2 seconds of mix.
-**Generate illustrated video** plans the shots itself when no plan matches the current mix,
-including a loaded or regenerated one. Click **Plan shots** first to review the times and
-prompts. The plan is saved beside the mix, so a reloaded project keeps it.
+Planning shows its elapsed time and stops after 5 minutes if the writer hasn't answered.
+To use any other chat model, open **Use another chat model**, click **Copy full planner
+prompt**, paste the model's JSON reply and click **Apply pasted plan**; it is checked like the
+built-in planner's. Either way the plan is saved beside the mix for the current Art direction
+and Minimum shots, so a reloaded project keeps it. Review the times and prompts, then click
+**Generate illustrated video**, which starts drawing at once; without a matching plan it says
+so instead of planning on its own.
 Every scene is drawn from its text first, with the character, prop and location descriptions
 written into the prompt, at a 16:9 size whatever the Image tab is set to.
 **Keep characters consistent** is on by default. Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one

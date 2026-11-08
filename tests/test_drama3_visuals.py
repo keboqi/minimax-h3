@@ -254,12 +254,38 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertEqual(preset_for(STYLE_PRESETS["Film noir"] + " Set in 1940s Shanghai."), CUSTOM_STYLE)
         self.assertEqual(preset_for(""), CUSTOM_STYLE)
 
+    def test_copied_prompt_and_pasted_reply_follow_the_built_in_planner(self):
+        from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt
+
+        settings = {"duration": 10, "title": "Rain", "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
+        runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
+        prompt = full_plan_prompt(settings, "ink wash", 2, runtime=runtime)
+        system, request = prompt.split("\n\n----- USER REQUEST -----\n\n")
+        self.assertTrue(system.startswith("You are the visual director"))
+        request = json.loads(request)
+        self.assertEqual((request["art_direction"], request["min_shots"], request["max_shots"]), ("ink wash", 2, 5))
+        self.assertEqual(request["cues"][0]["text"], "Hi")
+        plan = {"art_style": "ink", "characters": {"ana": "Ana, red scarf"},
+                "shots": [{"start": 0, "transition": "cut", "beat": "Hello", "prompt": "@ana waves"},
+                          {"start": 4, "transition": "dissolve", "beat": "Rain", "prompt": "Rain falls"}]}
+        # Chat models wrap JSON in a fence or a sentence; both are accepted.
+        for reply in (json.dumps(plan), f"Here is the plan:\n```json\n{json.dumps(plan)}\n```",
+                      f"Sure! {json.dumps(plan)} Enjoy."):
+            with self.subTest(reply=reply[:20]):
+                parsed, shots = check_plan_reply(reply, settings, "ink wash", 2)
+                self.assertEqual(parsed, plan)
+                self.assertEqual([s.references for s in shots], [("ana",), ()])
+        for reply, error in (("not json", "isn't valid JSON"), (json.dumps({**plan, "shots": plan["shots"][:1]}),
+                                                                  "fewer than the minimum of 2")):
+            with self.subTest(error=error), self.assertRaisesRegex(H3Error, error):
+                check_plan_reply(reply, settings, "ink wash", 2)
+
     def test_plan_below_the_minimum_asks_to_plan_again(self):
         settings = {"duration": 30, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         plan = {"art_style": "ink", "shots": [{"start": 0, "transition": "cut", "beat": "Hi", "prompt": "Ana"}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
         with patch("h3_app.drama3.visual_plan.write_prompt", return_value=(json.dumps(plan), "ok")):
-            with self.assertRaisesRegex(H3Error, "planned 1 shots, fewer than the minimum of 4"):
+            with self.assertRaisesRegex(H3Error, "has 1 shots, fewer than the minimum of 4"):
                 plan_shots(settings, "ink", 4, "model", "", "Gemini", "", "", "", runtime=runtime)
             _, shots = plan_shots(settings, "ink", 1, "model", "", "Gemini", "", "", "", runtime=runtime)
         self.assertEqual(len(shots), 1)

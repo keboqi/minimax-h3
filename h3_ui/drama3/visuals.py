@@ -2,6 +2,9 @@
 
 import glob
 import hashlib
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 import json
 import re
 from collections import OrderedDict
@@ -13,10 +16,12 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-from h3_app.drama3.visual_plan import compile_plan, fill_tags, plan_shots, sheet_prompt, shot_cap, subjects
+from h3_app.drama3.visual_plan import (check_plan_reply, compile_plan, fill_tags, full_plan_prompt, plan_shots,
+                                       sheet_prompt, shot_cap, subjects)
 from h3_app.drama3.visuals import FPS, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
+from h3_ui.clipboard import copy_js
 from h3_ui.engines.controls import QUIET, generation_actions, writer_inputs
 from h3_ui.image_controller import reference_limit, reference_tag
 from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -27,6 +32,9 @@ from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_genera
 # and settings resumes after them.
 _FINISHED: OrderedDict[str, dict] = OrderedDict()
 _FINISHED_LIMIT = 8
+COPY_PLAN_ID = "h3-drama3-copy-plan-prompt"
+PLAN_TICK = 3  # Seconds between planning status updates.
+PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
                "moss_image": (1344, 768), "fibo2": (1344, 768)}
@@ -251,10 +259,21 @@ def bind_visual_export(view, controller, deps):
                           info="One moment per image. The planner uses at least this many and adds more "
                                "where the story needs them.")
         plan_button = gr.Button("Plan shots", size="sm")
-        gr.Markdown("Generate plans the shots from the finished mix if you haven't reviewed a plan. "
-                    "Uses the Gemini or OpenAI-compatible writer selected on Script.")
+        gr.Markdown("Step 1: plan the shots from the finished mix with the Gemini or OpenAI-compatible writer "
+                    "selected on Script, or paste a plan from another chat model below. Step 2: review it, then "
+                    "generate. The plan is saved with the mix for this Art direction and Minimum shots.")
         preview = gr.Dataframe(headers=["Start (s)", "End (s)", "Transition", "Story beat", "Image prompt"],
                                interactive=False, wrap=True, label="Shot plan")
+        with gr.Accordion("Use another chat model", open=False):
+            gr.Markdown("Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked "
+                        "like the built-in planner and saved as this mix's plan for the current Art direction and "
+                        "Minimum shots.")
+            copy_prompt = gr.Button("Copy full planner prompt", size="sm", elem_id=COPY_PLAN_ID)
+            # A hidden Textbox, not gr.State: State values stay on the server, so the copy script got None.
+            planner_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
+            pasted_plan = gr.Textbox(label="Pasted planner reply", lines=6, max_lines=20,
+                                     placeholder='{"art_style": "...", "characters": {...}, "shots": [...]}')
+            apply_plan = gr.Button("Apply pasted plan", size="sm", variant="primary")
         continuity = gr.Checkbox(value=True, label="Keep characters consistent",
                                  info="Draws one portrait per character, then repaints each scene's characters to "
                                       "match it after the scene is drawn. MOSS-Image uses text prompts only.")
@@ -307,24 +326,65 @@ def bind_visual_export(view, controller, deps):
         write_plan(audio, style, limit, plan)
         return plan_rows(None, None, shots)
 
-    bind_prompt_action(plan_button.click, prepare, inputs=[source, style, limit, *writer_inputs(view.writer)],
-                       outputs=preview, api_name=False, show_progress="minimal")
+    def plan_live(result_name, style, limit, *writer):
+        """Plan in the background, reporting elapsed time; the writer can take minutes on a long mix."""
+        load_mix(result_name)
+        model = writer[4] if len(writer) > 4 and writer[2] == "OpenAI-compatible" else writer[0]
+        started = time.monotonic()
+        # No ``with``: leaving it would wait for a writer that never answers.
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-shot-plan")
+        future = pool.submit(prepare, result_name, style, limit, *writer)
+        pool.shutdown(wait=False)
+        while True:
+            try:
+                rows = future.result(timeout=PLAN_TICK)
+                break
+            except FuturesTimeout:
+                elapsed = int(time.monotonic() - started)
+                if elapsed >= PLAN_TIMEOUT:
+                    # The writer's own retries can run for ten minutes; stop waiting long before that.
+                    # A reply that still arrives later is saved as this mix's plan.
+                    raise gr.Error(f"{model} hasn't returned a shot plan after {elapsed // 60} minutes, so "
+                                   "planning stopped. Try again, pick another writer model, or use Copy full "
+                                   "planner prompt with any chat model and paste its reply.") from None
+                yield gr.skip(), (f"Planning shots with {model}… {elapsed // 60}m{elapsed % 60:02d}s. "
+                                  f"A long mix can take a few minutes; this stops at {PLAN_TIMEOUT // 60} minutes.")
+        yield rows, f"Planned {len(rows)} shots in {int(time.monotonic() - started)}s."
 
-    def plan_if_needed(result_name, style, limit, *writer):
-        """Reuse the plan saved with this mix; otherwise plan from the finished mix before the GPU job."""
+    bind_prompt_action(plan_button.click, plan_live, inputs=[source, style, limit, *writer_inputs(view.writer)],
+                       outputs=[preview, status], api_name=False, show_progress="minimal")
+
+    def copy_plan_prompt(result_name, style, limit):
+        _, settings = load_mix(result_name)
+        try:
+            return full_plan_prompt(settings, style, int(limit), runtime=deps.runtime_config())
+        except H3Error as exc:
+            raise gr.Error(f"Could not build the planner prompt: {exc}") from exc
+
+    copy_prompt.click(copy_plan_prompt, inputs=[source, style, limit], outputs=planner_prompt, **QUIET).success(
+        fn=None, js=copy_js(COPY_PLAN_ID, "Copy full planner prompt"), inputs=planner_prompt, api_name=False)
+
+    def apply_pasted_plan(reply, result_name, style, limit):
+        """Check a plan from another chat model like the built-in planner's, then save it with the mix."""
+        if not str(reply or "").strip():
+            raise gr.Error("Paste the chat model's JSON reply first.")
         audio, settings = load_mix(result_name)
-        saved = read_plan(audio, style, limit)
-        if saved is not None:
-            rows = plan_rows(saved, settings["duration"])
-            return rows, gr.update(interactive=True), f"Using the saved {len(rows)}-shot plan…"
-        rows = prepare(result_name, style, limit, *writer)
-        return rows, gr.update(interactive=True), f"Planned {len(rows)} shots. Generating images…"
+        try:
+            plan, shots = check_plan_reply(reply, settings, style, int(limit))
+        except H3Error as exc:
+            raise gr.Error(str(exc)) from exc
+        write_plan(audio, style, limit, plan)
+        return plan_rows(None, None, shots), f"Applied the pasted {len(shots)}-shot plan."
+
+    apply_plan.click(apply_pasted_plan, inputs=[pasted_plan, source, style, limit], outputs=[preview, status],
+                     **QUIET)
 
     def generate(result_name, engine, style, limit, use_references, *values):
         audio, settings = load_mix(result_name)
         saved = read_plan(audio, style, limit)
         if saved is None:
-            raise gr.Error("This mix has no shot plan for the current art direction. Click Plan shots.")
+            raise gr.Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
+                           "Click Plan shots, or paste a plan from another chat model, then generate.")
         if which("ffmpeg") is None:
             raise gr.Error("Install FFmpeg to export an illustrated video.")
         duration = settings["duration"]
@@ -345,15 +405,13 @@ def bind_visual_export(view, controller, deps):
         }})
         yield str(video_path), f"Exported {len(shots)} illustrated shots."
 
-    # The writer runs in the prompt queue, so its keys never enter the GPU job's saved snapshot.
-    # The plan travels as a file beside the mix, not as session state, so the GPU job always finds it.
-    planning = bind_prompt_action(run.click, plan_if_needed,
-                                  inputs=[source, style, limit, *writer_inputs(view.writer)],
-                                  outputs=[preview, stop, status], api_name=False, show_progress="minimal")
-    event = bind_gpu_action(planning.success, owned_generation(generate, "drama3_visuals",
+    # Planning is its own step (Plan shots or a pasted plan), saved as a file beside the mix. Generate starts
+    # the GPU job straight from its click: a planner chained into the GPU job could finish and then never
+    # submit the job, leaving the page waiting with nothing to show.
+    event = bind_gpu_action(run.click, owned_generation(generate, "drama3_visuals",
                             input_names=("result_name", "engine", "style", "max_shots",
                                          "use_visual_references", *controller.fields)),
                             inputs=[source, engine, style, limit, continuity, *controller.fields.values()],
                             outputs=[video, status], api_name=False, show_progress="minimal")
     stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
-        None, cancels=[planning, event], **QUIET)
+        None, cancels=[event], **QUIET)

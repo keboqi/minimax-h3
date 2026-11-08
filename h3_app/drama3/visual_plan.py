@@ -7,7 +7,7 @@ from math import ceil, isfinite
 
 from h3_app.errors import H3Error
 from h3_app.llm import repair_json
-from h3_app.prompt_writers.common import write_prompt
+from h3_app.prompt_writers.common import read_system_prompt, write_prompt
 from .visuals import FPS, Shot
 
 
@@ -171,16 +171,65 @@ def shot_cap(duration, minimum):
     return max(int(minimum), min(MAX_SHOTS, ceil(float(duration) / 2)))
 
 
-def plan_shots(settings, style, minimum, model, temporary_api_key, backend, openai_api_key, openai_model,
-               openai_base_url, *, runtime):
-    """Plan at least ``minimum`` shots; the writer adds more wherever the story needs them."""
+def _duration(settings):
     duration = float(settings.get("duration") or 0)
     if not isfinite(duration) or duration <= 0:
         raise H3Error("Generate a timed Sound Stage mix first.")
-    limit = shot_cap(duration, minimum)
-    request = json.dumps(dict(title=settings.get("title"), duration=duration, art_direction=style,
-                              min_shots=int(minimum), max_shots=limit, cues=_timeline(settings, duration)),
-                         ensure_ascii=False)
+    return duration
+
+
+def plan_request(settings, style, minimum):
+    """The JSON request the planner answers: the timed mix, the art direction and the shot range."""
+    duration = _duration(settings)
+    return json.dumps(dict(title=settings.get("title"), duration=duration, art_direction=style,
+                           min_shots=int(minimum), max_shots=shot_cap(duration, minimum),
+                           cues=_timeline(settings, duration)), ensure_ascii=False)
+
+
+def full_plan_prompt(settings, style, minimum, *, runtime):
+    """The exact system prompt and request the built-in planner sends, for use in another chat model."""
+    system_path = runtime.prompt_systems["Drama 3 visuals"]
+    system_prompt = read_system_prompt(system_path, "Sound Stage shot plan")
+    return f"{system_prompt}\n\n----- USER REQUEST -----\n\n{plan_request(settings, style, minimum)}\n"
+
+
+def _reply_json(reply):
+    """The JSON object in a reply, allowing a code fence or a sentence of chat around it."""
+    text = str(reply or "").strip()
+    fenced = re.search(r"```[A-Za-z0-9_-]*\s*(.*?)\s*```", text, flags=re.S)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    if "{" in text and "}" in text:
+        try:
+            return json.loads(text[text.index("{"):text.rindex("}") + 1])
+        except ValueError:
+            pass
+    return repair_json(text)
+
+
+def check_plan_reply(reply, settings, style, minimum):
+    """Validate a planner reply, from the built-in writer or pasted from another chat model."""
+    duration = _duration(settings)
+    plan = _reply_json(reply)
+    if plan is None:
+        raise H3Error("The shot plan was cut off or isn't valid JSON. "
+                      "Plan again, or lower Minimum shots for a long mix.")
+    shots = compile_plan(plan, duration, style, shot_cap(duration, minimum))
+    # A mix shorter than the minimum at one frame per shot can't hold that many.
+    if len(shots) < min(int(minimum), ceil(duration * FPS)):
+        raise H3Error(f"The plan has {len(shots)} shots, fewer than the minimum of {int(minimum)}. "
+                      "Plan again, or lower Minimum shots.")
+    return plan, shots
+
+
+def plan_shots(settings, style, minimum, model, temporary_api_key, backend, openai_api_key, openai_model,
+               openai_base_url, *, runtime):
+    """Plan at least ``minimum`` shots; the writer adds more wherever the story needs them."""
+    request = plan_request(settings, style, minimum)
     reply, status = write_prompt(prompt=request, request_text=request, model=model,
                                  temporary_api_key=temporary_api_key, backend=backend,
                                  openai_api_key=openai_api_key, openai_model=openai_model,
@@ -188,16 +237,4 @@ def plan_shots(settings, style, minimum, model, temporary_api_key, backend, open
                                  system_path=runtime.prompt_systems["Drama 3 visuals"], media_values=[], context="")
     if status.startswith("Prompt enhancement failed"):
         raise H3Error(status)
-    try:
-        plan = json.loads(reply)
-    except ValueError:
-        plan = repair_json(reply)
-    if plan is None:
-        raise H3Error("The writer's shot plan was cut off or isn't valid JSON. "
-                      "Plan again, or lower Minimum shots for a long mix.")
-    shots = compile_plan(plan, duration, style, limit)
-    # A mix shorter than the minimum at one frame per shot can't hold that many.
-    if len(shots) < min(int(minimum), ceil(duration * FPS)):
-        raise H3Error(f"The writer planned {len(shots)} shots, fewer than the minimum of {int(minimum)}. "
-                      "Plan again, or lower Minimum shots.")
-    return plan, shots
+    return check_plan_reply(reply, settings, style, minimum)
