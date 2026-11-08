@@ -850,7 +850,7 @@ class Drama3AutoTests(unittest.TestCase):
                             for dep in config["dependencies"]))
         self.assertTrue(any(fn.outputs == [view.subtitles, view.alignment_status] for fn in demo.fns.values()))
 
-    def test_soundstage_is_four_steps_and_auto_on_script_presses_auto_on_speak(self):
+    def test_soundstage_is_three_steps_and_auto_on_script_presses_auto_on_mix(self):
         import gradio as gr
         from h3_ui.application import _drama3_actions
         from h3_ui.drama3.view import AUTO_ID, build_drama3_view
@@ -860,7 +860,7 @@ class Drama3AutoTests(unittest.TestCase):
             view = build_drama3_view(gr.Group())
             bind_drama3(view, _drama3_actions())
         self.assertEqual([tab.label for tab in view.steps.tabs.children],
-                         ["Script", "Cast & sounds", "Speak", "Review lines"])
+                         ["Script", "Cast & sounds", "Mix & review"])
         self.assertEqual(view.auto.elem_id, AUTO_ID)
         # Step buttons only run browser code, so moving between steps sends no request.
         auto_shortcuts = [fn for fn in demo.fns.values() if fn.js and AUTO_ID in fn.js]

@@ -5,7 +5,7 @@ scripts, cast voices, stage sound effects and music, review individual takes,
 and remix the result. Speech generation is powered by Fish Audio Drama 3.
 Open **Create → Soundstage** to begin.
 
-After generating a mix, open **Speak → Illustrated video** to export a 720p MP4.
+After generating a mix, open **Mix & review → Illustrated video** to export a 720p MP4.
 Choose an Image-tab model and a **Style preset** (ink and watercolor, graphic novel, film noir,
 anime, Chinese ink wash, picture book, painterly realism, woodcut, retro pulp or pixel art).
 The preset fills **Art direction**; edit it to add the cast, setting or era, and the preset
@@ -34,7 +34,7 @@ are never image inputs: an edit model handed a location or a multi-view sheet co
 instead of drawing a new scene. When a model has fewer input slots than a shot needs, the
 characters the planner mentions first win. MOSS-Image uses the text prompts throughout.
 The export uses the finished soundtrack and saves the video to Media. Once a mix has a video,
-an **Audio / Video** switch appears above the Speak result: Video shows the illustrated video in
+an **Audio / Video** switch appears above the Mix & review result: Video shows the illustrated video in
 the player's place with the mix's subtitles laid over it, lighting word by word like the list
 below, which follows the video too. **Subtitles on the video** turns the overlay off, and
 switching pauses whichever player is hidden. **Media**, in the studio and the Workshop, does the
@@ -45,10 +45,10 @@ video for this mix**.
 
 ## Compose and generate
 
-Soundstage works in four steps, laid out like Dub & Translate: **Script**,
-**Cast & sounds**, **Speak** and **Review lines**. Each step pairs a working card
+Soundstage works in three steps, laid out like Dub & Translate: **Script**,
+**Cast & sounds** and **Mix & review**. Each step pairs a working card
 with an action card that holds its next move; the action card stays in view while
-you scroll. Moving between steps happens in the browser and sends no request.
+you scroll. On Mix & review it is a bar pinned to the bottom of the window. Moving between steps happens in the browser and sends no request.
 
 1. **Script.** Enter a draft or a script in **Speech text**. Start each line with a
    speaker's name from the cast, such as `Mia: Hello.` (a full-width `：` works too),
@@ -67,9 +67,11 @@ you scroll. Moving between steps happens in the browser and sends no request.
    that speaker below. In Advanced
    mode, review **Sound effects and music** too; it has the same cards, one per sound. **Generate all speaker voices** makes
    every missing voice in one job.
-3. **Speak.** Choose a **Speech preset** (**Expressive** by default). **Generate
-   speech** renders the current script and references without rewriting them.
-4. **Review lines.** Hear, regenerate or remix single lines (see **Takes** below).
+3. **Mix & review.** The result comes first: the player, its timeline and subtitles.
+   Below it, once there is a result, every line sits beside the picked line's take,
+   where you hear, regenerate or remix (see **Takes** below). **How it sounds** holds the
+   **Speech preset** (**Expressive** by default), and **Generate speech** in the bar at
+   the bottom renders the current script and references without rewriting them.
 
 The Script step offers three example presets. **示例三：雨巷里的末班广播**
 loads an original Chinese story with five voices and three scenes: a playful street
@@ -80,11 +82,11 @@ a short listener reaction, and a score that withdraws and resumes. The confessio
 plays over rain alone; music returns with the reunion, then withdraws for the
 repaired clock's ticking. Dialogue stays mostly dry; the broadcast uses device
 filtering and the arriving character moves from far to near. Generate its voices
-and sounds in **Cast & sounds**, then use **Generate speech** in **Speak** to perform
+and sounds in **Cast & sounds**, then use **Generate speech** in **Mix & review** to perform
 the prepared script.
 
 **Auto: rewrite, voice, sound and speak** does steps 1–3 in one go. It lives on
-Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
+Mix & review, and the Script step has a shortcut that opens Mix & review and starts it. When Auto
 stops, its status names the step whose status says why.
 
 Under the player, a timeline shows each line as a segment in its speaker's color on a
@@ -116,7 +118,7 @@ Drama 3 receives only each line's text with its speaker's clip and transcript, n
 a speaker number or name. Repeated identical lines have separate
 takes, distinguished by their occurrence order. **Generate speech** reuses saved takes, so
 after editing a script only changed lines are generated; when nothing changed, the
-mix is rebuilt without starting SGLang-Omni. After a result, the **Review lines** step
+mix is rebuilt without starting SGLang-Omni. After a result, **Mix & review**
 shows a table of every line with its length and whether it was reused. Click
 a row (or choose a line) to hear that line's take, before staging and effects. Click
 **Regenerate line** for a new take of just that line, or **Remix** to rebuild the
@@ -148,7 +150,7 @@ projects** and click **Load project** to continue with Auto or manual generation
 
 Projects retain script and generation settings, cast and sound slots, reference clips and
 transcripts. A speech result marks the project **Generated** and becomes available on the
-Speak step when you load it again. On Modal, stop one endpoint before editing on the other.
+Mix & review step when you load it again. On Modal, stop one endpoint before editing on the other.
 
 To use a chat model outside the app, open **Use another chat model** on the
 Script step and click **Copy full writer prompt**; a running
@@ -374,7 +376,7 @@ while the next job renders. An interrupt stops the batch.
 
 **Try new voices** designs one to four fresh clips for the selected speaker from
 its voice description and exact clip transcript, using the Cast's **Voice
-generator** and the Speak sampling settings. The saved clip is untouched until you
+generator** and the Mix & review sampling settings. The saved clip is untouched until you
 pick one of the new voices and press **Use selected voice**, which saves it with the
 description and transcript it was made from. Keep the saved voice or generate
 another batch as often as you like; selecting another speaker discards the tries.

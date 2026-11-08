@@ -327,7 +327,7 @@ class WriterHandlers:
         status = (
             f'Loaded example story "{story_title}": {len(cast)} speakers and '
             f"{len(sounds)} sound/music assets. "
-            "Next: open Cast & sounds to generate speaker voices and sounds, then Speak."
+            "Next: open Cast & sounds to generate speaker voices and sounds, then Mix & review."
         )
         return (
             script,
