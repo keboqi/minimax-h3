@@ -8,6 +8,7 @@ the page polls it, so it outlives the page that started it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -19,6 +20,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED
 from h3_app.workspace_store import request_owner
 
 from ..job_admission import execute_accepted
@@ -27,7 +29,7 @@ from ..storyboard.page import Run, Runs, guarded
 from ..subtitle_words import word_pieces
 from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
-from .page_script import boot_payload, install_script_routes, script_payload
+from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
 from .result_view import clean_line, timeline_data
 
 STATIC = Path(__file__).with_name("page")
@@ -36,8 +38,26 @@ GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 # The Speak step's defaults, for a project saved before a field existed.
 DEFAULTS = {"temperature": 2.0, "top_p": 1.0, "top_k": 30, "max_frames": 8192, "parallel": 16, "retries": 0,
             "word_timing": False, "script_mode": "Basic", "text": "", "title": ""}
-SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool}
+SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,
+                  "retries": int, "max_frames": int, "auto_save_speakers": bool}
+# The Speak step's slider ranges, which the page draws and saved values are kept inside.
+SETTING_RANGES = {"temperature": (0.0, 2.0, 0.05), "top_p": (0.05, 1.0, 0.05), "top_k": (0, 4096, 1),
+                  "parallel": (1, 32, 1), "retries": (0, 4, 1), "max_frames": (1, 8192, 1)}
 RUN_KIND = "speak"
+
+
+@dataclass
+class SpeakRun(Run):
+    """Speaking, or Auto, which rewrites, makes the cast and speaks in turn (``stage``)."""
+
+    auto: bool = False
+    stage: str | None = None
+    family: str | None = None  # The running job's family, which Interrupt names.
+    slots: dict[str, str] = field(default_factory=dict)
+    stop_requested: bool = False
+
+    def public(self, scene_id) -> dict[str, Any]:
+        return {**super().public(scene_id), "auto": self.auto, "stage": self.stage, "slots": dict(self.slots)}
 
 
 def _value(data: dict, key: str):
@@ -135,7 +155,9 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None) ->
         "cast_settings": cast_settings(data),
         "settings": {"temperature": float(_value(data, "temperature")), "top_p": float(_value(data, "top_p")),
                      "top_k": int(_value(data, "top_k")), "word_timing": bool(_value(data, "word_timing")),
-                     "preset": _preset(data)},
+                     "parallel": int(_value(data, "parallel")), "retries": int(_value(data, "retries")),
+                     "max_frames": int(_value(data, "max_frames")),
+                     "auto_save_speakers": bool(data.get("auto_save_speakers")), "preset": _preset(data)},
         "result": result_payload(result),
         "script": script_payload(data),
     }
@@ -176,11 +198,15 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     def payload(owner, name):
         data, result = project(name)
-        cast_run = cast_runs.latest(owner, name) if cast_runs is not None else None
+        cast_run = cast_jobs.runs.latest(owner, name) if cast_jobs is not None else None
         return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
                 "cast_run": cast_run.public(None) if cast_run is not None else None}
 
-    cast_runs = None
+    def auto_running(owner, name) -> str | None:
+        run = runs.active(owner, name, RUN_KIND)
+        return "Auto is running; it makes the voices and sounds itself." if getattr(run, "auto", False) else None
+
+    cast_jobs = None
 
     # The page --------------------------------------------------------------
     @app.get("/soundstage", include_in_schema=False)
@@ -204,13 +230,14 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         return {"gpu": gpu,
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
+                "ranges": {key: list(bounds) for key, bounds in SETTING_RANGES.items()},
                 **boot_payload(), **cast_boot_payload()}
 
     install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload,
                           clip=lambda value: _clip(clips, value))
-    cast_runs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
+    cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=lambda value: _clip(clips, value),
-                                    runtime=runtime_config, gpu=gpu, interrupt=interrupt)
+                                    runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running)
 
     # Projects --------------------------------------------------------------
     @app.get(f"{api}/project", include_in_schema=False)
@@ -227,6 +254,9 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         for key, kind in SETTING_FIELDS.items():
             if key in body:
                 data[key] = kind(body[key])
+                if key in SETTING_RANGES:
+                    low, high, _step = SETTING_RANGES[key]
+                    data[key] = kind(min(high, max(low, data[key])))
         store.save_soundstage_project(name, data)
         return payload(owner, name)
 
@@ -262,6 +292,28 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def read_run(name: str, request: Request):
         return {"run": run_payload(owner_of(request), name)}
 
+    def speak_job(run, owner: str, session, name: str, action: str, line=None) -> None:
+        """Speak, remix or regenerate a line from the project as it is saved now."""
+        data, _ = project(name)
+        values = generation_values(name, data, clips)
+        if action == REGENERATE:
+            values = [line, *values]
+        # Accepted here, once this is the project's only run: a refused run leaves no job.
+        job = JOBS.accept(owner, "drama3", values, callback=callbacks[action], output_indices=(0,),
+                          key=uuid.uuid4().hex)
+        run.job_id, run.family = job.id, "drama3"
+        for update in execute_accepted(job.id, session):
+            status = str(update[1] or "") if len(update) > 1 else ""
+            if status:
+                run.status = status.splitlines()[0]
+            if status.startswith("Error"):
+                # The reason, without the timing summary that follows it.
+                run.error = status.removeprefix("Error:").strip().split("\n\n")[0]
+            if update[0]:
+                run.revision += 1
+        if run.error is None:
+            run.status = "Done."
+
     @app.post(f"{api}/speak", include_in_schema=False)
     @guarded
     def speak(name: str, request: Request, body: dict = Body(...)):
@@ -271,35 +323,66 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         action = body.get("action")
         if action not in callbacks:
             raise H3Error("Unknown speech request.")
-        data, result = project(name)
-        values = generation_values(name, data, clips)
+        _, result = project(name)
         if action == REGENERATE:
             keys = {take["key"] for take in (result_payload(result) or {}).get("takes", [])}
             if body.get("line") not in keys:
                 raise H3Error("Choose a line of this mix first.")
-            values = [body["line"], *values]
         elif action == REMIX and result is None:
             raise H3Error("Speak the project once before remixing it.")
         session = session_of(request)
+        runs.start(SpeakRun(owner, name, RUN_KIND),
+                   lambda run: speak_job(run, owner, session, name, action, body.get("line")))
+        return {"run": run_payload(owner, name)}
+
+    @app.post(f"{api}/auto", include_in_schema=False)
+    @guarded
+    def auto(name: str, request: Request, body: dict = Body(default={})):
+        """Auto: rewrite the script (unless it is prepared), make every missing voice and sound, then speak.
+
+        Each step starts only after the one before it worked, as the tab's Auto does; ``body``
+        carries the writer service for the rewrite.
+        """
+        if not gpu:
+            raise H3Error("Open Soundstage in Studio to run Auto on the GPU.")
+        owner = owner_of(request)
+        if cast_jobs.runs.active(owner, name, "cast") is not None:
+            raise H3Error("Wait for the voices and sounds being made, then run Auto.")
+        data, _ = project(name)
+        if not (data.get("text") or "").strip():
+            raise H3Error("Write or paste some text on Script first.")
+        session = session_of(request)
+        clip = lambda value: _clip(clips, value)  # noqa: E731
+
+        def stopped(run) -> bool:
+            if run.stop_requested:
+                run.status = "Auto interrupted."
+            return run.stop_requested
 
         def work(run):
-            # Accepted here, once this is the project's only run: a refused run leaves no job.
-            job = JOBS.accept(owner, "drama3", values, callback=callbacks[action], output_indices=(0,),
-                              key=uuid.uuid4().hex)
-            run.job_id = job.id
-            for update in execute_accepted(job.id, session):
-                status = str(update[1] or "") if len(update) > 1 else ""
-                if status:
-                    run.status = status.splitlines()[0]
-                if status.startswith("Error"):
-                    # The reason, without the timing summary that follows it.
-                    run.error = status.removeprefix("Error:").strip().split("\n\n")[0]
-                if update[0]:
-                    run.revision += 1
-            if run.error is None:
-                run.status = "Done."
+            if project(name)[0].get("prepared"):
+                run.status = "Using the prepared script."
+            else:
+                run.status = "Rewriting the script…"
+                _, status, refused = rewrite_project(actions, store, name, body, clip)
+                run.revision += 1
+                if refused:
+                    run.error = "The writer stopped: " + status.removeprefix(DRAMA3_PROMPT_FAILED).strip()
+                    return
+            if stopped(run):
+                return
+            run.stage, run.status = "cast", "Making the missing voices and sounds…"
+            data, _ = project(name)
+            _, family, callback, values = cast_jobs.job_for(data, "prepare")
+            cast_jobs.execute(run, owner, session, name, "prepare", None, family, callback, values)
+            if run.error or stopped(run):
+                return
+            # The cast job's own summary is in the slots' notes; Auto's message is only what it saved.
+            run.message = cast_jobs.save_all(name) if data.get("auto_save_speakers") else None
+            run.stage, run.status, run.job_id = "speak", "Speaking…", None
+            speak_job(run, owner, session, name, GENERATE)
 
-        runs.start(Run(owner, name, RUN_KIND), work)
+        runs.start(SpeakRun(owner, name, RUN_KIND, auto=True, stage="script"), work)
         return {"run": run_payload(owner, name)}
 
     @app.post(f"{api}/interrupt", include_in_schema=False)
@@ -311,8 +394,11 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         run = runs.active(owner, name, RUN_KIND)
         if run is None:
             message = "This project isn't speaking."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
         else:
-            message = interrupt(session_of(request), family="drama3", job_id=run.job_id)
+            run.stop_requested = True
+            if run.job_id is None:
+                message = ("Auto stops when the writer answers." if run.auto
+                           else "The run is still starting. Try again in a moment.")
+            else:
+                message = interrupt(session_of(request), family=run.family or "drama3", job_id=run.job_id)
         return {"message": message, "run": run_payload(owner, name)}

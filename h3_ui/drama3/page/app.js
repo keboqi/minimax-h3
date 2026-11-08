@@ -319,9 +319,70 @@
     if (!settings.preset) buttons.push(h("button", {type: "button", "aria-pressed": "true", disabled: true}, "Custom"));
     $("presets").replaceChildren(...buttons);
     $("word-timing").checked = settings.word_timing;
+    $("auto-save").checked = settings.auto_save_speakers;
+    // Leave the sliders alone while one is being dragged or typed in.
+    if ($("speech-settings").contains(document.activeElement)) return;
+    const sliders = [
+      ["temperature", "Temperature", ""],
+      ["top_p", "Top-p", ""],
+      ["top_k", "Top-k", "0 keeps all candidates. Small caps can make speech stall at pauses."],
+      ["parallel", "Parallel requests", "Lines go out in parallel with their speaker's clip."],
+      ["retries", "Retries per chunk", "0 keeps the first take. Retries only near-silent audio."],
+      ["max_frames", "Maximum audio frames per take", "21.5 frames a second; 8192 is about 6.3 minutes. Only limits a take that runs on."],
+    ];
+    $("speech-settings").replaceChildren(...sliders.map(([key, label, hint]) => {
+      const [min, max, step] = state.boot.ranges[key];
+      // The server keeps values inside their range; show what it kept.
+      const commit = async (value) => {
+        if (value === "") return;
+        await saveSettings({[key]: Number(value)});
+        number.value = range.value = state.project.settings[key];
+      };
+      const number = h("input", {type: "number", min, max, step, value: settings[key], "aria-label": label,
+                                 onchange: (event) => commit(event.target.value)});
+      const range = h("input", {type: "range", min, max, step, value: settings[key], "aria-label": label,
+                                oninput: (event) => { number.value = event.target.value; },
+                                onchange: (event) => commit(event.target.value)});
+      return h("div", {class: "slider-row"}, h("span", {class: "label"}, label), range, number,
+               hint ? h("span", {class: "hint"}, hint) : null);
+    }), h("p", {class: "muted small"}, "Drama 3 runs on SGLang-Omni (Linux, CUDA); the checkpoint downloads on first use."));
+  }
+
+  // -- Auto ------------------------------------------------------------------
+  const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking"};
+  function autoRunning() { return Boolean(state.run?.active && state.run.auto); }
+
+  function renderAuto() {
+    const running = autoRunning();
+    $("auto-status").hidden = !running;
+    $("auto-split").hidden = running;
+    if (running) {
+      $("auto-status-text").textContent = `Auto · ${AUTO_STAGES[state.run.stage] || "Starting"}: ${state.run.status || "…"}`;
+    }
+    $("auto").disabled = !state.boot.gpu || isRunning() || castRunning();
+    $("auto").title = !state.boot.gpu ? "Auto needs the GPU: open Soundstage in Studio."
+      : "Rewrite the script if it needs it, make every missing voice and sound, then speak";
+  }
+
+  async function startAuto() {
+    $("auto-menu").open = false;
+    if (isRunning() || castRunning()) return;
+    await flushScript();
+    await flushSlots();
+    try {
+      const data = await api(named("/auto"), {method: "POST", body: {writer: writerService()}});
+      state.run = data.run;
+      autoRevision = data.run?.revision ?? 0;
+      renderAuto();
+      renderActions();
+      poll();
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   function isRunning() { return Boolean(state.run?.active); }
+  let autoRevision = 0;
 
   function renderActions() {
     const onScript = state.screen === "script";
@@ -346,7 +407,10 @@
     const title = $("action-title");
     const detail = $("action-detail");
     detail.classList.remove("error");
-    if (running) {
+    if (running && state.run.auto) {
+      title.textContent = `Auto · ${AUTO_STAGES[state.run.stage] || "Starting"}`;
+      detail.textContent = state.run.status || "Waiting for the GPU…";
+    } else if (running) {
       title.textContent = "Speaking…";
       detail.textContent = state.run.status || "Waiting for the GPU…";
     } else if (state.run?.error) {
@@ -392,6 +456,7 @@
     renderLines();
     renderInspector();
     renderSettings();
+    renderAuto();
     renderActions();
     sync();
   }
@@ -922,9 +987,15 @@
     return library;
   }
 
-  function castRunning() { return Boolean(state.castRun?.active); }
+  function castRunning() { return Boolean(state.castRun?.active) || autoRunning(); }
+  /** The run making the cast: a cast job, or Auto while it makes voices and sounds. */
+  function castJob() {
+    if (state.castRun?.active) return state.castRun;
+    if (autoRunning() && state.run.stage === "cast") return {...state.run, target: "prepare"};
+    return state.castRun;
+  }
   function slotNote(kind, slot) {
-    const run = state.castRun;
+    const run = castJob();
     return run?.slots?.[`${kind}:${slot}`] || null;
   }
   function slotWorking(kind, slot) {
@@ -1221,8 +1292,8 @@
     const detail = $("action-detail");
     detail.classList.remove("error");
     if (running) {
-      title.textContent = "Making voices and sounds…";
-      detail.textContent = state.castRun.status || "Waiting for the GPU…";
+      title.textContent = autoRunning() ? `Auto · ${AUTO_STAGES[state.run.stage] || "Starting"}` : "Making voices and sounds…";
+      detail.textContent = (autoRunning() ? state.run.status : state.castRun?.status) || "Waiting for the GPU…";
     } else if (state.castRun?.error) {
       title.textContent = "That didn't work";
       detail.textContent = state.castRun.error;
@@ -1240,7 +1311,7 @@
     make.hidden = running || !total;
     make.disabled = !state.boot.gpu;
     make.textContent = `Make the missing ${total}`;
-    $("cast-interrupt").hidden = !running;
+    $("cast-interrupt").hidden = !state.castRun?.active;  // Auto has its own, in the top bar.
     $("to-script").hidden = false;
     $("to-mix").hidden = false;
     $("to-mix").className = `btn${total || running ? "" : " btn-primary"}`;
@@ -1292,6 +1363,7 @@
     Object.assign(state.project, {...rest, run: state.project.run});
     if (project.cast_run !== undefined) state.castRun = project.cast_run;
     renderSteps();
+    renderAuto();
     if (state.screen === "cast") {
       renderCastLists();
       renderSlotEditor(editor);
@@ -1456,12 +1528,22 @@
         const before = state.run;
         state.run = run;
         if (run && !run.active) {
-          if (run.error) toast(`Speaking stopped: ${run.error}`);
+          if (run.auto) {
+            if (run.error) toast(`Auto stopped: ${run.error}`);
+            else if (before?.active) toast(run.message ? `Auto finished. ${run.message}` : "Auto finished.");
+            if (!run.error && before?.active) show("mix");
+          } else if (run.error) toast(`Speaking stopped: ${run.error}`);
           else if (before?.active) toast("Speech ready.");
           await loadProject(name, {keepPick: true});
           return;
         }
+        if (run?.auto && run.revision !== autoRevision) {
+          autoRevision = run.revision;
+          await loadProject(name, {keepPick: true});
+        }
+        renderAuto();
         renderActions();
+        if (state.screen === "cast") { renderCastLists(); renderSlotEditor(false); }
         if (run?.active) poll();
       } catch (error) {
         toast(error.message);
@@ -1515,6 +1597,9 @@
     for (const screen of SCREENS) $(`step-${screen}`).addEventListener("click", () => show(screen));
     $("to-mix").addEventListener("click", () => show("mix"));
     $("to-cast").addEventListener("click", () => show("cast"));
+    $("auto").addEventListener("click", startAuto);
+    $("auto-interrupt").addEventListener("click", interruptRun);
+    $("auto-save").addEventListener("change", (event) => saveSettings({auto_save_speakers: event.target.checked}));
     $("to-script").addEventListener("click", () => show("script"));
     $("make-missing").addEventListener("click", () => make("prepare"));
     $("cast-interrupt").addEventListener("click", interruptCast);
@@ -1537,6 +1622,7 @@
     $("apply-reply").addEventListener("click", applyReply);
     document.addEventListener("click", (event) => {
       if (!event.target.closest("#examples")) $("examples").open = false;
+      if (!event.target.closest("#auto-menu")) $("auto-menu").open = false;
     });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { flushScript(); flushSlots(); } });
     document.addEventListener("keydown", (event) => {

@@ -50,9 +50,20 @@ class CastRun(Run):
 
     target: str | None = None
     slots: dict[str, str] = field(default_factory=dict)
+    family: str | None = None  # The running job's family, which Interrupt names.
 
     def public(self, scene_id) -> dict[str, Any]:
         return {**super().public(scene_id), "target": self.target, "slots": dict(self.slots)}
+
+
+@dataclass(frozen=True)
+class CastJobs:
+    """The cast runs, and the pieces Auto runs in its own order."""
+
+    runs: Runs
+    job_for: Callable
+    execute: Callable
+    save_all: Callable
 
 
 def _setting(data: dict, key: str):
@@ -141,8 +152,12 @@ def boot_payload() -> dict:
 
 
 def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, session_of, payload, clips: Path,
-                        clip: Callable[[Any], str | None], runtime: Callable[[], Any], gpu: bool, interrupt) -> Runs:
-    """The Cast & sounds routes. Returns the cast runs, which the project payload reports."""
+                        clip: Callable[[Any], str | None], runtime: Callable[[], Any], gpu: bool, interrupt,
+                        blocked: Callable[[str, str], str | None] | None = None) -> CastJobs:
+    """The Cast & sounds routes; ``blocked`` names what keeps a cast job from starting (Auto running).
+
+    Returns the cast runs and jobs, which the project payload and Auto use.
+    """
     from h3_app.drama3 import sounds as drama3_sounds
     from h3_app.drama3 import speakers as drama3_speakers
 
@@ -445,6 +460,76 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                 run.message = str(value(overall[0]))
         run.revision += 1
 
+    def job_for(data: dict, target: str, slot=None):
+        """The job family, callback and inputs that make ``target``; refuses what can't be made yet."""
+        if target == VOICE:
+            slot = slot_of("voice", slot)
+            if not (data.get(f"voice_{slot}_description") or "").strip() or not (data.get(f"voice_{slot}_preview_text") or "").strip():
+                raise H3Error("Add a voice description and the line it reads first.")
+            settings = voice_values(data)[:5]
+            return slot, "drama3_voice", actions.generate_drama3_voice, [
+                data.get(f"voice_{slot}_description"), data.get(f"voice_{slot}_preview_text"),
+                data.get(f"voice_{slot}_language") or "Auto", *settings]
+        if target == SOUND:
+            slot = slot_of("sound", slot)
+            if not (data.get(f"sound_{slot}_description") or "").strip():
+                raise H3Error("Describe the sound first.")
+            return slot, "drama3_sound", actions.generate_drama3_sound, [
+                data.get(f"sound_{slot}_description"), data.get(f"sound_{slot}_duration") or 5]
+        if target == TRANSCRIBE:
+            slot = slot_of("voice", slot)
+            audio = clip(data.get(f"voice_{slot}_audio"))
+            if not audio:
+                raise H3Error("Upload a reference clip first.")
+            return slot, "drama3_voice", actions.transcribe_drama3_voice, [audio, _setting(data, "asr_model")]
+        if target == PREPARE:
+            if actions.prepare_drama3_cast is None:
+                raise H3Error("Making the whole cast isn't available here.")
+            return None, "drama3_prepare", actions.prepare_drama3_cast, [
+                data.get("script_mode"), *voice_values(data), *sound_values(data)]
+        raise H3Error("Unknown request.")
+
+    def execute(run, owner: str, session, name: str, target: str, slot, family: str, callback, values) -> None:
+        """Run one cast job to its end on the usual job path, writing each frame into the project."""
+        job = JOBS.accept(owner, family, values, callback=owned_generation(callback, family), key=uuid.uuid4().hex)
+        run.job_id = job.id
+        run.family = family
+        for update in execute_accepted(job.id, session):
+            apply_outputs(run, name, target, slot, update if isinstance(update, (list, tuple)) else (update,))
+        if run.error is None:
+            failed = [note for key, note in run.slots.items() if "-clip:" not in key and "failed" in note]
+            if target in (VOICE, SOUND) and failed:
+                run.error = failed[-1]
+            run.status = run.status if run.error else (run.status or "Done.")
+
+    def save_all(name: str) -> str:
+        """Keep every voiced speaker in the selected group and use the saved voice, as the tab's Save all does."""
+        saved, errors = 0, []
+        with lock:
+            data, _ = store.soundstage_project(name)
+            group = _setting(data, "speaker_group")
+            for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
+                preset = data.get(f"voice_{slot}_preset")
+                try:
+                    if _is_saved(preset, UPLOAD_VOICE):
+                        source = drama3_speakers.load_speaker(preset, runtime())
+                        speaker, audio, transcript, description = (source.name, source.audio, source.transcript,
+                                                                   source.description)
+                    else:
+                        audio = clip(data.get(f"voice_{slot}_audio"))
+                        speaker = data.get(f"voice_{slot}_save_name") or f"Speaker {slot}"
+                        transcript = data.get(f"voice_{slot}_transcript") or ""
+                        description = data.get(f"voice_{slot}_description") or ""
+                    if not audio:
+                        continue
+                    kept = drama3_speakers.save_speaker(speaker, audio, transcript, runtime(), description, group)
+                    data[f"voice_{slot}_preset"] = kept.key
+                    saved += 1
+                except H3Error as exc:
+                    errors.append(f"Speaker {slot}: {exc}")
+            store.save_soundstage_project(name, data)
+        return " ".join([f'Saved {saved} speaker{"s" if saved != 1 else ""} to "{group}".', *errors])
+
     @app.post(f"{api}/project/make", include_in_schema=False)
     @guarded
     def make(name: str, request: Request, body: dict = Body(...)):
@@ -452,55 +537,21 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         if not gpu:
             raise H3Error("Open Soundstage in Studio to make voices and sounds on the GPU.")
         owner = owner_of(request)
+        if blocked is not None and (reason := blocked(owner, name)):
+            raise H3Error(reason)
         target = body.get("target")
         data, _ = store.soundstage_project(name)
-        slot = None
-        if target == VOICE:
-            slot = slot_of("voice", body.get("slot"))
-            if not (data.get(f"voice_{slot}_description") or "").strip() or not (data.get(f"voice_{slot}_preview_text") or "").strip():
-                raise H3Error("Add a voice description and the line it reads first.")
-            settings = voice_values(data)[:5]
-            family, callback = "drama3_voice", actions.generate_drama3_voice
-            values = [data.get(f"voice_{slot}_description"), data.get(f"voice_{slot}_preview_text"),
-                      data.get(f"voice_{slot}_language") or "Auto", *settings]
-        elif target == SOUND:
-            slot = slot_of("sound", body.get("slot"))
-            if not (data.get(f"sound_{slot}_description") or "").strip():
-                raise H3Error("Describe the sound first.")
-            family, callback = "drama3_sound", actions.generate_drama3_sound
-            values = [data.get(f"sound_{slot}_description"), data.get(f"sound_{slot}_duration") or 5]
-        elif target == TRANSCRIBE:
-            slot = slot_of("voice", body.get("slot"))
-            audio = clip(data.get(f"voice_{slot}_audio"))
-            if not audio:
-                raise H3Error("Upload a reference clip first.")
-            family, callback = "drama3_voice", actions.transcribe_drama3_voice
-            values = [audio, _setting(data, "asr_model")]
-        elif target == PREPARE:
-            if actions.prepare_drama3_cast is None:
-                raise H3Error("Making the whole cast isn't available here.")
-            family, callback = "drama3_prepare", actions.prepare_drama3_cast
-            values = [data.get("script_mode"), *voice_values(data), *sound_values(data)]
-        else:
-            raise H3Error("Unknown request.")
+        slot, family, callback, values = job_for(data, target, body.get("slot"))
         session = session_of(request)
-        wrapped = owned_generation(callback, family)
-
-        def work(run):
-            job = JOBS.accept(owner, family, values, callback=wrapped, key=uuid.uuid4().hex)
-            run.job_id = job.id
-            for update in execute_accepted(job.id, session):
-                apply_outputs(run, name, target, slot, update if isinstance(update, (list, tuple)) else (update,))
-            if run.error is None:
-                failed = [note for key, note in run.slots.items() if "-clip:" not in key and "failed" in note]
-                if target in (VOICE, SOUND) and failed:
-                    run.error = failed[-1]
-                run.status = run.status if run.error else (run.status or "Done.")
-
         run = CastRun(owner, name, "cast", target=f"{target}:{slot}" if slot is not None else target)
         run.status = "Waiting for the GPU…"
-        runs.start(run, work)
+        runs.start(run, lambda run: execute(run, owner, session, name, target, slot, family, callback, values))
         return {"cast_run": run.public(None)}
+
+    @app.post(f"{api}/project/save-all", include_in_schema=False)
+    @guarded
+    def save_all_speakers(name: str, request: Request):
+        return {**payload(owner_of(request), name), "message": save_all(name)}
 
     @app.post(f"{api}/project/make/interrupt", include_in_schema=False)
     @guarded
@@ -514,9 +565,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         elif run.job_id is None:
             message = "The run is still starting. Try again in a moment."
         else:
-            family = {"voice": "drama3_voice", "transcribe": "drama3_voice", "sound": "drama3_sound"}.get(
-                str(run.target).split(":")[0], "drama3_prepare")
-            message = interrupt(session_of(request), family=family, job_id=run.job_id)
+            message = interrupt(session_of(request), family=run.family, job_id=run.job_id)
         return {"message": message}
 
-    return runs
+    return CastJobs(runs=runs, job_for=job_for, execute=execute, save_all=save_all)

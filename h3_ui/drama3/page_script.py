@@ -157,6 +157,39 @@ def _writer_service(body: dict) -> list[Any]:
             service.get("openai_model") or OPENAI_PROMPT_MODELS[0], service.get("openai_base_url") or ""]
 
 
+def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, str, bool]:
+    """Rewrite a saved project's script with the writer and keep the answer.
+
+    ``body`` may carry writer choices (kept either way) and the writer service. Returns the
+    script before, the writer's status and whether it failed; a failed rewrite changes nothing
+    else. Raises when there is nothing to rewrite.
+    """
+    data, _ = store.soundstage_project(name)
+    for key, kind in WRITER_FIELDS.items():
+        if key in body:
+            data[key] = kind(body[key])
+    before = data.get("text") or ""
+    if not before.strip():
+        raise H3Error("Write or paste some text first.")
+    try:
+        outputs = list(actions.enhance_drama3_text(
+            before, _setting(data, "speaker_mode"), *_writer_service(body), *writer_slots(data, clip),
+            _setting(data, "writer_workflow"), int(_setting(data, "max_batch_lines")),
+            bool(_setting(data, "strict_source")), _setting(data, "smart_budget_profile")))
+    except Exception as exc:  # The writer calls out to hosted services and can fail any way.
+        store.save_soundstage_project(name, data)  # The writer choices stay.
+        return before, f"{writer.DRAMA3_PROMPT_FAILED} {exc}", True
+    status = str(outputs[1])
+    if failed(status):
+        store.save_soundstage_project(name, data)
+        return before, status, True
+    _apply_cast(data, outputs)
+    data["prepared"] = True
+    sync_sounds(actions, data)
+    store.save_soundstage_project(name, data)
+    return before, status, False
+
+
 def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip) -> None:
     """The Script step's routes; ``payload`` answers with a project's page payload, ``clip`` finds a clip."""
 
@@ -210,26 +243,12 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
     @app.post(f"{api}/project/rewrite", include_in_schema=False)
     def rewrite(name: str, request: Request, body: dict = Body(...)):
         try:
-            data = load(name)
-            writer_settings(data, body)
+            owner = owner_of(request)
+            before, status, refused = rewrite_project(actions, store, name, body, clip)
         except (H3Error, ValueError) as exc:
             return {"error": str(exc)}
-        before = data.get("text") or ""
-        if not before.strip():
-            return {"error": "Write or paste some text first."}
-        try:
-            outputs = list(actions.enhance_drama3_text(
-                before, _setting(data, "speaker_mode"), *_writer_service(body), *writer_slots(data, clip),
-                _setting(data, "writer_workflow"), int(_setting(data, "max_batch_lines")),
-                bool(_setting(data, "strict_source")), _setting(data, "smart_budget_profile")))
-            status = str(outputs[1])
-            if not failed(status):
-                _apply_cast(data, outputs)
-            else:
-                store.save_soundstage_project(name, data)  # The writer choices stay.
-            return answered(request, name, data, before, status)
-        except Exception as exc:  # The writer calls out to hosted services and can fail any way.
-            return {"error": f"Script unchanged. {exc}"}
+        answer = {**payload(owner, name), "status": status, "failed": refused}
+        return answer if refused else {**answer, "previous": before}
 
     @app.post(f"{api}/project/writer-prompt", include_in_schema=False)
     @guarded

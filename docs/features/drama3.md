@@ -56,6 +56,17 @@ the tab's **Load project** picks up what the page saved.
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
 
+**Auto-produce**, at the top on every screen, does the whole production in one run, as the tab's
+Auto does: it rewrites the script with the writer (unless the writer already wrote it and it hasn't
+changed since), makes every missing voice and, in Advanced, every missing sound, then speaks.
+Each step starts only when the one before it worked. While it runs, the top bar shows its step and
+progress with **Interrupt**, the screens fill in as each step lands, and other voice, sound and
+speech jobs wait; it opens Mix & review when it finishes, or says which step stopped it and why.
+Interrupting it while the writer works stops it once the writer answers, before any GPU work. Its
+menu has **Save the voices it makes to the speaker group**, which saves every voiced speaker to the
+group selected on Cast & sounds after the voices are made. Like speaking, it carries on if the page
+is closed.
+
 ### Script
 
 Every change on Script saves to the project a moment after you stop typing; the top bar says
@@ -116,6 +127,9 @@ The page opens a generated project here and shows:
 - **The picked line** beside them: its take before staging and effects, its warnings,
   **Regenerate line** and **Play in mix**.
 - **How it sounds**: the speech preset and word-by-word subtitles, saved with the project.
+  **Speech settings** below them hold the tab's sliders: temperature, top-p, top-k, parallel
+  requests, retries per chunk and maximum audio frames per take. Changing a sampling value makes
+  the preset **Custom**; values outside a slider's range are kept at its end.
 
 The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Remix** and
 **Interrupt**. They speak the project as last saved, on the same job path as the tab, and the page

@@ -23,6 +23,26 @@
     <span class="spacer"></span>
     <div class="seg" role="group" aria-label="Script mode" id="mode"></div>
     <span id="gpu" class="gpu"></span>
+    <div class="auto-status" id="auto-status" role="status" hidden>
+      <span class="auto-dot" aria-hidden="true"></span>
+      <span id="auto-status-text"></span>
+      <button type="button" class="btn btn-small" id="auto-interrupt">Interrupt</button>
+    </div>
+    <div class="auto-split" id="auto-split">
+      <button type="button" class="btn btn-small" id="auto" title="Rewrite the script if it needs it, make every missing voice and sound, then speak">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+        Auto-produce
+      </button>
+      <details class="menu" id="auto-menu">
+        <summary class="btn btn-small" aria-label="Auto options">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+        </summary>
+        <div class="menu-items auto-options">
+          <p class="small">Auto rewrites the script unless the writer already did, makes every missing voice and (in Advanced) every missing sound, then speaks.</p>
+          <label class="check"><input type="checkbox" id="auto-save"> Save the voices it makes to the speaker group</label>
+        </div>
+      </details>
+    </div>
   </header>
 
   <nav class="steps" aria-label="Steps">
@@ -156,6 +176,10 @@
           <p class="muted small">Used the next time you speak or remix this project.</p>
           <div class="seg" role="group" aria-label="Speech preset" id="presets"></div>
           <label class="check"><input type="checkbox" id="word-timing"> Word-by-word subtitles</label>
+          <details class="more speech-settings">
+            <summary>Speech settings</summary>
+            <div class="more-body" id="speech-settings"></div>
+          </details>
         </section>
       </aside>
     </div>

@@ -37,7 +37,9 @@ def write_wav(path: Path, seconds=0.5):
     return path
 
 
-class Drama3PageCastTests(unittest.TestCase):
+class CastFixture(unittest.TestCase):
+    """A project on a page whose GPU work is faked, and helpers to drive it."""
+
     def setUp(self):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -56,7 +58,7 @@ class Drama3PageCastTests(unittest.TestCase):
                                                       generation_services=lambda: None, free_gpu=lambda: None))
         actions = dataclasses.replace(Drama3Actions.of(self.handlers, interrupt=lambda *args, **kwargs: ""),
                                       generate_drama3_voice=self.fake_voice, generate_drama3_sound=self.fake_sound,
-                                      transcribe_drama3_voice=self.fake_transcribe)
+                                      transcribe_drama3_voice=self.fake_transcribe, generate_drama3=self.fake_speak)
         # Everything missing goes through the tab's prepare handler, which calls these.
         self.handlers.generate_drama3_voices = self.fake_voices
         self.handlers.generate_drama3_sounds = self.fake_sounds
@@ -93,6 +95,27 @@ class Drama3PageCastTests(unittest.TestCase):
         updates[0:2] = [str(write_wav(self.made / "rain.wav")), "Sound generated."]
         yield (*updates, "Generated 1 of 1 sound clips.")
 
+    def fake_speak(self, *values):
+        """Speech marks its project generated, as the real handler does with the project name it is given."""
+        from h3_app.drama3.results import DRAMA3_FAMILY
+        from h3_app.generation.results import GenerationUpdate
+        from h3_app.provenance import write_snapshot
+
+        self.calls.append(("speak", values))
+        mix = write_wav(self.made / f"mix_{len(self.calls)}.wav")
+        write_snapshot(mix, {"family": DRAMA3_FAMILY, "settings": {"duration": 0.5, "chunks": [], "sounds": []}})
+        self.store.mark_soundstage_generated(values[-1], str(mix))
+        yield GenerationUpdate(None, "Speaking…")
+        yield GenerationUpdate(str(mix), "Done.")
+
+    def wait_speech(self):
+        for _ in range(300):
+            run = self.ok(self.client.get(f"{API}/run", params=NAME))["run"]
+            if run and not run["active"]:
+                return run
+            time.sleep(0.02)
+        self.fail("The run did not finish.")
+
     def ok(self, response):
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
@@ -110,6 +133,8 @@ class Drama3PageCastTests(unittest.TestCase):
     def patch_slot(self, kind, slot, **body):
         return self.ok(self.client.patch(f"{API}/project/slot", params={**NAME, "kind": kind, "slot": slot}, json=body))
 
+
+class Drama3PageCastTests(CastFixture):
     def test_boot_offers_the_generators(self):
         boot = self.ok(self.client.get(f"{API}/boot"))
         self.assertIn("Qwen3-TTS VoiceDesign", boot["voice_engines"])
@@ -250,6 +275,93 @@ class Drama3PageCastTests(unittest.TestCase):
         client = TestClient(app)
         client.get(f"{API}/boot")
         self.assertIn("Studio", client.post(f"{API}/project/make", params=NAME, json={"target": "prepare"}).json()["error"])
+
+
+class Drama3PageAutoTests(CastFixture):
+    """Auto and the speech settings, on the same fake GPU work."""
+
+    WRITER = ("<|speaker:0|>Fresh plums, two for one.", "Rewrote the script.",
+              [{"speaker_id": 0, "name": "Mia", "description": "A bright vendor.",
+                "preview_text": "Fresh plums, two for one, only while the rain holds off tonight."}], "Night Market")
+
+    def test_auto_rewrites_makes_the_cast_and_speaks(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums in the rain."}))
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", return_value=self.WRITER) as writer:
+            run = self.ok(self.client.post(f"{API}/auto", params=NAME, json={"writer": {"gemini_api_key": "k"}}))["run"]
+            self.assertTrue(run["auto"])
+            run = self.wait_speech()
+        self.assertIsNone(run["error"])
+        self.assertEqual((run["stage"], run["status"]), ("speak", "Done."))
+        writer.assert_called_once()
+        self.assertEqual([call[0] for call in self.calls], ["voices", "speak"])
+        project = self.ok(self.client.get(f"{API}/project", params=NAME))
+        self.assertEqual(project["script"]["text"], "Mia: Fresh plums, two for one.")
+        self.assertTrue(project["speakers"][0]["ready"])
+        self.assertIsNotNone(project["result"])
+        # Speech went out with the voice Auto just made.
+        speech = self.calls[-1][1]
+        self.assertTrue(str(speech[2]).endswith(".wav"))
+
+    def test_auto_keeps_a_prepared_script_and_can_save_the_cast(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums."}))
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", return_value=self.WRITER):
+            self.ok(self.client.post(f"{API}/project/rewrite", params=NAME, json={}))
+        self.ok(self.client.patch(f"{API}/project/settings", params=NAME, json={"auto_save_speakers": True}))
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text") as writer:
+            self.ok(self.client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_speech()
+        writer.assert_not_called()
+        self.assertIsNone(run["error"])
+        self.assertIn('to "Global"', run["message"])
+        self.assertEqual(self.ok(self.client.get(f"{API}/project", params=NAME))["speakers"][0]["source"], "saved")
+
+    def test_auto_stops_with_the_writers_reason(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums."}))
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text",
+                   return_value=("", "Prompt enhancement failed: no key", [], "")):
+            self.ok(self.client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_speech()
+        self.assertEqual(run["error"], "The writer stopped: no key")
+        self.assertEqual(self.calls, [])
+        empty = self.client.post(f"{API}/projects", json={"name": "Empty"})
+        self.ok(empty)
+        self.assertIn("Script first", self.client.post(f"{API}/auto", params={"name": "Empty"}, json={}).json()["error"])
+
+    def test_interrupting_auto_during_the_rewrite_stops_it_before_the_gpu(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums."}))
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        actions = dataclasses.replace(Drama3Actions.of(self.handlers, interrupt=lambda *args, **kwargs: ""),
+                                      generate_drama3=self.fake_speak)
+        install_soundstage_page(app, actions, store=self.store, output_dir=self.root / "outputs",
+                                takes_dir=lambda: self.root / "takes", runtime_config=lambda: self.runtime,
+                                interrupt=lambda request, family, job_id: "Stopping.")
+        self.client = TestClient(app)
+        self.client.get(f"{API}/boot")
+
+        def slow_writer(*args, **kwargs):
+            time.sleep(0.3)
+            return self.WRITER
+
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", side_effect=slow_writer):
+            self.ok(self.client.post(f"{API}/auto", params=NAME, json={}))
+            stopped = self.ok(self.client.post(f"{API}/interrupt", params=NAME))
+            self.assertEqual(stopped["message"], "Auto stops when the writer answers.")
+            run = self.wait_speech()
+        self.assertEqual(run["status"], "Auto interrupted.")
+        self.assertEqual(self.calls, [])  # No voices, sounds or speech.
+
+    def test_speech_settings_are_kept_inside_their_ranges(self):
+        boot = self.ok(self.client.get(f"{API}/boot"))
+        self.assertEqual(boot["ranges"]["parallel"], [1, 32, 1])
+        project = self.ok(self.client.patch(f"{API}/project/settings", params=NAME, json={
+            "parallel": 99, "retries": 2, "max_frames": 4000, "temperature": 1.3, "top_k": -5}))
+        settings = project["settings"]
+        self.assertEqual((settings["parallel"], settings["retries"], settings["max_frames"], settings["top_k"]),
+                         (32, 2, 4000, 0))
+        self.assertIsNone(settings["preset"])  # Custom.
+        saved, _ = self.store.soundstage_project("Night Market")
+        self.assertEqual((saved["parallel"], saved["temperature"]), (32, 1.3))
 
 
 if __name__ == "__main__":
