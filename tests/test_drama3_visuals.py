@@ -72,6 +72,24 @@ class IllustratedMixTests(unittest.TestCase):
             self.assertEqual(controller.generate.call_args.args[1:4:2], ("Image edit", [str(images[0])]))
             self.assertEqual(records[2]["references"], [{"shot": 1, "subjects": ["Mara"]}])
 
+    def test_plan_is_saved_beside_the_mix_for_its_art_direction(self):
+        from h3_ui.drama3.visuals import plan_rows, read_plan, write_plan
+
+        plan = {"style": "ink", "continuity": {}, "shots": [
+            {"start": 0, "transition": "cut", "beat": "Open", "references": [], "prompt": "A door"},
+            {"start": 1.5, "transition": "dissolve", "beat": "Rain", "references": [], "prompt": "Rain"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            mix = Path(tmp) / f"mix_{'b' * 32}.mp3"
+            self.assertIsNone(read_plan(mix))
+            write_plan(mix, "Comic panels ", 16.0, plan)
+            self.assertEqual(read_plan(mix, "Comic panels", 16)["plan"], plan)
+            self.assertIsNone(read_plan(mix, "Oil paint", 16))
+            self.assertIsNone(read_plan(mix, "Comic panels", 8))
+            rows = plan_rows(read_plan(mix), 3.0)
+            self.assertEqual([row[:3] for row in rows], [[0.0, 1.5, "Cut"], [1.5, 3.0, "Dissolve"]])
+            # The plan file is hidden, so it never shows up as a result beside the mix.
+            self.assertEqual([p.name for p in Path(tmp).iterdir() if not p.name.startswith(".")], [])
+
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})

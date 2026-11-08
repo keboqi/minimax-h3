@@ -108,6 +108,46 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
     return images, shot_records
 
 
+def plan_path(audio):
+    """The shot plan saved beside a Sound Stage mix."""
+    audio = Path(audio)
+    return audio.with_name(f".{audio.stem}.visual_plan.json")
+
+
+def write_plan(audio, style, limit, plan):
+    path = plan_path(audio)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"style": style, "limit": int(limit), "plan": plan}, ensure_ascii=False),
+                         encoding="utf-8")
+    temporary.replace(path)
+
+
+def read_plan(audio, style=None, limit=None):
+    """The plan saved with this mix, or None; with ``style`` and ``limit``, only a plan made for them."""
+    try:
+        saved = json.loads(plan_path(audio).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(saved, dict) or not isinstance(saved.get("plan"), dict):
+        return None
+    if style is not None and (saved.get("style") or "").strip() != (style or "").strip():
+        return None
+    if limit is not None and saved.get("limit") != int(limit):
+        return None
+    return saved
+
+
+def plan_rows(saved, duration, shots=None):
+    """Shot plan table rows from compiled shots, or from a saved plan."""
+    if shots is None:
+        try:
+            shots = compile_plan(saved["plan"], duration, saved["style"], saved["limit"])
+        except (H3Error, KeyError, TypeError):
+            return []
+    return [[round(s.first / FPS, 3), round((s.first + s.frames) / FPS, 3),
+             "Dissolve" if s.dissolve else "Cut", s.beat, s.prompt] for s in shots]
+
+
 def bind_visual_export(view, controller, deps):
     with view.visual_root, gr.Accordion("Illustrated video", open=False):
         engine = gr.Dropdown([(item.label, item.id) for item in engines_for_task("Image")],
@@ -120,7 +160,6 @@ def bind_visual_export(view, controller, deps):
                     "Uses the Gemini or OpenAI-compatible writer selected on Script.")
         preview = gr.Dataframe(headers=["Start (s)", "End (s)", "Transition", "Story beat", "Image prompt"],
                                interactive=False, wrap=True, label="Shot plan")
-        planned = gr.State(None)
         continuity = gr.Checkbox(value=True, label="Use earlier illustrations as visual references",
                                  info="Edit-capable models reuse the first appearance of returning subjects. "
                                       "MOSS-Image uses the planned text prompts.")
@@ -129,10 +168,18 @@ def bind_visual_export(view, controller, deps):
         source = gr.State(None)
 
     def select_mix(path):
-        return Path(path).name if path else None, None, None, []
+        """Show the plan saved with this mix, if any, so a loaded project keeps its reviewed plan."""
+        name = Path(path).name if path else None
+        rows = []
+        if name:
+            audio = Path(deps.resolve_result(name))
+            saved = read_plan(audio)
+            duration = ((read_snapshot(audio) or {}).get("settings") or {}).get("duration")
+            if saved is not None and duration:
+                rows = plan_rows(saved, float(duration))
+        return name, None, rows
 
-    view.output.change(select_mix, inputs=view.output, outputs=[source, video, planned, preview], **QUIET)
-    gr.on([style.input, limit.input], lambda: (None, []), outputs=[planned, preview], **QUIET)
+    view.output.change(select_mix, inputs=view.output, outputs=[source, video, preview], **QUIET)
 
     def load_mix(result_name):
         if not result_name:
@@ -143,59 +190,58 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("The saved Sound Stage mix could not be found.")
         return audio, snapshot["settings"]
 
-    def is_current(planned, result_name, style, limit):
-        return bool(planned) and (planned["source"], planned["style"], planned["limit"]) == (result_name, style,
-                                                                                           limit)
-
     def prepare(result_name, style, limit, *writer):
-        _, settings = load_mix(result_name)
+        audio, settings = load_mix(result_name)
         try:
             plan, shots = plan_shots(settings, style, int(limit), *writer, runtime=deps.runtime_config())
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
-        rows = [[round(s.first / FPS, 3), round((s.first + s.frames) / FPS, 3),
-                 "Dissolve" if s.dissolve else "Cut", s.beat, s.prompt] for s in shots]
-        return {"source": result_name, "style": style, "limit": limit, "plan": plan}, rows
+        write_plan(audio, style, limit, plan)
+        return plan_rows(None, None, shots)
 
     bind_prompt_action(plan_button.click, prepare, inputs=[source, style, limit, *writer_inputs(view.writer)],
-                       outputs=[planned, preview], api_name=False, show_progress="minimal")
+                       outputs=preview, api_name=False, show_progress="minimal")
 
-    def plan_if_needed(result_name, style, limit, planned, *writer):
-        """Keep a reviewed plan for this mix; otherwise plan from the finished mix before the GPU job."""
-        if is_current(planned, result_name, style, limit):
-            return gr.skip(), gr.skip(), gr.update(interactive=True), "Using the reviewed shot plan…"
-        planned, rows = prepare(result_name, style, limit, *writer)
-        return planned, rows, gr.update(interactive=True), f"Planned {len(rows)} shots. Generating images…"
-
-    def generate(result_name, engine, style, limit, planned, use_references, *values):
+    def plan_if_needed(result_name, style, limit, *writer):
+        """Reuse the plan saved with this mix; otherwise plan from the finished mix before the GPU job."""
         audio, settings = load_mix(result_name)
-        if not is_current(planned, result_name, style, limit):
-            raise gr.Error("The shot plan no longer matches the mix or art direction. Generate again.")
+        saved = read_plan(audio, style, limit)
+        if saved is not None:
+            rows = plan_rows(saved, settings["duration"])
+            return rows, gr.update(interactive=True), f"Using the saved {len(rows)}-shot plan…"
+        rows = prepare(result_name, style, limit, *writer)
+        return rows, gr.update(interactive=True), f"Planned {len(rows)} shots. Generating images…"
+
+    def generate(result_name, engine, style, limit, use_references, *values):
+        audio, settings = load_mix(result_name)
+        saved = read_plan(audio, style, limit)
+        if saved is None:
+            raise gr.Error("This mix has no shot plan for the current art direction. Click Plan shots.")
         if which("ffmpeg") is None:
             raise gr.Error("Install FFmpeg to export an illustrated video.")
-        shots = compile_plan(planned["plan"], settings["duration"], style, limit)
+        shots = compile_plan(saved["plan"], settings["duration"], saved["style"], saved["limit"])
         captured = dict(zip(controller.fields, values, strict=True))
-        key = export_key(result_name, planned["plan"], engine, use_references, captured)
+        key = export_key(result_name, saved["plan"], engine, use_references, captured)
         images, shot_records = yield from illustrate_shots(controller, engine, shots, captured, use_references,
                                                            finished_images(key))
         yield gr.skip(), "Rendering video with the finished mix…"
         video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
         _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
         write_snapshot(video_path, {"family": "Sound Stage illustrated video", "settings": {
-            "source": audio.name, "model": engine, "art_direction": style, "visual_plan": planned["plan"],
+            "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
             "use_visual_references": use_references, "shots": shot_records,
         }})
         yield str(video_path), f"Exported {len(shots)} illustrated shots."
 
     # The writer runs in the prompt queue, so its keys never enter the GPU job's saved snapshot.
+    # The plan travels as a file beside the mix, not as session state, so the GPU job always finds it.
     planning = bind_prompt_action(run.click, plan_if_needed,
-                                  inputs=[source, style, limit, planned, *writer_inputs(view.writer)],
-                                  outputs=[planned, preview, stop, status], api_name=False,
-                                  show_progress="minimal")
+                                  inputs=[source, style, limit, *writer_inputs(view.writer)],
+                                  outputs=[preview, stop, status], api_name=False, show_progress="minimal")
     event = bind_gpu_action(planning.success, owned_generation(generate, "drama3_visuals",
-                            input_names=("result_name", "engine", "style", "max_shots", "visual_plan",
+                            input_names=("result_name", "engine", "style", "max_shots",
                                          "use_visual_references", *controller.fields)),
-                            inputs=[source, engine, style, limit, planned, continuity, *controller.fields.values()],
+                            inputs=[source, engine, style, limit, continuity, *controller.fields.values()],
                             outputs=[video, status], api_name=False, show_progress="minimal")
     stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
         None, cancels=[planning, event], **QUIET)
