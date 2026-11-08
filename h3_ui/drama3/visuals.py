@@ -10,7 +10,8 @@ import gradio as gr
 
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
-from h3_app.drama3.visual_plan import compile_plan, plan_shots
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
+from h3_app.drama3.visual_plan import compile_plan, plan_shots, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
@@ -19,10 +20,19 @@ from h3_ui.image_controller import reference_limit, reference_tag
 from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
 
-# Illustrations finished by an export that failed or was stopped, by export fingerprint.
-# A retry with the same mix, plan, model and settings resumes after them.
-_FINISHED: OrderedDict[str, list[str]] = OrderedDict()
+# Images finished by an export that failed or was stopped, by export fingerprint:
+# {"sheets": {key: path}, "shots": [path, ...]}. A retry with the same mix, plan, model
+# and settings resumes after them.
+_FINISHED: OrderedDict[str, dict] = OrderedDict()
 _FINISHED_LIMIT = 8
+# Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
+_WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
+               "moss_image": (1344, 768), "fibo2": (1344, 768)}
+_SHEET_NOTES = {
+    "characters": "keep the same face, hairstyle, build and outfit",
+    "props": "keep the same shape, colors and markings",
+    "locations": "keep the same architecture, layout and landmarks",
+}
 
 
 def export_key(result_name, plan, engine, use_references, captured):
@@ -32,80 +42,106 @@ def export_key(result_name, plan, engine, use_references, captured):
 
 
 def finished_images(key):
-    images = _FINISHED.setdefault(key, [])
+    images = _FINISHED.setdefault(key, {"sheets": {}, "shots": []})
     _FINISHED.move_to_end(key)
     while len(_FINISHED) > _FINISHED_LIMIT:
         _FINISHED.popitem(last=False)
     return images
 
 
-def shot_references(keys, first_seen, limit):
-    """Group visible subjects by their first illustrated shot, in the planner's priority order."""
-    sources = {}
-    for key in dict.fromkeys(keys):
-        shot = first_seen.get(key)
-        if shot is not None and (shot in sources or len(sources) < limit):
-            sources.setdefault(shot, []).append(key)
-    return sources
+def widescreen(engine, captured):
+    """Override the Image tab's size with a 16:9 one; edits use it too instead of a reference's shape."""
+    width, height = _WIDESCREEN.get(engine, (1344, 768))
+    captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False, moss_image__layout="", flux3__layout="",
+                    qwen__output_resolution_1k=None, qwen__output_resolution_2k=None)
+    if engine == "h3":
+        captured.update(image__width=width, image__height=height, image__edit_size=QWEN_EDIT_SIZE_MANUAL)
+    else:
+        captured.update({f"{engine}__width": width, f"{engine}__height": height})
+        if engine in ("qwen", "flux3"):
+            captured[f"{engine}__edit_size"] = QWEN_EDIT_SIZE_MANUAL
 
 
-def generate_shot(controller, engine, prompt, sources, images, captured):
+def generate_shot(controller, engine, prompt, sources, captured):
+    """One scene: from text alone, or as an edit that follows the subjects' reference sheets.
+
+    ``sources`` maps each subject key to ``(kind, sheet path)`` in the planner's priority order.
+    """
     if not sources:
         return controller.generate(engine, "Text to image", prompt, [], captured)
-
-    instructions = ["Compose a new shot using the supplied illustrations as visual references."]
-    for position, keys in enumerate(sources.values(), 1):
+    instructions = ["Draw the new scene described below. The supplied images are reference sheets for its "
+                    "subjects, not a layout to copy."]
+    for position, (key, (kind, _)) in enumerate(sources.items(), 1):
         tag = reference_tag(engine, position, len(sources)) or "the reference image"
-        instructions.append(f"Preserve the identifying features of {', '.join(keys)} from {tag}.")
-    instructions.append("Use the new shot's action, setting, framing and lighting. "
-                        "Only include subjects called for in the new shot.")
+        instructions.append(f"{tag} shows {key}: {_SHEET_NOTES[kind]}.")
+    instructions.append("Do not copy the sheets' poses, plain backdrops or side-by-side views. Use the scene's "
+                        "own action, setting, framing and lighting, as one single image.")
     instructions.append(prompt)
     return controller.generate(engine, "Image edit", "\n".join(instructions),
-                               [images[index] for index in sources], captured)
+                               [path for _, path in sources.values()], captured)
 
 
-def illustrate_shots(controller, engine, shots, captured, use_references, finished=None):
-    """Stream image progress and keep first appearances local to this export.
+def _draw(controller, engine, mode_sources, prompt, captured, label):
+    """Stream one image's progress; return its path."""
+    path, message = None, "No image returned."
+    for result, message in generate_shot(controller, engine, prompt, mode_sources, captured):
+        if message.startswith("Error:"):
+            raise H3Error(f"{label} failed. {message}")
+        yield gr.skip(), f"{label} · {message}"
+        if result:
+            path = result[0] if isinstance(result, list) else result
+    if not path or not Path(path).is_file():
+        raise H3Error(f"{label} failed. {message}")
+    return path
 
-    ``finished`` holds images from an earlier attempt at the same export; existing files are
-    reused in order, and each new image is appended so a later retry can resume after it.
+
+def illustrate_shots(controller, engine, shots, captured, use_references, finished=None, sheets=None):
+    """Draw each subject's reference sheet, then every scene from the sheets of what it shows.
+
+    ``sheets`` maps subject keys to ``(kind, sheet prompt)``; only subjects some shot shows are drawn.
+    ``finished`` holds images from an earlier attempt at the same export; existing files are reused,
+    and each new image is recorded so a later retry can resume after it.
     """
-    finished = [] if finished is None else finished
-    captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False,
-                    moss_image__layout="", flux3__layout="")
-    ref_limit = reference_limit(engine, captured["qwen__turbo_variant"]) if use_references else 0
-    first_seen = {}
+    finished = {"sheets": {}, "shots": []} if finished is None else finished
+    widescreen(engine, captured)
+    limit = reference_limit(engine, captured.get("qwen__turbo_variant", "Off")) if use_references else 0
+    shown = list(dict.fromkeys(key for shot in shots for key in shot.references if key in (sheets or {})))
+    drawn = {}
+    if limit:
+        for number, key in enumerate(shown, 1):
+            kind, prompt = sheets[key]
+            label = f"Reference {number} of {len(shown)} · {key}"
+            saved = finished["sheets"].get(key)
+            if saved and Path(saved).is_file():
+                path = saved
+                yield None, f"{label} · Reused from the interrupted export"
+            else:
+                yield None, label
+                path = yield from _draw(controller, engine, {}, prompt, captured, label)
+                finished["sheets"][key] = path
+            drawn[key] = (kind, path)
     shot_records = []
     images = []
+    done = finished["shots"]
     for index, shot in enumerate(shots):
-        sources = shot_references(shot.references, first_seen, ref_limit)
+        sources = {key: drawn[key] for key in shot.references if key in drawn}
+        sources = dict(list(sources.items())[:limit])
         label = f"Shot {index + 1} of {len(shots)}"
         if sources:
-            label += " · Using reference shot(s) " + ", ".join(str(n + 1) for n in sources)
-        if index < len(finished) and Path(finished[index]).is_file():
-            path = finished[index]
+            label += " · Following " + ", ".join(sources)
+        if index < len(done) and Path(done[index]).is_file():
+            path = done[index]
             yield None, f"{label} · Reused from the interrupted export"
         else:
-            del finished[index:]
+            del done[index:]
             yield None, label
-            path = None
-            message = "No image returned."
-            for result, message in generate_shot(controller, engine, shot.prompt, sources, images, captured):
-                if message.startswith("Error:"):
-                    raise H3Error(f"{label} failed. {message}")
-                yield gr.skip(), f"{label} · {message}"
-                if result:
-                    path = result[0] if isinstance(result, list) else result
-            if not path or not Path(path).is_file():
-                raise H3Error(f"{label} failed. {message}")
-            finished.append(path)
+            path = yield from _draw(controller, engine, sources, shot.prompt, captured, label)
+            done.append(path)
         images.append(path)
-        for key in shot.references:
-            first_seen.setdefault(key, index)
         shot_records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
-                             "image": Path(path).name, "references": [
-                                 {"shot": n + 1, "subjects": subjects} for n, subjects in sources.items()]})
-    return images, shot_records
+                             "image": Path(path).name, "references": list(sources)})
+    sheet_records = {key: Path(path).name for key, (_, path) in drawn.items()}
+    return images, shot_records, sheet_records
 
 
 def plan_path(audio):
@@ -141,7 +177,7 @@ def plan_rows(saved, duration, shots=None):
     """Shot plan table rows from compiled shots, or from a saved plan."""
     if shots is None:
         try:
-            shots = compile_plan(saved["plan"], duration, saved["style"], saved["limit"])
+            shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
         except (H3Error, KeyError, TypeError):
             return []
     return [[round(s.first / FPS, 3), round((s.first + s.frames) / FPS, 3),
@@ -152,17 +188,19 @@ def bind_visual_export(view, controller, deps):
     with view.visual_root, gr.Accordion("Illustrated video", open=False):
         engine = gr.Dropdown([(item.label, item.id) for item in engines_for_task("Image")],
                              value="qwen", label="Image model", info="Uses this model’s settings from the Image tab.")
-        style = gr.Textbox(label="Art direction", value="Cinematic ink and watercolor comic panels",
+        style = gr.Textbox(label="Art direction", value="Cinematic ink and watercolor illustration",
                            placeholder="Describe the cast, setting and illustration style.")
-        limit = gr.Slider(1, 64, value=16, step=1, label="Maximum shots")
+        limit = gr.Slider(1, 64, value=16, step=1, label="Minimum shots",
+                          info="One moment per image. The planner uses at least this many and adds more "
+                               "where the story needs them.")
         plan_button = gr.Button("Plan shots", size="sm")
         gr.Markdown("Generate plans the shots from the finished mix if you haven't reviewed a plan. "
                     "Uses the Gemini or OpenAI-compatible writer selected on Script.")
         preview = gr.Dataframe(headers=["Start (s)", "End (s)", "Transition", "Story beat", "Image prompt"],
                                interactive=False, wrap=True, label="Shot plan")
-        continuity = gr.Checkbox(value=True, label="Use earlier illustrations as visual references",
-                                 info="Edit-capable models reuse the first appearance of returning subjects. "
-                                      "MOSS-Image uses the planned text prompts.")
+        continuity = gr.Checkbox(value=True, label="Draw reference sheets first",
+                                 info="Draws each recurring character, prop and location once, then edits every "
+                                      "scene from the sheets of what it shows. MOSS-Image uses text prompts only.")
         run, stop, status = generation_actions("Generate illustrated video")
         video = gr.Video(label="Illustrated mix", interactive=False)
         source = gr.State(None)
@@ -219,17 +257,21 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("This mix has no shot plan for the current art direction. Click Plan shots.")
         if which("ffmpeg") is None:
             raise gr.Error("Install FFmpeg to export an illustrated video.")
-        shots = compile_plan(saved["plan"], settings["duration"], saved["style"], saved["limit"])
+        duration = settings["duration"]
+        shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
         captured = dict(zip(controller.fields, values, strict=True))
         key = export_key(result_name, saved["plan"], engine, use_references, captured)
-        images, shot_records = yield from illustrate_shots(controller, engine, shots, captured, use_references,
-                                                           finished_images(key))
+        art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
+        sheets = {name: (kind, sheet_prompt(kind, name, anchor, art_style, saved["style"]))
+                  for name, (kind, anchor) in subjects(saved["plan"]).items()}
+        images, shot_records, sheet_records = yield from illustrate_shots(
+            controller, engine, shots, captured, use_references, finished_images(key), sheets)
         yield gr.skip(), "Rendering video with the finished mix…"
         video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
         _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
         write_snapshot(video_path, {"family": "Sound Stage illustrated video", "settings": {
             "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
-            "use_visual_references": use_references, "shots": shot_records,
+            "use_visual_references": use_references, "reference_sheets": sheet_records, "shots": shot_records,
         }})
         yield str(video_path), f"Exported {len(shots)} illustrated shots."
 

@@ -8,16 +8,19 @@ Open **Create → Soundstage** to begin.
 After generating a mix, open **Speak → Illustrated video** to export a 720p MP4.
 Choose an Image-tab model and describe the cast, setting, or drawing style in **Art direction**.
 **Plan shots** sends the mix's timed dialogue, available word timings and sound cues to
-the Gemini or OpenAI-compatible writer selected on **Script**. It chooses visual beats,
-cuts and dissolves within your **Maximum shots** budget. **Generate illustrated video**
-plans the shots itself when no plan matches the current mix, including a loaded or
-regenerated one. Click **Plan shots** first to review the times and prompts. Every prompt carries the shared art
-direction and the recurring character, setting and prop descriptions relevant to that shot.
-**Use earlier illustrations as visual references** is on by default. When a subject returns,
-Qwen, P-H3-Image, FLUX 3 and Fibo Dev can use its first illustrated appearance as an edit
-reference, even after a scene change. A shot with no returning subjects starts from text.
-The planner prioritizes subjects when the model has fewer reference slots than the shot needs.
-MOSS-Image uses the text prompts throughout.
+the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art style and a
+continuity bible of the recurring characters, props and locations, then splits the story into
+single-moment widescreen images with cuts and dissolves. **Minimum shots** is a floor: the
+planner adds images wherever the story needs them, up to one per 2 seconds of mix.
+**Generate illustrated video** plans the shots itself when no plan matches the current mix,
+including a loaded or regenerated one. Click **Plan shots** first to review the times and
+prompts. The plan is saved beside the mix, so a reloaded project keeps it.
+**Draw reference sheets first** is on by default. Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw
+each recurring subject once (a character sheet, a prop on a plain backdrop, an empty
+location), then edit every scene from the sheets of the subjects it shows, so faces, outfits,
+props and places stay consistent. When a model has fewer reference slots than a shot needs,
+the subjects the planner mentions first win. MOSS-Image uses the text prompts throughout.
+Every image is drawn at a 16:9 size, whatever the Image tab is set to.
 The export uses the finished soundtrack and saves the video to Media.
 
 ## Compose and generate
