@@ -499,6 +499,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                   "Write, cast and preview your script here. Save the project, then load it in Studio to generate audio.")
         intro("Soundstage · powered by Drama 3", "Turn any text into an audio drama.", detail, "AUDIO DRAMA")
         project = ProjectControls.build()
+        if gpu:
+            gr.Markdown("**Preview:** [Open the new Soundstage page ↗](/soundstage/) to play, review and speak a "
+                        "saved project.", elem_classes=["h3-song-hint"])
         steps = step_strip(STEPS_ID)
         with steps.tabs:
             with steps.step(SCRIPT, "Script"):

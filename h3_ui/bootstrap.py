@@ -196,6 +196,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         if services.soundstage_workspace is not None:
             from h3_ui.drama3.projects import bind_projects
             bind_projects(drama3_components, *services.soundstage_workspace, demo.load)
+            from h3_app.drama3.serving.takes import takes_root
+            from .drama3.page import install_soundstage_page
+
+            store, output_dir = services.soundstage_workspace
+            demo.h3_routes = (*demo.h3_routes, partial(
+                install_soundstage_page, actions=engine_actions, store=store, output_dir=output_dir,
+                takes_dir=lambda: takes_root(services.engine_deps.runtime_config()), interrupt=services.interrupt))
         if app_views.storyboard is not None and services.storyboard_handlers is not None:
             from h3_ui.storyboard.tab import build_storyboard_tab
 

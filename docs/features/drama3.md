@@ -43,6 +43,29 @@ video plays with its mix's subtitles over it and beside it. The newest video for
 whenever the mix is loaded; if the page lost its connection during a long export, click **Show the latest
 video for this mix**.
 
+## Soundstage page (preview)
+
+Soundstage is moving to a page of its own at `/soundstage/`, outside Gradio, as Remake and
+Storyboard did; the tab links to it under the project controls. The page's design is the
+[Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi). So far it holds
+**Mix & review**; Script and Cast & sounds are still edited in the tab, so save the project there
+first. The page opens a saved project and shows:
+
+- **The mix**, with a play button and a timeline: each line on the **Voices** lane in its
+  speaker's color and each sound on the **Sounds** lane, looped beds apart from one-shot effects.
+  Clicking a clip, or an empty spot on a lane, jumps there.
+- **Lines**, highlighted as they are spoken (word by word when the mix has word timings), each
+  marked **New**, **Reused** or **Flagged** (a take that failed its check or has warnings). Filter
+  them by mark; **Follow playback** keeps the spoken line in view.
+- **The picked line** beside them: its take before staging and effects, its warnings,
+  **Regenerate line** and **Play in mix**.
+- **How it sounds**: the speech preset and word-by-word subtitles, saved with the project.
+
+The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Remix** and
+**Interrupt**. They speak the project as last saved, on the same job path as the tab, and the page
+checks on the run, so it carries on if the page is closed. Playing, seeking and picking lines ask
+the server for nothing. The page reads each project's mix and only that mix's takes.
+
 ## Compose and generate
 
 Soundstage works in four steps, laid out like Dub & Translate: **Script**,

@@ -18,16 +18,28 @@ WORD_CLASS = "h3-word"
 def word_spans_html(text: str, words) -> str:
     """``text`` escaped, as one ``<span data-start data-end>`` per aligned word where they fit it."""
     text = str(text or "")
+    pieces = word_pieces(text, words)
+    if pieces is None:
+        return escape(text)
+    lead, timed = pieces
+    return escape(lead) + "".join(f'<span class="{WORD_CLASS}" data-start="{start:.3f}" data-end="{end:.3f}">'
+                                  f"{escape(piece)}</span>" for piece, start, end in timed)
+
+
+def word_pieces(text: str, words) -> tuple[str, list[tuple[str, float, float]]] | None:
+    """``text`` split as the aligned ``words`` cover it: the text before the first word, then each
+    word's text with what follows it, and its (start, end). None when the words do not fit ``text``."""
+    text = str(text or "")
     timed = []
     for word in words or ():
         try:
             unit, start, end = normalized_text(word["text"]), float(word["start"]), float(word["end"])
         except (KeyError, TypeError, ValueError):
-            return escape(text)
+            return None
         if unit:
             timed.append((unit, start, end))
     if not timed:
-        return escape(text)
+        return None
     # (start, end) character ranges of ``text`` for each word: its own letters, then what follows.
     pieces, index, cursor = [], 0, 0
     for unit, start, end in timed:
@@ -39,14 +51,11 @@ def word_spans_html(text: str, words) -> str:
             matched += folded
             index += 1
         if matched != unit or first is None:
-            return escape(text)
+            return None
         pieces.append((first, start, end))
         cursor = index
     if normalized_text(text[cursor:]):
-        return escape(text)
-    out = escape(text[:pieces[0][0]])
-    for number, (first, start, end) in enumerate(pieces):
-        stop = pieces[number + 1][0] if number + 1 < len(pieces) else len(text)
-        out += (f'<span class="{WORD_CLASS}" data-start="{start:.3f}" data-end="{end:.3f}">'
-                f"{escape(text[first:stop])}</span>")
-    return out
+        return None
+    timed = [(text[first:pieces[number + 1][0] if number + 1 < len(pieces) else len(text)], start, end)
+             for number, (first, start, end) in enumerate(pieces)]
+    return text[:pieces[0][0]], timed

@@ -247,12 +247,11 @@ def script_preview_html(script: str, script_mode: str) -> str:
             else "<p>Add a spoken line to preview the script.</p>")
 
 
-def subtitles_html(settings: dict, output) -> str:
-    """The rich view for a result with these snapshot ``settings``, or "" when it has no line timings.
+def timeline_data(settings: dict):
+    """A result's timed lines, their aligned words, each speaker's (tone, pan) and its timed sounds.
 
-    The browser highlights the line playing and moves the timeline's playhead, following the
-    player whose file carries ``output``'s 32-hex id. Results from before line timings were
-    recorded have none.
+    Lines are (speaker, text, start, end) with cues left out; sounds are (name, loop, start, end).
+    Results from before line timings were recorded have no lines.
     """
     entries, pans, words = [], {}, []
     for chunk in settings.get("chunks") or []:
@@ -263,18 +262,34 @@ def subtitles_html(settings: dict, output) -> str:
             pans.setdefault(speaker, chunk["pan"])
         # A take can hold several script lines; results from before line timings show it whole.
         for line in chunk.get("lines") or [chunk]:
-            text = " ".join(_CUE.sub(" ", str(line.get("text", ""))).split())
+            text = clean_line(line.get("text", ""))
             if not text or line.get("start") is None:
                 continue
             start = float(line["start"])
             entries.append((speaker, text, start, float(line.get("end", start))))
             words.append(line.get("words"))
-    if not entries:
-        return ""
     tones = _stage_tones((speaker for speaker, *_ in entries), pans)
     sounds = [(str(sound.get("name") or "Sound"), bool(sound.get("loop")), float(sound["start"]),
                float(sound.get("end", sound["start"])))
               for sound in settings.get("sounds") or [] if sound.get("start") is not None]
+    return entries, words, tones, sounds
+
+
+def clean_line(text) -> str:
+    """A script line as it is heard: cues and tags left out, spaces collapsed."""
+    return " ".join(_CUE.sub(" ", str(text or "")).split())
+
+
+def subtitles_html(settings: dict, output) -> str:
+    """The rich view for a result with these snapshot ``settings``, or "" when it has no line timings.
+
+    The browser highlights the line playing and moves the timeline's playhead, following the
+    player whose file carries ``output``'s 32-hex id. Results from before line timings were
+    recorded have none.
+    """
+    entries, words, tones, sounds = timeline_data(settings)
+    if not entries:
+        return ""
     lines = "".join(
         f'<li data-start="{start:.3f}" data-end="{end:.3f}">'
         f'<span class="h3-subtitle-speaker h3-drama3-tone-{tones[speaker][0]}">{html.escape(speaker)}</span>'

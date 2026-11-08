@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundstage</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app" class="app" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" class="brand-mark"></rect><path d="M7 15v-2M11 18v-8M15 20V8M19 17v-6M23 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+      <span>Soundstage</span>
+    </div>
+    <label class="project-picker">
+      <span class="sr-only">Project</span>
+      <select id="project"></select>
+    </label>
+    <span id="project-state" class="chip"></span>
+    <span class="spacer"></span>
+    <span id="mode" class="chip chip-quiet"></span>
+    <span id="gpu" class="gpu"></span>
+  </header>
+
+  <nav class="steps" aria-label="Steps">
+    <a class="step" id="step-script" href="/" target="_top" title="Edit the script in the Soundstage tab">
+      <span class="step-dot" aria-hidden="true">1</span>
+      <span class="step-text"><strong>Script</strong><span id="script-summary"></span></span>
+    </a>
+    <span class="step-arrow" aria-hidden="true"></span>
+    <a class="step" id="step-cast" href="/" target="_top" title="Edit voices and sounds in the Soundstage tab">
+      <span class="step-dot" aria-hidden="true">2</span>
+      <span class="step-text"><strong>Cast &amp; sounds</strong><span id="cast-summary"></span></span>
+    </a>
+    <span class="step-arrow" aria-hidden="true"></span>
+    <span class="step step-current" aria-current="step">
+      <span class="step-dot" aria-hidden="true">3</span>
+      <span class="step-text"><strong>Mix &amp; review</strong><span id="mix-summary"></span></span>
+    </span>
+    <span class="steps-note">Script and Cast are edited in the Soundstage tab for now. Save the project there, then come back.</span>
+  </nav>
+
+  <main class="main">
+    <section class="card player" id="player" aria-label="Mix"></section>
+    <div class="columns">
+      <section class="card lines" aria-label="Lines">
+        <div class="card-head">
+          <h2>Lines</h2>
+          <div class="seg" role="group" aria-label="Show lines" id="filters"></div>
+          <span class="spacer"></span>
+          <label class="check"><input type="checkbox" id="follow" checked> Follow playback</label>
+        </div>
+        <ol class="line-list" id="lines"></ol>
+      </section>
+      <aside class="side">
+        <section class="card inspector" id="inspector" aria-label="Picked line"></section>
+        <section class="card sound-settings" aria-label="How it sounds">
+          <h2>How it sounds</h2>
+          <p class="muted small">Used the next time you speak or remix this project.</p>
+          <div class="seg" role="group" aria-label="Speech preset" id="presets"></div>
+          <label class="check"><input type="checkbox" id="word-timing"> Word-by-word subtitles</label>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="actionbar">
+    <div class="actionbar-text">
+      <strong id="action-title"></strong>
+      <span id="action-detail" class="muted small"></span>
+    </div>
+    <div class="actionbar-buttons">
+      <button type="button" class="btn" id="interrupt" hidden>Interrupt</button>
+      <button type="button" class="btn" id="remix">Remix</button>
+      <button type="button" class="btn btn-primary" id="speak">Speak</button>
+    </div>
+  </footer>
+</div>
+<div id="empty" class="empty" hidden></div>
+<div id="loading" class="loading" role="status">Opening Soundstage…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<audio id="mix-audio" preload="metadata"></audio>
+<audio id="take-audio" preload="none"></audio>
+<script src="app.js"></script>
+</body>
+</html>
