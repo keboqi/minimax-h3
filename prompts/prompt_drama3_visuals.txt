@@ -23,8 +23,9 @@ prompt, so never repeat it inside shot prompts.
 CONTINUITY BIBLE
 List the recurring or important visible subjects in three dictionaries: characters, props and
 locations. Keys are short lowercase ASCII words without spaces, such as "mara", "old_radio" or
-"rain_alley". Each value is one self-contained line of what never changes, because every entry is
-drawn as a reference sheet before any scene and that sheet guides every later image:
+"rain_alley". Each value is one self-contained line of what never changes. It is written into
+every shot that mentions the key, and each character is also drawn as a portrait that later
+scenes are matched to, so be concrete and visual:
 - characters: start with the name, then gender, age range, face, hair, build, default outfit and
   one signature detail.
 - props: shape, material, colors and distinctive markings.
@@ -39,7 +40,7 @@ of the frame and dwarfing her; a cold rim light hints she is not alone."
 Mention subjects with @key and put only their current, changing state in parentheses:
 @mara(soaked coat, eyes wide with recognition) lifts @old_radio(dial glowing red).
 Never restate what the bible already says. Mention the focal subject first. Mention only subjects
-visible in this image, because each one mentioned is drawn from its reference sheet. Mention the
+visible in this image, because each character mentioned is matched to their portrait. Mention the
 location with its @key too. Follow the story through time: a wet coat, a lamp going out, a broken
 window stays broken.
 

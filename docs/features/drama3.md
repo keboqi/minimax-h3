@@ -18,13 +18,17 @@ planner adds images wherever the story needs them, up to one per 2 seconds of mi
 **Generate illustrated video** plans the shots itself when no plan matches the current mix,
 including a loaded or regenerated one. Click **Plan shots** first to review the times and
 prompts. The plan is saved beside the mix, so a reloaded project keeps it.
-**Draw reference sheets first** is on by default. Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw
-each recurring subject once (a character sheet, a prop on a plain backdrop, an empty
-location), then edit every scene from the sheets of the subjects it shows, so faces, outfits,
-props and places stay consistent. When a model has fewer reference slots than a shot needs,
-the subjects the planner mentions first win. MOSS-Image uses the text prompts throughout.
-Every image is drawn at a 16:9 size, whatever the Image tab is set to.
-The export uses the finished soundtrack and saves the video to Media.
+Every scene is drawn from its text first, with the character, prop and location descriptions
+written into the prompt, at a 16:9 size whatever the Image tab is set to.
+**Keep characters consistent** is on by default. Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one
+square portrait per character, then repaint each finished scene's characters to match their
+portraits, with the scene as the first input so its composition stays. Props and locations
+are never image inputs: an edit model handed a location or a multi-view sheet copies it
+instead of drawing a new scene. When a model has fewer input slots than a shot needs, the
+characters the planner mentions first win. MOSS-Image uses the text prompts throughout.
+The export uses the finished soundtrack and saves the video to Media. The newest video for a
+mix shows whenever the mix is loaded; if the page lost its connection during a long export,
+click **Show the latest video for this mix**.
 
 ## Compose and generate
 

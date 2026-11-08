@@ -90,6 +90,8 @@ def expand_prompt(prompt, known):
     def inline(match):
         key, state = match.group(1), (match.group(2) or "").strip()
         mentioned.append(key)
+        # A state can mention another subject: @mara(holding @radio).
+        state = pattern.sub(inline, state)
         anchor = known[key][1]
         return f"{key} ({anchor}; {state})" if state else f"{key} ({anchor})"
 
@@ -99,10 +101,14 @@ def expand_prompt(prompt, known):
 
 
 def sheet_prompt(kind, key, anchor, art_style, art_direction):
-    """A reference sheet for one recurring subject, drawn before any scene that shows it."""
+    """A reference image for one recurring subject.
+
+    A character gets one centered portrait, never a multi-view sheet: an edit model pastes extra
+    views into the scene it is asked to match.
+    """
     body = {
-        "characters": f"Character reference sheet of {key}: {anchor}. A full-body front view and a head-and-"
-                      "shoulders close-up side by side, neutral standing pose, calm expression.",
+        "characters": f"Portrait of {key}: {anchor}. One single figure from the waist up, facing the viewer, "
+                      "centered, calm expression. Only this one view of this one person.",
         "props": f"Prop reference sheet of {key}: {anchor}. The object alone, centered, shown from the front "
                  "and at a three-quarter angle.",
         "locations": f"Location reference of {key}: {anchor}. An empty wide establishing view that shows its "
