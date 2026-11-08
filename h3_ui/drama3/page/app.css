@@ -338,11 +338,18 @@ button.step:hover { background: var(--raised); }
 button.link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
 .video-stage { position: relative; overflow: hidden; border-radius: 10px; background: #000; aspect-ratio: 16 / 9;
   /* Short enough that the timeline stays in view beneath it. */
-  width: min(100%, calc(56vh * 16 / 9)); margin: 0 auto; }
+  width: min(100%, calc(56vh * 16 / 9)); margin: 0 auto; container-type: inline-size; }
 .video-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 .video-caption { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); max-width: 86%; margin: 0;
-  padding: 6px 14px; border-radius: 8px; background: rgba(0, 0, 0, .66); color: #fff; font-size: clamp(14px, 2.2vw, 22px);
+  padding: 6px 14px; border-radius: 8px; background: rgba(0, 0, 0, .66); color: #fff;
+  /* Sized to the video, times the chosen subtitle size, but never so large a line leaves a small video. */
+  font-size: min(calc(clamp(12px, 2.2cqw, 40px) * var(--caption-scale, 1)), 5cqw); max-height: 88%; overflow: hidden;
   line-height: 1.4; text-align: center; pointer-events: none; }
+.subtitle-controls { display: inline-flex; align-items: center; gap: 10px; }
+.subtitle-size { flex-wrap: nowrap; align-items: center; }
+.subtitle-size button { min-width: 36px; padding: 0 8px; }
+.subtitle-size button:disabled { opacity: .4; cursor: default; }
+.subtitle-size span { min-width: 44px; text-align: center; color: var(--muted); }
 .video-caption .word.spoken { color: #8ee6cf; }
 .video-caption .word.current { background: rgba(142, 230, 207, .25); border-radius: 3px; }
 

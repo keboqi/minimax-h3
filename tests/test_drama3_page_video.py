@@ -109,6 +109,18 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual((video["style"], video["preset"], video["limit"], video["engine"], video["continuity"]),
                          ("Oil paint, thick impasto", "Custom", 64, "flux3", False))
 
+    def test_subtitles_are_shown_by_default_and_their_size_is_kept_in_range(self):
+        self.assertEqual(self.ok(self.client.get(f"{API}/boot"))["video"]["subtitle_sizes"], [50, 200, 10])
+        video = self.project()["video"]
+        self.assertEqual((video["subtitles"], video["subtitle_size"]), (True, 100))
+        video = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={
+            "video_subtitles": False, "video_subtitle_size": 130}))["video"]
+        self.assertEqual((video["subtitles"], video["subtitle_size"]), (False, 130))
+        for asked, kept in ((10, 50), (900, 200)):
+            video = self.ok(self.client.patch(f"{API}/project/video", params=NAME,
+                                              json={"video_subtitle_size": asked}))["video"]
+            self.assertEqual(video["subtitle_size"], kept)
+
     def test_planning_saves_a_plan_for_these_settings(self):
         with patch("h3_app.drama3.visual_plan.write_prompt", return_value=(json.dumps(PLAN), "ok")) as writer:
             run = self.ok(self.client.post(f"{API}/project/video/plan", params=NAME,

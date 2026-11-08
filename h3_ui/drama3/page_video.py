@@ -28,12 +28,15 @@ from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from .page_script import value
+from .page_store import editing
 from .stage_video import latest_export
 from . import visuals
 
 VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
-                "video_subtitles": bool}
+                "video_subtitles": bool, "video_subtitle_size": int}
 LIMITS = (1, 64)
+# The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
+SUBTITLE_SIZES = (50, 200, 10)
 PLAN, RENDER = "plan", "render"
 
 
@@ -52,7 +55,8 @@ def video_settings(data: dict, engines: list) -> dict:
     limit = int(data.get("video_limit") or 16)
     return {"engine": engine, "style": style, "preset": visuals.preset_for(style), "limit": limit,
             "continuity": data.get("video_continuity") is not False,
-            "subtitles": data.get("video_subtitles") is not False}
+            "subtitles": data.get("video_subtitles") is not False,
+            "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
 def video_payload(name: str, data: dict, result, engines: list) -> dict:
@@ -78,7 +82,8 @@ def video_payload(name: str, data: dict, result, engines: list) -> dict:
 def boot_payload(engines: list) -> dict:
     return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
             "styles": visuals.STYLE_PRESETS, "default_style": visuals.DEFAULT_STYLE,
-            "custom_style": visuals.CUSTOM_STYLE, "limits": list(LIMITS), "plan_timeout": visuals.PLAN_TIMEOUT}
+            "custom_style": visuals.CUSTOM_STYLE, "limits": list(LIMITS),
+            "subtitle_sizes": list(SUBTITLE_SIZES), "plan_timeout": visuals.PLAN_TIMEOUT}
 
 
 def _writer(body: dict) -> list[Any]:
@@ -104,13 +109,14 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @app.patch(f"{api}/project/video", include_in_schema=False)
     @guarded
     def save_video_settings(name: str, request: Request, body: dict = Body(...)):
-        data, _ = store.soundstage_project(name)
-        for key, kind in VIDEO_FIELDS.items():
-            if key in body:
-                data[key] = kind(body[key])
-        if "video_limit" in data:
-            data["video_limit"] = max(LIMITS[0], min(LIMITS[1], int(data["video_limit"])))
-        store.save_soundstage_project(name, data)
+        with editing(store, name) as data:
+            for key, kind in VIDEO_FIELDS.items():
+                if key in body:
+                    data[key] = kind(body[key])
+            if "video_limit" in data:
+                data["video_limit"] = max(LIMITS[0], min(LIMITS[1], int(data["video_limit"])))
+            if "video_subtitle_size" in data:
+                data["video_subtitle_size"] = max(SUBTITLE_SIZES[0], min(SUBTITLE_SIZES[1], int(data["video_subtitle_size"])))
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/video/plan", include_in_schema=False)

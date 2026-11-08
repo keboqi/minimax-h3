@@ -110,6 +110,52 @@ class Drama3PageScriptTests(unittest.TestCase):
         self.assertEqual(saved["voice_1_description"], CAST[1]["description"])
         self.assertEqual(saved["shown_slots"], 2)
 
+    def test_changes_saved_while_the_writer_works_are_kept(self):
+        """The writer can take minutes; a clip or setting saved meanwhile outlives its answer."""
+        self.create()
+        self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"},
+                                  json={"text": "Mia called out to Leo across the wet market."}))
+        answer = ("<|speaker:0|>Leo! You kept the stall open?\n<|speaker:1|>Someone has to.", "Rewrote the script.",
+                  CAST, "Night Market")
+
+        def writer(*args, **kwargs):
+            # As a cast job writing a clip, and a settings save, would while the writer works.
+            data, _ = self.store.soundstage_project("Night Market")
+            data["voice_0_audio"] = "made-meanwhile.wav"
+            self.store.save_soundstage_project("Night Market", data)
+            self.ok(self.client.patch(f"{API}/project/settings", params={"name": "Night Market"},
+                                      json={"temperature": 1.2}))
+            return answer
+
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", side_effect=writer):
+            data = self.ok(self.client.post(f"{API}/project/rewrite", params={"name": "Night Market"}, json={}))
+        self.assertEqual(data["script"]["text"], "Mia: Leo! You kept the stall open?\nLeo: Someone has to.")
+        saved, _ = self.store.soundstage_project("Night Market")
+        self.assertEqual((saved["voice_0_audio"], saved["temperature"]), ("made-meanwhile.wav", 1.2))
+        self.assertEqual(saved["voice_1_description"], CAST[1]["description"])
+
+    def test_a_settings_save_waits_for_a_clip_being_written(self):
+        """Every page save takes the project's lock, as a cast job writing a clip does."""
+        from threading import Thread
+
+        from h3_ui.drama3.page_store import project_lock
+
+        self.create()
+        replies = []
+        with project_lock("Night Market"):
+            saving = Thread(target=lambda: replies.append(self.client.patch(
+                f"{API}/project/settings", params={"name": "Night Market"}, json={"top_k": 50})))
+            saving.start()
+            saving.join(0.3)
+            self.assertTrue(saving.is_alive(), "The settings save didn't wait for the project.")
+            data, _ = self.store.soundstage_project("Night Market")
+            data["voice_0_audio"] = "made-meanwhile.wav"
+            self.store.save_soundstage_project("Night Market", data)
+        saving.join(10)
+        self.ok(replies[0])
+        saved, _ = self.store.soundstage_project("Night Market")
+        self.assertEqual((saved["voice_0_audio"], saved["top_k"]), ("made-meanwhile.wav", 50))
+
     def test_a_failed_rewrite_changes_nothing_but_keeps_the_writer_choices(self):
         self.create()
         self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"}, json={"text": "A story."}))

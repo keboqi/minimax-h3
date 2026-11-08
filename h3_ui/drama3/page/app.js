@@ -171,6 +171,51 @@
     $("mix-summary").textContent = result ? `${clock(result.duration)} · ${result.takes.length} takes` : "Not spoken yet";
   }
 
+  // -- Subtitles on the video: shown or hidden (C), and their size ------------
+  function setSubtitles(on) {
+    state.project.video.subtitles = on;
+    saveVideo({video_subtitles: on});
+    const box = $("subtitles-on");
+    if (box) box.checked = on;
+    for (const button of document.querySelectorAll("#subtitle-size button")) button.disabled = !on || sizeLimit(button);
+    sync();
+  }
+
+  function sizeLimit(button) {
+    const [low, high] = state.boot.video.subtitle_sizes;
+    const size = state.project.video.subtitle_size;
+    return button.dataset.step === "-1" ? size <= low : size >= high;
+  }
+
+  function setSubtitleSize(direction) {
+    const [low, high, step] = state.boot.video.subtitle_sizes;
+    const video = state.project.video;
+    video.subtitle_size = Math.min(high, Math.max(low, video.subtitle_size + direction * step));
+    $("video-stage")?.style.setProperty("--caption-scale", String(video.subtitle_size / 100));
+    $("subtitle-size-value").textContent = `${video.subtitle_size}%`;
+    for (const button of document.querySelectorAll("#subtitle-size button")) button.disabled = sizeLimit(button);
+    saveVideo({video_subtitle_size: video.subtitle_size}, {later: true});
+  }
+
+  function subtitleControls() {
+    const video = state.project.video;
+    const sizeButton = (direction, label, text) => {
+      const button = h("button", {type: "button", "data-step": String(direction), "aria-label": label, title: label,
+                                  onclick: () => setSubtitleSize(direction)}, text);
+      button.disabled = !video.subtitles || sizeLimit(button);
+      return button;
+    };
+    return h("div", {class: "subtitle-controls"},
+      h("label", {class: "check", title: "Show or hide the subtitles (C)"},
+        h("input", {type: "checkbox", id: "subtitles-on", checked: video.subtitles,
+                    onchange: (event) => setSubtitles(event.target.checked)}),
+        "Subtitles"),
+      h("div", {class: "seg subtitle-size", id: "subtitle-size", role: "group", "aria-label": "Subtitle size"},
+        sizeButton(-1, "Smaller subtitles", "A−"),
+        h("span", {class: "num small", id: "subtitle-size-value", "aria-live": "polite"}, `${video.subtitle_size}%`),
+        sizeButton(1, "Larger subtitles", "A+")));
+  }
+
   function renderPlayer() {
     const box = $("player");
     const result = state.project.result;
@@ -192,16 +237,16 @@
       state.project.video?.latest ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
         ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),
                                                        onclick: () => setMediaMode(mode)}, mode === "audio" ? "Audio" : "Video"))) : null,
-      state.mediaMode === "video" ? h("label", {class: "check"}, h("input", {type: "checkbox", checked: state.project.video.subtitles,
-        onchange: (event) => { state.project.video.subtitles = event.target.checked; saveVideo({video_subtitles: event.target.checked}); sync(); }}),
-        "Subtitles on the video") : null,
+      state.mediaMode === "video" ? subtitleControls() : null,
       state.mediaMode === "video"
         ? h("a", {class: "btn btn-small", href: state.project.video.latest.url, download: state.project.video.latest.file}, "Download video")
         : h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
     let stage = null;
     if (state.mediaMode === "video") {
       mixVideo.hidden = false;
-      stage = h("div", {class: "video-stage"}, mixVideo, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
+      stage = h("div", {class: "video-stage", id: "video-stage",
+                        style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
+                mixVideo, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
       mixVideo.onclick = () => (mixVideo.paused ? mixVideo.play() : mixVideo.pause());
     } else {
       mixVideo.hidden = true;
@@ -490,7 +535,11 @@
     if (!Object.keys(body).length) return;
     try {
       const project = await api(named("/project/video"), {method: "PATCH", body});
+      // What was chosen while this save was on its way stays, and saves next.
+      const {subtitles, subtitle_size: size} = state.project.video;
       state.project.video = project.video;
+      if ("video_subtitles" in videoEdits) state.project.video.subtitles = subtitles;
+      if ("video_subtitle_size" in videoEdits) state.project.video.subtitle_size = size;
       renderVideo();
     } catch (error) {
       toast(error.message);
@@ -778,8 +827,7 @@
   async function startAuto() {
     $("auto-menu").open = false;
     if (isRunning() || castRunning()) return;
-    await flushScript();
-    await flushSlots();
+    await flushEdits();
     try {
       const data = await api(named("/auto"), {method: "POST", body: {writer: writerService()}});
       state.run = data.run;
@@ -1941,17 +1989,32 @@
     }
   }
 
-  async function saveSettings(values) {
-    try {
-      const project = await api(named("/project/settings"), {method: "PATCH", body: values});
-      state.project.settings = project.settings;
-      renderSettings();
-    } catch (error) {
-      toast(error.message);
-    }
+  // The speech settings save on change; Speak waits for a save still on its way.
+  let settingsSave = Promise.resolve();
+  function saveSettings(values) {
+    const save = settingsSave.then(async () => {
+      try {
+        const project = await api(named("/project/settings"), {method: "PATCH", body: values});
+        state.project.settings = project.settings;
+        renderSettings();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    settingsSave = save;
+    return save;
+  }
+
+  /** Save every edit still waiting, so a run speaks what the page shows. */
+  async function flushEdits() {
+    await flushScript();
+    await flushSlots();
+    await settingsSave;
   }
 
   async function speak(action, line) {
+    if (isRunning()) return;
+    await flushEdits();
     if (isRunning()) return;
     try {
       const data = await api(named("/speak"), {method: "POST", body: {action, line}});
@@ -2085,6 +2148,10 @@
     document.addEventListener("keydown", (event) => {
       if (state.screen !== "mix" || event.target.closest("input, select, textarea, button") || !state.project?.result) return;
       if (event.key === " ") { event.preventDefault(); if (mix.paused) mix.play(); else mix.pause(); }
+      if ((event.key === "c" || event.key === "C") && !event.ctrlKey && !event.metaKey && !event.altKey
+          && state.mediaMode === "video" && state.project.video) {
+        setSubtitles(!state.project.video.subtitles);
+      }
     });
     try {
       state.boot = await api("/boot");

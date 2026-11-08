@@ -31,6 +31,7 @@ from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
 from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
 from .page_library import install_library_routes
+from .page_store import editing
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line, timeline_data
 
@@ -273,14 +274,13 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def save_settings(name: str, request: Request, body: dict = Body(...)):
         """Keep the speech settings with the project, as Save project in the tab does."""
         owner = owner_of(request)
-        data, _ = store.soundstage_project(name)
-        for key, kind in SETTING_FIELDS.items():
-            if key in body:
-                data[key] = kind(body[key])
-                if key in SETTING_RANGES:
-                    low, high, _step = SETTING_RANGES[key]
-                    data[key] = kind(min(high, max(low, data[key])))
-        store.save_soundstage_project(name, data)
+        with editing(store, name) as data:
+            for key, kind in SETTING_FIELDS.items():
+                if key in body:
+                    data[key] = kind(body[key])
+                    if key in SETTING_RANGES:
+                        low, high, _step = SETTING_RANGES[key]
+                        data[key] = kind(min(high, max(low, data[key])))
         return payload(owner, name)
 
     # Files -----------------------------------------------------------------

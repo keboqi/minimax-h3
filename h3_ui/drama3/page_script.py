@@ -19,6 +19,7 @@ from h3_app.prompt_writers import drama3 as writer
 
 from ..storyboard.page import guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
+from .page_store import edit_project, editing, project_lock
 from .result_view import script_preview_settings
 
 SKIP = object()
@@ -163,11 +164,17 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     ``body`` may carry writer choices (kept either way) and the writer service. Returns the
     script before, the writer's status and whether it failed; a failed rewrite changes nothing
     else. Raises when there is nothing to rewrite.
+
+    The writer can take minutes, so the project isn't held while it works: its answer is written
+    into the project as saved when it arrives, keeping clips and settings changed meanwhile.
     """
-    data, _ = store.soundstage_project(name)
-    for key, kind in WRITER_FIELDS.items():
-        if key in body:
-            data[key] = kind(body[key])
+    def choose(data):
+        for key, kind in WRITER_FIELDS.items():
+            if key in body:
+                data[key] = kind(body[key])
+        return dict(data)
+
+    data = edit_project(store, name, choose)  # The writer choices stay, whatever it answers.
     before = data.get("text") or ""
     if not before.strip():
         raise H3Error("Write or paste some text first.")
@@ -177,16 +184,17 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
             _setting(data, "writer_workflow"), int(_setting(data, "max_batch_lines")),
             bool(_setting(data, "strict_source")), _setting(data, "smart_budget_profile")))
     except Exception as exc:  # The writer calls out to hosted services and can fail any way.
-        store.save_soundstage_project(name, data)  # The writer choices stay.
         return before, f"{writer.DRAMA3_PROMPT_FAILED} {exc}", True
     status = str(outputs[1])
     if failed(status):
-        store.save_soundstage_project(name, data)
         return before, status, True
-    _apply_cast(data, outputs)
-    data["prepared"] = True
-    sync_sounds(actions, data)
-    store.save_soundstage_project(name, data)
+
+    def keep(current):
+        _apply_cast(current, outputs)
+        current["prepared"] = True
+        sync_sounds(actions, current)
+
+    edit_project(store, name, keep)
     return before, status, False
 
 
@@ -203,12 +211,9 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
                 data[key] = kind(body[key])
 
     def answered(request, name, data, before, status):
-        """Save a writer or example answer; a failed one changes nothing."""
+        """Answer for a writer reply the caller saved; a failed one changed nothing but the writer choices."""
         if failed(status):
             return {**payload(owner_of(request), name), "status": status, "failed": True}
-        data["prepared"] = True
-        sync_sounds(actions, data)
-        store.save_soundstage_project(name, data)
         return {**payload(owner_of(request), name), "status": status, "failed": False, "previous": before}
 
     @app.post(f"{api}/projects", include_in_schema=False)
@@ -217,9 +222,10 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         name = " ".join(str(body.get("name") or "").split())
         if not name:
             raise H3Error("Enter a project name.")
-        if any(existing == name for existing, _ in store.soundstage_projects()):
-            raise H3Error(f"A project named {name} already exists.")
-        store.save_soundstage_project(name, dict(NEW_PROJECT))
+        with project_lock(name):
+            if any(existing == name for existing, _ in store.soundstage_projects()):
+                raise H3Error(f"A project named {name} already exists.")
+            store.save_soundstage_project(name, dict(NEW_PROJECT))
         return payload(owner_of(request), name)
 
     @app.patch(f"{api}/project/script", include_in_schema=False)
@@ -228,16 +234,15 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         """Keep the script, title, script mode and writer choices; a changed script needs rewriting again."""
         if "script_mode" in body and body["script_mode"] not in writer.DRAMA3_SCRIPT_MODES:
             raise H3Error("Unknown script mode.")
-        data = load(name)
-        before = (data.get("text"), data.get("script_mode"))
-        for key, kind in SCRIPT_FIELDS.items():
-            if key in body:
-                data[key] = kind(body[key])
-        writer_settings(data, body)
-        if (data.get("text"), data.get("script_mode")) != before:
-            data["prepared"] = False
-            sync_sounds(actions, data)
-        store.save_soundstage_project(name, data)
+        with editing(store, name) as data:
+            before = (data.get("text"), data.get("script_mode"))
+            for key, kind in SCRIPT_FIELDS.items():
+                if key in body:
+                    data[key] = kind(body[key])
+            writer_settings(data, body)
+            if (data.get("text"), data.get("script_mode")) != before:
+                data["prepared"] = False
+                sync_sounds(actions, data)
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/rewrite", include_in_schema=False)
@@ -262,19 +267,21 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
     @app.post(f"{api}/project/reply", include_in_schema=False)
     @guarded
     def apply_reply(name: str, request: Request, body: dict = Body(...)):
-        data = load(name)
-        writer_settings(data, body)
         reply = str(body.get("reply") or "")
         if not reply.strip():
             raise H3Error("Paste the chat model's reply first.")
-        before = data.get("text") or ""
-        # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
-        outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),
-                                                         *writer_slots(data, clip),
-                                                         strict_source=bool(_setting(data, "strict_source"))))
-        status = str(outputs[1])
-        if not failed(status):
-            _apply_cast(data, outputs)
+        with editing(store, name) as data:
+            writer_settings(data, body)
+            before = data.get("text") or ""
+            # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
+            outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),
+                                                             *writer_slots(data, clip),
+                                                             strict_source=bool(_setting(data, "strict_source"))))
+            status = str(outputs[1])
+            if not failed(status):
+                _apply_cast(data, outputs)
+                data["prepared"] = True
+                sync_sounds(actions, data)
         return answered(request, name, data, before, status)
 
     @app.post(f"{api}/project/example", include_in_schema=False)
@@ -285,15 +292,14 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         loader = loaders.get(body.get("example"))
         if loader is None:
             raise H3Error("Unknown example.")
-        data = load(name)
-        before = data.get("text") or ""
-        outputs = list(loader(_setting(data, "speaker_group")))
-        rest = _apply_cast(data, outputs)
-        data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
-        meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]
-        _apply_sounds(data, meta, rest[2 + 3 * DRAMA3_SOUND_SLOTS:])
-        data["prepared"] = True
-        store.save_soundstage_project(name, data)
+        with editing(store, name) as data:
+            before = data.get("text") or ""
+            outputs = list(loader(_setting(data, "speaker_group")))
+            rest = _apply_cast(data, outputs)
+            data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
+            meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]
+            _apply_sounds(data, meta, rest[2 + 3 * DRAMA3_SOUND_SLOTS:])
+            data["prepared"] = True
         return {**payload(owner_of(request), name), "status": str(outputs[1]), "failed": False, "previous": before}
 
     @app.post(f"{api}/preview", include_in_schema=False)

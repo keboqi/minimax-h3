@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
-from threading import Lock
 from typing import Any, Callable
 import uuid
 
@@ -32,6 +31,7 @@ from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
 from .page_script import value, SKIP
+from .page_store import edit_project, project_lock
 
 def _keep_clip(path, directory: Path) -> str:
     """Keep a clip with the project's clips under its content digest; returns its file name."""
@@ -180,14 +180,9 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     from h3_app.drama3 import speakers as drama3_speakers
 
     runs = Runs(busy="This project is already making voices or sounds.")
-    lock = Lock()  # Each change reads, edits and saves the whole project.
 
     def edit(name: str, change: Callable[[dict], Any]):
-        with lock:
-            data, _ = store.soundstage_project(name)
-            result = change(data)
-            store.save_soundstage_project(name, data)
-            return result
+        return edit_project(store, name, change)
 
     def match_saved(data: dict, slot: int) -> None:
         """Give a voiceless speaker the saved voice of the same name in the group (or Global), as the tab does."""
@@ -548,7 +543,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     def save_all(name: str) -> str:
         """Keep every voiced speaker in the selected group and use the saved voice, as the tab's Save all does."""
         saved, errors = 0, []
-        with lock:
+        with project_lock(name):
             data, _ = store.soundstage_project(name)
             group = _setting(data, "speaker_group")
             for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):

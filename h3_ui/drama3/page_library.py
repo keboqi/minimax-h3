@@ -23,6 +23,7 @@ from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from .controls import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
 from .page_script import SKIP, value
+from .page_store import editing
 
 MAX_TAKES = 4
 
@@ -55,14 +56,10 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
         """Point the project's slots that used ``old`` at ``new``, or let them go when it was deleted."""
         if not project:
             return
-        data, _ = store.soundstage_project(project)
-        changed = False
-        for slot in range(DRAMA3_VOICE_SLOTS):
-            if data.get(f"voice_{slot}_preset") == old:
-                data[f"voice_{slot}_preset"] = new or UPLOAD_VOICE
-                changed = True
-        if changed:
-            store.save_soundstage_project(project, data)
+        with editing(store, project) as data:
+            for slot in range(DRAMA3_VOICE_SLOTS):
+                if data.get(f"voice_{slot}_preset") == old:
+                    data[f"voice_{slot}_preset"] = new or UPLOAD_VOICE
 
     def answer(request: Request, project: str | None, message: str, **extra):
         reply = {"message": message, **extra}
@@ -136,10 +133,9 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
         if project:
             for preset in removed:
                 repoint(project, preset.key, None)
-            data, _ = store.soundstage_project(project)
-            if (data.get("speaker_group") or "Global").casefold() == group.casefold():
-                data["speaker_group"] = "Global"
-                store.save_soundstage_project(project, data)
+            with editing(store, project) as data:
+                if (data.get("speaker_group") or "Global").casefold() == group.casefold():
+                    data["speaker_group"] = "Global"
         return answer(request, project, f'Deleted group "{group}" and its {len(removed)} saved speakers.')
 
     @app.post(f"{api}/library/sound/delete", include_in_schema=False)
@@ -150,10 +146,9 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
         drama3_sounds.delete_sound(name, runtime())
         project = body.get("project")
         if project:
-            data, _ = store.soundstage_project(project)
-            for key in [key for key, item in data.items() if key.startswith("sound_") and key.endswith("_preset") and item == name]:
-                data[key] = None
-            store.save_soundstage_project(project, data)
+            with editing(store, project) as data:
+                for key in [key for key, item in data.items() if key.startswith("sound_") and key.endswith("_preset") and item == name]:
+                    data[key] = None
         return answer(request, project, f'Deleted saved sound "{name}".')
 
     # Try new voices ----------------------------------------------------------

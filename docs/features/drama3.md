@@ -144,8 +144,11 @@ to Media, where a selected mix with an illustrated video offers the same Audio/V
 
 Once the mix has a video, **Audio** and **Video** above the timeline switch the player, keeping the
 position. Video plays the newest video for the mix with the line being spoken over it, word by word
-when the mix has word timings; **Subtitles on the video** turns that off. The timeline and lines
-follow the video as they follow the audio, and **Download video** saves it.
+when the mix has word timings. **Subtitles** shows or hides those lines (C does the same while
+the video plays), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width; both
+are saved with the project. The subtitles are drawn over the player only: **Download video** saves
+the video without them. The timeline and lines
+follow the video as they follow the audio.
 
 ## Scripts, takes and timings
 
