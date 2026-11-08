@@ -11,7 +11,11 @@
   const mix = $("mix-audio");
   const takeAudio = $("take-audio");
 
-  const state = {boot: null, project: null, picked: 0, filter: "all", run: null, poll: null, busy: false};
+  const state = {boot: null, project: null, picked: 0, filter: "all", run: null, poll: null, busy: false,
+                 screen: "script", saving: null, saveTimer: null, writing: false, writerResult: null,
+                 estimate: null, estimateTimer: null};
+  const SCREENS = ["script", "mix"];
+  const shortMode = (mode) => (mode === state.boot.advanced ? "Advanced" : "Basic");
 
   // -- Helpers ---------------------------------------------------------------
   function h(tag, attrs = {}, ...children) {
@@ -121,7 +125,13 @@
       h("option", {value: project.name, selected: project.name === state.project.name},
         project.name + (project.generated ? "" : " · Draft"))));
     $("project-state").textContent = state.project.result ? "Generated" : "Draft";
-    $("mode").textContent = `${state.project.script_mode} script`;
+    const mode = state.project.script.script_mode;
+    $("mode").replaceChildren(...state.boot.script_modes.map((option) => h("button", {
+      type: "button", "aria-pressed": String(option === mode),
+      title: option === state.boot.advanced ? "Dialogue plus sound effects, music and vocal effects"
+                                            : "Dialogue with expression cues; sound tags are kept but ignored",
+      onclick: () => option !== mode && saveScript({script_mode: option}, {now: true}),
+    }, shortMode(option))));
     const gpu = $("gpu");
     gpu.dataset.ready = String(state.boot.gpu);
     gpu.textContent = state.boot.gpu ? "GPU ready" : "No GPU here";
@@ -129,16 +139,22 @@
 
   function renderSteps() {
     const project = state.project;
+    for (const screen of SCREENS) {
+      const step = $(`step-${screen}`);
+      if (screen === state.screen) step.setAttribute("aria-current", "step");
+      else step.removeAttribute("aria-current");
+    }
     $("script-summary").textContent = project.lines ? `${project.lines} lines` : "No script yet";
     $("step-script").dataset.state = project.lines ? "done" : "needs";
     const missing = project.cast.filter((speaker) => !speaker.ready).length;
     const sounds = project.sounds.length;
     const silent = project.sounds.filter((sound) => !sound.ready).length;
-    const parts = [missing ? `${missing} voice${missing > 1 ? "s" : ""} missing`
-                           : `${project.cast.length} voice${project.cast.length === 1 ? "" : "s"}`];
+    const parts = [!project.cast.length ? "No cast yet"
+                   : missing ? `${missing} voice${missing > 1 ? "s" : ""} missing`
+                   : `${project.cast.length} voice${project.cast.length === 1 ? "" : "s"}`];
     if (sounds) parts.push(silent ? `${silent} sound${silent > 1 ? "s" : ""} to make` : `${sounds} sounds`);
     $("cast-summary").textContent = parts.join(" · ");
-    $("step-cast").dataset.state = missing ? "needs" : "done";
+    $("step-cast").dataset.state = missing || !project.cast.length ? "needs" : "done";
     const result = project.result;
     $("mix-summary").textContent = result ? `${clock(result.duration)} · ${result.takes.length} takes` : "Not spoken yet";
   }
@@ -306,6 +322,14 @@
   function isRunning() { return Boolean(state.run?.active); }
 
   function renderActions() {
+    const onScript = state.screen === "script";
+    $("estimate").hidden = !onScript;
+    $("action-text").hidden = onScript;
+    for (const id of ["speak", "remix", "interrupt"]) if (onScript) $(id).hidden = true;
+    $("to-mix").hidden = !onScript;
+    $("to-cast").hidden = !onScript;
+    if (onScript) { renderEstimate(); return; }
+    $("speak").hidden = false;
     const project = state.project;
     const result = project.result;
     const running = isRunning();
@@ -346,8 +370,11 @@
   }
 
   function renderAll() {
+    $("screen-script").hidden = state.screen !== "script";
+    $("screen-mix").hidden = state.screen !== "mix";
     renderHeader();
     renderSteps();
+    renderScript();
     renderPlayer();
     renderFilters();
     renderLines();
@@ -472,11 +499,18 @@
 
   // -- Projects and runs -----------------------------------------------------
   async function loadProject(name, {keepPick = false} = {}) {
+    await flushScript();
     const project = await api(`/project?name=${encodeURIComponent(name)}`);
-    const changed = state.project?.name !== project.name || state.project?.result?.version !== project.result?.version;
+    const switched = state.project?.name !== project.name;
+    const changed = switched || state.project?.result?.version !== project.result?.version;
     state.project = project;
     state.run = project.run;
     if (!keepPick || !project.result || state.picked >= project.result.lines.length) state.picked = 0;
+    if (switched) {
+      state.writerResult = null;
+      state.estimate = null;
+      if (!location.hash) state.screen = project.result ? "mix" : "script";
+    }
     try { localStorage.setItem(LAST_PROJECT, name); } catch { /* Storage may be blocked. */ }
     if (changed) {
       mix.pause();
@@ -491,7 +525,370 @@
       lastActive = -1;
     }
     renderAll();
+    if (switched) queueEstimate(0);
     if (isRunning()) poll();
+  }
+
+  function show(screen) {
+    if (!SCREENS.includes(screen) || !state.project) return;
+    if (screen !== state.screen) window.scrollTo({top: 0});
+    state.screen = screen;
+    if (location.hash !== `#${screen}`) history.replaceState(null, "", `#${screen}`);
+    if (screen !== "mix") { mix.pause(); takeAudio.pause(); }
+    renderAll();
+    if (screen === "script") queueEstimate(0);
+  }
+
+  // -- Script ----------------------------------------------------------------
+  const NAME = /^(\s*)([^\s:：<>[\]{}|][^:：<>[\]{}|\n]{0,39}?)(\s*[:：])/;
+  // A sound tag is colored with its description: <sound name="rain">Steady rain</sound>.
+  const TOKEN = /(<sound\b[^>]*>(?:[^<\n]*<\/sound>)?|<\/sound>)|(<\|[^|]*\|>|<[^>]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/g;
+  const escapeHtml = (text) => text.replace(/[&<>"]/g, (char) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[char]);
+
+  /** Speakers in the order the script first names them, with the result view's colors. */
+  function scriptSpeakers(text) {
+    const narrators = new Set(state.boot.narrators);
+    const order = new Map();
+    for (const line of text.split("\n")) {
+      const match = NAME.exec(line);
+      if (!match) continue;
+      const name = match[2].trim();
+      const entry = order.get(name) || {name, count: 0};
+      entry.count += 1;
+      order.set(name, entry);
+    }
+    let character = 0;
+    const cast = new Set(state.project.cast.map((speaker) => speaker.name.trim().toLowerCase()));
+    const numbered = /^speaker\s+\d+$/i;
+    return [...order.values()].map((entry) => {
+      const narrator = narrators.has(entry.name.toLowerCase());
+      const tone = narrator ? "narrator" : String(character++ % 8);
+      // A name the cast doesn't have is an error when speaking; "Speaker 2" means slot 2.
+      const known = !state.project.cast.length || cast.has(entry.name.toLowerCase()) || numbered.test(entry.name);
+      return {...entry, tone, known};
+    });
+  }
+
+  function highlight(text, speakers) {
+    const byName = new Map(speakers.map((speaker) => [speaker.name, speaker]));
+    // A trailing newline needs a line of its own in the mirror, or the caret's last line jumps.
+    return text.split("\n").map((line) => {
+      let lead = "";
+      const match = NAME.exec(line);
+      if (match) {
+        const speaker = byName.get(match[2].trim());
+        const style = speaker ? ` style="color: var(--tone-${speaker.tone})"` : "";
+        const unknown = speaker && !speaker.known ? " tok-unknown" : "";
+        lead = `${escapeHtml(match[1])}<span class="tok-name${unknown}"${style}>${escapeHtml(match[2])}</span>${escapeHtml(match[3])}`;
+        line = line.slice(match[0].length);
+      }
+      let out = "", cursor = 0;
+      for (const token of line.matchAll(TOKEN)) {
+        out += escapeHtml(line.slice(cursor, token.index));
+        const kind = token[1] ? "sound" : token[2] ? "tag" : token[3] ? "cue" : "effect";
+        out += `<span class="tok-${kind}">${escapeHtml(token[0])}</span>`;
+        cursor = token.index + token[0].length;
+      }
+      return lead + out + escapeHtml(line.slice(cursor));
+    }).join("\n") + "\n";
+  }
+
+  function paintEditor() {
+    const area = $("script-text");
+    const speakers = scriptSpeakers(area.value);
+    $("script-mirror").innerHTML = highlight(area.value, speakers);
+    area.style.height = "auto";
+    area.style.height = `${Math.max(420, area.scrollHeight)}px`;
+    $("speakers").replaceChildren(...speakers.map((speaker) => h("span", {
+      class: `speaker-chip${speaker.known ? "" : " unknown"}`,
+      title: speaker.known ? `${speaker.count} line${speaker.count > 1 ? "s" : ""}` : "Not in the cast: this line can't be spoken",
+    }, h("i", {style: {background: toneColor(speaker.tone)}}), speaker.name,
+       h("span", {class: "count"}, speaker.known ? speaker.count : "not in cast"))));
+  }
+
+  function renderWriter() {
+    const writer = state.project.script.writer;
+    const choose = (body) => () => saveScript(body, {now: true});
+    $("speaker-mode").replaceChildren(...state.boot.speaker_modes.map((mode) => h("button", {
+      type: "button", "aria-pressed": String(writer.speaker_mode === mode), onclick: choose({speaker_mode: mode}),
+    }, mode)));
+    $("workflows").replaceChildren(...state.boot.workflows.map((workflow) => h("button", {
+      type: "button", class: "workflow", "aria-pressed": String(writer.writer_workflow === workflow.id),
+      onclick: choose({writer_workflow: workflow.id}),
+    }, h("strong", {}, workflow.id.replace(/^Guided \((.*)\)$/, (_, kind) => kind[0].toUpperCase() + kind.slice(1))),
+       h("span", {}, workflow.note))));
+    $("strict").checked = writer.strict_source;
+    const batch = state.boot.batch;
+    const guided = writer.writer_workflow !== state.boot.workflows[0].id;
+    const smart = writer.writer_workflow === state.boot.smart_workflow;
+    const count = h("span", {class: "num small"}, writer.max_batch_lines);
+    const service = writerService();
+    const update = (key) => (event) => storeWriterService({[key]: event.target.value});
+    const backend = service.prompt_writer_backend || "Gemini";
+    $("writer-more").replaceChildren(...[
+      h("label", {class: "field"}, h("span", {class: "label"}, "Writer service"),
+        h("select", {onchange: (event) => { storeWriterService({prompt_writer_backend: event.target.value}); renderWriter(); }},
+          ["Gemini", "OpenAI-compatible"].map((name) => h("option", {selected: name === backend}, name)))),
+      backend === "Gemini" ? [
+        h("label", {class: "field"}, h("span", {class: "label"}, "Gemini model"),
+          h("select", {onchange: update("gemini_prompt_model")}, state.boot.writer.gemini_models.map((name) =>
+            h("option", {selected: name === (service.gemini_prompt_model || state.boot.writer.gemini_model)}, name)))),
+        h("label", {class: "field"}, h("span", {class: "label"}, "Gemini API key (optional)"),
+          h("input", {type: "password", autocomplete: "off", value: service.gemini_api_key || "", oninput: update("gemini_api_key")})),
+      ] : [
+        h("label", {class: "field"}, h("span", {class: "label"}, "Model"),
+          h("input", {value: service.openai_model || "", placeholder: state.boot.writer.openai_models[0], oninput: update("openai_model")})),
+        h("label", {class: "field"}, h("span", {class: "label"}, "API key (optional)"),
+          h("input", {type: "password", autocomplete: "off", value: service.openai_api_key || "", oninput: update("openai_api_key")})),
+        h("label", {class: "field"}, h("span", {class: "label"}, "Base URL (optional)"),
+          h("input", {value: service.openai_base_url || "", oninput: update("openai_base_url")})),
+      ],
+      h("p", {class: "muted small"}, "Leave a key empty to use the server's. Keys stay in this browser tab only."),
+      guided ? h("label", {class: "field"}, h("span", {class: "label"}, "Guided batch lines"),
+        h("span", {class: "range-row"},
+          h("input", {type: "range", min: batch.min, max: batch.max, step: 5, value: writer.max_batch_lines,
+                      oninput: (event) => { count.textContent = event.target.value; },
+                      onchange: (event) => saveScript({max_batch_lines: Number(event.target.value)}, {now: true})}),
+          count)) : null,
+      smart ? h("label", {class: "field"}, h("span", {class: "label"}, "Smart budget profile"),
+        h("select", {onchange: (event) => saveScript({smart_budget_profile: event.target.value}, {now: true})},
+          state.boot.budget_profiles.map((name) => h("option", {selected: name === writer.smart_budget_profile}, name)))) : null,
+    ].flat().filter(Boolean));
+    const rewrite = $("rewrite");
+    rewrite.disabled = state.writing;
+    if (!state.writing) rewrite.textContent = "Rewrite script";
+  }
+
+  function renderWriterResult() {
+    const box = $("writer-result");
+    const result = state.writerResult;
+    box.hidden = !result;
+    if (!result) return;
+    box.classList.toggle("failed", result.failed);
+    box.replaceChildren(
+      h("div", {class: "writer-result-head"},
+        h("strong", {}, result.failed ? "Script unchanged" : result.label),
+        h("span", {class: "spacer"}),
+        result.previous !== undefined && !result.failed
+          ? h("button", {type: "button", class: "btn btn-small", onclick: undoWriter}, "Undo") : null,
+        h("button", {type: "button", class: "btn btn-icon", "aria-label": "Dismiss",
+                     onclick: () => { state.writerResult = null; renderWriterResult(); }}, "×")),
+      h("p", {}, result.status));
+  }
+
+  function renderScript() {
+    const script = state.project.script;
+    const area = $("script-text");
+    // Never replace what is being typed; a saved answer from the server is the same text anyway.
+    if (document.activeElement !== area || state.saveTimer === null) area.value = script.text;
+    if (document.activeElement !== $("title")) $("title").value = script.title;
+    $("example-items").replaceChildren(...state.boot.examples.map((example) => h("button", {
+      type: "button", onclick: () => loadExample(example),
+    }, example.label)));
+    paintEditor();
+    renderWriter();
+    renderWriterResult();
+    renderSaveState();
+  }
+
+  function renderSaveState() {
+    const labels = {pending: "Unsaved changes", saving: "Saving…", saved: "All changes saved", failed: "Not saved"};
+    $("save-state").textContent = labels[state.saving] || "";
+  }
+
+  // Script edits save on their own, a moment after typing stops.
+  let pendingScript = {};
+  function saveScript(body, {now = false} = {}) {
+    pendingScript = {...pendingScript, ...body};
+    state.saving = "pending";
+    renderSaveState();
+    clearTimeout(state.saveTimer);
+    state.saveTimer = setTimeout(() => flushScript(), now ? 0 : 800);
+  }
+
+  async function flushScript() {
+    if (state.saveTimer === null) return;
+    clearTimeout(state.saveTimer);
+    state.saveTimer = null;
+    const body = pendingScript;
+    pendingScript = {};
+    if (!Object.keys(body).length || !state.project) return;
+    const name = state.project.name;
+    state.saving = "saving";
+    renderSaveState();
+    try {
+      const project = await api(`/project/script?name=${encodeURIComponent(name)}`, {method: "PATCH", body});
+      if (state.project.name !== name) return;
+      state.saving = state.saveTimer === null ? "saved" : "pending";
+      const text = $("script-text").value;
+      Object.assign(state.project, {...project, run: state.project.run});
+      // Keep what was typed while the save was on its way.
+      if (state.saveTimer !== null) state.project.script.text = text;
+      renderHeader();
+      renderSteps();
+      if (body.script_mode || body.text !== undefined) queueEstimate();
+      if (!("text" in body) && !("title" in body)) renderScript();
+      else renderSaveState();
+    } catch (error) {
+      state.saving = "failed";
+      renderSaveState();
+      toast(`Not saved: ${error.message}`);
+    }
+  }
+
+  const WRITER_KEY = "h3-soundstage-writer";
+  function writerService() {
+    try { return JSON.parse(sessionStorage.getItem(WRITER_KEY)) || {}; } catch { return {}; }
+  }
+  function storeWriterService(values) {
+    try { sessionStorage.setItem(WRITER_KEY, JSON.stringify({...writerService(), ...values})); } catch { /* Private windows refuse it. */ }
+  }
+
+  /** Apply a writer, pasted-reply or example answer: the project changed on the server. */
+  function writerAnswered(data, label) {
+    const {status, failed, previous, ...project} = data;
+    state.writerResult = {status, failed, previous, label};
+    if (!failed) {
+      Object.assign(state.project, {...project, run: state.project.run});
+      $("script-text").value = state.project.script.text;
+      queueEstimate(0);
+    }
+    renderAll();
+  }
+
+  async function rewrite() {
+    if (state.writing) return;
+    await flushScript();
+    state.writing = true;
+    const button = $("rewrite");
+    const started = Date.now();
+    const tick = () => { button.textContent = `Rewriting… ${Math.round((Date.now() - started) / 1000)} s`; };
+    tick();
+    const timer = setInterval(tick, 1000);
+    renderWriter();
+    button.textContent = "Rewriting… 0 s";
+    try {
+      const data = await api(named("/project/rewrite"), {method: "POST", body: {writer: writerService()}});
+      writerAnswered(data, `Rewritten in ${Math.round((Date.now() - started) / 1000)} s`);
+    } catch (error) {
+      state.writerResult = {status: error.message, failed: true};
+      renderWriterResult();
+    } finally {
+      clearInterval(timer);
+      state.writing = false;
+      renderWriter();
+    }
+  }
+
+  async function undoWriter() {
+    const previous = state.writerResult?.previous;
+    if (previous === undefined) return;
+    $("script-text").value = previous;
+    state.project.script.text = previous;
+    state.writerResult = null;
+    saveScript({text: previous}, {now: true});
+    renderScript();
+    toast("Script put back. The cast keeps the writer's changes; edit them in Cast & sounds.");
+  }
+
+  async function copyPrompt() {
+    await flushScript();
+    try {
+      const {prompt} = await api(named("/project/writer-prompt"), {method: "POST", body: {}});
+      await navigator.clipboard.writeText(prompt);
+      toast("Writer prompt copied. Paste it into any chat model.");
+    } catch (error) {
+      toast(`Could not copy the prompt: ${error.message}`);
+    }
+  }
+
+  async function applyReply() {
+    await flushScript();
+    try {
+      const data = await api(named("/project/reply"), {method: "POST", body: {reply: $("reply").value}});
+      writerAnswered(data, "Reply applied");
+      if (!data.failed) $("reply").value = "";
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function loadExample(example) {
+    $("examples").open = false;
+    const text = $("script-text").value.trim();
+    if (text && !confirm(`Replace this project's script and cast with “${example.label}”?`)) return;
+    await flushScript();
+    try {
+      writerAnswered(await api(named("/project/example"), {method: "POST", body: {example: example.id}}), "Example loaded");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  // The estimated timeline follows the saved script.
+  function queueEstimate(delay = 400) {
+    clearTimeout(state.estimateTimer);
+    state.estimateTimer = setTimeout(async () => {
+      if (!state.project) return;
+      const name = state.project.name;
+      try {
+        const estimate = await api("/preview", {method: "POST", body: {text: $("script-text").value,
+                                                                         script_mode: state.project.script.script_mode}});
+        if (state.project.name !== name) return;
+        state.estimate = estimate;
+        renderEstimate();
+      } catch { /* The bar keeps its last estimate. */ }
+    }, delay);
+  }
+
+  function renderEstimate() {
+    const box = $("estimate");
+    const estimate = state.estimate;
+    if (!estimate || !estimate.lines.length) {
+      box.replaceChildren(h("div", {class: "estimate-head"},
+        h("span", {}, h("strong", {}, "Estimated timeline"), " · add a spoken line to see it")));
+      return;
+    }
+    const duration = estimate.duration || Math.max(...estimate.lines.map((line) => line.end));
+    const place = (start, end) => ({left: `${start / duration * 100}%`, width: `${Math.max(end - start, 0) / duration * 100}%`});
+    const voices = rows(estimate.lines);
+    const lanes = [h("div", {class: "lane", style: {"--rows": voices.count}}, estimate.lines.map((line, index) => h("span", {
+      class: "clip", title: `${line.speaker}: ${line.text}`,
+      style: {...place(line.start, line.end), "--row": voices.placed[index], background: toneColor(
+        estimate.speakers.find((speaker) => speaker.name === line.speaker)?.tone ?? "narrator")},
+    })))];
+    if (estimate.sounds.length) {
+      const sounds = rows(estimate.sounds);
+      lanes.push(h("div", {class: "lane", style: {"--rows": sounds.count}}, estimate.sounds.map((sound, index) => h("span", {
+        class: `clip ${sound.loop ? "bed" : "cue"}`, title: sound.name,
+        style: {...place(sound.start, sound.end), "--row": sounds.placed[index]},
+      }))));
+    }
+    box.replaceChildren(
+      h("div", {class: "estimate-head"},
+        h("span", {}, h("strong", {}, "Estimated timeline"), ` · ${estimate.lines.length} lines, no audio yet`),
+        h("span", {class: "num"}, `≈ ${clock(duration)}`)),
+      h("div", {class: "lanes"}, lanes));
+  }
+
+  async function newProject() {
+    const dialog = $("new-dialog");
+    $("new-name").value = "";
+    dialog.showModal();
+  }
+
+  async function createProject(name) {
+    try {
+      const project = await api("/projects", {method: "POST", body: {name}});
+      state.boot.projects.unshift({name: project.name, generated: false});
+      $("empty").hidden = true;
+      $("app").hidden = false;
+      history.replaceState(null, "", "#script");
+      state.screen = "script";
+      await loadProject(project.name);
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   async function saveSettings(values) {
@@ -566,21 +963,44 @@
     $("empty").hidden = false;
     $("empty").replaceChildren(
       h("h1", {}, "No Soundstage projects yet"),
-      h("p", {}, "Write a script and cast it in the Soundstage tab, then click Save project. "
-        + "Saved projects open here to speak, play and review."),
-      h("p", {}, h("a", {href: "/", target: "_top"}, "Open the studio")));
+      h("p", {}, "Start one here: write or paste a story, and the writer turns it into a script."),
+      h("p", {}, h("button", {type: "button", class: "btn btn-primary", onclick: newProject}, "New project")));
   }
 
   async function start() {
     applyTheme();
     matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
     $("project").addEventListener("change", (event) => loadProject(event.target.value).catch((error) => toast(error.message)));
+    $("new-project").addEventListener("click", newProject);
+    $("new-cancel").addEventListener("click", () => $("new-dialog").close());
+    $("new-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = $("new-name").value.trim();
+      if (!name) return;
+      $("new-dialog").close();
+      createProject(name);
+    });
+    for (const screen of SCREENS) $(`step-${screen}`).addEventListener("click", () => show(screen));
+    $("to-mix").addEventListener("click", () => show("mix"));
+    window.addEventListener("hashchange", () => show(location.hash.slice(1)));
     $("speak").addEventListener("click", () => speak("generate"));
     $("remix").addEventListener("click", () => speak("remix"));
     $("interrupt").addEventListener("click", interruptRun);
     $("word-timing").addEventListener("change", (event) => saveSettings({word_timing: event.target.checked}));
+    const area = $("script-text");
+    area.addEventListener("input", () => { paintEditor(); saveScript({text: area.value}); });
+    area.addEventListener("blur", () => flushScript());
+    $("title").addEventListener("input", (event) => saveScript({title: event.target.value}));
+    $("strict").addEventListener("change", (event) => saveScript({strict_source: event.target.checked}, {now: true}));
+    $("rewrite").addEventListener("click", rewrite);
+    $("copy-prompt").addEventListener("click", copyPrompt);
+    $("apply-reply").addEventListener("click", applyReply);
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest("#examples")) $("examples").open = false;
+    });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) flushScript(); });
     document.addEventListener("keydown", (event) => {
-      if (event.target.closest("input, select, textarea, button") || !state.project?.result) return;
+      if (state.screen !== "mix" || event.target.closest("input, select, textarea, button") || !state.project?.result) return;
       if (event.key === " ") { event.preventDefault(); if (mix.paused) mix.play(); else mix.pause(); }
     });
     try {
@@ -591,6 +1011,7 @@
     }
     const projects = state.boot.projects;
     if (!projects.length) { showEmpty(); return; }
+    if (SCREENS.includes(location.hash.slice(1))) state.screen = location.hash.slice(1);
     let last = null;
     try { last = localStorage.getItem(LAST_PROJECT); } catch { /* Storage may be blocked. */ }
     const first = projects.find((project) => project.name === last) ?? projects.find((project) => project.generated) ?? projects[0];
@@ -602,6 +1023,7 @@
     }
     $("loading").hidden = true;
     $("app").hidden = false;
+    paintEditor();  // Sizes the editor now that it can be measured.
   }
 
   start();

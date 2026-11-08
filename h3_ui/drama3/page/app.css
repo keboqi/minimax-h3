@@ -167,3 +167,84 @@ a.step:hover { background: var(--raised); }
   .steps-note { text-align: left; }
   .timeline { grid-template-columns: 52px minmax(0, 1fr); }
 }
+
+/* Steps are buttons too. */
+button.step { border: 0; background: transparent; font: inherit; text-align: left; }
+button.step:hover { background: var(--raised); }
+.step[aria-current="step"] { background: var(--accent-soft); }
+.step[aria-current="step"] .step-dot { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+
+/* Script */
+.script { flex: 999 1 600px; min-width: 0; display: flex; flex-direction: column; }
+.script-head { align-items: flex-end; }
+.title-field { flex: 1 1 260px; display: flex; flex-direction: column; gap: 2px; }
+.title-field span, .label { font-size: 12px; font-weight: 650; color: var(--muted); }
+.title-field input { min-height: 36px; padding: 0; border: 0; background: transparent; font-size: 18px; font-weight: 650; outline-offset: 4px; }
+.menu { position: relative; }
+.menu summary { list-style: none; }
+.menu summary::-webkit-details-marker { display: none; }
+.menu-items { position: absolute; right: 0; top: calc(100% + 4px); z-index: 6; min-width: 260px; padding: 6px; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); }
+.menu-items button { min-height: 40px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
+.menu-items button:hover { background: var(--raised); }
+.legend-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px 0; }
+.legend-row:empty { display: none; }
+.speaker-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--raised); font-size: 13px; }
+.speaker-chip i { width: 10px; height: 10px; border-radius: 50%; }
+.speaker-chip .count { color: var(--muted); }
+.speaker-chip.unknown { background: var(--flag-bg); color: var(--flag); }
+.editor { position: relative; margin: 12px 18px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.editor:focus-within { border-color: var(--accent); }
+.editor textarea, .editor-mirror {
+  display: block; width: 100%; min-height: 420px; margin: 0; padding: 14px 16px; border: 0; border-radius: 10px;
+  font: 14px/1.7 "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; tab-size: 4;
+}
+.editor-mirror { position: absolute; inset: 0; overflow: hidden; color: var(--text); pointer-events: none; }
+.editor textarea { position: relative; resize: none; overflow: hidden; background: transparent; color: transparent; caret-color: var(--text); outline: none; }
+.editor textarea::placeholder { color: var(--muted); }
+.editor textarea::selection { color: transparent; background: rgba(38, 132, 255, .3); }
+.tok-name { font-weight: inherit; }
+.tok-cue { color: #2b7a3d; }
+.tok-tag { color: #9c36b5; }
+.tok-sound { color: #8a5a00; background: rgba(240, 179, 90, .18); border-radius: 3px; }
+.tok-effect { color: #267f99; }
+.tok-unknown { text-decoration: underline wavy var(--flag); text-underline-offset: 3px; }
+:root[data-theme="dark"] .tok-cue { color: #8fc97a; }
+:root[data-theme="dark"] .tok-tag { color: #d6a2e8; }
+:root[data-theme="dark"] .tok-sound { color: #f0c77a; }
+:root[data-theme="dark"] .tok-effect { color: #6fd0c2; }
+.editor-hint { padding: 10px 18px 16px; }
+.editor-hint code { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: var(--lane); }
+
+.writer { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.writer > div > p { margin-top: 4px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field input, .field select, .field textarea { min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 14px; }
+.field textarea { resize: vertical; font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 13px; }
+.workflows { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.workflow { display: flex; flex-direction: column; gap: 2px; min-height: 44px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); text-align: left; }
+.workflow strong { font-size: 14px; }
+.workflow span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.workflow[aria-pressed="true"] { border: 2px solid var(--accent); padding: 9px; background: var(--selected); }
+.more summary, .other-model summary { cursor: pointer; font-weight: 650; font-size: 14px; min-height: 32px; display: flex; align-items: center; }
+.more-body { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; align-items: stretch; }
+.more-body .btn { align-self: flex-start; }
+.range-row { display: flex; align-items: center; gap: 10px; }
+.range-row input { flex: 1; accent-color: var(--accent); min-height: 0; padding: 0; border: 0; }
+.writer-result { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.writer-result.failed { border-color: var(--flag); }
+.writer-result-head { display: flex; align-items: center; gap: 8px; }
+.writer-result p { font-size: 14px; white-space: pre-line; }
+.other-model { padding: 14px 18px; }
+
+/* The Script step's estimated timeline in the action bar. */
+.estimate { flex: 999 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.estimate-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+.estimate-head strong { color: var(--text); }
+.estimate .lane { cursor: default; }
+
+.dialog { border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(420px, calc(100% - 32px)); background: var(--surface); color: var(--text); }
+.dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.dialog form { display: flex; flex-direction: column; gap: 16px; }
+.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }

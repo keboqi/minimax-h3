@@ -26,6 +26,7 @@ from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from ..subtitle_words import word_pieces
 from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
+from .page_script import boot_payload, install_script_routes, script_payload
 from .result_view import clean_line, timeline_data
 
 STATIC = Path(__file__).with_name("page")
@@ -76,9 +77,11 @@ def _cast(data: dict, clips: Path) -> list[dict]:
     for slot in range(min(shown, DRAMA3_VOICE_SLOTS)):
         preset = data.get(f"voice_{slot}_preset")
         saved = bool(preset) and preset != UPLOAD_VOICE
-        name = data.get(f"voice_{slot}_save_name") or (preset if saved else "") or f"Speaker {slot}"
-        cast.append({"slot": slot, "name": name,
-                     "ready": saved or _clip(clips, data.get(f"voice_{slot}_audio")) is not None})
+        ready = saved or _clip(clips, data.get(f"voice_{slot}_audio")) is not None
+        name = data.get(f"voice_{slot}_save_name") or (preset if saved else "")
+        if not name and not ready:
+            continue  # An empty slot is no speaker yet.
+        cast.append({"slot": slot, "name": name or f"Speaker {slot}", "ready": ready})
     return cast
 
 
@@ -102,11 +105,8 @@ def _take_status(chunk: dict) -> str:
     return "reused" if chunk.get("reused") else "new"
 
 
-def result_payload(path: str | Path | None) -> dict | None:
-    """What the page draws for a mix: its lines, sounds and takes on the timeline."""
-    if not path or not Path(path).is_file():
-        return None
-    settings = result_settings(path)
+def timeline_payload(settings: dict) -> dict:
+    """A snapshot's timed lines (with their aligned words), speakers and sounds, as the page draws them."""
     entries, words, tones, sounds = timeline_data(settings)
     lines = []
     for (speaker, text, start, end), line_words in zip(entries, words):
@@ -115,6 +115,19 @@ def result_payload(path: str | Path | None) -> dict | None:
                       "words": None if pieces is None else {
                           "lead": pieces[0], "items": [{"text": piece, "start": s, "end": e}
                                                        for piece, s, e in pieces[1]]}})
+    return {
+        "duration": float(settings.get("duration") or 0),
+        "speakers": [{"name": name, "tone": tone, "pan": pan} for name, (tone, pan) in tones.items()],
+        "lines": lines,
+        "sounds": [{"name": name, "loop": loop, "start": start, "end": end} for name, loop, start, end in sounds],
+    }
+
+
+def result_payload(path: str | Path | None) -> dict | None:
+    """What the page draws for a mix: its lines, sounds and takes on the timeline."""
+    if not path or not Path(path).is_file():
+        return None
+    settings = result_settings(path)
     takes = []
     for chunk in settings.get("chunks") or []:
         if not chunk.get("take"):
@@ -125,15 +138,8 @@ def result_payload(path: str | Path | None) -> dict | None:
                       "status": _take_status(chunk), "warnings": list(chunk.get("warnings") or []),
                       "start": chunk.get("start"), "end": chunk.get("end")})
     file = Path(path)
-    return {
-        "file": file.name, "version": file.stat().st_mtime_ns,
-        "title": settings.get("title") or "", "duration": float(settings.get("duration") or 0),
-        "word_timing": bool(settings.get("word_timing")),
-        "speakers": [{"name": name, "tone": tone, "pan": pan} for name, (tone, pan) in tones.items()],
-        "lines": lines,
-        "sounds": [{"name": name, "loop": loop, "start": start, "end": end} for name, loop, start, end in sounds],
-        "takes": takes,
-    }
+    return {**timeline_payload(settings), "file": file.name, "version": file.stat().st_mtime_ns,
+            "title": settings.get("title") or "", "word_timing": bool(settings.get("word_timing")), "takes": takes}
 
 
 def _preset(data: dict) -> str | None:
@@ -155,6 +161,7 @@ def project_payload(name: str, data: dict, result, clips: Path) -> dict:
                      "top_k": int(_value(data, "top_k")), "word_timing": bool(_value(data, "word_timing")),
                      "preset": _preset(data)},
         "result": result_payload(result),
+        "script": script_payload(data),
     }
 
 
@@ -215,7 +222,11 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         owner_of(request)
         return {"gpu": gpu,
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
-                "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()}}
+                "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
+                **boot_payload()}
+
+    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload,
+                          clip=lambda value: _clip(clips, value))
 
     # Projects --------------------------------------------------------------
     @app.get(f"{api}/project", include_in_schema=False)

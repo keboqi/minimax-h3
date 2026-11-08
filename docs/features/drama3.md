@@ -48,8 +48,39 @@ video for this mix**.
 Soundstage is moving to a page of its own at `/soundstage/`, outside Gradio, as Remake and
 Storyboard did; the tab links to it under the project controls. The page's design is the
 [Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi). So far it holds
-**Mix & review**; Script and Cast & sounds are still edited in the tab, so save the project there
-first. The page opens a saved project and shows:
+**Script** and **Mix & review**; Cast & sounds is still edited in the tab (load the project there,
+change voices or sounds, then save it). The step bar moves between the screens without asking
+the server for anything, and the address keeps the screen (`#script`, `#mix`).
+
+Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
+Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
+
+### Script
+
+Every change on Script saves to the project a moment after you stop typing; the top bar says
+when everything is saved. Saving an Advanced script gives each of its `<sound>` tags a sound slot,
+as the tab does.
+
+- **The editor** colors each speaker's name as the mix does, cues green, sound tags amber and
+  other tags purple. Above it, a chip per speaker counts their lines; a name the cast doesn't
+  have is underlined and marked **not in cast**, because that line can't be spoken.
+- **Examples** loads one of the tab's three example stories, with its cast and sounds, after
+  asking before it replaces a script.
+- **Rewrite with the writer** has the tab's choices: **Speakers** (Auto, Adapt to voices,
+  Single), **How it writes** (Single-pass, Step by step, Smart scenes) and **Keep my exact
+  words**. **More writer settings** holds the writer service and its keys, which stay in that
+  browser tab, and the Guided batch size and Smart budget profile when they apply. A rewrite
+  fills the script, title and cast; its notes appear below with **Undo**, which puts the script
+  back (the cast keeps the writer's names and descriptions).
+- **Use another chat model** copies the full writer prompt and applies a pasted JSON reply,
+  checked like the built-in writer.
+
+The bar at the bottom shows the script's estimated timeline, with no audio, and leads on to
+Cast & sounds in the tab or to Mix & review.
+
+### Mix & review
+
+The page opens a generated project here and shows:
 
 - **The mix**, with a play button and a timeline: each line on the **Voices** lane in its
   speaker's color and each sound on the **Sounds** lane, looped beds apart from one-shot effects.

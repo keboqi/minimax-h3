@@ -209,6 +209,13 @@ def _stage_html(tones):
 
 def script_preview_html(script: str, script_mode: str) -> str:
     """Estimate a silent timeline from the same script tree used for speech generation."""
+    panel = subtitles_html(script_preview_settings(script, script_mode), None)
+    return ("<p>Script preview · Estimated timing</p>" + panel if panel
+            else "<p>Add a spoken line to preview the script.</p>")
+
+
+def script_preview_settings(script: str, script_mode: str) -> dict:
+    """A result-like snapshot of ``script`` with estimated timings: its lines, sounds and duration."""
     from h3_app.drama3.serving.planner import expected_seconds
     from h3_app.drama3.serving.tree import (
         ParallelNode, PauseNode, SoundNode, SpeechNode, parse_drama3_tree, strip_drama3_sound_tags,
@@ -242,9 +249,7 @@ def script_preview_html(script: str, script_mode: str) -> str:
     duration = place(parse_drama3_tree(script), 0, {})
     # A trailing overlap can move the cursor behind the end of an earlier clip.
     duration = max(duration, max((item["end"] for item in chunks + sounds), default=0))
-    panel = subtitles_html(dict(chunks=chunks, sounds=sounds, duration=duration), None)
-    return ("<p>Script preview · Estimated timing</p>" + panel if panel
-            else "<p>Add a spoken line to preview the script.</p>")
+    return dict(chunks=chunks, sounds=sounds, duration=duration)
 
 
 def timeline_data(settings: dict):
