@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Sequence
 import gradio as gr
 
-from .result_views import dub_panel, soundstage_panel
+from .result_views import dub_panel, soundstage_panel, stage_mode_switch, stage_panel
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,9 @@ class GalleryView:
     # A Soundstage result's timeline, subtitles and stage, and a dub's result player.
     soundstage_view: Any = None
     dub_view: Any = None
+    # A Soundstage mix's Audio / Video switch and its illustrated video with subtitles over it.
+    stage_mode: Any = None
+    stage_view: Any = None
 
 
 SORT_CHOICES = (("Newest first", "newest"), ("Oldest first", "oldest"), ("Name", "name"))
@@ -271,6 +274,7 @@ def build_gallery_view(
                     interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
+                stage_mode = stage_mode_switch()
                 audio = gr.Audio(
                     label="Selected audio",
                     type="filepath",
@@ -278,6 +282,7 @@ def build_gallery_view(
                     interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
+                stage_view = stage_panel()
                 soundstage_view, dub_view = soundstage_panel(), dub_panel()
                 with gr.Row(equal_height=True, elem_classes=["h3-gallery-title-row"]):
                     download = gr.Markdown(elem_classes=["h3-gallery-download"])
@@ -438,4 +443,6 @@ def build_gallery_view(
         counts,
         soundstage_view,
         dub_view,
+        stage_mode,
+        stage_view,
     )

@@ -34,8 +34,10 @@ The export uses the finished soundtrack and saves the video to Media. Once a mix
 an **Audio / Video** switch appears above the Speak result: Video shows the illustrated video in
 the player's place with the mix's subtitles laid over it, lighting word by word like the list
 below, which follows the video too. **Subtitles on the video** turns the overlay off, and
-switching pauses whichever player is hidden. The newest video for a mix shows whenever the mix
-is loaded; if the page lost its connection during a long export, click **Show the latest
+switching pauses whichever player is hidden. **Media**, in the studio and the Workshop, does the
+same: a selected mix with an illustrated video offers the switch, and a selected illustrated
+video plays with its mix's subtitles over it and beside it. The newest video for a mix shows
+whenever the mix is loaded; if the page lost its connection during a long export, click **Show the latest
 video for this mix**.
 
 ## Compose and generate

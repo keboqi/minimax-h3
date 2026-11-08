@@ -32,21 +32,56 @@ class MediaResultViewTests(unittest.TestCase):
                        {"name": "Leo", "text": "Hi.", "start": 2.5, "end": 3.5, "take": "b"}],
             "sounds": [{"name": "rain", "loop": True, "start": 0.0, "end": 6.0}],
         }}, record_job=False)
-        soundstage, dub = result_view_values(str(audio))
-        self.assertEqual(dub, "")
+        soundstage, dub, stage, switch = result_view_values(str(audio))
+        self.assertEqual((dub, stage, switch), ("", "", False))
         self.assertIn(f'data-media="{RESULT_ID}"', soundstage)
         self.assertIn("Hello there.", soundstage)
         self.assertIn("h3-drama3-stage-map", soundstage)
         self.assertIn("rain", soundstage)
 
+    def test_illustrated_video_shows_with_its_mix_and_on_its_own(self):
+        from h3_ui.result_views import result_view_updates
+
+        audio = self.root / f"story_{RESULT_ID}.mp3"
+        audio.write_bytes(b"")
+        write_snapshot(audio, {"family": "Drama 3", "settings": {
+            "duration": 4.0, "chunks": [{"name": "Mia", "text": "Hello.", "start": 0.0, "end": 2.0, "take": "a"}],
+        }}, record_job=False)
+        video = self.root / f"story_{RESULT_ID}_illustrated_1a2b3c4d.mp4"
+        video.write_bytes(b"")
+        write_snapshot(video, {"family": "Sound Stage illustrated video",
+                               "settings": {"source": audio.name}}, record_job=False)
+        # The mix offers its newest video behind the switch and starts on Audio.
+        soundstage, dub, stage, switch = result_view_values(str(audio))
+        self.assertIn("Hello.", soundstage)
+        self.assertIn(video.name, stage)
+        self.assertTrue(switch)
+        *_, video_preview, audio_preview, stage_update, switch_update = result_view_updates(str(audio))
+        self.assertEqual((stage_update["visible"], switch_update["visible"], switch_update["value"]),
+                         (False, True, "Audio"))
+        self.assertNotIn("visible", video_preview)
+        # The video itself plays captioned, with its mix's subtitles, instead of the plain preview.
+        soundstage, dub, stage, switch = result_view_values(str(video))
+        self.assertIn("Hello.", soundstage)
+        self.assertIn(f'data-media="{RESULT_ID}"', stage)
+        self.assertFalse(switch)
+        *_, video_preview, audio_preview, stage_update, switch_update = result_view_updates(str(video))
+        self.assertEqual((video_preview["visible"], stage_update["visible"], switch_update["visible"]),
+                         (False, True, False))
+        self.assertNotIn("visible", audio_preview)
+        # A video whose mix is gone still plays, without subtitles.
+        audio.unlink()
+        self.assertEqual(result_view_values(str(video))[0], "")
+        self.assertIn(video.name, result_view_values(str(video))[2])
+
     def test_media_without_a_rich_view_hides_the_panels(self):
         audio = self.root / "song.mp3"
         audio.write_bytes(b"")
-        self.assertEqual(result_view_values(str(audio)), ("", ""))
+        self.assertEqual(result_view_values(str(audio)), ("", "", "", False))
         write_snapshot(audio, {"family": "Drama 3", "settings": {"chunks": [{"text": "No timing."}]}},
                        record_job=False)
-        self.assertEqual(result_view_values(str(audio)), ("", ""))
-        self.assertEqual(result_view_values(None), ("", ""))
+        self.assertEqual(result_view_values(str(audio)), ("", "", "", False))
+        self.assertEqual(result_view_values(None), ("", "", "", False))
 
     def dub(self, *, saved_root="/elsewhere/output/dubbing", file=PLAYER_FILE, key=None):
         """A dub's outputs and player folder, its paths recorded under another mount."""
@@ -73,7 +108,7 @@ class MediaResultViewTests(unittest.TestCase):
             player = load_player(output_dir / output)
             self.assertEqual((player.video, player.dub, player.music),
                              (output_dir / "talk.fr.mp4", folder / "dub.mp3", folder / "music.mp3"))
-            soundstage, dub = result_view_values(str(output_dir / output))
+            soundstage, dub, *_ = result_view_values(str(output_dir / output))
             self.assertEqual(soundstage, "")
             self.assertIn("Dub (French)", dub)
             self.assertIn("Bonjour.", dub)
@@ -93,13 +128,14 @@ class MediaResultViewTests(unittest.TestCase):
 
         output_dir, _folder = self.dub()
         for output in ("talk.fr.mp4", "talk.fr.mp3"):
-            _soundstage, dub, video, audio = result_view_updates(str(output_dir / output))
+            _soundstage, dub, video, audio, *_ = result_view_updates(str(output_dir / output))
             self.assertTrue(dub["visible"])
             self.assertEqual((video["visible"], audio["visible"]), (False, False))
         # Other media keep the preview their selection showed.
         plain = self.root / "song.mp3"
         plain.write_bytes(b"")
-        _soundstage, dub, video, audio = result_view_updates(str(plain))
+        _soundstage, dub, video, audio, stage, switch = result_view_updates(str(plain))
+        self.assertEqual((stage["visible"], switch["visible"]), (False, False))
         self.assertFalse(dub["visible"])
         self.assertNotIn("visible", video)
         self.assertNotIn("visible", audio)
@@ -112,7 +148,7 @@ class MediaResultViewTests(unittest.TestCase):
         output_dir, folder = self.dub()
         (folder / "original.mp3").unlink()
         self.assertIsNone(load_player(output_dir / "talk.fr.mp3"))
-        self.assertEqual(result_view_values(str(output_dir / "talk.fr.mp3")), ("", ""))
+        self.assertEqual(result_view_values(str(output_dir / "talk.fr.mp3")), ("", "", "", False))
 
     def test_player_folder_stays_while_either_output_remains(self):
         output_dir, folder = self.dub()

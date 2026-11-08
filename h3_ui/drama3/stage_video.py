@@ -8,6 +8,7 @@ text, so captions light word by word along with the list.
 
 from __future__ import annotations
 
+import glob
 from html import escape
 import re
 from pathlib import Path
@@ -15,6 +16,18 @@ from pathlib import Path
 from h3_ui.dubbing.player import file_url
 
 ELEM_CLASS = "h3-stage-video-panel"
+# The settings-snapshot family of an illustrated video; its settings name the source mix.
+ILLUSTRATED_FAMILY = "Sound Stage illustrated video"
+# Pauses every result player in a scope before a switch hides one of them.
+PAUSE_JS = ("(mode) => {{ document.querySelectorAll('{scope} :is(audio, video)')"
+            ".forEach((media) => media.pause()); return mode; }}")
+
+
+def latest_export(audio):
+    """The newest illustrated video made from this mix, if any."""
+    audio = Path(audio)
+    videos = [path for path in audio.parent.glob(f"{glob.escape(audio.stem)}_illustrated_*.mp4") if path.is_file()]
+    return max(videos, key=lambda path: path.stat().st_mtime, default=None)
 
 STAGE_VIDEO_JS = """
 // Gradio patches a new value into the existing DOM, so each new video rebinds through its revision.

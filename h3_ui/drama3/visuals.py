@@ -1,6 +1,5 @@
 """Optional illustrated video export from the Speak result."""
 
-import glob
 import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +22,7 @@ from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.clipboard import copy_js
 from h3_ui.drama3.stage_video import ELEM_CLASS as STAGE_VIDEO_CLASS
-from h3_ui.drama3.stage_video import STAGE_VIDEO_JS, stage_video_html
+from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY, PAUSE_JS, STAGE_VIDEO_JS, latest_export, stage_video_html
 from h3_ui.engines.controls import QUIET, generation_actions, writer_inputs
 from h3_ui.image_controller import reference_limit, reference_tag
 from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -202,13 +201,6 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
     return images, shot_records, portrait_records
 
 
-def latest_export(audio):
-    """The newest illustrated video made from this mix, if any."""
-    audio = Path(audio)
-    videos = [path for path in audio.parent.glob(f"{glob.escape(audio.stem)}_illustrated_*.mp4") if path.is_file()]
-    return max(videos, key=lambda path: path.stat().st_mtime, default=None)
-
-
 def plan_path(audio):
     """The shot plan saved beside a Sound Stage mix."""
     audio = Path(audio)
@@ -327,8 +319,7 @@ def bind_visual_export(view, controller, deps):
 
     # Pause whichever player is being hidden, so the audio and the video never play over each other.
     result_mode.change(switch_result, inputs=result_mode, outputs=[view.output, view.result_video_root],
-                       js="(mode) => { document.querySelectorAll('.h3-drama3-result :is(audio, video)')"
-                          ".forEach((media) => media.pause()); return mode; }", **QUIET)
+                       js=PAUSE_JS.format(scope=".h3-drama3-result"), **QUIET)
     preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET)
     style.input(preset_for, inputs=style, outputs=preset, **QUIET)
 
@@ -423,7 +414,7 @@ def bind_visual_export(view, controller, deps):
         yield gr.skip(), "Rendering video with the finished mix…"
         video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
         _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
-        write_snapshot(video_path, {"family": "Sound Stage illustrated video", "settings": {
+        write_snapshot(video_path, {"family": ILLUSTRATED_FAMILY, "settings": {
             "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
             "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records,
         }})

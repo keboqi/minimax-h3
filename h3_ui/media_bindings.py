@@ -19,7 +19,8 @@ from h3_app.catalog import (
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
 from .media_previews import browser_preview_updates, browser_gallery_items
-from .result_views import result_view_updates
+from .result_views import result_view_updates, switch_stage
+from h3_ui.drama3.stage_video import PAUSE_JS
 
 
 def bind_gallery_view(
@@ -42,6 +43,12 @@ def bind_gallery_view(
     h3_refinement_inputs=None,
 ) -> None:
     page_size = 48
+
+    if view.stage_mode is not None:
+        # Only a click switches: a new selection resets the switch without re-showing the audio preview.
+        view.stage_mode.input(switch_stage, inputs=view.stage_mode, outputs=[view.audio, view.stage_view],
+                              js=PAUSE_JS.format(scope=".h3-gallery-inspector"), queue=False,
+                              show_progress="hidden", api_name=False)
 
     filters = view.filters
     index = view.search.h3_asset_index
@@ -142,7 +149,8 @@ def bind_gallery_view(
         if view.soundstage_view is not None:
             event.then(
                 result_view_updates, inputs=view.selected,
-                outputs=[view.soundstage_view, view.dub_view, view.player, view.audio],
+                outputs=[view.soundstage_view, view.dub_view, view.player, view.audio,
+                         view.stage_view, view.stage_mode],
                 queue=False, show_progress="hidden", api_name=False,
             )
         image_destination_sync = getattr(view.selected, "h3_image_destination_sync", None)
