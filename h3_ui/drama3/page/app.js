@@ -14,7 +14,7 @@
   let mix = mixAudio;
   const takeAudio = $("take-audio");
 
-  const state = {boot: null, project: null, picked: 0, filter: "all", run: null, poll: null, busy: false,
+  const state = {boot: null, project: null, picked: 0, filter: "all", run: null, busy: false,
                  screen: "script", saving: null, saveTimer: null, writing: false, writerResult: null,
                  estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
                  videoRun: null, mediaMode: "audio"};
@@ -91,7 +91,26 @@
     if (!response.ok || data.error) throw new Error(data.error || data.detail || `Request failed (${response.status}).`);
     return data;
   }
-  const named = (path) => `${path}${path.includes("?") ? "&" : "?"}name=${encodeURIComponent(state.project.name)}`;
+  const named = (path, name = state.project.name) => `${path}${path.includes("?") ? "&" : "?"}name=${encodeURIComponent(name)}`;
+
+  /** A poll that runs step(again) every POLL_MS until a step stops calling again; a failed step tries again. */
+  function poller(step, {retry = true} = {}) {
+    let timer = null;
+    return function again() {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          await step(again);
+        } catch (error) {
+          toast(error.message);
+          if (retry) again();
+        }
+      }, POLL_MS);
+    };
+  }
+
+  /** Say how a run that was going ended. */
+  const toastEnded = (run) => toast(run?.error ? `Stopped: ${run.error}` : (run?.status || "Done."));
 
   let toastTimer = null;
   function toast(message) {
@@ -643,37 +662,27 @@
     if (data && $("plan-reply")) $("plan-reply").value = "";
   }
 
-  let videoPollTimer = null;
-  function pollVideo() {
-    clearTimeout(videoPollTimer);
-    videoPollTimer = setTimeout(async () => {
-      const name = state.project.name;
-      try {
-        const project = await api(`/project?name=${encodeURIComponent(name)}`);
-        if (state.project.name !== name) return;
-        const before = state.videoRun;
-        const hadStills = state.project.video?.stills?.revision;
-        state.videoRun = project.video_run;
-        state.project.video = project.video;
-        if (project.video_run?.active) { renderVideo(); pollVideo(); return; }
-        if (before?.active) {
-          if (project.video_run?.error) toast(`Stopped: ${project.video_run.error}`);
-          else toast(project.video_run?.status || "Done.");
-          if (before.kind === "draw" && !project.video_run?.error && project.video?.stills?.revision !== hadStills) {
-            setMediaMode("video");
-            window.scrollTo({top: 0, behavior: "smooth"});
-          }
-        }
-        loadVideoSource();
-        renderVideo();
-        renderPlayer();
-        sync();
-      } catch (error) {
-        toast(error.message);
-        pollVideo();
+  const pollVideo = poller(async (again) => {
+    const name = state.project.name;
+    const project = await api(named("/project", name));
+    if (state.project.name !== name) return;
+    const before = state.videoRun;
+    const hadStills = state.project.video?.stills?.revision;
+    state.videoRun = project.video_run;
+    state.project.video = project.video;
+    if (project.video_run?.active) { renderVideo(); again(); return; }
+    if (before?.active) {
+      toastEnded(project.video_run);
+      if (before.kind === "draw" && !project.video_run?.error && project.video?.stills?.revision !== hadStills) {
+        setMediaMode("video");
+        window.scrollTo({top: 0, behavior: "smooth"});
       }
-    }, POLL_MS);
-  }
+    }
+    loadVideoSource();
+    renderVideo();
+    renderPlayer();
+    sync();
+  });
 
   /** Load the rendered video only for a mix that has no stills to slide; otherwise the page never fetches it. */
   function loadVideoSource() {
@@ -865,22 +874,14 @@
     }
   }
 
-  let takesTimer = null;
-  function pollTakes() {
-    clearTimeout(takesTimer);
-    takesTimer = setTimeout(async () => {
-      const run = libraryState.takes;
-      if (!run) return;
-      try {
-        const data = await api(`/library/takes?run=${encodeURIComponent(run.id)}`);
-        libraryState.takes = data.takes_run;
-        if ($("library-dialog").open) renderLibrary();
-        if (data.takes_run.active) pollTakes();
-      } catch (error) {
-        toast(error.message);
-      }
-    }, POLL_MS);
-  }
+  const pollTakes = poller(async (again) => {
+    const run = libraryState.takes;
+    if (!run) return;
+    const data = await api(`/library/takes?run=${encodeURIComponent(run.id)}`);
+    libraryState.takes = data.takes_run;
+    if ($("library-dialog").open) renderLibrary();
+    if (data.takes_run.active) again();
+  }, {retry: false});
 
   // -- Auto ------------------------------------------------------------------
   const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking"};
@@ -1137,7 +1138,7 @@
   async function loadProject(name, {keepPick = false} = {}) {
     await flushScript();
     await flushSlots();
-    const project = await api(`/project?name=${encodeURIComponent(name)}`);
+    const project = await api(named("/project", name));
     const switched = state.project?.name !== project.name;
     const changed = switched || state.project?.result?.version !== project.result?.version;
     state.project = project;
@@ -1366,7 +1367,7 @@
     state.saving = "saving";
     renderSaveState();
     try {
-      const project = await api(`/project/script?name=${encodeURIComponent(name)}`, {method: "PATCH", body});
+      const project = await api(named("/project/script", name), {method: "PATCH", body});
       if (state.project.name !== name) return;
       state.saving = state.saveTimer === null ? "saved" : "pending";
       const text = $("script-text").value;
@@ -1912,7 +1913,7 @@
       let project = null;
       for (const [key, body] of edits) {
         const [kind, slot] = key.split(":");
-        project = await api(`/project/slot?name=${encodeURIComponent(name)}&kind=${kind}&slot=${slot}`, {method: "PATCH", body});
+        project = await api(named(`/project/slot?kind=${kind}&slot=${slot}`, name), {method: "PATCH", body});
       }
       if (state.project.name !== name) return;
       castAnswered(project);
@@ -2031,26 +2032,17 @@
     }
   }
 
-  let castPollTimer = null;
-  function pollCast() {
-    clearTimeout(castPollTimer);
-    castPollTimer = setTimeout(async () => {
-      const name = state.project.name;
-      try {
-        const project = await api(`/project?name=${encodeURIComponent(name)}`);
-        if (state.project.name !== name) return;
-        const before = state.castRun;
-        castAnswered(project);
-        if (state.screen !== "cast") renderSteps();
-        if (project.cast_run?.active) { pollCast(); return; }
-        if (before?.active) toast(project.cast_run?.error ? `Stopped: ${project.cast_run.error}` : (project.cast_run?.status || "Done."));
-        renderSlotEditor(true);
-      } catch (error) {
-        toast(error.message);
-        pollCast();
-      }
-    }, POLL_MS);
-  }
+  const pollCast = poller(async (again) => {
+    const name = state.project.name;
+    const project = await api(named("/project", name));
+    if (state.project.name !== name) return;
+    const before = state.castRun;
+    castAnswered(project);
+    if (state.screen !== "cast") renderSteps();
+    if (project.cast_run?.active) { again(); return; }
+    if (before?.active) toastEnded(project.cast_run);
+    renderSlotEditor(true);
+  });
 
   async function newGroup() {
     const name = prompt("Name the speaker group, such as a series or book:");
@@ -2102,42 +2094,34 @@
     }
   }
 
-  function poll() {
-    clearTimeout(state.poll);
-    state.poll = setTimeout(async () => {
-      const name = state.project.name;
-      try {
-        const {run} = await api(named("/run"));
-        if (name !== state.project.name) return;
-        const before = state.run;
-        state.run = run;
-        if (run && !run.active) {
-          if (run.auto) {
-            if (run.error) toast(`Auto stopped: ${run.error}`);
-            else if (before?.active) toast(run.message ? `Auto finished. ${run.message}` : "Auto finished.");
-            if (!run.error && before?.active) show("mix");
-          } else if (run.task === "words") {
-            if (run.error) toast(`Word timing stopped: ${run.error}`);
-            else if (before?.active) toast(run.status || "Word timing ready.");
-          } else if (run.error) toast(`Speaking stopped: ${run.error}`);
-          else if (before?.active) toast("Speech ready.");
-          await loadProject(name, {keepPick: true});
-          return;
-        }
-        if (run?.auto && run.revision !== autoRevision) {
-          autoRevision = run.revision;
-          await loadProject(name, {keepPick: true});
-        }
-        renderAuto();
-        renderActions();
-        if (state.screen === "cast") { renderCastLists(); renderSlotEditor(false); }
-        if (run?.active) poll();
-      } catch (error) {
-        toast(error.message);
-        poll();
-      }
-    }, POLL_MS);
-  }
+  const poll = poller(async (again) => {
+    const name = state.project.name;
+    const {run} = await api(named("/run", name));
+    if (name !== state.project.name) return;
+    const before = state.run;
+    state.run = run;
+    if (run && !run.active) {
+      if (run.auto) {
+        if (run.error) toast(`Auto stopped: ${run.error}`);
+        else if (before?.active) toast(run.message ? `Auto finished. ${run.message}` : "Auto finished.");
+        if (!run.error && before?.active) show("mix");
+      } else if (run.task === "words") {
+        if (run.error) toast(`Word timing stopped: ${run.error}`);
+        else if (before?.active) toast(run.status || "Word timing ready.");
+      } else if (run.error) toast(`Speaking stopped: ${run.error}`);
+      else if (before?.active) toast("Speech ready.");
+      await loadProject(name, {keepPick: true});
+      return;
+    }
+    if (run?.auto && run.revision !== autoRevision) {
+      autoRevision = run.revision;
+      await loadProject(name, {keepPick: true});
+    }
+    renderAuto();
+    renderActions();
+    if (state.screen === "cast") { renderCastLists(); renderSlotEditor(false); }
+    if (run?.active) again();
+  });
 
   async function interruptRun() {
     try {

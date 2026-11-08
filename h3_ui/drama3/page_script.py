@@ -19,10 +19,10 @@ from h3_app.prompt_writers import drama3 as writer
 
 from ..storyboard.page import guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
+from .page_common import SKIP, apply_fields, timeline_payload, value, writer_service
 from .page_store import edit_project, editing, project_lock
 from .result_view import script_preview_settings
 
-SKIP = object()
 SCRIPT_FIELDS = {"text": str, "title": str, "script_mode": str}
 WRITER_FIELDS = {"speaker_mode": str, "writer_workflow": str, "max_batch_lines": int, "strict_source": bool,
                  "smart_budget_profile": str}
@@ -42,24 +42,23 @@ NEW_PROJECT = {"text": "", "title": "", "script_mode": writer.DRAMA3_SCRIPT_ADVA
                "shown_sound_slots": 1}
 
 
-def value(update) -> Any:
-    """What a tab handler set a component to, or SKIP when it left it alone."""
-    if isinstance(update, dict) and update.get("__type__") == "update":
-        return update.get("value", SKIP)
-    return update
-
-
 def _setting(data: dict, key: str):
     current = data.get(key)
     return WRITER_DEFAULTS.get(key) if current is None else current
 
 
-def writer_slots(data: dict, clip: Callable[[Any], str | None]) -> list[Any]:
-    """The writer's slot inputs from a project: voices, cast details, shown slots, script mode and group."""
+def voice_inputs(data: dict, clip: Callable[[Any], str | None]) -> list[Any]:
+    """Each voice slot's preset, clip and transcript, as the tab's speech and writer handlers take them."""
     values: list[Any] = []
     for slot in range(DRAMA3_VOICE_SLOTS):
         values += [data.get(f"voice_{slot}_preset") or UPLOAD_VOICE, clip(data.get(f"voice_{slot}_audio")),
                    data.get(f"voice_{slot}_transcript") or ""]
+    return values
+
+
+def writer_slots(data: dict, clip: Callable[[Any], str | None]) -> list[Any]:
+    """The writer's slot inputs from a project: voices, cast details, shown slots, script mode and group."""
+    values = voice_inputs(data, clip)
     for slot in range(DRAMA3_VOICE_SLOTS):
         values += [data.get(f"voice_{slot}_{field}") or "" for field in VOICE_META]
     return [*values, int(data.get("shown_slots") or 1), data.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC,
@@ -130,8 +129,6 @@ def script_payload(data: dict) -> dict:
 
 def preview_payload(text: str, script_mode: str) -> dict:
     """The script's estimated timeline, in the shape of a mix's lines and sounds."""
-    from .page import timeline_payload
-
     return timeline_payload(script_preview_settings(text, script_mode))
 
 
@@ -150,14 +147,6 @@ def boot_payload() -> dict:
     }
 
 
-def _writer_service(body: dict) -> list[Any]:
-    """The writer service inputs: model, Gemini key, backend, OpenAI key, model and base URL."""
-    service = body.get("writer") or {}
-    return [service.get("gemini_prompt_model") or DEFAULT_GEMINI_PROMPT_MODEL, service.get("gemini_api_key") or "",
-            service.get("prompt_writer_backend") or "Gemini", service.get("openai_api_key") or "",
-            service.get("openai_model") or OPENAI_PROMPT_MODELS[0], service.get("openai_base_url") or ""]
-
-
 def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, str, bool]:
     """Rewrite a saved project's script with the writer and keep the answer.
 
@@ -169,9 +158,7 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     into the project as saved when it arrives, keeping clips and settings changed meanwhile.
     """
     def choose(data):
-        for key, kind in WRITER_FIELDS.items():
-            if key in body:
-                data[key] = kind(body[key])
+        apply_fields(data, body, WRITER_FIELDS)
         return dict(data)
 
     data = edit_project(store, name, choose)  # The writer choices stay, whatever it answers.
@@ -180,7 +167,7 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
         raise H3Error("Write or paste some text first.")
     try:
         outputs = list(actions.enhance_drama3_text(
-            before, _setting(data, "speaker_mode"), *_writer_service(body), *writer_slots(data, clip),
+            before, _setting(data, "speaker_mode"), *writer_service(body), *writer_slots(data, clip),
             _setting(data, "writer_workflow"), int(_setting(data, "max_batch_lines")),
             bool(_setting(data, "strict_source")), _setting(data, "smart_budget_profile")))
     except Exception as exc:  # The writer calls out to hosted services and can fail any way.
@@ -205,16 +192,10 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         data, _ = store.soundstage_project(name)
         return data
 
-    def writer_settings(data: dict, body: dict) -> None:
-        for key, kind in WRITER_FIELDS.items():
-            if key in body:
-                data[key] = kind(body[key])
-
-    def answered(request, name, data, before, status):
-        """Answer for a writer reply the caller saved; a failed one changed nothing but the writer choices."""
-        if failed(status):
-            return {**payload(owner_of(request), name), "status": status, "failed": True}
-        return {**payload(owner_of(request), name), "status": status, "failed": False, "previous": before}
+    def answered(owner, name, before, status, refused):
+        """Answer for a writer reply that was saved; a refused one changed nothing but the writer choices."""
+        answer = {**payload(owner, name), "status": status, "failed": refused}
+        return answer if refused else {**answer, "previous": before}
 
     @app.post(f"{api}/projects", include_in_schema=False)
     @guarded
@@ -236,10 +217,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
             raise H3Error("Unknown script mode.")
         with editing(store, name) as data:
             before = (data.get("text"), data.get("script_mode"))
-            for key, kind in SCRIPT_FIELDS.items():
-                if key in body:
-                    data[key] = kind(body[key])
-            writer_settings(data, body)
+            apply_fields(data, body, {**SCRIPT_FIELDS, **WRITER_FIELDS})
             if (data.get("text"), data.get("script_mode")) != before:
                 data["prepared"] = False
                 sync_sounds(actions, data)
@@ -252,15 +230,14 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
             before, status, refused = rewrite_project(actions, store, name, body, clip)
         except (H3Error, ValueError) as exc:
             return {"error": str(exc)}
-        answer = {**payload(owner, name), "status": status, "failed": refused}
-        return answer if refused else {**answer, "previous": before}
+        return answered(owner, name, before, status, refused)
 
     @app.post(f"{api}/project/writer-prompt", include_in_schema=False)
     @guarded
     def writer_prompt(name: str, request: Request, body: dict = Body(default={})):
         owner_of(request)
         data = load(name)
-        writer_settings(data, body)
+        apply_fields(data, body, WRITER_FIELDS)
         return {"prompt": actions.copy_drama3_writer_prompt(data.get("text") or "", _setting(data, "speaker_mode"),
                                                            *writer_slots(data, clip))}
 
@@ -271,7 +248,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not reply.strip():
             raise H3Error("Paste the chat model's reply first.")
         with editing(store, name) as data:
-            writer_settings(data, body)
+            apply_fields(data, body, WRITER_FIELDS)
             before = data.get("text") or ""
             # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
             outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),
@@ -282,7 +259,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
                 _apply_cast(data, outputs)
                 data["prepared"] = True
                 sync_sounds(actions, data)
-        return answered(request, name, data, before, status)
+        return answered(owner_of(request), name, before, status, failed(status))
 
     @app.post(f"{api}/project/example", include_in_schema=False)
     @guarded
@@ -300,7 +277,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
             meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]
             _apply_sounds(data, meta, rest[2 + 3 * DRAMA3_SOUND_SLOTS:])
             data["prepared"] = True
-        return {**payload(owner_of(request), name), "status": str(outputs[1]), "failed": False, "previous": before}
+        return answered(owner_of(request), name, before, str(outputs[1]), False)
 
     @app.post(f"{api}/preview", include_in_schema=False)
     @guarded

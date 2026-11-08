@@ -10,26 +10,20 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
-from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Any, Callable
+from typing import Callable
 from urllib.parse import quote
-import uuid
 
-from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, Request
 
-from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
 from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt, plan_shots
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS
 from h3_app.provenance import read_snapshot
 
-from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
-from ..storyboard.page import Run, Runs, guarded
-from .page_script import value
+from ..storyboard.page import Runs, guarded
+from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, value, writer_service
 from .page_store import editing
 from .stage_video import latest_export
 from . import visuals
@@ -39,12 +33,9 @@ VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "vi
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
+VIDEO_RANGES = {"video_limit": LIMITS, "video_subtitle_size": SUBTITLE_SIZES}
 PLAN, DRAW, SAVE = "plan", "draw", "save"
-
-
-@dataclass
-class VideoRun(Run):
-    family: str | None = None
+VideoRun = PageRun
 
 
 def video_settings(data: dict, engines: list) -> dict:
@@ -109,14 +100,6 @@ def boot_payload(engines: list) -> dict:
             "subtitle_sizes": list(SUBTITLE_SIZES), "plan_timeout": visuals.PLAN_TIMEOUT}
 
 
-def _writer(body: dict) -> list[Any]:
-    """The planner's writer inputs, as the Script step's writer service sends them."""
-    service = body.get("writer") or {}
-    return [service.get("gemini_prompt_model") or DEFAULT_GEMINI_PROMPT_MODEL, service.get("gemini_api_key") or "",
-            service.get("prompt_writer_backend") or "Gemini", service.get("openai_api_key") or "",
-            service.get("openai_model") or OPENAI_PROMPT_MODELS[0], service.get("openai_base_url") or ""]
-
-
 def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, session_of, payload,
                          project: Callable[[str], tuple[dict, str | None]], gpu: bool, interrupt) -> Runs:
     """The video routes; ``export`` is the tab's :class:`visuals.VideoExport`. Returns the video runs."""
@@ -133,13 +116,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @guarded
     def save_video_settings(name: str, request: Request, body: dict = Body(...)):
         with editing(store, name) as data:
-            for key, kind in VIDEO_FIELDS.items():
-                if key in body:
-                    data[key] = kind(body[key])
-            if "video_limit" in data:
-                data["video_limit"] = max(LIMITS[0], min(LIMITS[1], int(data["video_limit"])))
-            if "video_subtitle_size" in data:
-                data["video_subtitle_size"] = max(SUBTITLE_SIZES[0], min(SUBTITLE_SIZES[1], int(data["video_subtitle_size"])))
+            apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES)
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/video/plan", include_in_schema=False)
@@ -148,7 +125,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         """Plan shots with the writer in the background; the page follows its elapsed time."""
         owner = owner_of(request)
         _, audio, mix_settings, settings = mix_of(name)
-        writer = _writer(body)
+        writer = writer_service(body)
         model = writer[4] if writer[2] == "OpenAI-compatible" else writer[0]
         run_id = visuals.claim_plan(audio)
 
@@ -225,9 +202,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                                     input_names=(*visuals.VIDEO_INPUT_NAMES, *export.controller.fields))
 
         def work(run):
-            job = JOBS.accept(owner, "drama3_visuals", values, callback=callback, key=uuid.uuid4().hex)
-            run.job_id, run.family = job.id, "drama3_visuals"
-            for update in execute_accepted(job.id, session):
+            for update in run_job(run, owner, session, "drama3_visuals", values, callback):
                 status = value(update[1]) if len(update) > 1 else None
                 if isinstance(status, str) and status:
                     run.status = status
@@ -264,18 +239,16 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @app.get(f"{api}/video/still", include_in_schema=False)
     def still(name: str, file: str, request: Request):
         """One of the mix's stills; only images its stills record names."""
-        try:
+        with found():
             owner_of(request)
             _, result = project(name)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
         root = export.deps.runtime_config().output_dir
         record = visuals.read_stills(result, root) if result else None
         if record is None or file not in {item["image"] for item in record["shots"]}:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise not_found()
         # Each drawing names its images afresh, so a still never changes under its name.
-        return FileResponse(visuals.stills_dir(result, root) / file, media_type="image/jpeg",
-                            headers={"Cache-Control": "private, max-age=31536000, immutable"})
+        return file_response(visuals.stills_dir(result, root) / file, media_type="image/jpeg",
+                             cache="private, max-age=31536000, immutable")
 
     @app.post(f"{api}/project/video/interrupt", include_in_schema=False)
     @guarded
@@ -295,14 +268,9 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @app.get(f"{api}/video", include_in_schema=False)
     def video_file(name: str, request: Request):
         """The newest illustrated video made from the project's mix."""
-        try:
+        with found():
             owner_of(request)
             _, result = project(name)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        video = latest_export(result) if result else None
-        if video is None:
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(video, media_type="video/mp4", headers={"Cache-Control": "private, max-age=3600"})
+        return file_response(latest_export(result) if result else None, media_type="video/mp4")
 
     return runs

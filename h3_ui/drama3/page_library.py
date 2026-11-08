@@ -8,34 +8,28 @@ updates its slots, so a renamed voice stays in use and a deleted one is let go.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable
-import uuid
 
-from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, Request
 
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS
 
-from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
-from ..storyboard.page import Run, Runs, guarded
+from ..storyboard.page import Runs, guarded
 from .controls import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
-from .page_script import SKIP, value
+from .page_common import SKIP, PageRun, file_response, found, run_job, value
 from .page_store import editing
 
 MAX_TAKES = 4
 
 
 @dataclass
-class TakesRun(Run):
+class TakesRun(PageRun):
     """New voices tried for a saved speaker: their clips, and the brief they were made from."""
 
     key: str | None = None
     takes: list[str | None] = field(default_factory=list)
     brief: dict | None = None
-    family: str | None = None
 
     def public(self, scene_id) -> dict[str, Any]:
         return {**super().public(scene_id), "key": self.key,
@@ -84,15 +78,11 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
 
     @app.get(f"{api}/library/clip", include_in_schema=False)
     def library_clip(kind: str, key: str, request: Request):
-        try:
+        with found():
             owner_of(request)
             saved = (drama3_speakers.load_speaker(key, runtime()) if kind == "voice"
                      else drama3_sounds.load_sound(key, runtime()))
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        if not Path(saved.audio).is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(saved.audio, headers={"Cache-Control": "no-cache"})
+        return file_response(saved.audio, cache="no-cache")
 
     @app.post(f"{api}/library/speaker/update", include_in_schema=False)
     @guarded
@@ -172,9 +162,7 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
         callback = owned_generation(actions.generate_drama3_voice_takes, "drama3_voice")
 
         def work(run):
-            job = JOBS.accept(owner, "drama3_voice", values, callback=callback, key=uuid.uuid4().hex)
-            run.job_id, run.family = job.id, "drama3_voice"
-            for update in execute_accepted(job.id, session):
+            for update in run_job(run, owner, session, "drama3_voice", values, callback):
                 update = list(update)
                 clips, brief, status = update[:MAX_TAKES], value(update[MAX_TAKES + 1]), value(update[MAX_TAKES + 2])
                 run.takes = [value(clip) if isinstance(value(clip), str) else None for clip in clips][:count]
@@ -205,14 +193,9 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
 
     @app.get(f"{api}/library/take", include_in_schema=False)
     def take_clip(request: Request, run: str, index: int):
-        try:
-            found = owned_run(request, run)
-            file = Path(found.takes[index] or "")
-        except (H3Error, ValueError, IndexError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        if not file.is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(file, headers={"Cache-Control": "private, max-age=3600"})
+        with found():
+            file = owned_run(request, run).takes[index]
+        return file_response(file)
 
     @app.post(f"{api}/library/speaker/use-take", include_in_schema=False)
     @guarded

@@ -15,23 +15,21 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable
 import uuid
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app.catalog import AUDIO_EXTENSIONS
 from h3_app.drama3.voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS
 from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED
 from h3_app.voice_design import LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 
-from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
-from ..storyboard.page import Run, Runs, guarded
+from ..storyboard.page import Runs, guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
-from .page_script import value, SKIP
+from .page_common import SKIP, PageRun, apply_fields, file_response, found, run_job, speech_value, value
 from .page_store import edit_project, project_lock
+
 
 def _keep_clip(path, directory: Path) -> str:
     """Keep a clip with the project's clips under its content digest; returns its file name."""
@@ -63,12 +61,11 @@ VOICE, SOUND, TRANSCRIBE, PREPARE = "voice", "sound", "transcribe", "prepare"
 
 
 @dataclass
-class CastRun(Run):
+class CastRun(PageRun):
     """A cast job, with the latest word from each slot it works on (``voice:0``, ``sound:2``)."""
 
     target: str | None = None
     slots: dict[str, str] = field(default_factory=dict)
-    family: str | None = None  # The running job's family, which Interrupt names.
 
     def public(self, scene_id) -> dict[str, Any]:
         return {**super().public(scene_id), "target": self.target, "slots": dict(self.slots)}
@@ -91,6 +88,11 @@ def _setting(data: dict, key: str):
 
 def _is_saved(preset, upload) -> bool:
     return bool(preset) and preset != upload
+
+
+def slot_keys(kind: str, slot: int) -> tuple[str, str]:
+    """A slot's key prefix in the project (``voice_0``) and the preset that means "no saved one"."""
+    return (f"voice_{slot}", UPLOAD_VOICE) if kind == "voice" else (f"sound_{slot}", UPLOAD_SOUND)
 
 
 def clip_url(name: str, kind: str, slot: int, version) -> str:
@@ -229,9 +231,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
 
         def change(data):
             group_before = _setting(data, "speaker_group")
-            for key, kind in CAST_SETTINGS.items():
-                if key in body:
-                    data[key] = kind(body[key])
+            apply_fields(data, body, CAST_SETTINGS)
             if _setting(data, "speaker_group") != group_before:
                 # A new group's saved voices fill the speakers that have none, as the tab matches them.
                 for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
@@ -246,7 +246,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         """A speaker's or sound's details; ``source`` "upload" lets go of a saved voice or sound."""
         slot = slot_of(kind, slot)
         fields = VOICE_FIELDS if kind == "voice" else SOUND_FIELDS
-        prefix, upload = (f"voice_{slot}", UPLOAD_VOICE) if kind == "voice" else (f"sound_{slot}", UPLOAD_SOUND)
+        prefix, upload = slot_keys(kind, slot)
 
         def change(data):
             for key, cast in fields.items():
@@ -260,6 +260,21 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         edit(name, change)
         return payload(owner_of(request), name)
 
+    def set_clip(name: str, kind: str, slot: int, kept: str | None) -> None:
+        """Give a slot its own clip (or none), letting go of a saved one; a voice's transcript goes with it."""
+        prefix, upload = slot_keys(kind, slot)
+
+        def change(data):
+            if kept is None:
+                data.pop(f"{prefix}_audio", None)
+            else:
+                data[f"{prefix}_audio"] = kept
+            data[f"{prefix}_preset"] = upload
+            if kind == "voice":
+                data[f"{prefix}_transcript"] = ""
+
+        edit(name, change)
+
     @app.post(f"{api}/project/slot/upload", include_in_schema=False)
     @guarded
     def upload_clip(name: str, kind: str, slot: int, request: Request, file: UploadFile = File(...)):
@@ -267,30 +282,13 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         slot = slot_of(kind, slot)
         with TemporaryDirectory(prefix="h3-soundstage-") as directory:
             kept = keep(spool(file, directory))
-
-        def change(data):
-            prefix = f"voice_{slot}" if kind == "voice" else f"sound_{slot}"
-            data[f"{prefix}_audio"] = kept
-            data[f"{prefix}_preset"] = UPLOAD_VOICE if kind == "voice" else UPLOAD_SOUND
-            if kind == "voice":
-                data[f"{prefix}_transcript"] = ""
-
-        edit(name, change)
+        set_clip(name, kind, slot, kept)
         return payload(owner_of(request), name)
 
     @app.delete(f"{api}/project/slot/clip", include_in_schema=False)
     @guarded
     def remove_clip(name: str, kind: str, slot: int, request: Request):
-        slot = slot_of(kind, slot)
-
-        def change(data):
-            prefix = f"voice_{slot}" if kind == "voice" else f"sound_{slot}"
-            data.pop(f"{prefix}_audio", None)
-            data[f"{prefix}_preset"] = UPLOAD_VOICE if kind == "voice" else UPLOAD_SOUND
-            if kind == "voice":
-                data[f"{prefix}_transcript"] = ""
-
-        edit(name, change)
+        set_clip(name, kind, slot_of(kind, slot), None)
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/slots", include_in_schema=False)
@@ -380,7 +378,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             key, message = saved.name, f'Saved sound "{saved.name}".'
 
         def change(current):
-            current[f"{'voice' if kind == 'voice' else 'sound'}_{slot}_preset"] = key
+            current[f"{slot_keys(kind, slot)[0]}_preset"] = key
 
         edit(name, change)
         return {**payload(owner_of(request), name), "message": message}
@@ -388,30 +386,25 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     @app.get(f"{api}/clip", include_in_schema=False)
     def slot_clip(name: str, kind: str, slot: int, request: Request):
         """A slot's clip: the project's own, or the saved voice or sound it uses."""
-        try:
+        with found():
             owner_of(request)
             slot = slot_of(kind, slot)
             data, _ = store.soundstage_project(name)
-            prefix, upload = (f"voice_{slot}", UPLOAD_VOICE) if kind == "voice" else (f"sound_{slot}", UPLOAD_SOUND)
+            prefix, upload = slot_keys(kind, slot)
             preset = data.get(f"{prefix}_preset")
             if _is_saved(preset, upload):
                 saved = (drama3_speakers.load_speaker(preset, runtime()) if kind == "voice"
                          else drama3_sounds.load_sound(preset, runtime()))
-                file = Path(saved.audio)
+                file = saved.audio
             else:
-                file = Path(clip(data.get(f"{prefix}_audio")) or "")
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        if not file.is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(file, headers={"Cache-Control": "private, max-age=3600"})
+                file = clip(data.get(f"{prefix}_audio"))
+        return file_response(file)
 
     # Making voices, sounds and transcripts ---------------------------------
     def voice_values(data: dict) -> list[Any]:
         """``generate_drama3_voices``' inputs: design settings, parallel, shown slots, skip, then each slot."""
-        settings = [_setting(data, "voice_engine"), *(data.get(key) if data.get(key) is not None else default
-                                                      for key, default in (("temperature", 2.0), ("top_p", 1.0),
-                                                                           ("top_k", 30), ("max_frames", 8192)))]
+        settings = [_setting(data, "voice_engine"),
+                    *(speech_value(data, key) for key in ("temperature", "top_p", "top_k", "max_frames"))]
         values = [*settings, data.get("parallel") or 16, int(data.get("shown_slots") or 1),
                   bool(_setting(data, "skip_existing"))]
         for slot in range(DRAMA3_VOICE_SLOTS):
@@ -529,10 +522,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
 
     def execute(run, owner: str, session, name: str, target: str, slot, family: str, callback, values) -> None:
         """Run one cast job to its end on the usual job path, writing each frame into the project."""
-        job = JOBS.accept(owner, family, values, callback=owned_generation(callback, family), key=uuid.uuid4().hex)
-        run.job_id = job.id
-        run.family = family
-        for update in execute_accepted(job.id, session):
+        for update in run_job(run, owner, session, family, values, owned_generation(callback, family)):
             apply_outputs(run, name, target, slot, update if isinstance(update, (list, tuple)) else (update,))
         if run.error is None:
             failed = [note for key, note in run.slots.items() if "-clip:" not in key and "failed" in note]

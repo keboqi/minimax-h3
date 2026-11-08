@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
-import uuid
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -23,24 +22,20 @@ from h3_app.jobs import JOBS
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED
 from h3_app.workspace_store import request_owner
 
-from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
-from ..storyboard.page import Run, Runs, guarded
-from ..subtitle_words import word_pieces
-from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
+from ..storyboard.page import Runs, guarded
+from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
-from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
+from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, speech_value, timeline_payload
+from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload, voice_inputs
 from .page_library import install_library_routes
 from .page_store import editing
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
-from .result_view import clean_line, timeline_data
+from .result_view import clean_line
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
-# The Speak step's defaults, for a project saved before a field existed.
-DEFAULTS = {"temperature": 2.0, "top_p": 1.0, "top_k": 30, "max_frames": 8192, "parallel": 16, "retries": 0,
-            "word_timing": False, "script_mode": "Basic", "text": "", "title": ""}
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,
                   "retries": int, "max_frames": int, "auto_save_speakers": bool}
 # The Speak step's slider ranges, which the page draws and saved values are kept inside.
@@ -50,24 +45,18 @@ RUN_KIND = "speak"
 
 
 @dataclass
-class SpeakRun(Run):
+class SpeakRun(PageRun):
     """Speaking, or Auto, which rewrites, makes the cast and speaks in turn (``stage``)."""
 
     auto: bool = False
     task: str = "speak"  # "speak", or "words" for word alignment
     stage: str | None = None
-    family: str | None = None  # The running job's family, which Interrupt names.
     slots: dict[str, str] = field(default_factory=dict)
     stop_requested: bool = False
 
     def public(self, scene_id) -> dict[str, Any]:
         return {**super().public(scene_id), "auto": self.auto, "task": self.task, "stage": self.stage,
                 "slots": dict(self.slots)}
-
-
-def _value(data: dict, key: str):
-    value = data.get(key)
-    return DEFAULTS.get(key) if value is None else value
 
 
 def _clip(clips: Path, value) -> str | None:
@@ -80,19 +69,16 @@ def _clip(clips: Path, value) -> str | None:
 
 def generation_values(name: str, data: dict, clips: Path) -> list[Any]:
     """A saved project as ``generate_drama3``'s inputs, in the order the Speak step sends them."""
-    values: list[Any] = [_value(data, "text")]
-    for slot in range(DRAMA3_VOICE_SLOTS):
-        values += [data.get(f"voice_{slot}_preset") or UPLOAD_VOICE, _clip(clips, data.get(f"voice_{slot}_audio")),
-                   data.get(f"voice_{slot}_transcript") or ""]
-    values += [_value(data, key) for key in ("temperature", "top_p", "top_k", "max_frames", "parallel", "retries",
-                                             "script_mode")]
+    values: list[Any] = [speech_value(data, "text"), *voice_inputs(data, lambda value: _clip(clips, value))]
+    values += [speech_value(data, key) for key in ("temperature", "top_p", "top_k", "max_frames", "parallel",
+                                                   "retries", "script_mode")]
     for slot in range(DRAMA3_SOUND_SLOTS):
         values += [data.get(f"sound_{slot}_preset") or UPLOAD_SOUND, _clip(clips, data.get(f"sound_{slot}_audio")),
                    data.get(f"sound_{slot}_save_name") or "", data.get(f"sound_{slot}_description") or "",
                    data.get(f"sound_{slot}_duration") or 5]
-    values.append(_value(data, "title"))
+    values.append(speech_value(data, "title"))
     values += [data.get(f"voice_{slot}_save_name") or "" for slot in range(DRAMA3_VOICE_SLOTS)]
-    values += [bool(_value(data, "word_timing")), name]
+    values += [bool(speech_value(data, "word_timing")), name]
     return values
 
 
@@ -100,24 +86,6 @@ def _take_status(chunk: dict) -> str:
     if not chunk.get("ok", True) or chunk.get("warnings"):
         return "flagged"
     return "reused" if chunk.get("reused") else "new"
-
-
-def timeline_payload(settings: dict) -> dict:
-    """A snapshot's timed lines (with their aligned words), speakers and sounds, as the page draws them."""
-    entries, words, tones, sounds = timeline_data(settings)
-    lines = []
-    for (speaker, text, start, end), line_words in zip(entries, words):
-        pieces = word_pieces(text, line_words)
-        lines.append({"speaker": speaker, "text": text, "start": start, "end": end,
-                      "words": None if pieces is None else {
-                          "lead": pieces[0], "items": [{"text": piece, "start": s, "end": e}
-                                                       for piece, s, e in pieces[1]]}})
-    return {
-        "duration": float(settings.get("duration") or 0),
-        "speakers": [{"name": name, "tone": tone, "pan": pan} for name, (tone, pan) in tones.items()],
-        "lines": lines,
-        "sounds": [{"name": name, "loop": loop, "start": start, "end": end} for name, loop, start, end in sounds],
-    }
 
 
 def result_payload(path: str | Path | None) -> dict | None:
@@ -140,29 +108,26 @@ def result_payload(path: str | Path | None) -> dict | None:
 
 
 def _preset(data: dict) -> str | None:
-    current = tuple(float(_value(data, key)) for key in ("temperature", "top_p", "top_k"))
+    current = tuple(float(speech_value(data, key)) for key in ("temperature", "top_p", "top_k"))
     return next((name for name, values in DRAMA3_SAMPLING_PRESETS.items()
                  if tuple(float(value) for value in values) == current), None)
 
 
 def project_payload(name: str, data: dict, result, clips: Path, runtime=None) -> dict:
-    text = str(_value(data, "text"))
+    text = str(speech_value(data, "text"))
     speakers = speakers_payload(name, data, lambda value: _clip(clips, value), runtime)
     return {
         "name": name,
-        "title": _value(data, "title"),
-        "script_mode": _value(data, "script_mode"),
+        "title": speech_value(data, "title"),
+        "script_mode": speech_value(data, "script_mode"),
         "lines": sum(1 for line in text.splitlines() if line.strip()),
         # The speakers who are someone: named, or with a voice.
         "cast": [speaker for speaker in speakers if speaker["save_name"] or speaker["saved_name"] or speaker["ready"]],
         "speakers": speakers,
         "sounds": sounds_payload(name, data, lambda value: _clip(clips, value)),
         "cast_settings": cast_settings(data),
-        "settings": {"temperature": float(_value(data, "temperature")), "top_p": float(_value(data, "top_p")),
-                     "top_k": int(_value(data, "top_k")), "word_timing": bool(_value(data, "word_timing")),
-                     "parallel": int(_value(data, "parallel")), "retries": int(_value(data, "retries")),
-                     "max_frames": int(_value(data, "max_frames")),
-                     "auto_save_speakers": bool(data.get("auto_save_speakers")), "preset": _preset(data)},
+        "settings": {**{key: kind(speech_value(data, key)) for key, kind in SETTING_FIELDS.items()},
+                     "preset": _preset(data)},
         "result": result_payload(result),
         "script": script_payload(data),
     }
@@ -179,6 +144,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     """
     runs = Runs(busy="This project is already speaking.")
     clips = Path(output_dir) / "h3" / ".soundstage" / "clips"
+
+    def clip(value) -> str | None:
+        return _clip(clips, value)
+
     callbacks = {
         GENERATE: owned_generation(actions.generate_drama3, "drama3"),
         REMIX: owned_generation(actions.remix_drama3, "drama3"),
@@ -197,25 +166,26 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         data, result = store.soundstage_project(name)
         return data, result if result and Path(result).is_file() else None
 
-    def run_payload(owner, name):
-        run = runs.latest(owner, name)
+    def latest(source: Runs | None, owner, name):
+        run = source.latest(owner, name) if source is not None else None
         return run.public(None) if run is not None else None
+
+    def run_payload(owner, name):
+        return latest(runs, owner, name)
 
     def payload(owner, name):
         data, result = project(name)
-        cast_run = cast_jobs.runs.latest(owner, name) if cast_jobs is not None else None
-        video_run = video_runs.latest(owner, name) if video_runs is not None else None
         return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
-                "cast_run": cast_run.public(None) if cast_run is not None else None,
+                "cast_run": latest(cast_jobs.runs if cast_jobs is not None else None, owner, name),
                 "video": video_payload(name, data, result, video_export) if video_export else None,
-                "video_run": video_run.public(None) if video_run is not None else None}
+                "video_run": latest(video_runs, owner, name)}
 
     def voice_settings(data: dict) -> list:
         """The Cast's voice generator with the speech sampling, as the tab's voice tries use them."""
         from h3_app.drama3.voice_design import ENGINE_QWEN
 
-        return [data.get("voice_engine") or ENGINE_QWEN, *(_value(data, key) for key in
-                                                           ("temperature", "top_p", "top_k", "max_frames", "parallel"))]
+        return [data.get("voice_engine") or ENGINE_QWEN,
+                *(speech_value(data, key) for key in ("temperature", "top_p", "top_k", "max_frames", "parallel"))]
 
     def auto_running(owner, name) -> str | None:
         run = runs.active(owner, name, RUN_KIND)
@@ -250,10 +220,9 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 "video": video_boot_payload(video_export.engines) if video_export else None,
                 **boot_payload(), **cast_boot_payload()}
 
-    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload,
-                          clip=lambda value: _clip(clips, value))
+    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip)
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
-                                    payload=payload, clips=clips, clip=lambda value: _clip(clips, value),
+                                    payload=payload, clips=clips, clip=clip,
                                     runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running)
     install_library_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                            payload=payload, runtime=runtime_config, voice_settings=voice_settings, gpu=gpu,
@@ -275,39 +244,27 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         """Keep the speech settings with the project, as Save project in the tab does."""
         owner = owner_of(request)
         with editing(store, name) as data:
-            for key, kind in SETTING_FIELDS.items():
-                if key in body:
-                    data[key] = kind(body[key])
-                    if key in SETTING_RANGES:
-                        low, high, _step = SETTING_RANGES[key]
-                        data[key] = kind(min(high, max(low, data[key])))
+            apply_fields(data, body, SETTING_FIELDS, SETTING_RANGES)
         return payload(owner, name)
 
     # Files -----------------------------------------------------------------
     @app.get(f"{api}/audio", include_in_schema=False)
     def project_audio(name: str, request: Request):
-        try:
+        with found():
             owner_of(request)
             _, result = project(name)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        if result is None:
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(result, headers={"Cache-Control": "private, max-age=3600"})
+        return file_response(result)
 
     @app.get(f"{api}/take", include_in_schema=False)
     def take_audio(name: str, key: str, request: Request):
         """One line's saved take, before staging and effects; only takes of the project's mix."""
-        try:
+        with found():
             owner_of(request)
             _, result = project(name)
-        except (H3Error, ValueError) as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
         keys = {chunk.get("take") for chunk in result_settings(result).get("chunks") or []} if result else set()
-        file = Path(takes_dir()) / f"{key}.wav"
-        if not key.isalnum() or key not in keys or not file.is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(file, media_type="audio/wav", headers={"Cache-Control": "private, max-age=3600"})
+        if not key.isalnum() or key not in keys:
+            raise not_found()
+        return file_response(Path(takes_dir()) / f"{key}.wav", media_type="audio/wav")
 
     # Speaking --------------------------------------------------------------
     @app.get(f"{api}/run", include_in_schema=False)
@@ -322,10 +279,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if action == REGENERATE:
             values = [line, *values]
         # Accepted here, once this is the project's only run: a refused run leaves no job.
-        job = JOBS.accept(owner, "drama3", values, callback=callbacks[action], output_indices=(0,),
-                          key=uuid.uuid4().hex)
-        run.job_id, run.family = job.id, "drama3"
-        for update in execute_accepted(job.id, session):
+        for update in run_job(run, owner, session, "drama3", values, callbacks[action], output_indices=(0,)):
             status = str(update[1] or "") if len(update) > 1 else ""
             if status:
                 run.status = status.splitlines()[0]
@@ -375,7 +329,6 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if not (data.get("text") or "").strip():
             raise H3Error("Write or paste some text on Script first.")
         session = session_of(request)
-        clip = lambda value: _clip(clips, value)  # noqa: E731
 
         def stopped(run) -> bool:
             if run.stop_requested:
@@ -424,9 +377,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         callback = owned_generation(actions.repair_drama3_words, "drama3_words")
 
         def work(run):
-            job = JOBS.accept(owner, "drama3_words", [result], callback=callback, key=uuid.uuid4().hex)
-            run.job_id, run.family = job.id, "drama3_words"
-            for update in execute_accepted(job.id, session):
+            for update in run_job(run, owner, session, "drama3_words", [result], callback):
                 status = str(update[1] or "") if len(update) > 1 else ""
                 if status:
                     run.status = status.splitlines()[0]
