@@ -336,10 +336,13 @@ def apply_drama3_reply(
     return_sounds: bool = False,
     return_title: bool = False,
     speaker_names: dict[int, str] | None = None,
+    strict_source: bool = False,
 ) -> tuple:
     """Validate a reply pasted from another chat model; the text is kept on failure.
 
-    ``return_title`` appends the reply's title ("" when it has none or failed).
+    ``return_title`` appends the reply's title ("" when it has none or failed). As with the
+    built-in writer, a reply that changes the source words is kept and the changes are listed
+    in the status; ``strict_source`` rejects it instead.
     """
     original = str(text or "")
     extra = (([],) if return_sounds else ()) + (("",) if return_title else ())
@@ -360,6 +363,7 @@ def apply_drama3_reply(
             notes=notes,
             meta=meta,
             speaker_names=speaker_names,
+            strict_source=strict_source,
         )
     except H3Error as exc:
         return (original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", [], *extra)

@@ -32,7 +32,25 @@ from ..job_bindings import owned_generation
 from ..storyboard.page import Run, Runs, guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
 from .page_script import value, SKIP
-from .projects import _keep_clip
+
+def _keep_clip(path, directory: Path) -> str:
+    """Keep a clip with the project's clips under its content digest; returns its file name."""
+    import os
+
+    from h3_app.storyboard.service import file_digest
+
+    source = Path(path)
+    target = directory / (file_digest(source) + source.suffix.lower())
+    if not target.exists():
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / uuid.uuid4().hex
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return target.name
+
 
 VOICE_FIELDS = {"save_name": str, "description": str, "preview_text": str, "language": str, "transcript": str}
 SOUND_FIELDS = {"save_name": str, "description": str, "duration": int}

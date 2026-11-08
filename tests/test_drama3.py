@@ -346,57 +346,6 @@ class Drama3AppInputTests(unittest.TestCase):
         with self.assertRaisesRegex(gr.Error, "Choose a line"):
             self.captured_request("regenerate_drama3_line", None)
 
-    def test_takes_table_comes_from_the_result_snapshot(self):
-        from h3_ui.application import drama3_handlers
-        from h3_app.provenance import write_snapshot
-
-        with tempfile.TemporaryDirectory() as temp:
-            result = Path(temp) / "speech.mp3"
-            result.write_bytes(b"mp3")
-            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
-                {"speaker": 0, "name": "Alice", "text": "Hello  there.", "take": "k1", "reused": True,
-                 "check": "reused", "seconds": 1.2},
-                {"speaker": 3, "name": "", "text": "x" * 60, "take": "k2", "reused": False,
-                 "check": "skipped", "seconds": 4.0},
-            ]}})
-            table, line, actions = drama3_handlers.drama3_takes(str(result))
-        self.assertEqual(table["value"], [[1, "Alice", "Hello there.", 1.2, "reused"],
-                                          [2, "Speaker 3", "x" * 60, 4.0, "new"]])
-        self.assertEqual(line["choices"][0], ("1 · Alice · Hello there.", "k1"))
-        self.assertTrue(line["choices"][1][0].endswith("…"))
-        self.assertEqual(line["value"], "k1")
-        self.assertTrue(actions["visible"])
-        self.assertFalse(drama3_handlers.drama3_takes(None)[2]["visible"])
-
-    def test_clicking_a_takes_row_picks_its_line_and_plays_its_take(self):
-        import gradio as gr
-        import numpy as np
-        from h3_ui import application  # noqa: F401 - installs the handlers' services
-        from h3_ui.application import drama3_handlers
-        from h3_app.drama3.serving import audio, takes
-        from h3_app.provenance import write_snapshot
-
-        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": temp}):
-            result = Path(temp) / "speech.mp3"
-            result.write_bytes(b"mp3")
-            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
-                {"speaker": 0, "text": "Untaken."},
-                {"speaker": 0, "text": "One.", "take": "a" * 32},
-                {"speaker": 1, "text": "Two.", "take": "b" * 32},
-            ]}})
-            # Rows count only lines with a take, as the table shows them.
-            self.assertEqual(drama3_handlers.drama3_take_selected(str(result), SimpleNamespace(index=[1, 2])),
-                             "b" * 32)
-            self.assertIs(type(drama3_handlers.drama3_take_selected(str(result), SimpleNamespace(index=[5, 0]))),
-                          type(gr.skip()))
-            root = takes.takes_root(None)
-            takes.save_take(root, "b" * 32, audio.encode_wav(np.zeros(2400, dtype=np.float32), 24000))
-            rate, samples = drama3_handlers.drama3_take_audio("b" * 32)
-            self.assertEqual((rate, samples.size), (24000, 2400))
-            self.assertIsNone(drama3_handlers.drama3_take_audio("a" * 32))
-            self.assertIsNone(drama3_handlers.drama3_take_audio("../b"))
-            self.assertIsNone(drama3_handlers.drama3_take_audio(None))
-
     def test_subtitles_are_timed_lines_without_cues(self):
         from h3_ui import application  # noqa: F401 - installs the handlers' services
         from h3_ui.application import drama3_handlers
@@ -450,43 +399,6 @@ class Drama3AppInputTests(unittest.TestCase):
         self.assertIn('h3-drama3-tone-2" data-row="0" style="left: 42.5%">Leo</span>', update["value"])
         self.assertFalse(old["visible"])  # results from before line timings were recorded
         self.assertFalse(drama3_handlers.drama3_subtitles(None)["visible"])
-
-    def test_takes_and_settings_are_found_from_gradios_cached_copy(self):
-        import shutil
-        from h3_ui import application
-        from h3_app.provenance import write_snapshot
-
-        with tempfile.TemporaryDirectory() as temp:
-            outputs = Path(temp) / "output"
-            result = outputs / "drama3" / "Drama3_sglang_20261020-030937_0123456789abcdef0123456789abcdef.mp3"
-            result.parent.mkdir(parents=True)
-            result.write_bytes(b"mp3")
-            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
-                {"speaker": 0, "name": "Alice", "text": "Hello.", "take": "k1", "reused": False,
-                 "check": "skipped", "seconds": 1.0}]}})
-            # Gradio passes listeners a copy in its cache, without the snapshot beside it.
-            cached = Path(temp) / "gradio" / "f00d" / result.name
-            cached.parent.mkdir(parents=True)
-            shutil.copyfile(result, cached)
-            for other_root in (Path(temp) / "outputs", outputs, outputs / ".." / "output", Path(temp)):
-                with self.subTest(other_root=other_root), \
-                        patch.object(application, "OUTPUT_DIR", outputs), \
-                        patch.object(application, "OUTPUTS_DIR", other_root):
-                    self.assertEqual(application.H3.resolve_result_path(str(cached)), result)
-                    table, _line, actions = application.drama3_handlers.drama3_takes(str(cached))
-                    self.assertEqual(table["value"][0][1], "Alice")
-                    self.assertTrue(actions["visible"])
-                    self.assertIn("Alice", application.H3.result_settings_for_media(str(cached)))
-
-            # Two distinct outputs with the same name must still be considered ambiguous.
-            other = Path(temp) / "outputs" / result.name
-            other.parent.mkdir()
-            shutil.copyfile(result, other)
-            write_snapshot(other, {"family": "Drama 3", "settings": {}})
-            with patch.object(application, "OUTPUT_DIR", outputs), \
-                    patch.object(application, "OUTPUTS_DIR", other.parent):
-                self.assertEqual(application.H3.resolve_result_path(str(cached)), str(cached))
-
 
 class Drama3VramHandoffTests(unittest.TestCase):
     def run_release(self, allocations, timeout=60):
@@ -737,7 +649,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("<robotic_voice>", adv_script)
         self.assertIn("<#1.0#>", adv_script)
 
-    def test_switch_script_mode_and_sync_script_sounds(self):
+    def test_sync_script_sounds_fills_sound_slots_from_the_script(self):
         from h3_ui.application import drama3_handlers
 
         text = (
@@ -749,11 +661,6 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             "</sequential>\n"
             "</parallel>"
         )
-        # Switching to Advanced reveals the sounds panel
-        panel_upd, status = drama3_handlers.switch_drama3_script_mode(drama3_writer.DRAMA3_SCRIPT_ADVANCED, text)
-        self.assertTrue(panel_upd["visible"])
-        self.assertIn("Advanced", status)
-
         # Syncing script sounds populates slot metadata
         meta = ["", "", 5] * 16
         synced = drama3_handlers.sync_drama3_script_sounds(
@@ -761,13 +668,6 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         )
         self.assertEqual(list(synced[0:3]), ["cafe_bgm", "Warm jazz piano, 15 seconds", 15])
         self.assertEqual(list(synced[3:6]), ["door_bell", "Shop doorbell chime, 2 seconds", 2])
-
-        # Switching back to Basic keeps the authored tags (they are ignored when generating)
-        basic_panel_upd, basic_status = drama3_handlers.switch_drama3_script_mode(
-            drama3_writer.DRAMA3_SCRIPT_BASIC, text
-        )
-        self.assertFalse(basic_panel_upd["visible"])
-        self.assertIn("kept but ignored", basic_status)
 
     def test_batch_sounds_report_clips_that_were_not_returned(self):
         from h3_ui.application import drama3_handlers
@@ -807,140 +707,6 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
 
 
 class Drama3AutoTests(unittest.TestCase):
-    def test_composer_and_auto_bindings_can_be_mounted(self):
-        import gradio as gr
-        from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.view import build_drama3_view
-        from h3_ui.drama3.bindings import bind_drama3
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
-        demo.queue()
-        # In particular, Auto must not register cancellation of unqueued callbacks.
-        demo.validate_queue_settings()
-        self.assertEqual(len(view.voices), 16)
-        self.assertEqual(len(view.sounds), 16)
-        # Auto defaults to sound-enhanced, expressive speech and leaves speaker saving opt-in.
-        self.assertEqual(view.script_mode.value, "Advanced (sound enhanced)")
-        self.assertFalse(hasattr(view, "backend"))
-        self.assertEqual((view.temperature.value, view.top_p.value, view.top_k.value), (2.0, 1.0, 30))
-        self.assertTrue(view.sounds_panel.visible)
-        self.assertFalse(view.auto_save_speakers.value)
-        # Auto only disables and re-enables its button; the label never changes, so it cannot stick.
-        import inspect
-
-        label_writers = []
-        for fn in demo.fns.values():
-            outputs = [block._id for block in fn.outputs]
-            if view.auto._id not in outputs or fn.inputs or not callable(fn.fn) or any(
-                    parameter.default is parameter.empty
-                    for parameter in inspect.signature(fn.fn).parameters.values()):
-                continue
-            update = fn.fn()[outputs.index(view.auto._id)]
-            label_writers += ["value" in update]
-        self.assertTrue(label_writers)
-        self.assertFalse(any(label_writers))
-        from h3_app.jobs import JOBS
-        self.assertEqual(JOBS.callbacks["drama3_words"].__name__, "repair_drama3_words")
-        self.assertEqual(JOBS.callbacks["drama3_words"].job_input_names, ("output",))
-        self.assertIs(view.repair_words.h3_stop, view.stop_repair_words)
-        config = demo.get_config_file()
-        self.assertTrue(any((view.repair_words._id, "click") in [tuple(t) for t in dep["targets"]]
-                            for dep in config["dependencies"]))
-        self.assertTrue(any(fn.outputs == [view.subtitles, view.alignment_status] for fn in demo.fns.values()))
-
-    def test_soundstage_is_four_steps_and_auto_on_script_presses_auto_on_speak(self):
-        import gradio as gr
-        from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.view import AUTO_ID, build_drama3_view
-        from h3_ui.drama3.bindings import bind_drama3
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
-        self.assertEqual([tab.label for tab in view.steps.tabs.children],
-                         ["Script", "Cast & sounds", "Speak", "Review lines"])
-        self.assertEqual(view.auto.elem_id, AUTO_ID)
-        # Step buttons only run browser code, so moving between steps sends no request.
-        auto_shortcuts = [fn for fn in demo.fns.values() if fn.js and AUTO_ID in fn.js]
-        self.assertEqual(len(auto_shortcuts), 1)
-        self.assertIsNone(auto_shortcuts[0].fn)
-        self.assertFalse(view.take_actions.visible)
-
-    def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
-        import gradio as gr
-        from h3_ui.drama3.bindings import drama3_auto_rewritten
-
-        with self.assertRaisesRegex(gr.Error, "no key"):
-            drama3_auto_rewritten("Prompt enhancement failed: no key")
-        self.assertIn("voices", drama3_auto_rewritten("Rewrote the script."))
-
-    def test_auto_releases_controls_when_a_gpu_stage_cannot_be_accepted(self):
-        import uuid
-        import gradio as gr
-        from h3_ui import job_admission
-        from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.view import build_drama3_view
-        from h3_ui.drama3.bindings import _bind_auto
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            _bind_auto(view, _drama3_actions(), [view.text])
-        dependencies = demo.get_config_file()["dependencies"]
-        controls = [view.auto_status, view.stop_auto, view.auto]
-        accepted_stages = [
-            dep for dep in dependencies
-            if getattr(demo.fns[dep["id"]].fn, "__name__", None) == "accept"
-        ]
-        self.assertEqual(len(accepted_stages), 3)  # voices, sounds, speech
-        for accepted in accepted_stages:
-            with self.subTest(stage=accepted["id"]):
-                accept = demo.fns[accepted["id"]]
-                values = [component.value for component in accept.inputs]
-                values[-1] = uuid.uuid4().hex
-                with patch.object(job_admission, "require_owner", return_value="owner"), \
-                        patch.object(job_admission.JOBS, "accept", side_effect=ValueError("Cannot capture inputs")), \
-                        self.assertRaisesRegex(gr.Error, "Cannot capture inputs"):
-                    accept.fn(*values, None)
-                # Execution is success-only, so an admission failure skips it.
-                children = [dep for dep in dependencies if dep["trigger_after"] == accepted["id"]]
-                execution = [dep for dep in children if dep["queue"]]
-                self.assertEqual(len(execution), 1)
-                self.assertTrue(execution[0]["trigger_only_on_success"])
-                failures = [demo.fns[dep["id"]] for dep in children
-                            if dep["trigger_only_on_failure"]]
-                self.assertEqual(len(failures), 1)
-                self.assertEqual(failures[0].outputs, controls)
-                status, stop, auto = failures[0].fn()
-                self.assertIn("Auto stopped", status)
-                self.assertIn("error message", status)
-                self.assertFalse(stop["interactive"])
-                self.assertTrue(auto["interactive"])
-
-    def test_auto_starts_voices_after_script_sync_and_reuses_the_applied_script(self):
-        import gradio as gr
-        from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.view import build_drama3_view
-        from h3_ui.drama3.bindings import bind_drama3
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
-        deps = demo.get_config_file()["dependencies"]
-        voice_admissions = [dep for dep in deps if dep["trigger_only_on_success"]
-                            and getattr(demo.fns[dep["id"]].fn, "__name__", "") == "accept"
-                            and view.voice_engine in demo.fns[dep["id"]].inputs]
-        self.assertEqual(len(voice_admissions), 1)
-        previous = demo.fns[voice_admissions[0]["trigger_after"]]
-        self.assertEqual(previous.fn.__name__, "sync_drama3_script_sounds")
-        prepare = next(fn for fn in demo.fns.values() if fn.inputs and fn.inputs[0] is view.prepared_script)
-        values = [block.value for block in prepare.inputs]
-        values[1] = "Mia: Hello."
-        values[0] = (values[1], view.script_mode.value)
-        updates = prepare.fn(*values)
-        self.assertEqual(updates[1], "Using the prepared script.")
-        self.assertEqual(updates[0], gr.skip())
 
     def test_script_preview_shows_speakers_parallel_sound_and_no_player(self):
         from h3_ui.drama3.result_view import script_preview_html
@@ -995,117 +761,6 @@ class Drama3AutoTests(unittest.TestCase):
                 patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"), \
                 self.assertRaises(JobCancelled):
             list(drama3_handlers.preload_drama3_models(ENGINE_QWEN))
-
-    def test_only_advanced_generates_sounds(self):
-        from h3_ui.drama3.bindings import drama3_auto_sound_slots
-
-        self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
-        self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)
-
-    def test_load_example_story_populates_script_speakers_and_sounds(self):
-        import gradio as gr
-        from h3_app.drama3.cast import parse_script_cast_and_sounds, voices_without_sex
-        from h3_app.drama3.example_story import (
-            EXAMPLE_STORY_SCRIPT,
-            EXAMPLE_STORY_SPEAKERS,
-            EXAMPLE_STORY_TITLE,
-            EXAMPLE_STORY_ZH_SCRIPT,
-            EXAMPLE_STORY_ZH_SPEAKERS,
-            EXAMPLE_STORY_ZH_TITLE,
-            example_story_reply_json,
-        )
-        from h3_app.drama3.lint import SCOPED_TAGS, lint_drama3_script, needs_direction
-        from h3_app.drama3.example_story_zh_latest import (
-            EXAMPLE_STORY_ZH_LATEST_TITLE,
-            EXAMPLE_STORY_ZH_LATEST_SPEAKERS,
-        )
-        from h3_app.drama3.serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
-        from h3_ui.application import _drama3_actions, drama3_handlers
-        from h3_ui.drama3.bindings import bind_drama3
-        from h3_ui.drama3.view import build_drama3_view
-
-        for lang, raw_script in (("en", EXAMPLE_STORY_SCRIPT), ("zh", EXAMPLE_STORY_ZH_SCRIPT)):
-            with self.subTest(lang=lang):
-                tagged, cast, sounds = parse_script_cast_and_sounds(example_story_reply_json(lang))
-                self.assertEqual(len(cast), 6)
-                self.assertEqual(len(sounds), 12)
-                self.assertEqual(lint_drama3_script(tagged), (tagged, []))
-                self.assertFalse(needs_direction(tagged))
-                self.assertEqual(voices_without_sex(cast), [])
-                for tag in SCOPED_TAGS:
-                    self.assertIn(f"<{tag}>", raw_script)
-                tree = parse_drama3_tree(raw_script)
-                rooms_used = {getattr(node, "room", "") for node in tree.children if getattr(node, "room", "")}
-                self.assertEqual(rooms_used, {"small_room", "outdoors", "large_hall", "underwater"})
-                effects_used = {
-                    eff
-                    for speech in iter_speech_nodes(tree)
-                    for turn in speech.turns
-                    for eff in turn.speaker_effects
-                }
-                self.assertTrue(
-                    {"walkie_talkie", "bad_signal", "robotic_voice", "ghost_spirit", "near", "far"} <= effects_used
-                )
-                sound_nodes = iter_sound_nodes(tree)
-                self.assertTrue(any(node.loop for node in sound_nodes))
-                self.assertTrue(any(not node.loop and node.pan is not None for node in sound_nodes))
-                self.assertTrue(any(node.distance == "far" for node in sound_nodes))
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
-        self.assertIsNotNone(view.load_example)
-        self.assertEqual(view.load_example.value, "Load example story")
-        self.assertIsNotNone(view.load_example_zh)
-        self.assertEqual(view.load_example_zh.value, "Load Chinese example (中文)")
-        self.assertIsNotNone(view.load_example_zh_latest)
-        self.assertEqual(view.load_example_zh_latest.value, "示例三：雨巷里的末班广播")
-        latest_fn = next(f for f in demo.fns.values()
-                         if f.fn == drama3_handlers.load_drama3_example_zh_latest)
-        self.assertEqual(latest_fn.inputs, [view.speaker_group])
-        fn = next(f for f in demo.fns.values() if view.load_example and f.outputs and view.title in f.outputs
-                  and view.shown_sound_slots in f.outputs)
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": tmp}):
-            runtime = RuntimeConfig(Path(tmp), "http://x", Path(tmp) / "ComfyUI", Path(tmp) / "m.json",
-                                    Path(tmp) / "outputs")
-            with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
-                result_en = drama3_handlers.load_drama3_example("Global")
-                result_zh = drama3_handlers.load_drama3_example_zh("Global")
-                result_latest = latest_fn.fn("Global")
-        self.assertEqual(len(result_en), len(fn.outputs))
-        self.assertEqual(len(result_zh), len(fn.outputs))
-        out_en = dict(zip(fn.outputs, result_en))
-        self.assertEqual(out_en[view.title], EXAMPLE_STORY_TITLE)
-        self.assertIn('<parallel room="small_room"', out_en[view.text])
-        self.assertEqual(out_en[view.shown_slots], len(EXAMPLE_STORY_SPEAKERS))
-        self.assertEqual(out_en[view.shown_sound_slots], 12)
-        self.assertEqual(out_en[view.voices[1].save_name], "Elena")
-        self.assertEqual(out_en[view.sounds[0].save_name], "coastal_storm")
-        self.assertEqual(out_en[view.sounds[1].save_name], "noir_cello")
-
-        out_zh = dict(zip(fn.outputs, result_zh))
-        self.assertEqual(out_zh[view.title], EXAMPLE_STORY_ZH_TITLE)
-        self.assertIn("尉迟{yu4 chi2}烈", out_zh[view.text])
-        self.assertEqual(out_zh[view.shown_slots], len(EXAMPLE_STORY_ZH_SPEAKERS))
-        self.assertEqual(out_zh[view.shown_sound_slots], 12)
-        self.assertEqual(out_zh[view.voices[1].save_name], "沈星河")
-        self.assertEqual(out_zh[view.voices[2].save_name], "尉迟烈")
-        self.assertEqual(out_zh[view.sounds[0].save_name], "glacier_blizzard")
-        self.assertEqual(out_zh[view.sounds[1].save_name], "guqin_mystery")
-        self.assertEqual(latest_fn.outputs, fn.outputs)
-        self.assertEqual(len(result_latest), len(latest_fn.outputs))
-        out_latest = dict(zip(latest_fn.outputs, result_latest))
-        self.assertEqual(out_latest[view.title], EXAMPLE_STORY_ZH_LATEST_TITLE)
-        self.assertEqual(out_latest[view.shown_slots], len(EXAMPLE_STORY_ZH_LATEST_SPEAKERS))
-        self.assertEqual(out_latest[view.shown_sound_slots], 9)
-        self.assertEqual(out_latest[view.script_mode], drama3_writer.DRAMA3_SCRIPT_ADVANCED)
-        self.assertEqual(out_latest[view.speaker_mode], drama3_writer.DRAMA3_SPEAKER_AUTO)
-        self.assertEqual(out_latest[view.voices[1].save_name], "许知夏")
-        self.assertEqual(out_latest[view.sounds[0].save_name], "market_rain")
-        self.assertIn('我没敢答应~1.2', out_latest[view.text])
-        demo.close()
-
-
 
 if __name__ == "__main__":
     unittest.main()

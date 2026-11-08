@@ -989,11 +989,8 @@ def _storyboard_handlers():
 
 
 def _drama3_actions():
-    from h3_ui.drama3.speaker_library import SpeakerLibraryActions
     from h3_ui.drama3.bindings import Drama3Actions
-    return Drama3Actions.of(
-        drama3_handlers, interrupt=interrupt, speaker_library_actions=SpeakerLibraryActions(_runtime_config),
-    )
+    return Drama3Actions.of(drama3_handlers, interrupt=interrupt)
 
 
 def interrupt(request: gr.Request, family: str = "h3", job_id: str | None = None) -> str:

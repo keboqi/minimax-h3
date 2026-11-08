@@ -3,57 +3,20 @@
 Soundstage is Prism Studio's audio production workspace: write and direct
 scripts, cast voices, stage sound effects and music, review individual takes,
 and remix the result. Speech generation is powered by Fish Audio Drama 3.
-Open **Create → Soundstage** to begin.
+Open **Create → Soundstage** to begin. In the task bar it sits with the production
+workspaces (Remake, Storyboard, Soundstage, Dub & Translate), after the basic Video, Image and
+Song tasks.
 
-After generating a mix, open **Speak → Illustrated video** to export a 720p MP4.
-Choose an Image-tab model and a **Style preset** (ink and watercolor, graphic novel, film noir,
-anime, Chinese ink wash, picture book, painterly realism, woodcut, retro pulp or pixel art).
-The preset fills **Art direction**; edit it to add the cast, setting or era, and the preset
-switches to Custom.
-**Plan shots** sends the mix's timed dialogue lines and sound cues (not per-word timings) to
-the Gemini or OpenAI-compatible writer selected on **Script**. It writes one art style and a
-continuity bible of the recurring characters, props and locations, then splits the story into
-single-moment widescreen images with cuts and dissolves. **Minimum shots** is a floor: the
-planner adds images wherever the story needs them, up to one per 2 seconds of mix.
-Planning shows its elapsed time and stops after 5 minutes if the writer hasn't answered. A
-reply that arrives later is still saved, unless a newer plan was started or pasted by then.
-To use any other chat model, open **Use another chat model**, click **Copy full planner
-prompt**, paste the model's JSON reply and click **Apply pasted plan**; it is checked like the
-built-in planner's. Either way the plan is saved beside the mix for the current Art direction
-and Minimum shots, so a reloaded project keeps it. The Shot plan table only lists the plan
-Generate would use: after changing either setting it empties and says the saved plan was made
-for other settings. Review the times and prompts, then click
-**Generate illustrated video**, which starts drawing at once; without a matching plan it says
-so instead of planning on its own.
-Every scene is drawn from its text first, with the character, prop and location descriptions
-written into the prompt, at a 16:9 size whatever the Image tab is set to.
-**Keep characters consistent** is on by default. Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one
-square portrait per character, then repaint each finished scene's characters to match their
-portraits, with the scene as the first input so its composition stays. Props and locations
-are never image inputs: an edit model handed a location or a multi-view sheet copies it
-instead of drawing a new scene. When a model has fewer input slots than a shot needs, the
-characters the planner mentions first win. MOSS-Image uses the text prompts throughout.
-The export uses the finished soundtrack and saves the video to Media. Once a mix has a video,
-an **Audio / Video** switch appears above the Speak result: Video shows the illustrated video in
-the player's place with the mix's subtitles laid over it, lighting word by word like the list
-below, which follows the video too. **Subtitles on the video** turns the overlay off, and
-switching pauses whichever player is hidden. **Media**, in the studio and the Workshop, does the
-same: a selected mix with an illustrated video offers the switch, and a selected illustrated
-video plays with its mix's subtitles over it and beside it. The newest video for a mix shows
-whenever the mix is loaded; if the page lost its connection during a long export, click **Show the latest
-video for this mix**.
+## The Soundstage page
 
-## Soundstage page (preview)
+Soundstage is a page of its own at `/soundstage/`, outside Gradio, as Remake and Storyboard are;
+the Soundstage tab shows it in a frame and follows the studio's light or dark theme. The page's
+design is the [Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi).
+It holds three steps: **Script**, **Cast & sounds** and **Mix & review**. The step bar moves
+between them without asking the server for anything, and the address keeps the screen
+(`#script`, `#cast`, `#mix`). Projects are saved in the shared workspace database as you work.
 
-Soundstage is moving to a page of its own at `/soundstage/`, outside Gradio, as Remake and
-Storyboard did; the tab links to it under the project controls. The page's design is the
-[Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi). It holds all
-three steps: **Script**, **Cast & sounds** and **Mix & review**. The step bar moves between them
-without asking the server for anything, and the address keeps the screen (`#script`, `#cast`,
-`#mix`). The page and the tab share saved projects: a project saved in the tab opens here, and
-the tab's **Load project** picks up what the page saved.
-
-The CPU Workshop serves the page too, at the same `/soundstage/`, linked from its Sound Stage tab.
+The CPU Workshop shows the same page in its Sound Stage tab.
 There it prepares projects: write and rewrite the script, cast speakers and sounds (describe,
 upload, transcripts, saved voices and the Voice library), set the speech and video settings, and
 play a mix already made. The top bar says **Prepare only**; anything that needs the GPU (speaking,
@@ -63,8 +26,7 @@ is off and says to open the project in Studio, where the same project continues.
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
 
-**Auto-produce**, at the top on every screen, does the whole production in one run, as the tab's
-Auto does: it rewrites the script with the writer (unless the writer already wrote it and it hasn't
+**Auto-produce**, at the top on every screen, does the whole production in one run: it rewrites the script with the writer (unless the writer already wrote it and it hasn't
 changed since), makes every missing voice and, in Advanced, every missing sound, then speaks.
 Each step starts only when the one before it worked. While it runs, the top bar shows its step and
 progress with **Interrupt**, the screens fill in as each step lands, and other voice, sound and
@@ -77,15 +39,14 @@ is closed.
 ### Script
 
 Every change on Script saves to the project a moment after you stop typing; the top bar says
-when everything is saved. Saving an Advanced script gives each of its `<sound>` tags a sound slot,
-as the tab does.
+when everything is saved. Saving an Advanced script gives each of its `<sound>` tags a sound slot.
 
 - **The editor** colors each speaker's name as the mix does, cues green, sound tags amber and
   other tags purple. Above it, a chip per speaker counts their lines; a name the cast doesn't
   have is underlined and marked **not in cast**, because that line can't be spoken.
-- **Examples** loads one of the tab's three example stories, with its cast and sounds, after
+- **Examples** loads one of three example stories, with its cast and sounds, after
   asking before it replaces a script.
-- **Rewrite with the writer** has the tab's choices: **Speakers** (Auto, Adapt to voices,
+- **Rewrite with the writer** offers **Speakers** (Auto, Adapt to voices,
   Single), **How it writes** (Single-pass, Step by step, Smart scenes) and **Keep my exact
   words**. **More writer settings** holds the writer service and its keys, which stay in that
   browser tab, and the Guided batch size and Smart budget profile when they apply. A rewrite
@@ -93,6 +54,10 @@ as the tab does.
   back (the cast keeps the writer's names and descriptions).
 - **Use another chat model** copies the full writer prompt and applies a pasted JSON reply,
   checked like the built-in writer.
+
+With **Keep my exact words** off (the default), a rewrite or pasted reply that changes the source
+words, such as a model correcting a typo, is kept, and the status lists each change to review.
+With it on, such an answer is refused and the script stays as it was.
 
 The bar at the bottom shows the script's estimated timeline, with no audio, and leads on to
 Cast & sounds or Mix & review.
@@ -111,7 +76,7 @@ their own. **Add speaker** and **Add sound** open a new slot.
   A clip plays in the panel; **Save to** keeps it in the group shown at the top of Voices, and the
   speaker then uses the saved voice. **New group** starts a group for a series or book. Typing a
   speaker's name that the group (or Global) has a saved voice for gives a speaker without a clip
-  that voice, and choosing another group does the same for every such speaker, as the tab does.
+  that voice, and choosing another group does the same for every such speaker.
 - **Voice library** opens the saved speakers and sounds. Pick a group and a saved speaker to hear
   it, edit its name, description and transcript (**Save changes**; a name another speaker in the
   group has is refused), **Copy to group**, or **Delete** it; **Delete this group** removes a group
@@ -143,7 +108,7 @@ The page opens a generated project here and shows:
 - **The picked line** beside them: its take before staging and effects, its warnings,
   **Regenerate line** and **Play in mix**.
 - **How it sounds**: the speech preset and word-by-word subtitles, saved with the project.
-  **Speech settings** below them hold the tab's sliders: temperature, top-p, top-k, parallel
+  **Speech settings** below them hold sliders for temperature, top-p, top-k, parallel
   requests, retries per chunk and maximum audio frames per take. Changing a sampling value makes
   the preset **Custom**; values outside a slider's range are kept at its end. **Word timing**
   says how many of the mix's lines have their words timed, and **Time every word** (or **Repair
@@ -151,11 +116,11 @@ The page opens a generated project here and shows:
   timed are kept and missing ones are tried again.
 
 The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Remix** and
-**Interrupt**. They speak the project as last saved, on the same job path as the tab, and the page
+**Interrupt**. They speak the project as last saved, on the usual GPU job path, and the page
 checks on the run, so it carries on if the page is closed. Playing, seeking and picking lines ask
 the server for nothing. The page reads each project's mix and only that mix's takes.
 
-**Illustrated video**, under the lines, is the tab's export: pick an **Image model**, a **Style
+**Illustrated video**, under the lines, exports a 720p MP4: pick an **Image model**, a **Style
 preset** (which fills **Art direction**; editing it makes the preset Custom) and **Minimum shots**,
 then **Plan shots**. The plan uses the writer service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
@@ -167,125 +132,77 @@ draws that plan with the Image tab's settings for the model, which the studio ha
 each time it opens or switches task, keeping characters consistent unless that is unticked; it runs
 on the usual job path and can be interrupted. When it finishes, the player switches to the video.
 
+Every scene is drawn from its text first, with the character, prop and location descriptions
+written into the prompt, at a 16:9 size whatever the Image tab is set to. With **Keep characters
+consistent** (on by default), Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one square portrait per
+character, then repaint each finished scene's characters to match their portraits, with the scene
+as the first input so its composition stays. Props and locations are never image inputs: an edit
+model handed a location or a multi-view sheet copies it instead of drawing a new scene. When a
+model has fewer input slots than a shot needs, the characters the planner mentions first win.
+MOSS-Image uses the text prompts throughout. The video uses the finished soundtrack and is saved
+to Media, where a selected mix with an illustrated video offers the same Audio/Video switch.
+
 Once the mix has a video, **Audio** and **Video** above the timeline switch the player, keeping the
 position. Video plays the newest video for the mix with the line being spoken over it, word by word
 when the mix has word timings; **Subtitles on the video** turns that off. The timeline and lines
 follow the video as they follow the audio, and **Download video** saves it.
 
-## Compose and generate
+## Scripts, takes and timings
 
-Soundstage works in four steps, laid out like Dub & Translate: **Script**,
-**Cast & sounds**, **Speak** and **Review lines**. Each step pairs a working card
-with an action card that holds its next move; the action card stays in view while
-you scroll. Moving between steps happens in the browser and sends no request.
+Start each line of a script with a speaker's name from the cast, such as `Mia: Hello.` (a
+full-width `：` works too), and add cues such as `[laughs]` for delivery. `Speaker 2:` means cast
+slot 2 whatever its name. Text before the first named line, or prose that names nobody, is read by
+the first speaker with a voice. In a script that names its speakers, a line starting with a name
+not in the cast is an error, so a typo is not read aloud. Older scripts with `<|speaker:N|>` tags
+still work. **Basic** is dialogue; **Advanced** (the default) adds sound effects, music and vocal
+effects. Basic keeps those tags in the script but ignores them.
 
-1. **Script.** Enter a draft or a script in **Speech text**. Start each line with a
-   speaker's name from the cast, such as `Mia: Hello.` (a full-width `：` works too),
-   and add cues such as `[laughs]` for delivery. `Speaker 2:` means cast slot 2
-   whatever its name. Text before the first named line, or prose that names nobody,
-   is read by the first speaker with a voice. In a script that names its speakers, a
-   line starting with a name not in the cast is an error, so a typo is not read aloud.
-   Older scripts with `<|speaker:N|>` tags still work. Choose **Basic** for dialogue
-   or **Advanced** (the default) for sound effects, music and vocal effects; Basic
-   keeps those tags in the script but ignores them. **Rewrite script** turns any text
-   into a Drama 3 script and fills the cast; review the result before moving on.
-2. **Cast & sounds.** Use **Speaker voices** to choose a saved group, manage presets,
-   upload clips, or generate a cast. Every speaker in the script needs a voice. The
-   panel title shows the selected group and how many speakers it holds, and a card
-   per speaker shows its name and whether its voice is ready; click a card to edit
-   that speaker below. In Advanced
-   mode, review **Sound effects and music** too; it has the same cards, one per sound. **Generate all speaker voices** makes
-   every missing voice in one job.
-3. **Speak.** Choose a **Speech preset** (**Expressive** by default). **Generate
-   speech** renders the current script and references without rewriting them.
-4. **Review lines.** Hear, regenerate or remix single lines (see **Takes** below).
+Of the three examples, **示例三：雨巷里的末班广播** is an original Chinese story with five voices and
+three scenes: a playful street market, a quiet confession, and a reunion over the neighborhood
+broadcast. It uses the production controls shared by Single-pass and Guided: social ambience,
+phrase-anchored effects, a restrained comic accent, held beats, a short listener reaction, and a
+score that withdraws and resumes. The confession plays over rain alone; music returns with the
+reunion, then withdraws for the repaired clock's ticking. Dialogue stays mostly dry; the broadcast
+uses device filtering and the arriving character moves from far to near.
 
-The Script step offers three example presets. **示例三：雨巷里的末班广播**
-loads an original Chinese story with five voices and three scenes: a playful street
-market, a quiet confession, and a reunion over the neighborhood broadcast. It uses
-the production controls shared by Single-pass and Guided: social ambience,
-phrase-anchored effects, a restrained comic accent, held beats,
-a short listener reaction, and a score that withdraws and resumes. The confession
-plays over rain alone; music returns with the reunion, then withdraws for the
-repaired clock's ticking. Dialogue stays mostly dry; the broadcast uses device
-filtering and the arriving character moves from far to near. Generate its voices
-and sounds in **Cast & sounds**, then use **Generate speech** in **Speak** to perform
-the prepared script.
-
-**Auto: rewrite, voice, sound and speak** does steps 1–3 in one go. It lives on
-Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
-stops, its status names the step whose status says why.
-
-Under the player, a timeline shows each line as a segment in its speaker's color on a
-**Voices** lane, and each sound on a **Sounds** lane, colored apart for looped beds
-(ambience, music) and one-shot effects, with a playhead that follows the player;
-clicking a segment jumps to it. Clips that play at the same time stack in rows, such
-as speakers talking over each other in a parallel block, or an effect over the music
-bed. Results made before sound timings were recorded show no Sounds lane until they
-are remixed. Below it the
-result's lines scroll as subtitles: the line being spoken is highlighted as it plays
-and follows the player when you seek, and clicking a line jumps to it. The stage
-underneath shows where each voice stands in the stereo mix (see the end of this
-section). Speakers keep the colors their names have in **Speech text**. Bracketed cues and tags are left out. Consecutive lines of one speaker
-are spoken as one take, so each line's time inside the take is placed at the pauses
-between them, or estimated from its length when the take has too few pauses. Results
-made before this feature have no line timings and show no subtitles; Remix gives older
-results per-line timings without generating anything.
-
-**Speech settings → Word-by-word subtitles** (off by default) times every word with
-Qwen3's forced aligner after speaking, and the subtitles light each word as it is said.
-To add it to an existing result, turn it on and Remix or generate again: saved takes are
-aligned, not spoken again. A take the aligner cannot time keeps plain line subtitles.
+In a mix, consecutive lines of one speaker are spoken as one take, so each line's time inside the
+take is placed at the pauses between them, or estimated from its length when the take has too few
+pauses. Clips that play at the same time stack in rows on the timeline, such as speakers talking
+over each other in a parallel block, or an effect over the music bed. Results made before line or
+sound timings were recorded show no lines or no Sounds lane until they are remixed; Remix gives
+them timings without generating anything. **Word-by-word subtitles** (off by default) times every
+word with Qwen3's forced aligner after speaking; a take the aligner cannot time keeps plain line
+subtitles.
 
 ### Takes
 
-Every generated line is saved as a take, keyed by its text, speaker name, voice clip
-and transcript, and sampling settings; renaming a speaker generates its lines again.
-Drama 3 receives only each line's text with its speaker's clip and transcript, never
-a speaker number or name. Repeated identical lines have separate
-takes, distinguished by their occurrence order. **Generate speech** reuses saved takes, so
-after editing a script only changed lines are generated; when nothing changed, the
-mix is rebuilt without starting SGLang-Omni. After a result, the **Review lines** step
-shows a table of every line with its length and whether it was reused. Click
-a row (or choose a line) to hear that line's take, before staging and effects. Click
-**Regenerate line** for a new take of just that line, or **Remix** to rebuild the
-mix from saved takes after changing sounds, staging or vocal effects (which are
-applied at mix time). Takes live in the private workspace (`drama3_takes`) and
-are removed after 30 days unused.
+Every generated line is saved as a take, keyed by its text, speaker name, voice clip and
+transcript, and sampling settings; renaming a speaker generates its lines again. Drama 3 receives
+only each line's text with its speaker's clip and transcript, never a speaker number or name.
+Repeated identical lines have separate takes, distinguished by their occurrence order. Speaking
+reuses saved takes, so after editing a script only changed lines are generated; when nothing
+changed, the mix is rebuilt without starting SGLang-Omni. **Regenerate line** makes a new take of
+just that line, and **Remix** rebuilds the mix from saved takes after changing sounds, staging or
+vocal effects (which are applied at mix time). Takes live in the private workspace
+(`drama3_takes`) and are removed after 30 days unused.
 
-Drama 3 runs on SGLang-Omni, which requires Linux and a CUDA GPU.
-**Speech settings** contains parallel requests, retries and custom sampling controls.
-Auto respects the skip-existing voice and sound options; clear them when you want
-new clips. Check **Save generated speakers to the selected group** (off by default)
-to have Auto save the cast after the voices are generated, as **Save all speakers**
-does. Interrupt controls stop their corresponding jobs.
-
-Auto reuses the last successful rewrite or applied writer reply in this session
-when the script text and mode still match. On the Script step, **Preview script
-without audio** shows the lines, speakers and sound cues on an estimated timeline.
-
-Once the script is ready, Auto generates speaker voices, then Advanced-mode
-sound effects, then speech. Each stage uses its model immediately if loaded
-or loads it when needed. Skipped slots do not require their generation model.
+Drama 3 runs on SGLang-Omni, which requires Linux and a CUDA GPU. Auto respects the
+skip-existing voice and sound options in **Generator settings**; clear them when you want new
+clips. Each stage uses its model immediately if loaded or loads it when needed, and skipped slots
+do not require their generation model.
 
 ## Script writer and cast
 
-Workshop's **Sound Stage** tab supports writing, applying external replies, editing cast and sound
-briefs, and silent preview on CPU; so does the Soundstage page it links to, which saves as you go.
-Enter a **Project name** and click **Save project**. Saving
-under the same name updates the draft. In Studio, select that name under **Saved Sound Stage
-projects** and click **Load project** to continue with Auto or manual generation.
+Projects keep the script and its settings, the cast and sound slots, reference clips and
+transcripts. A speech result marks the project **Generated**. Projects live in the shared workspace
+database, so one prepared in the CPU Workshop opens in Studio; on Modal, stop one endpoint before
+editing on the other.
 
-Projects retain script and generation settings, cast and sound slots, reference clips and
-transcripts. A speech result marks the project **Generated** and becomes available on the
-Speak step when you load it again. On Modal, stop one endpoint before editing on the other.
-
-To use a chat model outside the app, open **Use another chat model** on the
-Script step and click **Copy full writer prompt**; a running
-rewrite keeps going. The prompt contains the system prompt, the current speaker slots, and the speech text.
-Paste the model's JSON reply (code fences and surrounding chat text are fine)
-and click **Apply pasted reply**; it is validated like the built-in writer
-before the script and speaker slots change.
+To use a chat model outside the app, open **Use another chat model** on Script and click
+**Copy full writer prompt**. The prompt contains the system prompt, the current speaker slots, and
+the script. Paste the model's JSON reply (code fences and surrounding chat text are fine) and click
+**Apply pasted reply**; it goes through the same checks as the built-in writer, including **Keep my
+exact words**, before the script and speaker slots change.
 
 The script writer returns a Drama 3 script plus an indexed cast. It separates
 narration and dialogue, resolves character aliases, preserves supplied dialogue
@@ -339,10 +256,9 @@ For Chinese it also accepts same-sound character slips (的/地/得, 在/再, �
 and a dropped doubled character (三名名老者). By default a rewrite that
 changes your words in any other way is still kept: the status lists up to four
 changed spots, for example `Source check off: kept 6 changes to your words
-(…[回复] → …[恢复]; …)`, so you can review them in the script. Turn on **Strict
-source check** next to the writer workflow to reject such a rewrite and keep your
-text instead. The setting is remembered, and Auto uses it too. Pasted replies from
-another chat model are always checked strictly.
+(…[回复] → …[恢复]; …)`, so you can review them in the script. Turn on **Keep my exact
+words** in the writer panel to reject such a rewrite and keep your text instead. The setting is
+saved with the project, and Auto and pasted replies from another chat model follow it too.
 
 With a Gemini key, the free Gemma models also help with a few small checks. When a strict check
 finds only a handful of short word changes (no numbers and no speaker changes), Gemma judges
@@ -376,11 +292,9 @@ later in the request takes over from there.
 The writer's script is formatted for reading: each turn, sound, and
 `<parallel>`/`<sequential>` tag sits on its own line, indented two spaces per
 level of nesting. Indentation and blank lines do not change the performance.
-**Speech text** colors the script in VS Code's Light+ or Dark+ palette. The
-narrator's name has its own slate color; characters take eight further colors in
-order of their first line, each on a faint tint so a name never reads as a tag, and
-none of them is a tag color. [cues], `<parallel>`, `<sequential>`, sounds, effect
-tags, and `<#seconds#>` pauses each have theirs.
+The Script editor colors the narrator's name slate and characters in eight further colors in
+order of their first line, as the mix's timeline does; [cues], sound tags and other tags each
+have their own color.
 
 The writer starts every voice description by naming the voice's sex ("A female
 voice: ..."), since voice design otherwise guesses from roles such as "mother" and
@@ -396,8 +310,7 @@ script, subtitles, takes and the writer's checks keep the characters; only the r
 to Drama 3 replaces each noted character with Drama 3's phoneme tag
 (`<|phoneme_start|>huan2<|phoneme_end|>`). A note must follow exactly as many Chinese
 characters as it has syllables; a malformed note is an error, as is a raw `<|phoneme_…|>`
-tag in **Speech text**. The director keeps the writer's notes, and **Speech text**
-colors them like attribute values. Notes change a line's text, so a line takes a new take
+tag in the script. The director keeps the writer's notes. Notes change a line's text, so a line takes a new take
 when a note is added or changed.
 
 English names and rare words take the same kind of note in CMU Arpabet, uppercase
@@ -406,63 +319,36 @@ phonemes with a stress digit (0-2) on every vowel, right after the word:
 the word and its note with one phoneme tag; everything else keeps the word. The writer
 adds these only for names and words a reader would plausibly misread.
 
-In **Speaker voices**, each shown speaker has a card with its name, slot and whether
-its voice is ready or saved; the first speaker is picked at first, and **Add speaker**
-picks the new one. The picked speaker's panel, titled with its index, name, and
-whether a voice is ready (for example `Speaker 2 · Mia · voice ready`), opens below
-the cards; the other speakers' panels stay hidden but keep their settings. Upload and transcribe a reference clip, or edit the voice description
-and preview speech and click **Generate voice**. Its synthesis text becomes the
-reference transcript automatically, and each panel shows its own progress and
-errors. The **Speaker voices** title counts the shown speakers and how many
-have a voice. **Generate all speaker voices** designs every shown speaker in one
-job; it skips saved speakers and speakers without a description and preview
-speech. **Skip speakers with a voice** (on by default) also skips speakers that
-already have a clip; uncheck it to regenerate them, for example after changing
-the voice generator. With Drama 3, the SGLang-Omni server is prepared once and up
-to **Parallel requests** voices generate at the same time; a failed voice does not
-stop the others. Qwen runs the voices one after another. **Voice generator** picks the
-engine:
+**Generate voice** designs a voice from its description and the line it reads; that line becomes
+the clip's exact transcript. **Make the missing** designs every speaker without a clip that has a
+description and a line to read, skipping saved speakers; with **Make the missing skips speakers
+with a voice** unticked in **Generator settings**, it remakes speakers that have a clip too. With
+Drama 3, the SGLang-Omni server is prepared once and up to **Parallel requests** voices generate at
+the same time; a failed voice does not stop the others. Qwen runs the voices one after another.
+**Voice generator** picks the engine:
 
 - **Qwen3-TTS VoiceDesign** (default) uses
   [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)
-  and also takes a preview language. Browsers that saved the previous default
-  (Drama 3) switch to it once; choosing Drama 3 again is remembered.
-- **Drama 3** generates one take with no reference on SGLang-Omni, with the
-  sampling settings under **Speech settings**. The description is
-  inserted as a delivery cue after the preview's opening phrase, for example
-  `Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
-  so it must not contain brackets. The cue is not part of the transcript.
+  and also takes a language.
+- **Drama 3** generates one take with no reference on SGLang-Omni, with the speech settings on
+  Mix & review. The description is inserted as a delivery cue after the line's opening phrase,
+  for example `Well now, [gravelly old sailor, slow and amused] the tide is turning.`, so it must
+  not contain brackets. The cue is not part of the transcript.
 
-Preview speech is separate from the current clip's transcript: editing a future
-preview does not change the words paired with an existing clip. Uploading a new
-clip clears the previous transcript. **Save speaker** stores either kind of clip
-with its exact transcript, name, and description; older presets still load. Picking
-a saved speaker in a slot replaces the upload controls with a player for its
-saved clip, so you can listen to it without opening the library.
+The line a speaker reads for a new voice is separate from the current clip's transcript: editing it
+does not change the words paired with an existing clip. Uploading a new clip clears the previous
+transcript. Saved speakers live in groups: a story or series group is reused across chapters, and
+rewrites and newly named speakers take matching saved voices from that group first, then from
+**Global**. A group's narrator overrides the global one. The writer uses the canonical name
+`narrator`, and matching also recognizes legacy names such as `旁白` and `story teller`. Saving
+the same name again replaces that group's speaker; other groups are unaffected, and renaming or
+copying refuses to overwrite a different saved speaker.
 
-Use **Speaker preset group** inside **Speaker voices** to select or create a story/series
-group and reuse it across chapters. Rewrites and newly named speaker slots select
-matching saved voices from that group first, then from **Global**. Existing global
-presets remain available, including a shared narrator; a group's narrator overrides
-the global match. The writer uses the canonical name `narrator`, and matching also
-recognizes legacy names such as `旁白` and `story teller`. **Save all speakers to
-selected group** saves every shown speaker with a clip and exact transcript in one
-action, including copies of selected presets from other groups. Saving the same
-name again replaces that group's preset; other groups are unaffected.
-
-**Manage saved speakers** shows or hides the library inside **Speaker voices**.
-Its list follows the selected group and updates as soon as a speaker is saved
-or deleted from a slot or with **Save all speakers to selected group**, keeping
-the current selection when it still exists. Search the current group's speakers, listen to a saved clip, edit its name,
-description or exact transcript, copy it into another group, or delete it.
-Renaming or copying refuses to overwrite a different saved speaker. Renames and
-deletions also update any currently selected voice slots.
-**Delete group and all its speakers** removes the selected custom group together
-with its saved clips and presets, then switches back to Global. Copies saved in
-other groups are unaffected. Global itself cannot be deleted.
-
-Scripted clients reach the same library through API-only endpoints, which have no
-controls on the page:
+Scripted clients reach Soundstage through API-only endpoints, which have no controls in the
+studio. `/generate_drama3`, `/remix_drama3`, `/regenerate_drama3_line`, `/enhance_drama3_text`,
+`/generate_drama3_voice`, `/transcribe_drama3_voice` and `/generate_drama3_sound` keep their
+parameter names; a result from `/generate_drama3` belongs to no saved project. The library and
+results:
 
 | Endpoint | Parameters | Returns |
 | --- | --- | --- |
@@ -502,12 +388,10 @@ back; after each one, takes that still fail their check are generated again up t
 as it is done, so a client can fetch its audio (`/drama3_result_audio`) and details
 while the next job renders. An interrupt stops the batch.
 
-**Try new voices** designs one to four fresh clips for the selected speaker from
-its voice description and exact clip transcript, using the Cast's **Voice
-generator** and the Speak sampling settings. The saved clip is untouched until you
-pick one of the new voices and press **Use selected voice**, which saves it with the
-description and transcript it was made from. Keep the saved voice or generate
-another batch as often as you like; selecting another speaker discards the tries.
+**Try new voices**, in the Voice library, designs one to four fresh clips for a saved speaker from
+its description and exact clip transcript, using the Cast's **Voice generator** and the speech
+settings. The saved clip is untouched until **Keep this voice** saves one of them with the
+description and transcript it was made from.
 
 VoiceDesign and Stable Audio 3 Medium sound generation require a CUDA GPU. They
 share one separate Python 3.12 environment with `qwen-tts==0.1.1` and its pinned

@@ -14,7 +14,8 @@ from h3_app.drama3.visual_plan import (compile_plan, expand_prompt, fill_tags, p
                                       subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
-from h3_ui.drama3.visuals import illustrate_shots, latest_export, match_characters
+from h3_ui.drama3.stage_video import latest_export
+from h3_ui.drama3.visuals import illustrate_shots, match_characters
 
 
 def drain(iterator):
@@ -224,24 +225,6 @@ class IllustratedMixTests(unittest.TestCase):
             # Another mix's runs are independent.
             other = Path(tmp) / f"mix_{'d' * 32}.mp3"
             self.assertTrue(save_plan(other, "ink", 16, {"shots": "own"}, claim_plan(other)))
-
-    def test_shot_table_shows_only_the_plan_generate_would_use(self):
-        from h3_app.provenance import write_snapshot
-        from h3_ui.drama3.visuals import PLAN_LABEL, STALE_PLAN_LABEL, plan_table, write_plan
-
-        plan = {"style": "ink", "shots": [{"start": 0, "transition": "cut", "beat": "Open", "prompt": "A door"}]}
-        with tempfile.TemporaryDirectory() as tmp:
-            mix = Path(tmp) / f"mix_{'e' * 32}.mp3"
-            mix.write_bytes(b"")
-            write_snapshot(mix, {"family": "Sound Stage", "settings": {"duration": 3.0}})
-            self.assertEqual(plan_table(mix, "Comic", 16)["value"], [])
-            self.assertEqual(plan_table(None, "Comic", 16)["label"], PLAN_LABEL)
-            write_plan(mix, "Comic", 16, plan)
-            current = plan_table(mix, "Comic ", 16.0)
-            self.assertEqual((len(current["value"]), current["label"]), (1, PLAN_LABEL))
-            for style, limit in (("Oil paint", 16), ("Comic", 8)):
-                stale = plan_table(mix, style, limit)
-                self.assertEqual((stale["value"], stale["label"]), ([], STALE_PLAN_LABEL))
 
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}

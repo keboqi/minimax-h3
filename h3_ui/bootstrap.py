@@ -15,10 +15,7 @@ from .persistence import (
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
 from .media_view import build_gallery_view
-from h3_ui.drama3.bindings import bind_drama3
 from h3_ui.engines import FEATURES
-from h3_ui.engines.controls import settings_components
-from h3_ui.drama3.view import DRAMA3_CAST_JS, DRAMA3_SCRIPT_HIGHLIGHT_JS, build_drama3_view
 from h3_ui import audio_probe_cache
 from h3_ui.image_library import REFERENCE_TAG_JS
 from h3_ui.result_views import load_result_view_scripts
@@ -183,21 +180,15 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
 
         demo.h3_routes = (*getattr(demo, "h3_routes", ()),
                           partial(install_remake_page, handlers=engine_handlers["remake"], interrupt=services.interrupt))
-        drama3_components = build_drama3_view(
-            app_views.drama3,
-            engine_actions.drama3_speaker_names(),
-            getattr(engine_actions, "drama3_sound_names", lambda: [])(),
-            engine_actions.drama3_speaker_groups(),
-            (getattr(engine_actions, "drama3_speaker_group_size", None) or (lambda _group: None))("Global"),
-        )
-        bind_drama3(drama3_components, engine_actions)
-        from .drama3.visuals import bind_visual_export
+        # Soundstage is its own page; the tab shows it and keeps the API endpoints.
+        from .drama3.tab import build_soundstage_tab
+        from .drama3.visuals import video_export as soundstage_video_export
+
+        build_soundstage_tab(app_views.drama3, engine_actions)
         # Captures the Image tab's settings as the studio opens or switches task, for the page's export.
-        video_export = bind_visual_export(drama3_components, image_controller, services.engine_deps,
-                                          triggers=(demo.load, app_views.task.change))
+        video_export = soundstage_video_export(image_controller, services.engine_deps,
+                                               triggers=(demo.load, app_views.task.change))
         if services.soundstage_workspace is not None:
-            from h3_ui.drama3.projects import bind_projects
-            bind_projects(drama3_components, *services.soundstage_workspace, demo.load)
             from h3_app.drama3.serving.takes import takes_root
             from .drama3.page import install_soundstage_page
 
@@ -300,7 +291,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
         )
-        for view in (*engine_views.values(), drama3_components, image_workspace):
+        for view in (*engine_views.values(), image_workspace):
             with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(
                     "Settings used will appear with the generated result."
@@ -385,10 +376,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 for name, component in feature.settings_of(engine_views[feature.id]).items()
             },
             **{
-                f"drama3.{name}": component
-                for name, component in settings_components(drama3_components).items()
-            },
-            **{
                 f"gallery.{name}": component
                 for name, component in vars(gallery_components).items()
             },
@@ -414,7 +401,5 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
         demo.load(None, js=REFERENCE_TAG_JS, api_name=False)
         load_result_view_scripts(demo)
-        demo.load(None, js=DRAMA3_SCRIPT_HIGHLIGHT_JS, api_name=False)
-        demo.load(None, js=DRAMA3_CAST_JS, api_name=False)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

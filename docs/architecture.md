@@ -44,7 +44,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, Song-specific controls and the session take history for Music 3 and YuE2 |
-| h3_ui/step_cards.py | The guided step strip shared by Soundstage and Dub & Translate, and the intro and card headings Song uses too |
+| h3_ui/step_cards.py | The guided step strip Dub & Translate uses, and the intro and card headings Song uses too |
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
 | h3_app/remake/ | Viggle Remake's run rules in model.py, source trimming, cut detection and joining in media.py, frame alignment in align.py, window planning in windows.py, saved windows in project.py and the window-by-window run in runner.py; `build_remake_graph` lives with the other H3 graphs |
 | h3_app/storyboard/ | Storyboard documents and outdated rules in model.py; shared storage, takes, versions and ffmpeg joining in service.py; hosted story expansion in writer.py and explicit scene separators in text.py |
@@ -56,10 +56,10 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/image_workspace.py | Common Image view, model option placement and explicit preference components |
 | h3_ui/image_bindings.py | Common Image mode, reference actions, readiness, queue bindings and prompt review |
 | h3_ui/image_controller.py | Image draft validation and named option adapters to existing model handlers; H3 requests reuse current settings without capturing Video media |
-| h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
+| h3_ui/drama3/ | Soundstage's handlers and API. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices and sounds methods live in one module each. tab.py frames the page and bindings.py keeps the API-only endpoints on hidden components; controls.py holds the slot contracts |
 | h3_ui/engines/remake.py | The Remake task: what its page calls, and the hidden Gradio bridge for the API, the MiniMax H3 settings it follows, and Media and Image hand-offs |
 | h3_ui/remake_page.py, h3_ui/remake_static/ | The Remake page in its frame and its JSON API, outside Gradio like Storyboard's |
-| h3_ui/drama3/page.py, h3_ui/drama3/page/ | The Soundstage page (preview) at `/soundstage/` and its JSON API: a saved project's mix, lines and takes, and speech runs |
+| h3_ui/drama3/page.py, page_*.py, page/ | The Soundstage page at `/soundstage/` and its JSON API: Script (page_script), Cast & sounds (page_cast), the voice library (page_library), the illustrated video (page_video), and the mix, takes, Auto and speech runs (page.py) |
 | h3_ui/storyboard/ | The Storyboard page (`page/`, plain HTML, CSS and JS) and its JSON API (`page.py`, `payload.py`), outside Gradio; the tab that frames it, the scripted API and the H3 settings capture (`tab.py`); actions in `handlers.py`, whose take runner calls H3 generation with a `StoryboardGraph` that adds the continuation and latent-saving nodes |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |

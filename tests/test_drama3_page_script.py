@@ -139,6 +139,25 @@ class Drama3PageScriptTests(unittest.TestCase):
         self.assertTrue(bad["failed"])
         self.assertEqual(bad["script"]["text"], "Mia: Hello, Leo.")
 
+    def test_a_pasted_reply_that_fixes_the_source_is_kept_with_a_warning(self):
+        self.create()
+        source = "现在他们感应到妖兽的可拍，有人大叫起来。"
+        self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"},
+                                  json={"text": source, "script_mode": DRAMA3_SCRIPT_BASIC}))
+        reply = json.dumps({"script": "<|speaker:0|>现在他们感应到妖兽的可怕，有人大叫起来。",
+                            "speakers": [{"speaker_id": 0, "name": "narrator", "description": "A calm storyteller.",
+                                          "preview_text": "这片海域离琼英岛足有数万里之遥，四周海面看似平静，实则暗藏玄机。"}]})
+        data = self.ok(self.client.post(f"{API}/project/reply", params={"name": "Night Market"}, json={"reply": reply}))
+        self.assertFalse(data["failed"], data["status"])
+        self.assertIn("妖兽的可[拍] → 妖兽的可[怕]", data["status"])
+        self.assertEqual(data["script"]["text"], "narrator: 现在他们感应到妖兽的可怕，有人大叫起来。")
+        # "Keep my exact words" refuses a reply that changes them.
+        self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"},
+                                  json={"text": source, "strict_source": True}))
+        strict = self.ok(self.client.post(f"{API}/project/reply", params={"name": "Night Market"}, json={"reply": reply}))
+        self.assertTrue(strict["failed"])
+        self.assertEqual(strict["script"]["text"], source)
+
     def test_an_example_loads_its_script_cast_and_sounds(self):
         self.create()
         data = self.ok(self.client.post(f"{API}/project/example", params={"name": "Night Market"}, json={"example": "en"}))

@@ -208,6 +208,11 @@ div.h3-workspace.column { display: grid; grid-template-columns: auto auto minmax
 .h3-workspace .h3-task-picker label input[type="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .h3-workspace .h3-task-picker label:has(input:focus-visible) { outline: 2px solid var(--h3-focus); outline-offset: -4px; border-radius: 6px; }
 .h3-workspace .h3-task-picker label:has(input:checked) { border-bottom-color: var(--h3-accent); color: var(--h3-accent); font-weight: 600; }
+/* Two groups: basic generation (Video, Image, Song), then the production workspaces from Remake on.
+   Picked by value, so reordering or renaming a task never moves the divider. */
+.h3-workspace .h3-task-picker label:has(input[value="Remake"]) { margin-left: 17px; }
+.h3-workspace .h3-task-picker label:has(input[value="Remake"])::before { content: ""; position: absolute; left: -10px; top: 50%;
+  width: 1px; height: 24px; transform: translateY(-50%); background: var(--h3-border); pointer-events: none; }
 /* Away from Create no task is the current place. */
 .h3-workspace:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]) .h3-task-picker label:has(input:checked) { border-bottom-color: transparent; color: var(--h3-muted); font-weight: 500; }
 .h3-workspace #h3-main-tabs > .tab-wrapper::before { content: ""; align-self: center; width: 1px; height: 24px; margin-right: 12px; background: var(--h3-border); }
@@ -794,13 +799,9 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-cue-speaker { flex: none; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 1px; }
 .h3-workspace .h3-dub-cue-text { display: flex; flex-direction: column; min-width: 0; }
 .h3-workspace .h3-dub-cue-source { font-size: 12px; opacity: .8; }
-/* Soundstage: Song's four-step strip (Script, Cast & sounds, Speak, Review lines) with sticky action
-   cards, and visible outlines on the small secondary buttons. */
-.h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
-.h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
-/* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea.
-   The cast grid and the result's timeline, subtitles and stage reuse the name colors. */
-.h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles, .h3-dub) {
+/* Soundstage results in Media: name colors after VS Code's Light+ and Dark+ themes, shared by the
+   timeline, subtitles and stage, and by Dub & Translate. */
+.h3-workspace :is(.h3-drama3-subtitles, .h3-dub) {
   --h3-hl-text: #1f2328; --h3-hl-punct: #800000; --h3-hl-cue: #008000; --h3-hl-pause: #098658;
   --h3-hl-keyword: #af00db; --h3-hl-tag: #800000; --h3-hl-effect: #267f99; --h3-hl-attr: #e50000;
   --h3-hl-value: #0000ff; --h3-hl-sound: #795e26; --h3-hl-sequence: #b35c00; --h3-hl-narrator: #5b6b80;
@@ -808,70 +809,13 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   --h3-hl-name0: #c92a2a; --h3-hl-name1: #1864ab; --h3-hl-name2: #2b8a3e; --h3-hl-name3: #6741d9;
   --h3-hl-name4: #d9480f; --h3-hl-name5: #9c36b5; --h3-hl-name6: #c2255c; --h3-hl-name7: #a07800;
 }
-.dark .h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles, .h3-dub) {
+.dark .h3-workspace :is(.h3-drama3-subtitles, .h3-dub) {
   --h3-hl-text: #d4d4d4; --h3-hl-punct: #808080; --h3-hl-cue: #6a9955; --h3-hl-pause: #b5cea8;
   --h3-hl-keyword: #c586c0; --h3-hl-tag: #569cd6; --h3-hl-effect: #4ec9b0; --h3-hl-attr: #9cdcfe;
   --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa; --h3-hl-sequence: #d7ba7d; --h3-hl-narrator: #94a3b8;
   --h3-hl-name0: #ff8787; --h3-hl-name1: #74c0fc; --h3-hl-name2: #a9e34b; --h3-hl-name3: #b197fc;
   --h3-hl-name4: #ffa94d; --h3-hl-name5: #da77f2; --h3-hl-name6: #f783ac; --h3-hl-name7: #ffd43b;
 }
-.h3-workspace .h3-drama3-script :has(> textarea.h3-drama3-highlighted) { position: relative; }
-.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted {
-  position: relative; z-index: 1; background: transparent !important; color: transparent;
-  caret-color: var(--h3-hl-text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
-}
-.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted::placeholder { color: var(--input-placeholder-color); }
-.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted::selection { color: transparent; background: rgba(38, 132, 255, .3); }
-.h3-workspace .h3-drama3-highlight {
-  position: absolute; z-index: 0; margin: 0; box-sizing: border-box; overflow: hidden; pointer-events: none;
-  border-style: solid; border-color: transparent; background: var(--input-background-fill);
-  color: var(--h3-hl-text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
-}
-.h3-drama3-highlight .h3-hl-punct { color: var(--h3-hl-punct); }
-.h3-drama3-highlight .h3-hl-cue { color: var(--h3-hl-cue); }
-.h3-drama3-highlight .h3-hl-pause { color: var(--h3-hl-pause); }
-.h3-drama3-highlight .h3-hl-keyword { color: var(--h3-hl-keyword); }
-.h3-drama3-highlight .h3-hl-sequence { color: var(--h3-hl-sequence); }
-.h3-drama3-highlight .h3-hl-narrator { color: var(--h3-hl-narrator); }
-/* A tint and shadow, never padding, so the mirror's text stays under the textarea's. */
-.h3-drama3-highlight .h3-hl-name {
-  border-radius: 3px; background: color-mix(in srgb, currentColor 16%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent);
-}
-.h3-drama3-highlight .h3-hl-tag { color: var(--h3-hl-tag); }
-.h3-drama3-highlight .h3-hl-effect { color: var(--h3-hl-effect); }
-.h3-drama3-highlight .h3-hl-attr { color: var(--h3-hl-attr); }
-.h3-drama3-highlight .h3-hl-value { color: var(--h3-hl-value); }
-.h3-drama3-highlight .h3-hl-sound { color: var(--h3-hl-sound); }
-.h3-drama3-highlight .h3-hl-name0 { color: var(--h3-hl-name0); }
-.h3-drama3-highlight .h3-hl-name1 { color: var(--h3-hl-name1); }
-.h3-drama3-highlight .h3-hl-name2 { color: var(--h3-hl-name2); }
-.h3-drama3-highlight .h3-hl-name3 { color: var(--h3-hl-name3); }
-.h3-drama3-highlight .h3-hl-name4 { color: var(--h3-hl-name4); }
-.h3-drama3-highlight .h3-hl-name5 { color: var(--h3-hl-name5); }
-.h3-drama3-highlight .h3-hl-name6 { color: var(--h3-hl-name6); }
-.h3-drama3-highlight .h3-hl-name7 { color: var(--h3-hl-name7); }
-.h3-workspace .h3-drama3 button.secondary { border: 1px solid var(--h3-border); background: var(--h3-surface); }
-.h3-workspace .h3-drama3 button.secondary:not(:disabled):hover { border-color: var(--h3-accent); color: var(--h3-accent); background: var(--h3-muted-surface); }
-.h3-workspace .h3-drama3-inline-actions { flex-wrap: wrap; gap: 8px; align-items: center; }
-.h3-workspace .h3-drama3-inline-actions > :is(button, .row) { flex: 0 1 auto !important; width: auto; min-width: 0 !important; }
-.h3-workspace .h3-drama3-inline-actions > .row { gap: 8px; }
-.h3-workspace .h3-drama3-slot-count { padding-top: 4px; }
-.h3-workspace .h3-drama3-note, .h3-workspace .h3-drama3-note p { color: var(--h3-muted); font-size: 12px; margin: 0; }
-.h3-workspace .h3-drama3-note:empty { display: none; }
-.h3-workspace .h3-drama3-toolbar { padding: 10px; gap: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); }
-.h3-workspace .h3-drama3-toolbar + .h3-drama3-toolbar { margin-top: 4px; }
-.h3-workspace .h3-drama3-clip { padding: 8px; border: 1px dashed var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); }
-.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot { box-shadow: inset 3px 0 var(--h3-border); border-color: var(--h3-border); }
-.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap { min-height: 40px; padding-block: 6px; background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-border); color: var(--h3-text); }
-.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap.open { box-shadow: inset 3px 0 var(--h3-accent), 0 1px var(--h3-border); }
-.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap > span:first-child { font-size: 13px; }
-.h3-workspace .h3-drama3-stage { gap: 12px; }
-.h3-workspace .h3-drama3-auto { gap: 8px; padding: 14px; border: 1px dashed var(--h3-disclosure-border); border-radius: 12px; background: var(--h3-disclosure); }
-.h3-workspace .h3-drama3-auto .h3-generation-buttons { flex-wrap: wrap; }
-.h3-workspace .h3-drama3-auto .h3-generation-buttons > button { flex: 1 1 200px; min-height: 40px; white-space: normal; }
-.h3-workspace .h3-drama3-auto-heading strong { color: var(--h3-accent); font-size: 14px; }
-.h3-workspace .h3-drama3-auto-heading p { margin: 2px 0 0; color: var(--h3-muted); font-size: 12px; }
 .h3-workspace .h3-drama3-subtitles ol { position: relative; max-height: min(360px, 45vh); overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-subtitles li { display: flex; gap: 10px; margin: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.5; transition: background 160ms ease, color 160ms ease; }
 .h3-workspace .h3-drama3-subtitles li:hover { background: var(--h3-surface); }
@@ -898,21 +842,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-tone-7 { --h3-tone: var(--h3-hl-name7); }
 .h3-workspace .h3-drama3-subtitles .h3-subtitle-speaker { color: var(--h3-tone, var(--h3-accent)); }
 /* Cast grid: one card per shown speaker; only the picked speaker's slot shows below. */
-.h3-workspace .h3-drama3-cast-off { display: none !important; }
-.h3-workspace .h3-drama3-cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
-.h3-workspace .h3-drama3-cast-card {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "avatar name" "avatar slot" "state state";
-  gap: 2px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 12px;
-  background: color-mix(in srgb, var(--h3-tone) 7%, var(--h3-surface)); color: var(--h3-text); font: inherit; text-align: left; cursor: pointer;
-}
-.h3-workspace .h3-drama3-cast-card:hover { border-color: var(--h3-disclosure-border); }
-.h3-workspace .h3-drama3-cast-card[aria-pressed="true"] { border-color: var(--h3-accent); box-shadow: inset 0 0 0 1px var(--h3-accent); }
-.h3-workspace .h3-drama3-cast-card:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 2px; }
-.h3-workspace .h3-drama3-cast-avatar { grid-area: avatar; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--h3-tone); color: var(--h3-surface); font-weight: 700; }
-.h3-workspace .h3-drama3-cast-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
-.h3-workspace .h3-drama3-cast-slot { grid-area: slot; color: var(--h3-muted); font-size: 12px; }
-.h3-workspace .h3-drama3-cast-state { grid-area: state; justify-self: start; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: var(--h3-disclosure); color: var(--h3-accent); font-size: 12px; font-weight: 600; }
-.h3-workspace .h3-drama3-cast-card[data-state="missing"] .h3-drama3-cast-state { background: transparent; color: var(--h3-text); box-shadow: inset 0 0 0 1px var(--h3-disclosure-border); }
 /* The result's voices and sounds on lanes, one row per clip playing at the same time;
    clicking a segment seeks, the playhead follows the player. */
 .h3-workspace .h3-drama3-timeline { display: flex; margin-bottom: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); overflow: hidden; }
@@ -948,21 +877,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-stage-side:nth-last-child(3) { left: 0; }
 .h3-workspace .h3-drama3-stage-side:nth-last-child(2) { left: 50%; }
 .h3-workspace .h3-drama3-stage-side:nth-last-child(1) { left: 100%; }
-.h3-workspace .h3-drama3-lines { gap: 10px; }
-.h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }
-/* Clip, unlike hidden, does not create the scroll container that would pin the stage in place.
-   Top level, because Gradio scopes rules inside @media under .gradio-container, which then never match it. */
-.gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
-@media (min-width: 768px) {
-  .h3-workspace .h3-drama3-stage { position: sticky; top: 12px; }
-  /* A long result is taller than the window; pinned, its end would stay out of reach. */
-  .h3-workspace .h3-drama3-stage.h3-drama3-result { position: static; }
-}
-@media (max-width: 767px) {
-  .h3-workspace .h3-drama3.h3-engine-view { padding: 6px; }
-  .h3-workspace .h3-drama3 :is(.h3-composer, .h3-preview-panel) { padding: 8px; }
-  .h3-workspace .h3-drama3 .gr-accordion > div[data-testid="accordion-content"] { padding: 8px 6px 8px 9px; }
-  .h3-workspace .h3-drama3 :is(.h3-drama3-toolbar, .h3-drama3-clip) { padding: 6px; }
 }
 /* Narrower windows stack the bar's parts; each row scrolls sideways instead of wrapping. */
 @media (max-width: 1100px) {
@@ -996,9 +910,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-mobile-nav { display: flex; gap: 8px; }
   .h3-workspace .h3-mode-row { flex-direction: column; }
   .h3-workspace .h3-preview-panel { padding: 8px; }
-  .h3-workspace .h3-drama3 .h3-generation-buttons > button {
-    flex: 1 1 100%; min-width: 0; white-space: normal;
-  }
   .h3-workspace .h3-gallery-workspace { flex-direction: column; }
   .h3-workspace .h3-gallery-workspace > .column { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }
@@ -1018,6 +929,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-tagged-thumbnails .thumbnail-item::after { content: "×"; position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0, 0, 0, .65); color: #fff; font-size: 16px; line-height: 22px; text-align: center; }
 .h3-input-thumbnails .caption-label { max-width: calc(100% - 8px); overflow: visible; white-space: normal; overflow-wrap: anywhere; text-align: center; }
 /* Storyboard: the page runs in this frame. */
+.h3-soundstage-frame { display: block; width: 100%; height: calc(100vh - 150px); min-height: 640px; border: 0; border-radius: 8px; }
 .h3-storyboard-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) {
   .h3-workspace *, .h3-workspace *::before, .h3-workspace *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }

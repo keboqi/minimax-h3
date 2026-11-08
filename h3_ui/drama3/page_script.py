@@ -268,8 +268,10 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not reply.strip():
             raise H3Error("Paste the chat model's reply first.")
         before = data.get("text") or ""
+        # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
         outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),
-                                                         *writer_slots(data, clip)))
+                                                         *writer_slots(data, clip),
+                                                         strict_source=bool(_setting(data, "strict_source"))))
         status = str(outputs[1])
         if not failed(status):
             _apply_cast(data, outputs)

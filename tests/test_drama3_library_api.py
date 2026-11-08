@@ -80,12 +80,10 @@ class Drama3LibraryApiTests(unittest.TestCase):
 
     def test_endpoints_are_published_and_hidden_from_the_page(self):
         from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.bindings import bind_drama3
-        from h3_ui.drama3.view import build_drama3_view
+        from h3_ui.drama3.tab import build_soundstage_tab
 
         with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
+            build_soundstage_tab(gr.Column(), _drama3_actions())
         api = demo.get_api_info()["named_endpoints"]
         parameters = {name: [row["parameter_name"] for row in api[name]["parameters"]] for name in (
             "/drama3_library_groups", "/drama3_library_speakers", "/drama3_library_save_speaker",

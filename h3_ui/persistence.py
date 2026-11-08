@@ -33,9 +33,7 @@ EXTRA_FIELDS = {
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
                    "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "openai_model", "accelerate"),
     "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
-    "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
-               "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
-               "voice_engine", "skip_existing", "writer_workflow", "max_batch_lines", "strict_source"),
+    "drama3": (),  # The Soundstage page keeps its settings with each project.
     "workspace": ("task", "engine"),
     "image": ("mode", "h3_width", "h3_height", "h3_edit_size", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
     "qwen_image21": (
@@ -190,17 +188,11 @@ def restore_preferences(saved, components):
         for name in ("prompt_backend", "prompt_model", "openai_model"):
             if f"{prefix}.{name}" in values:
                 values.setdefault(f"image.{name}", values[f"{prefix}.{name}"])
-    if version < 7 and values.get("drama3.voice_engine") == "Drama 3":
-        # v7 made Qwen3-TTS VoiceDesign the default; older saves stored the previous default.
-        values = {name: value for name, value in values.items() if name != "drama3.voice_engine"}
     if version < 8 and values.get("workspace.engine") == "h3" and values.get("workspace.task") in (
         "Image", "Audio / Music"
     ):
         # v8 made Qwen Image 2.1 and Music 3 the defaults; task switches staged the previous H3 default.
         values = {name: value for name, value in values.items() if name != "workspace.engine"}
-    if version < 9 and values.get("drama3.parallel") == 8:
-        # v9 raised Drama 3's parallel requests to 16; older saves stored the previous default.
-        values = {name: value for name, value in values.items() if name != "drama3.parallel"}
     # Turbo labels name their LoRA versions; carry renamed choices forward.
     from h3_app.catalog import LEGACY_PROMPT_WRITER_BACKENDS, LEGACY_TURBO_VARIANTS
 

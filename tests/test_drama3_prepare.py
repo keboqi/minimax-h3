@@ -77,42 +77,6 @@ class PrepareCastTests(unittest.TestCase):
         self.handlers.generate_drama3_sounds.assert_not_called()
 
 
-class PrepareCastUiTests(unittest.TestCase):
-    def test_panel_and_combined_buttons_have_separate_jobs_and_correct_inputs(self):
-        from h3_app.jobs import JOBS
-        from h3_ui.application import _drama3_actions
-        from h3_ui.drama3.bindings import bind_drama3
-        from h3_ui.drama3.view import build_drama3_view
-
-        with gr.Blocks() as demo:
-            view = build_drama3_view(gr.Group())
-            bind_drama3(view, _drama3_actions())
-        config = demo.get_config_file()
-
-        def ancestry(node, target, trail=()):
-            trail = (*trail, node["id"])
-            if node["id"] == target:
-                return trail
-            return next((found for child in node.get("children", [])
-                         if (found := ancestry(child, target, trail))), None)
-
-        self.assertIn(view.voices_panel._id, ancestry(config["layout"], view.generate_voices._id))
-        self.assertNotIn(view.voices_panel._id, ancestry(config["layout"], view.prepare_cast._id))
-        self.assertEqual(view.prepare_cast.value, "Generate all speaker voices and sounds")
-        self.assertEqual(view.generate_voices.value, "Generate all speaker voices")
-        self.assertIs(view.prepare_cast.h3_stop, view.stop_prepare_cast)
-        self.assertIs(view.generate_voices.h3_stop, view.stop_voices)
-        callback = JOBS.callbacks["drama3_prepare"]
-        self.assertEqual(callback.__name__, "prepare_drama3_cast")
-        self.assertEqual(len(callback.job_input_names), 1 + len(inspect.signature(
-            Drama3Handlers.generate_drama3_voices).parameters) - 1 + len(inspect.signature(
-            Drama3Handlers.generate_drama3_sounds).parameters) - 1)
-        prepared = next(fn for fn in demo.fns.values() if view.prepare_status in fn.outputs
-                        and view.voices[0].audio in fn.outputs)
-        self.assertEqual(prepared.outputs[3 * DRAMA3_VOICE_SLOTS], view.voice_status)
-        self.assertEqual(prepared.outputs[-2:], [view.sound_status, view.prepare_status])
-        demo.close()
-
 
 if __name__ == "__main__":
     unittest.main()

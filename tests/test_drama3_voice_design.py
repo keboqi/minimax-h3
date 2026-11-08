@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from contextlib import nullcontext
 from pathlib import PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 import unittest
@@ -164,12 +163,6 @@ class VoiceDesignTests(unittest.TestCase):
                 patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime), \
                 patch.object(writers_common, "write_prompt", return_value=(response, "Enhanced prompt")) as writer:
             saved = drama3_speakers.save_speaker("Narrator", clip, "Uploaded words.", self.runtime, "A measured baritone.")
-            selection = drama3_handlers.select_drama3_speaker(saved.name)
-            self.assertEqual(selection[1]["value"], "Uploaded words.")
-            self.assertEqual(selection[5], saved.name)
-            self.assertEqual(selection[6]["value"], saved.description)
-            self.assertEqual((selection[9]["value"], selection[9]["visible"]), (str(saved.audio), True))
-            self.assertEqual(drama3_handlers.select_drama3_speaker("Upload a clip")[9]["visible"], False)
             voices = ["Upload a clip", None, ""] * 16
             voices[15:18] = [saved.name, None, ""]
             result = drama3_handlers.enhance_drama3_text("Hello there.", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
@@ -423,7 +416,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_unchecked_skip_regenerates_speakers_that_already_have_a_clip(self):
         from h3_ui.application import drama3_handlers
-        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_voices_title
+        from h3_ui.drama3.controls import UPLOAD_VOICE
         calls = []
 
         def single(description, *args):
@@ -436,12 +429,6 @@ class CastSlotTests(unittest.TestCase):
         with patch.object(drama3_handlers, "generate_drama3_voice", side_effect=single):
             list(drama3_handlers.generate_drama3_voices(*settings, 8, 2, False, *[v for slot in slots for v in slot]))
         self.assertEqual(calls, ["Deep"])  # saved speakers are never overwritten
-        self.assertEqual(drama3_voices_title(3, ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE], [False, True, False]),
-                         "Speaker voices · 3 speakers · 2 with a voice")
-        self.assertEqual(drama3_voices_title(1, [UPLOAD_VOICE], [True, True]),
-                         "Speaker voices · 1 speaker · 1 with a voice")
-        self.assertEqual(drama3_voices_title(2, [UPLOAD_VOICE], [True], group="Chapter 1"),
-                         "Speaker voices · Chapter 1 group · 2 speakers · 1 with a voice")
 
     def test_saved_speaker_tries_keep_the_saved_voice_selected(self):
         from h3_ui.application import drama3_handlers
@@ -498,7 +485,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_generate_all_fills_only_shown_upload_slots_with_a_brief_and_no_clip(self):
         from h3_ui.application import drama3_handlers
-        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_slot_title
+        from h3_ui.drama3.controls import UPLOAD_VOICE
         calls = []
 
         def single(description, preview, language, *settings):
@@ -527,9 +514,6 @@ class CastSlotTests(unittest.TestCase):
         self.assertIn("already has a clip", updates[0][3 * 2 + 2])
         self.assertIn("Generated 1 of 2", updates[-1][-1])
         self.assertIn("speaker 3", updates[-1][-1])
-        self.assertEqual(drama3_slot_title(2), "Speaker 2")
-        self.assertEqual(drama3_slot_title(2, " Mia ", UPLOAD_VOICE, True), "Speaker 2 · Mia · voice ready")
-        self.assertEqual(drama3_slot_title(3, "Alice", "Alice"), "Speaker 3 · Alice · saved voice")
 
     def test_generate_all_with_drama3_sends_every_brief_in_one_batch_with_the_parallel_setting(self):
         from h3_ui.application import drama3_handlers
@@ -644,66 +628,6 @@ class Drama3VoiceDesignTests(unittest.TestCase):
             release.assert_not_called()
             served.release_for_job("flux3")
             release.assert_called_once()
-
-
-class BrowserSlotPresentationTests(unittest.TestCase):
-    """Slot titles, panel titles and Add/Remove run in the browser and must match their Python twins."""
-
-    def test_slot_titles_and_clip_flags_match_python(self):
-        from tests.node_js import run_js
-        from h3_ui.drama3.controls import (
-            _SOUND_KIND, _VOICE_KIND, _slot_title_js, drama3_slot_title, drama3_sound_slot_title
-        )
-        audio = {"path": "/tmp/voice.wav", "url": "/file=voice.wav"}
-        for name, preset, clip in ((None, None, None), (" Mia ", "Upload a clip", audio),
-                                   ("Alice", "Alice", None), ("", "Upload a clip", None)):
-            with self.subTest(name=name, preset=preset, clip=bool(clip)):
-                label, ready = run_js(_slot_title_js(_VOICE_KIND, 3), name, preset, clip)
-                self.assertEqual(label["label"], drama3_slot_title(3, name, preset, bool(clip)))
-                self.assertIs(ready, bool(clip))
-                label, _ready = run_js(_slot_title_js(_SOUND_KIND, 2), name, preset, clip)
-                self.assertEqual(label["label"], drama3_sound_slot_title(2, name, preset, bool(clip)))
-
-    def test_panel_titles_match_python(self):
-        from tests.node_js import run_js
-        from h3_ui.drama3.controls import (
-            UPLOAD_VOICE, _VOICE_KIND, _SOUND_KIND, _panel_title_js, drama3_sounds_title, drama3_voices_title
-        )
-        presets = ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE] + [UPLOAD_VOICE] * 13
-        clips = [False, True, False, True] + [False] * 12
-        for shown in (1, 3, 4, 16, 0, None):
-            with self.subTest(shown=shown):
-                self.assertEqual(run_js(_panel_title_js(_VOICE_KIND), shown, *presets, *clips)["label"],
-                                 drama3_voices_title(shown, presets, clips))
-                self.assertEqual(run_js(_panel_title_js(_SOUND_KIND), shown, *presets, *clips)["label"],
-                                 drama3_sounds_title(shown, presets, clips))
-        for group, size in (("Global", 3), ("Chapter 1", 0), ("Story", None), ("", 5)):
-            with self.subTest(group=group, size=size):
-                self.assertEqual(run_js(_panel_title_js(_VOICE_KIND, True), group, size, 4, *presets, *clips)["label"],
-                                 drama3_voices_title(4, presets, clips, group, size))
-        self.assertIn("Story group (2 saved) · 4 speakers", drama3_voices_title(4, group="Story", group_size=2))
-
-    def test_add_and_remove_send_only_changed_slots_and_clear_the_removed_one(self):
-        from tests.node_js import run_js
-        from h3_ui.drama3.controls import _slot_count_js, _slot_visibility
-        skip = {"__type__": "update"}
-        added = run_js(_slot_count_js(16, 1), 4)
-        self.assertEqual(added, [{**value} if isinstance(value, dict) else value
-                                 for value in _slot_visibility(5, 4)])
-        self.assertEqual(added[1 + 4], {"__type__": "update", "visible": True})
-        self.assertEqual(added[1:5], [skip] * 4)
-        self.assertEqual(run_js(_slot_count_js(16, 1), 16)[0], 16)
-        removed = run_js(_slot_count_js(16, -1, [["Upload a clip", None, ""]]), 4)
-        self.assertEqual(removed[:19], [{**value} if isinstance(value, dict) else value
-                                        for value in _slot_visibility(3, 4)])
-        cleared = removed[19:]
-        self.assertEqual(len(cleared), 48)
-        self.assertEqual(cleared[9:12], [{"__type__": "update", "value": "Upload a clip"},
-                                         {"__type__": "update", "value": None},
-                                         {"__type__": "update", "value": ""}])
-        self.assertTrue(all(value == skip for index, value in enumerate(cleared) if not 9 <= index < 12))
-        # The last slot is never removed or cleared.
-        self.assertTrue(all(value == skip for value in run_js(_slot_count_js(16, -1, [["x"]]), 1)[19:]))
 
 
 if __name__ == "__main__":

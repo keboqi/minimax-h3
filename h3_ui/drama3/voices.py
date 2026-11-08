@@ -10,6 +10,13 @@ from h3_app.generation import requests as generation_requests
 from h3_app.jobs import JobCancelled
 
 DRAMA3_VOICE_DESIGN_SETTINGS = ("engine", "temperature", "top_p", "top_k", "max_frames")
+# New voices tried for a saved speaker: at most four, offered beside keeping the saved one.
+KEEP_SAVED = "Keep saved voice"
+MAX_TAKES = 4
+
+
+def take_label(index):
+    return f"New voice {index + 1}"
 
 
 class VoiceHandlers:
@@ -218,7 +225,6 @@ class VoiceHandlers:
         """
         from h3_app.drama3 import voice_design as drama3_voice_design
         from h3_app.voice_design import generate_reference
-        from h3_ui.drama3.speaker_library import KEEP_SAVED, MAX_TAKES, take_label
 
         count = max(1, min(int(count or 1), MAX_TAKES))
         clips = [None] * MAX_TAKES

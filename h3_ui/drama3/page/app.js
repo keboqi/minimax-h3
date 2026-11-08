@@ -2033,6 +2033,12 @@
   async function start() {
     applyTheme();
     matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
+    // In the studio's Soundstage tab, follow its light/dark switch as it changes.
+    try {
+      if (window.parent !== window) {
+        new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
+      }
+    } catch { /* Framed by another origin. */ }
     $("project").addEventListener("change", (event) => loadProject(event.target.value).catch((error) => toast(error.message)));
     $("new-project").addEventListener("click", newProject);
     $("new-cancel").addEventListener("click", () => $("new-dialog").close());

@@ -17,7 +17,6 @@ from .batch_api import BatchApiHandlers
 from .generation import GenerationHandlers
 from .library_api import LibraryApiHandlers
 from .sounds import SoundHandlers
-from .speakers import SpeakerHandlers
 from .voices import DRAMA3_VOICE_DESIGN_SETTINGS, VoiceHandlers
 from .writer import WriterHandlers
 
@@ -32,7 +31,7 @@ class Drama3Services:
     resolve_result: Callable[[Any], Any] = lambda path: path
 
 
-class Drama3Handlers(GenerationHandlers, WriterHandlers, VoiceHandlers, SpeakerHandlers, SoundHandlers,
+class Drama3Handlers(GenerationHandlers, WriterHandlers, VoiceHandlers, SoundHandlers,
                      LibraryApiHandlers, BatchApiHandlers):
     """Every Soundstage handler, bound to one set of runtime services."""
 

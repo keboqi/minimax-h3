@@ -6,79 +6,10 @@ from pathlib import Path
 
 import gradio as gr
 
-from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 
 class SoundHandlers:
     """Soundstage handlers for this area; runtime services come from :class:`Drama3Handlers`."""
-
-    def drama3_sound_names(self):
-        from h3_app.drama3 import sounds as drama3_sounds
-        return drama3_sounds.sound_names(self._runtime_config())
-
-    def _drama3_sound_preset_updates(self, count, selected_slot=None, selected=None):
-        from h3_ui.drama3.controls import drama3_sound_choices
-        choices = drama3_sound_choices(self.drama3_sound_names())
-        return [
-            gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
-            for slot in range(count)
-        ]
-
-    def select_drama3_sound(self, name):
-        """Show the sound upload controls, or a saved sound preset's metadata in their place."""
-        from h3_app.drama3 import sounds as drama3_sounds
-        from h3_ui.drama3.controls import UPLOAD_SOUND
-        if not name or name == UPLOAD_SOUND:
-            return (
-                gr.update(visible=True),
-                gr.update(visible=True),
-                gr.update(visible=False),
-                "",
-                gr.skip(),
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-                gr.skip(),
-            )
-        try:
-            saved = drama3_sounds.load_sound(name, self._runtime_config())
-        except H3Error as exc:
-            return (
-                gr.update(visible=True),
-                gr.update(visible=True),
-                gr.update(visible=False),
-                str(exc),
-                gr.skip(),
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-                gr.skip(),
-            )
-        return (
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=True),
-            f'Using saved sound "{saved.name}".',
-            saved.name,
-            gr.update(value=saved.description, interactive=False),
-            gr.update(value=saved.duration, interactive=False),
-            str(saved.audio),
-        )
-
-    def save_drama3_sound(self, slot, name, audio, description, duration, count):
-        from h3_app.drama3 import sounds as drama3_sounds
-        try:
-            saved = drama3_sounds.save_sound(name, audio, description, duration, self._runtime_config())
-        except H3Error as exc:
-            return [str(exc), *[gr.skip()] * count]
-        return [f'Saved sound "{saved.name}".', *self._drama3_sound_preset_updates(count, slot, saved.name)]
-
-    def delete_drama3_sound(self, slot, name, count):
-        from h3_app.drama3 import sounds as drama3_sounds
-        from h3_ui.drama3.controls import UPLOAD_SOUND
-        try:
-            drama3_sounds.delete_sound(name, self._runtime_config())
-        except H3Error as exc:
-            return [str(exc), *[gr.skip()] * count]
-        return [f'Deleted saved sound "{name}".', *self._drama3_sound_preset_updates(count, slot, UPLOAD_SOUND)]
 
     def generate_drama3_sound(self, description, duration=5):
         """Generate a single sound effect or music clip with Stable Audio 3 Medium."""

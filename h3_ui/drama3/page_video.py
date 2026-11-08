@@ -20,6 +20,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
+from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt, plan_shots
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
 
@@ -126,7 +127,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             started = time.monotonic()
             # No ``with``: leaving it would wait for a writer that never answers.
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-shot-plan")
-            future = pool.submit(visuals.plan_shots, mix_settings, settings["style"], settings["limit"], *writer,
+            future = pool.submit(plan_shots, mix_settings, settings["style"], settings["limit"], *writer,
                                  runtime=export.deps.runtime_config())
             pool.shutdown(wait=False)
             while True:
@@ -159,7 +160,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     def planner_prompt(name: str, request: Request):
         owner_of(request)
         _, _audio, mix_settings, settings = mix_of(name)
-        return {"prompt": visuals.full_plan_prompt(mix_settings, settings["style"], settings["limit"],
+        return {"prompt": full_plan_prompt(mix_settings, settings["style"], settings["limit"],
                                                    runtime=export.deps.runtime_config())}
 
     @app.post(f"{api}/project/video/reply", include_in_schema=False)
@@ -170,7 +171,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         if not reply.strip():
             raise H3Error("Paste the chat model's JSON reply first.")
         _, audio, mix_settings, settings = mix_of(name)
-        plan_data, shots = visuals.check_plan_reply(reply, mix_settings, settings["style"], settings["limit"])
+        plan_data, shots = check_plan_reply(reply, mix_settings, settings["style"], settings["limit"])
         # Claiming a run drops the reply of any planning still running for this mix.
         visuals.save_plan(audio, settings["style"], settings["limit"], plan_data, visuals.claim_plan(audio))
         return {**payload(owner_of(request), name), "message": f"Applied the pasted {len(shots)}-shot plan."}

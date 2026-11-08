@@ -184,43 +184,6 @@ class GenerationHandlers:
 
         return panel_update(soundstage_html(self._result_path(output)))
 
-    def drama3_take_selected(self, output, evt: gr.SelectData):
-        """The take key of the takes-table row the user clicked."""
-        chunks = self._take_chunks(output)
-        row = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
-        if not isinstance(row, int) or not 0 <= row < len(chunks):
-            return gr.skip()
-        return chunks[row]["take"]
-
-    def drama3_take_audio(self, key):
-        """One line's saved take, before staging and speaker effects, for the line player."""
-        from h3_app.drama3.serving.takes import load_take, takes_root
-
-        key = str(key or "")
-        # Keys are hex digests; anything else must not become a path.
-        loaded = load_take(takes_root(self._runtime_config()), key) if key.isalnum() else None
-        if loaded is None:
-            return None
-        samples, rate = loaded
-        return rate, samples
-
-    def drama3_takes(self, output):
-        """Takes table rows and line choices for a generated result, from its settings snapshot."""
-        chunks = self._take_chunks(output)
-        rows, choices = [], []
-        for number, chunk in enumerate(chunks, 1):
-            speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"
-            text = " ".join(str(chunk.get("text", "")).split())
-            take = "reused" if chunk.get("reused") else chunk.get("check") or ""
-            if take == "skipped":
-                take = "new"
-            rows.append([number, speaker, text, chunk.get("seconds", ""), take])
-            short = text if len(text) <= 48 else text[:47] + "…"
-            choices.append((f"{number} · {speaker} · {short}", chunk["take"]))
-        return (gr.update(value=rows, visible=bool(rows)),
-                gr.update(choices=choices, value=choices[0][1] if choices else None, visible=bool(rows)),
-                gr.update(visible=bool(rows)))
-
     def _cast_names(self, names, slot_names):
         """Every Cast name by slot: saved speakers' names (``names``) win over typed ones."""
         cast = {speaker: " ".join(str(name or "").split()) for speaker, name in enumerate(slot_names)}

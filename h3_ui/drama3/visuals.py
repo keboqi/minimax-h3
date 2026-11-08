@@ -1,12 +1,9 @@
-"""Optional illustrated video export from the Speak result."""
+"""The illustrated video export from a Soundstage mix: plan shots, draw them, render the video."""
 
 from dataclasses import dataclass, field
 import hashlib
 import inspect
-import time
 from typing import Any, Callable
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
 import json
 import re
 from collections import OrderedDict
@@ -20,17 +17,12 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-from h3_app.drama3.visual_plan import (check_plan_reply, compile_plan, fill_tags, full_plan_prompt, plan_shots,
-                                       sheet_prompt, shot_cap, subjects)
+from h3_app.drama3.visual_plan import compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
-from h3_ui.clipboard import copy_js
-from h3_ui.drama3.stage_video import ELEM_CLASS as STAGE_VIDEO_CLASS
-from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY, PAUSE_JS, STAGE_VIDEO_JS, latest_export, stage_video_html
-from h3_ui.engines.controls import QUIET, generation_actions, writer_inputs
+from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
 from h3_ui.image_controller import reference_limit, reference_tag
-from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
 
 # Images finished by an export that failed or was stopped, by export fingerprint:
@@ -38,7 +30,6 @@ from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_genera
 # and settings resumes after them.
 _FINISHED: OrderedDict[str, dict] = OrderedDict()
 _FINISHED_LIMIT = 8
-COPY_PLAN_ID = "h3-drama3-copy-plan-prompt"
 PLAN_TICK = 3  # Seconds between planning status updates.
 PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
@@ -270,30 +261,6 @@ def plan_rows(saved, duration, shots=None):
              "Dissolve" if s.dissolve else "Cut", s.beat, s.prompt] for s in shots]
 
 
-PLAN_LABEL = "Shot plan"
-STALE_PLAN_LABEL = ("Shot plan · The saved plan was made for a different Art direction or Minimum shots. "
-                    "Plan again, or set them back.")
-
-
-def plan_table(audio, style, limit):
-    """The shot table for the plan Generate would use with these settings.
-
-    A plan saved for other settings stays on disk but isn't shown, so the table never lists shots
-    that Generate would refuse; the label says why it's empty.
-    """
-    saved = read_plan(audio) if audio else None
-    if saved is None:
-        return gr.update(value=[], label=PLAN_LABEL)
-    try:
-        current = read_plan(audio, style, limit)
-    except (TypeError, ValueError):
-        current = None
-    duration = ((read_snapshot(audio) or {}).get("settings") or {}).get("duration")
-    if current is None or not duration:
-        return gr.update(value=[], label=STALE_PLAN_LABEL if current is None else PLAN_LABEL)
-    return gr.update(value=plan_rows(current, float(duration)), label=PLAN_LABEL)
-
-
 def load_mix(deps, result_name):
     """A Sound Stage mix by its file name, and its settings snapshot."""
     if not result_name:
@@ -356,185 +323,20 @@ class VideoExport:
                 for name, component in self.controller.fields.items()]
 
 
-def bind_visual_export(view, controller, deps, triggers=()):
-    with view.visual_root, gr.Accordion("Illustrated video", open=False):
-        engine = gr.Dropdown([(item.label, item.id) for item in engines_for_task("Image")],
-                             value="qwen", label="Image model", info="Uses this model’s settings from the Image tab.")
-        preset = gr.Dropdown([*STYLE_PRESETS, CUSTOM_STYLE], value=DEFAULT_STYLE, label="Style preset",
-                             info="Fills Art direction. Edit the text to make it your own.")
-        style = gr.Textbox(label="Art direction", value=STYLE_PRESETS[DEFAULT_STYLE], lines=2,
-                           placeholder="Describe the cast, setting and illustration style.")
-        limit = gr.Slider(1, 64, value=16, step=1, label="Minimum shots",
-                          info="One moment per image. The planner uses at least this many and adds more "
-                               "where the story needs them.")
-        plan_button = gr.Button("Plan shots", size="sm")
-        gr.Markdown("Step 1: plan the shots from the finished mix with the Gemini or OpenAI-compatible writer "
-                    "selected on Script, or paste a plan from another chat model below. Step 2: review it, then "
-                    "generate. The plan is saved with the mix for this Art direction and Minimum shots.")
-        preview = gr.Dataframe(headers=["Start (s)", "End (s)", "Transition", "Story beat", "Image prompt"],
-                               interactive=False, wrap=True, label="Shot plan")
-        with gr.Accordion("Use another chat model", open=False):
-            gr.Markdown("Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked "
-                        "like the built-in planner and saved as this mix's plan for the current Art direction and "
-                        "Minimum shots.")
-            copy_prompt = gr.Button("Copy full planner prompt", size="sm", elem_id=COPY_PLAN_ID)
-            # A hidden Textbox, not gr.State: State values stay on the server, so the copy script got None.
-            planner_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
-            pasted_plan = gr.Textbox(label="Pasted planner reply", lines=6, max_lines=20,
-                                     placeholder='{"art_style": "...", "characters": {...}, "shots": [...]}')
-            apply_plan = gr.Button("Apply pasted plan", size="sm", variant="primary")
-        continuity = gr.Checkbox(value=True, label="Keep characters consistent",
-                                 info="Draws one portrait per character, then repaints each scene's characters to "
-                                      "match it after the scene is drawn. MOSS-Image uses text prompts only.")
-        run, stop, status = generation_actions("Generate illustrated video")
-        # The job's video lands here; it is shown beside the speech result, under the Audio/Video switch.
-        video = gr.Video(visible=False, interactive=False)
-        show_latest = gr.Button("Show the latest video for this mix", size="sm")
-        source = gr.State(None)
-    with view.result_mode_root:
-        result_mode = gr.Radio(["Audio", "Video"], value="Audio", show_label=False, visible=False,
-                               elem_classes=["h3-drama3-result-mode"])
-    with view.result_video_root:
-        stage = gr.HTML("", js_on_load=STAGE_VIDEO_JS, elem_classes=[STAGE_VIDEO_CLASS])
+def video_export(controller, deps, triggers=()):
+    """The illustrated video export the Soundstage page runs, drawing with the Image tab's settings.
 
-    def select_mix(path, style, limit):
-        """Show the plan and newest video saved with this mix, so a loaded project picks up where it left off."""
-        name = Path(path).name if path else None
-        audio = Path(deps.resolve_result(name)) if name else None
-        latest = latest_export(audio) if audio else None
-        return name, str(latest) if latest else None, plan_table(audio, style, limit)
-
-    view.output.change(select_mix, inputs=[view.output, style, limit], outputs=[source, video, preview], **QUIET)
-
-    def refresh_table(result_name, style, limit):
-        return plan_table(Path(deps.resolve_result(result_name)) if result_name else None, style, limit)
-
-    # Editing Art direction or Minimum shots switches the table to the plan Generate would use, if any.
-    # User events only: a .change listener here would loop back through the components that set them.
-    table = dict(fn=refresh_table, inputs=[source, style, limit], outputs=preview, **QUIET)
-    style.input(**table)
-    limit.release(**table)
-
-    def show_latest_video(result_name):
-        # A long export keeps running if the page loses its connection; its video still lands here.
-        latest = latest_export(deps.resolve_result(result_name)) if result_name else None
-        if latest is None:
-            raise gr.Error("No illustrated video has been exported from this mix yet.")
-        return str(latest)
-
-    show_latest.click(show_latest_video, inputs=source, outputs=video, **QUIET).success(
-        lambda: "Video", outputs=result_mode, **QUIET)
-
-    def show_video(path, mode):
-        """Offer the switch once this mix has a video; without one the result is the audio again."""
-        mode = mode if path else "Audio"
-        return stage_video_html(path), gr.update(visible=bool(path), value=mode)
-
-    video.change(show_video, inputs=[video, result_mode], outputs=[stage, result_mode], **QUIET)
-
-    def switch_result(mode):
-        return gr.update(visible=mode != "Video"), gr.update(visible=mode == "Video")
-
-    # Pause whichever player is being hidden, so the audio and the video never play over each other.
-    result_mode.change(switch_result, inputs=result_mode, outputs=[view.output, view.result_video_root],
-                       js=PAUSE_JS.format(scope=".h3-drama3-result"), **QUIET)
-    preset.input(lambda name: STYLE_PRESETS.get(name, gr.skip()), inputs=preset, outputs=style, **QUIET).then(
-        **table)
-    style.input(preset_for, inputs=style, outputs=preset, **QUIET)
-
-    def load_mix_or_error(result_name):
-        try:
-            return load_mix(deps, result_name)
-        except H3Error as exc:
-            raise gr.Error(str(exc)) from exc
-
-    def prepare(result_name, style, limit, run, *writer):
-        audio, settings = load_mix_or_error(result_name)
-        try:
-            plan, shots = plan_shots(settings, style, int(limit), *writer, runtime=deps.runtime_config())
-        except H3Error as exc:
-            raise gr.Error(str(exc)) from exc
-        if not save_plan(audio, style, limit, plan, run):
-            raise gr.Error("A newer shot plan was started or pasted while this one was planning, "
-                           "so this reply was dropped.")
-        return plan_rows(None, None, shots)
-
-    def plan_live(result_name, style, limit, *writer):
-        """Plan in the background, reporting elapsed time; the writer can take minutes on a long mix."""
-        audio, _ = load_mix_or_error(result_name)
-        run = claim_plan(audio)
-        model = writer[4] if len(writer) > 4 and writer[2] == "OpenAI-compatible" else writer[0]
-        started = time.monotonic()
-        # No ``with``: leaving it would wait for a writer that never answers.
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-shot-plan")
-        future = pool.submit(prepare, result_name, style, limit, run, *writer)
-        pool.shutdown(wait=False)
-        while True:
-            try:
-                rows = future.result(timeout=PLAN_TICK)
-                break
-            except FuturesTimeout:
-                elapsed = int(time.monotonic() - started)
-                if elapsed >= PLAN_TIMEOUT:
-                    # The writer's own retries can run for ten minutes; stop waiting long before that.
-                    # A reply that still arrives later is saved as this mix's plan, unless a newer
-                    # plan was started or pasted by then.
-                    raise gr.Error(f"{model} hasn't returned a shot plan after {elapsed // 60} minutes, so "
-                                   "planning stopped. Try again, pick another writer model, or use Copy full "
-                                   "planner prompt with any chat model and paste its reply.") from None
-                yield gr.skip(), (f"Planning shots with {model}… {elapsed // 60}m{elapsed % 60:02d}s. "
-                                  f"A long mix can take a few minutes; this stops at {PLAN_TIMEOUT // 60} minutes.")
-        yield gr.update(value=rows, label=PLAN_LABEL),             f"Planned {len(rows)} shots in {int(time.monotonic() - started)}s."
-
-    bind_prompt_action(plan_button.click, plan_live, inputs=[source, style, limit, *writer_inputs(view.writer)],
-                       outputs=[preview, status], api_name=False, show_progress="minimal")
-
-    def copy_plan_prompt(result_name, style, limit):
-        _, settings = load_mix_or_error(result_name)
-        try:
-            return full_plan_prompt(settings, style, int(limit), runtime=deps.runtime_config())
-        except H3Error as exc:
-            raise gr.Error(f"Could not build the planner prompt: {exc}") from exc
-
-    copy_prompt.click(copy_plan_prompt, inputs=[source, style, limit], outputs=planner_prompt, **QUIET).success(
-        fn=None, js=copy_js(COPY_PLAN_ID, "Copy full planner prompt"), inputs=planner_prompt, api_name=False)
-
-    def apply_pasted_plan(reply, result_name, style, limit):
-        """Check a plan from another chat model like the built-in planner's, then save it with the mix."""
-        if not str(reply or "").strip():
-            raise gr.Error("Paste the chat model's JSON reply first.")
-        audio, settings = load_mix_or_error(result_name)
-        try:
-            plan, shots = check_plan_reply(reply, settings, style, int(limit))
-        except H3Error as exc:
-            raise gr.Error(str(exc)) from exc
-        # Claiming a run drops the reply of any planning still running for this mix.
-        save_plan(audio, style, limit, plan, claim_plan(audio))
-        return gr.update(value=plan_rows(None, None, shots), label=PLAN_LABEL), f"Applied the pasted {len(shots)}-shot plan."
-
-    apply_plan.click(apply_pasted_plan, inputs=[pasted_plan, source, style, limit], outputs=[preview, status],
-                     **QUIET)
-
+    ``triggers`` are the studio events (opening it, switching task) on which each owner's Image
+    tab values are handed to the export, as Remake and Storyboard take the MiniMax H3 settings.
+    """
     def generate(result_name, engine, style, limit, use_references, *values):
         try:
             yield from export_video(controller, deps, result_name, engine, style, limit, use_references, *values)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 
-    # Planning is its own step (Plan shots or a pasted plan), saved as a file beside the mix. Generate starts
-    # the GPU job straight from its click: a planner chained into the GPU job could finish and then never
-    # submit the job, leaving the page waiting with nothing to show.
-    event = bind_gpu_action(run.click, owned_generation(generate, "drama3_visuals",
-                            input_names=(*VIDEO_INPUT_NAMES, *controller.fields)),
-                            inputs=[source, engine, style, limit, continuity, *controller.fields.values()],
-                            outputs=[video, status], api_name=False, show_progress="minimal")
-    event.success(lambda: "Video", outputs=result_mode, **QUIET)
-    stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
-        None, cancels=[event], **QUIET)
     export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")])
     if triggers:
-        # The page outside Gradio exports with the Image tab's settings; hand them over as the studio
-        # opens or switches task, as Remake and Storyboard take the MiniMax H3 settings.
         names = list(controller.fields)
 
         def capture(*args):
@@ -546,6 +348,7 @@ def bind_visual_export(view, controller, deps, triggers=()):
         capture.__signature__ = inspect.Signature([
             *(inspect.Parameter(f"value_{index}", inspect.Parameter.POSITIONAL_OR_KEYWORD) for index in range(len(names))),
             inspect.Parameter("request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=gr.Request, default=None)])
+        # Gradio injects the request from annotations; without this it passes None.
         capture.__annotations__ = {"request": gr.Request}
         gr.on(triggers=list(triggers), fn=capture, inputs=list(controller.fields.values()), outputs=None,
               queue=False, api_name=False, show_progress="hidden")

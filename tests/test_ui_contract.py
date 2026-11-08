@@ -26,7 +26,6 @@ from h3_ui.presentation import (
     result_format_presentation,
 )
 from h3_ui.styles import H3_SETUP_CSS
-from tests.node_js import run_js
 from h3_app.contracts import GENERATION_FIELDS
 
 
@@ -749,8 +748,8 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
-        self.assertEqual(len(models), 10)
+        # Soundstage's writer settings are on its page, outside Gradio.
+        self.assertEqual(len(models), 9)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -761,7 +760,7 @@ class UiContractTests(unittest.TestCase):
             if component.get("props", {}).get("label") in ("Prompt writer", "Writer service")
             and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
-        self.assertEqual(len(writers), 9)
+        self.assertEqual(len(writers), 8)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
@@ -788,7 +787,7 @@ class UiContractTests(unittest.TestCase):
                 for c in self.config["components"]
                 if c.get("props", {}).get("label") == label
             ]
-            self.assertEqual(len(keys), 9, label)
+            self.assertEqual(len(keys), 8, label)  # Soundstage's are on its page.
             for key in keys:
                 self.assertEqual(
                     hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label
@@ -862,24 +861,14 @@ class UiContractTests(unittest.TestCase):
         # The Writer workflow comes last, so existing positional callers keep working.
         self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group",
                                        "writer_workflow", "max_batch_lines", "strict_source", "smart_budget_profile"])
-        budget = next(c for c in self.config["components"]
-                      if c.get("props", {}).get("label") == "Smart budget profile")
-        self.assertEqual(budget["props"]["value"], "Auto")
-        self.assertEqual([item[1] for item in budget["props"]["choices"]],
-                         ["Auto", "Request optimized", "Token optimized"])
-        self.assertFalse(budget["props"]["visible"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine",
                           "temperature", "top_p", "top_k", "max_frames"])
-        engine = next(c for c in self.config["components"]
-                      if c.get("props", {}).get("label") == "Voice generator")
-        self.assertEqual(engine["props"]["value"], "Qwen3-TTS VoiceDesign")
-        speakers = next(c for c in self.config["components"]
-                        if c.get("props", {}).get("label") == "Speakers")
-        self.assertEqual(speakers["props"]["value"], "Auto")
-        self.assertEqual([choice[1] for choice in speakers["props"]["choices"]],
-                         ["Auto", "Adapt to voices", "Single"])
+        transcribe = api["/transcribe_drama3_voice"]
+        self.assertEqual([row["parameter_name"] for row in transcribe["parameters"]], ["audio", "model_choice"])
+        for name in ("/regenerate_drama3_line", "/remix_drama3", "/generate_drama3_sound", "/preload_drama3_models"):
+            self.assertIn(name, api)
         flux = [row["parameter_name"] for row in api["/enhance_flux3_prompt"]["parameters"]]
         self.assertEqual(flux, ["prompt", "reference_images", "width", "height", "model",
                                 "temporary_api_key", "backend", "openai_api_key", "openai_model",
@@ -887,51 +876,8 @@ class UiContractTests(unittest.TestCase):
 
         labels = {c["id"]: c.get("props", {}).get("label") for c in self.config["components"]}
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
-        top_k = next(self.components[i] for i in endpoints["generate_drama3"]["inputs"]
-                     if labels[i] == "Top-k")
-        # Expressive is the default speech preset.
-        self.assertEqual((top_k["props"]["minimum"], top_k["props"]["value"]), (0, 30))
-        preset = next(c for c in self.config["components"]
-                      if c.get("props", {}).get("label") == "Speech preset")
-        apply_preset = next(fn for fn in self.demo.fns.values()
-                            if [c._id for c in fn.inputs] == [preset["id"]]
-                            and top_k["id"] in [c._id for c in fn.outputs])
-        # Presets apply in the browser, without a server round trip.
-        self.assertIsNone(apply_preset.fn)
-        self.assertEqual(run_js(apply_preset.js, "Balance"), [1.0, 0.9, 0])
-        self.assertEqual(run_js(apply_preset.js, "Expressive"), [2.0, 1.0, 30])
-        self.assertEqual(run_js(apply_preset.js, "Strict"), [0.7, 0.7, 30])
         self.assertIn("Expand the prompt locally",
                       [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])
-        transcribe = endpoints["transcribe_drama3_voice"]
-        self.assertEqual([labels[i] for i in transcribe["inputs"]], ["Speaker 0 reference clip", "Voice transcript model"])
-        self.assertEqual(labels[transcribe["outputs"][0]], "Speaker 0 exact transcript")
-        voices = [c for c in self.config["components"]
-                  if c.get("type") == "dropdown"
-                  and re.fullmatch(r"Speaker \d+ voice", str(c.get("props", {}).get("label", "")))]
-        self.assertEqual([c["props"]["label"] for c in voices],
-                         [f"Speaker {n} voice" for n in range(16)])
-        for dropdown in voices:
-            self.assertEqual(dropdown["props"]["value"], "Upload a clip")
-            self.assertEqual(dropdown["props"]["choices"][0][0], "Upload or generate a voice")
-        auto = [c for c in self.config["components"]
-                if c["type"] == "button" and c.get("props", {}).get("value") == "Auto transcribe"]
-        self.assertEqual(len(auto), 16)
-        add = next(c for c in self.config["components"]
-                   if c["type"] == "button" and c.get("props", {}).get("value") == "Add speaker")
-        add_event = next(d for d in self.config["dependencies"]
-                         if d["targets"] and d["targets"][0][0] == add["id"])
-        self.assertEqual(len(add_event["outputs"]), 1 + 16 + 2)  # count, slot groups, both buttons
-
-    def test_saved_speaker_list_follows_slot_and_bulk_saves(self):
-        library = next(c for c in self.config["components"]
-                       if c.get("props", {}).get("label") == "Saved speaker")
-        refreshes = [fn for fn in self.demo.fns.values()
-                     if getattr(fn.fn, "__name__", "") == "refresh_saved"]
-        # One per slot save and delete, plus Save all speakers to selected group and Auto's save.
-        self.assertEqual(len(refreshes), 2 * 16 + 2)
-        for fn in refreshes:
-            self.assertEqual(fn.outputs[0]._id, library["id"])
 
     def test_new_engine_model_options_are_bound_and_persisted(self):
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
@@ -947,17 +893,15 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(self.components[moss["Turbo LoRA"]]["props"]["value"], "Lodestones DMD (8-step)")
         self.assertIn("Rewrite as", labels("enhance_moss_image_prompt"))
         drama = labels("generate_drama3")
-        self.assertNotIn("Drama model", drama)
-        self.assertNotIn("Backend", drama)
-        asr = labels("transcribe_drama3_voice")
-        self.assertIn("Voice transcript model", asr)
+        self.assertNotIn("drama_model", drama)
+        self.assertNotIn("backend", drama)
+        self.assertIn("model_choice", labels("transcribe_drama3_voice"))
         from h3_ui.persistence import EXTRA_FIELDS
         self.assertIn("prompt_enhancer", EXTRA_FIELDS["qwen_image21"])
         self.assertIn("upsampler", EXTRA_FIELDS["flux3"])
         self.assertIn("turbo_variant", EXTRA_FIELDS["moss_image"])
         self.assertIn("rewrite_mode", EXTRA_FIELDS["moss_image"])
-        self.assertNotIn("model", EXTRA_FIELDS["drama3"])
-        self.assertIn("asr_model", EXTRA_FIELDS["drama3"])
+        self.assertEqual(EXTRA_FIELDS["drama3"], ())  # The page keeps them with each project.
 
     def test_flux_references_keep_local_edit_upsampling_available(self):
         endpoint = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_flux3")

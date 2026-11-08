@@ -145,7 +145,7 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                 with gr.Tab("Storyboard", id="storyboard"):
                     storyboard = gr.Column(elem_classes=["h3-engine-view", "h3-storyboard-shell"])
                 with gr.Tab("Soundstage", id="drama3"):
-                    drama3 = gr.Group(elem_classes=["h3-engine-view"])
+                    drama3 = gr.Column(elem_classes=["h3-engine-view", "h3-soundstage-shell"])
                 with gr.Tab("Dub & Translate", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:

@@ -197,35 +197,24 @@ class WriterHandlers:
         except H3Error as exc:
             raise gr.Error(f"Could not build the writer prompt: {exc}") from exc
 
-    def apply_drama3_writer_reply(self, reply, text, speaker_mode, *slots):
-        """Validate a pasted reply like the built-in writer, then fill the script and speaker slots."""
+    def apply_drama3_writer_reply(self, reply, text, speaker_mode, *slots, strict_source=False):
+        """Validate a pasted reply like the built-in writer, then fill the script and speaker slots.
+
+        Changes to the source words are listed in the status, unless ``strict_source`` rejects them.
+        """
         group = self._drama3_writer_group(slots)
         try:
             names, existing, _cast_context, shown = self._drama3_writer_slots(slots)
             script_mode, _sound_context = self._drama3_writer_mode_and_sounds(slots)
             script, status, cast, title = drama3_writer.apply_drama3_reply(
                 reply, text, names, speaker_mode, script_mode=script_mode, return_title=True,
-                speaker_names=self._slot_names(existing),
+                speaker_names=self._slot_names(existing), strict_source=bool(strict_source),
             )
             if status.startswith("Prompt enhancement failed:"):
                 return text, status, *self._drama3_unchanged_outputs(group)
             return self._drama3_apply_cast(script, status, cast, existing, shown, group, title)
         except H3Error as exc:
             return text, f"Prompt enhancement failed: {exc}", *self._drama3_unchanged_outputs(group)
-
-    def switch_drama3_script_mode(self, script_mode, text):
-        """Show the sounds panel for Advanced; Basic keeps but ignores the script's sound tags."""
-        from h3_app.drama3.serving.tree import has_drama3_sound_features
-
-        if script_mode == drama3_writer.DRAMA3_SCRIPT_ADVANCED:
-            return (gr.update(visible=True),
-                    "Advanced sound-enhanced mode enabled (sounds use Stable Audio 3 Medium).")
-        # The script is left as authored, so switching back to Advanced restores its staging.
-        status = "Basic script mode enabled."
-        if has_drama3_sound_features(str(text or "")):
-            status += (" The script's sound, staging, pause and vocal effect tags are kept but ignored "
-                       "in Basic mode; switch back to Advanced to use them.")
-        return gr.update(visible=False), status
 
     def sync_drama3_script_sounds(self, text, script_mode, shown_sound_slots, *sound_meta_values):
         """Populate sound slot names, descriptions, and durations from <sound> tags in the script."""

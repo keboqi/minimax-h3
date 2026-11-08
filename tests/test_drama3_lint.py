@@ -95,8 +95,9 @@ class CoverageTests(unittest.TestCase):
                 {"speaker_id": 1, "name": "Teacher", "description": "Stern.", "preview_text": "Hello there."},
             ],
         })
+        # Keep my exact words: a reply that drops source words is refused.
         script, status, _cast = drama3_writer.apply_drama3_reply(
-            reply, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。", (), "Auto")
+            reply, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。", (), "Auto", strict_source=True)
         self.assertEqual(script, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。")
         self.assertIn("failed", status)
         self.assertIn("source words", status)
@@ -336,7 +337,7 @@ class SourceModeTests(unittest.TestCase):
             "script": "narrator: 第一句话说得很长很长。",
             "speakers": [{"speaker_id": 0, "name": "narrator", "description": "Calm.", "preview_text": "你好。"}],
         }, ensure_ascii=False)
-        _script, status, _cast = drama3_writer.apply_drama3_reply(reply, self.SOURCE, (), "Auto")
+        _script, status, _cast = drama3_writer.apply_drama3_reply(reply, self.SOURCE, (), "Auto", strict_source=True)
         self.assertIn("failed", status)
         self.assertIn("source words", status)
         self.assertEqual(_script, self.SOURCE)

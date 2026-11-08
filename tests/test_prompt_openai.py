@@ -256,20 +256,20 @@ class RemotePromptOpenAITests(unittest.TestCase):
             "flux3.prompt_backend": SimpleNamespace(value="Gemini", choices=backends),
             "h3.prompt_writer_backend": SimpleNamespace(value="Gemini", choices=("Local MiniMax-H3 8B", *backends)),
             "flux3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS),
-            "drama3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS,
-                                                   allow_custom_value=True),
+            "moss_image.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS,
+                                                       allow_custom_value=True),
         }
         restored, _ = restore_preferences({"schema_version": 9, "values": {
             "flux3.prompt_backend": "Lightning AI",
             "h3.prompt_writer_backend": "Lightning AI",
             "flux3.lightning_model": "openai/gpt-6.1-sol",
-            "drama3.openai_model": "my-model",
+            "moss_image.openai_model": "my-model",
         }}, components)
         self.assertEqual(restored, {
             "flux3.prompt_backend": "OpenAI-compatible",
             "h3.prompt_writer_backend": "OpenAI-compatible",
             "flux3.openai_model": "gpt-6-luna",  # a former preset falls back to the default
-            "drama3.openai_model": "my-model",  # typed models survive a reload
+            "moss_image.openai_model": "my-model",  # typed models survive a reload
         })
 
 
