@@ -39,6 +39,46 @@ class IllustratedMixTests(unittest.TestCase):
             list(illustrate_shots(controller, "qwen", [shot, shot], {"qwen__turbo_variant": "Off"}, True))
         controller.generate.assert_called_once()
 
+    def test_retry_resumes_after_the_shots_a_failed_export_finished(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            images = [Path(tmp) / f"{i}.png" for i in range(3)]
+            for image in images:
+                Image.new("RGB", (4, 4)).save(image)
+            shots = [Shot(i * FPS, FPS, False, "Paint", references=(subject,))
+                     for i, subject in enumerate(("Mara", "tower", "Mara"))]
+            captured = {"qwen__turbo_variant": "Off"}
+            finished = []
+            controller = Mock()
+            controller.generate.side_effect = [[([str(images[0])], "Complete")],
+                                               [([str(images[1])], "Complete")],
+                                               [(None, "Error: out of memory")]]
+            with self.assertRaisesRegex(H3Error, "Shot 3 of 3"):
+                list(illustrate_shots(controller, "qwen", shots, captured, True, finished))
+            self.assertEqual(finished, [str(images[0]), str(images[1])])
+            controller = Mock()
+            controller.generate.side_effect = [[([str(images[2])], "Complete")]]
+
+            def drain(iterator):
+                try:
+                    while True:
+                        next(iterator)
+                except StopIteration as stop:
+                    return stop.value
+
+            result, records = drain(illustrate_shots(controller, "qwen", shots, captured, True, finished))
+            self.assertEqual(result, [str(image) for image in images])
+            controller.generate.assert_called_once()
+            # The resumed shot still edits from Mara's first appearance.
+            self.assertEqual(controller.generate.call_args.args[1:4:2], ("Image edit", [str(images[0])]))
+            self.assertEqual(records[2]["references"], [{"shot": 1, "subjects": ["Mara"]}])
+
+    def test_cut_off_writer_reply_explains_itself(self):
+        settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
+        runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
+        with patch("h3_app.drama3.visual_plan.write_prompt", return_value=('{"style": "ink", "shots": [', "ok")):
+            with self.assertRaisesRegex(H3Error, "cut off"):
+                plan_shots(settings, "comic", 16, "model", "", "Gemini", "", "", "", runtime=runtime)
+
     def test_edit_reuses_first_appearances_and_respects_reference_priority(self):
         first_seen = {"Mara": 0, "bell": 0, "key": 2, "courtyard": 4}
         keys = ["key", "Mara", "courtyard", "bell", "Mara", "newcomer"]

@@ -1,5 +1,8 @@
 """Optional illustrated video export from the Speak result."""
 
+import hashlib
+import json
+from collections import OrderedDict
 from pathlib import Path
 from shutil import which
 
@@ -14,6 +17,26 @@ from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.engines.controls import QUIET, generation_actions, writer_inputs
 from h3_ui.image_controller import reference_limit, reference_tag
 from h3_ui.job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
+
+
+# Illustrations finished by an export that failed or was stopped, by export fingerprint.
+# A retry with the same mix, plan, model and settings resumes after them.
+_FINISHED: OrderedDict[str, list[str]] = OrderedDict()
+_FINISHED_LIMIT = 8
+
+
+def export_key(result_name, plan, engine, use_references, captured):
+    data = json.dumps([result_name, plan, engine, bool(use_references), captured],
+                      sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def finished_images(key):
+    images = _FINISHED.setdefault(key, [])
+    _FINISHED.move_to_end(key)
+    while len(_FINISHED) > _FINISHED_LIMIT:
+        _FINISHED.popitem(last=False)
+    return images
 
 
 def shot_references(keys, first_seen, limit):
@@ -41,8 +64,13 @@ def generate_shot(controller, engine, prompt, sources, images, captured):
                                [images[index] for index in sources], captured)
 
 
-def illustrate_shots(controller, engine, shots, captured, use_references):
-    """Stream image progress and keep first appearances local to this export."""
+def illustrate_shots(controller, engine, shots, captured, use_references, finished=None):
+    """Stream image progress and keep first appearances local to this export.
+
+    ``finished`` holds images from an earlier attempt at the same export; existing files are
+    reused in order, and each new image is appended so a later retry can resume after it.
+    """
+    finished = [] if finished is None else finished
     captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False,
                     moss_image__layout="", flux3__layout="")
     ref_limit = reference_limit(engine, captured["qwen__turbo_variant"]) if use_references else 0
@@ -54,17 +82,23 @@ def illustrate_shots(controller, engine, shots, captured, use_references):
         label = f"Shot {index + 1} of {len(shots)}"
         if sources:
             label += " · Using reference shot(s) " + ", ".join(str(n + 1) for n in sources)
-        yield None, label
-        path = None
-        message = "No image returned."
-        for result, message in generate_shot(controller, engine, shot.prompt, sources, images, captured):
-            if message.startswith("Error:"):
+        if index < len(finished) and Path(finished[index]).is_file():
+            path = finished[index]
+            yield None, f"{label} · Reused from the interrupted export"
+        else:
+            del finished[index:]
+            yield None, label
+            path = None
+            message = "No image returned."
+            for result, message in generate_shot(controller, engine, shot.prompt, sources, images, captured):
+                if message.startswith("Error:"):
+                    raise H3Error(f"{label} failed. {message}")
+                yield gr.skip(), f"{label} · {message}"
+                if result:
+                    path = result[0] if isinstance(result, list) else result
+            if not path or not Path(path).is_file():
                 raise H3Error(f"{label} failed. {message}")
-            yield gr.skip(), f"{label} · {message}"
-            if result:
-                path = result[0] if isinstance(result, list) else result
-        if not path or not Path(path).is_file():
-            raise H3Error(f"{label} failed. {message}")
+            finished.append(path)
         images.append(path)
         for key in shot.references:
             first_seen.setdefault(key, index)
@@ -129,9 +163,12 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("Install FFmpeg to export an illustrated video.")
         shots = compile_plan(planned["plan"], settings["duration"], style, limit)
         captured = dict(zip(controller.fields, values, strict=True))
-        images, shot_records = yield from illustrate_shots(controller, engine, shots, captured, use_references)
+        key = export_key(result_name, planned["plan"], engine, use_references, captured)
+        images, shot_records = yield from illustrate_shots(controller, engine, shots, captured, use_references,
+                                                           finished_images(key))
         yield gr.skip(), "Rendering video with the finished mix…"
         video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
+        _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
         write_snapshot(video_path, {"family": "Sound Stage illustrated video", "settings": {
             "source": audio.name, "model": engine, "art_direction": style, "visual_plan": planned["plan"],
             "use_visual_references": use_references, "shots": shot_records,

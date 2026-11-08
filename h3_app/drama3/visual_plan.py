@@ -96,5 +96,8 @@ def plan_shots(settings, style, limit, model, temporary_api_key, backend, openai
         plan = json.loads(reply)
     except ValueError:
         plan = repair_json(reply)
+    if plan is None:
+        raise H3Error("The writer's shot plan was cut off or isn't valid JSON. "
+                      "Plan again, or lower Maximum shots for a long mix.")
     shots = compile_plan(plan, duration, style, limit)
     return plan, shots
