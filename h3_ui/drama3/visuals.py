@@ -116,7 +116,8 @@ def bind_visual_export(view, controller, deps):
                            placeholder="Describe the cast, setting and illustration style.")
         limit = gr.Slider(1, 64, value=16, step=1, label="Maximum shots")
         plan_button = gr.Button("Plan shots", size="sm")
-        gr.Markdown("Uses the Gemini or OpenAI-compatible writer selected on Script.")
+        gr.Markdown("Generate plans the shots from the finished mix if you haven't reviewed a plan. "
+                    "Uses the Gemini or OpenAI-compatible writer selected on Script.")
         preview = gr.Dataframe(headers=["Start (s)", "End (s)", "Transition", "Story beat", "Image prompt"],
                                interactive=False, wrap=True, label="Shot plan")
         planned = gr.State(None)
@@ -142,6 +143,10 @@ def bind_visual_export(view, controller, deps):
             raise gr.Error("The saved Sound Stage mix could not be found.")
         return audio, snapshot["settings"]
 
+    def is_current(planned, result_name, style, limit):
+        return bool(planned) and (planned["source"], planned["style"], planned["limit"]) == (result_name, style,
+                                                                                           limit)
+
     def prepare(result_name, style, limit, *writer):
         _, settings = load_mix(result_name)
         try:
@@ -155,10 +160,17 @@ def bind_visual_export(view, controller, deps):
     bind_prompt_action(plan_button.click, prepare, inputs=[source, style, limit, *writer_inputs(view.writer)],
                        outputs=[planned, preview], api_name=False, show_progress="minimal")
 
+    def plan_if_needed(result_name, style, limit, planned, *writer):
+        """Keep a reviewed plan for this mix; otherwise plan from the finished mix before the GPU job."""
+        if is_current(planned, result_name, style, limit):
+            return gr.skip(), gr.skip(), gr.update(interactive=True), "Using the reviewed shot plan…"
+        planned, rows = prepare(result_name, style, limit, *writer)
+        return planned, rows, gr.update(interactive=True), f"Planned {len(rows)} shots. Generating images…"
+
     def generate(result_name, engine, style, limit, planned, use_references, *values):
         audio, settings = load_mix(result_name)
-        if not planned or (planned["source"], planned["style"], planned["limit"]) != (result_name, style, limit):
-            raise gr.Error("Plan shots for the current mix and art direction before generating images.")
+        if not is_current(planned, result_name, style, limit):
+            raise gr.Error("The shot plan no longer matches the mix or art direction. Generate again.")
         if which("ffmpeg") is None:
             raise gr.Error("Install FFmpeg to export an illustrated video.")
         shots = compile_plan(planned["plan"], settings["duration"], style, limit)
@@ -175,10 +187,15 @@ def bind_visual_export(view, controller, deps):
         }})
         yield str(video_path), f"Exported {len(shots)} illustrated shots."
 
-    event = bind_gpu_action(run.click, owned_generation(generate, "drama3_visuals",
+    # The writer runs in the prompt queue, so its keys never enter the GPU job's saved snapshot.
+    planning = bind_prompt_action(run.click, plan_if_needed,
+                                  inputs=[source, style, limit, planned, *writer_inputs(view.writer)],
+                                  outputs=[planned, preview, stop, status], api_name=False,
+                                  show_progress="minimal")
+    event = bind_gpu_action(planning.success, owned_generation(generate, "drama3_visuals",
                             input_names=("result_name", "engine", "style", "max_shots", "visual_plan",
                                          "use_visual_references", *controller.fields)),
                             inputs=[source, engine, style, limit, planned, continuity, *controller.fields.values()],
                             outputs=[video, status], api_name=False, show_progress="minimal")
     stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
-        None, cancels=[event], **QUIET)
+        None, cancels=[planning, event], **QUIET)

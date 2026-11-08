@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import gradio as gr
 
+from h3_app.drama3.results import DRAMA3_FAMILY
+from h3_app.provenance import read_snapshot
 from h3_app.storyboard.service import file_digest
 from .controls import _slot_visibility, _sound_slot_visibility
 
@@ -81,20 +83,37 @@ def bind_projects(view, store, output_dir, load_trigger, *, gpu=True):
     picker_outputs = [controls.saved, controls.status]
     load_trigger(refresh, inputs=controls.active, outputs=picker_outputs, **quiet)
 
+    def shown_mix(output):
+        """The managed Sound Stage mix behind the Speak player, which may show Gradio's cached copy."""
+        if not output:
+            return None
+        output = Path(output)
+        for candidate in (output, Path(output_dir) / "drama3" / output.name):
+            if candidate.is_file() and (read_snapshot(candidate) or {}).get("family") == DRAMA3_FAMILY:
+                return candidate
+        return None
+
     def save(name, marker, *values):
         name = (name or "").strip()
         if not name:
             raise gr.Error("Enter a project name to save this draft.")
+        output = values[-1] if gpu else None
+        values = values[:-1] if gpu else values
         data = dict(zip(fields, values, strict=True))
         for key, value in data.items():
             if key.endswith("_audio") and value:
                 data[key] = _keep_clip(value, clips)
         data["prepared"] = marker == (data["text"], data["script_mode"])
         store.save_soundstage_project(name, data)
+        # Speech generated before the draft had a name is linked when it is saved.
+        mix = shown_mix(output)
+        if mix is not None:
+            store.mark_soundstage_generated(name, str(mix))
         picker, label = refresh(name)
         return name, name, {**picker, "value": name}, label
 
-    controls.save.click(save, [controls.name, view.prepared_script, *fields.values()],
+    controls.save.click(save, [controls.name, view.prepared_script, *fields.values(),
+                               *([view.output] if gpu else [])],
                         [controls.active, controls.name, controls.saved, controls.status], api_name=False)
 
     def load(name):

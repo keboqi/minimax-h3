@@ -395,6 +395,41 @@ class ModelManagerTests(unittest.TestCase):
         save.fn(*values)
         self.assertEqual(store.soundstage_projects(), [("Chapter one", True)])
 
+    def test_saving_after_generating_links_the_shown_mix(self):
+        import gradio as gr
+        from h3_app.drama3.results import DRAMA3_FAMILY
+        from h3_app.provenance import write_snapshot
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui.drama3.projects import bind_projects
+        from h3_ui.drama3.view import build_drama3_view
+
+        data = Path(self.temp.name)
+        store = WorkspaceStore(data / "workspace")
+        mix = data / "output" / "drama3" / f"Rain_20261108_{'a' * 32}.mp3"
+        mix.parent.mkdir(parents=True)
+        mix.write_bytes(b"mix")
+        write_snapshot(mix, {"family": DRAMA3_FAMILY, "settings": {}})
+        # The Speak player hands listeners Gradio's cached copy, without the snapshot.
+        cached = data / "gradio" / "cache" / mix.name
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b"mix")
+        with gr.Blocks() as studio:
+            view = build_drama3_view(gr.Column())
+            bind_projects(view, store, data / "output", studio.load)
+        save = next(fn for fn in studio.fns.values() if (view.project.save._id, "click") in fn.targets)
+        values = [component.value for component in save.inputs]
+        values[0] = "Rain"
+        values[save.inputs.index(view.output)] = str(cached)
+        save.fn(*values)
+        self.assertEqual(store.soundstage_projects(), [("Rain", True)])
+        load = next(fn for fn in studio.fns.values() if (view.project.load._id, "click") in fn.targets)
+        loaded = dict(zip(load.outputs, load.fn("Rain"), strict=True))
+        self.assertEqual(Path(loaded[view.output]), mix)
+        # A draft saved with nothing generated stays a draft.
+        values[0], values[save.inputs.index(view.output)] = "Draft", None
+        save.fn(*values)
+        self.assertIn(("Draft", False), store.soundstage_projects())
+
     def test_cpu_image_includes_hosted_writer_dependencies_and_guidelines(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))

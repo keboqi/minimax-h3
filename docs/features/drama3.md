@@ -9,8 +9,9 @@ After generating a mix, open **Speak → Illustrated video** to export a 720p MP
 Choose an Image-tab model and describe the cast, setting, or drawing style in **Art direction**.
 **Plan shots** sends the mix's timed dialogue, available word timings and sound cues to
 the Gemini or OpenAI-compatible writer selected on **Script**. It chooses visual beats,
-cuts and dissolves within your **Maximum shots** budget. Review the times and prompts
-before clicking **Generate illustrated video**. Every prompt carries the shared art
+cuts and dissolves within your **Maximum shots** budget. **Generate illustrated video**
+plans the shots itself when no plan matches the current mix, including a loaded or
+regenerated one. Click **Plan shots** first to review the times and prompts. Every prompt carries the shared art
 direction and the recurring character, setting and prop descriptions relevant to that shot.
 **Use earlier illustrations as visual references** is on by default. When a subject returns,
 Qwen, P-H3-Image, FLUX 3 and Fibo Dev can use its first illustrated appearance as an edit
