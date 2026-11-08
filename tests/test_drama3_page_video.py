@@ -1,6 +1,7 @@
-"""The Soundstage page's illustrated video: settings, planning, pasted plans, the video job and playing it.
+"""The Soundstage page's illustrated video: settings, planning, pasted plans, drawing, its stills and saving.
 
-The planner runs for real with its writer replaced; drawing is replaced by a fake export.
+The planner runs for real with its writer replaced; drawing is replaced by a fake that keeps two
+stills, and saving to Media renders with FFmpeg replaced.
 """
 
 import json
@@ -23,6 +24,8 @@ from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
 from h3_ui.drama3.bindings import Drama3Actions
 from h3_ui.drama3.handlers import Drama3Handlers, Drama3Services
 from h3_ui.drama3.page import install_soundstage_page
+from h3_app.drama3.visuals import Shot
+from h3_ui.drama3 import visuals
 from h3_ui.drama3.visuals import DEFAULT_STYLE, STYLE_PRESETS, VideoExport
 
 API = "/soundstage/api"
@@ -69,11 +72,19 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.store.mark_soundstage_generated("Night Market", str(self.mix))
 
     def fake_export(self, result_name, engine, style, limit, use_references, *values):
+        """Draw two images (the second dissolving in at 4 s) and keep them as the mix's stills."""
+        from PIL import Image
+
         self.renders.append((result_name, engine, style, limit, use_references, values))
         yield gr.skip(), "Shot 1 of 2"
-        video = self.mix.with_name(f"{self.mix.stem}_illustrated_{len(self.renders)}.mp4")
-        video.write_bytes(b"MP4")
-        yield str(video), "Exported 2 illustrated shots."
+        images = []
+        for index, color in enumerate(("red", "blue")):
+            image = self.root / f"drawn-{len(self.renders)}-{index}.png"
+            Image.new("RGB", (64, 36), color).save(image)
+            images.append(image)
+        shots = [Shot(0, 96, False, "Mia at her stall.", "The stall"), Shot(96, 96, True, "The radio.", "The radio")]
+        record = visuals.keep_stills(self.mix, self.runtime.output_dir, shots, images, {"model": engine})
+        yield str(record), "Drew 2 images."
 
     def ok(self, response):
         self.assertEqual(response.status_code, 200, response.text)
@@ -145,20 +156,73 @@ class Drama3PageVideoTests(unittest.TestCase):
         prompt = self.ok(self.client.post(f"{API}/project/video/prompt", params=NAME))["prompt"]
         self.assertIn("Plums!", prompt)
 
-    def test_generating_draws_the_plan_with_the_image_tabs_settings(self):
-        refused = self.client.post(f"{API}/project/video/render", params=NAME)
-        self.assertIn("no shot plan", refused.json()["error"])
+    def draw(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
-        self.ok(self.client.post(f"{API}/project/video/render", params=NAME))
-        run = self.wait()
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        return self.wait()
+
+    def test_drawing_keeps_stills_that_play_with_the_mix_and_renders_nothing(self):
+        refused = self.client.post(f"{API}/project/video/draw", params=NAME)
+        self.assertIn("no shot plan", refused.json()["error"])
+        run = self.draw()
         self.assertIsNone(run["error"])
-        self.assertEqual(run["status"], "Exported 2 illustrated shots.")
+        self.assertEqual(run["status"], "Drew 2 images.")
         name, engine, style, limit, continuity, values = self.renders[-1]
         self.assertEqual((name, engine, style, limit, continuity), (self.mix.name, "qwen", STYLE_PRESETS[DEFAULT_STYLE], 2, True))
         self.assertEqual(values, (8, -1))  # The Image tab's defaults until the studio hands its settings over.
+        video = self.project()["video"]
+        self.assertIsNone(video["latest"])  # Nothing is rendered until it is saved to Media.
+        self.assertEqual(list(self.mix.parent.glob("*.mp4")), [])
+        shots = video["stills"]["shots"]
+        self.assertEqual([(shot["start"], shot["end"], shot["fade"], shot["beat"]) for shot in shots],
+                         [(0.0, 4.0, 0.0, "The stall"), (4.0, 8.0, 0.5, "The radio")])
+        still = self.client.get(shots[1]["url"])
+        self.assertEqual((still.status_code, still.headers["content-type"]), (200, "image/jpeg"))
+        self.assertIn("immutable", still.headers["cache-control"])
+        self.assertEqual(self.client.get(f"{API}/video/still", params={**NAME, "file": "../secret.jpg"}).status_code, 404)
+
+    def test_drawing_again_replaces_the_stills(self):
+        first = self.draw() and self.project()["video"]["stills"]
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        self.wait()
+        second = self.project()["video"]["stills"]
+        self.assertNotEqual(first["revision"], second["revision"])
+        self.assertEqual(self.client.get(first["shots"][0]["url"]).status_code, 404)
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+        self.assertEqual(len(list(folder.glob("*.jpg"))), 2)
+
+    def test_saving_to_media_renders_the_stills_on_request(self):
+        refused = self.client.post(f"{API}/project/video/save", params=NAME)
+        self.assertIn("Draw the images first", refused.json()["error"])
+        self.draw()
+        rendered = []
+
+        def fake_render(audio, shots, images, output_dir):
+            rendered.append(([(shot.first, shot.frames, shot.dissolve) for shot in shots], images, output_dir))
+            video = Path(output_dir) / f"{Path(audio).stem}_illustrated_test.mp4"
+            video.write_bytes(b"MP4")
+            return video
+
+        with patch.object(visuals, "render_video", fake_render), patch.object(visuals, "which", lambda name: name):
+            self.ok(self.client.post(f"{API}/project/video/save", params=NAME))
+            run = self.wait()
+        self.assertIsNone(run["error"])
+        self.assertIn("to Media", run["status"])
+        shots, images, output_dir = rendered[0]
+        self.assertEqual(shots, [(0, 96, False), (96, 96, True)])
+        self.assertTrue(all(Path(image).suffix == ".jpg" and Path(image).is_file() for image in images))
+        self.assertEqual(Path(output_dir), self.mix.parent)
         latest = self.project()["video"]["latest"]
-        self.assertTrue(latest["file"].endswith("_illustrated_1.mp4"))
+        self.assertTrue(latest["current"])
         self.assertEqual(self.client.get(latest["url"]).content, b"MP4")
+        from h3_app.provenance import read_snapshot
+
+        snapshot = read_snapshot(self.mix.parent / latest["file"])
+        self.assertEqual((snapshot["settings"]["source"], snapshot["settings"]["model"]), (self.mix.name, "qwen"))
+        # New stills make the saved video an older one, to save again.
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        self.wait()
+        self.assertFalse(self.project()["video"]["latest"]["current"])
 
     def test_captured_image_settings_are_used_for_their_owner(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
@@ -167,7 +231,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
         self.export.settings[owner] = {"qwen__steps": 20, "qwen__seed": 7}
         self.export.settings["someone-else"] = {"qwen__steps": 99}
-        self.ok(self.client.post(f"{API}/project/video/render", params=NAME))
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
         self.wait()
         self.assertEqual(self.renders[-1][5], (20, 7))
 

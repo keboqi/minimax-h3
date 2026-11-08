@@ -120,17 +120,20 @@ The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Rem
 checks on the run, so it carries on if the page is closed. Playing, seeking and picking lines ask
 the server for nothing. The page reads each project's mix and only that mix's takes.
 
-**Illustrated video**, under the lines, exports a 720p MP4: pick an **Image model**, a **Style
+**Illustrated video**, under the lines, draws one image per shot and slides them along the mix on
+the page; a 720p MP4 is rendered only when you save it to Media. Pick an **Image model**, a **Style
 preset** (which fills **Art direction**; editing it makes the preset Custom) and **Minimum shots**,
 then **Plan shots**. The plan uses the writer service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
 then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
 like the planner's. The **Shot plan** lists each image's time (click it to jump there), cut or
-dissolve, story beat and prompt; it only lists the plan Generate would use, and says so when the
-saved plan was made for another Art direction or Minimum shots. **Generate illustrated video**
-draws that plan with the Image tab's settings for the model, which the studio hands to the page
-each time it opens or switches task, keeping characters consistent unless that is unticked; it runs
-on the usual job path and can be interrupted. When it finishes, the player switches to the video.
+dissolve, story beat and prompt; it only lists the plan drawing would use, and says so when the
+saved plan was made for another Art direction or Minimum shots. **Draw the images** draws that plan
+with the Image tab's settings for the model, which the studio hands to the page each time it opens
+or switches task, keeping characters consistent unless that is unticked; it runs on the usual job
+path and can be interrupted. It renders no video: it keeps a JPEG copy of each image (the *stills*)
+with its shot's time under `.soundstage/stills/` in the outputs, out of Media, replacing the mix's
+earlier stills. When it finishes, the player switches to Video.
 
 Every scene is drawn from its text first, with the character, prop and location descriptions
 written into the prompt, at a 16:9 size whatever the Image tab is set to. With **Keep characters
@@ -139,16 +142,22 @@ character, then repaint each finished scene's characters to match their portrait
 as the first input so its composition stays. Props and locations are never image inputs: an edit
 model handed a location or a multi-view sheet copies it instead of drawing a new scene. When a
 model has fewer input slots than a shot needs, the characters the planner mentions first win.
-MOSS-Image uses the text prompts throughout. The video uses the finished soundtrack and is saved
-to Media, where a selected mix with an illustrated video offers the same Audio/Video switch.
+MOSS-Image uses the text prompts throughout.
 
-Once the mix has a video, **Audio** and **Video** above the timeline switch the player, keeping the
-position. Video plays the newest video for the mix with the line being spoken over it, word by word
-when the mix has word timings. **Subtitles** shows or hides those lines (C does the same while
-the video plays), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width; both
-are saved with the project. The subtitles are drawn over the player only: **Download video** saves
-the video without them. The timeline and lines
-follow the video as they follow the audio.
+Once the mix has stills, **Audio** and **Video** above the timeline switch the player, keeping the
+position. Video shows the shot under the playhead over the mix's own audio, cutting or dissolving
+on the plan's frames as the rendered video would, and fetches the next images before they are due;
+nothing is encoded, so it starts at once and each image stays sharp. A mix drawn before stills
+existed plays its newest rendered video instead. The line being spoken shows over the picture,
+word by word when the mix has word timings. **Subtitles** shows or hides those lines (C does the
+same on Mix & review), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width;
+both are saved with the project. The timeline and lines follow Video as they follow Audio.
+
+**Save to Media** renders the stills with the finished soundtrack into a 720p MP4 beside the mix
+(it needs FFmpeg, not the GPU, so it works in the CPU Workshop too) and adds it to Media, where a
+selected mix with an illustrated video offers the same Audio/Video switch. Once saved, the button
+becomes **Download video** until the images are drawn again. The subtitles are drawn over the
+player only; the video is saved without them.
 
 ## Scripts, takes and timings
 

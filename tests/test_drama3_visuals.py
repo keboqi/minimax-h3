@@ -328,6 +328,42 @@ class IllustratedMixTests(unittest.TestCase):
                 compile_plan({"style": "ink", "continuity": {}, "shots": shots}, 10, "", 16)
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "requires FFmpeg")
+    def test_saved_video_is_rendered_from_the_kept_stills(self):
+        """Drawing keeps JPEG stills out of Media; saving renders them beside the mix and records the video."""
+        from h3_app.provenance import read_snapshot
+        from h3_ui.drama3 import visuals
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            mixes = folder / "h3" / "drama3"
+            mixes.mkdir(parents=True)
+            audio = mixes / "night.wav"
+            with wave.open(str(audio), "wb") as wav:
+                wav.setparams((1, 2, 16000, 0, "NONE", ""))
+                wav.writeframes(bytes(32000 * 2))
+            images = []
+            for color in ("red", "blue"):
+                image = folder / f"{color}.png"
+                Image.new("RGB", (64, 36), color).save(image)
+                images.append(image)
+            root = folder / "h3"
+            with self.assertRaisesRegex(H3Error, "Draw the images first"):
+                visuals.render_stills(audio, root)
+            shots = [Shot(0, FPS, False, "red"), Shot(FPS, FPS, True, "blue")]
+            visuals.keep_stills(audio, root, shots, images, {"model": "qwen"})
+            stills = visuals.stills_dir(audio, root)
+            self.assertIn(".soundstage", stills.parts)  # Media leaves .soundstage alone.
+            self.assertEqual(sorted(path.suffix for path in stills.iterdir()), [".jpg", ".jpg", ".json"])
+            video = visuals.render_stills(audio, root)
+            self.assertEqual(video.parent, mixes)
+            self.assertEqual(latest_export(audio), video)
+            settings = read_snapshot(video)["settings"]
+            self.assertEqual((settings["source"], settings["model"]), ("night.wav", "qwen"))
+            self.assertEqual(settings["stills"], visuals.read_stills(audio, root)["revision"])
+            info = subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)])
+            self.assertEqual(int(json.loads(info)["streams"][0]["nb_frames"]), 2 * FPS)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "requires FFmpeg")
     def test_render_preserves_timeline_and_soundtrack(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

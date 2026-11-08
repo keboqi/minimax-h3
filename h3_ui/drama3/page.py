@@ -207,7 +207,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         video_run = video_runs.latest(owner, name) if video_runs is not None else None
         return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
                 "cast_run": cast_run.public(None) if cast_run is not None else None,
-                "video": video_payload(name, data, result, video_export.engines) if video_export else None,
+                "video": video_payload(name, data, result, video_export) if video_export else None,
                 "video_run": video_run.public(None) if video_run is not None else None}
 
     def voice_settings(data: dict) -> list:

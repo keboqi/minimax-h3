@@ -1,4 +1,9 @@
-"""The illustrated video export from a Soundstage mix: plan shots, draw them, render the video."""
+"""The illustrated video from a Soundstage mix: plan shots, draw them, then play or render them.
+
+Drawing keeps a web copy of each image with its time on the mix (the *stills*), which the page
+slides along the mix as it plays. The video itself is rendered from those stills only when it is
+saved to Media, since encoding takes a while and the file is large to load.
+"""
 
 from dataclasses import dataclass, field
 import hashlib
@@ -11,6 +16,7 @@ from itertools import count
 from pathlib import Path
 from shutil import which
 from threading import Lock
+from uuid import uuid4
 
 import gradio as gr
 
@@ -18,7 +24,7 @@ from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.drama3.visual_plan import compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
-from h3_app.drama3.visuals import FPS, render_video
+from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
@@ -272,15 +278,87 @@ def load_mix(deps, result_name):
     return audio, snapshot["settings"]
 
 
-def export_video(controller, deps, result_name, engine, style, limit, use_references, *values):
-    """Draw a mix's saved shot plan and render the video; yields (video or skip, status)."""
+STILLS_RECORD = "stills.json"
+STILLS_QUALITY = 92  # JPEG quality of the web copies: close to the drawn image, a fraction of its size.
+
+
+def stills_dir(audio, root):
+    """Where a mix's stills are kept: under ``root``'s ``.soundstage`` folder, which Media leaves alone."""
+    return Path(root) / ".soundstage" / "stills" / Path(audio).stem
+
+
+def keep_stills(audio, root, shots, images, details):
+    """Keep a web copy of each drawn image with its shot's time on the mix; returns the stills record.
+
+    A new drawing replaces the mix's earlier stills. ``details`` is what a video rendered from
+    them records in its settings snapshot.
+    """
+    from PIL import Image
+
+    folder = stills_dir(audio, root)
+    folder.mkdir(parents=True, exist_ok=True)
+    revision = uuid4().hex[:12]
+    records = []
+    for index, (shot, image) in enumerate(zip(shots, images, strict=True)):
+        name = f"{revision}-{index + 1:03d}.jpg"
+        with Image.open(image) as picture:
+            picture.convert("RGB").save(folder / name, "JPEG", quality=STILLS_QUALITY, optimize=True)
+        records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
+                        "beat": shot.beat, "prompt": shot.prompt, "image": name})
+    record = folder / STILLS_RECORD
+    temporary = folder / f".{revision}.tmp"
+    temporary.write_text(json.dumps({"revision": revision, "source": Path(audio).name, "fps": FPS,
+                                     "shots": records, "details": details}, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(record)
+    for old in folder.glob("*.jpg"):
+        if not old.name.startswith(f"{revision}-"):
+            old.unlink(missing_ok=True)
+    return record
+
+
+def read_stills(audio, root):
+    """The mix's stills record, or None when it has none or an image is missing."""
+    folder = stills_dir(audio, root)
+    try:
+        record = json.loads((folder / STILLS_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    shots = record.get("shots") if isinstance(record, dict) else None
+    if (not shots or record.get("source") != Path(audio).name
+            or not all((folder / str(shot.get("image") or "")).is_file() for shot in shots)):
+        return None
+    return record
+
+
+def stills_shots(record):
+    """A stills record as the shots and image file names the renderer takes."""
+    return ([Shot(int(item["first_frame"]), int(item["frames"]), bool(item["dissolve"]), item.get("prompt") or "",
+                  item.get("beat") or "") for item in record["shots"]], [item["image"] for item in record["shots"]])
+
+
+def render_stills(audio, root):
+    """Render the video from the mix's stills, beside the mix, and record it so it shows in Media."""
+    audio = Path(audio)
+    record = read_stills(audio, root)
+    if record is None:
+        raise H3Error("Draw the images first: the video is rendered from them.")
+    if which("ffmpeg") is None:
+        raise H3Error("Install FFmpeg to render an illustrated video.")
+    shots, names = stills_shots(record)
+    folder = stills_dir(audio, root)
+    video = render_video(audio, shots, [folder / name for name in names], audio.parent)
+    write_snapshot(video, {"family": ILLUSTRATED_FAMILY, "settings": {
+        **(record.get("details") or {}), "source": audio.name, "stills": record["revision"]}})
+    return video
+
+
+def draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values):
+    """Draw a mix's saved shot plan and keep the images as its stills; yields (record or skip, status)."""
     audio, settings = load_mix(deps, result_name)
     saved = read_plan(audio, style, limit)
     if saved is None:
         raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
-                      "Click Plan shots, or paste a plan from another chat model, then generate.")
-    if which("ffmpeg") is None:
-        raise H3Error("Install FFmpeg to export an illustrated video.")
+                      "Click Plan shots, or paste a plan from another chat model, then draw.")
     duration = settings["duration"]
     shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
     captured = dict(zip(controller.fields, values, strict=True))
@@ -290,14 +368,12 @@ def export_video(controller, deps, result_name, engine, style, limit, use_refere
                  for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
     images, shot_records, portrait_records = yield from illustrate_shots(
         controller, engine, shots, captured, use_references, finished_images(key), portraits)
-    yield gr.skip(), "Rendering video with the finished mix…"
-    video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
-    _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
-    write_snapshot(video_path, {"family": ILLUSTRATED_FAMILY, "settings": {
-        "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
-        "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records,
-    }})
-    yield str(video_path), f"Exported {len(shots)} illustrated shots."
+    yield gr.skip(), "Keeping the images with the mix…"
+    record = keep_stills(audio, deps.runtime_config().output_dir, shots, images, {
+        "model": engine, "art_direction": style, "visual_plan": saved["plan"],
+        "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records})
+    _FINISHED.pop(key, None)  # A fresh drawing of the same settings draws new illustrations.
+    yield str(record), f"Drew {len(shots)} images. They play with the mix here; Save to Media renders the video."
 
 
 VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references")
@@ -305,7 +381,7 @@ VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_
 
 @dataclass
 class VideoExport:
-    """What the Soundstage page needs to export an illustrated video as the tab does.
+    """What the Soundstage page needs to draw an illustrated video's images.
 
     ``settings`` holds each owner's Image tab values, captured when the studio loads or switches
     task; an owner the studio hasn't shown yet gets the Image tab's defaults.
@@ -324,14 +400,14 @@ class VideoExport:
 
 
 def video_export(controller, deps, triggers=()):
-    """The illustrated video export the Soundstage page runs, drawing with the Image tab's settings.
+    """The drawing the Soundstage page runs for an illustrated video, with the Image tab's settings.
 
     ``triggers`` are the studio events (opening it, switching task) on which each owner's Image
     tab values are handed to the export, as Remake and Storyboard take the MiniMax H3 settings.
     """
     def generate(result_name, engine, style, limit, use_references, *values):
         try:
-            yield from export_video(controller, deps, result_name, engine, style, limit, use_references, *values)
+            yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 

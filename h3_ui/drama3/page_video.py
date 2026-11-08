@@ -1,8 +1,9 @@
-"""The Soundstage page's illustrated video: plan shots, check a pasted plan, draw and render, and play.
+"""The Soundstage page's illustrated video: plan shots, check a pasted plan, draw, play and save.
 
-It is the tab's own export (``visuals``): the plan is saved beside the mix, Generate draws the plan
-for the current Art direction and Minimum shots with the Image tab's model settings, and the video
-lands beside the mix, where the newest one for the mix is found again.
+The plan is saved beside the mix. Draw images draws the plan for the current Art direction and
+Minimum shots with the Image tab's model settings and keeps the images as the mix's stills, which
+the page slides along the mix. Save to Media renders the video from the stills, on request only,
+beside the mix, where the newest one for the mix is found again.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
 from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt, plan_shots
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_app.provenance import read_snapshot
 
 from ..job_admission import execute_accepted
 from ..job_bindings import owned_generation
@@ -37,7 +39,7 @@ VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "vi
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
-PLAN, RENDER = "plan", "render"
+PLAN, DRAW, SAVE = "plan", "draw", "save"
 
 
 @dataclass
@@ -59,11 +61,27 @@ def video_settings(data: dict, engines: list) -> dict:
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
-def video_payload(name: str, data: dict, result, engines: list) -> dict:
-    """The video settings, the shot plan Generate would use with them, and the newest video for the mix."""
-    settings = video_settings(data, engines)
+def stills_payload(name: str, record: dict | None) -> dict | None:
+    """The stills the page slides along the mix: each image's time and the seconds it dissolves in."""
+    if not record:
+        return None
+    fps = float(record.get("fps") or visuals.FPS)
+    shots = []
+    for item in record["shots"]:
+        first, frames = int(item["first_frame"]), int(item["frames"])
+        fade = min(12, frames - 1) / fps if item.get("dissolve") and frames > 1 else 0.0
+        shots.append({"start": round(first / fps, 3), "end": round((first + frames) / fps, 3),
+                      "fade": round(fade, 3), "beat": item.get("beat") or "",
+                      "url": f"/soundstage/api/video/still?name={quote(name)}&file={quote(item['image'])}"})
+    return {"revision": record["revision"], "shots": shots}
+
+
+def video_payload(name: str, data: dict, result, export) -> dict:
+    """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
+    settings = video_settings(data, export.engines)
     plan = {"rows": [], "stale": False, "saved": False}
     latest = None
+    stills = None
     if result:
         audio = Path(result)
         saved = visuals.read_plan(audio)
@@ -72,11 +90,16 @@ def video_payload(name: str, data: dict, result, engines: list) -> dict:
         plan = {"rows": [{"start": row[0], "end": row[1], "transition": row[2], "beat": row[3], "prompt": row[4]}
                          for row in (visuals.plan_rows(current, duration) if current and duration else [])],
                 "stale": saved is not None and current is None, "saved": saved is not None}
+        record = visuals.read_stills(audio, export.deps.runtime_config().output_dir)
+        stills = stills_payload(name, record)
         video = latest_export(audio)
         if video is not None:
+            made_from = ((read_snapshot(video) or {}).get("settings") or {}).get("stills")
             latest = {"url": f"/soundstage/api/video?name={quote(name)}&v={video.stat().st_mtime_ns}",
-                      "file": video.name}
-    return {**settings, "plan": plan, "latest": latest}
+                      "file": video.name,
+                      # Saved from the stills shown now, so saving again would make the same video.
+                      "current": bool(record) and made_from == record["revision"]}
+    return {**settings, "plan": plan, "stills": stills, "latest": latest}
 
 
 def boot_payload(engines: list) -> dict:
@@ -97,7 +120,7 @@ def _writer(body: dict) -> list[Any]:
 def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, session_of, payload,
                          project: Callable[[str], tuple[dict, str | None]], gpu: bool, interrupt) -> Runs:
     """The video routes; ``export`` is the tab's :class:`visuals.VideoExport`. Returns the video runs."""
-    runs = Runs(busy="This mix is already being planned or drawn.")
+    runs = Runs(busy="This mix is already being planned, drawn or saved.")
 
     def mix_of(name: str):
         data, result = project(name)
@@ -182,17 +205,17 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         visuals.save_plan(audio, settings["style"], settings["limit"], plan_data, visuals.claim_plan(audio))
         return {**payload(owner_of(request), name), "message": f"Applied the pasted {len(shots)}-shot plan."}
 
-    @app.post(f"{api}/project/video/render", include_in_schema=False)
+    @app.post(f"{api}/project/video/draw", include_in_schema=False)
     @guarded
-    def render(name: str, request: Request):
-        """Draw the plan for the current settings and render the video, on the usual job path."""
+    def draw(name: str, request: Request):
+        """Draw the plan for the current settings and keep the images as the mix's stills, on the usual job path."""
         if not gpu:
-            raise H3Error("Open Soundstage in Studio to draw the video on the GPU.")
+            raise H3Error("Open Soundstage in Studio to draw the images on the GPU.")
         owner = owner_of(request)
         _, audio, _mix_settings, settings = mix_of(name)
         if visuals.read_plan(audio, settings["style"], settings["limit"]) is None:
             raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
-                          "Plan shots, or paste a plan from another chat model, then generate.")
+                          "Plan shots, or paste a plan from another chat model, then draw.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
@@ -202,8 +225,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                                     input_names=(*visuals.VIDEO_INPUT_NAMES, *export.controller.fields))
 
         def work(run):
-            job = JOBS.accept(owner, "drama3_visuals", values, callback=callback, output_indices=(0,),
-                              key=uuid.uuid4().hex)
+            job = JOBS.accept(owner, "drama3_visuals", values, callback=callback, key=uuid.uuid4().hex)
             run.job_id, run.family = job.id, "drama3_visuals"
             for update in execute_accepted(job.id, session):
                 status = value(update[1]) if len(update) > 1 else None
@@ -212,10 +234,48 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                 if isinstance(value(update[0]), str):
                     run.revision += 1
 
-        run = VideoRun(owner, name, RENDER)
+        run = VideoRun(owner, name, DRAW)
         run.status = "Waiting for the GPU…"
         runs.start(run, work)
         return {"video_run": run.public(None)}
+
+    @app.post(f"{api}/project/video/save", include_in_schema=False)
+    @guarded
+    def save(name: str, request: Request):
+        """Render the video from the mix's stills and add it to Media; it needs FFmpeg, not the GPU."""
+        owner = owner_of(request)
+        _, result = project(name)
+        if not result:
+            raise H3Error("Speak the project first: the video is drawn from its mix.")
+        root = export.deps.runtime_config().output_dir
+        if visuals.read_stills(result, root) is None:
+            raise H3Error("Draw the images first: the video is rendered from them.")
+
+        def work(run):
+            video = visuals.render_stills(result, root)
+            run.status = f"Saved {video.name} to Media."
+            run.revision += 1
+
+        run = VideoRun(owner, name, SAVE)
+        run.status = "Rendering the video for Media…"
+        runs.start(run, work)
+        return {"video_run": run.public(None)}
+
+    @app.get(f"{api}/video/still", include_in_schema=False)
+    def still(name: str, file: str, request: Request):
+        """One of the mix's stills; only images its stills record names."""
+        try:
+            owner_of(request)
+            _, result = project(name)
+        except (H3Error, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="File not found") from exc
+        root = export.deps.runtime_config().output_dir
+        record = visuals.read_stills(result, root) if result else None
+        if record is None or file not in {item["image"] for item in record["shots"]}:
+            raise HTTPException(status_code=404, detail="File not found")
+        # Each drawing names its images afresh, so a still never changes under its name.
+        return FileResponse(visuals.stills_dir(result, root) / file, media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
     @app.post(f"{api}/project/video/interrupt", include_in_schema=False)
     @guarded
@@ -226,6 +286,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             return {"message": "Nothing is being planned or drawn."}
         if run.kind == PLAN:
             return {"message": "Planning can't be stopped; its reply is dropped if you plan again or paste a plan."}
+        if run.kind == SAVE:
+            return {"message": "Saving to Media can't be stopped; it finishes in a moment."}
         if interrupt is None or run.job_id is None:
             return {"message": "The run is still starting. Try again in a moment."}
         return {"message": interrupt(session_of(request), family=run.family, job_id=run.job_id)}

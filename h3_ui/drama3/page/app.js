@@ -234,20 +234,28 @@
         h("strong", {}, result.title || state.project.title || state.project.name),
         h("span", {class: "muted small num", id: "clock"}, `0:00 / ${clock(result.duration)}`)),
       h("span", {class: "spacer"}),
-      state.project.video?.latest ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
+      visualSource() ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
         ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),
                                                        onclick: () => setMediaMode(mode)}, mode === "audio" ? "Audio" : "Video"))) : null,
       state.mediaMode === "video" ? subtitleControls() : null,
       state.mediaMode === "video"
-        ? h("a", {class: "btn btn-small", href: state.project.video.latest.url, download: state.project.video.latest.file}, "Download video")
+        ? videoFileButton()
         : h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
     let stage = null;
     if (state.mediaMode === "video") {
-      mixVideo.hidden = false;
+      const playing = () => (mix.paused ? mix.play() : mix.pause());
+      const stills = visualSource() === "stills";
+      // The stills slide along the mix's audio; an older mix with only a rendered video plays that.
+      const picture = stills
+        ? h("div", {class: "stills", onclick: playing},
+            h("img", {class: "still", id: "still-back", alt: ""}), h("img", {class: "still", id: "still-front", alt: ""}))
+        : mixVideo;
+      mixVideo.hidden = stills;
+      if (stills) document.body.append(mixVideo);
+      else mixVideo.onclick = playing;
       stage = h("div", {class: "video-stage", id: "video-stage",
                         style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
-                mixVideo, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
-      mixVideo.onclick = () => (mixVideo.paused ? mixVideo.play() : mixVideo.pause());
+                picture, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
     } else {
       mixVideo.hidden = true;
       document.body.append(mixVideo);
@@ -426,18 +434,63 @@
     return Boolean(run?.active && (!kind || run.kind === kind));
   }
 
-  /** Audio or Video in the player: the video plays the same mix, with the lines over it. */
+  /** What Video shows: the drawn stills, an older mix's rendered video, or nothing yet. */
+  function visualSource() {
+    const video = state.project.video;
+    if (video?.stills?.shots?.length) return "stills";
+    return video?.latest ? "file" : null;
+  }
+
+  /** Audio or Video in the player. The stills slide along the mix's own audio; a rendered video carries it. */
   function setMediaMode(mode) {
-    const video = state.project.video?.latest;
-    mode = mode === "video" && video ? "video" : "audio";
-    if (mode === state.mediaMode) return;
+    const source = visualSource();
+    mode = mode === "video" && source ? "video" : "audio";
+    const player = mode === "video" && source === "file" ? mixVideo : mixAudio;
+    if (mode === state.mediaMode && player === mix) return;
     const time = mix.currentTime || 0;
-    mix.pause();
+    const wasPlaying = !mix.paused;
     state.mediaMode = mode;
-    mix = mode === "video" ? mixVideo : mixAudio;
-    try { mix.currentTime = time; } catch { /* Not loaded yet; it starts from the top. */ }
+    if (player !== mix) {
+      mix.pause();
+      mix = player;
+      try { mix.currentTime = time; } catch { /* Not loaded yet; it starts from the top. */ }
+      if (wasPlaying) mix.play().catch(() => {});
+    }
     renderPlayer();
     sync();
+  }
+
+  /** The header's video file: download the saved one, or render it from the stills for Media. */
+  function videoFileButton() {
+    const video = state.project.video;
+    const saving = videoRunning("save");
+    if (video.latest && (video.latest.current || !video.stills)) {
+      return h("a", {class: "btn btn-small", href: video.latest.url, download: video.latest.file,
+                     title: "This video is in Media too."}, "Download video");
+    }
+    return h("button", {type: "button", class: "btn btn-small", disabled: saving || videoRunning("draw"),
+                        title: "Render a 720p video with the mix from these images and add it to Media",
+                        onclick: saveVideoToMedia}, saving ? "Saving to Media…" : "Save to Media");
+  }
+
+  // The stills on the mix's clock: the shot under the playhead, dissolving in over the one before it.
+  const preloaded = new Set();
+  function paintStills(time) {
+    const back = $("still-back"), front = $("still-front");
+    const shots = state.project.video?.stills?.shots;
+    if (!back || !front || !shots?.length) return;
+    let index = 0;
+    while (index + 1 < shots.length && shots[index + 1].start <= time) index += 1;
+    const shot = shots[index];
+    const fading = index > 0 && shot.fade > 0 && time < shot.start + shot.fade;
+    const show = (image, url) => { if (image.dataset.src !== url) { image.src = url; image.dataset.src = url; } };
+    show(back, fading ? shots[index - 1].url : shot.url);
+    if (fading) show(front, shot.url);
+    front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
+    // Fetch the next images before they are due, so a cut never waits on the network.
+    for (const next of shots.slice(index + 1, index + 3)) {
+      if (!preloaded.has(next.url)) { preloaded.add(next.url); new Image().src = next.url; }
+    }
   }
 
   function videoField(label, input, hint) {
@@ -455,7 +508,8 @@
     if (box.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
     const result = state.project.result;
     const planning = videoRunning("plan");
-    const drawing = videoRunning("render");
+    const drawing = videoRunning("draw");
+    const shown = visualSource();
     const save = (body) => saveVideo(body);
     const presets = [...Object.keys(boot.styles), boot.custom_style];
     const rows = video.plan.rows;
@@ -466,10 +520,11 @@
     box.replaceChildren(
       h("div", {class: "card-head"},
         h("h2", {}, "Illustrated video"),
-        h("span", {class: "muted small"}, "A 720p video of the mix, drawn shot by shot with an Image model."),
+        h("span", {class: "muted small"}, "Images drawn shot by shot with an Image model slide along the mix here. "
+          + "Save to Media renders them as a 720p video."),
         h("span", {class: "spacer"}),
-        video.latest ? h("button", {type: "button", class: "btn btn-small", onclick: () => { setMediaMode("video"); window.scrollTo({top: 0, behavior: "smooth"}); }},
-          "Watch the latest video") : null),
+        shown ? h("button", {type: "button", class: "btn btn-small", onclick: () => { setMediaMode("video"); window.scrollTo({top: 0, behavior: "smooth"}); }},
+          shown === "stills" ? "Watch with the mix" : "Watch the latest video") : null),
       !result ? h("p", {class: "video-empty muted"}, "Speak the project first: the video is drawn from its mix.") : h("div", {class: "video-body"},
         h("div", {class: "video-settings"},
           videoField("Image model", h("select", {onchange: (event) => save({video_engine: event.target.value})},
@@ -494,7 +549,8 @@
             drawing
               ? h("button", {type: "button", class: "btn", onclick: interruptVideo}, "Interrupt")
               : h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: !rows.length || planning || !state.boot.gpu,
-                             title: rows.length ? "" : "Plan shots first", onclick: renderVideoJob}, "Generate illustrated video")),
+                             title: rows.length ? "" : "Plan shots first", onclick: drawImages},
+                  video.stills ? "Draw the images again" : "Draw the images")),
           note,
           h("details", {class: "more"},
             h("summary", {}, "Use another chat model"),
@@ -563,7 +619,12 @@
   }
 
   const planShots = () => videoCall("/project/video/plan", {writer: writerService()});
-  const renderVideoJob = () => videoCall("/project/video/render");
+  const drawImages = () => videoCall("/project/video/draw");
+  async function saveVideoToMedia() {
+    await videoCall("/project/video/save");
+    renderPlayer();
+    sync();  // A new player shows nothing until it is painted at the playhead.
+  }
   const interruptVideo = () => videoCall("/project/video/interrupt");
 
   async function copyPlannerPrompt() {
@@ -591,21 +652,22 @@
         const project = await api(`/project?name=${encodeURIComponent(name)}`);
         if (state.project.name !== name) return;
         const before = state.videoRun;
-        const hadVideo = state.project.video?.latest?.url;
+        const hadStills = state.project.video?.stills?.revision;
         state.videoRun = project.video_run;
         state.project.video = project.video;
         if (project.video_run?.active) { renderVideo(); pollVideo(); return; }
         if (before?.active) {
           if (project.video_run?.error) toast(`Stopped: ${project.video_run.error}`);
           else toast(project.video_run?.status || "Done.");
-          if (before.kind === "render" && !project.video_run?.error && project.video?.latest?.url !== hadVideo) {
-            loadVideoSource();
+          if (before.kind === "draw" && !project.video_run?.error && project.video?.stills?.revision !== hadStills) {
             setMediaMode("video");
             window.scrollTo({top: 0, behavior: "smooth"});
           }
         }
+        loadVideoSource();
         renderVideo();
         renderPlayer();
+        sync();
       } catch (error) {
         toast(error.message);
         pollVideo();
@@ -613,17 +675,29 @@
     }, POLL_MS);
   }
 
-  /** Point the video player at the mix's newest video, if it changed. */
+  /** Load the rendered video only for a mix that has no stills to slide; otherwise the page never fetches it. */
   function loadVideoSource() {
-    const latest = state.project.video?.latest;
-    if (!latest) {
+    const source = visualSource();
+    if (source === "file") {
+      const latest = state.project.video.latest;
+      if (mixVideo.dataset.url !== latest.url) {
+        mixVideo.src = latest.url;
+        mixVideo.dataset.url = latest.url;
+      }
+    } else if (mixVideo.dataset.url) {
+      mixVideo.pause();
       mixVideo.removeAttribute("src");
-      if (state.mediaMode === "video") { state.mediaMode = "audio"; mix = mixAudio; }
-      return;
+      delete mixVideo.dataset.url;
+      mixVideo.load();
     }
-    if (mixVideo.dataset.url !== latest.url) {
-      mixVideo.src = latest.url;
-      mixVideo.dataset.url = latest.url;
+    // Keep the player on what can show now: the stills play on the mix's audio.
+    if (state.mediaMode === "video" && !source) state.mediaMode = "audio";
+    const player = state.mediaMode === "video" && source === "file" ? mixVideo : mixAudio;
+    if (player !== mix) {
+      const time = mix.currentTime || 0;
+      mix.pause();
+      mix = player;
+      try { mix.currentTime = time; } catch { /* Not loaded yet. */ }
     }
   }
 
@@ -1005,6 +1079,7 @@
       if (row) list.scrollTo({top: row.offsetTop - list.offsetTop - (list.clientHeight - row.offsetHeight) / 2, behavior: "smooth"});
     }
     lastActive = active;
+    paintStills(time);
     const caption = $("video-caption");
     if (caption) {
       const line = active >= 0 ? result.lines[active] : null;
