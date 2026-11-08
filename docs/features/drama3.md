@@ -136,6 +136,23 @@ The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Rem
 checks on the run, so it carries on if the page is closed. Playing, seeking and picking lines ask
 the server for nothing. The page reads each project's mix and only that mix's takes.
 
+**Illustrated video**, under the lines, is the tab's export: pick an **Image model**, a **Style
+preset** (which fills **Art direction**; editing it makes the preset Custom) and **Minimum shots**,
+then **Plan shots**. The plan uses the writer service set on Script, shows its elapsed time and
+stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
+then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
+like the planner's. The **Shot plan** lists each image's time (click it to jump there), cut or
+dissolve, story beat and prompt; it only lists the plan Generate would use, and says so when the
+saved plan was made for another Art direction or Minimum shots. **Generate illustrated video**
+draws that plan with the Image tab's settings for the model, which the studio hands to the page
+each time it opens or switches task, keeping characters consistent unless that is unticked; it runs
+on the usual job path and can be interrupted. When it finishes, the player switches to the video.
+
+Once the mix has a video, **Audio** and **Video** above the timeline switch the player, keeping the
+position. Video plays the newest video for the mix with the line being spoken over it, word by word
+when the mix has word timings; **Subtitles on the video** turns that off. The timeline and lines
+follow the video as they follow the audio, and **Download video** saves it.
+
 ## Compose and generate
 
 Soundstage works in four steps, laid out like Dub & Translate: **Script**,

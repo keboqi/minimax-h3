@@ -8,12 +8,16 @@
   const FILTERS = [["all", "All"], ["new", "New"], ["reused", "Reused"], ["flagged", "Flagged"]];
   const STATUS_LABELS = {new: "New", reused: "Reused", flagged: "Flagged"};
   const $ = (id) => document.getElementById(id);
-  const mix = $("mix-audio");
+  const mixAudio = $("mix-audio");
+  const mixVideo = $("mix-video");
+  // The player plays the mix, or its illustrated video, which carries the same soundtrack.
+  let mix = mixAudio;
   const takeAudio = $("take-audio");
 
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, poll: null, busy: false,
                  screen: "script", saving: null, saveTimer: null, writing: false, writerResult: null,
-                 estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null};
+                 estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
+                 videoRun: null, mediaMode: "audio"};
   const SCREENS = ["script", "cast", "mix"];
   const shortMode = (mode) => (mode === state.boot.advanced ? "Advanced" : "Basic");
 
@@ -179,7 +183,24 @@
         h("strong", {}, result.title || state.project.title || state.project.name),
         h("span", {class: "muted small num", id: "clock"}, `0:00 / ${clock(result.duration)}`)),
       h("span", {class: "spacer"}),
-      h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
+      state.project.video?.latest ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
+        ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),
+                                                       onclick: () => setMediaMode(mode)}, mode === "audio" ? "Audio" : "Video"))) : null,
+      state.mediaMode === "video" ? h("label", {class: "check"}, h("input", {type: "checkbox", checked: state.project.video.subtitles,
+        onchange: (event) => { state.project.video.subtitles = event.target.checked; saveVideo({video_subtitles: event.target.checked}); sync(); }}),
+        "Subtitles on the video") : null,
+      state.mediaMode === "video"
+        ? h("a", {class: "btn btn-small", href: state.project.video.latest.url, download: state.project.video.latest.file}, "Download video")
+        : h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
+    let stage = null;
+    if (state.mediaMode === "video") {
+      mixVideo.hidden = false;
+      stage = h("div", {class: "video-stage"}, mixVideo, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
+      mixVideo.onclick = () => (mixVideo.paused ? mixVideo.play() : mixVideo.pause());
+    } else {
+      mixVideo.hidden = true;
+      document.body.append(mixVideo);
+    }
 
     const duration = result.duration || Math.max(0, ...result.lines.map((line) => line.end));
     const place = (start, end) => ({left: `${Math.min(start / duration, 1) * 100}%`,
@@ -226,7 +247,7 @@
                               h("span", {}, h("i", {style: {background: "var(--cue)"}}), "One-shot effect")] : null,
       h("span", {class: "spacer"}),
       h("span", {}, "Click a clip or a line to jump there"));
-    box.replaceChildren(head, timeline, legend);
+    box.replaceChildren(...[head, stage, timeline, legend].filter(Boolean));
   }
 
   function wordNodes(line) {
@@ -348,6 +369,209 @@
     }), h("p", {class: "muted small"}, "Drama 3 runs on SGLang-Omni (Linux, CUDA); the checkpoint downloads on first use."));
   }
 
+  // -- Illustrated video -----------------------------------------------------
+  function videoRunning(kind) {
+    const run = state.videoRun;
+    return Boolean(run?.active && (!kind || run.kind === kind));
+  }
+
+  /** Audio or Video in the player: the video plays the same mix, with the lines over it. */
+  function setMediaMode(mode) {
+    const video = state.project.video?.latest;
+    mode = mode === "video" && video ? "video" : "audio";
+    if (mode === state.mediaMode) return;
+    const time = mix.currentTime || 0;
+    mix.pause();
+    state.mediaMode = mode;
+    mix = mode === "video" ? mixVideo : mixAudio;
+    try { mix.currentTime = time; } catch { /* Not loaded yet; it starts from the top. */ }
+    renderPlayer();
+    sync();
+  }
+
+  function videoField(label, input, hint) {
+    return h("label", {class: "field"}, h("span", {class: "label"}, label), input,
+             hint ? h("span", {class: "muted small"}, hint) : null);
+  }
+
+  function renderVideo() {
+    const box = $("video-panel");
+    const boot = state.boot.video;
+    const video = state.project.video;
+    box.hidden = !boot || !video;
+    if (box.hidden) return;
+    // Leave the panel alone while one of its fields is being typed in.
+    if (box.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
+    const result = state.project.result;
+    const planning = videoRunning("plan");
+    const drawing = videoRunning("render");
+    const save = (body) => saveVideo(body);
+    const presets = [...Object.keys(boot.styles), boot.custom_style];
+    const rows = video.plan.rows;
+    const run = state.videoRun;
+    const note = run && (run.active || run.error || run.status)
+      ? h("p", {class: `slot-note${run.error ? " error" : ""}`}, run.error || run.status) : null;
+    const limitCount = h("span", {class: "num small"}, video.limit);
+    box.replaceChildren(
+      h("div", {class: "card-head"},
+        h("h2", {}, "Illustrated video"),
+        h("span", {class: "muted small"}, "A 720p video of the mix, drawn shot by shot with an Image model."),
+        h("span", {class: "spacer"}),
+        video.latest ? h("button", {type: "button", class: "btn btn-small", onclick: () => { setMediaMode("video"); window.scrollTo({top: 0, behavior: "smooth"}); }},
+          "Watch the latest video") : null),
+      !result ? h("p", {class: "video-empty muted"}, "Speak the project first: the video is drawn from its mix.") : h("div", {class: "video-body"},
+        h("div", {class: "video-settings"},
+          videoField("Image model", h("select", {onchange: (event) => save({video_engine: event.target.value})},
+            boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
+            "Draws with the Image tab's settings for that model."),
+          videoField("Style preset", h("select", {onchange: (event) => {
+            const style = boot.styles[event.target.value];
+            if (style) save({video_style: style});
+          }}, presets.map((name) => h("option", {selected: name === video.preset, disabled: name === boot.custom_style && video.preset !== name}, name)))),
+          videoField("Art direction", h("textarea", {rows: 3, value: video.style, oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
+            "Add the cast, setting or era. Editing it makes the preset Custom."),
+          videoField("Minimum shots", h("span", {class: "range-row"},
+            h("input", {type: "range", min: boot.limits[0], max: boot.limits[1], step: 1, value: video.limit,
+                        oninput: (event) => { limitCount.textContent = event.target.value; },
+                        onchange: (event) => save({video_limit: Number(event.target.value)})}), limitCount),
+            "A floor: the planner adds images wherever the story needs them, up to one per 2 seconds."),
+          h("label", {class: "check"}, h("input", {type: "checkbox", checked: video.continuity,
+            onchange: (event) => save({video_continuity: event.target.checked})}), "Keep characters consistent"),
+          h("div", {class: "row-buttons"},
+            h("button", {type: "button", class: "btn", disabled: planning || drawing, onclick: planShots},
+              planning ? "Planning…" : rows.length ? "Plan again" : "Plan shots"),
+            drawing
+              ? h("button", {type: "button", class: "btn", onclick: interruptVideo}, "Interrupt")
+              : h("button", {type: "button", class: "btn btn-primary", disabled: !rows.length || planning || !state.boot.gpu,
+                             title: rows.length ? "" : "Plan shots first", onclick: renderVideoJob}, "Generate illustrated video")),
+          note,
+          h("details", {class: "more"},
+            h("summary", {}, "Use another chat model"),
+            h("div", {class: "more-body"},
+              h("p", {class: "muted small"}, "Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked like the built-in planner's."),
+              h("button", {type: "button", class: "btn btn-small", onclick: copyPlannerPrompt}, "Copy full planner prompt"),
+              h("label", {class: "field"}, h("span", {class: "label"}, "Pasted planner reply"),
+                h("textarea", {rows: 4, id: "plan-reply", placeholder: '{"art_style": "...", "shots": [...]}'})),
+              h("button", {type: "button", class: "btn btn-small", onclick: applyPlannerReply}, "Apply pasted plan")))),
+        h("div", {class: "video-plan"},
+          h("span", {class: "label"}, rows.length ? `Shot plan · ${rows.length} shots` : "Shot plan"),
+          rows.length ? h("div", {class: "table-wrap plan-wrap"}, h("table", {class: "plan-table"},
+            h("thead", {}, h("tr", {}, ["Time", "", "Story beat", "Image prompt"].map((label) => h("th", {scope: "col"}, label)))),
+            h("tbody", {}, rows.map((row) => h("tr", {},
+              h("td", {class: "num"}, h("button", {type: "button", class: "link", onclick: () => seek(row.start, false)},
+                `${clock(row.start)}–${clock(row.end)}`)),
+              h("td", {}, h("span", {class: `kind ${row.transition === "Cut" ? "kind-shot" : "kind-loop"}`}, row.transition)),
+              h("td", {}, row.beat),
+              h("td", {class: "muted"}, row.prompt))))))
+            : h("p", {class: "muted small"}, video.plan.stale
+              ? "The saved plan was made for a different Art direction or Minimum shots. Plan again, or set them back."
+              : "Plan shots to see each image's time, story beat and prompt here before drawing."))));
+  }
+
+  // Video settings save on their own; the Art direction a moment after typing stops.
+  let videoTimer = null;
+  let videoEdits = {};
+  function saveVideo(body, {later = false} = {}) {
+    videoEdits = {...videoEdits, ...body};
+    clearTimeout(videoTimer);
+    videoTimer = setTimeout(flushVideo, later ? 700 : 0);
+  }
+
+  async function flushVideo() {
+    clearTimeout(videoTimer);
+    const body = videoEdits;
+    videoEdits = {};
+    if (!Object.keys(body).length) return;
+    try {
+      const project = await api(named("/project/video"), {method: "PATCH", body});
+      state.project.video = project.video;
+      renderVideo();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function videoCall(path, body) {
+    await flushVideo();
+    try {
+      const data = await api(named(path), {method: "POST", body: body ?? {}});
+      if (data.video_run) state.videoRun = data.video_run;
+      if (data.video) state.project.video = data.video;
+      if (data.message) toast(data.message);
+      renderVideo();
+      if (state.videoRun?.active) pollVideo();
+      return data;
+    } catch (error) {
+      toast(error.message);
+      return null;
+    }
+  }
+
+  const planShots = () => videoCall("/project/video/plan", {writer: writerService()});
+  const renderVideoJob = () => videoCall("/project/video/render");
+  const interruptVideo = () => videoCall("/project/video/interrupt");
+
+  async function copyPlannerPrompt() {
+    await flushVideo();
+    try {
+      const {prompt} = await api(named("/project/video/prompt"), {method: "POST"});
+      await navigator.clipboard.writeText(prompt);
+      toast("Planner prompt copied. Paste it into any chat model.");
+    } catch (error) {
+      toast(`Could not copy the prompt: ${error.message}`);
+    }
+  }
+
+  async function applyPlannerReply() {
+    const data = await videoCall("/project/video/reply", {reply: $("plan-reply")?.value || ""});
+    if (data && $("plan-reply")) $("plan-reply").value = "";
+  }
+
+  let videoPollTimer = null;
+  function pollVideo() {
+    clearTimeout(videoPollTimer);
+    videoPollTimer = setTimeout(async () => {
+      const name = state.project.name;
+      try {
+        const project = await api(`/project?name=${encodeURIComponent(name)}`);
+        if (state.project.name !== name) return;
+        const before = state.videoRun;
+        const hadVideo = state.project.video?.latest?.url;
+        state.videoRun = project.video_run;
+        state.project.video = project.video;
+        if (project.video_run?.active) { renderVideo(); pollVideo(); return; }
+        if (before?.active) {
+          if (project.video_run?.error) toast(`Stopped: ${project.video_run.error}`);
+          else toast(project.video_run?.status || "Done.");
+          if (before.kind === "render" && !project.video_run?.error && project.video?.latest?.url !== hadVideo) {
+            loadVideoSource();
+            setMediaMode("video");
+            window.scrollTo({top: 0, behavior: "smooth"});
+          }
+        }
+        renderVideo();
+        renderPlayer();
+      } catch (error) {
+        toast(error.message);
+        pollVideo();
+      }
+    }, POLL_MS);
+  }
+
+  /** Point the video player at the mix's newest video, if it changed. */
+  function loadVideoSource() {
+    const latest = state.project.video?.latest;
+    if (!latest) {
+      mixVideo.removeAttribute("src");
+      if (state.mediaMode === "video") { state.mediaMode = "audio"; mix = mixAudio; }
+      return;
+    }
+    if (mixVideo.dataset.url !== latest.url) {
+      mixVideo.src = latest.url;
+      mixVideo.dataset.url = latest.url;
+    }
+  }
+
   // -- Auto ------------------------------------------------------------------
   const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking"};
   function autoRunning() { return Boolean(state.run?.active && state.run.auto); }
@@ -456,6 +680,7 @@
     renderLines();
     renderInspector();
     renderSettings();
+    renderVideo();
     renderAuto();
     renderActions();
     sync();
@@ -540,6 +765,23 @@
       if (row) list.scrollTo({top: row.offsetTop - list.offsetTop - (list.clientHeight - row.offsetHeight) / 2, behavior: "smooth"});
     }
     lastActive = active;
+    const caption = $("video-caption");
+    if (caption) {
+      const line = active >= 0 ? result.lines[active] : null;
+      const show = state.project.video?.subtitles && line && line.end + 0.6 > time;
+      caption.hidden = !show;
+      if (show && caption.dataset.line !== String(active)) {
+        caption.dataset.line = String(active);
+        caption.replaceChildren(h("strong", {}, `${line.speaker}: `), ...wordNodes(line));
+      }
+      if (show) {
+        for (const word of caption.querySelectorAll(".word")) {
+          const start = Number(word.dataset.start), end = Number(word.dataset.end);
+          word.classList.toggle("spoken", start <= time);
+          word.classList.toggle("current", start <= time && time < end + 0.08);
+        }
+      }
+    }
     const progress = $("take-progress");
     if (progress) {
       const current = lineTakes(result)[state.picked];
@@ -561,14 +803,16 @@
     following = true;
     const frame = () => {
       sync();
-      following = !mix.paused || !takeAudio.paused;
+      following = !mixAudio.paused || !mixVideo.paused || !takeAudio.paused;
       if (following) requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
   }
-  for (const element of [mix, takeAudio]) {
+  const players = [mixAudio, mixVideo, takeAudio];
+  for (const element of players) {
+    // One thing plays at a time.
     element.addEventListener("play", () => {
-      (element === mix ? takeAudio : mix).pause();
+      for (const other of players) if (other !== element) other.pause();
       follow();
     });
     for (const event of ["pause", "seeked", "loadedmetadata", "ended"]) element.addEventListener(event, sync);
@@ -594,23 +838,28 @@
       if (!location.hash) state.screen = project.result ? "mix" : "script";
     }
     try { localStorage.setItem(LAST_PROJECT, name); } catch { /* Storage may be blocked. */ }
+    state.videoRun = project.video_run;
+    if (switched) { state.mediaMode = "audio"; mix = mixAudio; }
     if (changed) {
-      mix.pause();
+      mixAudio.pause();
+      mixVideo.pause();
       takeAudio.pause();
       takeAudio.removeAttribute("src");
       delete takeAudio.dataset.key;
       if (project.result) {
-        mix.src = `${API}/audio?name=${encodeURIComponent(name)}&v=${project.result.version}`;
+        mixAudio.src = `${API}/audio?name=${encodeURIComponent(name)}&v=${project.result.version}`;
       } else {
-        mix.removeAttribute("src");
+        mixAudio.removeAttribute("src");
       }
       lastActive = -1;
     }
     if (switched || !library) await loadLibrary(project.cast_settings.speaker_group);
+    loadVideoSource();
     renderAll();
     if (switched) queueEstimate(0);
     if (isRunning()) poll();
     if (castRunning()) pollCast();
+    if (videoRunning()) pollVideo();
   }
 
   function show(screen) {
@@ -618,7 +867,7 @@
     if (screen !== state.screen) window.scrollTo({top: 0});
     state.screen = screen;
     if (location.hash !== `#${screen}`) history.replaceState(null, "", `#${screen}`);
-    if (screen !== "mix") { mix.pause(); takeAudio.pause(); }
+    if (screen !== "mix") { mixAudio.pause(); mixVideo.pause(); takeAudio.pause(); }
     if (screen !== "cast") flushSlots();
     renderAll();
     if (screen === "script") queueEstimate(0);

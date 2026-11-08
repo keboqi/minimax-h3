@@ -30,6 +30,7 @@ from ..subtitle_words import word_pieces
 from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
 from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
+from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line, timeline_data
 
 STATIC = Path(__file__).with_name("page")
@@ -165,12 +166,12 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None) ->
 
 def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_dir: Callable[[], Path],
                             runtime_config: Callable[[], Any] | None = None, gpu: bool = True,
-                            interrupt=None) -> None:
+                            interrupt=None, video_export=None) -> None:
     """Serve the page at ``/soundstage/`` and its API under ``/soundstage/api``.
 
     ``actions`` holds Soundstage's speech actions; ``store`` keeps the saved projects and
     ``output_dir`` their clips, as the Soundstage tab saves them; ``takes_dir`` is where line
-    takes are kept.
+    takes are kept. ``video_export`` is the tab's illustrated video export; without it the page has none.
     """
     runs = Runs(busy="This project is already speaking.")
     clips = Path(output_dir) / "h3" / ".soundstage" / "clips"
@@ -199,14 +200,18 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def payload(owner, name):
         data, result = project(name)
         cast_run = cast_jobs.runs.latest(owner, name) if cast_jobs is not None else None
+        video_run = video_runs.latest(owner, name) if video_runs is not None else None
         return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
-                "cast_run": cast_run.public(None) if cast_run is not None else None}
+                "cast_run": cast_run.public(None) if cast_run is not None else None,
+                "video": video_payload(name, data, result, video_export.engines) if video_export else None,
+                "video_run": video_run.public(None) if video_run is not None else None}
 
     def auto_running(owner, name) -> str | None:
         run = runs.active(owner, name, RUN_KIND)
         return "Auto is running; it makes the voices and sounds itself." if getattr(run, "auto", False) else None
 
     cast_jobs = None
+    video_runs = None
 
     # The page --------------------------------------------------------------
     @app.get("/soundstage", include_in_schema=False)
@@ -231,6 +236,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
                 "ranges": {key: list(bounds) for key, bounds in SETTING_RANGES.items()},
+                "video": video_boot_payload(video_export.engines) if video_export else None,
                 **boot_payload(), **cast_boot_payload()}
 
     install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload,
@@ -238,6 +244,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=lambda value: _clip(clips, value),
                                     runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running)
+    if video_export is not None:
+        video_runs = install_video_routes(app, video_export, api=api, store=store, owner_of=owner_of,
+                                          session_of=session_of, payload=payload, project=project, gpu=gpu,
+                                          interrupt=interrupt)
 
     # Projects --------------------------------------------------------------
     @app.get(f"{api}/project", include_in_schema=False)

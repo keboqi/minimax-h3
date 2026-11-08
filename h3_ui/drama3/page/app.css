@@ -323,3 +323,25 @@ button.step:hover { background: var(--raised); }
 .slider-row input[type="range"] { width: 100%; accent-color: var(--accent); }
 .slider-row input[type="number"] { width: 64px; min-height: 32px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 13px; }
 .slider-row .hint { grid-column: 1 / 3; font-size: 12px; color: var(--muted); }
+
+/* Illustrated video: the panel under Mix & review, and the video in the player */
+.video-panel .card-head h2 { white-space: nowrap; }
+.video-body { display: flex; flex-wrap: wrap; gap: 20px; padding: 16px 18px 18px; align-items: flex-start; }
+.video-settings { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.video-plan { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.video-empty { padding: 18px; }
+.plan-wrap { max-height: 520px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 10px; }
+.plan-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; }
+.plan-table th { position: sticky; top: 0; padding: 8px 10px; background: var(--surface); text-align: left; font-size: 12px; font-weight: 650; color: var(--muted); }
+.plan-table td { padding: 8px 10px; border-top: 1px solid var(--line-soft); vertical-align: top; line-height: 1.45; }
+.plan-table td:first-child { white-space: nowrap; }
+button.link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
+.video-stage { position: relative; overflow: hidden; border-radius: 10px; background: #000; aspect-ratio: 16 / 9;
+  /* Short enough that the timeline stays in view beneath it. */
+  width: min(100%, calc(56vh * 16 / 9)); margin: 0 auto; }
+.video-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+.video-caption { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); max-width: 86%; margin: 0;
+  padding: 6px 14px; border-radius: 8px; background: rgba(0, 0, 0, .66); color: #fff; font-size: clamp(14px, 2.2vw, 22px);
+  line-height: 1.4; text-align: center; pointer-events: none; }
+.video-caption .word.spoken { color: #8ee6cf; }
+.video-caption .word.current { background: rgba(142, 230, 207, .25); border-radius: 3px; }

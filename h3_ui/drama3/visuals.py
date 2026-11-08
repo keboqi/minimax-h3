@@ -1,7 +1,10 @@
 """Optional illustrated video export from the Speak result."""
 
+from dataclasses import dataclass, field
 import hashlib
+import inspect
 import time
+from typing import Any, Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 import json
@@ -291,7 +294,69 @@ def plan_table(audio, style, limit):
     return gr.update(value=plan_rows(current, float(duration)), label=PLAN_LABEL)
 
 
-def bind_visual_export(view, controller, deps):
+def load_mix(deps, result_name):
+    """A Sound Stage mix by its file name, and its settings snapshot."""
+    if not result_name:
+        raise H3Error("Generate speech before exporting an illustrated video.")
+    audio = Path(deps.resolve_result(Path(result_name).name))
+    snapshot = read_snapshot(audio) or {}
+    if snapshot.get("family") != DRAMA3_FAMILY or not audio.is_file():
+        raise H3Error("The saved Sound Stage mix could not be found.")
+    return audio, snapshot["settings"]
+
+
+def export_video(controller, deps, result_name, engine, style, limit, use_references, *values):
+    """Draw a mix's saved shot plan and render the video; yields (video or skip, status)."""
+    audio, settings = load_mix(deps, result_name)
+    saved = read_plan(audio, style, limit)
+    if saved is None:
+        raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
+                      "Click Plan shots, or paste a plan from another chat model, then generate.")
+    if which("ffmpeg") is None:
+        raise H3Error("Install FFmpeg to export an illustrated video.")
+    duration = settings["duration"]
+    shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
+    captured = dict(zip(controller.fields, values, strict=True))
+    key = export_key(result_name, saved["plan"], engine, use_references, captured)
+    art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
+    portraits = {name: sheet_prompt(kind, name, anchor, art_style, saved["style"])
+                 for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
+    images, shot_records, portrait_records = yield from illustrate_shots(
+        controller, engine, shots, captured, use_references, finished_images(key), portraits)
+    yield gr.skip(), "Rendering video with the finished mix…"
+    video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
+    _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
+    write_snapshot(video_path, {"family": ILLUSTRATED_FAMILY, "settings": {
+        "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
+        "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records,
+    }})
+    yield str(video_path), f"Exported {len(shots)} illustrated shots."
+
+
+VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references")
+
+
+@dataclass
+class VideoExport:
+    """What the Soundstage page needs to export an illustrated video as the tab does.
+
+    ``settings`` holds each owner's Image tab values, captured when the studio loads or switches
+    task; an owner the studio hasn't shown yet gets the Image tab's defaults.
+    """
+
+    controller: Any
+    deps: Any
+    generate: Callable
+    engines: list
+    settings: dict = field(default_factory=dict)
+
+    def values(self, owner):
+        captured = self.settings.get(owner) or {}
+        return [captured.get(name, getattr(component, "value", None))
+                for name, component in self.controller.fields.items()]
+
+
+def bind_visual_export(view, controller, deps, triggers=()):
     with view.visual_root, gr.Accordion("Illustrated video", open=False):
         engine = gr.Dropdown([(item.label, item.id) for item in engines_for_task("Image")],
                              value="qwen", label="Image model", info="Uses this model’s settings from the Image tab.")
@@ -377,17 +442,14 @@ def bind_visual_export(view, controller, deps):
         **table)
     style.input(preset_for, inputs=style, outputs=preset, **QUIET)
 
-    def load_mix(result_name):
-        if not result_name:
-            raise gr.Error("Generate speech before exporting an illustrated video.")
-        audio = Path(deps.resolve_result(Path(result_name).name))
-        snapshot = read_snapshot(audio) or {}
-        if snapshot.get("family") != DRAMA3_FAMILY or not audio.is_file():
-            raise gr.Error("The saved Sound Stage mix could not be found.")
-        return audio, snapshot["settings"]
+    def load_mix_or_error(result_name):
+        try:
+            return load_mix(deps, result_name)
+        except H3Error as exc:
+            raise gr.Error(str(exc)) from exc
 
     def prepare(result_name, style, limit, run, *writer):
-        audio, settings = load_mix(result_name)
+        audio, settings = load_mix_or_error(result_name)
         try:
             plan, shots = plan_shots(settings, style, int(limit), *writer, runtime=deps.runtime_config())
         except H3Error as exc:
@@ -399,7 +461,7 @@ def bind_visual_export(view, controller, deps):
 
     def plan_live(result_name, style, limit, *writer):
         """Plan in the background, reporting elapsed time; the writer can take minutes on a long mix."""
-        audio, _ = load_mix(result_name)
+        audio, _ = load_mix_or_error(result_name)
         run = claim_plan(audio)
         model = writer[4] if len(writer) > 4 and writer[2] == "OpenAI-compatible" else writer[0]
         started = time.monotonic()
@@ -428,7 +490,7 @@ def bind_visual_export(view, controller, deps):
                        outputs=[preview, status], api_name=False, show_progress="minimal")
 
     def copy_plan_prompt(result_name, style, limit):
-        _, settings = load_mix(result_name)
+        _, settings = load_mix_or_error(result_name)
         try:
             return full_plan_prompt(settings, style, int(limit), runtime=deps.runtime_config())
         except H3Error as exc:
@@ -441,7 +503,7 @@ def bind_visual_export(view, controller, deps):
         """Check a plan from another chat model like the built-in planner's, then save it with the mix."""
         if not str(reply or "").strip():
             raise gr.Error("Paste the chat model's JSON reply first.")
-        audio, settings = load_mix(result_name)
+        audio, settings = load_mix_or_error(result_name)
         try:
             plan, shots = check_plan_reply(reply, settings, style, int(limit))
         except H3Error as exc:
@@ -454,39 +516,37 @@ def bind_visual_export(view, controller, deps):
                      **QUIET)
 
     def generate(result_name, engine, style, limit, use_references, *values):
-        audio, settings = load_mix(result_name)
-        saved = read_plan(audio, style, limit)
-        if saved is None:
-            raise gr.Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
-                           "Click Plan shots, or paste a plan from another chat model, then generate.")
-        if which("ffmpeg") is None:
-            raise gr.Error("Install FFmpeg to export an illustrated video.")
-        duration = settings["duration"]
-        shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
-        captured = dict(zip(controller.fields, values, strict=True))
-        key = export_key(result_name, saved["plan"], engine, use_references, captured)
-        art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
-        portraits = {name: sheet_prompt(kind, name, anchor, art_style, saved["style"])
-                     for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
-        images, shot_records, portrait_records = yield from illustrate_shots(
-            controller, engine, shots, captured, use_references, finished_images(key), portraits)
-        yield gr.skip(), "Rendering video with the finished mix…"
-        video_path = render_video(audio, shots, images, deps.runtime_config().output_dir / "drama3")
-        _FINISHED.pop(key, None)  # A fresh export of the same settings draws new illustrations.
-        write_snapshot(video_path, {"family": ILLUSTRATED_FAMILY, "settings": {
-            "source": audio.name, "model": engine, "art_direction": style, "visual_plan": saved["plan"],
-            "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records,
-        }})
-        yield str(video_path), f"Exported {len(shots)} illustrated shots."
+        try:
+            yield from export_video(controller, deps, result_name, engine, style, limit, use_references, *values)
+        except H3Error as exc:
+            raise gr.Error(str(exc)) from exc
 
     # Planning is its own step (Plan shots or a pasted plan), saved as a file beside the mix. Generate starts
     # the GPU job straight from its click: a planner chained into the GPU job could finish and then never
     # submit the job, leaving the page waiting with nothing to show.
     event = bind_gpu_action(run.click, owned_generation(generate, "drama3_visuals",
-                            input_names=("result_name", "engine", "style", "max_shots",
-                                         "use_visual_references", *controller.fields)),
+                            input_names=(*VIDEO_INPUT_NAMES, *controller.fields)),
                             inputs=[source, engine, style, limit, continuity, *controller.fields.values()],
                             outputs=[video, status], api_name=False, show_progress="minimal")
     event.success(lambda: "Video", outputs=result_mode, **QUIET)
     stop.click(owned_interrupt(deps.interrupt, "drama3_visuals"), outputs=status, **QUIET).then(
         None, cancels=[event], **QUIET)
+    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")])
+    if triggers:
+        # The page outside Gradio exports with the Image tab's settings; hand them over as the studio
+        # opens or switches task, as Remake and Storyboard take the MiniMax H3 settings.
+        names = list(controller.fields)
+
+        def capture(*args):
+            *values, request = args
+            from h3_ui.job_admission import require_owner
+
+            export.settings[require_owner(request)] = dict(zip(names, values, strict=True))
+
+        capture.__signature__ = inspect.Signature([
+            *(inspect.Parameter(f"value_{index}", inspect.Parameter.POSITIONAL_OR_KEYWORD) for index in range(len(names))),
+            inspect.Parameter("request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=gr.Request, default=None)])
+        capture.__annotations__ = {"request": gr.Request}
+        gr.on(triggers=list(triggers), fn=capture, inputs=list(controller.fields.values()), outputs=None,
+              queue=False, api_name=False, show_progress="hidden")
+    return export

@@ -192,7 +192,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         bind_drama3(drama3_components, engine_actions)
         from .drama3.visuals import bind_visual_export
-        bind_visual_export(drama3_components, image_controller, services.engine_deps)
+        # Captures the Image tab's settings as the studio opens or switches task, for the page's export.
+        video_export = bind_visual_export(drama3_components, image_controller, services.engine_deps,
+                                          triggers=(demo.load, app_views.task.change))
         if services.soundstage_workspace is not None:
             from h3_ui.drama3.projects import bind_projects
             bind_projects(drama3_components, *services.soundstage_workspace, demo.load)
@@ -203,7 +205,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             demo.h3_routes = (*demo.h3_routes, partial(
                 install_soundstage_page, actions=engine_actions, store=store, output_dir=output_dir,
                 takes_dir=lambda: takes_root(services.engine_deps.runtime_config()),
-                runtime_config=lambda: services.engine_deps.runtime_config(), interrupt=services.interrupt))
+                runtime_config=lambda: services.engine_deps.runtime_config(), interrupt=services.interrupt,
+                video_export=video_export))
         if app_views.storyboard is not None and services.storyboard_handlers is not None:
             from h3_ui.storyboard.tab import build_storyboard_tab
 
