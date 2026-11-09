@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, Request
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, OPENAI_PROMPT_MODELS
 from h3_app.drama3.guided.budget import AUTO as SMART_BUDGET_AUTO, BUDGET_PROFILES
-from h3_app.drama3.results import NARRATOR_NAMES
+from h3_app.drama3.results import NARRATOR_NAMES, result_settings
 from h3_app.errors import H3Error
 from h3_app.prompt_writers import drama3 as writer
 
@@ -170,6 +170,37 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     return before, status, False
 
 
+def spoken_payload(estimate: dict, settings: dict, script_mode: str) -> dict | None:
+    """The spoken mix's real timeline, numbered with the estimate's script lines, or None.
+
+    A mix belongs to the script when it was spoken in the same script mode and holds exactly the
+    estimate's lines (speaker and words, cues aside); otherwise the script has changed since and
+    only the estimate fits it. Lines are matched by speaker and words, not position, because voices
+    at the same time may be ordered differently. A sound takes the script line of the first unmatched
+    sound of its name, or None.
+    """
+    if not settings or (settings.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC) != script_mode:
+        return None
+    actual = timeline_payload(settings)
+    if not actual["lines"] or len(actual["lines"]) != len(estimate["lines"]):
+        return None
+    numbers: dict[tuple[str, str], list] = {}
+    for line in estimate["lines"]:
+        numbers.setdefault((line["speaker"], line["text"]), []).append(line.get("line"))
+    for line in actual["lines"]:
+        found = numbers.get((line["speaker"], line["text"]))
+        if not found:
+            return None
+        line["line"] = found.pop(0)
+    sound_lines: dict[str, list] = {}
+    for sound in estimate["sounds"]:
+        sound_lines.setdefault(sound["name"], []).append(sound.get("line"))
+    for sound in actual["sounds"]:
+        found = sound_lines.get(sound["name"])
+        sound["line"] = found.pop(0) if found else None
+    return {**actual, "actual": True}
+
+
 def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip) -> None:
     """The Script step's routes; ``payload`` answers with a project's page payload, ``clip`` finds a clip."""
 
@@ -292,7 +323,13 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
 
     @app.post(f"{api}/preview", include_in_schema=False)
     @guarded
-    def preview(request: Request, body: dict = Body(...)):
+    def preview(request: Request, body: dict = Body(...), name: str | None = None):
+        """The script's timeline: the project's spoken mix when it is of this script, else an estimate."""
         owner_of(request)
-        return preview_payload(str(body.get("text") or ""), str(body.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC))
+        text, script_mode = str(body.get("text") or ""), str(body.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC)
+        estimate = preview_payload(text, script_mode)
+        if not name:
+            return estimate
+        _, result = store.soundstage_project(name)
+        return spoken_payload(estimate, result_settings(result) if result else {}, script_mode) or estimate
 

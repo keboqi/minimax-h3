@@ -613,7 +613,8 @@ export function startWorkspace() {
     if (load !== projectLoad) return;
     loadVideoSource();
     renderAll();
-    if (switched) queueEstimate(0);
+    // A new mix replaces the estimate with its real timings, when it is of this script.
+    if (changed) queueEstimate(0);
     if (isRunning()) poll();
     if (castRunning()) pollCast();
     if (videoRunning()) pollVideo();
@@ -813,14 +814,14 @@ export function startWorkspace() {
     if (bar && "ResizeObserver" in window) new ResizeObserver(measure).observe(bar);
   }
 
-  // The estimated timeline follows the saved script.
+  // The script's timeline follows the saved script: the spoken mix's timings while they fit it, else an estimate.
   function queueEstimate(delay = 400) {
     clearTimeout(state.estimateTimer);
     state.estimateTimer = setTimeout(async () => {
       if (!state.project) return;
       const name = state.project.name;
       try {
-        const estimate = await api("/preview", {method: "POST", body: {text: $("script-text").value,
+        const estimate = await api(named("/preview", name), {method: "POST", body: {text: $("script-text").value,
                                                                          script_mode: state.project.script.script_mode}});
         if (state.project.name !== name) return;
         state.estimate = estimate;

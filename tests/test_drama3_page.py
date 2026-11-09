@@ -163,6 +163,23 @@ class Drama3PageTests(unittest.TestCase):
         self.assertIsNone(self.ok(self.client.get(f"{API}/project", params={"name": "Draft only"}))["result"])
         self.assertIn("error", self.client.get(f"{API}/project", params={"name": "Missing"}).json())
 
+    def test_the_script_timeline_uses_the_mixs_real_timings_while_the_script_matches(self):
+        data = self.save_project()
+        preview = self.ok(self.client.post(f"{API}/preview", params={"name": "Night Market"},
+                                           json={"text": data["text"], "script_mode": "Basic"}))
+        self.assertTrue(preview["actual"])
+        self.assertEqual(preview["duration"], 6.0)
+        self.assertEqual([(line["text"], line["line"], line["start"], line["end"]) for line in preview["lines"]],
+                         [("Leo! You kept the stall open?", 1, 0.0, 2.1), ("Someone has to.", 2, 2.5, 4.0)])
+        # Basic mode stages no sounds, so the mix's bed has no script line to point at.
+        self.assertEqual([(sound["name"], sound["line"]) for sound in preview["sounds"]], [("rain", None)])
+        # An edited line, a script mode the mix wasn't spoken in, or no project: back to the estimate.
+        for params, body in (({"name": "Night Market"}, {"text": data["text"] + "\nMia: One more.", "script_mode": "Basic"}),
+                             ({"name": "Night Market"}, {"text": data["text"], "script_mode": "Advanced"}),
+                             ({}, {"text": data["text"], "script_mode": "Basic"})):
+            preview = self.ok(self.client.post(f"{API}/preview", params=params, json=body))
+            self.assertNotIn("actual", preview)
+
     def test_only_the_projects_mix_and_its_own_takes_are_served(self):
         self.save_project()
         self.assertEqual(self.client.get(f"{API}/audio", params={"name": "Night Market"}).content, b"ID3")

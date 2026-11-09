@@ -613,13 +613,15 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       box.classList.toggle("open", timelineOpen);
       toggle.setAttribute("aria-expanded", String(timelineOpen));
       updateWindow();
-    }}, svg("m6 15 6-6 6 6", 14), "Estimated timeline");
+    }}, svg("m6 15 6-6 6 6", 14), estimate.actual ? "Spoken timeline" : "Estimated timeline");
+    const spoken = state.project?.result
+      ? "script changed since the last mix, so this is an estimate" : "no audio yet";
     box.replaceChildren(
       h("div", {class: "estimate-head"},
-        h("span", {}, toggle, ` · ${estimate.lines.length} lines, no audio yet`,
-          located ? " · click to find it in the script" : ""),
-        h("span", {class: "num"}, `≈ ${clock(duration)}`)),
-      bands, lanesBox);
+        h("span", {}, toggle, ` · ${estimate.lines.length} line${estimate.lines.length === 1 ? "" : "s"}, `
+          + (estimate.actual ? "as spoken in the last mix" : spoken), located ? " · click to find it in the script" : ""),
+        h("span", {class: "num"}, `${estimate.actual ? "" : "≈ "}${clock(duration)}`)),
+      bands || "", lanesBox);
     markTimeline();
     updateWindow();
     // Line and scene times come from the estimate, so the views and the outline redraw with it.
