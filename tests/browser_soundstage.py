@@ -67,8 +67,20 @@ def run():
             expect(page.locator("#visual-view .vbranch-note")).to_have_text("Starts 1 s into Leo's line")
             expect(page.locator("#visual-view .vbed")).to_contain_text("rain")
             door_row = page.locator("#visual-view .vrow", has=page.locator(".vcue", has_text="door"))
-            expect(door_row.locator(".vtext")).to_have_text("Come in.")
+            # Delivery cues show as chips beside the words, never as raw [brackets].
+            expect(door_row.locator(".vcue-inline")).to_have_text("warmly")
+            expect(door_row.locator(".vsaid")).to_contain_text("Come in.")
             expect(page.locator("#visual-view")).not_to_contain_text("[laughs]")
+            # The outline lists the opening line and the scene, and the layout toggles hide and show its column.
+            expect(page.locator("#outline-scenes .rail-scene")).to_have_count(2)
+            expect(page.locator("#speakers .rail-speaker")).to_have_count(2)
+            page.locator("#toggle-outline").click()
+            expect(page.locator("#outline-col")).to_be_hidden()
+            page.locator("#toggle-outline").click()
+            expect(page.locator("#outline-col")).to_be_visible()
+            page.locator("#writer-tab-paste").click()
+            expect(page.locator("#apply-reply")).to_be_visible()
+            page.locator("#writer-tab-built").click()
             page.locator("#visual-view .vline", has_text="Only me.").dblclick()
             expect(page.locator("#code-view")).to_be_visible()
             assert page.evaluate(caret) == 8

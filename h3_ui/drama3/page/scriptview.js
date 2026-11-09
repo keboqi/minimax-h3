@@ -8,7 +8,10 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   const PAUSE = /^<#\s*(-?\d+(?:\.\d+)?)\s*#>$/;
   const SPEAKER_TAG = /^<\|speaker:(\d+)\|>\s*/;
   const EDIT_ICON = "M4 20h4L19 9l-4-4L4 16v4z";
-  let flashTimer = 0, visualTimer = 0, frame = 0;
+  const TIMELINE_KEY = "h3-soundstage-timeline";
+  let flashTimer = 0, visualTimer = 0, outlineTimer = 0, frame = 0;
+  let timelineOpen = false;
+  try { timelineOpen = localStorage.getItem(TIMELINE_KEY) === "open"; } catch { /* Storage may be blocked. */ }
 
   try { state.scriptView = localStorage.getItem(VIEW_KEY) === "visual" ? "visual" : "code"; } catch { state.scriptView = "code"; }
   state.scriptLine = 1;
@@ -28,6 +31,25 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     return text.replace(SPEAKER_TAG, "").replace(NAME, "").replace(/<sound\b[^>]*>[\s\S]*?<\/sound\s*>/gi, "")
       .replace(/<[^>]*>/g, " ").replace(/\[[^\]]*\]/g, " ").replace(/\{[^{}]*\}/g, " ")
       .replace(/\s+/g, " ").replace(/\s+([,.!?;:…])/g, "$1").trim();
+  }
+
+  /** What a line says with its delivery cues kept apart, for the visual view's cue chips. */
+  function spokenParts(text) {
+    const kept = text.replace(SPEAKER_TAG, "").replace(NAME, "").replace(/<sound\b[^>]*>[\s\S]*?<\/sound\s*>/gi, "")
+      .replace(/<[^>]*>/g, " ").replace(/\{[^{}]*\}/g, " ");
+    const out = [];
+    const said = (piece) => {
+      const words = piece.replace(/\s+/g, " ").replace(/\s+([,.!?;:…])/g, "$1").trim();
+      if (words) out.push({text: words});
+    };
+    let cursor = 0;
+    for (const cue of kept.matchAll(/\[([^\]]*)\]/g)) {
+      said(kept.slice(cursor, cue.index));
+      if (cue[1].trim()) out.push({cue: cue[1].trim()});
+      cursor = cue.index + cue[0].length;
+    }
+    said(kept.slice(cursor));
+    return out;
   }
 
   function soundNode(n, raw, desc) {
@@ -80,7 +102,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
         if (tag) speaker = `Speaker ${Number(tag[1])}`;
         else if (named) speaker = named[2].trim();
         const said = plain(piece);
-        if (said) top.children.push({type: "line", n, speaker, text: said});
+        if (said) top.children.push({type: "line", n, speaker, text: said, parts: spokenParts(piece)});
       }
     });
     for (const group of stack.slice(1)) group.end = Math.max(group.end, last);
@@ -157,10 +179,14 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
 
   function lineRow(node, tones, {note = "", cues = []} = {}) {
     const tone = tones.get(node.speaker);
+    // Words with the delivery cues as chips between them, as the voice will read them.
+    const said = (node.parts || [{text: node.text}]).flatMap((part, index) => [
+      index ? " " : null, part.cue ? h("span", {class: "vcue-inline"}, part.cue) : part.text]);
     return h("div", {class: "vrow", "data-row": node.n},
       h("button", {type: "button", class: "vline", "data-line": node.n, title: `Line ${node.n} · double-click to edit it in code`},
-        node.speaker ? h("span", {class: "vspeaker", style: {color: tone ? toneColor(tone) : ""}}, node.speaker) : null,
-        h("span", {class: "vtext"}, note ? h("span", {class: "vnote"}, note) : null, node.text)),
+        h("span", {class: "vspeaker", style: {color: tone ? toneColor(tone) : ""}}, node.speaker || ""),
+        h("span", {class: "vtext"}, note ? h("span", {class: "vnote"}, note) : null, h("span", {class: "vsaid"}, said)),
+        h("span", {class: "vtime"}, timed().length ? clock(startOf(node.n)) : "")),
       h("button", {type: "button", class: "vedit", "data-line": node.n, "aria-label": `Edit line ${node.n} in code`,
                    title: "Edit in code"}, svg(EDIT_ICON, 15)),
       h("div", {class: "vcues"}, cues.map(cueChip)));
@@ -258,10 +284,6 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     if (basic && anySound) {
       out.push(h("p", {class: "visual-note small"}, "Basic mode speaks the lines only: these sounds and scenes are left out until you switch to Advanced."));
     }
-    if (anySound) {
-      out.push(h("div", {class: "visual-columns", "aria-hidden": "true"},
-        h("span", {}, "Dialogue"), h("span"), h("span", {}, "Sounds on the line"), h("span", {}, "Beds")));
-    }
     let sceneNumber = 0;
     parts.forEach((part, index) => {
       if (!part.scene) {
@@ -281,12 +303,15 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
           group.attrs.stage ? h("span", {class: "muted small"}, stageText(group.attrs.stage)) : null,
           h("span", {class: "spacer"}),
           range ? h("span", {class: "muted small num"}, range) : null),
+        // The scene's beds run under all of it, so they sit across its top.
+        sceneBeds.length ? h("div", {class: "vbeds"}, sceneBeds.map((bed) => h("button", {
+          type: "button", class: "vbed", "data-line": bed.n, title: `Line ${bed.n} · double-click to edit it in code`,
+          "aria-label": `Bed ${bed.name}, ${bed.meta}, line ${bed.n}${bed.desc ? `: ${bed.desc}` : ""}`,
+        }, h("span", {class: "vbed-head"}, svg("M2 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0", 13), h("strong", {}, bed.name),
+             bed.meta ? h("span", {class: "vbed-meta"}, bed.meta) : null),
+           bed.desc ? h("span", {class: "vbed-desc"}, bed.desc) : null))) : null,
         h("div", {class: "vscene-body"},
-          h("div", {class: "vscene-rows"}, renderNodes(group.children, tones, {inScene: true, note: ""})),
-          sceneBeds.length ? h("div", {class: "vbeds"}, sceneBeds.map((bed) => h("button", {
-            type: "button", class: "vbed", "data-line": bed.n, title: `${bed.desc}\nLine ${bed.n} · double-click to edit it in code`,
-            "aria-label": `Bed ${bed.name}, ${bed.meta}, line ${bed.n}`,
-          }, h("strong", {}, bed.name), h("span", {}, bed.meta)))) : null)));
+          h("div", {class: "vscene-rows"}, renderNodes(group.children, tones, {inScene: true, note: ""})))));
     });
     // Holding the old height while the content is swapped keeps the page from jumping.
     box.style.minHeight = `${box.offsetHeight}px`;
@@ -299,6 +324,54 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   function queueVisual() {
     clearTimeout(visualTimer);
     if (!$("visual-view").hidden) visualTimer = setTimeout(renderVisual, 150);
+    clearTimeout(outlineTimer);
+    outlineTimer = setTimeout(renderOutline, 150);
+  }
+
+  // -- Outline -----------------------------------------------------------------
+
+  /** The outline's Scenes list: each scene, and the loose lines around them, with where they start. */
+  function renderOutline() {
+    clearTimeout(outlineTimer);
+    const box = $("outline-scenes");
+    if (!box || !state.project) return;
+    const parts = sections(parse($("script-text").value));
+    if (!parts.length) {
+      box.replaceChildren(h("p", {class: "rail-empty"}, "Scenes appear as you write."));
+      return;
+    }
+    const scenes = parts.filter((part) => part.scene).length;
+    const span = (node) => [node.n, node.type === "group" ? node.end : node.n];
+    let sceneNumber = 0;
+    const items = parts.map((part, index) => {
+      const nodes = part.scene ? [part.node] : part.nodes;
+      const from = span(nodes[0])[0];
+      const to = Math.max(...nodes.map((node) => span(node)[1]));
+      let name;
+      if (part.scene) {
+        sceneNumber += 1;
+        name = `Scene ${sceneNumber}${part.node.attrs.room ? ` · ${humanize(part.node.attrs.room)}` : ""}`;
+      } else {
+        name = !scenes ? "Script" : index === 0 ? "Opening" : index === parts.length - 1 ? "Closing" : "Between scenes";
+      }
+      return {from, to, name};
+    });
+    box.replaceChildren(...items.map((item, index) => {
+      // A section owns the blank lines up to the next one, so the caret always lands in some section.
+      const until = index + 1 < items.length ? items[index + 1].from - 1 : Number.MAX_SAFE_INTEGER;
+      return h("button", {type: "button", class: "rail-scene", "data-from": item.from, "data-to": until,
+                          onclick: () => locate(item.from)},
+        h("span", {class: "rail-scene-top"}, h("strong", {}, item.name),
+          timed().length ? h("span", {}, clock(startOf(item.from))) : null),
+        h("small", {}, item.from === item.to ? `Line ${item.from}` : `Lines ${item.from}–${item.to}`));
+    }));
+    markOutline();
+  }
+
+  function markOutline() {
+    for (const item of $("outline-scenes").querySelectorAll(".rail-scene")) {
+      item.classList.toggle("active", state.scriptLine >= Number(item.dataset.from) && state.scriptLine <= Number(item.dataset.to));
+    }
   }
 
   function markPicked() {
@@ -335,10 +408,12 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     markTimeline();
   }
 
-  /** The part of the window the script can be seen in: above the sticky action bar. */
+  /** The part of the window the script can be seen in: under the script's sticky head, above the sticky action bar. */
   function viewport() {
     const bar = document.querySelector(".actionbar");
-    return {top: 0, bottom: bar ? bar.getBoundingClientRect().top : window.innerHeight};
+    const head = document.querySelector("#screen-script .script-head");
+    return {top: head ? Math.max(0, head.getBoundingClientRect().bottom) : 0,
+            bottom: bar ? bar.getBoundingClientRect().top : window.innerHeight};
   }
 
   /** Scroll the page so ``element`` sits in the middle of what can be seen. */
@@ -459,6 +534,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   }
 
   function markTimeline() {
+    markOutline();
     const lanes = $("estimate-lanes");
     if (!lanes) return;
     for (const clip of lanes.querySelectorAll(".clip[data-line]")) {
@@ -528,15 +604,26 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
         if (line) locate(line);
       });
     }
+    // Closed, the bar keeps one slim voice lane so it covers little of the script; open adds scenes and sounds.
+    box.classList.toggle("open", timelineOpen);
+    const toggle = h("button", {type: "button", class: "estimate-toggle", "aria-expanded": String(timelineOpen),
+                                title: "Show scenes and sounds on the timeline", onclick: () => {
+      timelineOpen = !timelineOpen;
+      try { localStorage.setItem(TIMELINE_KEY, timelineOpen ? "open" : "closed"); } catch { /* Storage may be blocked. */ }
+      box.classList.toggle("open", timelineOpen);
+      toggle.setAttribute("aria-expanded", String(timelineOpen));
+      updateWindow();
+    }}, svg("m6 15 6-6 6 6", 14), "Estimated timeline");
     box.replaceChildren(
       h("div", {class: "estimate-head"},
-        h("span", {}, h("strong", {}, "Estimated timeline"), ` · ${estimate.lines.length} lines, no audio yet`,
+        h("span", {}, toggle, ` · ${estimate.lines.length} lines, no audio yet`,
           located ? " · click to find it in the script" : ""),
         h("span", {class: "num"}, `≈ ${clock(duration)}`)),
       bands, lanesBox);
     markTimeline();
     updateWindow();
-    if (!$("visual-view").hidden) queueVisual();
+    // Line and scene times come from the estimate, so the views and the outline redraw with it.
+    queueVisual();
   }
 
   // -- Wiring ------------------------------------------------------------------

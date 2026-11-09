@@ -408,6 +408,7 @@ export function startWorkspace() {
     $("screen-script").hidden = state.screen !== "script";
     $("screen-mix").hidden = state.screen !== "mix";
     $("screen-cast").hidden = state.screen !== "cast";
+    $("layout").hidden = state.screen !== "script";
     renderHeader();
     renderSteps();
     renderScript();
@@ -767,6 +768,51 @@ export function startWorkspace() {
     }
   }
 
+  // The Script screen's frame: which side columns show, the writer's two tabs, and room for the action bar.
+  const LAYOUT_KEY = "h3-soundstage-layout";
+  function bindScriptLayout() {
+    let layout = {outline: true, writer: true};
+    try { layout = {...layout, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")}; } catch { /* Storage may be blocked. */ }
+    const apply = () => {
+      $("screen-script").classList.toggle("hide-outline", !layout.outline);
+      $("screen-script").classList.toggle("hide-writer", !layout.writer);
+      $("toggle-outline").setAttribute("aria-pressed", String(layout.outline));
+      $("toggle-writer").setAttribute("aria-pressed", String(layout.writer));
+    };
+    const toggle = (key) => () => {
+      layout = {...layout, [key]: !layout[key]};
+      try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* Storage may be blocked. */ }
+      apply();
+    };
+    $("toggle-outline").addEventListener("click", toggle("outline"));
+    $("toggle-writer").addEventListener("click", toggle("writer"));
+    apply();
+
+    const tabs = [$("writer-tab-built"), $("writer-tab-paste")];
+    const select = (tab, focus = false) => {
+      for (const each of tabs) {
+        const on = each === tab;
+        each.setAttribute("aria-selected", String(on));
+        each.tabIndex = on ? 0 : -1;
+        $(each.getAttribute("aria-controls")).hidden = !on;
+      }
+      if (focus) tab.focus();
+    };
+    for (const tab of tabs) {
+      tab.addEventListener("click", () => select(tab));
+      tab.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        select(tabs[(tabs.indexOf(tab) + 1) % tabs.length], true);
+      });
+    }
+
+    // The sticky side columns stop above the action bar, whatever its height.
+    const bar = document.querySelector(".actionbar");
+    const measure = () => document.documentElement.style.setProperty("--bar-h", `${bar.offsetHeight}px`);
+    if (bar && "ResizeObserver" in window) new ResizeObserver(measure).observe(bar);
+  }
+
   // The estimated timeline follows the saved script.
   function queueEstimate(delay = 400) {
     clearTimeout(state.estimateTimer);
@@ -1074,6 +1120,7 @@ export function startWorkspace() {
     $("title").addEventListener("input", (event) => saveScript({title: event.target.value}));
     $("strict").addEventListener("change", (event) => saveScript({strict_source: event.target.checked}, {now: true}));
     $("rewrite").addEventListener("click", rewrite);
+    bindScriptLayout();
     $("copy-prompt").addEventListener("click", copyPrompt);
     $("apply-reply").addEventListener("click", applyReply);
     document.addEventListener("click", (event) => {
@@ -1125,7 +1172,8 @@ export function startWorkspace() {
     undoWriter,
     loadExample,
     renderSaveState,
-    painted: () => scriptView.painted()
+    painted: () => scriptView.painted(),
+    showCast: () => show("cast")
   });
   const scriptView = createScriptView({state, $: (...args) => $(...args), h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows});
   const {renderEstimate} = scriptView;

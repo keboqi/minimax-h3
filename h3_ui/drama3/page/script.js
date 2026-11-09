@@ -1,5 +1,5 @@
 // Script view and local controls for Soundstage.
-export function createScript({state, $, h, toneColor, saveScript, writerService, storeWriterService, reviewWriterProposal, undoWriter, loadExample, renderSaveState, painted}) {
+export function createScript({state, $, h, toneColor, saveScript, writerService, storeWriterService, reviewWriterProposal, undoWriter, loadExample, renderSaveState, painted, showCast}) {
   const NAME = /^(\s*)([^\s:：<>[\]{}|][^:：<>[\]{}|\n]{0,39}?)(\s*[:：])/;
   // A sound tag is colored with its description: <sound name="rain">Steady rain</sound>.
   const TOKEN = /(<sound\b[^>]*>(?:[^<\n]*<\/sound>)?|<\/sound>)|(<\|[^|]*\|>|<[^>]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/g;
@@ -65,11 +65,19 @@ export function createScript({state, $, h, toneColor, saveScript, writerService,
     area.style.height = "auto";
     area.style.height = `${Math.max(360, area.scrollHeight)}px`;
     body.style.minHeight = "";
-    $("speakers").replaceChildren(...speakers.map((speaker) => h("span", {
-      class: `speaker-chip${speaker.known ? "" : " unknown"}`,
-      title: speaker.known ? `${speaker.count} line${speaker.count > 1 ? "s" : ""}` : "Not in the cast: this line can't be spoken",
-    }, h("i", {style: {background: toneColor(speaker.tone)}}), speaker.name,
-       h("span", {class: "count"}, speaker.known ? speaker.count : "not in cast"))));
+    // The outline's Speakers list, and a note for names the cast doesn't have.
+    const unknown = speakers.filter((speaker) => !speaker.known);
+    $("speakers").replaceChildren(
+      ...(speakers.length ? speakers.map((speaker) => h("div", {
+        class: `rail-speaker${speaker.known ? "" : " unknown"}`,
+        title: speaker.known ? `${speaker.count} line${speaker.count > 1 ? "s" : ""}` : "Not in the cast: this line can't be spoken",
+      }, h("i", {style: {background: toneColor(speaker.tone)}}), h("span", {class: "name"}, speaker.name),
+         h("span", {class: "count num"}, speaker.known ? speaker.count : "not in cast")))
+        : [h("p", {class: "rail-empty"}, "Speakers appear as you write.")]),
+      unknown.length ? h("div", {class: "rail-warning", role: "note"},
+        h("span", {}, `${unknown.map((speaker) => speaker.name).join(", ")} ${unknown.length > 1 ? "aren't" : "isn't"} in the cast, `
+          + `so ${unknown.length > 1 ? "their lines" : "that line"} can't be spoken.`),
+        h("button", {type: "button", class: "btn btn-small", onclick: showCast}, "Set up the cast")) : "");
     painted();
   }
 
