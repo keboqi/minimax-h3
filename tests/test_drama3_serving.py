@@ -620,6 +620,9 @@ class GenerateTests(unittest.TestCase):
         result = Path(updates[-1].output["value"])
         self.assertRegex(result.name, r"^第一卷_青春_少时_Chapter_1_\d{8}-\d{6}_[0-9a-f]{32}\.mp3$")
         self.assertEqual(snapshot.call_args.args[1]["settings"]["title"], "第一卷 青春/少时: Chapter 1")
+        from h3_app.drama3.results import script_fingerprint
+        self.assertEqual(snapshot.call_args.args[1]["settings"]["script_fingerprint"],
+                         script_fingerprint("<|speaker:0|> Hello there."))
         self.assertEqual(generate.title_stem(" <>? "), "Drama3_sglang")
 
     def test_sglang_route_sends_references_inline(self):

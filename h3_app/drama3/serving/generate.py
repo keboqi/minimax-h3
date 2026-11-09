@@ -20,7 +20,7 @@ import requests
 
 from h3_app import stable_audio
 from h3_app.drama3 import sounds as drama3_sounds
-from h3_app.drama3.results import CHARACTER_POSITIONS, DRAMA3_FAMILY, is_narrator
+from h3_app.drama3.results import CHARACTER_POSITIONS, DRAMA3_FAMILY, is_narrator, script_fingerprint
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
@@ -1013,6 +1013,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
+            "script_fingerprint": script_fingerprint(request.text),
             "sound_count": len(sound_nodes),
             "word_timing": word_timing,
             "chunks": [{"speaker": t.chunk.speaker, "name": t.chunk.speaker,

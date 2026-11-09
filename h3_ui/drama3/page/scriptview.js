@@ -641,6 +641,15 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     const area = $("script-text");
     for (const type of ["keyup", "click", "select", "focus"]) area.addEventListener(type, onCaret);
     area.addEventListener("input", onCaret);
+    // Wrapping changes when a column toggles or the window resizes. Observe width only:
+    // painting changes the height itself and must not trigger a resize loop.
+    let editorWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (!width || width === editorWidth) return;
+      editorWidth = width;
+      if (state.project && !$("code-view").hidden) paintEditor();
+    }).observe(area);
     // The script grows with its text and the page scrolls, so the In view window follows the page.
     window.addEventListener("scroll", updateWindow, {passive: true});
     window.addEventListener("resize", () => { placeBand(); updateWindow(); });

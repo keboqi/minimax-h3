@@ -84,7 +84,24 @@ def run():
             page.locator("#visual-view .vline", has_text="Only me.").dblclick()
             expect(page.locator("#code-view")).to_be_visible()
             assert page.evaluate(caret) == 8
+            # Rewrapping after columns appear or the window narrows must grow the editor.
+            original_script = page.locator("#script-text").input_value()
+            page.locator("#toggle-outline").click()
+            page.locator("#toggle-writer").click()
+            page.locator("#script-text").fill(("Mia: " + "Some longer dialogue. " * 12 + "\n") * 30)
+            fits = "() => { const a = document.getElementById('script-text'); return a.clientHeight >= a.scrollHeight; }"
+            page.wait_for_function(fits)
+            wide_height = page.locator("#script-text").evaluate("a => a.clientHeight")
+            page.locator("#toggle-outline").click()
+            page.locator("#toggle-writer").click()
+            page.wait_for_function(fits)
+            assert page.locator("#script-text").evaluate("a => a.clientHeight") > wide_height
+            page.set_viewport_size({"width": 800, "height": 1000})
+            page.wait_for_function(fits)
+            page.set_viewport_size({"width": 1440, "height": 1000})
+            page.locator("#script-text").fill(original_script)
             page.locator("#project").select_option("Night Market")
+            expect(page.locator("#script-text")).to_have_value("Mia: Plums!")
             page.locator("#script-text").fill("Mia: A newer line.")
             # Switching projects flushes even a still-debounced edit.
             page.locator("#project").select_option("Second")

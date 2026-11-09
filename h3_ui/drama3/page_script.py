@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, Request
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, OPENAI_PROMPT_MODELS
 from h3_app.drama3.guided.budget import AUTO as SMART_BUDGET_AUTO, BUDGET_PROFILES
-from h3_app.drama3.results import NARRATOR_NAMES, result_settings
+from h3_app.drama3.results import NARRATOR_NAMES, result_settings, script_fingerprint
 from h3_app.errors import H3Error
 from h3_app.prompt_writers import drama3 as writer
 
@@ -170,16 +170,18 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     return before, status, False
 
 
-def spoken_payload(estimate: dict, settings: dict, script_mode: str) -> dict | None:
+def spoken_payload(estimate: dict, settings: dict, script_mode: str, text: str) -> dict | None:
     """The spoken mix's real timeline, numbered with the estimate's script lines, or None.
 
-    A mix belongs to the script when it was spoken in the same script mode and holds exactly the
-    estimate's lines (speaker and words, cues aside); otherwise the script has changed since and
-    only the estimate fits it. Lines are matched by speaker and words, not position, because voices
+    A mix belongs to the script when its source fingerprint and script mode still match.
+    Older mixes without a fingerprint use the estimate, since their staging cannot be verified.
+    Lines are matched by speaker and words, not position, because voices
     at the same time may be ordered differently. A sound takes the script line of the first unmatched
     sound of its name, or None.
     """
     if not settings or (settings.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC) != script_mode:
+        return None
+    if settings.get("script_fingerprint") != script_fingerprint(text):
         return None
     actual = timeline_payload(settings)
     if not actual["lines"] or len(actual["lines"]) != len(estimate["lines"]):
@@ -331,5 +333,5 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not name:
             return estimate
         _, result = store.soundstage_project(name)
-        return spoken_payload(estimate, result_settings(result) if result else {}, script_mode) or estimate
+        return spoken_payload(estimate, result_settings(result) if result else {}, script_mode, text) or estimate
 

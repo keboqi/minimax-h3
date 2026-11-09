@@ -11,7 +11,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from h3_app.drama3.results import DRAMA3_FAMILY
+from h3_app.drama3.results import DRAMA3_FAMILY, script_fingerprint
 from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.provenance import write_snapshot
@@ -73,6 +73,7 @@ class Drama3PageTests(unittest.TestCase):
         path.write_bytes(b"ID3")
         write_snapshot(path, {"family": DRAMA3_FAMILY, "settings": {
             "title": "Night Market", "duration": 6.0, "word_timing": True,
+            "script_fingerprint": script_fingerprint("Mia: Leo! You kept the stall open?\nLeo: Someone has to."),
             "chunks": [
                 {"name": "Mia", "text": "Leo! [surprised] You kept the stall open?", "take": TAKE_MIA, "reused": True,
                  "ok": True, "warnings": [], "seconds": 2.1, "start": 0.0, "end": 2.1,
@@ -179,6 +180,27 @@ class Drama3PageTests(unittest.TestCase):
                              ({}, {"text": data["text"], "script_mode": "Basic"})):
             preview = self.ok(self.client.post(f"{API}/preview", params=params, json=body))
             self.assertNotIn("actual", preview)
+
+    def test_script_timeline_rejects_changed_staging_and_unverifiable_legacy_mixes(self):
+        from h3_ui.drama3.page_script import preview_payload, spoken_payload
+        from h3_ui.drama3.result_view import script_preview_settings
+
+        source = 'Mia: First.\n<#1#>\nLeo: Second.\n<sound name="bell" duration="2">Bell rings</sound>'
+        settings = {**script_preview_settings(source, "Advanced"), "script_mode": "Advanced",
+                    "script_fingerprint": script_fingerprint(source)}
+        self.assertTrue(spoken_payload(preview_payload(source, "Advanced"), settings, "Advanced", source)["actual"])
+        changes = [source.replace("<#1#>", "<#10#>"),
+                   source.replace("Mia: First.", "Leo: Second.").replace("Leo: Second.\n<sound", "Mia: First.\n<sound"),
+                   source.replace('duration="2"', 'duration="20"'),
+                   source.split('\n<sound')[0],
+                   source + '\n<sound name="door">A door opens</sound>',
+                   source.replace("Mia: First.", "Mia: [whispering] First."),
+                   source.replace("<#1#>\n", "<parallel>\n") + '\n</parallel>']
+        for changed in changes:
+            with self.subTest(script=changed):
+                self.assertIsNone(spoken_payload(preview_payload(changed, "Advanced"), settings, "Advanced", changed))
+        settings.pop("script_fingerprint")
+        self.assertIsNone(spoken_payload(preview_payload(source, "Advanced"), settings, "Advanced", source))
 
     def test_only_the_projects_mix_and_its_own_takes_are_served(self):
         self.save_project()
