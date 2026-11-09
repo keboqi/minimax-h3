@@ -1,4 +1,4 @@
-"""What Dub & Translate's custom panels show: pure functions from sessions and settings.
+"""What the Dubbing page shows: pure functions from sessions and settings.
 
 The line board, speaker cards and earlier sessions render in the browser from the
 values built here; every text in those values is HTML-escaped already. The step

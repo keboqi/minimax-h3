@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dubbing</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path><path d="M13 21l4-9 4 9M14.5 18h5"></path>
+      </svg>
+      <span>Dubbing</span>
+    </div>
+    <div class="project-picker">
+      <label for="project-list">Project</label>
+      <select id="project-list"></select>
+      <button type="button" class="btn btn-small" id="project-load">Load</button>
+    </div>
+    <span class="muted small" id="project-status" role="status">Unsaved draft</span>
+    <span class="spacer"></span>
+    <span class="mode" id="mode"></span>
+    <button type="button" class="btn btn-small" id="project-save-as">Save as…</button>
+    <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
+  </header>
+  <div class="banner" id="banner" hidden>
+    <strong>Workshop</strong>
+    <span>Analyze and translate here with Gemini or a pasted reply. Save the project and load it in Studio to
+      separate vocals (when not already cached), transcribe locally, preview voices, dub and align words.
+      Line edits save automatically.</span>
+  </div>
+  <nav class="steps" id="steps" aria-label="Steps"></nav>
+  <main id="screen" class="screen"></main>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="name-dialog">
+    <form method="dialog" class="dialog-form">
+      <h2>Save project as</h2>
+      <label class="field">Project name<input id="name-input" required maxlength="120"></label>
+      <div class="row-end">
+        <button type="button" class="btn" value="cancel" id="name-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -694,7 +694,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
             ["MiniMax H3", "Image workspace", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
-             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
+             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Remake", "Storyboard", "Soundstage", "Dubbing"],
         )
         task = next(
             c for c in self.config["components"]
@@ -702,7 +702,7 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [choice[0] for choice in task["props"]["choices"]],
-            ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dub & Translate"],
+            ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dubbing"],
         )
 
     def test_generated_media_outputs_are_display_only(self) -> None:

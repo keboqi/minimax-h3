@@ -18,7 +18,7 @@ sys.meta_path.insert(0, Blocked())
 from h3_app.dubbing import pipeline, projects, session, shares
 from h3_app.dubbing.gemini import transcribe_prompt
 from h3_app.drama3.serving.speech import run_blocking
-from h3_ui.dubbing import handlers, presenters, share, view, workshop
+from h3_ui.dubbing import handlers, page, presenters, share, tab, workshop
 line = {"start": 0.0, "end": 0.1, "speaker": "speaker1", "source": "Hi", "translation": "A long line to say", "dub": True}
 assert pipeline.long_lines([line]) == [0]
 assert pipeline.translation_issues([line]) == []

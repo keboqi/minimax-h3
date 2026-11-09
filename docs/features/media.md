@@ -27,7 +27,7 @@ that request and its available actions. **Save as project** keeps its prompt,
 settings and sources; saved requests open in **Projects**.
 Selecting a **Soundstage** result shows its generate-flow view again under the
 player: voices and sounds on a timeline, subtitles that follow playback and seek
-on click, and where each voice stands on the stage. A **Dub & Translate** result
+on click, and where each voice stands on the stage. A **Dubbing** result
 (its audio or video) opens in its own result player, with either voice, background
 music on or off and original or translated subtitles. Both are read from files kept
 beside the output on the volume (the settings snapshot, and the dub's

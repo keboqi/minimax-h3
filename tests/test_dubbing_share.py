@@ -155,10 +155,11 @@ class ShareTests(unittest.TestCase):
 
     def test_routes_are_installed_on_workshop_only(self):
         with gr.Blocks() as ui:
-            view = build_dubbing_workshop(gr.Tab("Dub"), ui, self.runtime)
-        self.assertTrue(view.share.visible)
+            build_dubbing_workshop(gr.Tab("Dubbing"), ui, self.runtime)
         app = FastAPI()
         for install in ui.h3_routes:
             install(app)
-        self.assertTrue(any(getattr(route, "path", "").startswith("/dub-share") for route in app.routes))
-        self.assertTrue(any((view.create_share._id, "click") in fn.targets for fn in ui.fns.values()))
+        paths = {getattr(route, "path", "") for route in app.routes}
+        self.assertTrue(any(path.startswith("/dub-share") for path in paths))
+        # The Workshop page makes and stops the links.
+        self.assertIn("/dubbing/api/share", paths)

@@ -13,6 +13,8 @@ from typing import Any, Iterable
 TABLE_HEADERS = ["#", "Start", "End", "Speaker", "Original", "Translation", "Dub"]
 TABLE_TYPES = ["number", "str", "str", "str", "str", "str", "bool"]
 DEFAULT_SPEAKER = "speaker1"
+# "Dub into" this to keep the spoken language and fix or rewrite lines instead of translating them.
+SAME_LANGUAGE = "Same as spoken"
 MIN_SEGMENT_SECONDS = 0.05
 
 

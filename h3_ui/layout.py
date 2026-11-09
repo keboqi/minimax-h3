@@ -67,10 +67,10 @@ FORMAT_LAYOUT_OUTPUTS = (
     ("audio_output", 9),
     ("resolution_info", 14),
 )
-# Dub & Translate has no H3 output; its task keeps the H3 settings on Video.
+# Dubbing has no H3 output; its task keeps the H3 settings on Video.
 FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "Remake": "Video", "Storyboard": "Video",
                    "TTS": "Audio", "Dub": "Video"}
-TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dub & Translate"}
+TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dubbing"}
 
 
 def create_app_views(*, summary_root=None, task_root=None) -> AppViews:
@@ -146,7 +146,7 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     storyboard = gr.Column(elem_classes=["h3-engine-view", "h3-storyboard-shell"])
                 with gr.Tab("Soundstage", id="drama3"):
                     drama3 = gr.Column(elem_classes=["h3-engine-view", "h3-soundstage-shell"])
-                with gr.Tab("Dub & Translate", id="dub"):
+                with gr.Tab("Dubbing", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])

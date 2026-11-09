@@ -1,4 +1,4 @@
-"""Dub & Translate's result player: the dub with original or translated subtitles, either voice, music on or off.
+"""Dubbing's result player: the dub with original or translated subtitles, either voice, music on or off.
 
 The voice track is the clock; the muted picture and the background music follow it,
 so switching the voice or the music never interrupts playback. Subtitles come from
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from html import escape
 import hashlib
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -115,7 +116,8 @@ const bind = (root) => {
         && time >= Math.max(Number(cue.dataset.end), Number(cue.dataset.shownEnd)));
     }
     const current = active.at(-1) || null;
-    if (current && current !== lit && !voice.paused) {
+    // The Dubbing page's Follow playback switch sets data-follow="off" to scroll the lines freely.
+    if (current && current !== lit && !voice.paused && root.dataset.follow !== "off") {
       // Measured against the list itself: offsetTop is relative to whichever ancestor is positioned.
       const offset = current.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
       list.scrollTo({ top: offset - (list.clientHeight - current.offsetHeight) / 2, behavior: "smooth" });
@@ -218,6 +220,12 @@ def file_url(path: Path) -> str:
     return "/gradio_api/file=" + quote(str(path).replace("\\", "/"), safe="/:=") + version
 
 
+def _speaker(speaker: str) -> str:
+    """``speaker2`` → ``Speaker 2``; a named speaker stays as named."""
+    found = re.fullmatch(r"speaker(\d+)", str(speaker or ""))
+    return f"Speaker {found.group(1)}" if found else str(speaker or "")
+
+
 def _language(name: str, fallback: str) -> str:
     return escape(name or fallback)
 
@@ -281,7 +289,7 @@ def player_html(player: Player, *, key: str, url=file_url, viewer: bool = False)
         f'<li data-start="{cue["start"]:.3f}" data-end="{cue["end"]:.3f}" '
         f'data-shown-start="{cue["shown_start"]:.3f}" data-shown-end="{cue["shown_end"]:.3f}">'
         f'<span class="h3-dub-cue-time">{format_time(cue["start"])[:-4]}</span>'
-        + (f'<span class="h3-dub-cue-speaker">{escape(cue["speaker"])}</span>' if speakers else "")
+        + (f'<span class="h3-dub-cue-speaker">{escape(_speaker(cue["speaker"]))}</span>' if speakers else "")
         + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">'
         f'{word_spans_html(cue["translation"], cue.get("translation_words"))}</span>'
         f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span>'

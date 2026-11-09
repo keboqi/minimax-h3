@@ -13,8 +13,6 @@ from h3_app.dubbing import pipeline, projects, session as sessions
 from h3_app.dubbing.results import Player, player_folder, save_player
 from h3_app.errors import H3Error
 from h3_ui.dubbing.handlers import DubbingHandlers, DubbingServices
-from h3_ui.dubbing.projects import bind_projects
-from h3_ui.dubbing.view import build_dubbing_view
 from h3_ui.dubbing.workshop import build_dubbing_workshop
 
 
@@ -69,37 +67,49 @@ class DubbingProjectTests(unittest.TestCase):
         self.assertEqual(replaced.segments, [])
 
     def test_workshop_and_studio_share_source_and_settings(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
+        from h3_ui.dubbing.page import install_dubbing_page
+
+        store = WorkspaceStore(self.root / "store")
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        JOBS.store = store
+
+        def client(routes):
+            app = FastAPI()
+            install_owner_cookie(app, store)
+            for install in routes:
+                install(app)
+            return TestClient(app)
+
         with gr.Blocks() as cpu:
-            view = build_dubbing_workshop(gr.Tab("Dub & Translate"), cpu, self.runtime)
-        gpu_controls = (view.run, view.preview, view.new_take, view.align_words)
-        self.assertTrue(view.analyze.visible and view.retranslate.visible and view.prepare_audio.visible)
-        self.assertEqual(view.pipeline.value, pipeline.PIPELINE_GEMINI)
-        self.assertEqual(view.translator.value, pipeline.TRANSLATOR_GEMINI)
-        self.assertIn(pipeline.PIPELINE_MANUAL, view.pipeline.html_template)
-        self.assertNotIn(pipeline.PIPELINE_LOCAL, view.pipeline.html_template)
-        self.assertTrue(all(not control.visible for control in gpu_controls))
+            build_dubbing_workshop(gr.Tab("Dubbing"), cpu, self.runtime)
+        workshop = client(cpu.h3_routes)
+        boot = workshop.get("/dubbing/api/boot").json()
+        self.assertFalse(boot["gpu"])
+        self.assertEqual([p["key"] for p in boot["pipelines"]], [pipeline.PIPELINE_GEMINI, pipeline.PIPELINE_MANUAL])
         self.assertFalse(any(fn.concurrency_id == "h3-gpu" for fn in cpu.fns.values()))
-        targets = {target[0] for fn in cpu.fns.values() for target in fn.targets}
-        self.assertTrue(all(control._id not in targets for control in gpu_controls))
-        save = next(fn for fn in cpu.fns.values() if (view.project.save._id, "click") in fn.targets)
-        values = [control.value for control in save.inputs]
-        for control, value in ((view.project.name, "Long interview"), (view.source, str(self.source)),
-                               (view.target_language, "French"), (view.notes, "Keep names"),
-                               (view.max_speed, 1.3), (view.timing, "Natural pace")):
-            values[save.inputs.index(control)] = value
-        save.fn(*values)
-        self.source.unlink()
-        with gr.Blocks() as studio:
-            restored = build_dubbing_view(gr.Column(), gemini_models=["model"], default_gemini_model="model")
-            bind_projects(restored, self.actions, studio.load)
-        load = next(fn for fn in studio.fns.values() if (restored.project.load._id, "click") in fn.targets)
-        loaded = dict(zip(load.outputs, load.fn("Long interview"), strict=True))
-        self.assertEqual(loaded[restored.target_language], "French")
-        self.assertEqual(loaded[restored.notes], "Keep names")
-        self.assertEqual(loaded[restored.max_speed], 1.3)
-        self.assertEqual(loaded[restored.timing], "Natural pace")
-        self.assertEqual(loaded[restored.api_key], "")
-        self.assertEqual(Path(loaded[restored.source]).read_bytes(), b"uploaded media")
+        uploaded = workshop.post("/dubbing/api/upload", files={"file": ("interview.wav", b"uploaded media")}).json()
+        settings = {"target_language": "French", "notes": "Keep names", "max_speed": 1.3, "timing": "Natural pace",
+                    "api_key": "never kept"}
+        saved = workshop.post("/dubbing/api/project/save", json={
+            "name": "Long interview", "source": uploaded["source"]["path"], "settings": settings}).json()
+        self.assertEqual(saved["projects"], ["Long interview"])
+        for path, body in (("/preview", {"session": saved["session"]["id"], "line": 0}),
+                           ("/dub", {"session": saved["session"]["id"]}), ("/align", {"session": saved["session"]["id"]})):
+            self.assertIn("Studio", workshop.post(f"/dubbing/api{path}", json=body).json()["error"], path)
+        studio_actions = DubbingHandlers(DubbingServices(lambda: self.runtime, None, lambda mode: []))
+        studio = client([lambda app: install_dubbing_page(app, studio_actions)])
+        loaded = studio.post("/dubbing/api/project/load", json={"name": "Long interview"}).json()
+        self.assertEqual(loaded["settings"]["target_language"], "French")
+        self.assertEqual(loaded["settings"]["notes"], "Keep names")
+        self.assertEqual(loaded["settings"]["max_speed"], 1.3)
+        self.assertEqual(loaded["settings"]["timing"], "Natural pace")
+        self.assertNotIn("api_key", loaded["settings"])
+        self.assertEqual(Path(loaded["session"]["source"]["path"]).read_bytes(), b"uploaded media")
 
     def test_workshop_rejects_model_execution(self):
         run = Mock()

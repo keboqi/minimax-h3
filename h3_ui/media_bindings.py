@@ -372,7 +372,7 @@ def bind_gallery_view(
     )
     synchronize(refreshed, refreshed=True)
     if view.downloads is not None and download_actions is not None:
-        from .dubbing.bindings import bind_media_downloads
+        from .dubbing.downloads import bind_media_downloads
 
         def show_download(event):
             # A finished download is a video: switch to Video and show it at the top of the page.

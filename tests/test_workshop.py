@@ -225,7 +225,7 @@ class ModelManagerTests(unittest.TestCase):
         # there shifts the tabs after it: Storyboard then showed over Sound Stage.
         tabs = next(block for block in blocks if isinstance(block, gr.Tabs))
         self.assertEqual([child.label for child in tabs.children],
-                         ["Models", "Media library", "Storyboard", "Remake", "Sound Stage", "Dub & Translate"])
+                         ["Models", "Media library", "Storyboard", "Remake", "Sound Stage", "Dubbing"])
         self.assertTrue(all(isinstance(child, gr.Tab) for child in tabs.children))
         enhance = [block for block in blocks if getattr(block, "label", None) == "Enhance selected media"]
         self.assertEqual([block.visible for block in enhance], [False])

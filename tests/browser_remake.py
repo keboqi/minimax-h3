@@ -67,7 +67,7 @@ def main(shots=None):
                 picker = page.locator(".h3-task-picker label")
                 expect(picker.first).to_be_visible(timeout=60000)
                 names = [text.strip() for text in picker.all_inner_texts()]
-                assert names == ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dub & Translate"], names
+                assert names == ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dubbing"], names
                 picker.filter(has_text="Remake").click()
                 # The tab is a page of its own, in a frame.
                 remake = page.frame_locator(".h3-remake-frame:visible")

@@ -4,7 +4,7 @@ Soundstage is Prism Studio's audio production workspace: write and direct
 scripts, cast voices, stage sound effects and music, review individual takes,
 and remix the result. Speech generation is powered by Fish Audio Drama 3.
 Open **Create → Soundstage** to begin. In the task bar it sits with the production
-workspaces (Remake, Storyboard, Soundstage, Dub & Translate), after the basic Video, Image and
+workspaces (Remake, Storyboard, Soundstage, Dubbing), after the basic Video, Image and
 Song tasks.
 
 ## The Soundstage page

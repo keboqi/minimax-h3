@@ -222,18 +222,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             downloads=True,
         )
         if app_views.dubbing is not None:
-            from .dubbing.bindings import bind_dubbing
-            from .dubbing.view import build_dubbing_view
+            # Dubbing is its own page; the tab shows it and keeps the API endpoints.
+            from .dubbing.page import install_dubbing_page
+            from .dubbing.tab import build_dubbing_tab
 
-            dubbing_components = build_dubbing_view(
-                app_views.dubbing,
-                gemini_models=catalog.GEMINI_PROMPT_MODELS,
-                default_gemini_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-            )
-            bind_dubbing(dubbing_components, task=app_views.task, create_tab=app_views.create_tab,
-                         interrupt=services.interrupt, actions=services.dubbing_actions)
-            from .dubbing.projects import bind_projects as bind_dubbing_projects
-            bind_dubbing_projects(dubbing_components, services.dubbing_actions, demo.load)
+            build_dubbing_tab(app_views.dubbing, services.dubbing_actions)
+            demo.h3_routes = (*getattr(demo, "h3_routes", ()), partial(
+                install_dubbing_page, handlers=services.dubbing_actions, interrupt=services.interrupt))
         with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools

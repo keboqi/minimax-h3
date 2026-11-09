@@ -58,7 +58,7 @@ ENGINES += (
     EngineCapability("drama3", "Soundstage (Drama 3)", ("TTS",),
                      "Audio production with scripts, cast voices, sound effects, music, takes and mixing. "
                      "Speech powered by Fish Audio Drama 3."),
-    EngineCapability("dub", "Dub & Translate", ("Dub",),
+    EngineCapability("dub", "Dubbing", ("Dub",),
                      "Translate a video's speech and dub it with each speaker's cloned voice: transcribe, "
                      "review every line, then dub with Drama 3."),
 )

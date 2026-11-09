@@ -85,7 +85,7 @@ def build_download_controls() -> SimpleNamespace:
 
     with gr.Group(visible=False, elem_classes=["h3-gallery-card", "h3-gallery-panel"]) as panel:
         gr.Markdown("### Download from a URL\nPaste a video page link (YouTube, Bilibili, X and most video "
-                    "sites). The video joins the library, ready for **Dub & Translate**.",
+                    "sites). The video joins the library, ready for **Dubbing**.",
                     elem_classes=["h3-gallery-section-title"])
         with gr.Row(equal_height=True):
             url = gr.Textbox(label="Video URL", placeholder="https://…", scale=4)

@@ -1,15 +1,17 @@
-"""CPU-only project preparation, line editing and result review."""
+"""Dubbing in the CPU Workshop: the page in a frame, for preparing projects without a GPU.
+
+Projects and sessions live in the shared workspace, so a project analyzed with Gemini and edited here
+opens in Studio, which voices it. Workshop also serves the dubs' share links.
+"""
 from functools import partial
 
 import gradio as gr
 
-from h3_app.catalog import GEMINI_PROMPT_MODELS, DEFAULT_GEMINI_PROMPT_MODEL
 from h3_ui.media_console import media_controller
-from .bindings import bind_dubbing
 from .handlers import DubbingHandlers, DubbingServices
-from .projects import bind_projects
+from .page import install_dubbing_page
 from .share import install_share_routes
-from .view import build_dubbing_view
+from .tab import build_dubbing_tab
 
 
 def build_dubbing_workshop(tab, ui, runtime):
@@ -17,9 +19,7 @@ def build_dubbing_workshop(tab, ui, runtime):
     actions = DubbingHandlers(DubbingServices(lambda: runtime, None, controller.list_media_paths, gpu=False))
     with tab, gr.Column(elem_classes=["h3-workspace"]) as root:
         pass
-    view = build_dubbing_view(root, gemini_models=GEMINI_PROMPT_MODELS,
-                              default_gemini_model=DEFAULT_GEMINI_PROMPT_MODEL, gpu=False)
-    bind_dubbing(view, create_tab=tab, actions=actions, gpu=False)
-    bind_projects(view, actions, ui.load)
-    ui.h3_routes = (*getattr(ui, "h3_routes", ()), partial(install_share_routes, runtime=runtime))
-    return view
+    build_dubbing_tab(root, actions, gpu=False)
+    ui.h3_routes = (*getattr(ui, "h3_routes", ()), partial(install_share_routes, runtime=runtime),
+                    partial(install_dubbing_page, handlers=actions, gpu=False))
+    return actions

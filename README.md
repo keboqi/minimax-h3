@@ -16,7 +16,7 @@ Modal launches use the same UI.
 
 One top bar holds the navigation, so the centre of the window stays for the
 work: the Create tasks, in two groups (Video, Image and Song; then Remake, Storyboard, Soundstage and
-Dub & Translate), then
+Dubbing), then
 Media, Jobs, System and API & workflows, with backend and job status
 at the right. Picking a task opens it from any tab; its engine choice sits at
 the top of Create. On narrow windows the bar stacks into scrolling rows.
@@ -33,7 +33,7 @@ Mobile section links jump to compose, generate, preview, and settings.
 Create supports H3,
 LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2,
 [Soundstage](docs/features/drama3.md), the audio production workspace powered by Drama 3, and
-[Dub & Translate](docs/features/dubbing.md), which transcribes, translates and re-voices a video
+[Dubbing](docs/features/dubbing.md), which transcribes, translates (or keeps the language and fixes or rewrites lines) and re-voices a video
 with each speaker's cloned voice, with every line editable before dubbing. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison, synchronized video playback, and downloads from video URLs.
@@ -129,7 +129,7 @@ backends; GPU inference and deployment are validated separately.
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
 - Soundstage for script writing and direction, voice casting, sound effects,
   music, reusable takes, and mixing
-- Dub & Translate: local (OmniVAD + Qwen3-ASR + ForcedAligner + Hy-MT) or Gemini
+- Dubbing: local (OmniVAD + Qwen3-ASR + ForcedAligner + Hy-MT) or Gemini
   transcription and translation, vocal separation, a line editor, and Drama 3
   voice-cloned dubbing muxed back into the video with subtitle tracks
 - Media downloads from video URLs with yt-dlp, including saved per-site cookies
@@ -183,7 +183,7 @@ backends; GPU inference and deployment are validated separately.
   upscaling, restoration, SDR to HDR and interpolation
 - [Remake](docs/features/remake.md) for editing existing footage with Viggle Remake
 - [Storyboard](docs/features/storyboard.md) for long videos made of H3 scenes
-- [Soundstage](docs/features/drama3.md) and [Dub & Translate](docs/features/dubbing.md)
+- [Soundstage](docs/features/drama3.md) and [Dubbing](docs/features/dubbing.md)
 - [Workspace operating guide](docs/workspace.md): storage, ownership, jobs and backups
 
 ## Requirements

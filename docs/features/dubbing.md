@@ -1,15 +1,23 @@
-# Dub & Translate
+# Dubbing
 
-**Dub & Translate** translates the speech in a video or recording and dubs it
-with each speaker's own cloned voice. Open **Create** and choose the **Dub & Translate** task, after
-Soundstage. It works in three steps, shown as a step strip: **Source**, **Review
-lines** and **Dub**. A finished analysis opens Review lines.
+**Dubbing** translates the speech in a video or recording and dubs it with each
+speaker's own cloned voice, or keeps the language and re-voices only the lines you
+fix or rewrite (see [Same language](#same-language-fix-or-rewrite)). Open **Create**
+and choose the **Dubbing** task, after Soundstage.
+
+Dubbing is its own page (`/dubbing/`), shown in the tab as Soundstage's is. It works
+in four steps on a step bar: **Source**, **Review lines**, **Dub** and **Result**. A
+finished analysis opens Review lines and a finished dub opens Result. The top bar
+holds the project picker with **Load**, **Save as…** and **Save project**, and says
+whether this server has a GPU. The page keeps its settings, the open session and step
+in the browser, so a reload returns to where you were; every run keeps going on the
+server and the page picks it up again.
 
 ## Projects and Workshop
 
-**Dub & Translate** is also available in **Prism Workshop**. Upload media or use
-**Media → From a URL**, choose the languages and processing settings, then enter a
-**Project name** and **Save project**. The saved source survives the upload cache;
+**Dubbing** is also available in **Prism Workshop**. Upload media or pick one
+**From Media**, choose the languages and processing settings, then **Save as…** a
+project name. The saved source survives the upload cache;
 named projects and their sessions are kept beyond the usual 14-day session cleanup.
 API keys are never saved in projects.
 
@@ -35,19 +43,22 @@ apps see the latest shared files.
 
 ## 1 · Source
 
-Pick the source in one of three tabs: **Upload** a video or audio file, choose
-one **From Media** (an upload and a Media pick replace each other), or open an
-**Earlier session**. The card below shows the picked file's kind, length and
-size. To use an online video, first download it in **Media → Download from a
+Pick the source in one of three tabs: **Upload** a video or audio file (or drop
+it on the page), choose one **From Media** (an upload and a Media pick replace each
+other), or open an **Earlier session**. The picked file's card shows its kind,
+length and size. To use an online video, first download it in **Media → Download from a
 URL** (see below). Choose the **Spoken language**, the language to **Dub into**
-(any language can be typed), a **Translation style** and any **Translation notes**.
+(any language can be typed, or **Same as spoken**), a **Translation style** and any
+**Translation notes**.
 
 **Earlier session** lists analyzed sessions; opening one restores its edited
 lines and dub language, for example after reloading the page, and opens Review
 lines.
 
 **More options** holds the settings below; its title sums them up while it is
-closed.
+closed. The transcription cards show only what applies: **Gemini by hand** opens
+its paste panel, Gemini (or the Gemini translator) asks for the model and key, and
+Qwen3-ASR adds its own options under More options.
 
 **Separate vocals from the background** (on by default) splits the soundtrack
 with audio-separator. The music and effects then stay under the dub, and voice
@@ -145,6 +156,38 @@ The first local run installs the isolated tools environment (see
 [Runtime](#runtime)) and downloads the models into
 `ComfyUI/models/dubbing`.
 
+## Same language: fix or rewrite
+
+Choose **Same as spoken** in **Dub into** to keep the spoken language. Each line's
+**New text** (the translation column, renamed) then starts as one of:
+
+- **A copy of what was said**: the translate step is skipped. Edit only the lines
+  you want to fix, for example a wrong figure or name, then dub.
+- **A rewrite for an audience**: every line is retold in the same language in a
+  **Rewrite style** (Simpler words, Children, Teens, Older adults, Formal, or your
+  own), for example a version of a lecture for young students. Translation notes
+  still keep your terms. The **Rewriter** is Gemini or **By hand** (both
+  recommended; by hand, copy the rewrite prompt in Review lines and paste the reply),
+  or Hy-MT2 on this server, which is experimental: it is a translation model and may
+  change little. In Workshop, Hy-MT leaves the lines as said, to rewrite by hand or
+  in Studio.
+
+One rule decides what is voiced: **a line is voiced only when its new text differs
+from what was said**. Every other line plays the original audio untouched, so a dub
+that fixes three lines generates three takes. Editing a line's new text turns its
+Dub switch on, and putting it back (**Revert to what was said**) turns it off; the
+switch can still be set by hand, for example to re-voice an unchanged line with a
+cough in it. Lines are matched to their saved version by start, speaker and
+original text, so editing the original text counts as a change.
+
+In this mode Review lines counts edited and unchanged lines, has an **Edited**
+filter, and **Translate again** reads **Copy again** (back to what was said) or
+**Rewrite again**. Gemini transcription only transcribes. Timing starts on **Match
+the original**, so a fix lands exactly where the old line was. The dub is named
+after the spoken language plus "· edited" or "· for <style>", and the player's
+switches read **Edited / Original** and **New text / What was said**. Choosing a
+real language again later translates and voices every line.
+
 ## 2 · Review lines
 
 The board lists every line with its time, speaker, original and translation.
@@ -168,17 +211,18 @@ kept: jobs write only their own results. With separation, every line that is not
 voiced (switched off, untranslated or failed) keeps its original voice; without
 stems the original soundtrack plays under every line anyway.
 
-**Edit as a table** shows every line at once for bulk edits: changes save as you
-type, and when an edit changes the order (a new Start time) or removes a row, the
+**Edit as a table** shows every line at once for bulk edits: a cell saves when you
+leave it, and when an edit changes the order (a new Start time) or removes a row, the
 table is renumbered to match. A new row is saved once it has a start, an end and
 text.
 
 Tick lines on the board to pick them for the line actions; without picks they
 use the focused line:
 
-- **Listen to original** plays the first picked line (or the focused line) from
+- **Original** (Listen to original) plays the first picked line (or the focused line) from
   the original soundtrack at its current Start and End, without padding or voice
-  generation. Its player is separate from the dub preview for comparison.
+  generation, in the inspector's **Original segment** player, next to the **Dub
+  preview** player for comparison.
 - **Preview** voices the first picked line, fits it to its timing and plays it.
   It reuses the line's saved take.
 - **New take** records the line again; the dub then uses the new take.
@@ -197,7 +241,8 @@ copying is left as it is. Long sessions may fit better a few dozen lines at a ti
 
 The **Dub it** card says what the dub will do: how many lines it voices, how
 many keep their original voice or are untranslated, and which lines may sound
-rushed.
+rushed, each with a **Fix** link back to Review lines. The latest dub sits above
+the settings; **Watch result** opens it.
 
 **Speakers** appears for sessions transcribed with MOSS, Nemotron or Gemini, with a card
 per speaker: give a speaker a saved Drama 3 voice instead of its cloned
@@ -290,10 +335,25 @@ enter the numbers under **Fresh takes for lines**, then dub again: every other
 line reuses its saved take. A mark clears when the line gets a take that passes,
 and it no longer applies once the line's start or translation is edited.
 
-The finished dub opens in a player beside the files. It plays the dub with
-**Dub** or **Original** voice, **Background music** on or off, and subtitles in
-the translation, the original, both or none. The lines below it follow playback;
-click one to jump there. Translated subtitles use the dub's timing, original ones
+## 4 · Result
+
+The finished dub opens on **Result**: its name, when it was made and the settings it
+used, then the player with its lines beside it. An **Incomplete dub** banner names
+lines whose take failed, with **Play line** and **Retry in Review lines**. The player
+plays the dub with **Dub** or **Original** voice, **Music** on or off, and subtitles
+in the translation, the original, both or off. The lines beside it follow playback;
+click one to jump there, **Search lines** to find one, or turn off **Follow
+playback** to scroll freely while it plays. On a phone the lines sit below the
+picture.
+
+Below the player:
+
+- **Downloads**: the dubbed video, the MP3 mix and both subtitle files (also in Media).
+- **Video with subtitles**: the burned-in export described under Dub, with its progress.
+- **Word timing**: how many lines light word by word, and **Repair word timing**
+  (Studio), which aligns the latest dub again without new voices.
+- **Share**: in Workshop, the share link (see below); in Studio, a note that
+  Workshop makes them. Translated subtitles use the dub's timing, original ones
 the source's. Without vocal separation the music cannot be switched off: the
 player switches between the finished mix and the original soundtrack. Its
 separate tracks are kept in `gradio_outputs/dubbing/.dub-player`, which Media

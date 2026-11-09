@@ -968,15 +968,19 @@ class HandlerTests(Workspace):
                     self.assertEqual((rate, message), (pipeline.RATE, "Preview ready"))
                     np.testing.assert_allclose(played, samples, atol=2 / 32768)
 
-    def test_preview_forces_fresh_take_and_clears_previous_audio_on_failure(self):
+    def test_preview_reuses_the_saved_take_and_new_take_records_again(self):
         session = self.board_session()
-        with patch.object(self.handlers, "_hf_token", return_value=None), \
-                patch.object(pipeline, "preview_line", return_value=iter([
-                    pipeline.LinePreview(pipeline.RATE, np.zeros(100), "Fresh preview ready")])) as preview:
-            updates = list(self.handlers.preview_line(session.id, "1", pipeline.VOICE_LINE, "Balance",
-                                                      pipeline.TIMING_MATCH, 1.35, 16))
-        self.assertIsNone(updates[0][0])
-        self.assertEqual(preview.call_args.args[0].regenerate, (0,))
+        for handler, regenerate in ((self.handlers.preview_line, ()), (self.handlers.preview_new_take, (0,))):
+            with patch.object(self.handlers, "_hf_token", return_value=None), \
+                    patch.object(pipeline, "preview_line", return_value=iter([
+                        pipeline.LinePreview(pipeline.RATE, np.zeros(100), "Preview ready")])) as preview:
+                updates = list(handler(session.id, "1", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH,
+                                       1.35, 16))
+            self.assertIsNone(updates[0][0])
+            self.assertEqual(preview.call_args.args[0].regenerate, regenerate, handler.__name__)
+
+    def test_preview_clears_previous_audio_on_failure(self):
+        session = self.board_session()
         with patch.object(self.handlers, "_hf_token", return_value=None), \
                 patch.object(pipeline, "preview_line", side_effect=H3Error("translated generation failed")):
             updates = list(self.handlers.preview_line(session.id, "1", pipeline.VOICE_LINE, "Balance",
@@ -1032,53 +1036,21 @@ class HandlerTests(Workspace):
                 self.assertEqual(payload["texts"], ["Two"])
                 self.assertEqual(sessions.load(self.runtime, created.id).segments[1]["translation"], "Deux")
 
-    def test_export_is_bound_separately_from_generation(self):
-        from h3_ui.dubbing.view import build_dubbing_view
-        from h3_ui.dubbing.bindings import bind_dubbing
+    def test_tab_keeps_the_published_api_endpoints(self):
+        from h3_ui.dubbing.tab import build_dubbing_tab
 
         gr = self.module.gr
-        interrupt = unittest.mock.Mock(return_value="Cancellation requested")
         with gr.Blocks() as demo:
-            task = gr.Radio(["Dub"], value="Dub")
-            with gr.Tab("Create") as tab:
-                view = build_dubbing_view(gr.Column(), gemini_models=["model"], default_gemini_model="model")
-            bind_dubbing(view, task=task, create_tab=tab, interrupt=interrupt, actions=self.handlers)
+            build_dubbing_tab(gr.Column(), self.handlers)
         generation = next(fn for fn in demo.fns.values() if fn.api_name == "dub_generate")
         self.assertEqual(len(generation.inputs), 11)
         self.assertEqual(len(generation.outputs), 9)
-        export = next(fn for fn in demo.fns.values() if fn.fn == self.handlers.export_subtitles)
-        self.assertEqual(export.inputs, [view.export_source])
-        self.assertEqual(export.outputs, [view.exported_video, view.export_status])
-        self.assertFalse(view.export_subtitles.interactive)
-        translation = next(fn for fn in demo.fns.values()
-                           if view.translation_context in fn.inputs and fn.inputs[:2] == [view.session, view.board])
-        self.assertEqual(translation.inputs[:8], [view.session, view.board, view.target_language,
-                                                view.translator, view.gemini_model, view.api_key,
-                                                view.notes, view.translation_context])
-        self.assertFalse(view.translation_context.value)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertEqual(analysis.inputs[-4:], [view.translation_context, view.project.active, view.manual_reply,
-                                                view.style])
-        self.assertEqual(view.style.value, "Precise")
-        self.assertIs(view.prepare_audio.h3_stop, view.stop_analyze)
-        config = demo.get_config_file()
-        self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
-                            for dep in config["dependencies"]))
-        self.assertTrue(any(fn.outputs == [view.player, view.alignment_status] for fn in demo.fns.values()))
-        self.assertFalse(view.align_words.interactive)
-        from h3_app.jobs import JOBS
-        self.assertEqual(JOBS.callbacks[tools.FAMILY_DUB].__name__, "generate_dub")
-        self.assertEqual(len(JOBS.callbacks[tools.FAMILY_DUB].job_input_names), 11)
-        self.assertEqual(JOBS.callbacks[tools.FAMILY_WORDS].__name__, "align_words")
-        self.assertEqual(JOBS.callbacks[tools.FAMILY_WORDS].job_input_names, ("session_id",))
-        self.assertIs(view.align_words.h3_stop, view.stop_align_words)
-        self.assertIsNot(view.align_words.h3_stop, view.run.h3_stop)
-        for control, family in ((view.stop, tools.FAMILY_DUB), (view.stop_align_words, tools.FAMILY_WORDS)):
-            event = next(dep for dep in config["dependencies"]
-                         if (control._id, "click") in [tuple(target) for target in dep["targets"]]
-                         and getattr(demo.fns[dep["id"]].fn, "__name__", "") == "stop")
-            demo.fns[event["id"]].fn("request")
-            interrupt.assert_called_with("request", family=family)
+        self.assertEqual(len(analysis.inputs), 21)
+        self.assertEqual(len(analysis.outputs), 5)
+        with gr.Blocks() as workshop:
+            build_dubbing_tab(gr.Column(), self.handlers, gpu=False)
+        self.assertFalse(any(fn.api_name in ("dub_generate", "dub_analyze_source") for fn in workshop.fns.values()))
 
     def test_word_alignment_handler_refreshes_player_and_reports_errors(self):
         player = pipeline.Player(None, Path("dub.mp3"), Path("original.mp3"), None, 1, [], word_timing=True)
@@ -1525,7 +1497,7 @@ class ReviewFixTests(Workspace):
         self.assertFalse(pipeline.AnalyzeRequest("").translation_context)
 
     def test_suspect_translation_is_saved_and_flagged_until_corrected(self):
-        from h3_ui.dubbing import presenters, widgets
+        from h3_ui.dubbing import presenters
 
         session = self.session_with_vocals([
             {"start": 0.0, "end": 0.5, "source": "Hello"},
@@ -1548,8 +1520,6 @@ class ReviewFixTests(Workspace):
         self.assertIn("Review translation", presenters.fit_note(saved.segments[0]))
         self.assertIn("May sound rushed", presenters.fit_note(saved.segments[0]))
         self.assertIn("Review translations: 1", presenters.readiness_html(saved))
-        self.assertIn("'rushed', 'translation'", widgets.BOARD_TEMPLATE)
-        self.assertIn("Review translation</span>", widgets.BOARD_TEMPLATE)
         # Editing the saved text clears the notice, including when reopening a session.
         lines = saved.segments
         lines[0]["translation"] = "你好"

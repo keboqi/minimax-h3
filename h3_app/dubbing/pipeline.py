@@ -106,6 +106,18 @@ TRANSLATION_STYLES = {
     "Older adults": "clear, respectful language for older adults",
 }
 DEFAULT_STYLE = "Precise"
+# "Dub into" this to keep the spoken language: each line's new text starts as a copy of what was said
+# (to fix a few lines) or as a rewrite for an audience. Only lines whose new text differs are voiced.
+SAME_LANGUAGE = segment_tools.SAME_LANGUAGE
+# Styles offered for a rewrite; anything else typed is used as written.
+REWRITE_STYLES = {
+    "Simpler words": "plain, simple words anyone can follow, with jargon replaced by everyday words",
+    "Children": TRANSLATION_STYLES["Children"],
+    "Teens": TRANSLATION_STYLES["Teens"],
+    "Older adults": TRANSLATION_STYLES["Older adults"],
+    "Formal": TRANSLATION_STYLES["Formal"],
+}
+DEFAULT_REWRITE_STYLE = "Simpler words"
 # Each fitted take is one ffmpeg run; these many run at once while the dub is laid out.
 TIMING_WORKERS = max(1, min(8, os.cpu_count() or 4))
 # Hy-MT sees this many earlier lines of the dialogue as background for each line.
@@ -157,6 +169,8 @@ class AnalyzeRequest:
     cloud_only: bool = False
     # A name in TRANSLATION_STYLES, or the viewer's own wording.
     style: str = DEFAULT_STYLE
+    # With target SAME_LANGUAGE: rewrite every line in ``style`` instead of copying what was said.
+    rewrite: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,6 +311,81 @@ def style_text(style: str) -> str:
     return TRANSLATION_STYLES.get(style, style)
 
 
+def rewrite_style_text(style: str) -> str:
+    """The instruction for a rewrite preset or typed style; empty means the default."""
+    style = str(style or "").strip() or DEFAULT_REWRITE_STYLE
+    return REWRITE_STYLES.get(style, TRANSLATION_STYLES.get(style, style))
+
+
+def same_language(session: sessions.Session) -> bool:
+    """Whether the session keeps its spoken language: lines are fixed or rewritten, not translated."""
+    return session.data.get("target_language") == SAME_LANGUAGE
+
+
+def spoken_language(session: sessions.Session) -> str:
+    """The source's language: as chosen, else as transcribed; empty when unknown."""
+    transcript = session.data.get("transcript") or {}
+    return str(session.data.get("source_language") or transcript.get("language") or "")
+
+
+def dub_language(session: sessions.Session) -> str:
+    """The language the dubbed lines are in."""
+    return spoken_language(session) if same_language(session) else str(session.data.get("target_language") or "")
+
+
+def dub_label(session: sessions.Session) -> str:
+    """How the dub is named: its language, or for the same language what was done to it."""
+    if not same_language(session):
+        return str(session.data.get("target_language") or "")
+    spoken = spoken_language(session) or "Original"
+    style = str(session.data.get("rewrite_style") or "").strip()
+    return f"{spoken} · for {style}" if session.data.get("rewrite") and style else f"{spoken} · edited"
+
+
+def unchanged(line: dict) -> bool:
+    return line["translation"].strip() == line["source"].strip()
+
+
+def apply_same_language_rule(session: sessions.Session, lines: list[dict]) -> list[dict]:
+    """In a same-language session, a line whose new text changed is voiced only when it differs from
+    what was said; a line whose text is unchanged keeps the Dub switch the viewer set.
+
+    ``lines`` are the lines about to be saved; each is matched to its saved version by start, speaker
+    and original text.
+    """
+    if not same_language(session):
+        return lines
+    saved = {(round(float(line["start"]), 3), line["speaker"], line["source"]): line for line in session.segments}
+    slots = {(round(float(line["start"]), 3), line["speaker"]): line for line in session.segments}
+    for line in lines:
+        start = round(float(line["start"]), 3)
+        before = saved.get((start, line["speaker"], line["source"]))
+        if before is None:
+            # What was said itself was corrected: a line still holding its untouched copy follows it.
+            slot = slots.get((start, line["speaker"]))
+            if slot is not None and unchanged(slot) and line["translation"] == slot["translation"]:
+                line["translation"], line["dub"] = line["source"], False
+                continue
+        if before is None or before["translation"] != line["translation"]:
+            line["dub"] = bool(line["translation"].strip()) and not unchanged(line)
+    return lines
+
+
+def _copy_lines(session: sessions.Session, indices: list[int]) -> None:
+    """New text starts as what was said; those lines keep their original audio."""
+    keys = {(line["start"], line["speaker"], line["source"])
+            for line in (session.segments[i] for i in indices)}
+
+    def apply(latest: sessions.Session) -> None:
+        updated = latest.segments
+        for line in updated:
+            if (line["start"], line["speaker"], line["source"]) in keys:
+                line["translation"], line["dub"] = line["source"], False
+        latest.segments = updated
+
+    sessions.modify(session, apply)
+
+
 def manual_transcript(reply: str) -> dict:
     """The transcript in a chat model's pasted reply, read before any slow step can start."""
     if not str(reply or "").strip():
@@ -401,6 +490,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if request.cloud_only and request.pipeline not in CLOUD_PIPELINES:
         raise H3Error("Workshop analyzes with Gemini or a pasted reply; open this project in Studio for the others.")
     target_language = str(request.target_language or "").strip()
+    same = target_language == SAME_LANGUAGE
     if request.translate and not target_language:
         raise H3Error("Choose the language to dub into.")
     if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and not request.aligner:
@@ -446,9 +536,11 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     elif request.pipeline == PIPELINE_GEMINI:
         upload = _speech_mp3(session)
         found, speakers, _raw = yield from blocking(
-            f"Transcribing{' and translating' if request.translate else ''} with {request.gemini_model}",
+            f"Transcribing{' and translating' if request.translate and not same else ''} with "
+            f"{request.gemini_model}",
             lambda _report: gemini.transcribe(upload, model=request.gemini_model, api_key=request.api_key,
-                                              target_language=target_language, translate=request.translate,
+                                              target_language=target_language,
+                                              translate=request.translate and not same,
                                               ignore_non_speech=request.ignore_non_speech,
                                               notes=request.notes, style=style_text(request.style)))
         transcript = {"segments": found, "speakers": speakers}
@@ -477,9 +569,14 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     session.segments, session.data["speakers"] = transcript["segments"], dict(transcript["speakers"])
     if transcript.get("language") and not session.data.get("source_language"):
         session.data["source_language"] = transcript["language"]
+    if same:
+        session.data.update(rewrite=bool(request.rewrite),
+                            rewrite_style=str(request.style or "").strip() if request.rewrite else "")
     session.save()
+    if same:
+        yield from _same_language_lines(session, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     # A pasted reply calls no model, so it needs no key: lines it left empty wait in Review lines.
-    if request.translate and request.pipeline != PIPELINE_MANUAL:
+    elif request.translate and request.pipeline != PIPELINE_MANUAL:
         # Gemini may already have translated; the translator fills every line still without one.
         missing = [i for i, s in enumerate(session.segments) if s["source"] and not s["translation"]]
         if missing and (request.translator == TRANSLATOR_GEMINI or not request.cloud_only):
@@ -488,8 +585,14 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     count = len(session.segments)
     speakers = len({s["speaker"] for s in session.segments})
     translated = sum(bool(s["translation"]) for s in session.segments)
-    message = (f"Found {count} line(s) from {speakers} speaker(s); {translated} translated into "
-               f"{target_language or 'nothing yet'}. Review the lines, then dub.")
+    if same:
+        edited = sum(bool(s.get("dub", True)) and bool(s["translation"]) for s in session.segments)
+        message = (f"Found {count} line(s) from {speakers} speaker(s); "
+                   + (f"rewrote them, {edited} changed. " if request.rewrite else "copied them as said. ")
+                   + "Edit lines to change them; only edited lines are voiced.")
+    else:
+        message = (f"Found {count} line(s) from {speakers} speaker(s); {translated} translated into "
+                   f"{target_language or 'nothing yet'}. Review the lines, then dub.")
     if reused:
         message += (f" Reused the {' and '.join(reused)} from an earlier analysis of this file; untick "
                     "Reuse earlier results to redo them.")
@@ -511,12 +614,14 @@ def _transcript_key(request: AnalyzeRequest) -> str:
     elif request.pipeline == PIPELINE_NEMOTRON:
         settings.update(model=nemotron.MODEL_REPO)
     elif request.pipeline == PIPELINE_GEMINI:
+        # Gemini translates as it transcribes, except when the language stays the same.
+        translating = request.translate and str(request.target_language or "").strip() != SAME_LANGUAGE
         settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
-                        target=str(request.target_language or "").strip() if request.translate else "")
-        if request.translate and str(request.notes or "").strip():
+                        target=str(request.target_language or "").strip() if translating else "")
+        if translating and str(request.notes or "").strip():
             settings["notes"] = str(request.notes).strip()
         # Precise adds nothing, so transcripts from before styles stay reusable.
-        if request.translate and style_text(request.style) != style_text(DEFAULT_STYLE):
+        if translating and style_text(request.style) != style_text(DEFAULT_STYLE):
             settings["style"] = style_text(request.style)
     elif request.pipeline == PIPELINE_MANUAL:
         settings.update(reply=hashlib.sha256(str(request.manual_reply).encode("utf-8")).hexdigest())
@@ -614,6 +719,9 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
     lines = session.segments
     texts = [lines[i]["source"] for i in indices]
     target = session.data.get("target_language") or request.target_language
+    if target == SAME_LANGUAGE:
+        yield from _rewrite(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+        return
     if request.translator == TRANSLATOR_GEMINI:
         # Each line's time on screen, so Gemini can word its translation to fit it.
         seconds = [lines[i]["end"] - lines[i]["start"] for i in indices]
@@ -643,6 +751,48 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
                                  for i, text in zip(indices, translated)}, target)
 
 
+def _rewrite(session: sessions.Session, indices: list[int], request, *, runtime, free_gpu,
+             hf_token=None) -> Iterator[str]:
+    """Retell the lines in their own language for ``request.style``; changed lines are voiced."""
+    lines = session.segments
+    texts = [lines[i]["source"] for i in indices]
+    language = spoken_language(session)
+    style = rewrite_style_text(request.style)
+    if request.translator == TRANSLATOR_GEMINI:
+        seconds = [lines[i]["end"] - lines[i]["start"] for i in indices]
+        rewritten = []
+        for first in range(0, len(texts), GEMINI_TRANSLATE_BATCH):
+            batch = texts[first:first + GEMINI_TRANSLATE_BATCH]
+            rewritten += yield from blocking(
+                f"Rewriting lines {first + 1}-{first + len(batch)} of {len(texts)} with Gemini",
+                lambda _report, batch=batch, first=first: gemini.rewrite(
+                    batch, model=request.gemini_model, api_key=request.api_key, language=language,
+                    notes=request.notes, seconds=seconds[first:first + len(batch)], style=style))
+    else:
+        # Experimental: Hy-MT is a translator, asked here to translate into the same language in the style.
+        reply = yield from blocking(
+            f"Rewriting {len(texts)} line(s) with Hy-MT (experimental)",
+            lambda report: tools.run("translate", {"texts": texts, "contexts": [""] * len(texts),
+                                                   "target_language": language or "the same language",
+                                                   "notes": request.notes, "style": style},
+                                     runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
+        rewritten = reply["texts"]
+    _save_translations(session, {_translation_key(i, lines[i]): text for i, text in zip(indices, rewritten)},
+                       SAME_LANGUAGE)
+
+
+def _same_language_lines(session: sessions.Session, request, *, runtime, free_gpu,
+                         hf_token=None) -> Iterator[str]:
+    """Fill each line's new text: a copy of what was said, or a rewrite."""
+    indices = [i for i, s in enumerate(session.segments) if s["source"]]
+    if request.rewrite and (request.translator == TRANSLATOR_GEMINI or not request.cloud_only):
+        yield from _rewrite(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+    else:
+        # Workshop has no Hy-MT: there the lines start as said, to rewrite in Studio or by hand.
+        yield "Copying the lines as said"
+        _copy_lines(session, indices)
+
+
 def _translation_key(index: int, line: dict) -> tuple:
     return index, line["start"], line["speaker"], line["source"]
 
@@ -662,6 +812,8 @@ def _save_translations(session: sessions.Session, results: dict, target: str) ->
             chosen = index if index in matches else matches[0] if len(matches) == 1 else None
             if chosen is not None:
                 updated[chosen]["translation"] = text
+                if target == SAME_LANGUAGE:
+                    updated[chosen]["dub"] = bool(text.strip()) and not unchanged(updated[chosen])
                 used.add(chosen)
                 applied += 1
         latest.segments = updated
@@ -684,10 +836,15 @@ def translation_request(session: sessions.Session, indices: list[int] | None, ta
         raise H3Error("No line has original text to translate.")
     if not target:
         raise H3Error("Choose the language to dub into.")
-    prompt = gemini.translation_prompt(
-        [lines[i]["source"] for i in chosen], target_language=target,
-        source_language=session.data.get("source_language", ""), notes=str(notes or ""),
-        seconds=[lines[i]["end"] - lines[i]["start"] for i in chosen], style=style_text(style))
+    texts = [lines[i]["source"] for i in chosen]
+    seconds = [lines[i]["end"] - lines[i]["start"] for i in chosen]
+    if target == SAME_LANGUAGE:
+        prompt = gemini.rewrite_prompt(texts, language=spoken_language(session), notes=str(notes or ""),
+                                       seconds=seconds, style=rewrite_style_text(style))
+    else:
+        prompt = gemini.translation_prompt(
+            texts, target_language=target, source_language=session.data.get("source_language", ""),
+            notes=str(notes or ""), seconds=seconds, style=style_text(style))
     return prompt, {"session": session.id, "target": target,
                     "lines": [list(_translation_key(i, lines[i])) for i in chosen]}
 
@@ -708,7 +865,9 @@ def apply_translation_reply(session_id: str, request: dict | None, reply: str, *
         raise H3Error(f"The pasted reply could not be read: {exc}") from exc
     applied = _save_translations(session, {key: text for key, text in zip(keys, texts) if text}, request["target"])
     skipped = len(keys) - applied
-    return Analysis(session, f"Applied {applied} translation(s) into {request['target']}."
+    done = (f"Applied {applied} rewritten line(s)." if request["target"] == SAME_LANGUAGE
+            else f"Applied {applied} translation(s) into {request['target']}.")
+    return Analysis(session, done
                     + (f" {skipped} line(s) were left: edited since copying, or empty in the reply." if skipped else "")
                     + translation_advice(session.segments) + length_advice(session.segments))
 
@@ -724,16 +883,44 @@ def retranslate(session_id: str, indices: list[int] | None, request, *, runtime,
     if request.target_language:
         session.data["target_language"] = request.target_language
     changed = bool(request.target_language) and request.target_language != previous
+    same = session.data.get("target_language") == SAME_LANGUAGE
+    if changed or same:
+        target = session.data["target_language"]
+
+        def apply(latest: sessions.Session) -> None:
+            latest.data["target_language"] = target
+            if same:
+                latest.data.update(rewrite=bool(request.rewrite),
+                                   rewrite_style=str(request.style or "").strip() if request.rewrite else "")
+            elif previous == SAME_LANGUAGE:
+                # Leaving the same language: every line is translated and voiced again.
+                updated = latest.segments
+                for line in updated:
+                    line["dub"] = True
+                latest.segments = updated
+
+        # Under the lock, on top of whatever the editor saved meanwhile.
+        sessions.modify(session, apply)
+        session = sessions.load(runtime, session_id)
     lines = session.segments
     if indices is None:
         indices = [i for i, s in enumerate(lines) if s["source"] and (changed or not s["translation"])]
     indices = [i for i in indices if lines[i]["source"]]
     if not indices:
         target = session.data.get("target_language") or "the target language"
-        yield Analysis(session, f"Every line already has a translation into {target}. "
-                                "Select lines to translate them again.")
+        yield Analysis(session, "Every line already has its new text. Select lines to copy or rewrite them again."
+                       if same else f"Every line already has a translation into {target}. "
+                                    "Select lines to translate them again.")
+        return
+    if same and not request.rewrite:
+        _copy_lines(session, indices)
+        yield Analysis(sessions.load(runtime, session_id),
+                       f"Copied {len(indices)} line(s) back to what was said; they keep their original audio.")
         return
     yield from _translate(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+    if same:
+        yield Analysis(session, f"Rewrote {len(indices)} line(s)." + length_advice(session.segments))
+        return
     yield Analysis(session, f"Translated {len(indices)} line(s) into {session.data['target_language']}."
                             + translation_advice(session.segments) + length_advice(session.segments))
 
@@ -1611,7 +1798,8 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
                     clip = Path(directory) / f"{number}.wav"
                     clip.write_bytes(wav)
                     field = pending[number][1]
-                    language = session.data.get("source_language" if field == "source" else "target_language", "")
+                    language = (session.data.get("source_language", "") if field == "source"
+                                else dub_language(session))
                     payload.append({"audio": str(clip), "text": text, "language": language,
                                     "duration": pending[number][3]})
                 reply = yield from blocking("Timing subtitle words with Qwen3", lambda report: tools.run(
@@ -1785,6 +1973,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     lines = session.segments
     chosen = [i for i, segment in enumerate(lines) if segment.get("dub", True) and segment["translation"]]
     if not chosen:
+        if same_language(session):
+            raise H3Error("No line is edited: change a line's new text, or switch Dub on, to voice it.")
         raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
     yield from finish_separation(session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     lines = session.segments
@@ -1838,10 +2028,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     mix = _ffmpeg(["-i", str(background), "-i", str(speech), "-filter_complex", graph, "-map", "[out]",
                    "-ar", str(RATE), "-c:a", "pcm_s16le"], session.root / "mix.wav", action="Mixing the dub")
 
-    language = session.data.get("target_language") or ""
+    language = dub_language(session)
+    label = dub_label(session)
     output_dir = runtime.outputs_dir / "dubbing"
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = _output_stem(session, language)
+    stem = _output_stem(session, language + ("edited" if same_language(session) else ""))
     subtitles = []
     for field_name, suffix in (("translation", language or "dub"), ("source", "original")):
         shown = subtitle_lines(lines, spoken) if field_name == "translation" else lines
@@ -1853,7 +2044,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     audio_out = _ffmpeg(["-i", str(mix), *OUTPUT_MP3], output_dir / f"{stem}.mp3",
                         action="Encoding the dubbed audio")
     settings = {
-        "source": session.data.get("name"), "target_language": language,
+        "source": session.data.get("name"), "target_language": label,
         "source_language": session.data.get("source_language", ""), "pipeline": session.data.get("pipeline"),
         "separated": separated, "voice_mode": request.voice_mode, "preset": request.preset,
         "timing": request.timing, "max_speed": request.max_speed, "speech_volume": request.speech_volume,
@@ -1872,7 +2063,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         inputs = ["-i", str(source), "-i", str(mix)]
         maps = ["-map", "0:v:0", "-map", "1:a:0"]
         metadata = ["-metadata:s:a:0", f"language={_language_code(language)}",
-                    "-metadata:s:a:0", f"title=Dub ({language or 'translated'})", "-disposition:a:0", "default"]
+                    "-metadata:s:a:0", f"title=Dub ({label or 'translated'})", "-disposition:a:0", "default"]
         if request.keep_original_track:
             inputs += ["-i", str(session.path("audio"))]
             maps += ["-map", "2:a:0"]
@@ -1884,7 +2075,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             original = path.name.endswith(".original.srt")
             metadata += [f"-metadata:s:s:{number}",
                          f"language={_language_code(session.data.get('source_language', '') if original else language)}",
-                         f"-metadata:s:s:{number}", f"title={'Original' if original else language or 'Translated'}"]
+                         f"-metadata:s:s:{number}", f"title={'Original' if original else label or 'Translated'}"]
         # Keep the picture unchanged; subtitle burning is a separate export after generation.
         video_out = _ffmpeg([*inputs, *maps, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-c:s", "mov_text",
                              *metadata, "-movflags", "+faststart"], output_dir / f"{stem}.mp4",
@@ -1903,7 +2094,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
                      background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
-                     spoken=spoken, duration=duration + overrun, language=language, words=words,
+                     spoken=spoken, duration=duration + overrun, language=label, words=words,
                      problems={line.index: line.note for line in kept})
     # Freeze the exact fitted clips and dialogue for alignment without regenerating
     # voices or applying any edits made after this dub.
@@ -1917,6 +2108,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         np.savez_compressed(folder / "alignment.npz", **{str(index): clip for index, clip in clips.items()})
         (folder / "alignment.json").write_text(json.dumps({
             "lines": lines, "spoken": spoken, "files": dict(session.data.get("files", {})),
+            # The player keeps the dub's label ("English · edited"); the aligner needs its language.
+            "language": language,
         }, ensure_ascii=False, default=str), encoding="utf-8")
     except OSError as exc:
         notes.insert(0, f"Dub saved, but word-alignment repair audio could not be saved: {exc}. "
@@ -1933,7 +2126,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     sessions.modify(session, lambda latest: latest.data.update(last_output=str(video_out or audio_out)))
     sped = sum(line.speed > 1.01 for line in planned)
     slowed = sum(line.speed < 0.99 for line in planned)
-    message = f"Dubbed {len(planned)} line(s) into {language or 'the target language'}"
+    message = (f"Voiced {len(planned)} edited line(s); every other line kept its original audio"
+               if same_language(session) else f"Dubbed {len(planned)} line(s) into {language or 'the target language'}")
     if kept:
         message = (f"**Incomplete dub: {len(kept)} line(s) failed and kept their original voice.** "
                    "Retry them in Review lines and generate the dub again.\n\n" + message)
@@ -1969,7 +2163,7 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
     if player is None:
         raise H3Error("This dub's result player is missing. Generate the dub again to enable this button.")
     frozen = sessions.Session(session.root, {"files": saved["files"], "source_language": player.source_language,
-                                             "target_language": player.target_language})
+                                             "target_language": saved.get("language", player.target_language)})
     if frozen.speech_audio is None or not frozen.speech_audio.is_file():
         raise H3Error("The original audio is no longer available. Analyze the source again.")
     lines = saved["lines"]
