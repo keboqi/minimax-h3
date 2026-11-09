@@ -22,7 +22,7 @@ from ..page_runs import guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
 from .page_common import apply_fields, check_proposal, proposal_token, timeline_payload, value, writer_service
 from .page_store import edit_project, editing, project_lock
-from .result_view import script_preview_settings
+from .result_view import clean_line, preview_source_lines, script_preview_settings
 
 from .page_adapter import (
     VOICE_META, SOUND_META, WriterAnswer, voice_inputs as voice_inputs, writer_slots as legacy_writer_slots,
@@ -91,8 +91,24 @@ def script_payload(data: dict) -> dict:
 
 
 def preview_payload(text: str, script_mode: str) -> dict:
-    """The script's estimated timeline, in the shape of a mix's lines and sounds."""
-    return timeline_payload(script_preview_settings(text, script_mode))
+    """The script's estimated timeline, in the shape of a mix's lines and sounds.
+
+    Each line and sound also carries ``line``, the script line it comes from (1-based), so the page
+    can jump between the script and the timeline; it is None when the script can't be matched up.
+    """
+    settings = script_preview_settings(text, script_mode)
+    payload = timeline_payload(settings)
+    speech, sounds = preview_source_lines(text, script_mode)
+    chunks = settings["chunks"]
+    if len(speech) != len(chunks) or len(sounds) != len(settings["sounds"]):
+        speech, sounds = [None] * len(chunks), [None] * len(settings["sounds"])
+    # The timeline leaves out turns with nothing left to hear once cues are dropped.
+    heard = [number for chunk, number in zip(chunks, speech) if clean_line(chunk["text"])]
+    for line, number in zip(payload["lines"], heard):
+        line["line"] = number
+    for sound, number in zip(payload["sounds"], sounds):
+        sound["line"] = number
+    return payload
 
 
 def boot_payload() -> dict:

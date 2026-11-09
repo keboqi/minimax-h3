@@ -193,10 +193,16 @@ button.step:hover { background: var(--raised); }
 .speaker-chip i { width: 10px; height: 10px; border-radius: 50%; }
 .speaker-chip .count { color: var(--muted); }
 .speaker-chip.unknown { background: var(--flag-bg); color: var(--flag); }
-.editor { position: relative; margin: 12px 18px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+/* The script box scrolls inside the card, so the timeline under it can show where it is. */
+.editor, .visual { position: relative; margin: 12px 18px 0; max-height: max(380px, calc(100vh - 400px)); overflow: auto;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--raised); overscroll-behavior: contain; }
+.editor-body { position: relative; }
+.line-band { position: absolute; left: 0; right: 0; background: var(--accent-soft); pointer-events: none; }
+.line-band.flash { animation: line-flash 1.4s ease-out; }
+@keyframes line-flash { 0%, 30% { background: color-mix(in srgb, var(--accent) 32%, transparent); } 100% { background: var(--accent-soft); } }
 .editor:focus-within { border-color: var(--accent); }
 .editor textarea, .editor-mirror {
-  display: block; width: 100%; min-height: 420px; margin: 0; padding: 14px 16px; border: 0; border-radius: 10px;
+  display: block; width: 100%; min-height: 360px; margin: 0; padding: 14px 16px; border: 0; border-radius: 10px;
   font: 14px/1.7 "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: 0;
   white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; tab-size: 4;
 }
@@ -243,6 +249,98 @@ button.step:hover { background: var(--raised); }
 .estimate-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
 .estimate-head strong { color: var(--text); }
 .estimate .lane { cursor: default; }
+.estimate .lanes.locating .lane, .estimate .lanes.locating .clip { cursor: pointer; }
+.estimate .clip.active { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--playhead); z-index: 1; }
+.estimate-window { position: absolute; top: -3px; bottom: -3px; min-width: 6px; border: 1.5px solid var(--accent); border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
+.estimate-cursor { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; background: var(--playhead); pointer-events: none; z-index: 2; }
+.scene-bands { position: relative; height: 24px; }
+.scene-band { position: absolute; top: 0; height: 22px; min-width: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--raised); color: var(--text); font-size: 11.5px; font-weight: 600; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-band:hover { background: var(--lane); }
+.scene-band.active { border-color: var(--accent); background: var(--accent-soft); }
+
+/* The script's visual view: scenes, plain dialogue, and the sounds beside it. */
+.script-view button { display: inline-flex; align-items: center; gap: 6px; }
+.visual { padding: 0 12px 14px; display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
+.visual > :first-child { margin-top: 12px; }
+.visual > .visual-columns:first-child { margin-top: 0; }
+.visual button { font: inherit; color: inherit; text-align: left; }
+.visual-empty { padding: 28px 8px; }
+.visual-note { padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+.visual-columns { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr) 36px 230px 84px; gap: 12px;
+  margin: 0 -12px -6px; padding: 10px 26px 6px; background: var(--raised); font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted); }
+.visual-columns span:last-child { text-align: center; }
+.vloose, .vscene { flex: none; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.vloose { padding: 4px 0; }
+.vloose-label { display: block; padding: 8px 14px 2px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.vscene-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; width: 100%; min-height: 44px; padding: 10px 14px;
+  border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; }
+.vscene-head:hover { background: var(--raised); }
+.vscene-head strong { font-size: 15px; }
+.vscene-body { display: flex; align-items: stretch; }
+.vscene-rows { flex: 1; min-width: 0; padding: 4px 0; }
+.vbeds { flex: 0 0 84px; display: flex; justify-content: center; gap: 8px; padding: 8px 0; border-left: 1px solid var(--line-soft); background: var(--raised); }
+.vbed { width: 32px; min-height: 120px; padding: 10px 0; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--bed) 45%, var(--surface));
+  writing-mode: vertical-rl; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.vbed strong { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; }
+.vbed span { color: var(--muted); }
+.vrow { display: grid; grid-template-columns: minmax(0, 1fr) 36px 230px; gap: 0 12px; align-items: start; }
+.vrow:hover { background: var(--raised); }
+.vrow.picked { background: var(--accent-soft); }
+.vline { display: flex; gap: 12px; align-items: baseline; min-height: 44px; padding: 10px 0 10px 14px; border: 0; background: transparent; }
+.vline-empty { min-height: 0; padding: 0; }
+.vspeaker { flex: 0 0 84px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 15.5px; line-height: 1.5; }
+.vnote, .vbranch-note { font-size: 12px; color: var(--muted); }
+.vedit { visibility: hidden; margin-top: 6px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--accent); }
+.vrow.picked > .vedit, .vrow:hover > .vedit, .vedit:focus-visible { visibility: visible; }
+.vcues { display: flex; flex-direction: column; gap: 6px; padding: 6px 12px 6px 0; }
+.vcues:empty { padding: 0; }
+.vcue { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--cue) 40%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--cue) 10%, var(--surface)); }
+.vcue.loop { border-color: color-mix(in srgb, var(--bed) 60%, var(--line)); background: color-mix(in srgb, var(--bed) 14%, var(--surface)); }
+.vcue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.vcue-head svg { color: var(--warn); flex: none; }
+.vcue-head strong { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 12.5px; }
+.vcue-meta { font-size: 12px; color: var(--muted); }
+.vcue-desc { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.vpause { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 28px; padding: 2px 14px; border: 0; background: transparent;
+  font-size: 12px; color: var(--muted); }
+.vpause span { flex: 1; height: 1px; background: repeating-linear-gradient(90deg, var(--line) 0 4px, transparent 4px 8px); }
+.vcue.picked, .vbed.picked, .vpause.picked, .vscene-head.picked, .vtogether-head.picked { box-shadow: inset 0 0 0 2px var(--accent); }
+.vpause.picked, .vscene-head.picked, .vtogether-head.picked { background: var(--accent-soft); }
+/* Voices at the same time: one column per branch, each branch's own lines down it. */
+.vtogether { margin: 6px 12px 6px 14px; border: 1px dashed var(--line); border-radius: 9px; background: var(--raised); }
+.vtogether-head { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 4px 10px; border: 0;
+  border-radius: 9px 9px 0 0; background: transparent; font-size: 12px; font-weight: 700; color: var(--muted); }
+.vtogether-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.vtogether-body > .vcues { width: 218px; padding-top: 4px; }
+.vbranches { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); min-width: 0; }
+.vbranch { min-width: 0; padding-bottom: 4px; }
+.vbranch + .vbranch { border-left: 1px solid var(--line-soft); }
+.vbranch-note { display: block; padding: 6px 10px 0; }
+.vbranch .vrow { grid-template-columns: minmax(0, 1fr) 36px; }
+.vbranch .vrow > .vcues { grid-column: 1 / -1; padding-left: 10px; }
+.vbranch .vline { padding-left: 10px; flex-direction: column; gap: 0; }
+.vbranch .vspeaker { flex: none; }
+.vbranch .vtogether { margin-left: 8px; margin-right: 8px; }
+/* A narrow script box stacks each line's sounds under it and lays the beds across. */
+@container (max-width: 680px) {
+  .visual-columns { display: none; }
+  .vrow { grid-template-columns: minmax(0, 1fr) 36px; }
+  .vrow > .vcues { grid-column: 1 / -1; padding-left: 14px; }
+  .vline { flex-direction: column; gap: 0; }
+  .vspeaker { flex: none; }
+  .vscene-body { flex-direction: column; }
+  .vbeds { flex: none; flex-wrap: wrap; justify-content: flex-start; padding: 8px 14px; border-left: 0; border-top: 1px solid var(--line-soft); }
+  .vbed { writing-mode: horizontal-tb; width: auto; min-height: 32px; padding: 0 10px; }
+  .vtogether-body { grid-template-columns: minmax(0, 1fr); }
+  .vtogether-body > .vcues { width: auto; padding-left: 10px; }
+}
 
 .dialog { border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(420px, calc(100% - 32px)); background: var(--surface); color: var(--text); }
 .dialog::backdrop { background: rgba(0, 0, 0, .35); }

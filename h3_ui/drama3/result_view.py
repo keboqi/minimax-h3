@@ -252,6 +252,37 @@ def script_preview_settings(script: str, script_mode: str) -> dict:
     return dict(chunks=chunks, sounds=sounds, duration=duration)
 
 
+def preview_source_lines(script: str, script_mode: str) -> tuple[list[int], list[int]]:
+    """The 1-based script line of each spoken turn and each sound, in the order the preview places them.
+
+    The preview walks the script tree in source order, so the n-th turn it times is the n-th turn
+    counted here. Callers check the counts match before trusting them.
+    """
+    from h3_app.drama3.serving.tree import (
+        SOUND_BLOCK_RE, iter_speech_nodes, parse_drama3_tree, parse_sound_tag, strip_drama3_sound_tags,
+    )
+    from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_BASIC
+
+    text = (script or "").replace("\r\n", "\n")
+    basic = script_mode == DRAMA3_SCRIPT_BASIC
+    sounds: list[int] = []
+
+    def blank(match):  # The parser reads a sound tag split over lines as speech, and so does this.
+        if "\n" in match.group(0) or parse_sound_tag(match.group(0)) is None:
+            return match.group(0)
+        sounds.append(text.count("\n", 0, match.start()) + 1)
+        return ""
+
+    body = SOUND_BLOCK_RE.sub(blank, text)
+    speech: list[int] = []
+    for number, line in enumerate(body.split("\n"), 1):
+        if basic:
+            line = strip_drama3_sound_tags(line)
+        if line.strip():
+            speech += [number] * sum(len(node.turns) for node in iter_speech_nodes(parse_drama3_tree(line)))
+    return speech, [] if basic else sounds
+
+
 def timeline_data(settings: dict):
     """A result's timed lines, their aligned words, each speaker's (tone, pan) and its timed sounds.
 

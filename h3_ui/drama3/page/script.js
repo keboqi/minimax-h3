@@ -1,5 +1,5 @@
 // Script view and local controls for Soundstage.
-export function createScript({state, $, h, toneColor, saveScript, writerService, storeWriterService, reviewWriterProposal, undoWriter, loadExample, renderSaveState}) {
+export function createScript({state, $, h, toneColor, saveScript, writerService, storeWriterService, reviewWriterProposal, undoWriter, loadExample, renderSaveState, painted}) {
   const NAME = /^(\s*)([^\s:：<>[\]{}|][^:：<>[\]{}|\n]{0,39}?)(\s*[:：])/;
   // A sound tag is colored with its description: <sound name="rain">Steady rain</sound>.
   const TOKEN = /(<sound\b[^>]*>(?:[^<\n]*<\/sound>)?|<\/sound>)|(<\|[^|]*\|>|<[^>]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/g;
@@ -32,7 +32,8 @@ export function createScript({state, $, h, toneColor, saveScript, writerService,
   function highlight(text, speakers) {
     const byName = new Map(speakers.map((speaker) => [speaker.name, speaker]));
     // A trailing newline needs a line of its own in the mirror, or the caret's last line jumps.
-    return text.split("\n").map((line) => {
+    // Each line is a numbered span, so the views and the timeline can find it.
+    return text.split("\n").map((line, index) => {
       let lead = "";
       const match = NAME.exec(line);
       if (match) {
@@ -49,7 +50,7 @@ export function createScript({state, $, h, toneColor, saveScript, writerService,
         out += `<span class="tok-${kind}">${escapeHtml(token[0])}</span>`;
         cursor = token.index + token[0].length;
       }
-      return lead + out + escapeHtml(line.slice(cursor));
+      return `<span data-line="${index + 1}">${lead}${out}${escapeHtml(line.slice(cursor))}</span>`;
     }).join("\n") + "\n";
   }
 
@@ -57,13 +58,18 @@ export function createScript({state, $, h, toneColor, saveScript, writerService,
     const area = $("script-text");
     const speakers = scriptSpeakers(area.value);
     $("script-mirror").innerHTML = highlight(area.value, speakers);
+    // The editor box scrolls; resizing the textarea mustn't move it.
+    const box = $("code-view");
+    const top = box.scrollTop;
     area.style.height = "auto";
-    area.style.height = `${Math.max(420, area.scrollHeight)}px`;
+    area.style.height = `${Math.max(360, area.scrollHeight)}px`;
+    box.scrollTop = top;
     $("speakers").replaceChildren(...speakers.map((speaker) => h("span", {
       class: `speaker-chip${speaker.known ? "" : " unknown"}`,
       title: speaker.known ? `${speaker.count} line${speaker.count > 1 ? "s" : ""}` : "Not in the cast: this line can't be spoken",
     }, h("i", {style: {background: toneColor(speaker.tone)}}), speaker.name,
        h("span", {class: "count"}, speaker.known ? speaker.count : "not in cast"))));
+    painted();
   }
 
   function renderWriter() {

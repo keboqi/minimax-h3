@@ -71,19 +71,26 @@
             <span>Title</span>
             <input id="title" maxlength="200" placeholder="Chapter or story title" autocomplete="off">
           </label>
+          <div class="seg script-view" role="group" aria-label="Script view" id="script-view"></div>
           <details class="menu" id="examples">
             <summary class="btn btn-small">Examples</summary>
             <div class="menu-items" id="example-items"></div>
           </details>
         </div>
         <div class="legend-row" id="speakers"></div>
-        <div class="editor">
-          <pre class="editor-mirror" id="script-mirror" aria-hidden="true"></pre>
-          <textarea id="script-text" spellcheck="false" aria-label="Speech text"
-                    placeholder="Mia: Welcome [with warm excitement] back!&#10;Leo: Took you long enough. [laughs]"></textarea>
+        <div class="editor" id="code-view">
+          <div class="editor-body">
+            <span class="line-band" id="line-band" aria-hidden="true" hidden></span>
+            <pre class="editor-mirror" id="script-mirror" aria-hidden="true"></pre>
+            <textarea id="script-text" spellcheck="false" aria-label="Speech text"
+                      placeholder="Mia: Welcome [with warm excitement] back!&#10;Leo: Took you long enough. [laughs]"></textarea>
+          </div>
         </div>
-        <p class="editor-hint muted small">Start each line with a speaker's name, such as <code>Mia:</code>.
+        <div class="visual" id="visual-view" aria-label="Script, as scenes" hidden></div>
+        <p class="editor-hint muted small" id="code-hint">Start each line with a speaker's name, such as <code>Mia:</code>.
           Add <code>[cues]</code> for delivery. Or paste any text and let the writer script it.</p>
+        <p class="editor-hint muted small" id="visual-hint" hidden>A reading view: cues and tags are hidden.
+          Click a line to find it on the timeline; double-click it to edit that line in Code.</p>
       </section>
       <aside class="side">
         <section class="card writer" aria-label="Script writer">

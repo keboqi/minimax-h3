@@ -7,6 +7,7 @@ import time
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
+from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED
 from tests.test_drama3_page_video import Drama3PageVideoTests
 
 
@@ -15,6 +16,23 @@ def run():
     fixture.setUp()
     list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True))
     fixture.store.save_soundstage_project("Second", {"text": "Mia: Another draft.", "shown_slots": 1})
+    fixture.store.save_soundstage_project("Scenes", {"script_mode": DRAMA3_SCRIPT_ADVANCED, "text": "\n".join([
+        "Mia: Plums, two for one!",
+        '<parallel room="small_room" stage="Mia=-0.4, Leo=0.4">',
+        '  <sound loop="true" duration="20" name="rain">Steady rain</sound>',
+        "  <parallel>",
+        "    Leo: Who's there?",
+        "    <sequential>",
+        "      <#1.0#>",
+        "      Mia: Only me. [laughs]",
+        "    </sequential>",
+        "  </parallel>",
+        "  <parallel>",
+        '    <sound name="door" duration="2">A door opens</sound>',
+        "    Leo: [warmly] Come in.",
+        "  </parallel>",
+        "</parallel>",
+    ])})
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
@@ -35,6 +53,26 @@ def run():
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             expect(page.locator("#app")).to_be_visible()
             page.locator("#step-script").click()
+            # The visual view reads the script as scenes; the timeline and both views find each other's lines.
+            page.locator("#project").select_option("Scenes")
+            expect(page.locator("#estimate .clip[data-line]")).to_have_count(6)
+            expect(page.locator(".scene-band")).to_have_count(1)
+            caret = "(() => { const a = document.getElementById('script-text'); return a.value.slice(0, a.selectionStart).split('\\n').length; })()"
+            page.locator("#estimate .clip[data-line='13']").click()
+            assert page.evaluate(caret) == 13
+            expect(page.locator("#estimate .clip.active")).to_have_count(1)
+            page.get_by_role("button", name="Visual", exact=True).click()
+            expect(page.locator("#visual-view .vscene")).to_have_count(1)
+            expect(page.locator("#visual-view .vtogether .vbranch")).to_have_count(2)
+            expect(page.locator("#visual-view .vbranch-note")).to_have_text("Starts 1 s into Leo's line")
+            expect(page.locator("#visual-view .vbed")).to_contain_text("rain")
+            door_row = page.locator("#visual-view .vrow", has=page.locator(".vcue", has_text="door"))
+            expect(door_row.locator(".vtext")).to_have_text("Come in.")
+            expect(page.locator("#visual-view")).not_to_contain_text("[laughs]")
+            page.locator("#visual-view .vline", has_text="Only me.").dblclick()
+            expect(page.locator("#code-view")).to_be_visible()
+            assert page.evaluate(caret) == 8
+            page.locator("#project").select_option("Night Market")
             page.locator("#script-text").fill("Mia: A newer line.")
             # Switching projects flushes even a still-debounced edit.
             page.locator("#project").select_option("Second")

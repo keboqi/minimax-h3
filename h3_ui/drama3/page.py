@@ -37,7 +37,7 @@ from .page_adapter import generation_values as generation_values, SpeechProgress
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
-                  "script.js", "cast.js", "mix.js", "video.js", "library.js", "project.js")}
+                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "library.js", "project.js")}
 STATIC_TYPES["app.css"] = "text/css"
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,

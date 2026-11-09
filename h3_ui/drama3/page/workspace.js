@@ -1,4 +1,5 @@
 import {createScript} from "./script.js";
+import {createScriptView} from "./scriptview.js";
 import {createCast} from "./cast.js";
 import {createMix} from "./mix.js";
 import {createVideo} from "./video.js";
@@ -782,36 +783,6 @@ export function startWorkspace() {
     }, delay);
   }
 
-  function renderEstimate() {
-    const box = $("estimate");
-    const estimate = state.estimate;
-    if (!estimate || !estimate.lines.length) {
-      box.replaceChildren(h("div", {class: "estimate-head"},
-        h("span", {}, h("strong", {}, "Estimated timeline"), " · add a spoken line to see it")));
-      return;
-    }
-    const duration = estimate.duration || Math.max(...estimate.lines.map((line) => line.end));
-    const place = (start, end) => ({left: `${start / duration * 100}%`, width: `${Math.max(end - start, 0) / duration * 100}%`});
-    const voices = rows(estimate.lines);
-    const lanes = [h("div", {class: "lane", style: {"--rows": voices.count}}, estimate.lines.map((line, index) => h("span", {
-      class: "clip", title: `${line.speaker}: ${line.text}`,
-      style: {...place(line.start, line.end), "--row": voices.placed[index], background: toneColor(
-        estimate.speakers.find((speaker) => speaker.name === line.speaker)?.tone ?? "narrator")},
-    })))];
-    if (estimate.sounds.length) {
-      const sounds = rows(estimate.sounds);
-      lanes.push(h("div", {class: "lane", style: {"--rows": sounds.count}}, estimate.sounds.map((sound, index) => h("span", {
-        class: `clip ${sound.loop ? "bed" : "cue"}`, title: sound.name,
-        style: {...place(sound.start, sound.end), "--row": sounds.placed[index]},
-      }))));
-    }
-    box.replaceChildren(
-      h("div", {class: "estimate-head"},
-        h("span", {}, h("strong", {}, "Estimated timeline"), ` · ${estimate.lines.length} lines, no audio yet`),
-        h("span", {class: "num"}, `≈ ${clock(duration)}`)),
-      h("div", {class: "lanes"}, lanes));
-  }
-
   async function newProject() {
     const dialog = $("new-dialog");
     $("new-name").value = "";
@@ -1099,6 +1070,7 @@ export function startWorkspace() {
     const area = $("script-text");
     area.addEventListener("input", () => { paintEditor(); saveScript({text: area.value}); });
     area.addEventListener("blur", () => flushScript());
+    scriptView.bind();
     $("title").addEventListener("input", (event) => saveScript({title: event.target.value}));
     $("strict").addEventListener("change", (event) => saveScript({strict_source: event.target.checked}, {now: true}));
     $("rewrite").addEventListener("click", rewrite);
@@ -1152,8 +1124,11 @@ export function startWorkspace() {
     reviewWriterProposal,
     undoWriter,
     loadExample,
-    renderSaveState
+    renderSaveState,
+    painted: () => scriptView.painted()
   });
+  const scriptView = createScriptView({state, $: (...args) => $(...args), h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows});
+  const {renderEstimate} = scriptView;
   const {castRunning, castJob, slotNote, slotWorking, speakerLines, missingItems, pickSlot, ensurePick, renderCast, renderCastLists, field, renderSlotEditor, noteBox, sourceSwitch, voiceEditor, soundEditor, renderGeneratorSettings, renderCastActions} = createCast({
     state,
     $: (...args) => $(...args),

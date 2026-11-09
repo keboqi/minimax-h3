@@ -276,6 +276,31 @@ class Drama3PageScriptTests(unittest.TestCase):
                                                                 "script_mode": DRAMA3_SCRIPT_BASIC}))
         self.assertEqual(basic["sounds"], [])
 
+    def test_the_preview_numbers_each_line_and_sound_with_its_script_line(self):
+        script = "\n".join([
+            "Mia: Plums! <#0.4#> Two for one.",              # 1: two turns, one line
+            '<parallel room="small_room" stage="Mia=-0.4, Leo=0.4">',
+            '  <sound loop="true" duration="20" name="rain">Steady rain on a tin roof</sound>',  # 3
+            "",
+            "  <parallel>",
+            '    <sound name="door" duration="2">A door</sound>',  # 6
+            "    Leo: Who's there?",                           # 7
+            "    <sequential>",
+            "      <#1.0#>",
+            "      Mia: Only me. [laughs]",                     # 10, overlapping Leo
+            "    </sequential>",
+            "  </parallel>",
+            "</parallel>",
+            "Leo: [sighs]",                                    # 14: nothing to hear, left off the timeline
+            "Leo: Come in.",                                   # 15
+        ])
+        preview = self.ok(self.client.post(f"{API}/preview", json={"text": script, "script_mode": DRAMA3_SCRIPT_ADVANCED}))
+        self.assertEqual([(line["text"], line["line"]) for line in preview["lines"]],
+                         [("Plums!", 1), ("Two for one.", 1), ("Who's there?", 7), ("Only me.", 10), ("Come in.", 15)])
+        self.assertEqual([(sound["name"], sound["line"]) for sound in preview["sounds"]], [("rain", 3), ("door", 6)])
+        basic = self.ok(self.client.post(f"{API}/preview", json={"text": script, "script_mode": DRAMA3_SCRIPT_BASIC}))
+        self.assertEqual([line["line"] for line in basic["lines"]], [1, 7, 10, 15])
+
 
 if __name__ == "__main__":
     unittest.main()
