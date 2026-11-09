@@ -11,7 +11,7 @@ import {renderResult, bindResult, afterResult} from "./result.js";
 
 const STORE = "h3-dubbing-page";
 const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["result", "Result"]];
-const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source"];
+const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source", "pendingRuns"];
 
 export const app = {
   boot: null,
@@ -28,6 +28,7 @@ export const app = {
   projects: [],
   screen: "source",
   runs: {},
+  pendingRuns: {},
   focus: 0,
   picks: new Set(),
   filter: "all",
@@ -175,11 +176,9 @@ async function poll() {
     polling = setTimeout(poll, POLL_MS * 3);
     return;
   }
-  const before = app.runs;
   app.runs = data.runs;
   for (const [kind, run] of Object.entries(app.runs)) {
-    const was = before[kind];
-    if (run && was && was.id === run.id && was.active && !run.active) await finished(kind, run);
+    await handleCompletion(kind, run);
   }
   updateRunViews();
   if (Object.values(app.runs).some((run) => run && run.active)) polling = setTimeout(poll, POLL_MS);
@@ -189,10 +188,19 @@ function watch() {
   if (!polling) polling = setTimeout(poll, 150);
 }
 
+// A pending ID survives reloads until its completion is consumed.
+async function handleCompletion(kind, run) {
+  if (!run || run.active || app.pendingRuns[kind] !== run.id) return;
+  delete app.pendingRuns[kind];
+  saveSettings();
+  await finished(kind, run);
+}
+
 async function finished(kind, run) {
   if (run.error) toast(run.error, {error: true});
   else if (run.status && run.status !== "Done.") toast(run.status);
   if (kind === "analyze" && run.task === "analyze" && run.session && !run.error) {
+    app.project = run.project ? {name: run.project, session: run.session} : null;
     app.sessionId = run.session;
     await refresh();
     go("review");
@@ -245,7 +253,10 @@ export async function startRun(path, body) {
     const data = await api.post(path, body);
     const run = data.run;
     app.runs = {...app.runs, [run.kind]: run};
+    app.pendingRuns[run.kind] = run.id;
+    saveSettings();
     updateRunViews();
+    await handleCompletion(run.kind, run);
     watch();
     return run;
   } catch (error) {
@@ -359,6 +370,7 @@ async function start() {
     app.settings.pipeline = app.boot.pipelines[0].key;
   }
   app.projects = app.boot.projects;
+  app.pendingRuns = saved.pendingRuns || {};
   app.project = saved.project || null;
   app.sourceTab = saved.sourceTab || "upload";
   app.source = saved.source || null;

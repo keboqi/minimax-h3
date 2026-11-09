@@ -141,6 +141,36 @@ class WorkshopPageTests(PageTests):
             self.client.post(f"{API}/analyze", json={"source": str(self.media)})
             self.assertEqual(self.wait("analyze")["error"], "Gemini said no.")
 
+    def test_analysis_advances_only_the_attached_project(self):
+        saved = self.client.post(f"{API}/project/save", json={"name": "Example", "source": str(self.media)}).json()
+        project = saved["project"]
+        for attempt, expected in enumerate(("Example", "Example", None)):
+            if attempt == 2:
+                # Another browser still holds the original selection.
+                project = saved["project"]
+            analyzed = self.session([])
+            with patch.object(pipeline, "analyze", return_value=iter([pipeline.Analysis(analyzed, "Done.")])):
+                self.client.post(f"{API}/analyze", json={"source": str(self.media), "project": project,
+                                                         "pipeline": pipeline.PIPELINE_MANUAL})
+                run = self.wait("analyze")
+            self.assertEqual((run["project"], run["session"], run["error"]), (expected, analyzed.id, None))
+            if expected:
+                project = {"name": run["project"], "session": run["session"]}
+
+    def test_prepared_audio_download_with_unicode_filename(self):
+        speech = self.root / "日本語-speech.mp3"
+        speech.write_bytes(b"vocals")
+        def prepare(*values):
+            yield str(speech), "Ready."
+
+        with patch.object(self.handlers, "prepare_speech", prepare):
+            self.client.post(f"{API}/prepare-audio", json={"source": str(self.media)})
+            run = self.wait("analyze")
+        self.assertIsNone(run["error"])
+        download = self.client.get(f"{API}/run-file", params={"id": run["id"]})
+        self.assertEqual(download.content, b"vocals")
+        self.assertIn("filename*=utf-8''", download.headers["content-disposition"])
+
     def test_studio_only_steps_say_where_to_go(self):
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
         for path, body in (("preview", {"session": created.id, "line": 0}), ("dub", {"session": created.id}),
@@ -171,9 +201,9 @@ class WorkshopPageTests(PageTests):
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
         folder = self.runtime.outputs_dir / "dubbing"
         folder.mkdir(parents=True)
-        output = folder / "talk.mp3"
+        output = folder / "日本語.mp3"
         output.write_bytes(b"mix")
-        (folder / "talk.french.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nSalut\n", encoding="utf-8")
+        (folder / "日本語.french.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nSalut\n", encoding="utf-8")
         tracks = player_folder(output)
         tracks.mkdir(parents=True)
         dub, original = tracks / "dub.mp3", tracks / "original.mp3"
@@ -186,11 +216,13 @@ class WorkshopPageTests(PageTests):
         sessions.modify(created, lambda current: current.data.update(last_output=str(output)))
         result = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]
         self.assertIn("h3-dub-player", result["html"])
-        self.assertEqual([f["name"] for f in result["files"]], ["talk.mp3", "talk.french.srt"])
+        self.assertEqual([f["name"] for f in result["files"]], ["日本語.mp3", "日本語.french.srt"])
         self.assertFalse(result["separated"])
         self.assertEqual(self.client.get(f"{API}/track", params={"session": created.id, "name": "dub"}).content, b"dub")
         self.assertEqual(self.client.get(f"{API}/track", params={"session": created.id, "name": "secrets"}).status_code, 404)
-        self.assertEqual(self.client.get(f"{API}/output", params={"session": created.id, "name": "talk.mp3"}).content, b"mix")
+        download = self.client.get(f"{API}/output", params={"session": created.id, "name": output.name})
+        self.assertEqual(download.content, b"mix")
+        self.assertIn("filename*=utf-8''", download.headers["content-disposition"])
         self.assertEqual(self.client.get(f"{API}/output", params={"session": created.id, "name": "../x"}).status_code, 404)
         shared = self.client.post(f"{API}/share", json={"session": created.id}).json()["session"]
         self.assertIn("/dub-share/", shared["share"])

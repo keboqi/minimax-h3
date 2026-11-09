@@ -124,11 +124,12 @@ def found() -> Iterator[None]:
         raise not_found() from exc
 
 
-def file_response(path, *, cache: str = "private, max-age=3600", media_type: str | None = None) -> FileResponse:
+def file_response(path, *, cache: str = "private, max-age=3600", media_type: str | None = None,
+                  filename: str | None = None) -> FileResponse:
     """Serve ``path``, or 404 when it is no file."""
     if not path or not Path(path).is_file():
         raise not_found()
-    return FileResponse(path, media_type=media_type, headers={"Cache-Control": cache})
+    return FileResponse(path, media_type=media_type, filename=filename, headers={"Cache-Control": cache})
 
 
 def timeline_payload(settings: dict) -> dict:

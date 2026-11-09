@@ -6,6 +6,11 @@ import {clock, copyText, esc, icon, plural, ranges, rich, toast} from "./ui.js";
 
 const TONES = ["#c92a2a", "#1864ab", "#2b8a3e", "#6741d9", "#d9480f", "#9c36b5", "#c2255c", "#a07800"];
 
+function editTime(seconds) {
+  const ms = Math.round(seconds * 1000);
+  return `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(3).padStart(6, "0")}`;
+}
+
 function flagOf(line, same) {
   const flags = line.flags;
   if (flags.includes("failed")) return ["Take failed", "flag-fail"];
@@ -138,8 +143,8 @@ function table(app) {
         <tbody>${app.session.board.lines.map((line, index) => `
           <tr data-row="${index}">
             <td class="mono">${index + 1}</td>
-            <td><input class="mono" data-cell="1" value="${esc(clock(line.s))}" aria-label="Start of line ${index + 1}"></td>
-            <td><input class="mono" data-cell="2" value="${esc(clock(line.e))}" aria-label="End of line ${index + 1}"></td>
+            <td><input class="mono" data-cell="1" value="${esc(editTime(line.s))}" aria-label="Start of line ${index + 1}"></td>
+            <td><input class="mono" data-cell="2" value="${esc(editTime(line.e))}" aria-label="End of line ${index + 1}"></td>
             <td><input data-cell="3" value="${esc(line.speakerId)}" aria-label="Speaker of line ${index + 1}"></td>
             <td><textarea data-cell="4" rows="2" aria-label="Original of line ${index + 1}">${esc(line.source)}</textarea></td>
             <td><textarea data-cell="5" rows="2" aria-label="New text of line ${index + 1}">${esc(line.translation)}</textarea></td>
@@ -197,8 +202,8 @@ function inspector(app) {
         ${line.problem ? `<div class="alert alert-fail" role="alert"><strong>Take failed, so the original voice was kept.</strong>
           ${esc(line.problem)} Use New take, then dub again.</div>` : ""}
         <div class="grid-3">
-          <label class="field">Start<input class="mono" data-line-field="start" value="${esc(clock(line.s))}"></label>
-          <label class="field">End<input class="mono" data-line-field="end" value="${esc(clock(line.e))}"></label>
+          <label class="field">Start<input class="mono" data-line-field="start" value="${esc(editTime(line.s))}"></label>
+          <label class="field">End<input class="mono" data-line-field="end" value="${esc(editTime(line.e))}"></label>
           <label class="field">Speaker<input data-line-field="speaker" list="speaker-list" value="${esc(line.speakerId)}">
             <datalist id="speaker-list">${speakers.map((s) => `<option value="${esc(s)}"></option>`).join("")}</datalist></label>
         </div>
@@ -272,38 +277,47 @@ export function renderReview(app) {
 
 // ---------------------------------------------------------------------------
 
-function keyOf(app, index) {
-  const line = app.session.board.lines[index];
+function keyOf(line, index) {
   return {index, start: line.s, speaker: line.speakerId, source: line.source};
 }
 
-async function saveLine(app, changes = {}) {
-  const index = app.focus;
-  const line = app.session.board.lines[index];
-  const box = document.querySelector(`[data-inspector="${index}"]`);
-  if (!line || !box) return;
-  const read = (name) => box.querySelector(`[data-line-field="${name}"]`)?.value ?? "";
-  const body = {session: app.session.id, key: keyOf(app, index), start: read("start"), end: read("end"),
-    speaker: read("speaker"), original: read("original"), translation: read("translation"), dub: line.dub, ...changes};
-  const same = body.start === clock(line.s) && body.end === clock(line.e) && body.speaker === line.speakerId
-    && body.original === line.source && body.translation === line.translation && body.dub === line.dub;
-  if (same) return;
-  try {
-    const data = await api.patch("line", body);
-    // The viewer may already be typing in the next field: keep them there after the redraw.
+// Serialize blur saves. While newer typing is still in the DOM, leave that editor mounted.
+let saveQueue = Promise.resolve();
+let editVersion = 0;
+const savedInspectorLines = new WeakMap();
+
+function enqueueSave(save) {
+  const version = ++editVersion;
+  saveQueue = saveQueue.then(() => save(() => version === editVersion))
+    .catch((error) => toast(error.message, {error: true}));
+}
+
+function saveLine(app, fields) {
+  const box = document.querySelector("[data-inspector]");
+  if (!box) return;
+  const index = Number(box.dataset.inspector);
+  const session = app.session.id;
+  const initial = {line: app.session.board.lines[index], index};
+  enqueueSave(async (canRedraw) => {
+    // A preceding save can change the source, speaker or position used to identify this line.
+    const saved = savedInspectorLines.get(box) || initial;
+    const {line} = saved;
+    const key = keyOf(line, saved.index);
+    const data = await api.patch("line", {session, key, start: line.s, end: line.e, speaker: line.speakerId,
+      original: line.source, translation: line.translation, dub: line.dub, ...fields});
+    savedInspectorLines.set(box, {index: data.focus, line: data.session.board.lines[data.focus]});
+    if (app.sessionId !== session) return;
+    app.setSession(data.session, {focus: box.isConnected ? data.focus : undefined});
+    if (!canRedraw()) return;
     const next = document.activeElement?.dataset?.lineField;
     const caret = document.activeElement?.selectionStart;
-    // A line clicked meanwhile keeps the focus; otherwise it follows this line to its new place.
-    app.setSession(data.session, {focus: app.focus === index ? data.focus : undefined});
     app.render();
     const field = next && document.querySelector(`[data-line-field="${next}"]`);
     if (field) {
       field.focus();
       if (typeof caret === "number") field.setSelectionRange(caret, caret);
     }
-  } catch (error) {
-    toast(error.message, {error: true});
-  }
+  });
 }
 
 async function edit(app, path, body) {
@@ -340,27 +354,24 @@ function tableRows(app) {
   return rows;
 }
 
-async function saveTable(app) {
+function saveTable(app) {
   const rows = tableRows(app);
-  // Where the viewer went next (another cell), to return them there after the table is drawn again.
-  const next = document.activeElement?.closest?.(".lines-table [data-cell]");
-  const place = next ? [next.closest("tr").dataset.row ?? `new${next.closest("tr").dataset.new}`, next.dataset.cell] : null;
-  app.newRows = rows.filter((row) => row[0] === null);
-  try {
-    const data = await api.put("lines", {session: app.session.id, rows});
+  const session = app.session.id;
+  enqueueSave(async (canRedraw) => {
+    const data = await api.put("lines", {session, rows});
+    if (app.sessionId !== session) return;
     app.setSession(data.session);
-    // A finished new row is now a saved line; unfinished ones stay in the editor.
-    const saved = new Set(data.session.board.lines.map((line) => `${clock(line.s)}|${line.source}`));
-    app.newRows = app.newRows.filter((row) => !saved.has(`${row[1]}|${row[4]}`));
+    app.newRows = data.unfinished;
     if (data.status) toast(data.status.replace(/\*\*/g, ""));
+    if (!canRedraw()) return;
+    const next = document.activeElement?.closest(".lines-table [data-cell]");
+    const row = next?.closest("tr").dataset;
     app.render();
-    if (place) {
-      const row = place[0].startsWith("new") ? `[data-new="${place[0].slice(3)}"]` : `[data-row="${place[0]}"]`;
-      document.querySelector(`.lines-table tr${row} [data-cell="${place[1]}"]`)?.focus();
+    if (next) {
+      const selector = row.row !== undefined ? `[data-row="${row.row}"]` : `[data-new="${row.new}"]`;
+      document.querySelector(`.lines-table tr${selector} [data-cell="${next.dataset.cell}"]`)?.focus();
     }
-  } catch (error) {
-    toast(error.message, {error: true});
-  }
+  });
 }
 
 export function bindReview(app) {
@@ -458,27 +469,22 @@ export function bindReview(app) {
       app.go("dub");
     }
   });
-  screen.addEventListener("focusout", (event) => {
-    if (app.screen !== "review" || !app.session) return;
-    if (event.target.closest("[data-line-field]")) {
-      saveLine(app);
-    } else if (event.target.closest(".lines-table [data-cell]") && event.target.type !== "checkbox"
-               && event.target.value !== event.target.defaultValue) {
-      saveTable(app);
-    }
-  });
   screen.addEventListener("change", (event) => {
-    if (app.screen === "review" && event.target.matches('.lines-table [data-cell="6"]')) saveTable(app);
+    if (app.screen !== "review" || !app.session) return;
+    const field = event.target.dataset.lineField;
+    if (field) saveLine(app, {[field]: event.target.value});
+    else if (event.target.matches(".lines-table [data-cell]")) saveTable(app);
   });
   screen.addEventListener("keydown", (event) => {
     if (app.screen !== "review") return;
     const field = event.target.dataset?.lineField;
     if (event.key === "Enter" && (field === "start" || field === "end")) {
       event.preventDefault();
-      saveLine(app);
+      saveLine(app, {[field]: event.target.value});
     }
   });
   screen.addEventListener("input", (event) => {
+    if (event.target.matches("[data-line-field], [data-cell]")) editVersion++;
     if (app.screen === "review" && event.target.dataset.action === "lines-reply") app.linesReply = event.target.value;
   });
 }

@@ -188,8 +188,10 @@ export async function afterResult(app) {
   const slot = document.getElementById("player-slot");
   const result = app.session?.result;
   if (!slot || !result) return;
-  const key = `${app.session.id}:${result.html.length}:${result.when}:${result.timed}`;
+  const key = result.html;
   if (mounted.key !== key) {
+    if (!bindPlayers) bindPlayers = (await import("./player.js")).bindPlayers;
+    if (!slot.isConnected) return;
     for (const media of mounted.node?.querySelectorAll("audio, video") || []) media.pause();
     const node = document.createElement("div");
     node.className = "player-host";
@@ -205,8 +207,7 @@ export async function afterResult(app) {
       cues.before(tools);
     }
     mounted = {key, node};
-    if (!bindPlayers) bindPlayers = (await import("./player.js")).bindPlayers;
-    slot.append(node);
+    slot.replaceChildren(node);
     bindPlayers(node);
   } else {
     slot.append(mounted.node);

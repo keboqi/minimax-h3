@@ -476,11 +476,13 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def save_table(request: Request, body: dict = Body(...)):
         owner_of(request)
         session_id = body.get("session")
-        _rows, status = handlers.save_lines(session_id, body.get("rows") or [])
+        rows = body.get("rows") or []
+        _rows, status = handlers.save_lines(session_id, rows)
         problem = _error(status)
         if problem:
             raise H3Error(problem)
-        return session_answer(request, session_id, status=_plain(status))
+        unfinished = [row for row in rows if row and row[0] is None and segment_tools.row_segment(row) is None]
+        return session_answer(request, session_id, status=_plain(status), unfinished=unfinished)
 
     @app.post(f"{API}/speaker", include_in_schema=False)
     @guarded
@@ -609,6 +611,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     @guarded
     def analyze(request: Request, body: dict = Body(...)):
         project = body.get("project")
+        if not isinstance(project, dict) or not project.get("name"):
+            project = None
         values = [checked_source(body.get("source")), None, bool(body.get("separate", True)),
                   body.get("separator_model") or DEFAULT_SEPARATOR, body.get("pipeline") or pipeline.PIPELINE_LOCAL,
                   body.get("source_language") or "Auto-detect", body.get("target_language") or "",
@@ -617,13 +621,19 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                   body.get("gemini_model") or DEFAULT_GEMINI_PROMPT_MODEL, body.get("api_key") or "",
                   body.get("notes") or "", bool(body.get("reuse", True)), bool(body.get("refine_timestamps", True)),
                   bool(body.get("translation_context", False)),
-                  project if isinstance(project, dict) and project.get("name") else None,
+                  project,
                   body.get("manual_reply") or "", body.get("style") or pipeline.DEFAULT_STYLE,
                   bool(body.get("rewrite", False))]
         if not values[0]:
             raise H3Error("Upload a video or audio file, or pick one from Media.")
-        return start(request, ANALYZE, SOURCE_KEY, "analyze", handlers.analyze_source, values,
-                     reader(3, session_index=0))
+        read_frame = reader(3, session_index=0)
+
+        def read_analysis(run, update):
+            read_frame(run, update)
+            if run.session and handlers.project_selection(project, run.session):
+                run.project = project["name"]
+
+        return start(request, ANALYZE, SOURCE_KEY, "analyze", handlers.analyze_source, values, read_analysis)
 
     @app.post(f"{API}/prepare-audio", include_in_schema=False)
     @guarded
@@ -737,9 +747,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             run = owned_run(request, id)
         if not run.file:
             raise not_found()
-        response = file_response(run.file, cache="no-store")
-        response.headers["Content-Disposition"] = f'attachment; filename="{Path(run.file).name}"'
-        return response
+        return file_response(run.file, cache="no-store", filename=Path(run.file).name)
 
     @app.post(f"{API}/interrupt", include_in_schema=False)
     @guarded
@@ -807,6 +815,4 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         files = {path.name: path for path in (result.video, result.audio, *result.subtitles) if path is not None}
         if name not in files:
             raise not_found()
-        response = file_response(files[name])
-        response.headers["Content-Disposition"] = f'attachment; filename="{name}"'
-        return response
+        return file_response(files[name], filename=name)
