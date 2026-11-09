@@ -288,9 +288,10 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
             "aria-label": `Bed ${bed.name}, ${bed.meta}, line ${bed.n}`,
           }, h("strong", {}, bed.name), h("span", {}, bed.meta)))) : null)));
     });
-    const top = box.scrollTop;
+    // Holding the old height while the content is swapped keeps the page from jumping.
+    box.style.minHeight = `${box.offsetHeight}px`;
     box.replaceChildren(...out);
-    box.scrollTop = top;
+    box.style.minHeight = "";
     markPicked();
     updateWindow();
   }
@@ -334,9 +335,20 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     markTimeline();
   }
 
-  function centre(box, element) {
-    const top = element.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-    box.scrollTo({top: Math.max(0, top - box.clientHeight / 2 + element.offsetHeight / 2), behavior: "smooth"});
+  /** The part of the window the script can be seen in: above the sticky action bar. */
+  function viewport() {
+    const bar = document.querySelector(".actionbar");
+    return {top: 0, bottom: bar ? bar.getBoundingClientRect().top : window.innerHeight};
+  }
+
+  /** Scroll the page so ``element`` sits in the middle of what can be seen. */
+  function centre(element) {
+    const rect = element.getBoundingClientRect();
+    const view = viewport();
+    const middle = (view.top + view.bottom) / 2;
+    // A line taller than the view starts at its top instead.
+    const delta = rect.height > view.bottom - view.top - 40 ? rect.top - view.top - 24 : rect.top + rect.height / 2 - middle;
+    window.scrollBy({top: delta, behavior: "smooth"});
   }
 
   /** Open line ``n`` in the code view with the caret at its start. */
@@ -352,8 +364,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     placeBand();
     markTimeline();
     const span = lineSpan(n);
-    if (span) centre($("code-view"), span);
-    $("code-view").scrollIntoView({block: "nearest"});
+    if (span) centre(span);
     if (flash) {
       const band = $("line-band");
       band.classList.remove("flash");
@@ -376,7 +387,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     }
     markPicked();
     markTimeline();
-    if (target) { centre(box, target); $("visual-view").scrollIntoView({block: "nearest"}); }
+    if (target) centre(target);
   }
 
   function pick(n) {
@@ -400,32 +411,35 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       if (state.project) paintEditor();  // A hidden editor can't measure its height, so it is sized when shown.
       placeBand();
       const span = lineSpan(state.scriptLine);
-      if (span) centre($("code-view"), span);
+      if (span && state.project) centre(span);
     } else {
       renderVisual();
       const target = $("visual-view").querySelector(`[data-line="${state.scriptLine}"]`);
-      if (target) centre($("visual-view"), target);
+      if (target) centre(target);
     }
     updateWindow();
   }
 
   // -- Timeline ----------------------------------------------------------------
 
+  /** The first and last script lines on screen, and whether some of the script is off screen. */
   function visibleLines() {
-    if (state.scriptView === "code") {
-      const box = $("code-view");
-      const spans = [...$("script-mirror").querySelectorAll("[data-line]")];
-      const top = box.scrollTop, bottom = top + box.clientHeight;
-      const shown = spans.filter((span) => span.offsetTop + span.offsetHeight > top + 4 && span.offsetTop < bottom - 4);
-      return shown.length ? [Number(shown[0].dataset.line), Number(shown[shown.length - 1].dataset.line), spans.length] : null;
-    }
-    const box = $("visual-view").getBoundingClientRect();
-    const lines = [...$("visual-view").querySelectorAll("[data-line]")].filter((element) => {
+    const code = state.scriptView === "code";
+    const elements = [...(code ? $("script-mirror") : $("visual-view")).querySelectorAll("[data-line]")];
+    if (!elements.length) return null;
+    const view = viewport();
+    let first = 0, last = 0, hidden = false;
+    for (const element of elements) {
       const rect = element.getBoundingClientRect();
-      return rect.bottom > box.top + 4 && rect.top < box.bottom - 4;
-    }).map((element) => Number(element.dataset.line));
-    const all = [...$("visual-view").querySelectorAll("[data-line]")].map((element) => Number(element.dataset.line));
-    return lines.length ? [Math.min(...lines), Math.max(...lines), Math.max(...all)] : null;
+      if (rect.bottom > view.top + 4 && rect.top < view.bottom - 4) {
+        const line = Number(element.dataset.line);
+        first = first ? Math.min(first, line) : line;
+        last = Math.max(last, line);
+      } else {
+        hidden = true;
+      }
+    }
+    return first ? {first, last, hidden} : null;
   }
 
   function updateWindow() {
@@ -435,12 +449,10 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       if (!marker) return;
       const range = visibleLines();
       const duration = state.estimate?.duration || 0;
-      const scrolls = state.scriptView === "code" ? $("code-view").scrollHeight > $("code-view").clientHeight + 4
-        : $("visual-view").scrollHeight > $("visual-view").clientHeight + 4;
-      marker.hidden = !range || !duration || !scrolls || !timed().length;
+      marker.hidden = !range || !range.hidden || !duration || !timed().length;
       if (marker.hidden) return;
-      const start = startOf(range[0]);
-      const end = Math.max(endOf(range[1]), start + 0.5);
+      const start = startOf(range.first);
+      const end = Math.max(endOf(range.last), start + 0.5);
       marker.style.left = `${start / duration * 100}%`;
       marker.style.width = `${Math.min(end - start, duration - start) / duration * 100}%`;
     });
@@ -540,8 +552,8 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     const area = $("script-text");
     for (const type of ["keyup", "click", "select", "focus"]) area.addEventListener(type, onCaret);
     area.addEventListener("input", onCaret);
-    $("code-view").addEventListener("scroll", updateWindow, {passive: true});
-    $("visual-view").addEventListener("scroll", updateWindow, {passive: true});
+    // The script grows with its text and the page scrolls, so the In view window follows the page.
+    window.addEventListener("scroll", updateWindow, {passive: true});
     window.addEventListener("resize", () => { placeBand(); updateWindow(); });
     $("script-view").replaceChildren(...[["visual", "Visual", "M3 4h18v6H3zM3 14h12v6H3z"], ["code", "Code", "m8 7-5 5 5 5M16 7l5 5-5 5"]]
       .map(([view, label, icon]) => h("button", {type: "button", "data-view": view, "aria-pressed": String(state.scriptView === view),

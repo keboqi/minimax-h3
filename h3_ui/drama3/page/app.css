@@ -85,7 +85,7 @@ a.step:hover { background: var(--raised); }
 .steps-note { flex: 1 1 260px; text-align: right; font-size: 12px; color: var(--muted); }
 
 /* Layout */
-.main { display: flex; flex-direction: column; gap: 16px; max-width: 1440px; margin: 0 auto; padding: 16px 24px 24px; }
+.main { display: flex; flex-direction: column; gap: 16px; padding: 16px 24px 24px; }
 .columns { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
 .lines { flex: 999 1 560px; min-width: 0; }
 .side { flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
@@ -193,9 +193,8 @@ button.step:hover { background: var(--raised); }
 .speaker-chip i { width: 10px; height: 10px; border-radius: 50%; }
 .speaker-chip .count { color: var(--muted); }
 .speaker-chip.unknown { background: var(--flag-bg); color: var(--flag); }
-/* The script box scrolls inside the card, so the timeline under it can show where it is. */
-.editor, .visual { position: relative; margin: 12px 18px 0; max-height: max(380px, calc(100vh - 400px)); overflow: auto;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--raised); overscroll-behavior: contain; }
+/* The script box grows with its text; the page is the only thing that scrolls. */
+.editor, .visual { position: relative; margin: 12px 18px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
 .editor-body { position: relative; }
 .line-band { position: absolute; left: 0; right: 0; background: var(--accent-soft); pointer-events: none; }
 .line-band.flash { animation: line-flash 1.4s ease-out; }

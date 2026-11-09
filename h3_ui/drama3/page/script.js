@@ -58,12 +58,13 @@ export function createScript({state, $, h, toneColor, saveScript, writerService,
     const area = $("script-text");
     const speakers = scriptSpeakers(area.value);
     $("script-mirror").innerHTML = highlight(area.value, speakers);
-    // The editor box scrolls; resizing the textarea mustn't move it.
-    const box = $("code-view");
-    const top = box.scrollTop;
+    // The editor grows with the script and the page scrolls. Holding the box's height while the
+    // textarea is measured keeps the page from shrinking under the reader and jumping.
+    const body = area.parentElement;
+    body.style.minHeight = `${body.offsetHeight}px`;
     area.style.height = "auto";
     area.style.height = `${Math.max(360, area.scrollHeight)}px`;
-    box.scrollTop = top;
+    body.style.minHeight = "";
     $("speakers").replaceChildren(...speakers.map((speaker) => h("span", {
       class: `speaker-chip${speaker.known ? "" : " unknown"}`,
       title: speaker.known ? `${speaker.count} line${speaker.count > 1 ? "s" : ""}` : "Not in the cast: this line can't be spoken",
