@@ -44,70 +44,53 @@ _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
 # Describe rendering, not story content: these apply to portraits and every scene.
 STYLE_PRESETS = {
     "Digital painting": "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
-                         "expressions. Solid forms and materials, restrained visible brushwork, sharper "
-                         "detail around faces and hands, simpler background edges. Use coherent local "
-                         "colors and clear foreground, middle ground and distance. Keep gestures and "
-                         "interactions readable; choose light and atmosphere from the scene.",
+                        "expressions. Solid forms and materials, restrained visible brushwork, sharper "
+                        "detail around faces and hands, and coherent local colors. Keep gestures readable.",
     "Realistic photo": "Full-color live-action film still with natural human proportions, individual facial "
-                              "features, subtle skin texture and believable fabric and surfaces. "
-                              "Physically plausible light, restrained color grading and fine film grain. "
-                              "Keep interacting subjects in focus and backgrounds legible when needed. "
-                              "Use the story's actual era, wardrobe and setting; avoid fashion-ad posing "
-                              "and beauty retouching.",
+                       "features, subtle skin texture and believable fabric and surfaces. Physically "
+                       "plausible light, restrained color grading and fine film grain. Avoid fashion-ad "
+                       "posing and beauty retouching.",
     "Anime": "Full-color 2D dramatic animation still with controlled fine outlines, consistent character proportions "
              "and clean two- or three-tone cel shading. Individually designed faces with restrained, "
-             "readable expressions; detailed painted environments with matching perspective. Separate "
-             "characters from backgrounds through value and color. Adapt palette and light to the scene; "
-             "avoid chibi proportions, exaggerated reaction symbols and decorative bloom.",
+             "readable expressions. Avoid chibi proportions, exaggerated reaction symbols and decorative bloom.",
     "3D animation": "Full-color stylized 3D animated feature still with appealing, consistent character proportions "
-                    "and expressive but restrained faces. Rounded modeled forms, tactile cloth and "
-                    "convincing material differences, soft indirect illumination and clear silhouettes. "
-                    "Keep eyes and skin natural within the stylization, without a glossy plastic finish. "
-                    "Use scene-appropriate colors, lighting and age-appropriate character designs.",
-    "2D cartoon": "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes and "
-                  "bold flat colors. Consistent character proportions, distinct silhouettes and "
-                  "expressive faces; minimal cel shading and uncluttered backgrounds with clear "
-                  "perspective. Make gestures and interactions easy to read. Match expressions and "
-                  "palette to the story, including serious moments. One continuous scene without "
-                  "speech bubbles, lettering or comic panels.",
+                    "and expressive but restrained faces. Rounded modeled forms, tactile cloth, "
+                    "convincing material differences and clear silhouettes. Keep eyes and skin natural "
+                    "within the stylization, without a glossy plastic finish.",
+    "2D cartoon": "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes, "
+                  "bold flat colors and minimal cel shading. Consistent character proportions, distinct "
+                  "silhouettes and expressive faces, serious when the story is. One continuous image "
+                  "without speech bubbles, lettering or comic panels.",
     "American comic": "American comic-book illustration with bold brush-ink contours, varied line "
                       "weight, sculpted spot blacks and selective cross-hatching. Clearly modeled "
                       "anatomy, distinct faces and expressive gestures; rich flat colors with crisp "
-                      "shadow shapes and restrained halftone texture. Keep action and quiet exchanges "
-                      "equally readable. Preserve the story's clothing, physique and setting without "
-                      "adding superhero costumes or exaggerated muscles. One continuous image, "
-                      "no panel borders, speech balloons, captions or lettering.",
+                      "shadow shapes and restrained halftone texture. Keep the story's clothing and "
+                      "physique without adding superhero costumes or exaggerated muscles. One continuous "
+                      "image, no panel borders, speech balloons, captions or lettering.",
     "Japanese comic": "Full-color Japanese manga illustration with precise pen lines, delicate "
-                      "facial detail and controlled variation in line weight. Use rich local colors, "
-                      "clean cel-shaded shadows and selective soft color gradients to establish depth. "
-                      "Consistent stylized proportions, distinct character designs and expressive "
-                      "but believable acting; detailed environments with clear perspective. Adapt "
-                      "palette and contrast to each scene, keeping eyes and gestures legible. "
-                      "Keep the image in full color throughout. One continuous "
-                      "image, no panels, speech balloons, lettering or decorative reaction symbols.",
+                      "facial detail and controlled variation in line weight. Rich local colors, "
+                      "clean cel-shaded shadows and selective color gradients. Consistent stylized "
+                      "proportions, distinct character designs and expressive but believable acting, "
+                      "with legible eyes and gestures. Full color throughout. One continuous image, "
+                      "no panels, speech balloons, lettering or decorative reaction symbols.",
     "Watercolor": "Full-color watercolor illustration with transparent layered washes, soft pigment "
-                          "edges and selective fine pencil contours. Preserve facial features, hands and "
-                          "important objects with controlled edges; let background washes soften. "
-                          "Subtle paper grain, believable proportions and readable depth. Use colors "
-                          "from the story and keep pigment density consistent across shots; avoid "
-                          "splatter or unfinished white gaps across focal subjects.",
+                  "edges and selective fine pencil contours. Preserve facial features, hands and "
+                  "important objects with controlled edges. Subtle paper grain, believable proportions "
+                  "and consistent pigment density; avoid splatter or unfinished white gaps across "
+                  "focal subjects.",
     "Oil painting": "Full-color oil painting with visible bristle strokes, layered opaque pigments "
                     "and subtle canvas texture. Model faces, hands and objects with believable "
-                    "proportions and clear light and shadow. Use richer paint detail at focal "
-                    "subjects and broader strokes in backgrounds. Keep natural material colors "
-                    "and coherent depth; adapt lighting to the story. Show the scene itself, "
-                    "without a picture frame, gallery wall or added antique costumes.",
+                    "proportions and clear light and shadow, and natural material colors. Show the "
+                    "painting itself, without a picture frame, gallery wall or added antique costumes.",
     "Children's book": "Full-color hand-painted gouache and colored-pencil storybook illustration. Matte opaque "
-                    "color shapes, subtle pencil edges and gentle paper texture; simplified but "
-                    "consistent anatomy, distinct character silhouettes and legible expressions. "
-                    "Layer environments with clear scale and perspective. Adapt warmth, contrast "
-                    "and color to the story's emotion; preserve tension or sadness when present "
-                    "instead of making every scene cheerful.",
+                       "color shapes, subtle pencil edges and gentle paper texture; simplified but "
+                       "consistent anatomy, distinct character silhouettes and legible expressions. "
+                       "Keep tension or sadness when the story has it instead of making everything cheerful.",
     "Pixel art": "Full-color narrative pixel art with a consistent coarse pixel grid, deliberate pixel clusters "
                  "and a limited shared palette. Crisp stepped edges without smoothing or mixed pixel "
                  "sizes; selective dithering for shading. Simplify forms into readable silhouettes "
-                 "while preserving each character's hair, outfit and key facial cues. Use layered "
-                 "environments and clear value separation; no game interface or decorative border.",
+                 "while preserving each character's hair, outfit and key facial cues; no game "
+                 "interface or decorative border.",
     "Flat illustration": "Full-color flat business illustration with clean geometric shapes, solid "
                          "color fills and minimal shading. Use simplified people and recognizable "
                          "objects to explain one idea at a time, with consistent proportions and a "
