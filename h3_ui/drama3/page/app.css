@@ -471,7 +471,9 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
 .still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .still:not([src]) { visibility: hidden; }
 #still-front { opacity: 0; }
-.video-caption { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); max-width: 86%; margin: 0;
+/* Centred with left/right + auto margins (not left: 50%), so long lines can use the frame's full width
+   instead of wrapping at half of it. */
+.video-caption { position: absolute; left: 0; right: 0; bottom: 5%; width: fit-content; max-width: 92%; margin: 0 auto;
   padding: 6px 14px; border-radius: 8px; background: rgba(0, 0, 0, .66); color: #fff;
   /* Sized to the video, times the chosen subtitle size, but never so large a line leaves a small video. */
   font-size: min(calc(clamp(12px, 2.2cqw, 40px) * var(--caption-scale, 1)), 5cqw); max-height: 88%; overflow: hidden;
