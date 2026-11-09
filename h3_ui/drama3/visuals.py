@@ -41,30 +41,102 @@ PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
                "moss_image": (1344, 768), "fibo2": (1344, 768)}
-# Starting points for Art direction; the planner builds its full production style on top.
+# Describe rendering, not story content: these apply to portraits and every scene.
 STYLE_PRESETS = {
-    "Ink and watercolor": "Cinematic ink and watercolor illustration: confident brush-pen linework, loose "
-                          "transparent washes, paper texture, muted palette with one warm accent per scene.",
-    "Graphic novel": "Modern graphic novel art: precise inked contours, heavy spot blacks and cross-hatching, "
-                     "flat digital color with dramatic rim light, grounded realistic anatomy.",
-    "Film noir": "Black-and-white film noir: hard single-source light, deep shadows, venetian-blind patterns, "
-                 "rain-slick streets, high contrast with fine film grain.",
-    "Anime": "Hand-painted Japanese animation look: clean cel-shaded characters, lush painted backgrounds, "
-             "soft bloom, saturated skies and expressive faces.",
-    "Chinese ink wash": "Traditional Chinese ink wash painting: expressive brushstrokes on rice paper, "
-                        "graded grey ink, generous empty space, small touches of cinnabar and indigo.",
-    "Picture book": "Warm children's picture book illustration: gouache and colored pencil, rounded friendly "
-                    "shapes, soft daylight, cozy textured details.",
-    "Painterly realism": "Cinematic painterly realism like film concept art: realistic proportions, "
-                         "atmospheric depth, volumetric light, rich color grading.",
-    "Woodcut": "Bold woodcut print: carved black lines, rough grain texture, two-color palette of black and "
-               "deep red on cream paper, strong silhouettes.",
-    "Retro pulp": "1950s pulp magazine art: dynamic poses, saturated halftone color, painted gouache "
-                  "rendering, dramatic low angles.",
-    "Pixel art": "Detailed 16-bit pixel art: limited palette, crisp dithering, side-lit scenes, cinematic "
-                 "widescreen composition.",
+    "Digital painting": "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
+                         "expressions. Solid forms and materials, restrained visible brushwork, sharper "
+                         "detail around faces and hands, simpler background edges. Use coherent local "
+                         "colors and clear foreground, middle ground and distance. Keep gestures and "
+                         "interactions readable; choose light and atmosphere from the scene.",
+    "Realistic photo": "Full-color live-action film still with natural human proportions, individual facial "
+                              "features, subtle skin texture and believable fabric and surfaces. "
+                              "Physically plausible light, restrained color grading and fine film grain. "
+                              "Keep interacting subjects in focus and backgrounds legible when needed. "
+                              "Use the story's actual era, wardrobe and setting; avoid fashion-ad posing "
+                              "and beauty retouching.",
+    "Anime": "Full-color 2D dramatic animation still with controlled fine outlines, consistent character proportions "
+             "and clean two- or three-tone cel shading. Individually designed faces with restrained, "
+             "readable expressions; detailed painted environments with matching perspective. Separate "
+             "characters from backgrounds through value and color. Adapt palette and light to the scene; "
+             "avoid chibi proportions, exaggerated reaction symbols and decorative bloom.",
+    "3D animation": "Full-color stylized 3D animated feature still with appealing, consistent character proportions "
+                    "and expressive but restrained faces. Rounded modeled forms, tactile cloth and "
+                    "convincing material differences, soft indirect illumination and clear silhouettes. "
+                    "Keep eyes and skin natural within the stylization, without a glossy plastic finish. "
+                    "Use scene-appropriate colors, lighting and age-appropriate character designs.",
+    "2D cartoon": "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes and "
+                  "bold flat colors. Consistent character proportions, distinct silhouettes and "
+                  "expressive faces; minimal cel shading and uncluttered backgrounds with clear "
+                  "perspective. Make gestures and interactions easy to read. Match expressions and "
+                  "palette to the story, including serious moments. One continuous scene without "
+                  "speech bubbles, lettering or comic panels.",
+    "American comic": "American comic-book illustration with bold brush-ink contours, varied line "
+                      "weight, sculpted spot blacks and selective cross-hatching. Clearly modeled "
+                      "anatomy, distinct faces and expressive gestures; rich flat colors with crisp "
+                      "shadow shapes and restrained halftone texture. Keep action and quiet exchanges "
+                      "equally readable. Preserve the story's clothing, physique and setting without "
+                      "adding superhero costumes or exaggerated muscles. One continuous image, "
+                      "no panel borders, speech balloons, captions or lettering.",
+    "Japanese comic": "Full-color Japanese manga illustration with precise pen lines, delicate "
+                      "facial detail and controlled variation in line weight. Use rich local colors, "
+                      "clean cel-shaded shadows and selective soft color gradients to establish depth. "
+                      "Consistent stylized proportions, distinct character designs and expressive "
+                      "but believable acting; detailed environments with clear perspective. Adapt "
+                      "palette and contrast to each scene, keeping eyes and gestures legible. "
+                      "Keep the image in full color throughout. One continuous "
+                      "image, no panels, speech balloons, lettering or decorative reaction symbols.",
+    "Watercolor": "Full-color watercolor illustration with transparent layered washes, soft pigment "
+                          "edges and selective fine pencil contours. Preserve facial features, hands and "
+                          "important objects with controlled edges; let background washes soften. "
+                          "Subtle paper grain, believable proportions and readable depth. Use colors "
+                          "from the story and keep pigment density consistent across shots; avoid "
+                          "splatter or unfinished white gaps across focal subjects.",
+    "Oil painting": "Full-color oil painting with visible bristle strokes, layered opaque pigments "
+                    "and subtle canvas texture. Model faces, hands and objects with believable "
+                    "proportions and clear light and shadow. Use richer paint detail at focal "
+                    "subjects and broader strokes in backgrounds. Keep natural material colors "
+                    "and coherent depth; adapt lighting to the story. Show the scene itself, "
+                    "without a picture frame, gallery wall or added antique costumes.",
+    "Children's book": "Full-color hand-painted gouache and colored-pencil storybook illustration. Matte opaque "
+                    "color shapes, subtle pencil edges and gentle paper texture; simplified but "
+                    "consistent anatomy, distinct character silhouettes and legible expressions. "
+                    "Layer environments with clear scale and perspective. Adapt warmth, contrast "
+                    "and color to the story's emotion; preserve tension or sadness when present "
+                    "instead of making every scene cheerful.",
+    "Pixel art": "Full-color narrative pixel art with a consistent coarse pixel grid, deliberate pixel clusters "
+                 "and a limited shared palette. Crisp stepped edges without smoothing or mixed pixel "
+                 "sizes; selective dithering for shading. Simplify forms into readable silhouettes "
+                 "while preserving each character's hair, outfit and key facial cues. Use layered "
+                 "environments and clear value separation; no game interface or decorative border.",
+    "Flat illustration": "Full-color flat business illustration with clean geometric shapes, solid "
+                         "color fills and minimal shading. Use simplified people and recognizable "
+                         "objects to explain one idea at a time, with consistent proportions and a "
+                         "small coordinated color palette. Clear visual hierarchy, generous spacing "
+                         "and a plain light background; leave an uncluttered area for slide text "
+                         "to be added later. Avoid decorative clutter, lettering, logos and invented data.",
+    "Isometric illustration": "Full-color isometric business illustration with parallel projection, "
+                              "consistent object scale and clean geometric volumes. Use restrained "
+                              "shading and coordinated colors to distinguish components. Show the "
+                              "requested system, process or workspace through clearly arranged objects "
+                              "and meaningful spatial relationships. Keep one coherent scene on a "
+                              "simple light background, with generous margins for slide text added "
+                              "later. No labels, logos, invented metrics or decorative dashboards.",
+    "Minimal vector": "Full-color minimal vector-style illustration with crisp edges, simple shapes "
+                      "and consistent stroke widths. Reduce the requested idea to a few recognizable "
+                      "elements with strong visual hierarchy, using a small coordinated palette "
+                      "on a plain light background. Keep ample negative space for slide text added "
+                      "later and maintain clarity at presentation size. No texture, ornamental "
+                      "detail, lettering, logos or invented charts and numbers.",
+    "Editorial illustration": "Full-color editorial business illustration built around one clear "
+                               "visual metaphor for the requested idea. Use simplified recognizable "
+                               "forms, confident silhouettes, restrained texture and a coordinated "
+                               "palette. Make the relationship between subjects easy to understand "
+                               "without labels; keep the focal concept distinct from a simple "
+                               "background and leave breathing room for slide text added later. "
+                               "Avoid unrelated symbols, stock handshake imagery, lettering, logos "
+                               "and invented data.",
 }
-DEFAULT_STYLE = "Ink and watercolor"
+DEFAULT_STYLE = "Digital painting"
 CUSTOM_STYLE = "Custom"
 
 

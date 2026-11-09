@@ -278,7 +278,7 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertNotIn(CUSTOM_STYLE, STYLE_PRESETS)
         for name, text in STYLE_PRESETS.items():
             self.assertEqual(preset_for(f" {text} "), name)
-        self.assertEqual(preset_for(STYLE_PRESETS["Film noir"] + " Set in 1940s Shanghai."), CUSTOM_STYLE)
+        self.assertEqual(preset_for(STYLE_PRESETS[DEFAULT_STYLE] + " Set in 1940s Shanghai."), CUSTOM_STYLE)
         self.assertEqual(preset_for(""), CUSTOM_STYLE)
 
     def test_copied_prompt_and_pasted_reply_follow_the_built_in_planner(self):

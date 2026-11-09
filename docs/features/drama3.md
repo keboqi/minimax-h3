@@ -123,7 +123,14 @@ the server for nothing. The page reads each project's mix and only that mix's ta
 **Illustrated video**, under the lines, draws one image per shot and slides them along the mix on
 the page; a 720p MP4 is rendered only when you save it to Media. Pick an **Image model**, a **Style
 preset** (which fills **Art direction**; editing it makes the preset Custom) and **Minimum shots**,
-then **Plan shots**. The plan uses the writer service set on Script, shows its elapsed time and
+then **Plan shots**. New projects default to Digital painting. The full-color presets are Digital
+painting, Realistic photo, Anime, 3D animation, 2D cartoon, American comic, Japanese comic,
+Watercolor, Oil painting, Children's book and Pixel art. Business slide options are Flat illustration,
+Isometric illustration, Minimal vector and Editorial illustration; these leave space for text to be
+added later and do not generate labels or data. Presets describe rendering and materials, while the planner adapts
+lighting and atmosphere to each story beat. Saved art direction is preserved as written; older
+preset text appears as Custom. Replan after changing art direction. The plan uses the writer
+service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
 then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
 like the planner's. The **Shot plan** lists each image's time (click it to jump there), cut or

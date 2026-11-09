@@ -106,7 +106,8 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             if (style) save({video_style: style});
           }}, presets.map((name) => h("option", {selected: name === video.preset, disabled: name === boot.custom_style && video.preset !== name}, name)))),
           videoField("Art direction", h("textarea", {rows: 3, value: video.style, oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
-            "Add the cast, setting or era. Editing it makes the preset Custom."),
+            "Controls the medium and rendering across all shots. Add a setting, era or visual constraint; "
+              + "each scene gets its own lighting. Editing makes the preset Custom. Plan again after changes."),
           videoField("Minimum shots", h("span", {class: "range-row"},
             h("input", {type: "range", min: boot.limits[0], max: boot.limits[1], step: 1, value: video.limit,
                         oninput: (event) => { limitCount.textContent = event.target.value; },

@@ -14,10 +14,18 @@ min_shots images and add more wherever the story needs them, never more than max
 moments relate: dissolve for passing time or drifting thought, cut for action and reveals.
 
 ART STYLE
-Design one specific style for the whole production that honors art_direction: the medium and
-rendering (line weight, hatching, washes, texture), genre or era references, a palette for each
-location or world, and the lighting approach. 60 to 120 words. It is appended to every image
-prompt, so never repeat it inside shot prompts.
+Design one specific rendering style for the whole production that honors art_direction: medium,
+edge treatment, shading, texture, level of stylization, and a coherent color and value approach.
+Use 40 to 80 concrete words. Treat the user's chosen medium as a constraint; do not blend in an
+unrequested medium or substitute generic 'cinematic, masterpiece, highly detailed' language.
+It is appended to every scene AND character portrait, alongside the user's art_direction, so
+complement that direction instead of repeating it. Keep story facts, individual locations, weather,
+time of day, camera framing and lighting setups out of art_style. Put those in the relevant shot.
+The style must work for both a quiet conversation and an action scene, indoors and outdoors,
+in daylight and darkness. Preserve readable faces, hands, gestures and important objects.
+Do not infer an era, culture, costume, scenery or mood from a medium's name. Derive those from
+the story or explicit user direction. Keep the same rendering language throughout, while allowing
+each shot's light and emotional tone to change with the story. Explicit user requests take priority.
 
 CONTINUITY BIBLE
 List the recurring or important visible subjects in three dictionaries: characters, props and
