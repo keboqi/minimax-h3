@@ -134,6 +134,56 @@ class Drama3PageScriptTests(unittest.TestCase):
         self.assertEqual((saved["voice_0_audio"], saved["temperature"]), ("made-meanwhile.wav", 1.2))
         self.assertEqual(saved["voice_1_description"], CAST[1]["description"])
 
+    def test_a_late_writer_answer_is_kept_for_explicit_review(self):
+        self.create()
+        self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"}, json={"text": "Mia sells plums."}))
+        def writer(*args, **kwargs):
+            self.ok(self.client.patch(f"{API}/project/script", params={"name": "Night Market"}, json={"text": "Mia sells apples."}))
+            return ("<|speaker:0|>Fresh plums!", "Rewrote.", CAST, "Market")
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", side_effect=writer):
+            answer = self.ok(self.client.post(f"{API}/project/rewrite", params={"name": "Night Market"}, json={}))
+        self.assertTrue(answer["failed"])
+        self.assertEqual(answer["script"]["text"], "Mia sells apples.")
+        self.assertTrue(answer["script"]["proposal"])
+        proposal = self.ok(self.client.get(f"{API}/project/proposal", params={"name": "Night Market"}))
+        self.assertIn("Fresh plums", proposal["text"])
+        applied = self.ok(self.client.post(f"{API}/project/proposal", params={"name": "Night Market"}, json={"id": proposal["id"]}))
+        self.assertFalse(applied["script"]["proposal"])
+        self.assertIn("Fresh plums", applied["script"]["text"])
+
+    def test_replaced_writer_proposal_requires_new_review(self):
+        self.create()
+        params = {"name": "Night Market"}
+        self.ok(self.client.patch(f"{API}/project/script", params=params, json={"text": "Mia sells plums."}))
+
+        def conflict(words, newer_text):
+            def writer(*args, **kwargs):
+                self.ok(self.client.patch(f"{API}/project/script", params=params, json={"text": newer_text}))
+                return (f"<|speaker:0|>{words}", "Rewrote.", CAST, "Market")
+            with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", side_effect=writer):
+                self.assertTrue(self.ok(self.client.post(f"{API}/project/rewrite", params=params, json={}))['failed'])
+
+        conflict("Reviewed answer.", "First newer draft.")
+        reviewed = self.ok(self.client.get(f"{API}/project/proposal", params=params))
+        conflict("Unreviewed answer.", "Second newer draft.")
+        for body in ({}, {"id": reviewed["id"]}):
+            response = self.client.post(f"{API}/project/proposal", params=params, json=body)
+            self.assertEqual(response.status_code, 400)
+        current = self.ok(self.client.get(f"{API}/project/proposal", params=params))
+        self.assertNotEqual(current["id"], reviewed["id"])
+        self.assertEqual(self.store.soundstage_project("Night Market")[0]["text"], "Second newer draft.")
+        applied = self.ok(self.client.post(f"{API}/project/proposal", params=params, json={"id": current["id"]}))
+        self.assertIn("Unreviewed answer.", applied["script"]["text"])
+
+    def test_invalid_patch_values_do_not_coerce_or_partially_save(self):
+        self.create()
+        for patch in ({"strict_source": "false"}, {"title": None}, {"writer_workflow": "unknown"}):
+            answer = self.client.patch(f"{API}/project/script", params={"name": "Night Market"}, json={"text": "changed", **patch})
+            self.assertEqual(answer.status_code, 400)
+            self.assertEqual(self.store.soundstage_project("Night Market")[0]["text"], "")
+        answer = self.client.patch(f"{API}/project/settings", params={"name": "Night Market"}, json={"temperature": "nan"})
+        self.assertEqual(answer.status_code, 400)
+
     def test_a_settings_save_waits_for_a_clip_being_written(self):
         """Every page save takes the project's lock, as a cast job writing a clip does."""
         from threading import Thread

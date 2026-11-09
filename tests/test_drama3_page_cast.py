@@ -168,6 +168,39 @@ class CastFixture(unittest.TestCase):
 
 
 class Drama3PageCastTests(CastFixture):
+    def test_generation_does_not_replace_an_edited_slot(self):
+        self.patch_slot("voice", 0, description="Original voice", preview_text="Hello there.")
+        self.patch_slot("voice", 1, description="Other voice", preview_text="Good morning.")
+        # Prepare calls this generator; edit slot zero before delivering its result.
+        def voices(*values):
+            self.patch_slot("voice", 0, description="New direction")
+            yield from self.fake_voices(*values)
+        self.handlers.generate_drama3_voices = voices
+        self.ok(self.client.post(f"{API}/project/make", params=NAME, json={"target": "prepare"}))
+        run = self.wait()
+        self.assertIn("slot changed", run["error"])
+        data, _ = self.store.soundstage_project("Night Market")
+        self.assertEqual(data["voice_0_description"], "New direction")
+        self.assertFalse(data.get("voice_0_audio"))
+        self.assertIn("voice:0", data["_cast_proposals"])
+        params = {**NAME, "kind": "voice", "slot": 0}
+        reviewed = self.ok(self.client.get(f"{API}/project/slot/proposal", params=params))
+        self.assertEqual(self.client.get(f"{API}/project/slot/proposal/audio", params={**params, "id": reviewed["id"]}).status_code, 200)
+        # A newer result arriving while the review dialog is open invalidates both
+        # its audio URL and its Apply action without consuming the replacement.
+        data["_cast_proposals"]["voice:0"]["id"] = "replacement"
+        data["_cast_proposals"]["voice:0"]["patch"]["voice_0_transcript"] = "Replacement transcript."
+        self.store.save_soundstage_project("Night Market", data)
+        self.assertEqual(self.client.get(f"{API}/project/slot/proposal/audio", params={**params, "id": reviewed["id"]}).status_code, 404)
+        for body in ({}, {"id": reviewed["id"]}):
+            self.assertEqual(self.client.post(f"{API}/project/slot/proposal", params=params, json=body).status_code, 400)
+        current = self.ok(self.client.get(f"{API}/project/slot/proposal", params=params))
+        self.ok(self.client.post(f"{API}/project/slot/proposal", params=params, json={"id": current["id"]}))
+        data, _ = self.store.soundstage_project("Night Market")
+        self.assertTrue(data["voice_0_audio"])
+        self.assertEqual(data["voice_0_description"], "New direction")
+        self.assertEqual(data["voice_0_transcript"], "Replacement transcript.")
+
     def test_boot_offers_the_generators(self):
         boot = self.ok(self.client.get(f"{API}/boot"))
         self.assertIn("Qwen3-TTS VoiceDesign", boot["voice_engines"])

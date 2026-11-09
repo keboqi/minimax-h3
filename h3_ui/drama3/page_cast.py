@@ -25,10 +25,12 @@ from h3_app.voice_design import LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 
 from ..job_bindings import owned_generation
-from ..storyboard.page import Runs, guarded
+from ..page_runs import Runs, guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND, UPLOAD_VOICE
-from .page_common import SKIP, PageRun, apply_fields, file_response, found, run_job, speech_value, value
-from .page_store import edit_project, project_lock
+from .page_common import (SKIP, PageRun, apply_fields, check_proposal, proposal_token,
+                          file_response, found, run_job, speech_value)
+from .page_adapter import CastProgress
+from .page_store import edit_project, editing
 
 
 def _keep_clip(path, directory: Path) -> str:
@@ -126,6 +128,7 @@ def speakers_payload(name: str, data: dict, clip: Callable[[Any], str | None], r
                 entry.update(source="clip", clip=clip_url(name, "voice", slot, Path(audio).name))
         entry["name"] = entry["saved_name"] or entry["save_name"] or f"Speaker {slot}"
         entry["ready"] = bool(entry["clip"])
+        entry["proposal"] = f"voice:{slot}" in (data.get("_cast_proposals") or {})
         speakers.append(entry)
     return speakers
 
@@ -158,6 +161,7 @@ def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None]) -> 
             continue  # An empty slot is no sound yet.
         entry["loop"] = loops.get(str(entry["name"]).casefold())
         entry["ready"] = bool(entry["clip"])
+        entry["proposal"] = f"sound:{slot}" in (data.get("_cast_proposals") or {})
         sounds.append(entry)
     return sounds
 
@@ -173,7 +177,7 @@ def boot_payload() -> dict:
 
 def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, session_of, payload, clips: Path,
                         clip: Callable[[Any], str | None], runtime: Callable[[], Any], gpu: bool, interrupt,
-                        blocked: Callable[[str, str], str | None] | None = None) -> CastJobs:
+                        blocked: Callable[[str, str], str | None] | None = None, admission_lock=None) -> CastJobs:
     """The Cast & sounds routes; ``blocked`` names what keeps a cast job from starting (Auto running).
 
     Returns the cast runs and jobs, which the project payload and Auto use.
@@ -181,7 +185,8 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     from h3_app.drama3 import sounds as drama3_sounds
     from h3_app.drama3 import speakers as drama3_speakers
 
-    runs = Runs(busy="This project is already making voices or sounds.")
+    runs = Runs(busy="This project is already making voices or sounds.", lock=admission_lock,
+                blocked=lambda run: blocked(run.owner, run.storyboard_id) if blocked else None)
 
     def edit(name: str, change: Callable[[dict], Any]):
         return edit_project(store, name, change)
@@ -231,7 +236,8 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
 
         def change(data):
             group_before = _setting(data, "speaker_group")
-            apply_fields(data, body, CAST_SETTINGS)
+            apply_fields(data, body, CAST_SETTINGS, choices={"voice_engine": VOICE_DESIGN_ENGINES,
+                                                            "asr_model": DRAMA3_ASR_CHOICES})
             if _setting(data, "speaker_group") != group_before:
                 # A new group's saved voices fill the speakers that have none, as the tab matches them.
                 for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
@@ -249,9 +255,10 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         prefix, upload = slot_keys(kind, slot)
 
         def change(data):
-            for key, cast in fields.items():
-                if key in body:
-                    data[f"{prefix}_{key}"] = cast(body[key])
+            values = {}
+            apply_fields(values, body, fields,
+                         choices={"language": LANGUAGES} if kind == "voice" else None)
+            data.update({f"{prefix}_{key}": val for key, val in values.items()})
             if body.get("source") == "upload":
                 data[f"{prefix}_preset"] = upload
             elif kind == "voice" and "save_name" in body:
@@ -421,74 +428,65 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                        data.get(f"sound_{slot}_duration") or 5]
         return values
 
-    def apply_voice(name, slot, audio, transcript):
-        kept = keep(audio)
+    def slot_source(data, kind, slot):
+        prefix = f"{kind}_{slot}_"
+        count = "shown_slots" if kind == "voice" else "shown_sound_slots"
+        return {"fields": {key: val for key, val in data.items() if key.startswith(prefix)},
+                "shown": slot < int(data.get(count) or 1),
+                "version": (data.get("_slot_versions") or {}).get(f"{kind}:{slot}", 0)}
 
+    def save_generated(run, name, kind, slot, patch):
+        key = f"{kind}:{slot}"
         def change(data):
-            data[f"voice_{slot}_audio"] = kept
-            data[f"voice_{slot}_preset"] = UPLOAD_VOICE
-            if transcript is not SKIP and transcript is not None:
-                data[f"voice_{slot}_transcript"] = str(transcript)
+            if slot_source(data, kind, slot) != run.expected_slots[key]:
+                data.setdefault("_cast_proposals", {})[key] = {"id": uuid.uuid4().hex, "patch": patch}
+                return False
+            changed = any(data.get(field) != val for field, val in patch.items())
+            data.update(patch)
+            source = slot_source(data, kind, slot)
+            if changed:
+                source["version"] += 1
+            return source
+        source = edit(name, change)
+        if source is False:
+            run.error = "The slot changed while generating. The result is kept for review in Cast & sounds."
+        else:
+            run.expected_slots[key] = source
 
-        edit(name, change)
+    def apply_voice(run, name, slot, audio, transcript):
+        patch = {f"voice_{slot}_audio": keep(audio), f"voice_{slot}_preset": UPLOAD_VOICE}
+        if transcript is not SKIP and transcript is not None:
+            patch[f"voice_{slot}_transcript"] = str(transcript)
+        save_generated(run, name, "voice", slot, patch)
 
-    def apply_sound(name, slot, audio):
-        kept = keep(audio)
-
-        def change(data):
-            data[f"sound_{slot}_audio"] = kept
-            data[f"sound_{slot}_preset"] = UPLOAD_SOUND
-
-        edit(name, change)
+    def apply_sound(run, name, slot, audio):
+        save_generated(run, name, "sound", slot,
+                       {f"sound_{slot}_audio": keep(audio), f"sound_{slot}_preset": UPLOAD_SOUND})
 
     def apply_outputs(run: CastRun, name: str, target: str, slot, update) -> None:
-        """Write one frame of a cast job into the project and the run's slot notes."""
-        update = list(update)
-        if target == VOICE:
-            audio, transcript, status = (value(item) for item in update[:3])
-            if isinstance(audio, str) and audio:
-                apply_voice(name, slot, audio, transcript)
-            if status is not SKIP:
-                run.slots[f"voice:{slot}"] = str(status)
-                run.status = str(status)
-        elif target == SOUND:
-            audio, status = (value(item) for item in update[:2])
-            if isinstance(audio, str) and audio:
-                apply_sound(name, slot, audio)
-            if status is not SKIP:
-                run.slots[f"sound:{slot}"] = str(status)
-                run.status = str(status)
-        elif target == TRANSCRIBE:
-            transcript, status = (value(item) for item in update[:2])
-            if transcript is not SKIP and transcript is not None:
-                edit(name, lambda data: data.__setitem__(f"voice_{slot}_transcript", str(transcript)))
-            if status is not SKIP:
-                run.slots[f"voice:{slot}"] = str(status)
-                run.status = str(status)
-                if str(status).startswith("Transcription failed"):
-                    run.error = str(status)
-        else:
-            voices, rest = update[:3 * DRAMA3_VOICE_SLOTS + 1], update[3 * DRAMA3_VOICE_SLOTS + 1:]
-            sounds, overall = rest[:2 * DRAMA3_SOUND_SLOTS + 1], rest[2 * DRAMA3_SOUND_SLOTS + 1:]
-            for index in range(DRAMA3_VOICE_SLOTS):
-                audio, transcript, status = (value(item) for item in voices[3 * index:3 * index + 3])
-                if isinstance(audio, str) and audio:
-                    known = run.slots.get(f"voice-clip:{index}")
-                    if known != audio:  # Every frame resends every finished clip.
-                        run.slots[f"voice-clip:{index}"] = audio
-                        apply_voice(name, index, audio, transcript)
-                if status is not SKIP and status:
-                    run.slots[f"voice:{index}"] = str(status)
-            for index in range(DRAMA3_SOUND_SLOTS):
-                audio, status = (value(item) for item in sounds[2 * index:2 * index + 2])
-                if isinstance(audio, str) and audio and run.slots.get(f"sound-clip:{index}") != audio:
-                    run.slots[f"sound-clip:{index}"] = audio
-                    apply_sound(name, index, audio)
-                if status is not SKIP and status:
-                    run.slots[f"sound:{index}"] = str(status)
-            if overall and value(overall[0]) is not SKIP:
-                run.status = str(value(overall[0])).split("\n\n")[0]
-                run.message = str(value(overall[0]))
+        """Apply named progress; the adapter owns Gradio's component layout."""
+        progress = CastProgress.read(target, slot, update)
+        for item in progress.slots:
+            key = f"{item.kind}:{item.slot}"
+            if isinstance(item.audio, str) and item.audio:
+                clip_key = f"{item.kind}-clip:{item.slot}"
+                if run.slots.get(clip_key) != item.audio:
+                    run.slots[clip_key] = item.audio
+                    if item.kind == "voice":
+                        apply_voice(run, name, item.slot, item.audio, item.transcript)
+                    else:
+                        apply_sound(run, name, item.slot, item.audio)
+            elif target == TRANSCRIBE and item.transcript is not SKIP and item.transcript is not None:
+                save_generated(run, name, "voice", item.slot, {f"voice_{item.slot}_transcript": str(item.transcript)})
+            if item.status is not SKIP and item.status:
+                run.slots[key] = str(item.status)
+                if target != PREPARE:
+                    run.status = str(item.status)
+        if progress.status:
+            run.status = progress.status.split("\n\n")[0]
+            run.message = progress.status
+        if progress.error:
+            run.error = progress.error
         run.revision += 1
 
     def job_for(data: dict, target: str, slot=None):
@@ -520,8 +518,12 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                 data.get("script_mode"), *voice_values(data), *sound_values(data)]
         raise H3Error("Unknown request.")
 
-    def execute(run, owner: str, session, name: str, target: str, slot, family: str, callback, values) -> None:
+    def execute(run, owner: str, session, name: str, target: str, slot, family: str, callback, values, *, expected=None) -> None:
         """Run one cast job to its end on the usual job path, writing each frame into the project."""
+        expected = expected if expected is not None else store.soundstage_project(name)[0]
+        run.expected_slots = {f"{kind}:{index}": slot_source(expected, kind, index)
+                              for kind, count in (("voice", DRAMA3_VOICE_SLOTS), ("sound", DRAMA3_SOUND_SLOTS))
+                              for index in range(count)}
         for update in run_job(run, owner, session, family, values, owned_generation(callback, family)):
             apply_outputs(run, name, target, slot, update if isinstance(update, (list, tuple)) else (update,))
         if run.error is None:
@@ -533,8 +535,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     def save_all(name: str) -> str:
         """Keep every voiced speaker in the selected group and use the saved voice, as the tab's Save all does."""
         saved, errors = 0, []
-        with project_lock(name):
-            data, _ = store.soundstage_project(name)
+        with editing(store, name) as data:
             group = _setting(data, "speaker_group")
             for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
                 preset = data.get(f"voice_{slot}_preset")
@@ -555,7 +556,6 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                     saved += 1
                 except H3Error as exc:
                     errors.append(f"Speaker {slot}: {exc}")
-            store.save_soundstage_project(name, data)
         return " ".join([f'Saved {saved} speaker{"s" if saved != 1 else ""} to "{group}".', *errors])
 
     @app.post(f"{api}/project/make", include_in_schema=False)
@@ -573,8 +573,51 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         session = session_of(request)
         run = CastRun(owner, name, "cast", target=f"{target}:{slot}" if slot is not None else target)
         run.status = "Waiting for the GPU…"
-        runs.start(run, lambda run: execute(run, owner, session, name, target, slot, family, callback, values))
+        runs.start(run, lambda run: execute(run, owner, session, name, target, slot, family, callback, values, expected=data))
         return {"cast_run": run.public(None)}
+
+    @app.get(f"{api}/project/slot/proposal", include_in_schema=False)
+    @guarded
+    def slot_proposal(name: str, kind: str, slot: int, request: Request):
+        owner_of(request)
+        slot = slot_of(kind, slot)
+        data, _ = store.soundstage_project(name)
+        proposal = (data.get("_cast_proposals") or {}).get(f"{kind}:{slot}")
+        if not proposal:
+            raise H3Error("There is no saved result for this slot.")
+        patch = proposal.get("patch", proposal)
+        audio = patch.get(f"{kind}_{slot}_audio")
+        return {"id": proposal_token(proposal), "transcript": patch.get(f"{kind}_{slot}_transcript"), "audio": bool(audio)}
+
+    @app.get(f"{api}/project/slot/proposal/audio", include_in_schema=False)
+    def slot_proposal_audio(name: str, kind: str, slot: int, request: Request, id: str):
+        with found():
+            owner_of(request)
+            slot = slot_of(kind, slot)
+            data, _ = store.soundstage_project(name)
+            proposal = (data.get("_cast_proposals") or {}).get(f"{kind}:{slot}", {})
+            check_proposal(proposal, id)
+            patch = proposal.get("patch", proposal)
+            return file_response(clip(patch.get(f"{kind}_{slot}_audio")), cache="no-cache")
+
+    @app.post(f"{api}/project/slot/proposal", include_in_schema=False)
+    @guarded
+    def apply_slot_proposal(name: str, kind: str, slot: int, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        slot = slot_of(kind, slot)
+        with editing(store, name) as data:
+            count = "shown_slots" if kind == "voice" else "shown_sound_slots"
+            if slot >= int(data.get(count) or 1):
+                raise H3Error("Add this slot again before applying its saved result.")
+            proposals = data.get("_cast_proposals") or {}
+            proposal = proposals.get(f"{kind}:{slot}")
+            if not proposal:
+                raise H3Error("There is no saved result for this slot.")
+            check_proposal(proposal, body.get("id"))
+            patch = proposal.get("patch", proposal)
+            proposals.pop(f"{kind}:{slot}")
+            data.update(patch)
+        return payload(owner, name)
 
     @app.post(f"{api}/project/save-all", include_in_schema=False)
     @guarded
@@ -588,6 +631,8 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             raise H3Error("Nothing can run here.")
         owner = owner_of(request)
         run = runs.active(owner, name, "cast")
+        if run is not None:
+            run.stop_requested = True
         if run is None:
             message = "This project isn't making anything."
         elif run.job_id is None:

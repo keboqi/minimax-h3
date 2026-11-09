@@ -8,16 +8,11 @@ long-lived connection and a run outlives the page that started it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import functools
 import hashlib
 from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
-from threading import Lock, Thread
-import time
 from types import SimpleNamespace
-from typing import Any, Callable
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -29,11 +24,13 @@ from h3_app.catalog import (
     OPENAI_PROMPT_MODELS, VIDEO_EXTENSIONS,
 )
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS, JobCancelled
+from h3_app.jobs import JOBS
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
 from h3_app.workspace_store import request_owner
 
 from ..job_admission import execute_accepted
+# Compatibility exports for existing callers.
+from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
 from .handlers import GENERATE_REMAINING, GENERATE_SCENE, SWITCH_AND_REGENERATE, StoryboardHandlers
 from .payload import board_payload, file_url, referenced_paths
 
@@ -45,91 +42,6 @@ UPLOAD_TYPES = {"first_image": IMAGE_EXTENSIONS, "last_image": IMAGE_EXTENSIONS,
                 "ref_videos": VIDEO_EXTENSIONS, "ref_audios": AUDIO_EXTENSIONS}
 SINGLE_FIELDS = ("first_image", "last_image")
 THUMB_WIDTH = 480
-# A finished run stays readable this long, for a page that polls or reopens afterwards.
-RUN_RETENTION_SECONDS = 600
-
-
-@dataclass
-class Run:
-    """Long work on a storyboard: GPU generation, or joining the takes."""
-
-    owner: str
-    storyboard_id: str
-    kind: str
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    job_id: str | None = None  # The generation job, once accepted.
-    project: str | None = None  # The Remake project it renders, once it has one.
-    status: str = "Waiting for the GPU…"
-    # Rises each time the storyboard changed, so the page knows to read it again.
-    revision: int = 0
-    finished_at: float | None = None
-    error: str | None = None
-    result_url: str | None = None
-    message: str | None = None
-
-    def public(self, scene_id) -> dict[str, Any]:
-        return {"id": self.id, "kind": self.kind, "status": self.status, "revision": self.revision,
-                "active": self.finished_at is None, "error": self.error, "scene_id": scene_id,
-                "project": self.project, "result_url": self.result_url, "message": self.message}
-
-
-class Runs:
-    def __init__(self, busy="This storyboard is already doing that."):
-        self.lock = Lock()
-        self.busy = busy
-        self.items: dict[str, Run] = {}
-
-    def start(self, run: Run, work: Callable[[Run], None]) -> Run:
-        with self.lock:
-            cutoff = time.time() - RUN_RETENTION_SECONDS
-            for key in [key for key, item in self.items.items()
-                        if item.finished_at is not None and item.finished_at < cutoff]:
-                del self.items[key]
-            if self.active(run.owner, run.storyboard_id, run.kind):
-                raise H3Error(self.busy)
-            self.items[run.id] = run
-
-        def execute():
-            try:
-                work(run)
-            except JobCancelled:
-                run.status = "Interrupted."
-            except Exception as exc:  # The page shows every failure; nothing else reads it.
-                run.error = str(exc)
-                run.status = "Stopped."
-            finally:
-                run.revision += 1
-                run.finished_at = time.time()
-
-        Thread(target=execute, name=f"storyboard-{run.kind}", daemon=True).start()
-        return run
-
-    def active(self, owner, storyboard_id, kind=None) -> Run | None:
-        return next((run for run in list(self.items.values())
-                     if run.owner == owner and run.storyboard_id == storyboard_id and run.finished_at is None
-                     and (kind is None or run.kind == kind)), None)
-
-    def latest(self, owner, storyboard_id) -> Run | None:
-        with self.lock:
-            active = self.active(owner, storyboard_id)
-            if active is not None:
-                return active
-            return next((run for run in reversed(self.items.values())
-                         if run.owner == owner and run.storyboard_id == storyboard_id), None)
-
-
-def guarded(endpoint):
-    """Every refusal reaches the page as ``{"error": message}``."""
-
-    @functools.wraps(endpoint)
-    def run(*args, **kwargs):
-        try:
-            return endpoint(*args, **kwargs)
-        except (H3Error, ValueError, TypeError, KeyError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-
-    return run
-
 
 def _image_thumbnail(path: Path, root: Path) -> Path | None:
     """A small cached JPEG of a picture, or None when it can't be read as one."""

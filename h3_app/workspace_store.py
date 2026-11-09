@@ -276,12 +276,38 @@ class WorkspaceStore:
                        "ON CONFLICT(name) DO UPDATE SET payload=excluded.payload, updated=excluded.updated",
                        (name, json.dumps(payload), time.time()))
 
+    def create_soundstage_project(self, name, payload):
+        """Create once, including when two server processes use the same workspace."""
+        try:
+            with self.connect() as db:
+                db.execute("INSERT INTO soundstage_projects(name, payload, updated) VALUES (?, ?, ?)",
+                           (name, json.dumps(payload), time.time()))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"A project named {name} already exists.") from exc
+
     def soundstage_project(self, name):
         with self.connect() as db:
             row = db.execute("SELECT payload, result FROM soundstage_projects WHERE name=?", (name,)).fetchone()
         if row is None:
             raise ValueError("Select a saved Sound Stage project.")
         return json.loads(row["payload"]), row["result"]
+
+    @contextmanager
+    def edit_soundstage_project(self, name):
+        """One transactional read/modify/write, including writers in other processes.
+
+        Callers must only do short local edits while holding this transaction.
+        Hosted writers and generation run before entering it.
+        """
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT payload FROM soundstage_projects WHERE name=?", (name,)).fetchone()
+            if row is None:
+                raise ValueError("Select a saved Sound Stage project.")
+            data = json.loads(row["payload"])
+            yield data
+            db.execute("UPDATE soundstage_projects SET payload=?, updated=? WHERE name=?",
+                       (json.dumps(data), time.time(), name))
 
     def mark_soundstage_generated(self, name, result):
         with self.connect() as db:

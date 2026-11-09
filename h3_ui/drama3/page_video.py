@@ -22,7 +22,7 @@ from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot
 
 from ..job_bindings import owned_generation
-from ..storyboard.page import Runs, guarded
+from ..page_runs import Runs, guarded
 from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, value, writer_service
 from .page_store import editing
 from .stage_video import latest_export
@@ -116,7 +116,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @guarded
     def save_video_settings(name: str, request: Request, body: dict = Body(...)):
         with editing(store, name) as data:
-            apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES)
+            apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES,
+                         choices={"video_engine": [key for _, key in export.engines]})
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/video/plan", include_in_schema=False)

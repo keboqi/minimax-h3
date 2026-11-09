@@ -6,21 +6,38 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+from functools import lru_cache
 import uuid
+import hashlib
+import json
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
+from pydantic import ConfigDict, ValidationError, create_model
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS
+from h3_app.jobs import JOBS, JobCancelled
 
 from ..job_admission import execute_accepted
-from ..storyboard.page import Run
+from ..page_runs import Run
 from ..subtitle_words import word_pieces
 from .result_view import timeline_data
 
 SKIP = object()
+
+
+def proposal_token(proposal: dict) -> str:
+    """Identify one result, including proposals saved before explicit IDs existed."""
+    return proposal.get("id") or hashlib.sha256(
+        json.dumps(proposal, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def check_proposal(proposal: dict, expected) -> None:
+    if not isinstance(expected, str) or expected != proposal_token(proposal):
+        raise H3Error("The saved result changed. Review it again before applying.")
+
+
 # The Speak step's defaults, for a project saved before a field existed.
 SPEECH_DEFAULTS = {"temperature": 2.0, "top_p": 1.0, "top_k": 30, "max_frames": 8192, "parallel": 16, "retries": 0,
                    "word_timing": False, "script_mode": "Basic", "text": "", "title": ""}
@@ -31,6 +48,10 @@ class PageRun(Run):
     """A run of the page; ``family`` is its running job's family, which Interrupt names."""
 
     family: str | None = None
+    stop_requested: bool = False
+
+    def public(self, scene_id):
+        return {**super().public(scene_id), "stop_requested": self.stop_requested}
 
 
 def value(update) -> Any:
@@ -46,12 +67,25 @@ def speech_value(data: dict, key: str):
     return SPEECH_DEFAULTS.get(key) if current is None else current
 
 
-def apply_fields(data: dict, body: dict, fields: dict, ranges: dict | None = None) -> None:
+@lru_cache(maxsize=32)
+def patch_model(fields: tuple):
+    return create_model("SoundstagePatch", __config__=ConfigDict(strict=True, allow_inf_nan=False),
+                        **{key: (kind, None) for key, kind in fields})
+
+
+def apply_fields(data: dict, body: dict, fields: dict, ranges: dict | None = None,
+                 choices: dict | None = None) -> None:
     """Copy each of ``fields`` that ``body`` sends into ``data`` as its kind, kept inside ``ranges`` (low, high, ...)."""
-    for key, kind in fields.items():
-        if key not in body:
-            continue
-        data[key] = kind(body[key])
+    try:
+        values = patch_model(tuple(fields.items())).model_validate(body).model_dump(exclude_unset=True)
+    except ValidationError as exc:
+        issue = exc.errors()[0]
+        raise H3Error(f"Invalid {issue['loc'][0]}: {issue['msg']}") from exc
+    for key, current in values.items():
+        kind = fields[key]
+        if choices and key in choices and current not in choices[key]:
+            raise H3Error(f"Unknown {key} choice.")
+        data[key] = current
         if ranges and key in ranges:
             low, high = ranges[key][:2]
             data[key] = kind(min(high, max(low, data[key])))
@@ -70,6 +104,8 @@ def run_job(run: PageRun, owner: str, session, family: str, values: list, callba
 
     The job is accepted when the first frame is asked for, so a run refused before then leaves none.
     """
+    if run.stop_requested:
+        raise JobCancelled("Interrupted before job admission.")
     job = JOBS.accept(owner, family, values, callback=callback, key=uuid.uuid4().hex, **options)
     run.job_id, run.family = job.id, family
     yield from execute_accepted(job.id, session)

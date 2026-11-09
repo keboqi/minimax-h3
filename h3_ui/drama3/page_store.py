@@ -9,8 +9,11 @@ project before a clip arrived would write it back without that clip.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from threading import Lock, RLock
 from typing import Any, Callable, Iterator
+
+from .controls import DRAMA3_VOICE_SLOTS, DRAMA3_SOUND_SLOTS
 
 _LOCKS: dict[str, RLock] = {}
 _GUARD = Lock()
@@ -29,9 +32,20 @@ def editing(store, name: str) -> Iterator[dict]:
     Nothing is saved when the block raises.
     """
     with project_lock(name):
-        data, _ = store.soundstage_project(name)
-        yield data
-        store.save_soundstage_project(name, data)
+        with store.edit_soundstage_project(name) as data:
+            before = deepcopy(data)
+            yield data
+            for kind, count, shown in (("voice", DRAMA3_VOICE_SLOTS, "shown_slots"),
+                                       ("sound", DRAMA3_SOUND_SLOTS, "shown_sound_slots")):
+                for slot in range(count):
+                    prefix = f"{kind}_{slot}_"
+                    old = {key: val for key, val in before.items() if key.startswith(prefix)}
+                    new = {key: val for key, val in data.items() if key.startswith(prefix)}
+                    visibility_changed = (slot < int(before.get(shown) or 1)) != (slot < int(data.get(shown) or 1))
+                    if old != new or visibility_changed:
+                        versions = data.setdefault("_slot_versions", {})
+                        key = f"{kind}:{slot}"
+                        versions[key] = versions.get(key, 0) + 1
 
 
 def edit_project(store, name: str, change: Callable[[dict], Any]) -> Any:

@@ -8,6 +8,7 @@ writes what they change back into the project.
 from __future__ import annotations
 
 from typing import Any, Callable
+import uuid
 
 from fastapi import Body, FastAPI, Request
 
@@ -17,11 +18,16 @@ from h3_app.drama3.results import NARRATOR_NAMES
 from h3_app.errors import H3Error
 from h3_app.prompt_writers import drama3 as writer
 
-from ..storyboard.page import guarded
-from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
-from .page_common import SKIP, apply_fields, timeline_payload, value, writer_service
+from ..page_runs import guarded
+from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
+from .page_common import apply_fields, check_proposal, proposal_token, timeline_payload, value, writer_service
 from .page_store import edit_project, editing, project_lock
 from .result_view import script_preview_settings
+
+from .page_adapter import (
+    VOICE_META, SOUND_META, WriterAnswer, voice_inputs as voice_inputs, writer_slots as legacy_writer_slots,
+    _apply_cast, _apply_sounds,
+)
 
 SCRIPT_FIELDS = {"text": str, "title": str, "script_mode": str}
 WRITER_FIELDS = {"speaker_mode": str, "writer_workflow": str, "max_batch_lines": int, "strict_source": bool,
@@ -29,14 +35,24 @@ WRITER_FIELDS = {"speaker_mode": str, "writer_workflow": str, "max_batch_lines":
 WRITER_DEFAULTS = {"speaker_mode": writer.DRAMA3_SPEAKER_AUTO, "writer_workflow": writer.DRAMA3_WORKFLOW_SINGLE,
                    "max_batch_lines": writer.DRAMA3_GUIDED_BATCH_DEFAULT, "strict_source": False,
                    "smart_budget_profile": SMART_BUDGET_AUTO, "speaker_group": "Global"}
+WRITER_CHOICES = {"speaker_mode": writer.DRAMA3_SPEAKER_MODES,
+                  "writer_workflow": writer.DRAMA3_WORKFLOWS,
+                  "smart_budget_profile": BUDGET_PROFILES}
 WORKFLOW_NOTES = {
     writer.DRAMA3_WORKFLOWS[0]: "One call. Best with strong models.",
     writer.DRAMA3_WORKFLOWS[1]: "Short steps, so small, fast models can manage.",
     writer.DRAMA3_WORKFLOWS[2]: "Plans the story, then writes scene by scene.",
 }
 EXAMPLES = (("en", "Example story"), ("zh", "Chinese example (中文)"), ("zh-latest", "示例三：雨巷里的末班广播"))
-VOICE_META = ("save_name", "description", "preview_text")
-SOUND_META = ("save_name", "description", "duration")
+
+def writer_source(data: dict) -> dict:
+    """Inputs owned by the writer; unrelated generated clips/settings may merge."""
+    keys = {"text", "title", "script_mode", "shown_slots", *WRITER_FIELDS}
+    keys.update(f"voice_{slot}_{key}" for slot in range(DRAMA3_VOICE_SLOTS)
+                for key in (*VOICE_META, "preset", "transcript"))
+    return {key: data.get(key) for key in keys}
+
+
 # A new project starts as the tab's draft does.
 NEW_PROJECT = {"text": "", "title": "", "script_mode": writer.DRAMA3_SCRIPT_ADVANCED, "shown_slots": 1,
                "shown_sound_slots": 1}
@@ -47,62 +63,8 @@ def _setting(data: dict, key: str):
     return WRITER_DEFAULTS.get(key) if current is None else current
 
 
-def voice_inputs(data: dict, clip: Callable[[Any], str | None]) -> list[Any]:
-    """Each voice slot's preset, clip and transcript, as the tab's speech and writer handlers take them."""
-    values: list[Any] = []
-    for slot in range(DRAMA3_VOICE_SLOTS):
-        values += [data.get(f"voice_{slot}_preset") or UPLOAD_VOICE, clip(data.get(f"voice_{slot}_audio")),
-                   data.get(f"voice_{slot}_transcript") or ""]
-    return values
-
-
 def writer_slots(data: dict, clip: Callable[[Any], str | None]) -> list[Any]:
-    """The writer's slot inputs from a project: voices, cast details, shown slots, script mode and group."""
-    values = voice_inputs(data, clip)
-    for slot in range(DRAMA3_VOICE_SLOTS):
-        values += [data.get(f"voice_{slot}_{field}") or "" for field in VOICE_META]
-    return [*values, int(data.get("shown_slots") or 1), data.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC,
-            _setting(data, "speaker_group")]
-
-
-def _apply_cast(data: dict, outputs: list[Any]) -> list[Any]:
-    """Write the script, cast details, shown slots, presets and title from a writer answer into ``data``.
-
-    ``outputs`` is the tab's writer outputs: script, status, three details per slot, the shown slot
-    count with each slot's visibility and Add/Remove, a preset per slot, then the title. Returns
-    what follows them.
-    """
-    script, rest = outputs[0], outputs[2:]
-    if value(script) is not SKIP:
-        data["text"] = value(script)
-    details, rest = rest[:3 * DRAMA3_VOICE_SLOTS], rest[3 * DRAMA3_VOICE_SLOTS:]
-    for slot in range(DRAMA3_VOICE_SLOTS):
-        for index, field in enumerate(VOICE_META):
-            changed = value(details[3 * slot + index])
-            if changed is not SKIP:
-                data[f"voice_{slot}_{field}"] = changed
-    shown, rest = value(rest[0]), rest[DRAMA3_VOICE_SLOTS + 3:]
-    if shown is not SKIP:
-        data["shown_slots"] = int(shown)
-    presets, rest = rest[:DRAMA3_VOICE_SLOTS], rest[DRAMA3_VOICE_SLOTS:]
-    for slot, preset in enumerate(presets):
-        if value(preset) is not SKIP:
-            data[f"voice_{slot}_preset"] = value(preset)
-    title, rest = value(rest[0]), rest[1:]
-    if title is not SKIP:
-        data["title"] = title
-    return rest
-
-
-def _apply_sounds(data: dict, meta: list[Any], visibility: list[Any]) -> None:
-    for slot in range(DRAMA3_SOUND_SLOTS):
-        for index, field in enumerate(SOUND_META):
-            changed = value(meta[3 * slot + index])
-            if changed is not SKIP:
-                data[f"sound_{slot}_{field}"] = changed
-    shown = value(visibility[0])
-    if shown is not SKIP:
-        data["shown_sound_slots"] = int(shown)
+    return legacy_writer_slots(data, clip, _setting)
 
 
 def sync_sounds(actions, data: dict) -> None:
@@ -124,6 +86,7 @@ def script_payload(data: dict) -> dict:
     return {"text": data.get("text") or "", "title": data.get("title") or "",
             "script_mode": data.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC,
             "prepared": bool(data.get("prepared")),
+            "proposal": bool(data.get("_writer_proposal")),
             "writer": {key: _setting(data, key) for key in WRITER_FIELDS}}
 
 
@@ -158,7 +121,7 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     into the project as saved when it arrives, keeping clips and settings changed meanwhile.
     """
     def choose(data):
-        apply_fields(data, body, WRITER_FIELDS)
+        apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
         return dict(data)
 
     data = edit_project(store, name, choose)  # The writer choices stay, whatever it answers.
@@ -166,22 +129,28 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     if not before.strip():
         raise H3Error("Write or paste some text first.")
     try:
-        outputs = list(actions.enhance_drama3_text(
+        answer = WriterAnswer.read(actions.enhance_drama3_text(
             before, _setting(data, "speaker_mode"), *writer_service(body), *writer_slots(data, clip),
             _setting(data, "writer_workflow"), int(_setting(data, "max_batch_lines")),
             bool(_setting(data, "strict_source")), _setting(data, "smart_budget_profile")))
     except Exception as exc:  # The writer calls out to hosted services and can fail any way.
         return before, f"{writer.DRAMA3_PROMPT_FAILED} {exc}", True
-    status = str(outputs[1])
-    if failed(status):
+    outputs, status = answer.outputs, answer.status
+    if answer.failed:
         return before, status, True
 
     def keep(current):
+        if writer_source(current) != writer_source(data):
+            current["_writer_proposal"] = {"id": uuid.uuid4().hex, "outputs": outputs, "source": before}
+            return False
         _apply_cast(current, outputs)
         current["prepared"] = True
+        current.pop("_writer_proposal", None)
         sync_sounds(actions, current)
+        return True
 
-    edit_project(store, name, keep)
+    if not edit_project(store, name, keep):
+        return before, f"{writer.DRAMA3_PROMPT_FAILED} The script or cast changed while writing. The answer is kept for review.", True
     return before, status, False
 
 
@@ -204,9 +173,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not name:
             raise H3Error("Enter a project name.")
         with project_lock(name):
-            if any(existing == name for existing, _ in store.soundstage_projects()):
-                raise H3Error(f"A project named {name} already exists.")
-            store.save_soundstage_project(name, dict(NEW_PROJECT))
+            store.create_soundstage_project(name, dict(NEW_PROJECT))
         return payload(owner_of(request), name)
 
     @app.patch(f"{api}/project/script", include_in_schema=False)
@@ -217,7 +184,8 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
             raise H3Error("Unknown script mode.")
         with editing(store, name) as data:
             before = (data.get("text"), data.get("script_mode"))
-            apply_fields(data, body, {**SCRIPT_FIELDS, **WRITER_FIELDS})
+            apply_fields(data, body, {**SCRIPT_FIELDS, **WRITER_FIELDS},
+                         choices={**WRITER_CHOICES, "script_mode": writer.DRAMA3_SCRIPT_MODES})
             if (data.get("text"), data.get("script_mode")) != before:
                 data["prepared"] = False
                 sync_sounds(actions, data)
@@ -237,9 +205,36 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
     def writer_prompt(name: str, request: Request, body: dict = Body(default={})):
         owner_of(request)
         data = load(name)
-        apply_fields(data, body, WRITER_FIELDS)
+        apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
         return {"prompt": actions.copy_drama3_writer_prompt(data.get("text") or "", _setting(data, "speaker_mode"),
                                                            *writer_slots(data, clip))}
+
+    @app.get(f"{api}/project/proposal", include_in_schema=False)
+    @guarded
+    def read_proposal(name: str, request: Request):
+        owner_of(request)
+        data = load(name)
+        proposal = data.get("_writer_proposal")
+        if not proposal:
+            raise H3Error("There is no saved writer answer.")
+        _apply_cast(data, proposal["outputs"])
+        return {"id": proposal_token(proposal), "text": data.get("text") or "", "source": proposal["source"]}
+
+    @app.post(f"{api}/project/proposal", include_in_schema=False)
+    @guarded
+    def apply_proposal(name: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        with editing(store, name) as data:
+            proposal = data.get("_writer_proposal")
+            if not proposal:
+                raise H3Error("There is no saved writer answer.")
+            check_proposal(proposal, body.get("id"))
+            data.pop("_writer_proposal")
+            before = data.get("text") or ""
+            _apply_cast(data, proposal["outputs"])
+            data["prepared"] = True
+            sync_sounds(actions, data)
+        return answered(owner, name, before, "Applied the saved writer answer.", False)
 
     @app.post(f"{api}/project/reply", include_in_schema=False)
     @guarded
@@ -248,7 +243,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not reply.strip():
             raise H3Error("Paste the chat model's reply first.")
         with editing(store, name) as data:
-            apply_fields(data, body, WRITER_FIELDS)
+            apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
             before = data.get("text") or ""
             # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
             outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),

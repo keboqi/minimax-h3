@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from threading import RLock
 from typing import Any, Callable
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -23,18 +24,21 @@ from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED
 from h3_app.workspace_store import request_owner
 
 from ..job_bindings import owned_generation
-from ..storyboard.page import Runs, guarded
-from .controls import DRAMA3_SAMPLING_PRESETS, DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND
+from ..page_runs import Runs, guarded
+from .controls import DRAMA3_SAMPLING_PRESETS
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
 from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, speech_value, timeline_payload
-from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload, voice_inputs
+from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
 from .page_library import install_library_routes
 from .page_store import editing
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line
+from .page_adapter import generation_values as generation_values, SpeechProgress
 
 STATIC = Path(__file__).with_name("page")
-STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
+STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
+                  "script.js", "cast.js", "mix.js", "video.js", "library.js", "project.js")}
+STATIC_TYPES["app.css"] = "text/css"
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,
                   "retries": int, "max_frames": int, "auto_save_speakers": bool}
@@ -52,7 +56,6 @@ class SpeakRun(PageRun):
     task: str = "speak"  # "speak", or "words" for word alignment
     stage: str | None = None
     slots: dict[str, str] = field(default_factory=dict)
-    stop_requested: bool = False
 
     def public(self, scene_id) -> dict[str, Any]:
         return {**super().public(scene_id), "auto": self.auto, "task": self.task, "stage": self.stage,
@@ -65,21 +68,6 @@ def _clip(clips: Path, value) -> str | None:
         return None
     clip = clips / Path(str(value)).name
     return str(clip) if clip.is_file() else None
-
-
-def generation_values(name: str, data: dict, clips: Path) -> list[Any]:
-    """A saved project as ``generate_drama3``'s inputs, in the order the Speak step sends them."""
-    values: list[Any] = [speech_value(data, "text"), *voice_inputs(data, lambda value: _clip(clips, value))]
-    values += [speech_value(data, key) for key in ("temperature", "top_p", "top_k", "max_frames", "parallel",
-                                                   "retries", "script_mode")]
-    for slot in range(DRAMA3_SOUND_SLOTS):
-        values += [data.get(f"sound_{slot}_preset") or UPLOAD_SOUND, _clip(clips, data.get(f"sound_{slot}_audio")),
-                   data.get(f"sound_{slot}_save_name") or "", data.get(f"sound_{slot}_description") or "",
-                   data.get(f"sound_{slot}_duration") or 5]
-    values.append(speech_value(data, "title"))
-    values += [data.get(f"voice_{slot}_save_name") or "" for slot in range(DRAMA3_VOICE_SLOTS)]
-    values += [bool(speech_value(data, "word_timing")), name]
-    return values
 
 
 def _take_status(chunk: dict) -> str:
@@ -142,7 +130,14 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     ``output_dir`` their clips, as the Soundstage tab saves them; ``takes_dir`` is where line
     takes are kept. ``video_export`` is the tab's illustrated video export; without it the page has none.
     """
-    runs = Runs(busy="This project is already speaking.")
+    admission_lock = RLock()
+
+    def speak_blocked(run):
+        if run.auto and cast_jobs is not None and cast_jobs.runs.active(run.owner, run.storyboard_id, "cast"):
+            return "Wait for the voices and sounds being made, then run Auto."
+        return None
+
+    runs = Runs(busy="This project is already speaking.", lock=admission_lock, blocked=speak_blocked)
     clips = Path(output_dir) / "h3" / ".soundstage" / "clips"
 
     def clip(value) -> str | None:
@@ -223,7 +218,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip)
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=clip,
-                                    runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running)
+                                    runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running, admission_lock=admission_lock)
     install_library_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                            payload=payload, runtime=runtime_config, voice_settings=voice_settings, gpu=gpu,
                            interrupt=interrupt)
@@ -280,13 +275,12 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             values = [line, *values]
         # Accepted here, once this is the project's only run: a refused run leaves no job.
         for update in run_job(run, owner, session, "drama3", values, callbacks[action], output_indices=(0,)):
-            status = str(update[1] or "") if len(update) > 1 else ""
-            if status:
-                run.status = status.splitlines()[0]
-            if status.startswith("Error"):
-                # The reason, without the timing summary that follows it.
-                run.error = status.removeprefix("Error:").strip().split("\n\n")[0]
-            if update[0]:
+            progress = SpeechProgress.read(update)
+            if progress.status:
+                run.status = progress.status.splitlines()[0]
+            if progress.error:
+                run.error = progress.error
+            if progress.output:
                 run.revision += 1
         if run.error is None:
             run.status = "Done."
@@ -350,7 +344,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             run.stage, run.status = "cast", "Making the missing voices and sounds…"
             data, _ = project(name)
             _, family, callback, values = cast_jobs.job_for(data, "prepare")
-            cast_jobs.execute(run, owner, session, name, "prepare", None, family, callback, values)
+            cast_jobs.execute(run, owner, session, name, "prepare", None, family, callback, values, expected=data)
             if run.error or stopped(run):
                 return
             # The cast job's own summary is in the slots' notes; Auto's message is only what it saved.
@@ -378,11 +372,11 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
         def work(run):
             for update in run_job(run, owner, session, "drama3_words", [result], callback):
-                status = str(update[1] or "") if len(update) > 1 else ""
-                if status:
-                    run.status = status.splitlines()[0]
-                if status.startswith("Word alignment unavailable"):
-                    run.error = status.removeprefix("Word alignment unavailable:").strip()
+                progress = SpeechProgress.read(update, alignment=True)
+                if progress.status:
+                    run.status = progress.status.splitlines()[0]
+                if progress.error:
+                    run.error = progress.error
             run.revision += 1
 
         run = SpeakRun(owner, name, RUN_KIND, task="words")
