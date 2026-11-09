@@ -113,6 +113,8 @@ function rewriter(app) {
 function languages(app) {
   const same = isSame(app);
   const options = [app.boot.same, ...app.boot.target_languages];
+  const target = app.settings.target_language;
+  const custom = !options.includes(target);
   return `
     <section class="card card-pad stack-16" aria-labelledby="lang-h">
       <h2 id="lang-h">Languages and tone</h2>
@@ -122,12 +124,16 @@ function languages(app) {
             <option ${name === app.settings.source_language ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
         </label>
         <span class="arrow" aria-hidden="true">→</span>
-        <label class="field grow">Dub into
-          <input data-setting="target_language" data-redraw list="dub-into" value="${esc(app.settings.target_language)}"
-            autocomplete="off">
-          <datalist id="dub-into">${options.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist>
-          <span class="muted small">${same ? SAME_HINT : `Pick or type any language, or <button type="button" class="linkish" data-action="same">Same as spoken</button> to fix or rewrite lines.`}</span>
-        </label>
+        <div class="field grow">
+          <label for="dub-into">Dub into</label>
+          <select id="dub-into" data-action="target-language">
+            ${options.map((name) => `<option value="${esc(name)}" ${name === target ? "selected" : ""}>${esc(name)}</option>`).join("")}
+            <option value="" ${custom ? "selected" : ""}>Other language…</option>
+          </select>
+          ${custom ? `<label for="custom-target">Language name</label>
+            <input id="custom-target" data-setting="target_language" value="${esc(target)}" autocomplete="off">` : ""}
+          <span class="muted small">${same ? SAME_HINT : `Choose <button type="button" class="linkish" data-action="same">Same as spoken</button> to fix or rewrite lines.`}</span>
+        </div>
       </div>
       ${same ? `
         <div class="sub stack-8">
@@ -428,10 +434,20 @@ export function bindSource(app) {
     const action = event.target.dataset.action;
     if (action === "api-key") app.apiKey = event.target.value;
     if (action === "manual-reply") app.manualReply = event.target.value;
+    if (event.target.id === "custom-target") schedulePlan(app);
   });
   screen.addEventListener("change", async (event) => {
     if (app.screen !== "source") return;
     const action = event.target.dataset.action;
+    if (action === "target-language") {
+      const target = event.target.value;
+      app.settings.target_language = target;
+      app.render();
+      document.getElementById(target ? "dub-into" : "custom-target")?.focus();
+    }
+    if (event.target.id === "custom-target" && (isSame(app) || app.boot.target_languages.includes(event.target.value))) {
+      app.render();
+    }
     if (action === "upload") upload(app, event.target.files[0]);
     if (action === "media") {
       const path = event.target.value;

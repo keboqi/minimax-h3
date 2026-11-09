@@ -13,6 +13,38 @@ from tests.test_dub_page import PageTests
 class DubbingBrowserTests(PageTests):
     gpu = True
 
+    def serve(self, route):
+        request = route.request
+        url = urlsplit(request.url)
+        path = url.path + ("?" + url.query if url.query else "")
+        response = self.client.request(request.method, path, content=request.post_data,
+                                       headers={"content-type": "application/json"})
+        route.fulfill(status=response.status_code, content_type=response.headers.get("content-type"),
+                      body=response.content)
+
+    def test_target_language_picker(self):
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            page.goto("http://dubbing.test/dubbing/")
+            picker = page.get_by_label("Dub into", exact=True)
+            picker.select_option("Chinese")
+            picker.select_option("French")
+            expect(picker).to_have_value("French")
+            picker.select_option(label="Other language…")
+            custom = page.get_by_label("Language name")
+            expect(custom).to_be_focused()
+            custom.fill("Swahili")
+            page.reload()
+            expect(custom).to_have_value("Swahili")
+            picker.select_option("Same as spoken")
+            expect(page.get_by_text("New text starts as")).to_be_visible()
+            picker.select_option("Japanese")
+            expect(page.get_by_text("New text starts as")).to_have_count(0)
+            expect(picker).to_have_value("Japanese")
+            browser.close()
+
     def test_delayed_edits_and_fast_completion(self):
         session = self.session([{"start": 1.234, "end": 2.345, "speaker": "speaker1",
                                  "source": "Hello", "translation": "Bonjour"}])
@@ -20,17 +52,7 @@ class DubbingBrowserTests(PageTests):
             browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
             page = browser.new_page()
 
-            def serve(route):
-                request = route.request
-                url = urlsplit(request.url)
-                path = url.path + ("?" + url.query if url.query else "")
-                response = self.client.request(request.method, path, content=request.post_data,
-                                               headers={"content-type": "application/json"})
-                reply = dict(status=response.status_code, content_type=response.headers.get("content-type"),
-                             body=response.content)
-                route.fulfill(**reply)
-
-            page.route("http://dubbing.test/**", serve)
+            page.route("http://dubbing.test/**", self.serve)
             state = {"screen": "review", "sessionId": session.id}
             page.add_init_script("if (!localStorage.getItem('h3-dubbing-page')) "
                                  f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
