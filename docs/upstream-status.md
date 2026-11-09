@@ -1,5 +1,59 @@
 # Upstream status
 
+## ComfyUI video-buffer upgrade implemented — 2026-11-09
+
+The shared `COMFY_REF` now pins
+`fca60fe70e5b84c5c6b058263653d15cb3401e44` for local provisioning and Modal
+builds. It includes the decoded-frame buffer change
+[#17562](https://github.com/Comfy-Org/ComfyUI/pull/17562).
+Core's requirements update workflow templates to 0.11.103 and retain frontend
+1.58.5 and Kitchen 0.2.41. All 64 focused RelayVSR, FaceRefine, regenerate,
+tiled upscale, HDR and restoration tests passed. GPU inference and long-clip
+peak host memory still require deployment checks. Reprovision local ComfyUI
+or rebuild/redeploy Modal to adopt the source upgrade.
+
+## LoRA audit — 2026-11-09
+
+All 38 configured LoRA files are present at their upstream heads. All 19
+configured SHA-256 values match. For the other 19, upstream metadata confirms
+availability only against the project configuration. Checked 26 adapter source
+repositories plus Fibo and compared weight filenames and LFS hashes with the
+November 4 snapshot where available. Viggle Remake has its first baseline here.
+The only weight addition or change in the 26 repositories with a prior snapshot
+was Kijai's smaller eight-step DMAD conversion. Evidence is in
+`.cache/lora-audit-2026-11-09/audit.json`. No weights or inference runs were needed.
+
+| Candidate | Fit and next check |
+| --- | --- |
+| **H3 DMAD eight-step** | First choice for an optional H3 preset. The official exact ComfyUI conversion is 1.956 GB. Kijai's average-rank-58 BF16 version is 0.562 GB. Compare both at eight steps on the same seeds with model strength 1, CFG 1, video/audio shifts 12/2 and LCM/simple. Compare motion, audio alignment and runtime with the existing four-step preset. Smaller download size alone establishes no inference speedup. [Official sampler instructions](https://huggingface.co/ZhengmingYu/DMAD) · [Kijai weights](https://huggingface.co/Kijai/MiniMax-H3-experimental/tree/main/loras) |
+| **Viggle Remake low-rank** | Edit and Swap each have rank-128 (1.34 GB) and rank-64 (0.67 GB) options versus 3.77 GB per configured ComfyUI adapter. Upstream documents these for its reference sampler. Verify key mapping and scaling against our ComfyUI loader, then test identity retention and edit fidelity on the same clip. [Viggle card](https://huggingface.co/Viggle/Viggle-Remake) |
+| **FLUX 3 Klein optional features** | A broader Hub search surfaced a camera-angle adapter for the base model and a separate transparency suite. Camera control could serve reference-image editing, though the author reports subject substitution on some objects. Transparency requires a four-channel VAE and custom nodes for RGBA I/O. Validate PNG alpha through the Media save path before exposing it. [Camera-angle card](https://huggingface.co/vdaular/flux-3-image-klein-angles-lora) · [RGBA workflows](https://huggingface.co/DenRakEiw/FLUX3-Image-Klein-Native-RGBA-Transparent-LoRA) |
+
+The November 4 MOSS three-step draft and Fibo Turbo candidates remain available.
+The configured Qwen Lightning, Pruna, Viggle Turbo, LightX2V H3 and LTX
+adapter repositories showed no weight changes versus that snapshot.
+
+## Component audit — 2026-11-09
+
+Compared the configured pins of 18 Git repositories with their default branches
+and refreshed the 25 PyPI package lookups from November 4. Nine source pins
+match upstream and nine have later commits. These are source and package-index
+checks. Deployed environments, model weights and GPU performance were outside
+this review. Exact comparisons are in `.cache/component-audit-2026-11-09/audit.json`.
+
+| Priority | Finding and decision |
+| --- | --- |
+| Upgrade first | **ComfyUI** `2f894332` → `fca60fe7` (19 commits). RelayVSR, FaceRefine, regenerate and the video upscalers already call `GetVideoComponents`. Upstream eliminates a second decoded-frame buffer, making this a host-memory improvement candidate with no graph migration. The only requirements change is workflow templates 0.11.102 → 0.11.103. Keep the source-paired frontend 1.58.5 and Kitchen 0.2.41. Validate long-clip peak host memory, frame count, FPS and audio passthrough before rollout. [Video change](https://github.com/Comfy-Org/ComfyUI/pull/17562) · [Full comparison](https://github.com/Comfy-Org/ComfyUI/compare/2f8943324e1eae89a5ee6c7db93602299246b5f1...fca60fe70e5b84c5c6b058263653d15cb3401e44) |
+| Evaluate separately | **PlagueKind v1.6.2** adds an H3 image edit node with up to nine reference slots. Our native Pruna graph already handles eight images and uses its own prompt expansion and eight-step schedule. Evaluate the ninth reference or a distinct editing capability before adding a second route. Provisioning currently checks for the SLA node. Exercise its registration alongside the new pack modules before a pin bump. [Image node source](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes/blob/cfb88a01d8922ca634d4ac1e753c7ae2c3c4273e/ltx_lora_loader/pk_minimax_h3_image.py) |
+| Adapt with a graph change | **Spectrum-MOSS** still has the same candidate as November 4. Supply its required `warn_unverified_sampler` input for the existing Euler graph. Evaluate ER-SDE separately with matched seeds, image quality and runtime. **LTXVideo** also has the same outstanding HDR node removals. Migrate the two HDR node references before upgrading. [Spectrum-MOSS changes](https://github.com/Rkkss/ComfyUI-Spectrum-MOSS/compare/3fde0674b29342565e7f42a0674af48d65aabc4a...1e5eb359160b50be02ff95d1a93f22af2947888c) · [LTXVideo changes](https://github.com/Lightricks/ComfyUI-LTXVideo/compare/3bf3ca62595f1764c47d01c35c8e5dfe47e1a88f...220e1d45aa0469f518e982102fca4dca92a61862) |
+| Hold | **SGLang-Omni** main is 186 commits beyond the pinned release. Its Drama 3 reference sampling and earlier first streaming window remain targeted experiments. NeMo Speech has additional artifact restoration changes with no verified benefit to our serving path. KJNodes, ControlNet Aux and Drama3 nodes retain their November 4 assessments. |
+
+The nine matching source heads are T8 Audio, Larry Turbo, Veda, Sol, H3 Spectrum,
+Qwen Spectrum, Video Depth Anything, TensorRT VAE and stable-audio-tools.
+Gradio 6.31.0 and audio-separator 0.48.0 are current. Frontend 1.58.7 is
+available independently. Transformers 5.22.2 is outside our kernels-compatible
+range. Keep the existing Torch/CUDA and NumPy constraints for this upgrade.
+
 ## Native RelayVSR added — 2026-11-06
 
 `COMFY_REF` pins `2f8943324e1eae89a5ee6c7db93602299246b5f1`, including
