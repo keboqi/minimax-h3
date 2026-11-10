@@ -79,11 +79,18 @@
   const engine = () => app.boot.engines.find((item) => item.id === app.s.engine);
 
   // Controls ----------------------------------------------------------------
+  // The buttons stay in place while their labels do: a redraw that lands between a press and its
+  // release (a poll, a prompt saved as the box loses focus) would otherwise swallow the click.
   const seg = (node, options, current, pick, {disabled = false} = {}) => {
-    node.replaceChildren(...options.map((option) => {
-      const [label, value] = Array.isArray(option) ? option : [String(option), option];
-      return h("button", {type: "button", "aria-pressed": String(value === current), disabled, text: label, onclick: () => pick(value)});
-    }));
+    const items = options.map((option) => Array.isArray(option) ? option : [String(option), option]);
+    const kept = node.children.length === items.length && items.every(([label], index) => node.children[index].textContent === label);
+    if (!kept) node.replaceChildren(...items.map(([label]) => h("button", {type: "button", text: label})));
+    items.forEach(([, value], index) => {
+      const button = node.children[index];
+      button.setAttribute("aria-pressed", String(value === current));
+      button.disabled = disabled;
+      button.onclick = () => pick(value);
+    });
     return node;
   };
   const commitOf = (field) => (value) => field.store === "writer" ? changeWriter({[field.name]: value}) : change("edit", {[field.name]: value});
@@ -104,7 +111,7 @@
       return [h("input", {class: "field num mono", type: "text", inputMode: "decimal", value: String(value), disabled, "aria-label": label,
         onchange: (event) => {
           const parsed = Number(event.target.value);
-          if (event.target.value.trim() === "" || Number.isNaN(parsed)) { toast(`${label} must be a number.`, true); render(); return; }
+          if (event.target.value.trim() === "" || Number.isNaN(parsed)) { toast(`${label} must be a number.`, true); delete $("fine").dataset.drawn; render(); return; }
           commit(parsed);
         }}), rangeOf(field) ? h("span", {class: "small muted", text: rangeOf(field)}) : null];
     }
@@ -157,6 +164,10 @@
     const wanted = Number(app.s.ui.group) || 0;
     const [group, [title, detail]] = shown.find(([index]) => index === wanted) || shown[0];
     $("fine-line").textContent = `${engine().label} settings, grouped by what they change. A preset sets them; they stay editable.`;
+    // An open list or a half-made click in Fine-tune survives redraws that change nothing here.
+    const drawn = JSON.stringify([app.s.engine, group, app.s.changed, app.s.fields.filter((field) => field.group === group)]);
+    if ($("fine").dataset.drawn === drawn) return;
+    $("fine").dataset.drawn = drawn;
     $("fine-nav").replaceChildren(...shown.map(([index, [label]]) => h("button", {
       type: "button", "aria-pressed": String(index === group), onclick: () => { saveUi({group: index}); render(); },
     }, label, app.s.changed[index] ? h("span", {class: "chip warn", "aria-hidden": "true", text: String(app.s.changed[index])}) : null)));
@@ -214,7 +225,8 @@
     const items = app.s.references;
     $("reference-count").textContent = items.length ? `${items.length} added` : "";
     $("clear-references").hidden = !items.length;
-    $("reference-list").replaceChildren(...items.map((item, index) => h("div", {class: "pic"},
+    const drawn = JSON.stringify([items.map((item) => [item.path, item.tag]), Boolean(app.s.separate?.value), app.s.engine]);
+    if ($("reference-list").dataset.drawn !== drawn) $("reference-list").replaceChildren(...items.map((item, index) => h("div", {class: "pic"},
       h("img", {class: "thumb", src: item.url, alt: `Image ${index + 1}`}),
       h("div", {class: "body"},
         h("div", {class: "row tightrow"}, h("strong", {class: "small", text: `Image ${index + 1}`}),
@@ -225,6 +237,7 @@
           h("button", {type: "button", class: "btn compact", text: "Up", "aria-label": `Move image ${index + 1} up`, disabled: index === 0, onclick: () => move(index, index - 1)}),
           h("button", {type: "button", class: "btn compact", text: "Down", "aria-label": `Move image ${index + 1} down`, disabled: index === items.length - 1, onclick: () => move(index, index + 1)}),
           h("button", {type: "button", class: "btn compact quiet", text: "Remove", "aria-label": `Remove image ${index + 1}`, onclick: guard(async () => take(await post("/references/remove", {index})))}))))));
+    $("reference-list").dataset.drawn = drawn;
     const separate = app.s.separate;
     $("separate").replaceChildren(separate ? h("label", {class: "check"},
       h("input", {type: "checkbox", checked: Boolean(separate.value), onchange: (event) => change("edit", {[separate.name]: event.target.checked})}),
@@ -259,9 +272,7 @@
     $("preset-box").hidden = !preset;
     $("no-preset").hidden = Boolean(preset);
     if (preset) {
-      $("preset").replaceChildren(...preset.choices.map(([label, value]) => h("button", {
-        type: "button", "aria-pressed": String(value === preset.value), text: label, onclick: () => change("edit", {[preset.name]: value}),
-      })));
+      seg($("preset"), preset.choices, preset.value, (value) => change("edit", {[preset.name]: value}));
       $("preset-hint").textContent = preset.hint;
     } else {
       $("no-preset-line").textContent = SAMPLING[app.s.engine] || "";
@@ -411,15 +422,14 @@
     seg($("models"), app.boot.engines.map((item) => [item.label, item.id]), app.s.engine, (value) => change("engine", {engine: value}));
     $("about").textContent = engine().description;
     $("references").hidden = !app.s.editing;
-    if (app.s.editing) renderReferences();
-    renderPrompt();
-    renderOutput();
-    renderSummary();
-    renderReadiness();
-    renderViewer();
     // Typing in a Fine-tune box must not lose the box to a redraw from another answer.
     const typing = $("fine-rows").contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
-    if (!typing) renderFine();
+    // Each part draws on its own, so one that fails cannot freeze the others.
+    let failed = null;
+    for (const part of [app.s.editing && renderReferences, renderPrompt, renderOutput, renderSummary, renderReadiness, renderViewer, !typing && renderFine]) {
+      try { if (part) part(); } catch (error) { console.error(error); failed = error; }
+    }
+    if (failed) toast(`Part of the page could not be drawn: ${failed.message}`, true);
     queueFit();
   };
 
