@@ -314,6 +314,14 @@ function bindChrome() {
     if (step && !step.disabled) go(step.dataset.screen);
   });
   document.getElementById("project-load").addEventListener("click", loadProject);
+  document.getElementById("project-new").addEventListener("click", () => {
+    if (!app.project && (app.source || app.sessionId || app.manualReply)
+        && !window.confirm("Leave this unsaved draft and start a new project?")) return;
+    try {
+      localStorage.removeItem(STORE);
+    } catch (_) { /* Storage can be unavailable in private windows. */ }
+    window.location.reload();
+  });
   document.getElementById("project-save").addEventListener("click", () => {
     if (app.project?.name) saveProject(app.project.name); else askName();
   });

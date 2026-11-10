@@ -22,6 +22,30 @@ class DubbingBrowserTests(PageTests):
         route.fulfill(status=response.status_code, content_type=response.headers.get("content-type"),
                       body=response.content)
 
+    def test_new_project_from_saved_project(self):
+        saved = self.client.post("/dubbing/api/project/save", json={
+            "name": "Original", "source": str(self.media), "settings": {"target_language": "French"},
+        }).json()["project"]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            page.goto("http://dubbing.test/dubbing/")
+            page.locator("#project-list").select_option("Original")
+            page.get_by_role("button", name="Load", exact=True).click()
+            expect(page.locator("#project-status")).to_have_text("Project: Original")
+            page.get_by_role("button", name="New project").click()
+            expect(page.locator("#project-status")).to_contain_text("Unsaved draft")
+            expect(page.get_by_label("Dub into", exact=True)).to_have_value("English")
+            state = page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page'))")
+            self.assertEqual([state[key] for key in ("sessionId", "source", "project")], [None] * 3)
+            page.locator("#project-list").select_option("Original")
+            page.get_by_role("button", name="Load", exact=True).click()
+            expect(page.get_by_label("Dub into", exact=True)).to_have_value("French")
+            self.assertEqual(page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page')).sessionId"),
+                             saved["session"])
+            browser.close()
+
     def test_target_language_picker(self):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))

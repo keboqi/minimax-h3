@@ -8,16 +8,17 @@ and choose the **Dubbing** task, after Soundstage.
 Dubbing is its own page (`/dubbing/`), shown in the tab as Soundstage's is. It works
 in four steps on a step bar: **Source**, **Review lines**, **Dub** and **Result**. A
 finished analysis opens Review lines and a finished dub opens Result. The top bar
-holds the project picker with **Load**, **Save as…** and **Save project**, and says
+holds the project picker with **Load**, **New project**, **Save as…** and **Save project**, and says
 whether this server has a GPU. The page keeps its settings, the open session and step
 in the browser, so a reload returns to where you were; every run keeps going on the
 server and the page picks it up again.
 
 ## Projects and Workshop
 
-**Dubbing** is also available in **Prism Workshop**. Upload media or pick one
-**From Media**, choose the languages and processing settings, then **Save as…** a
-project name. The saved source survives the upload cache;
+**Dubbing** is also available in **Prism Workshop**. Click **New project** to open a
+blank Source step. Upload a file or pick one **From Media**, choose the languages
+and processing settings, then click **Save project** and enter a new name.
+The saved source survives the upload cache;
 named projects and their sessions are kept beyond the usual 14-day session cleanup.
 API keys are never saved in projects.
 
