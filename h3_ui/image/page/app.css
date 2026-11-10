@@ -172,9 +172,6 @@ input[type="range"] { accent-color: var(--accent); }
 /* Image page */
 .stage a { position: absolute; inset: 0; display: block; }
 .stage img { width: 100%; height: 100%; object-fit: contain; }
-.models { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px; }
-.models button { display: flex; align-items: center; min-height: 40px; padding: 4px 10px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 13px; font-weight: 600; text-align: left; }
-.models button[aria-pressed="true"] { border-color: var(--accent); background: var(--soft); }
 .pic .thumb { height: 66px; }
 .check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
 .check input { margin-top: 3px; accent-color: var(--accent); }

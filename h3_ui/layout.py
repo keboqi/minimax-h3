@@ -17,8 +17,8 @@ H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
             'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 IMAGE_FRAME = ('<iframe class="h3-video-frame" src="/image/" title="Image" '
                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
-# The Image page has its own model picker, so the engine pills stay away for that task.
-IMAGE_HELP = "Create an image or edit your references. Choose the model on the page."
+# The Image page shows its own model pills and their description, so the studio's stay away for that task.
+IMAGE_HELP = ""
 
 
 @dataclass(frozen=True)

@@ -408,9 +408,7 @@
     seg($("mode"), app.boot.modes, app.s.mode, (value) => change("mode", {mode: value}), {disabled: app.s.generate_only});
     $("mode-help").textContent = app.s.generate_only ? "MOSS-Image generates from text only."
       : app.s.editing ? "Change the images you add. The first one is the edit target." : "Create an image from the prompt alone. Adding an image switches to Edit.";
-    $("models").replaceChildren(...app.boot.engines.map((item) => h("button", {
-      type: "button", "aria-pressed": String(item.id === app.s.engine), text: item.label, onclick: () => change("engine", {engine: item.id}),
-    })));
+    seg($("models"), app.boot.engines.map((item) => [item.label, item.id]), app.s.engine, (value) => change("engine", {engine: value}));
     $("about").textContent = engine().description;
     $("references").hidden = !app.s.editing;
     if (app.s.editing) renderReferences();

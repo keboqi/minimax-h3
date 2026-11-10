@@ -9,6 +9,10 @@
 <body>
 <div id="editor" class="editor" hidden>
   <p id="workshop-note" class="notice" hidden>Prepare the prompt, images and settings here, then open Image in Studio to generate on the GPU.</p>
+  <section class="bar" aria-label="Model">
+    <div class="seg wrap" role="group" aria-label="Image model" id="models"></div>
+    <span class="small muted grow" id="about"></span>
+  </section>
   <section class="bar" aria-label="Image run">
     <div class="seg" role="group" aria-label="Image task" id="mode"></div>
     <span class="small muted grow" id="mode-help"></span>
@@ -74,15 +78,6 @@
     </div>
 
     <aside class="panel inspector" aria-label="Compose">
-      <section class="block" aria-label="Model">
-        <div class="row between">
-          <h3>Model</h3>
-          <span class="small muted">Your draft stays when you switch</span>
-        </div>
-        <div class="models" role="group" aria-label="Image model" id="models"></div>
-        <p class="small muted" id="about"></p>
-      </section>
-
       <section class="block" id="references" aria-label="Images to edit" hidden>
         <div class="row between">
           <h3>Images to edit <span class="small muted" id="reference-count"></span></h3>
