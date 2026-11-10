@@ -5,9 +5,10 @@ from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from h3_app.errors import H3Error
 from h3_app.generation.requests import H3Request
 from h3_models import qwen_image21_reference_limit
+from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA, H3_IMAGE_EDIT_SIZE_MAX, H3_IMAGE_MAX_REFERENCES, official_edit_dimensions
 from .h3.layout import start_frame_generation_resolution
 
-IMAGE_MODELS = ("qwen", "h3", "flux3", "moss_image", "fibo2")
+IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2")
 
 
 def image_mode(engine, intent):
@@ -15,10 +16,10 @@ def image_mode(engine, intent):
     return "Text to image" if engine == "moss_image" else intent
 
 
-def reference_limit(engine, variant="Off"):
+def reference_limit(engine, variant="Off", h3_backend=H3_IMAGE_OFFICIAL):
     if engine == "qwen":
         return qwen_image21_reference_limit(variant)
-    return {"h3": 8, "flux3": 10, "moss_image": 0, "fibo2": 4}[engine]
+    return {"h3": 8 if h3_backend == H3_IMAGE_PRUNA else H3_IMAGE_MAX_REFERENCES, "flux3": 10, "moss_image": 0, "fibo2": 4}[engine]
 
 
 def reference_tag(engine, index, count, separate=False):
@@ -33,7 +34,7 @@ def reference_tag(engine, index, count, separate=False):
             "fibo2": f"<image_{index}>"}.get(engine)
 
 
-def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False):
+def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False, h3_backend=H3_IMAGE_OFFICIAL):
     if engine not in IMAGE_MODELS:
         return "Choose an image model."
     if mode not in {"Text to image", "Image edit"}:
@@ -48,16 +49,21 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
     if editing:
         if not references:
             return "Add at least one image to edit."
-        limit = reference_limit(engine, variant)
+        limit = reference_limit(engine, variant, h3_backend)
         if not (engine == "qwen" and separate) and len(references) > limit:
             return f"This model supports up to {limit} references per edit. Remove inputs or choose another model."
     return ""
 
 
-def h3_image_size(edit_size, references, width, height):
-    """An edit's output size: the sliders, or the first reference's ratio at its size or toward 8 MP."""
+def h3_image_size(edit_size, references, width, height, backend=H3_IMAGE_OFFICIAL):
+    """Resolve manual dimensions or the first reference ratio within the backend pixel cap."""
     if not references or edit_size == QWEN_EDIT_SIZE_MANUAL:
         return width, height
+    if backend == H3_IMAGE_OFFICIAL and edit_size in (H3_IMAGE_EDIT_SIZE_MAX, H3_EDIT_SIZE_MATCH):
+        from PIL import Image, ImageOps
+        with Image.open(references[0]) as image:
+            width, height = ImageOps.exif_transpose(image).size
+        return official_edit_dimensions(width, height, maximize=edit_size == H3_IMAGE_EDIT_SIZE_MAX)
     return start_frame_generation_resolution(
         references[:1], alignment=32, auto_megapixels="8 MP",
         edit_size=H3_EDIT_SIZE_MATCH if edit_size == H3_EDIT_SIZE_MATCH else H3_EDIT_SIZE_CAP,
@@ -136,21 +142,34 @@ class ImageGenerationController:
         self.fields.update({f"h3__{name}": component for name, component in self.h3_fields.items()})
         self.fields.update(image__width=view.h3_width, image__height=view.h3_height, image__seed=view.h3_seed,
                            image__edit_size=view.h3_edit_size)
+        for name in ("backend", "expand_prompt"):
+            component = getattr(view, f"h3_{name}", None)
+            if component is not None:
+                self.fields[f"image__{name}"] = component
 
     def generate(self, engine, mode, prompt, references, captured):
         options = {name: captured[f"{engine}__{name}"] for name, _ in GENERATION_OPTIONS.get(engine, ())}
+        backend = captured.get("image__backend", H3_IMAGE_OFFICIAL)
         issue = draft_issue(engine, mode, prompt, references, variant=options.get("turbo_variant", "Off"),
                             fibo_model=options.get("model_choice", "Dev"),
-                            separate=options.get("batch_edit_inputs", False))
+                            separate=options.get("batch_edit_inputs", False), h3_backend=backend)
         if issue:
             raise H3Error(issue)
         active_references = list(references or []) if mode == "Image edit" else []
         if engine == "h3":
             from h3_app.generation.ph3_image import generate_ph3_image
 
-            settings = {name: captured[f"h3__{name}"] for name in self.h3_fields}
+            if backend not in (H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA):
+                raise H3Error("Choose an H3 image backend.")
             width, height = h3_image_size(captured["image__edit_size"], active_references,
-                                          captured["image__width"], captured["image__height"])
+                                          captured["image__width"], captured["image__height"], backend)
+            if backend == H3_IMAGE_OFFICIAL:
+                from h3_app.generation.h3_image import H3ImageRequest, generate_h3_image
+
+                return generate_h3_image(H3ImageRequest(prompt, width, height, captured["image__seed"],
+                                          tuple(active_references), captured.get("image__expand_prompt", True)),
+                                         self.deps.generation_services(), self.deps.runtime_config())
+            settings = {name: captured[f"h3__{name}"] for name in self.h3_fields}
             values = h3_image_values(settings, prompt, active_references, width, height, captured["image__seed"])
             return generate_ph3_image(H3Request.from_values(values), self.deps.generation_services(),
                                       self.deps.runtime_config())
@@ -162,11 +181,19 @@ class ImageGenerationController:
         return getattr(self.handlers[engine], GENERATION_METHODS[engine])(**options)
 
 
-def suggest_prompt(handlers, engine, mode, prompt, references, options):
+def suggest_prompt(handlers, engine, mode, prompt, references, options, *, runtime=None):
     """Use the selected model's recipe and actual output dimensions."""
     active_references = references if mode == "Image edit" else []
     writer = dict(backend=options["writer_backend"], openai_api_key=options["writer_openai_key"],
                   openai_model=options["writer_openai_model"], openai_base_url=options["writer_base_url"])
+    if engine == "h3":
+        from h3_app.prompt_writers.h3_image import enhance_h3_image_prompt
+
+        width, height = h3_image_size(options.get("h3_edit_size", QWEN_EDIT_SIZE_MANUAL), active_references,
+                                      options["h3_width"], options["h3_height"],
+                                      options.get("h3_backend", H3_IMAGE_OFFICIAL))
+        return enhance_h3_image_prompt(prompt, options["writer_model"], options["writer_key"],
+                                        active_references, width, height, runtime=runtime, **writer)
     if engine == "qwen":
         return handlers[engine].enhance_qwen_image21_prompt(
             prompt, options["writer_model"], options["writer_key"], mode, active_references,

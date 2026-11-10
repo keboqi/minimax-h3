@@ -388,7 +388,7 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(restored["qwen_image21.seed"], 42)
         self.assertNotIn("qwen_image21.prompt", restored)
         self.assertNotIn("qwen_image21.api_key", restored)
-        for task, default, alternative in (("Audio / Music", "music", "yue2"), ("Image", "qwen", "fibo2")):
+        for task, default, alternative in (("Audio / Music", "music", "yue2"), ("Image", "h3", "fibo2")):
             for version, engine, expected in (
                 (8, None, default), (8, "unknown", default), (8, "h3", "h3"),
                 (8, alternative, alternative), (7, "h3", default), (7, alternative, alternative),

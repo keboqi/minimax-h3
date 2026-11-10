@@ -16,7 +16,7 @@ ENGINES = (
         "h3",
         "MiniMax H3",
         ("Video", "Image", "Audio / Music"),
-        "Video/audio generation and P-H3-Image still-image generation and editing.",
+        "Video/audio generation and official MiniMax H3 Image generation and editing.",
     ),
     EngineCapability(
         "ltx",
@@ -64,7 +64,7 @@ ENGINES += (
 )
 TASKS = ("Video", "Image", "Audio / Music", "Remake", "Storyboard", "TTS", "Dub")
 # Navigation and preference restoration use the first engine as the default.
-DEFAULT_ENGINES = {"Image": "qwen", "Audio / Music": "music"}
+DEFAULT_ENGINES = {"Image": "h3", "Audio / Music": "music"}
 
 
 def engines_for_task(task: str) -> tuple[EngineCapability, ...]:

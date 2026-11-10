@@ -109,10 +109,17 @@
     }
     if (kind === "int" || kind === "num") {
       return [h("input", {class: "field num mono", type: "text", inputMode: "decimal", value: String(value), disabled, "aria-label": label,
-        onchange: (event) => {
-          const parsed = Number(event.target.value);
-          if (event.target.value.trim() === "" || Number.isNaN(parsed)) { toast(`${label} must be a number.`, true); delete $("fine").dataset.drawn; render(); return; }
-          commit(parsed);
+        onchange: async (event) => {
+          const input = event.target;
+          const sent = input.value;
+          const parsed = Number(sent);
+          if (sent.trim() === "" || !Number.isFinite(parsed)) {
+            toast(`${label} must be a number.`, true);
+            input.value = String(value);
+            return;
+          }
+          await commit(parsed);
+          if (input.value === sent) input.value = String(app.s.options[field.name]);
         }}), rangeOf(field) ? h("span", {class: "small muted", text: rangeOf(field)}) : null];
     }
     if (kind === "area") return [h("textarea", {class: "field area", rows: 3, value: value ?? "", placeholder: field.placeholder, disabled, "aria-label": label, onchange: (event) => commit(event.target.value)})];
@@ -174,7 +181,7 @@
     $("fine-title").textContent = title;
     $("fine-detail").textContent = detail;
     const rows = app.s.fields.filter((field) => field.group === group).map(fineRow);
-    if (app.s.engine === "h3" && group === 1) {
+    if (app.s.engine === "h3" && group === 0 && app.s.options.image__backend === "Pruna P-H3-Image") {
       rows.push(h("div", {class: "fine-row"},
         h("div", {class: "about"}, h("span", {class: "label", text: "Model and performance"}),
           h("span", {class: "hint", text: "P-H3-Image runs 8 steps, Euler and CFG 1 on the model profile and performance settings of the MiniMax H3 page."})),
@@ -218,7 +225,7 @@
     const before = area.value.slice(0, start), after = area.value.slice(end);
     area.focus();
     area.setRangeText((before && !/\s$/.test(before) ? " " : "") + tag + (/^\s/.test(after) ? "" : " "), start, end, "end");
-    if (layout) saveLayout(); else promptEdited();
+    if (layout) autosave(); else promptEdited();
   };
   const move = guard(async (from, to) => take(await post("/references/move", {from, to})));
   const renderReferences = () => {
@@ -248,7 +255,7 @@
   // Output ------------------------------------------------------------------
   // What a model without presets samples with, where the others show their preset.
   const SAMPLING = {
-    h3: "P-H3-Image runs 8 steps, Euler and CFG 1 on your MiniMax H3 settings.",
+    h3: "MiniMax H3 Image (Official): 6 steps, CFG 1, native 16 MP and up to 16 reference images.",
     flux3: "Distilled models run 16 steps at CFG 1; Base models run 50 steps at CFG 4.",
     fibo2: "Dev runs 30 steps at CFG 5. Edit Turbo edits in 4 steps and needs Edit.",
   };
@@ -275,7 +282,8 @@
       seg($("preset"), preset.choices, preset.value, (value) => change("edit", {[preset.name]: value}));
       $("preset-hint").textContent = preset.hint;
     } else {
-      $("no-preset-line").textContent = SAMPLING[app.s.engine] || "";
+      $("no-preset-line").textContent = (app.s.engine === "h3" && app.s.options.image__backend === "Pruna P-H3-Image"
+        ? "Pruna P-H3-Image runs 8 steps on your Video FL2VA profile." : SAMPLING[app.s.engine]) || "";
     }
     $("batch-row").hidden = !batch;
     if (batch) seg($("batch"), Array.from({length: batch.maximum - batch.minimum + 1}, (_, index) => batch.minimum + index), batch.value, (value) => change("edit", {[batch.name]: value}));
@@ -297,20 +305,26 @@
 
   // Prompt ------------------------------------------------------------------
   let promptTimer;
-  const savePrompt = guard(async (accepted = false) => {
+  let pendingSave = Promise.resolve();
+  const saveDraft = (accepted = false) => {
     clearTimeout(promptTimer);
-    const sent = $("prompt").value;
-    const answer = await post("/prompt", {prompt: sent, accepted: accepted === true});
-    // Typing may have gone on while the save was in flight; the newer text stays.
-    if ($("prompt").value === sent) take(answer);
-  });
+    const body = {prompt: $("prompt").value, accepted};
+    if (app.s.layout) body.layout = {name: app.s.layout.name, value: $("layout").value};
+    // Blur, autosave and Generate can overlap. Write their snapshots in the order taken.
+    const save = pendingSave.then(async () => {
+      const answer = await post("/prompt", body);
+      if ($("prompt").value === body.prompt && (!body.layout || $("layout").value === body.layout.value)) take(answer);
+    });
+    pendingSave = save.catch(() => {});
+    return save;
+  };
+  const autosave = guard(() => saveDraft());
   const promptEdited = () => {
     app.s.prompt = $("prompt").value;
     clearTimeout(promptTimer);
-    promptTimer = setTimeout(savePrompt, 500);
+    promptTimer = setTimeout(autosave, 500);
     renderReadiness();
   };
-  const saveLayout = () => { if (app.s.layout && $("layout").value !== app.s.layout.value) change("edit", {[app.s.layout.name]: $("layout").value}); };
   const renderPrompt = () => {
     const editing = app.s.editing;
     $("prompt-label").textContent = editing ? "Edit instruction" : "Image prompt";
@@ -339,8 +353,7 @@
 
   // Runs --------------------------------------------------------------------
   const startRun = guard(async (path) => {
-    await savePrompt();
-    saveLayout();
+    await saveDraft();
     take(await post(path));
   });
   const poll = async () => {
@@ -469,8 +482,8 @@
       if (event.dataTransfer?.files?.length) upload(event.dataTransfer.files);
     });
     $("prompt").addEventListener("input", promptEdited);
-    $("prompt").addEventListener("blur", () => savePrompt());
-    $("layout").addEventListener("change", saveLayout);
+    $("prompt").addEventListener("blur", autosave);
+    $("layout").addEventListener("change", autosave);
     $("run").addEventListener("click", () => { app.progress = []; app.take = 0; startRun("/generate"); });
     $("stop").addEventListener("click", guard(async () => {
       const answer = await post("/interrupt");
@@ -493,7 +506,7 @@
       app.suggestion = null;
       app.enhanceNote = "";
       app.enhanceDraft = JSON.stringify([app.s.engine, app.s.mode, app.s.references.map((item) => item.path)]);
-      await savePrompt();
+      await saveDraft();
       const answer = await post("/enhance");
       app.enhancePending = app.enhanceStarted = true;
       take(answer);
@@ -511,7 +524,7 @@
       app.enhanceNote = "Suggested prompt accepted.";
       $("prompt").value = proposal.text;
       app.s.prompt = proposal.text;
-      return savePrompt(true);
+      return saveDraft(true);
     }));
     $("keep").addEventListener("click", () => { app.suggestion = null; app.enhanceNote = "Original prompt kept."; render(); });
     $("undo").addEventListener("click", () => {
@@ -519,7 +532,7 @@
       app.s.prompt = app.previous;
       app.previous = null;
       app.enhanceNote = "";
-      savePrompt();
+      autosave();
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.repeat) return;

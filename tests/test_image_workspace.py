@@ -41,7 +41,9 @@ class ImageWorkspaceTests(unittest.TestCase):
     def test_edit_capabilities_and_variant_limits(self):
         self.assertIn("generation only", draft_issue("moss_image", "Image edit", "fox", ["a"]))
         self.assertIn("at least one", draft_issue("h3", "Image edit", "fox", []))
-        self.assertIn("8 references", draft_issue("h3", "Image edit", "fox", ["a"] * 9))
+        self.assertIn("16 references", draft_issue("h3", "Image edit", "fox", ["a"] * 17))
+        self.assertIn("8 references", draft_issue("h3", "Image edit", "fox", ["a"] * 9,
+                                                 h3_backend="Pruna P-H3-Image"))
         self.assertIn("4 references", draft_issue("fibo2", "Image edit", "fox", ["a"] * 5))
         self.assertIn("Edit mode", draft_issue("fibo2", "Text to image", "fox", [], fibo_model="Edit Turbo"))
         self.assertEqual(reference_limit("qwen", QWEN_IMAGE21_OFFICIAL_TURBO), 10)
@@ -158,7 +160,7 @@ class ImageGenerationControllerTests(unittest.TestCase):
                                for field, component in zip(GENERATION_FIELDS, GENERATION_COMPONENTS, strict=True)})
         image = SimpleNamespace(h3_width=1024, h3_height=1024, h3_seed=27, h3_edit_size=QWEN_EDIT_SIZE_MANUAL)
         self.controller = ImageGenerationController(self.views, self.handlers, h3, image, Mock())
-        self.values = {**self.controller.fields, "qwen__turbo_variant": "Off", "qwen__batch_edit_inputs": False,
+        self.values = {**self.controller.fields, "image__backend": "Pruna P-H3-Image", "qwen__turbo_variant": "Off", "qwen__batch_edit_inputs": False,
                        "fibo2__model_choice": "Dev"}
 
     def test_dispatch_preserves_selected_options_and_excludes_inactive_references(self):
@@ -197,7 +199,7 @@ class ImageGenerationControllerTests(unittest.TestCase):
             Image.new("RGB", (1920, 1080)).save(first)
             self.controller.generate("h3", "Image edit", "edit", [str(first)], {
                 **self.values, "image__width": 1024, "image__height": 1024, "image__seed": 27,
-                "image__edit_size": H3_EDIT_SIZE_MATCH,
+                "image__edit_size": H3_EDIT_SIZE_MATCH, "image__backend": "Pruna P-H3-Image",
             })
         request = generate.call_args.args[0]
         self.assertEqual((request.output.width, request.output.height), (1920, 1088))

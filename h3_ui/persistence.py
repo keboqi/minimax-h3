@@ -35,7 +35,7 @@ EXTRA_FIELDS = {
     "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
     "drama3": (),  # The Soundstage page keeps its settings with each project.
     "workspace": ("task", "engine"),
-    "image": ("mode", "h3_width", "h3_height", "h3_edit_size", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
+    "image": ("mode", "h3_backend", "h3_expand_prompt", "h3_width", "h3_height", "h3_edit_size", "h3_seed", "prompt_backend", "prompt_model", "openai_model"),
     "qwen_image21": (
         "prompt_enhancer",
         "model",

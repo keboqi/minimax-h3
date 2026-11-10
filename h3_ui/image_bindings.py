@@ -7,6 +7,7 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
+from h3_app.h3_image import H3_IMAGE_OFFICIAL
 from .engines.controls import QUIET, bind_resolution_presets
 from .image_controller import (
     IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
@@ -50,12 +51,15 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
         return [path], "Image edit"
 
     use.click(use_result, inputs=[app_views.engine, selected], outputs=[refs, mode], **QUIET)
-    h3.model_profile.change(
-        lambda profile: f"Uses MiniMax H3 settings: **{profile}**.\n\nP-H3-Image uses 8 steps, Euler and CFG 1.",
-        inputs=h3.model_profile, outputs=view.base_summary, **QUIET)
+    def backend_summary(backend, profile):
+        return ("Official: dedicated image model, 6 steps, Euler and CFG 1." if backend == H3_IMAGE_OFFICIAL
+                else f"Pruna uses Video FL2VA profile **{profile}**, 8 steps, Euler and CFG 1.")
+
+    gr.on(triggers=[h3.model_profile.change, view.h3_backend.change], fn=backend_summary,
+          inputs=[view.h3_backend, h3.model_profile], outputs=view.base_summary, **QUIET)
 
     state_inputs = [app_views.engine, mode, prompt, refs, engine_views["qwen"].turbo_variant,
-                    engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs]
+                    engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs, view.h3_backend]
 
     # As in the other engines, a chosen preset takes priority over the first image's size.
     bind_resolution_presets(
@@ -95,13 +99,13 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     gr.on(triggers=[app_views.engine.change, mode.change, demo.load], fn=layout,
           inputs=[app_views.engine, mode], outputs=layout_outputs, trigger_mode="always_last", **QUIET)
 
-    def readiness_state(engine, intent, text, paths, variant, fibo_model, separate):
+    def readiness_state(engine, intent, text, paths, variant, fibo_model, separate, backend):
         if engine not in IMAGE_MODELS:
             return (gr.skip(),) * 4
         intent = image_mode(engine, intent)
         editing = intent == "Image edit"
-        issue = draft_issue(engine, intent, text, paths, variant, fibo_model, separate)
-        limit = reference_limit(engine, variant)
+        issue = draft_issue(engine, intent, text, paths, variant, fibo_model, separate, backend)
+        limit = reference_limit(engine, variant, backend)
         note = ("MOSS-Image generates from text only." if engine == "moss_image" else
                 f"Up to {limit} references per edit. Upload order is preserved.")
         if editing and engine == "qwen":
@@ -119,7 +123,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
         return (
             note, f'<p class="h3-readiness" role="status">{escape(ready)}</p>',
             gr.update(value="Edit image" if editing else "Generate image", interactive=not issue),
-            gr.update(interactive=engine in {"qwen", "flux3", "moss_image"} and not (editing and engine == "moss_image")),
+            gr.update(interactive=engine in {"h3", "qwen", "flux3", "moss_image"} and not (editing and engine == "moss_image")),
         )
 
     gr.on(triggers=[component.change for component in state_inputs] + [demo.load], fn=readiness_state,
@@ -148,6 +152,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
 
     writer = view.writer
     prompt_fields = {
+        "h3_width": view.h3_width, "h3_height": view.h3_height,
+        "h3_edit_size": view.h3_edit_size, "h3_backend": view.h3_backend,
         "moss_rewrite_mode": engine_views["moss_image"].rewrite_mode,
         "qwen_edit_size": engine_views["qwen"].edit_size,
         **{f"{engine}_{name}": getattr(engine_views[engine], name)
@@ -160,7 +166,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     def suggest_selected(engine, intent, text, paths, *values):
         try:
             return suggest_prompt(handlers, engine, image_mode(engine, intent), text, paths,
-                                  dict(zip(prompt_fields, values, strict=True)))
+                                  dict(zip(prompt_fields, values, strict=True)), runtime=deps.runtime_config())
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 
@@ -170,13 +176,14 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
 
     def accepted_suggestion(engine, text, message):
         if message != "Suggested prompt accepted.":
-            return gr.skip(), gr.skip()
+            return gr.skip(), gr.skip(), gr.skip()
         from h3_app.workflows.moss_image_prompt import is_layout_prompt
 
         return (False if engine == "flux3" else gr.skip(),
-                "" if engine == "moss_image" and is_layout_prompt(text) else gr.skip())
+                "" if engine == "moss_image" and is_layout_prompt(text) else gr.skip(),
+                False if engine == "h3" else gr.skip())
 
     suggestion.acceptance.success(accepted_suggestion, inputs=[app_views.engine, prompt, enhance_status],
-                                  outputs=[engine_views["flux3"].expand_prompt, engine_views["moss_image"].layout],
+                                  outputs=[engine_views["flux3"].expand_prompt, engine_views["moss_image"].layout, view.h3_expand_prompt],
                                   **QUIET)
     return controller

@@ -8,11 +8,15 @@ A run takes the job path the Gradio Generate button took, in a thread here, and 
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass, field
+import errno
 import json
+import math
 from pathlib import Path
 import re
 import shutil
+from tempfile import TemporaryDirectory
 from threading import RLock
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
@@ -22,6 +26,7 @@ import uuid
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 
+from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
 from h3_app import catalog
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
@@ -50,7 +55,7 @@ GENERATE, ENHANCE = "generate", "enhance"
 BUSY = {GENERATE: "An image is already being made.", ENHANCE: "The prompt writer is already running."}
 GENERATE_MODE, EDIT_MODE = "Text to image", "Image edit"
 MANUAL = catalog.QWEN_EDIT_SIZE_MANUAL
-WRITER_ENGINES = ("qwen", "flux3", "moss_image")
+WRITER_ENGINES = ("h3", "qwen", "flux3", "moss_image")
 SECRET_FIELDS = ("gemini_api_key", "openai_api_key")
 UI_LIMIT = 4096
 REFERENCE_LIMIT = 24  # Kept in the draft; each model's own limit is checked when it runs.
@@ -64,7 +69,7 @@ GROUPS = (
 )
 # Where Fine-tune shows a model's option, by the name its generation takes it under.
 GROUP_OF = {
-    "model_choice": 0, "precision": 0, "turbo_variant": 0, "lightning_strength": 0, "text_encoder_choice": 0,
+    "backend": 0, "model_choice": 0, "precision": 0, "turbo_variant": 0, "lightning_strength": 0, "text_encoder_choice": 0,
     "vae_choice": 0, "steps": 0, "cfg": 0, "negative_prompt": 0, "sampler_name": 0, "scheduler": 0,
     "width": 1, "height": 1, "seed": 1,
     "reference_resolution": 2, "cache_device": 2, "cache_dtype": 2,
@@ -159,6 +164,33 @@ def writer_defaults() -> dict[str, Any]:
             "openai_api_key": "", "openai_model": catalog.DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": ""}
 
 
+def private_image_root(runtime, workspace: Path) -> Path:
+    """Keep owner drafts outside the served roots, including on upgrades."""
+    outputs = runtime.outputs_dir.resolve()
+    comfy = runtime.output_dir.resolve()
+    root = (workspace / "image-page").resolve()
+    if any(root.is_relative_to(public) for public in (outputs, comfy)):
+        outer = comfy if outputs.is_relative_to(comfy) else outputs
+        root = (outer.with_name(f".{outer.name}-image-drafts") / outputs.relative_to(outer)).resolve()
+        if any(root.is_relative_to(public) for public in (outputs, comfy)):
+            raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private image drafts.")
+    previous = outputs / ".image-page"
+    if previous.is_dir():
+        root.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            previous.rename(root)
+        except OSError as error:
+            if error.errno != errno.EXDEV:
+                raise
+            # The workspace may be on a different volume. Publish only a complete copy.
+            with TemporaryDirectory(dir=root.parent) as staging:
+                copy = Path(staging) / "image-page"
+                shutil.copytree(previous, copy)
+                copy.rename(root)
+            shutil.rmtree(previous)
+    return root
+
+
 def key_of(engine: str, parameter: str) -> str:
     return f"{'image' if engine == 'h3' else engine}__{parameter}"
 
@@ -183,17 +215,22 @@ def coerce(spec: FieldSpec, value: Any) -> Any:
             raise H3Error(f"{spec.label} must be a number.")
         if spec.minimum is not None and not spec.minimum <= number <= spec.maximum:
             raise H3Error(f"{spec.label} must be between {spec.minimum:g} and {spec.maximum:g}.")
+        if spec.step:
+            steps = (number - (spec.minimum or 0)) / spec.step
+            if not math.isclose(steps, round(steps), rel_tol=0, abs_tol=1e-8):
+                raise H3Error(f"{spec.label} must change in increments of {spec.step:g} from {spec.minimum or 0:g}.")
         return int(round(number)) if spec.kind == "int" else number
     return "" if value is None else str(value)
 
 
-def _spool(upload: UploadFile, folder: Path) -> Path:
+def _spool(upload: UploadFile, folder: Path, rollback: ExitStack) -> Path:
     suffix = Path(upload.filename or "").suffix.lower()
     if suffix not in catalog.IMAGE_EXTENSIONS:
         raise H3Error(f"{upload.filename} isn't a supported image ({', '.join(sorted(catalog.IMAGE_EXTENSIONS))}).")
     stem = re.sub(r"[^\w. -]", "_", Path(upload.filename or "").stem).strip(" .")[:60] or "upload"
     path = folder / f"{uuid.uuid4().hex[:12]}-{stem}{suffix}"
-    with path.open("wb") as handle:
+    with path.open("xb") as handle:
+        rollback.callback(path.unlink, missing_ok=True)
         shutil.copyfileobj(upload.file, handle)
     return path
 
@@ -269,10 +306,13 @@ class ImagePageState:
                        if name in writer and name not in SECRET_FIELDS})
         writer.update(self.secrets.get(owner, {}))
         files = lambda paths: [str(path) for path in paths or [] if path and Path(path).is_file()]
+        # Earlier drafts stored absolute paths under the old output directory.
+        uploads = self.owner_root(owner) / "uploads"
+        references = [uploads / Path(path).name for path in saved.get("references") or [] if path]
         return {
             "engine": saved.get("engine") if saved.get("engine") in IMAGE_MODELS else IMAGE_MODELS[0],
             "mode": EDIT_MODE if saved.get("mode") == EDIT_MODE else GENERATE_MODE,
-            "prompt": str(saved.get("prompt") or ""), "references": files(saved.get("references")),
+            "prompt": str(saved.get("prompt") or ""), "references": files(references),
             "options": options, "writer": writer, "results": files(saved.get("results")),
             "ui": saved.get("ui") if isinstance(saved.get("ui"), dict) else {},
         }
@@ -295,9 +335,11 @@ class ImagePageState:
         self.granted.setdefault(owner, set()).add(str(path))
         return str(path)
 
-    def keep(self, owner: str, source) -> str:
+    def keep(self, owner: str, source, rollback: ExitStack | None = None) -> str:
         """A copy of ``source`` among the owner's uploads, so the draft outlives where it came from."""
         target = self.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(source).name}"
+        if rollback is not None:
+            rollback.callback(target.unlink, missing_ok=True)
         shutil.copy2(source, target)
         return str(target)
 
@@ -427,6 +469,8 @@ class ImagePageState:
         clean = self.baseline(engine, options)
         value = lambda parameter: options.get(key_of(engine, parameter))
         hidden = set()
+        if engine == "h3" and value("backend") == H3_IMAGE_PRUNA:
+            hidden.add("expand_prompt")
         if engine == "qwen":
             if value("cfg") <= 1:
                 hidden.add("negative_prompt")
@@ -470,13 +514,15 @@ class ImagePageState:
         engine, options = state["engine"], state["options"]
         return draft_issue(engine, image_mode(engine, state["mode"]), state["prompt"], state["references"],
                            options.get("qwen__turbo_variant", "Off"), options.get("fibo2__model_choice", "Dev"),
-                           bool(options.get("qwen__batch_edit_inputs")))
+                           bool(options.get("qwen__batch_edit_inputs")),
+                           options.get("image__backend", H3_IMAGE_OFFICIAL))
 
     def guidance(self, state: Mapping[str, Any], editing: bool) -> str:
         engine, count = state["engine"], len(state["references"])
         note = ""
         if editing:
-            limit = reference_limit(engine, state["options"].get("qwen__turbo_variant", "Off"))
+            limit = reference_limit(engine, state["options"].get("qwen__turbo_variant", "Off"),
+                                    state["options"].get("image__backend", H3_IMAGE_OFFICIAL))
             note = f"Up to {limit} images per edit, in this order."
         if editing and engine == "qwen":
             note += " The first image is the target; name several as <image1>, <image2>, …"
@@ -625,8 +671,15 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     @guarded
     def change_prompt(request: Request, body: dict = Body(...)):
         def change(state):
+            if "layout" in body:
+                layout = body["layout"]
+                if layout["name"] != key_of(state["engine"], "layout"):
+                    raise H3Error("The image model changed. Refresh the draft before saving.")
+                pages.apply(state, "edit", {layout["name"]: layout["value"]})
             state["prompt"] = str(body.get("prompt") or "")
             if body.get("accepted"):
+                if state["engine"] == "h3":
+                    state["options"]["image__expand_prompt"] = False
                 # A remote rewrite is already expanded, and a rewritten Layout carries its own boxes.
                 if state["engine"] == "flux3":
                     state["options"]["flux3__expand_prompt"] = False
@@ -645,20 +698,25 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
         return edit(request, lambda state: state.update(ui=ui))
 
     # Images to edit ----------------------------------------------------------
-    def add(state: dict[str, Any], paths: list[str]) -> None:
-        if len(state["references"]) + len(paths) > REFERENCE_LIMIT:
-            raise H3Error(f"Keep at most {REFERENCE_LIMIT} images in the draft.")
-        state["references"] += paths
-        # As in the Gradio view, adding an image means editing it.
-        state["mode"] = EDIT_MODE
+    def add(owner: str, paths: list[str], rollback: ExitStack) -> dict[str, Any]:
+        with pages.lock:
+            state = pages.load(owner)
+            if len(state["references"]) + len(paths) > REFERENCE_LIMIT:
+                raise H3Error(f"Keep at most {REFERENCE_LIMIT} images in the draft.")
+            state["references"] += paths
+            state["mode"] = EDIT_MODE
+            pages.save(owner, state)
+            rollback.pop_all()
+            return answer(owner, state)
 
     @app.post(f"{API}/references/upload", include_in_schema=False)
     @guarded
     def upload_references(request: Request, files: list[UploadFile] = File(...)):
         owner = owner_of(request)
         folder = pages.uploads(owner)
-        paths = [str(_spool(upload, folder)) for upload in files]
-        return edit(request, lambda state: add(state, paths))
+        with ExitStack() as rollback:
+            paths = [str(_spool(upload, folder, rollback)) for upload in files]
+            return add(owner, paths, rollback)
 
     @app.post(f"{API}/references/library", include_in_schema=False)
     @guarded
@@ -671,7 +729,9 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
         library.validate_path(source, "Image")
         if not Path(source).is_file():
             raise H3Error("This image is unavailable. Refresh the library and choose another.")
-        return edit(request, lambda state: add(state, [pages.keep(owner, source)]))
+        with ExitStack() as rollback:
+            path = pages.keep(owner, source, rollback)
+            return add(owner, [path], rollback)
 
     def position(state: dict[str, Any], value) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < len(state["references"]):
@@ -795,8 +855,10 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
         mode = image_mode(engine, state["mode"])
         prompt, references = state["prompt"], list(state["references"])
         arguments = {
+            "h3_width": options.get("image__width"), "h3_height": options.get("image__height"),
+            "h3_edit_size": options.get("image__edit_size"), "h3_backend": options.get("image__backend"),
             "moss_rewrite_mode": options.get("moss_image__rewrite_mode"), "qwen_edit_size": options.get("qwen__edit_size"),
-            **{f"{model}_{side}": options.get(f"{model}__{side}") for model in WRITER_ENGINES for side in ("width", "height")},
+            **{f"{model}_{side}": options.get(f"{model}__{side}") for model in WRITER_ENGINES if model != "h3" for side in ("width", "height")},
             "writer_model": writer["model"], "writer_key": writer["gemini_api_key"], "writer_backend": writer["backend"],
             "writer_openai_key": writer["openai_api_key"], "writer_openai_model": writer["openai_model"],
             "writer_base_url": writer["openai_base_url"] or None,

@@ -33,14 +33,14 @@ def validate_ph3_image(request):
         raise H3Error("P-H3-Image supports at most eight images.")
 
 
-def image_references(media):
+def image_references(media, *, label="P-H3-Image"):
     if media.mode == "Text to video":
         return ()
     if media.mode == "First / last frame":
         images = collect_reference_slots(media.first_image, media.last_image)
     elif media.mode == "Reference media":
         if any(getattr(media, f"ref_{kind}_{i}") for kind in ("video", "audio") for i in range(1, 4)):
-            raise H3Error("P-H3-Image editing accepts images; remove video and audio references.")
+            raise H3Error(f"{label} editing accepts images; remove video and audio references.")
         images = collect_reference_slots(*(getattr(media, f"ref_image_{i}") for i in range(1, 10)))
     else:
         raise H3Error("Choose text generation or an image editing mode.")

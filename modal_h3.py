@@ -31,6 +31,8 @@ PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
 PROMPTS = ROOT / "prompts"
 PROMPT_FILES = (
     "prompt.txt",
+    "prompt_h3_image_t2i.txt",
+    "prompt_h3_image_edit.txt",
     "prompt_music3.txt",
     "prompt_ltx25.txt",
     "prompt_qwen_image21.txt",

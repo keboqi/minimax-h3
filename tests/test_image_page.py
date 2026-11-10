@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -14,7 +15,7 @@ from h3_app import catalog
 from h3_app.jobs import JOBS
 from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
 from h3_ui import application as gradio_app
-from h3_ui.image.page import EDIT_MODE, GENERATE_MODE, GROUP_OF, COMPOSE, install_image_page
+from h3_ui.image.page import EDIT_MODE, GENERATE_MODE, GROUP_OF, COMPOSE, install_image_page, private_image_root
 from h3_ui.job_bindings import owned_generation
 
 API = "/image/api"
@@ -53,6 +54,8 @@ class ImagePageTests(unittest.TestCase):
         install_image_page(app, pages)
         self.client = TestClient(app)
         self.boot = self.ok(self.client.get(f"{API}/boot"))
+        self.initial_state = self.boot["state"]
+        self.boot["state"] = self.change("engine", engine="qwen")
 
     def generate(self, engine, mode, prompt, references, *values):
         self.generated.append({"engine": engine, "mode": mode, "prompt": prompt, "references": references,
@@ -96,15 +99,43 @@ class ImagePageTests(unittest.TestCase):
     def field(self, state, name):
         return next(row for row in state["fields"] if row["name"] == name)
 
+    def test_official_h3_defaults_and_backend_reference_limits(self):
+        self.assertEqual(self.initial_state["engine"], "h3")
+        self.assertEqual(self.initial_state["options"]["image__backend"], "MiniMax H3 Image (Official)")
+        self.assertEqual((self.initial_state["width"], self.initial_state["height"]), (4096, 4096))
+        self.change("engine", engine="h3")
+        self.post("/prompt", prompt="combine")
+        state = self.upload(*(f"ref{i}.png" for i in range(16)))
+        self.assertTrue(state["readiness"]["ready"])
+        self.assertIn("16 images", state["guidance"])
+        state = self.change(image__backend="Pruna P-H3-Image")
+        self.assertIn("8 references", state["readiness"]["message"])
+        self.assertNotIn("image__expand_prompt", {row["name"] for row in state["fields"]})
+        state = self.change(image__backend="MiniMax H3 Image (Official)")
+        self.assertTrue(state["readiness"]["ready"])
+
+    def test_h3_prompt_assistance_passes_image_settings_and_acceptance_skips_local_expansion(self):
+        self.change("engine", engine="h3")
+        self.change(image__width=4736, image__height=3552)
+        self.post("/prompt", prompt="three bowls")
+        self.post("/enhance")
+        result = self.finished("enhance")
+        self.assertEqual(self.suggested[0][:4], ("h3", GENERATE_MODE, "three bowls", []))
+        options = self.suggested[0][4]
+        self.assertEqual((options["h3_width"], options["h3_height"]), (4736, 3552))
+        suggestion = result["runs"]["enhance"]["suggestion"]
+        state = self.post("/prompt", prompt=suggestion, accepted=True)["state"]
+        self.assertFalse(state["options"]["image__expand_prompt"])
+
     def test_every_job_option_has_a_place_on_the_page(self):
         own = [name for name in self.services.job_fields if not name.startswith("h3__")]
         self.assertTrue(set(own) <= set(self.services.fields))
         for name in own:
             self.assertIn(name.partition("__")[2], {*GROUP_OF, *COMPOSE}, name)
         self.assertEqual([engine["id"] for engine in self.boot["engines"]],
-                         ["qwen", "h3", "flux3", "moss_image", "fibo2"])
+                         ["h3", "qwen", "flux3", "moss_image", "fibo2"])
         self.assertEqual({engine: [tier["label"] for tier in tiers] for engine, tiers in self.boot["sizes"].items()},
-                         {"qwen": ["1K", "2K"], "h3": ["4M", "8M"], "flux3": ["1K", "2K"],
+                         {"qwen": ["1K", "2K"], "h3": ["4M", "8M", "16M"], "flux3": ["1K", "2K"],
                           "moss_image": ["1M", "2M"], "fibo2": ["1M", "2M"]})
 
     def test_a_qwen_preset_sets_its_sampling_and_a_change_is_counted(self):
@@ -135,8 +166,9 @@ class ImagePageTests(unittest.TestCase):
         self.assertEqual((state["options"]["fibo2__steps"], state["options"]["fibo2__cfg"]), (4, 1))
         self.assertTrue(self.field(state, "fibo2__steps")["disabled"])
         state = self.change("engine", engine="h3")
-        self.assertEqual(names(state), {"image__width", "image__height", "image__seed"})
-        self.assertFalse(state["can_enhance"])
+        self.assertTrue({"image__width", "image__height", "image__seed",
+                         "image__backend", "image__expand_prompt"} <= names(state))
+        self.assertTrue(state["can_enhance"])
 
     def boot_state(self):
         return self.ok(self.client.get(f"{API}/boot"))["state"]
@@ -158,10 +190,60 @@ class ImagePageTests(unittest.TestCase):
 
     def test_values_are_checked_against_the_option(self):
         for changes in ({"qwen__steps": 500}, {"qwen__sampler_name": "nope"}, {"qwen__batch_edit_inputs": "yes"},
-                        {"unknown": 1}):
+                        {"unknown": 1}, {"qwen__width": 1025}, {"qwen__height": 1023.9}):
             response = self.client.post(f"{API}/settings", json={"changes": changes})
             self.assertEqual(response.status_code, 400, changes)
         self.assertEqual(self.change(qwen__steps="12")["options"]["qwen__steps"], 12)
+        self.assertEqual(self.change(qwen__width=1056)["options"]["qwen__width"], 1056)
+
+    def test_prompt_and_layout_save_together_before_generation(self):
+        self.change("engine", engine="flux3")
+        self.post("/prompt", prompt="New prompt", layout={"name": "flux3__layout", "value": "New boxes"})
+        self.post("/generate")
+        self.finished("generate")
+        self.assertEqual((self.generated[0]["prompt"], self.generated[0]["flux3__layout"]), ("New prompt", "New boxes"))
+        stale = {"prompt": "Wrong draft", "layout": {"name": "moss_image__layout", "value": ""}}
+        self.assertEqual(self.client.post(f"{API}/prompt", json=stale).status_code, 400)
+        self.assertEqual(self.boot_state()["prompt"], "New prompt")
+
+    def test_rejected_upload_batch_preserves_draft_and_files(self):
+        state = self.upload("keep.png")
+        folder = Path(state["references"][0]["path"]).parent
+        before = set(folder.iterdir())
+        def post(names):
+            files = [("files", (name, b"data", "application/octet-stream")) for name in names]
+            return self.client.post(f"{API}/references/upload", files=files)
+
+        for names in (["valid.png", "invalid.txt"], ["overflow.png"] * 24):
+            self.assertEqual(post(names).status_code, 400)
+            self.assertEqual(set(folder.iterdir()), before)
+        with patch.object(self.page_state(), "save", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                post(["new.png"])
+        self.assertEqual(set(folder.iterdir()), before)
+        self.assertEqual(self.boot_state()["references"], state["references"])
+
+    def test_existing_draft_moves_outside_both_public_output_roots(self):
+        from dataclasses import replace
+        from h3_ui.image.page import ImagePageState
+
+        for output in (self.root / "public" / "nested", self.root / "separate"):
+            runtime = SimpleNamespace(outputs_dir=output, output_dir=self.root / "public")
+            old = output / ".image-page"
+            pages = ImagePageState(replace(self.services, root=lambda: old, followers=()))
+            reference = pages.uploads("owner") / "reference.png"
+            reference.write_bytes(b"reference")
+            state = pages.load("owner")
+            state.update(prompt="Private draft", references=[str(reference)])
+            pages.save("owner", state)
+            workspace = output / "workspace" if output.name == "nested" else self.root / "workspace"
+            new = private_image_root(runtime, workspace)
+            self.assertFalse(old.exists())
+            self.assertFalse(any(new.is_relative_to(root) for root in (output, runtime.output_dir)))
+            self.assertEqual(private_image_root(runtime, workspace), new)
+            moved = ImagePageState(replace(pages.services, root=lambda: new)).load("owner")
+            self.assertEqual(moved["prompt"], "Private draft")
+            self.assertEqual(Path(moved["references"][0]).read_bytes(), b"reference")
 
     def test_adding_an_image_means_editing_and_the_order_can_change(self):
         self.assertEqual(self.boot["state"]["mode"], GENERATE_MODE)

@@ -114,13 +114,19 @@ backends; GPU inference and deployment are validated separately.
 
 - Unified H3 video, image, and audio result formats across text,
   first/last-frame, and reference-media conditioning
-- H3 Image uses Pruna P-H3-Image's eight-step LoRA on the selected FL2VA base,
-  with prompt upsampling and editing with up to eight images. Results are saved
-  automatically and shown in the shared Image results with download support.
+- H3 Image defaults to **MiniMax H3 Image (Official)**: a dedicated image checkpoint,
+  six Euler/PDD steps at CFG 1, native 16 MP presets, and editing with up to sixteen
+  ordered images. The INT8 model, FP16 image VAE and optional local Qwen3.5 9B prompt
+  expander download on first use; it reuses the H3 INT8 text encoder. Disable local
+  expansion when supplying a complete English description. Local expansion and remote
+  **Suggest a prompt** use separate generation/editing recipes adapted from MiniMax's
+  official image prompt-writing skill. Results save automatically.
+- **Pruna P-H3-Image** remains selectable under H3 image backend: its eight-step
+  LoRA reuses the selected Video FL2VA base and supports up to eight images.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - One Image workspace for Qwen Image 2.1, FLUX 3, MiniMax H3, MOSS-Image and Fibo 2.0,
   with a shared prompt, ordered editing references, results, and independent model settings
-- MiniMax H3 Image reuses the settings under Video → MiniMax H3; no duplicate video controls
+- Official H3 Image has independent image settings; Pruna reuses the Video → MiniMax H3 model profile
 - MOSS-Image supports text-to-image generation only, with Fast, Balanced and Quality
   presets and optional Spectrum acceleration
 - Fibo 2.0 Dev generation/editing and Edit Turbo, with ordered reference images
@@ -443,7 +449,7 @@ the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 The deployment pins ComfyUI v0.44.0 plus native RelayVSR and adaptive SeedVR2
 VAE slicing at immutable revision `2f8943324e1eae89a5ee6c7db93602299246b5f1`
 ([Comfy-Org/ComfyUI#17508](https://github.com/Comfy-Org/ComfyUI/pull/17508)), including native Sol H3 VAE decoding,
-H3 latent upscaling, P-H3-Image conditioning and LoRA bypass support.
+H3 latent upscaling, official H3 Image conditioning/PDD sampling, and Pruna LoRA bypass support.
 Refinement and H3 Regenerate use Core's optimized
 upscaler with a bundled loader that preserves FP32/BF16/FP16 precision choices.
 Fast and Singularity select the lazily downloaded

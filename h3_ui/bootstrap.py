@@ -229,8 +229,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=h3_page_services))
         from .h3.page import H3PageState
-        from .image.page import ImagePageServices, ImagePageState, install_image_page, spec_of
+        from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root, spec_of
         from .image_controller import suggest_prompt
+        from h3_app.h3_image import H3_IMAGE_16M_PRESETS
+        from h3_app.catalog import H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS
 
         # Reads what the MiniMax H3 page saved: P-H3-Image runs on that page's settings.
         h3_saved = H3PageState(h3_page_services)
@@ -239,18 +241,23 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         # Shown with the model's options, though no generation takes them by name.
         image_fields["qwen__preset"] = engine_views["qwen"].preset
         image_fields["moss_image__rewrite_mode"] = engine_views["moss_image"].rewrite_mode
+        from h3_app.jobs import JOBS
+
+        image_root = private_image_root(services.engine_deps.runtime_config(), JOBS.store.root)
         image_pages.append(ImagePageState(ImagePageServices(
-            root=lambda: services.engine_deps.runtime_config().outputs_dir / ".image-page",
+            root=lambda: image_root,
             fields={name: spec_of(component) for name, component in image_fields.items()},
             job_fields=tuple(image_controller.fields),
-            presets={engine: tuple(tuple(value for _label, value in dropdown.choices) for dropdown in pair)
-                     for engine, pair in {
-                         "qwen": (engine_views["qwen"].output_resolution_1k, engine_views["qwen"].output_resolution_2k),
-                         "h3": (image_workspace.h3_resolution_small, image_workspace.h3_resolution_large),
-                         **{engine: (engine_views[engine].resolution_small, engine_views[engine].resolution_large)
-                            for engine in ("flux3", "moss_image", "fibo2")},
-                     }.items()},
-            suggest=partial(suggest_prompt, engine_handlers),
+            presets={
+                **{engine: tuple(tuple(value for _label, value in dropdown.choices) for dropdown in pair)
+                   for engine, pair in {
+                       "qwen": (engine_views["qwen"].output_resolution_1k, engine_views["qwen"].output_resolution_2k),
+                       **{engine: (engine_views[engine].resolution_small, engine_views[engine].resolution_large)
+                          for engine in ("flux3", "moss_image", "fibo2")},
+                   }.items()},
+                "h3": (H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_16M_PRESETS),
+            },
+            suggest=partial(suggest_prompt, engine_handlers, runtime=services.engine_deps.runtime_config()),
             h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
             h3_defaults={name: getattr(component, "value", None)
                          for name, component in image_controller.h3_fields.items()},

@@ -78,9 +78,9 @@ def generate(
     ``remake`` runs Viggle Remake on the same model stack, attention, memory and finishing settings.
     """
     if str(request.output.result_format).strip().lower() == "image":
-        from .ph3_image import generate_ph3_image
+        from .h3_image import generate_h3_image_from_h3
 
-        yield from generate_ph3_image(request, services, runtime, progress=progress)
+        yield from generate_h3_image_from_h3(request, services, runtime, progress=progress)
         return
     requested_values = request.values()
     requested_values.update(run_context)

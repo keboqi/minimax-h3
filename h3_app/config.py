@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .h3_image import h3_image_prompt_path
+
 
 @dataclass(frozen=True)
 class RuntimeConfig:
@@ -62,6 +64,8 @@ class RuntimeConfig:
     def prompt_systems(self):
         return {
             "MiniMax H3": self.prompt_system_path,
+            "MiniMax H3 Image": h3_image_prompt_path(root=self.script_dir),
+            "MiniMax H3 Image edit": h3_image_prompt_path(True, root=self.script_dir),
             "MiniMax Music 3": self.script_dir / "prompts" / "prompt_music3.txt",
             "LTX-2.5": self.script_dir / "prompts" / "prompt_ltx25.txt",
             "Qwen Image 2.1": self.script_dir / "prompts" / "prompt_qwen_image21.txt",

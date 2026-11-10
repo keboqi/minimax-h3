@@ -7,6 +7,10 @@ from h3_app.catalog import (
     H3_EDIT_SIZE_MATCH, H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_EDIT_SIZE_MAX,
     QWEN_EDIT_SIZE_MANUAL,
 )
+from h3_app.h3_image import (
+    H3_IMAGE_OFFICIAL, H3_IMAGE_BACKENDS, H3_IMAGE_EDIT_SIZE_MAX as OFFICIAL_EDIT_MAX,
+    H3_IMAGE_16M_PRESETS,
+)
 from .engines.controls import QUIET, generation_actions, prompt_writer, resolution_presets
 from .image_controller import IMAGE_MODELS, reference_tag
 from .image_library import build_image_file_input
@@ -35,6 +39,8 @@ class ImageWorkspace:
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
+    h3_backend: gr.Dropdown
+    h3_expand_prompt: gr.Checkbox
     h3_width: gr.Slider
     h3_height: gr.Slider
     h3_seed: gr.Number
@@ -60,7 +66,7 @@ class ImageWorkspace:
 
     def preference_components(self):
         return {
-            **{name: getattr(self, name) for name in ("mode", "h3_width", "h3_height", "h3_edit_size", "h3_seed")},
+            **{name: getattr(self, name) for name in ("mode", "h3_backend", "h3_expand_prompt", "h3_width", "h3_height", "h3_edit_size", "h3_seed")},
             "prompt_backend": self.writer.backend, "prompt_model": self.writer.model,
             "openai_model": self.writer.openai_model,
         }
@@ -78,19 +84,19 @@ def _build_size_settings(engine_views):
             with gr.Group(visible=engine == "qwen") as size_groups[engine]:
                 if engine == "h3":
                     h3_small, h3_large = resolution_presets(
-                        H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS,
-                        "4M resolution preset", "8M resolution preset",
+                        (*H3_IMAGE_4M_RESOLUTION_PRESETS, *H3_IMAGE_8M_RESOLUTION_PRESETS), H3_IMAGE_16M_PRESETS,
+                        "4M / 8M resolution preset", "16M resolution preset",
                         "A recommended size for edits.",
-                        "Pruna's recommended size for generation, also good for edits. "
+                        "Official MiniMax H3 Image recommended size. "
                         "Edits use these instead of the first image size.")
                     with gr.Row():
-                        h3_width = gr.Slider(256, 8192, value=1024, step=32, label="Width")
-                        h3_height = gr.Slider(256, 8192, value=1024, step=32, label="Height")
+                        h3_width = gr.Slider(256, 8192, value=4096, step=32, label="Width")
+                        h3_height = gr.Slider(256, 8192, value=4096, step=32, label="Height")
                     h3_edit_size = gr.Radio(
-                        [H3_EDIT_SIZE_MATCH, H3_IMAGE_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL],
-                        value=H3_EDIT_SIZE_MATCH, label="Edit output size", visible=False,
-                        info="Keep the first image's aspect ratio at its own size (capped at 8 MP), "
-                             "scale it toward 8 MP, or use the width and height above. Applies only to edits.")
+                        [H3_EDIT_SIZE_MATCH, OFFICIAL_EDIT_MAX, H3_IMAGE_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL],
+                        value=OFFICIAL_EDIT_MAX, label="Edit output size", visible=False,
+                        info="Keep the first image aspect ratio, scale toward 16 MP (official) or 8 MP (Pruna), "
+                             "or use the width and height above. Applies only to edits.")
                     h3_seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 else:
                     for name in SIZE_FIELDS:
@@ -107,15 +113,18 @@ def _build_model_settings(engine_views, h3, labels):
             with gr.Group(visible=engine == "qwen") as option_groups[engine]:
                 gr.Markdown(f"### {labels[engine]}")
                 if engine == "h3":
-                    base = gr.Markdown(f"Uses MiniMax H3 settings: **{h3.model_profile.value}**.\n\n"
-                                       "P-H3-Image uses 8 steps, Euler and CFG 1.")
+                    backend = gr.Dropdown(H3_IMAGE_BACKENDS, value=H3_IMAGE_OFFICIAL, label="H3 image backend")
+                    expand_prompt = gr.Checkbox(value=True, label="Expand official image prompts locally",
+                                                info="Uses Qwen3.5 9B. Turn off for a complete English image description.")
+                    base = gr.Markdown("Official: dedicated image model, 6 steps, Euler and CFG 1. "
+                                       "Pruna: selected Video FL2VA profile, 8 steps.")
                     settings = gr.Button("Open Video → MiniMax H3 settings")
                     from .engines.remake import open_engine_js
                     settings.click(None, js=open_engine_js("Video", "MiniMax H3"), **QUIET)
                 else:
                     for name in OPTION_FIELDS[engine]:
                         _move(getattr(engine_views[engine], name))
-    return option_groups, base
+    return option_groups, base, backend, expand_prompt
 
 
 def build_image_view(root, engine, engine_views, h3):
@@ -158,13 +167,13 @@ def build_image_view(root, engine, engine_views, h3):
                 size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large = (
                     _build_size_settings(engine_views))
             with gr.Column(scale=2, min_width=320):
-                option_groups, base = _build_model_settings(engine_views, h3, labels)
+                option_groups, base, backend, expand_prompt = _build_model_settings(engine_views, h3, labels)
                 with gr.Accordion("Prompt assistance", open=False):
                     writer, enhance, enhance_status = prompt_writer("Suggest a prompt")
                     enhance.h3_review = build_prompt_review(compact=True)
     return ImageWorkspace(
         prompt=prompt, mode=mode, reference_images=refs, output=output, run=run, stop=stop, status=status,
-        h3_width=h3_width, h3_height=h3_height, h3_seed=h3_seed, h3_edit_size=h3_edit_size,
+        h3_backend=backend, h3_expand_prompt=expand_prompt, h3_width=h3_width, h3_height=h3_height, h3_seed=h3_seed, h3_edit_size=h3_edit_size,
         h3_resolution_small=h3_small, h3_resolution_large=h3_large, reference_panel=reference_panel,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,
         base_summary=base, writer=writer, enhance=enhance, enhance_status=enhance_status,

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from h3_app.catalog import UI_DEFAULTS
 from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
-from h3_app.generation.h3 import generate
+from h3_app.generation.ph3_image import generate_ph3_image as generate
 from h3_app.generation.requests import H3Request
 from h3_app.image_canvas import apply_job_canvas
 from h3_app.model_types import ModelConfig, ModelProfile
@@ -62,7 +62,7 @@ class PH3ImageTests(unittest.TestCase):
                 services = self.services()
                 # Reference mode must also use the selected FL2VA, never Ref2VA.
                 request = self.request(model_profile=profile)
-                results = list(generate(request, services, SimpleNamespace(), run_context={}))
+                results = list(generate(request, services, SimpleNamespace()))
                 self.assertEqual(results[-1].output, ["fox.png"])
                 graph = services.execution.submit_prompt.call_args.args[0]
                 self.assertEqual(inputs(graph, "UNETLoader")["unet_name"],
@@ -104,7 +104,7 @@ class PH3ImageTests(unittest.TestCase):
 
     def test_old_backend_fails_before_any_download(self):
         services = self.services(missing=("PH3ImageConditioning",))
-        results = list(generate(self.request(), services, SimpleNamespace(), run_context={}))
+        results = list(generate(self.request(), services, SimpleNamespace()))
         self.assertIn("PH3ImageConditioning", results[-1].status)
         services.models.ensure_model_keys.assert_not_called()
         services.models.ensure_profile_model.assert_not_called()
@@ -115,7 +115,7 @@ class PH3ImageTests(unittest.TestCase):
         with patch("h3_app.generation.image_jobs.write_snapshot"):
             result = list(generate(self.request(mode="Reference media", model_profile="Speed",
                                                 ref_image_1="target.png", ref_image_2="style.png"),
-                                   services, SimpleNamespace(), run_context={}))[-1]
+                                   services, SimpleNamespace()))[-1]
         self.assertEqual(result.output, ["fox.png"])
         graph = services.execution.submit_prompt.call_args.args[0]
         self.assertEqual(inputs(graph, "UNETLoader")["unet_name"], "custom_speed_fl2va.safetensors")
@@ -127,7 +127,7 @@ class PH3ImageTests(unittest.TestCase):
         for changes in ({"mode": "Reference media", "ref_video_1": "clip.mp4"},
                         {"mode": "Reference media", **{f"ref_image_{i}": f"{i}.png" for i in range(1, 10)}}):
             services = self.services()
-            result = list(generate(self.request(**changes), services, SimpleNamespace(), run_context={}))[-1]
+            result = list(generate(self.request(**changes), services, SimpleNamespace()))[-1]
             self.assertTrue(result.status.startswith("Error:"))
             services.models.ensure_model_keys.assert_not_called()
 
@@ -140,7 +140,7 @@ class PH3ImageTests(unittest.TestCase):
             with self.subTest(size=size), patch("h3_app.generation.image_jobs.write_snapshot"), \
                     patch.object(self, "context", context):
                 services = self.services()
-                results = list(generate(self.request(**changes), services, SimpleNamespace(), run_context={}))
+                results = list(generate(self.request(**changes), services, SimpleNamespace()))
                 self.assertEqual(results[-1].output, ["fox.png"])
                 graph = services.execution.submit_prompt.call_args.args[0]
                 conditioning = inputs(graph, "PH3ImageConditioning")

@@ -315,6 +315,24 @@ def enhance_h3_prompt(
 ) -> tuple[str, str]:
     """Dispatch H3 prompt enhancement to the selected prompt-writer backend."""
     original_prompt = str(prompt or "")
+    if normalize_result_format(result_format) == "Image" and backend in {"Gemini", "OpenAI-compatible"}:
+        from .h3_image import enhance_h3_image_prompt
+
+        try:
+            media = common.active_prompt_media(
+                mode, first_image, last_image,
+                (ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
+                 ref_image_6, ref_image_7, ref_image_8, ref_image_9),
+                (ref_video_1, ref_video_2, ref_video_3), (ref_audio_1, ref_audio_2, ref_audio_3),
+            )
+            if any(not label.startswith("<Picture ") for label, _ in media):
+                raise H3Error("H3 Image prompt assistance accepts image references only.")
+            return enhance_h3_image_prompt(
+                original_prompt, gemini_model, gemini_api_key, [path for _, path in media], width, height,
+                backend, openai_api_key, openai_model, openai_base_url, runtime=runtime,
+            )
+        except (H3Error, OSError, ValueError) as exc:
+            return original_prompt, f"Prompt enhancement failed: {exc}"
     try:
         voice_context, allowed_tags, required_tags = fl2va_prompt_voice_context(
             original_prompt, mode, fl2va_audio_1, fl2va_audio_2, fl2va_audio_3

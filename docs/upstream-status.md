@@ -1,5 +1,14 @@
 # Upstream status
 
+## Official H3 Image integrated — 2026-11-11
+
+ComfyUI now pins the November 10 image-support merge `ede4e5fe` (#17655), eight
+commits after `fca60fe7`. Frontend 1.58.5 and Kitchen 0.2.41 stay aligned with that
+revision. H3 Image defaults to the official INT8 image checkpoint and FP16 image
+VAE, with native six-step PDD sampling, shared H3 INT8 conditioning and sixteen
+reference images. Pruna remains selectable. The Comfy-Org model files are pinned
+to `892de7cb61df49753bf15145a711154803a355cb` and download lazily.
+
 ## ComfyUI video-buffer upgrade implemented — 2026-11-09
 
 The shared `COMFY_REF` now pins

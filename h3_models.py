@@ -89,6 +89,17 @@ class ModelSpec:
 
 MODEL_SPECS: dict[str, ModelSpec] = {
     **{
+        key: ModelSpec(
+            "Comfy-Org/MiniMax-H3-Image", folder, f"{folder}/{filename}",
+            "Official MiniMax H3 Image · ComfyUI", revision="892de7cb61df49753bf15145a711154803a355cb",
+        )
+        for key, folder, filename in (
+            ("h3_image_dit", "diffusion_models", "minimax_h3_image_pruned_int8_convrot.safetensors"),
+            ("h3_image_vae", "vae", "minimax_h3_image_vae_fp16.safetensors"),
+            ("h3_image_upsampler", "text_encoders", "qwen3.5_9b_w4a8_gptq.safetensors"),
+        )
+    },
+    **{
         f"relayvsr_{scale}x_{part}": ModelSpec(
             "Comfy-Org/RelayVSR", folder, f"{folder}/{filename}",
             f"RelayVSR {scale}x · ComfyUI",
@@ -1131,6 +1142,7 @@ DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "h3_image_dit", "h3_image_vae", "h3_image_upsampler",
     "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
     "h3_regenerate_refiner_16",
     "h3_regenerate_refiner_384",
@@ -2297,6 +2309,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "h3_image_dit", "h3_image_vae", "h3_image_upsampler",
         *RELAYVSR_MODEL_KEYS,
         "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
         "pika_flex_fl2va_lora", "pika_flex_ref2va_lora",
