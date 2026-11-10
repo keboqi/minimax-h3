@@ -173,6 +173,15 @@ class ImagePageTests(unittest.TestCase):
     def boot_state(self):
         return self.ok(self.client.get(f"{API}/boot"))["state"]
 
+    def test_h3_quick_sizes_accept_every_preset_across_three_tiers(self):
+        self.change("engine", engine="h3")
+        for tier in self.boot["sizes"]["h3"]:
+            for size in tier["sizes"]:
+                with self.subTest(tier=tier["label"], name=size["name"]):
+                    state = self.change("resolution", name=size["name"])
+                    self.assertEqual((state["width"], state["height"]), (size["width"], size["height"]))
+                    self.assertEqual(state["options"]["image__edit_size"], catalog.QWEN_EDIT_SIZE_MANUAL)
+
     def test_a_named_size_sets_the_dimensions_and_overrides_the_edit_size(self):
         name = self.boot["sizes"]["qwen"][1]["sizes"][0]["name"]
         state = self.change("resolution", name=name)

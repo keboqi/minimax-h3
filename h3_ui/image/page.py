@@ -126,8 +126,8 @@ class ImagePageServices:
     fields: Mapping[str, FieldSpec]
     # Every name a generation job takes after the draft, in its order.
     job_fields: tuple[str, ...]
-    # Each model's two lists of named sizes, smaller first.
-    presets: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]]
+    # Each model's resolution tiers, smaller first.
+    presets: Mapping[str, tuple[tuple[str, ...], ...]]
     suggest: Callable[..., tuple[str, str]]
     h3_values: Callable[[str], Mapping[str, Any]] = lambda owner: {}
     h3_defaults: Mapping[str, Any] = field(default_factory=dict)
@@ -423,14 +423,14 @@ class ImagePageState:
                 self.cascade(options, changed)
 
     def choose_size(self, engine: str, options: dict[str, Any], name: str) -> None:
-        small, large = self.services.presets.get(engine, ((), ()))
-        if name not in (*small, *large):
+        tiers = self.services.presets.get(engine, ())
+        if not any(name in tier for tier in tiers):
             raise H3Error("Choose one of this model's sizes.")
         width, height = resolution_preset_values(name)
         options[key_of(engine, "width")], options[key_of(engine, "height")] = width, height
         if engine == "qwen":
-            options["qwen__output_resolution_1k"] = name if name in small else None
-            options["qwen__output_resolution_2k"] = name if name in large else None
+            for index, field in enumerate(("qwen__output_resolution_1k", "qwen__output_resolution_2k")):
+                options[field] = name if index < len(tiers) and name in tiers[index] else None
         if self.has(engine, "edit_size"):
             # As in the Gradio views, a chosen size takes priority over the first image's.
             options[key_of(engine, "edit_size")] = MANUAL
