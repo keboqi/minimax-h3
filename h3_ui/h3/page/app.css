@@ -72,7 +72,7 @@ details summary:hover { color: var(--text); }
 details > p { margin-top: 8px; }
 .notice { padding: 8px 12px; border-radius: 8px; background: var(--warn); color: var(--warn-ink); font-size: 13px; }
 
-.editor { display: flex; flex-direction: column; gap: 12px; max-width: 1600px; margin: 0 auto; padding: 4px 12px 20px; }
+.editor { display: flex; flex-direction: column; gap: 12px; padding: 4px 12px 20px; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
 .action { flex: 1 1 320px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 12px; min-width: 0; }
 .readiness { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; text-align: right; }
@@ -89,7 +89,7 @@ details > p { margin-top: 8px; }
 .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
 .head.line-below { justify-content: flex-start; border-bottom: 1px solid var(--line); }
 
-.stage { position: relative; aspect-ratio: 16 / 9; max-height: 560px; width: 100%; overflow: hidden; background: #0b1210; }
+.stage { position: relative; aspect-ratio: 16 / 9; max-height: 720px; width: 100%; overflow: hidden; background: #0b1210; }
 .stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .stage-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 16px; text-align: center; color: #e9f1ed; }
 .stage-empty strong { font-size: 16px; }
@@ -97,7 +97,7 @@ details > p { margin-top: 8px; }
 .line-details { padding: 8px 12px; border-top: 1px solid var(--line); }
 .settings-used { margin-top: 8px; font-size: 13px; overflow-x: auto; }
 
-.inspector { flex: 1 1 400px; min-width: 0; display: flex; flex-direction: column; }
+.inspector { flex: 1 1 clamp(400px, 26vw, 560px); min-width: 0; display: flex; flex-direction: column; }
 .block { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .block.last { border-bottom: 0; gap: 10px; }
 .pictures { display: flex; flex-direction: column; gap: 8px; }
