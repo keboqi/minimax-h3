@@ -247,6 +247,40 @@ class StoryboardServiceTests(unittest.TestCase):
         self.assertFalse(video.is_file())
         self.assertFalse((self.runtime.output_dir / latent).is_file())
 
+    def test_shared_scene_file_survives_while_only_a_branch_version_uses_it(self):
+        original = self.service.create("a", "Chase", profile())
+        scene_id = self.service.load("a", original)["scenes"][0]["id"]
+        self.service.set_scene_media("a", original, scene_id, "ref_images", [self.picture])
+        branch = self.service.branch("a", original)
+        _, version = self.service.save_version("a", branch)
+        self.service.set_scene_media("a", branch, scene_id, "ref_images", [])
+        self.service.delete("a", original)
+        restored = self.service.branch("a", branch, version)
+        image = Path(self.service.load("a", restored)["scenes"][0]["ref_images"][0])
+        self.assertEqual(image.read_bytes(), self.picture.read_bytes())
+        self.service.delete("a", restored)
+        self.assertTrue(image.exists())
+        self.service.delete("a", branch)
+        self.assertFalse(image.exists())
+
+    def test_reference_take_tracks_cast_order_and_picture_across_branches(self):
+        scene = sb.new_scene("Meeting", "prompt", mode=sb.REFERENCES, cast=["A", "B"])
+        original = self.service.create("a", "Chase", profile(), scenes=[scene],
+                                       cast=[("A", self.picture), ("B", self.picture)])
+        document = self.service.load("a", original)
+        inputs = sb.scene_inputs(document, 0)
+        self.service.record_take("a", original, scene["id"], "t", video="v", latents={"latent": "l"},
+                                 seed=1, inputs=inputs)
+        branch = self.service.branch("a", original)
+        self.assertEqual(sb.scene_states(self.service.load("a", branch)), [sb.DONE])
+        changed = self.service.update_scene("a", branch, scene["id"], cast=["B", "A"])
+        self.assertEqual(sb.scene_states(changed), [sb.OUTDATED])
+        self.service.remove_cast("a", branch, "B")
+        self.picture.write_bytes(b"replacement")
+        self.service.add_cast("a", branch, "B", self.picture)
+        changed = self.service.update_scene("a", branch, scene["id"], cast=["A", "B"])
+        self.assertEqual(sb.scene_states(changed), [sb.OUTDATED])
+
     def test_delete_take_removes_unused_take_and_protects_take_in_use(self):
         storyboard_id = self.service.create("a", "Chase", profile())
         document = self.service.load("a", storyboard_id)
@@ -436,6 +470,21 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done"] * 3)  # Only asked.
         self.assertIsNone(self.handlers.use_take("a", storyboard_id, first, new_take, confirmed=True))
         self.assertEqual(sb.scene_states(self.service.load("a", storyboard_id)), ["done", "outdated", "done"])
+
+    def test_switch_regenerates_only_named_continuations(self):
+        storyboard_id = self.make("flow", "flow", "flow", "cut")
+        scenes = self.service.load("a", storyboard_id)["scenes"]
+        for scene in scenes[:3]:
+            list(self.handlers.generate_scene(storyboard_id, scene["id"]))
+        first = scenes[0]["id"]
+        list(self.handlers.generate_scene(storyboard_id, first))
+        take = self.service.load("a", storyboard_id)["scenes"][0]["takes"][-1]
+        self.graphs.clear()
+        list(self.handlers.switch_and_regenerate(storyboard_id, first, take))
+        document = self.service.load("a", storyboard_id)
+        self.assertEqual([prompt for prompt, _ in self.graphs], ["prompt 2", "prompt 3"])
+        self.assertEqual(sb.scene_states(document), [sb.DONE] * 3 + [sb.DRAFT] * 2)
+        self.assertEqual(document["queue"], [])
 
     def test_prompt_writer_gets_valid_arguments_and_failures_keep_the_prompt(self):
         import inspect

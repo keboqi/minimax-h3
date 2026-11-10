@@ -163,7 +163,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if not affected:
             return None
         numbers = " and ".join(str(later + 1) for later in affected)
-        after = affected[-1] + 1
+        after = sb.affected_by(board, index)[-1] + 1
         stop = (f" Scene {after + 1} starts fresh, so it and the scenes after it stay as they are."
                 if after < len(board["scenes"]) else "")
         return (f"Scene {numbers} continue{'s' if len(affected) == 1 else ''} from this scene and will need "
@@ -197,10 +197,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
         return path
 
     # Generation ------------------------------------------------------------
-    def _take(self, owner, storyboard_id, index, seed):
-        """Generate one take of scene ``index``; yields status text."""
+    def _take(self, owner, storyboard_id, scene_id, seed):
+        """Generate one take of the selected scene and yield status text."""
         service = self.service
         board = service.load(owner, storyboard_id)
+        index = service.scene_index(board, scene_id)
         scene = board["scenes"][index]
         sb.check_scene(board, index)
         source = None
@@ -231,8 +232,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
         service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
                             seed=seed, inputs=inputs, job_id=job.id if job else None)
 
-    def _run_scene(self, owner, storyboard_id, index):
+    def _run_scene(self, owner, storyboard_id, scene_id):
         board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
         scene = board["scenes"][index]
         self.running_scene[(owner, storyboard_id)] = scene["id"]
         count = int(scene["takes_per_run"])
@@ -242,7 +244,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             job = CURRENT_JOB.get()
             if job is not None:
                 job.check()
-            for status in self._take(owner, storyboard_id, index, seed):
+            for status in self._take(owner, storyboard_id, scene_id, seed):
                 yield (f"Take {number}/{count} · " if count > 1 else "") + status
 
     def generate_scene(self, storyboard_id, scene_id, request=None):
@@ -250,11 +252,10 @@ class StoryboardHandlers(StoryboardApiHandlers):
         owner = require_owner(request)
         if not storyboard_id or not scene_id:
             raise H3Error("Select a scene first.")
-        board = self.service.load(owner, storyboard_id)
-        index = self.service.scene_index(board, scene_id)
-        for status in self._run_scene(owner, storyboard_id, index):
+        for status in self._run_scene(owner, storyboard_id, scene_id):
             yield status, None
         board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
         take = board["takes"].get(board["scenes"][index]["in_use"])
         yield f"Scene {index + 1} generated.", take["video"] if take else None
 
@@ -267,14 +268,17 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if not storyboard_id:
             raise H3Error("Create a storyboard first.")
         board = self.service.load(owner, storyboard_id)
+        yield from self._generate_pending(owner, storyboard_id, board, sb.pending_scenes(board))
+
+    def _generate_pending(self, owner, storyboard_id, board, indices):
         started = monotonic()
         queue, skipped = [], []
-        for index in sb.pending_scenes(board):
+        for index in indices:
             own = [issue for issue in sb.scene_issues(board, index) if not issue.startswith("Generate scene")]
             (skipped if own else queue).append(index if own else board["scenes"][index]["id"])
         if not queue:
             yield ("Nothing to generate. " + (f"Scene {', '.join(str(i + 1) for i in skipped)} still need input."
-                                              if skipped else "Every scene is done.")), None
+                                              if skipped else "All selected scenes are done.")), None
             return
         # Saved so a restart shows what was waiting; nothing resumes on its own.
         self.service.set_queue(owner, storyboard_id, queue)
@@ -283,9 +287,10 @@ class StoryboardHandlers(StoryboardApiHandlers):
             index = sb.next_runnable(board, queue)
             if index is None:
                 break
-            for status in self._run_scene(owner, storyboard_id, index):
+            scene_id = board["scenes"][index]["id"]
+            for status in self._run_scene(owner, storyboard_id, scene_id):
                 yield f"{len(queue)} left · {status}", None
-            queue.remove(board["scenes"][index]["id"])
+            queue.remove(scene_id)
             self.service.set_queue(owner, storyboard_id, queue)
             yield f"Scene {index + 1} generated · {len(queue)} left.", sb.new_id()
         waiting = f" {len(queue)} scene(s) wait for a scene that needs input." if queue else ""
@@ -296,8 +301,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
     def switch_and_regenerate(self, storyboard_id, scene_id, take_id, request=None):
         """Use the chosen take, then regenerate the scenes that continue from it."""
         owner = require_owner(request)
-        self.service.use_take(owner, storyboard_id, scene_id, take_id)
-        yield from self.generate_remaining(storyboard_id, request)
+        board = self.service.use_take(owner, storyboard_id, scene_id, take_id)
+        index = self.service.scene_index(board, scene_id)
+        pending = set(sb.pending_scenes(board))
+        affected = [later for later in self.depends_on(board, index) if later in pending]
+        yield from self._generate_pending(owner, storyboard_id, board, affected)
 
     def run_job(self, action, storyboard_id, scene_id, take_id, request=None):
         """The storyboard job family's one callback; its values are what the Jobs tab retries."""

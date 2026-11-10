@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from h3_app.contracts import GENERATION_FIELDS
@@ -164,7 +165,9 @@ def scene_inputs(board: dict[str, Any], index: int) -> dict[str, Any]:
     return {
         "prompt": scene["prompt"].strip(),
         "seconds": int(scene["seconds"]),
-        "cast": sorted(scene["cast"]),
+        # Stored cast filenames identify immutable pictures across branches and restores.
+        "cast": [[name, Path(image).name] for name, image in selected_cast(board, scene)]
+                if scene.get("mode") == REFERENCES else sorted(scene["cast"]),
         "profile": profile_digest(board["profile"]),
         "flow": flow,
         "overlap": int(scene["overlap"]) if flow else None,
@@ -234,14 +237,18 @@ def next_runnable(board: dict[str, Any], queue: list[str]) -> int | None:
     return None
 
 
+def selected_cast(board, scene) -> list[tuple[str, str]]:
+    pictures = {member["name"]: member["image"] for member in board["cast"]}
+    return [(name, pictures[name]) for name in scene["cast"] if name in pictures][:MAX_CAST]
+
+
 def cast_prompt(board: dict[str, Any], scene: dict[str, Any]) -> tuple[str, list[str]]:
     """The scene prompt with cast picture tags, and the pictures in tag order."""
-    pictures = {member["name"]: member["image"] for member in board["cast"]}
-    names = [name for name in scene["cast"] if name in pictures][:MAX_CAST]
-    if not names:
+    members = selected_cast(board, scene)
+    if not members:
         return scene["prompt"].strip(), []
-    tags = " ".join(f"{name} is <Picture {number}>." for number, name in enumerate(names, 1))
-    return f"{tags} {scene['prompt'].strip()}", [pictures[name] for name in names]
+    tags = " ".join(f"{name} is <Picture {number}>." for number, (name, _) in enumerate(members, 1))
+    return f"{tags} {scene['prompt'].strip()}", [image for _, image in members]
 
 
 def runs_as(board: dict[str, Any], index: int) -> str:

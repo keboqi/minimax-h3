@@ -142,7 +142,7 @@ class StoryboardService:
         self.save(owner, storyboard_id, board)
         return storyboard_id
 
-    def _copy_cast(self, storyboard_id, name, image) -> dict[str, str]:
+    def _copy_cast(self, storyboard_id, name, image, *, from_branch_source=False) -> dict[str, str]:
         name = str(name).strip()
         source = Path(image)
         if not name:
@@ -151,7 +151,8 @@ class StoryboardService:
             raise H3Error("Cast pictures are PNG, JPEG or WebP images.")
         directory = self.cast_dir(storyboard_id)
         directory.mkdir(parents=True, exist_ok=True)
-        destination = directory / f"{model.new_id()}{source.suffix.lower()}"
+        filename = source.name if from_branch_source else f"{model.new_id()}{source.suffix.lower()}"
+        destination = directory / filename
         shutil.copy2(source, destination)
         return {"name": name, "image": str(destination)}
 
@@ -428,6 +429,11 @@ class StoryboardService:
 
     def branch(self, owner, storyboard_id, version_id=None, name=None) -> str:
         """A new storyboard from a saved version (or the current one), sharing take files."""
+        # Publish the branch's file references before deletion can collect shared files.
+        with self.lock:
+            return self._branch(owner, storyboard_id, version_id, name)
+
+    def _branch(self, owner, storyboard_id, version_id, name):
         board = self.load(owner, storyboard_id)
         source = board
         if version_id is not None:
@@ -439,9 +445,14 @@ class StoryboardService:
                                         copy.deepcopy(source["scenes"]))
         branched["takes"] = copy.deepcopy(board["takes"])
         for member in source["cast"]:
-            branched["cast"].append(self._copy_cast(branch_id, member["name"], member["image"]))
+            branched["cast"].append(self._copy_cast(branch_id, member["name"], member["image"], from_branch_source=True))
         self.save(owner, branch_id, branched)
         return branch_id
+
+    @staticmethod
+    def _scene_files(board):
+        return {path for snapshot in (board, *board.get("versions", ()))
+                for scene in snapshot["scenes"] for path in model.media_paths(scene)}
 
     def delete(self, owner, storyboard_id):
         with self.lock:
@@ -454,12 +465,9 @@ class StoryboardService:
                 other = self.store.storyboard(other_owner, other_id)
                 for take in other["takes"].values():
                     used |= {take["video"], take["latent"], take.get("stage_latent")}
-                for scene in other["scenes"]:
-                    used |= set(model.media_paths(scene))
-            for scene in board["scenes"]:
-                for value in model.media_paths(scene):
-                    if value not in used:
-                        Path(value).unlink(missing_ok=True)
+                used.update(self._scene_files(other))
+            for value in self._scene_files(board) - used:
+                Path(value).unlink(missing_ok=True)
             for take in board["takes"].values():
                 self._unlink_take_files(take, used)
             preview = self.preview_path(storyboard_id)
