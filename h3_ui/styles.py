@@ -780,6 +780,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-setup-card [role="alert"] { margin: 0; color: #7a4f00; }
 .dark .h3-workspace .h3-setup-card [role="alert"] { color: #fcd34d; }
 /* Remake: the page runs in this frame, and the bridge beside it stays out of sight. */
+.h3-video-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; }
 .h3-remake-frame { display: block; width: 100%; height: calc(100vh - 160px); min-height: 860px; border: 0; }
 .h3-remake-bridge { display: none !important; }
 /* Thumbnails stand in for a file input's list of names. */

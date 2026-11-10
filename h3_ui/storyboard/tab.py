@@ -73,7 +73,7 @@ def build_storyboard_tab(root, demo: gr.Blocks, handlers: StoryboardHandlers, *,
     with root:
         gr.HTML(FRAME)
         _bind_api(handlers)
-    if h3_values:
+    if h3_values and triggers:
         _bind_settings_capture(handlers, h3_values, list(triggers))
     # Read by build_server, which owns the application these routes join.
     demo.h3_routes = (*getattr(demo, "h3_routes", ()),

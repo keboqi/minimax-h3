@@ -850,8 +850,9 @@ def bind_h3_settings(view: RemakeView, handlers: RemakeHandlers, h3_values: Mapp
         *values, request = args
         handlers.settings[require_owner(request)] = dict(zip([*names, *finishing], values, strict=True))
 
-    gr.on(triggers=list(triggers), fn=_with_request(capture, len(controls)), inputs=controls, outputs=None,
-          queue=False, api_name=False, show_progress="hidden")
+    if triggers:
+        gr.on(triggers=list(triggers), fn=_with_request(capture, len(controls)), inputs=controls, outputs=None,
+              queue=False, api_name=False, show_progress="hidden")
     for model in EDIT_MODELS:
         if model.id in (edit_targets or {}):
             _bind_edit_bridge(view.edit_bridges[model.id], edit_targets[model.id], model.label, handlers)

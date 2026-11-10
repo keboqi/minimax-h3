@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniMax H3</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="editor" class="editor" hidden>
+  <p id="workshop-note" class="notice" hidden>Prepare the prompt, media and settings here, then open MiniMax H3 in Studio to generate on the GPU.</p>
+  <section class="bar" aria-label="MiniMax H3 run">
+    <div class="seg" role="group" aria-label="Conditioning mode" id="mode"></div>
+    <span class="small muted grow" id="mode-help"></span>
+    <div class="action">
+      <div class="readiness">
+        <div class="steps" id="steps"></div>
+        <p class="small muted" role="status" id="readiness"></p>
+      </div>
+      <button type="button" class="btn quiet" id="refresh">Refresh status</button>
+      <button type="button" class="btn" id="stop" hidden>Interrupt</button>
+      <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter">Generate video <kbd aria-hidden="true">Ctrl ↵</kbd></button>
+    </div>
+  </section>
+  <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+
+  <div class="workarea">
+    <div class="main">
+      <section class="panel" aria-label="Viewer">
+        <div class="head">
+          <div class="seg" role="group" aria-label="Generated video" id="takes"></div>
+          <span class="small muted mono" id="viewer-line"></span>
+        </div>
+        <div class="stage" id="stage">
+          <video id="result-video" controls playsinline preload="metadata" hidden></video>
+          <div class="stage-empty" id="stage-empty"><strong id="empty-title">Nothing generated yet</strong><span id="empty-line">Write a prompt on the right, then press Generate video.</span></div>
+        </div>
+        <div class="row line">
+          <span class="small muted grow" id="result-name"></span>
+          <a class="btn" id="download" hidden download>Download</a>
+        </div>
+        <details class="line-details" id="settings-used-box">
+          <summary>Settings used for this result</summary>
+          <div class="settings-used" id="settings-used">Settings used will appear with the generated result.</div>
+        </details>
+      </section>
+
+      <section class="panel next-run" aria-label="Next run">
+        <div class="row">
+          <div class="grow" id="summary"></div>
+        </div>
+        <div class="row">
+          <button type="button" class="btn quiet" id="restore">Restore preset settings</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="fine-toggle" aria-expanded="false" aria-controls="fine">Fine-tune <span class="chip warn" id="fine-count" hidden></span></button>
+        </div>
+      </section>
+
+      <section class="panel fine" id="fine" aria-label="Fine-tune" hidden>
+        <div class="head line-below">
+          <h2>Fine-tune</h2>
+          <span class="small muted grow">Everything beyond the basics, grouped by what it changes. Values follow the recipe; a group's badge counts the settings you changed there.</span>
+          <button type="button" class="btn quiet" id="fine-close">Close</button>
+        </div>
+        <div class="fine-body">
+          <nav class="fine-nav" aria-label="Fine-tune groups" id="fine-nav"></nav>
+          <div class="fine-content">
+            <h3 id="fine-title"></h3>
+            <p class="small muted" id="fine-detail"></p>
+            <div id="fine-rows"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" aria-label="Compose">
+      <section class="block" id="references" aria-label="Reference media" hidden>
+        <div class="row between">
+          <h3>Reference media <span class="small muted" id="reference-count"></span></h3>
+          <span class="inline"><span class="small muted">Picture size</span><span class="seg" role="group" aria-label="Reference image size" id="ref-size"></span></span>
+        </div>
+        <div class="pictures" id="reference-list"></div>
+        <div class="notice row" id="reference-confirm" hidden>
+          <span class="grow" id="reference-confirm-line"></span>
+          <button type="button" class="btn" id="confirm-references">Confirm replaced references</button>
+        </div>
+        <div class="row tightrow" id="reference-add"></div>
+        <p class="small muted">Upload, drop, or pick pictures from the Media library. Tags are ordered pictures, then videos, then audio.</p>
+      </section>
+
+      <section class="block" id="frames" aria-label="First and last frame" hidden>
+        <h3>Frames <span class="small muted">first, last, or both</span></h3>
+        <div class="frame-grid" id="frame-list"></div>
+        <details id="voices-box">
+          <summary>Optional voice references (experimental) <span id="voice-count"></span></summary>
+          <p class="small muted">Use short, clean samples of 2–3 seconds per voice. Assign speakers in the prompt, for example: The woman uses the voice timbre of &lt;Audio 1&gt; and says, "Hello." Fill slots in order. These apply to First / last frame only.</p>
+          <div class="pictures" id="voice-list"></div>
+        </details>
+      </section>
+
+      <section class="block" aria-label="Prompt">
+        <label class="strong" for="prompt">Prompt</label>
+        <textarea id="prompt" class="field prompt" rows="8" placeholder="A quiet seaside town at sunrise. The camera drifts over the rooftops as waves break in the distance…"></textarea>
+        <div class="row">
+          <button type="button" class="btn" id="enhance">Generate / enhance prompt</button>
+          <span class="small muted grow" id="writer-line"></span>
+          <button type="button" class="link" id="open-writer">Writer service &amp; keys</button>
+        </div>
+        <p class="small muted" id="enhance-status" role="status"></p>
+        <div class="suggestion" id="suggestion-box" hidden>
+          <strong class="small">Suggested prompt</strong>
+          <pre id="suggestion"></pre>
+          <div class="row">
+            <button type="button" class="btn primary" id="accept">Accept suggested prompt</button>
+            <button type="button" class="btn" id="keep">Keep original</button>
+          </div>
+        </div>
+        <button type="button" class="btn quiet start" id="undo" hidden>Undo accepted prompt</button>
+      </section>
+
+      <section class="block last" aria-label="Output">
+        <div class="row between">
+          <h3>Recipe</h3>
+          <button type="button" class="link" id="open-model">Model &amp; sampling</button>
+        </div>
+        <div class="recipes" role="group" aria-label="Recipe" id="preset"></div>
+        <p class="small muted">Sets Fine-tune's sampling, attention, memory, refinement and decoding. Keeps your prompt, media and output size.</p>
+        <label class="row setting"><span class="small muted name">Seconds</span>
+          <input type="range" id="duration" min="2" max="15" step="0.5" class="grow">
+          <span class="mono small value" id="duration-value"></span></label>
+        <div class="row setting"><span class="small muted name">Variations</span>
+          <div class="seg" role="group" aria-label="Variations" id="batch"></div>
+          <span class="small muted">independent random seeds</span></div>
+        <div class="row setting"><span class="small muted name">Aspect ratio</span>
+          <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div></div>
+        <div class="row setting"><span class="small muted name">Size</span>
+          <div class="seg wrap" role="group" aria-label="Size" id="tier"></div></div>
+        <div class="row between line-above">
+          <span class="small" id="resolution"></span>
+          <button type="button" class="link" id="open-size">Exact size &amp; seed</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="loading" class="loading" role="status">Opening MiniMax H3…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="library" class="library" aria-label="Media library"></dialog>
+<input id="file-input" type="file" hidden>
+<script src="app.js"></script>
+</body>
+</html>

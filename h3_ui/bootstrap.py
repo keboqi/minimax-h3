@@ -166,8 +166,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
 
         bind_h3_settings(
             engine_views["remake"], engine_handlers["remake"], h3_components.values,
-            # The task picker switches tabs itself, so a Tab select event wouldn't fire.
-            (demo.load, app_views.task.change),
+            # The MiniMax H3 page hands Remake its settings; nothing is captured from Gradio.
+            (),
             edit_targets={
                 "h3": EditTarget(image_workspace.reference_images, mode=image_workspace.mode, mode_value="Image edit"),
                 "qwen": EditTarget(image_workspace.reference_images, mode=image_workspace.mode,
@@ -206,10 +206,25 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 demo,
                 services.storyboard_handlers,
                 h3_values=h3_components.values,
-                # The task picker switches tabs itself, so a Tab select event wouldn't fire.
-                triggers=(demo.load, app_views.task.change),
+                # The MiniMax H3 page hands Storyboard its settings; nothing is captured from Gradio.
+                triggers=(),
                 interrupt=services.interrupt,
             )
+        from .h3.page import H3PageServices, install_h3_page
+
+        followers = tuple(handlers for handlers in (engine_handlers["remake"], services.storyboard_handlers)
+                          if handlers is not None)
+        demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=H3PageServices(
+            root=lambda: services.engine_deps.runtime_config().outputs_dir / ".h3-page",
+            resolve=services.resolve_request_settings,
+            describe=services.describe_settings,
+            enhance=services.enhance_h3_prompt,
+            interrupt=services.interrupt,
+            compile_trt=services.compile_trt_video_vae,
+            library=lambda: engine_handlers["remake"].library,
+            followers=followers,
+            attention_backend=catalog.SERVER_ATTENTION_BACKEND,
+        )))
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -269,15 +284,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 services.gallery_media_download_path,
             )
             engine_handlers["remake"].library = services.storyboard_handlers.library
-        destinations = {
-            "H3 · Reference images": tuple(
-                component for component in h3_components.values.values()
-                if hasattr(component, "h3_reference_slot")
-            ),
-        }
-        for component in h3_components.values.values():
-            if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
-                destinations[f"H3 · {component.label}"] = component
+        # MiniMax H3's inputs live on its page, which has its own Media library picker.
+        destinations = {}
         for feature in FEATURES:
             if feature.id not in {"qwen", "flux3", "moss_image", "fibo2"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))

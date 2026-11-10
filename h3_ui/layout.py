@@ -13,6 +13,10 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task, TASKS
 
 
+H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
+            'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+
+
 @dataclass(frozen=True)
 class AppViews:
     tabs: gr.Tabs
@@ -118,12 +122,12 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                 )
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
-                    gr.HTML(
-                        '<nav class="h3-mobile-nav" aria-label="Composer sections"><a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a><a href="#h3-generate-actions">Generate</a><a href="#h3-fine-tune">Fine-tune</a></nav>',
-                        elem_classes=["h3-mobile-nav-container"],
-                    )
-                    generation = gr.Row(elem_classes=["h3-generator-shell"])
-                    generation_settings = gr.Column(elem_id="h3-fine-tune")
+                    # Everything people do happens on the page at /h3/ (h3/page.py), outside Gradio.
+                    gr.HTML(H3_FRAME)
+                    # The Gradio view stays built but unseen: it keeps the published API endpoints
+                    # and the components the Image workspace and navigation still read.
+                    generation = gr.Row(elem_classes=["h3-generator-shell"], visible=False)
+                    generation_settings = gr.Column(elem_id="h3-fine-tune", visible=False)
                 with gr.Tab("Image workspace", id="image"):
                     image = gr.Column(elem_classes=["h3-engine-view"])
                 with gr.Tab("LTX 2.5", id="ltx"):

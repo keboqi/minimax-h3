@@ -236,13 +236,13 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 13)
+        self.assertEqual(len(choices), 10)
         for slot in range(1, 5):
             self.assertIn(f"Remake · Picture {slot}", choices)
         self.assertIn("Image · Reference images", choices)
         self.assertFalse(any(choice.startswith("MOSS-Image") for choice in choices))
-        self.assertIn("H3 · First frame (auto resolution)", choices)
-        self.assertIn("H3 · Reference images", choices)
+        # MiniMax H3's inputs are on its page, which has its own Media library picker.
+        self.assertFalse(any(choice.startswith("H3 ·") for choice in choices))
         self.assertIn("LTX · End keyframe", choices)
         self.assertIn("Music · Reference images", choices)
         self.assertFalse(dropdown["props"]["interactive"])
@@ -788,10 +788,9 @@ class UiContractTests(unittest.TestCase):
                 if c.get("props", {}).get("label") == label
             ]
             self.assertEqual(len(keys), 8, label)  # Soundstage's are on its page.
-            for key in keys:
-                self.assertEqual(
-                    hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label
-                )
+            # MiniMax H3's writer is on its page; its Gradio view stays built, unseen.
+            hidden = [hidden_by_ancestor(key) for key in keys]
+            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 1, label)
 
         endpoints = {
             dependency.get("api_name"): dependency
