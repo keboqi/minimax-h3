@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="editor" class="editor" hidden>
+  <p id="workshop-note" class="notice" hidden>Prepare the prompt, images and settings here, then open Image in Studio to generate on the GPU.</p>
+  <section class="bar" aria-label="Image run">
+    <div class="seg" role="group" aria-label="Image task" id="mode"></div>
+    <span class="small muted grow" id="mode-help"></span>
+    <div class="action">
+      <div class="readiness">
+        <div class="steps" id="steps"></div>
+        <p class="small muted" role="status" id="readiness"></p>
+      </div>
+      <button type="button" class="btn quiet" id="refresh">Refresh status</button>
+      <button type="button" class="btn" id="stop" hidden>Interrupt</button>
+      <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter"><span id="run-label">Generate image</span> <kbd aria-hidden="true">Ctrl ↵</kbd></button>
+    </div>
+  </section>
+  <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+
+  <div class="workarea">
+    <div class="main">
+      <section class="panel" aria-label="Viewer">
+        <div class="head">
+          <div class="seg wrap" role="group" aria-label="Generated image" id="takes"></div>
+          <span class="small muted mono" id="viewer-line"></span>
+        </div>
+        <div class="stage" id="stage">
+          <a id="result-link" target="_blank" rel="noopener" title="Open full size" hidden><img id="result-image" alt="Generated image"></a>
+          <div class="stage-empty" id="stage-empty"><strong id="empty-title">Nothing generated yet</strong><span id="empty-line">Write a prompt on the right, then press Generate image.</span></div>
+        </div>
+        <div class="row line">
+          <span class="small muted grow" id="result-name"></span>
+          <button type="button" class="btn" id="use-result" hidden title="Replaces the images to edit with this result and switches to Edit">Use as edit input</button>
+          <a class="btn" id="download" hidden download>Download</a>
+        </div>
+        <details class="line-details" id="settings-used-box">
+          <summary>Settings used for this result</summary>
+          <div class="settings-used" id="settings-used">Settings used will appear with the generated result.</div>
+        </details>
+      </section>
+
+      <section class="panel next-run" aria-label="Next run">
+        <div class="summary-line"><strong>Next run</strong><span class="small muted" id="summary"></span></div>
+        <div class="chips" id="summary-chips"></div>
+        <div class="row">
+          <button type="button" class="btn quiet" id="restore">Restore preset settings</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="fine-toggle" aria-expanded="false" aria-controls="fine">Fine-tune <span class="chip warn" id="fine-count" hidden></span></button>
+        </div>
+      </section>
+
+      <section class="panel fine" id="fine" aria-label="Fine-tune" hidden>
+        <div class="head line-below">
+          <h2>Fine-tune</h2>
+          <span class="small muted grow" id="fine-line"></span>
+          <button type="button" class="btn quiet" id="fine-close">Close</button>
+        </div>
+        <div class="fine-body">
+          <nav class="fine-nav" aria-label="Fine-tune groups" id="fine-nav"></nav>
+          <div class="fine-content">
+            <h3 id="fine-title"></h3>
+            <p class="small muted" id="fine-detail"></p>
+            <div id="fine-rows"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" aria-label="Compose">
+      <section class="block" aria-label="Model">
+        <div class="row between">
+          <h3>Model</h3>
+          <span class="small muted">Your draft stays when you switch</span>
+        </div>
+        <div class="models" role="group" aria-label="Image model" id="models"></div>
+        <p class="small muted" id="about"></p>
+      </section>
+
+      <section class="block" id="references" aria-label="Images to edit" hidden>
+        <div class="row between">
+          <h3>Images to edit <span class="small muted" id="reference-count"></span></h3>
+          <button type="button" class="link" id="clear-references">Remove all</button>
+        </div>
+        <div class="pictures" id="reference-list"></div>
+        <div class="row tightrow">
+          <button type="button" class="empty-slot" id="add-upload">+ Upload or drop images</button>
+          <button type="button" class="empty-slot" id="add-library">+ From Media library</button>
+        </div>
+        <div id="separate"></div>
+        <p class="small muted" id="guidance"></p>
+      </section>
+
+      <section class="block" aria-label="Prompt">
+        <label class="strong" for="prompt" id="prompt-label">Image prompt</label>
+        <textarea id="prompt" class="field prompt" rows="7"></textarea>
+        <p class="small muted" id="generate-note" hidden></p>
+        <div class="row">
+          <button type="button" class="btn" id="enhance">Suggest a prompt</button>
+          <span class="small muted grow" id="writer-line"></span>
+          <button type="button" class="link" id="open-writer">Writer service &amp; keys</button>
+        </div>
+        <p class="small muted" id="enhance-status" role="status"></p>
+        <div class="suggestion" id="suggestion-box" hidden>
+          <strong class="small">Suggested prompt</strong>
+          <pre id="suggestion"></pre>
+          <div class="row">
+            <button type="button" class="btn primary" id="accept">Accept suggestion</button>
+            <button type="button" class="btn" id="keep">Keep original</button>
+          </div>
+        </div>
+        <button type="button" class="btn quiet start" id="undo" hidden>Undo accepted suggestion</button>
+        <details id="layout-box" hidden>
+          <summary>Layout boxes (optional)</summary>
+          <p class="small muted" id="layout-hint"></p>
+          <textarea id="layout" class="field layout" rows="4" aria-label="Layout boxes"></textarea>
+        </details>
+      </section>
+
+      <section class="block last" aria-label="Output">
+        <div id="preset-box" hidden>
+          <div class="row between">
+            <h3>Preset</h3>
+            <button type="button" class="link" id="open-model">Model &amp; sampling</button>
+          </div>
+          <div class="recipes" role="group" aria-label="Preset" id="preset"></div>
+          <p class="small muted" id="preset-hint"></p>
+        </div>
+        <div class="row between" id="no-preset" hidden>
+          <span class="small muted grow" id="no-preset-line"></span>
+          <button type="button" class="link" id="open-model-plain">Model &amp; sampling</button>
+        </div>
+        <div class="row setting" id="batch-row" hidden><span class="small muted name">Variations</span>
+          <div class="seg" role="group" aria-label="Images per batch" id="batch"></div>
+          <span class="small muted">same inputs, a different seed each</span></div>
+        <div class="row setting" id="edit-size-row" hidden><span class="small muted name">Edit size</span>
+          <div class="seg wrap" role="group" aria-label="Edit output size" id="edit-size"></div></div>
+        <div class="row setting"><span class="small muted name">Aspect ratio</span>
+          <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div></div>
+        <div class="row setting"><span class="small muted name">Size</span>
+          <div class="seg wrap" role="group" aria-label="Size" id="tier"></div></div>
+        <div class="row between line-above">
+          <span class="small" id="resolution"></span>
+          <button type="button" class="link" id="open-size">Exact size &amp; seed</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="loading" class="loading" role="status">Opening Image…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="library" class="library" aria-label="Media library"></dialog>
+<input id="file-input" type="file" accept="image/*" multiple hidden>
+<script src="app.js"></script>
+</body>
+</html>

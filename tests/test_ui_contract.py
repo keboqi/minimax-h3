@@ -236,10 +236,11 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 10)
+        self.assertEqual(len(choices), 9)
         for slot in range(1, 5):
             self.assertIn(f"Remake · Picture {slot}", choices)
-        self.assertIn("Image · Reference images", choices)
+        # The Image page's inputs are on its page, which has its own Media library picker.
+        self.assertFalse(any(choice.startswith("Image ·") for choice in choices))
         self.assertFalse(any(choice.startswith("MOSS-Image") for choice in choices))
         # MiniMax H3's inputs are on its page, which has its own Media library picker.
         self.assertFalse(any(choice.startswith("H3 ·") for choice in choices))
@@ -657,19 +658,23 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(accepts)
         self.assertEqual(accepts - restarted, set())
 
-    def test_storyboard_tab_is_a_frame_with_only_its_scripted_api_and_settings_capture(self) -> None:
+    def test_storyboard_tab_is_a_frame_with_only_its_scripted_api(self) -> None:
         frame = next(c for c in self.config["components"]
                      if c["type"] == "html" and "h3-storyboard-frame" in str(c["props"].get("value")))
         self.assertIn('src="/storyboard/"', frame["props"]["value"])
         names = {dep.api_name for dep in self.demo.fns.values()}
         self.assertTrue({"storyboard_import", "storyboard_update", "storyboard_list", "storyboard_details"} <= names)
         self.assertTrue(isinstance(self.demo.h3_routes, tuple) and self.demo.h3_routes)
-        capture = next(dep for dep in self.demo.fns.values() if getattr(dep.fn, "__name__", "") == "capture")
-        self.assertIs(capture.queue, False)
-        # Gradio injects the browser request only into parameters typed as gr.Request.
-        import typing
-        import gradio as gr
-        self.assertIs(typing.get_type_hints(capture.fn).get("request"), gr.Request)
+        # The MiniMax H3 and Image pages hand their settings over; nothing is captured from Gradio.
+        self.assertFalse([dep for dep in self.demo.fns.values() if getattr(dep.fn, "__name__", "") == "capture"])
+
+    def test_image_tab_is_a_frame_and_its_page_is_installed(self) -> None:
+        from h3_ui.image.page import install_image_page
+
+        frame = next(c for c in self.config["components"]
+                     if c["type"] == "html" and 'src="/image/"' in str(c["props"].get("value")))
+        self.assertIn("h3-video-frame", frame["props"]["value"])
+        self.assertTrue(any(getattr(install, "func", None) is install_image_page for install in self.demo.h3_routes))
 
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
@@ -788,9 +793,9 @@ class UiContractTests(unittest.TestCase):
                 if c.get("props", {}).get("label") == label
             ]
             self.assertEqual(len(keys), 8, label)  # Soundstage's are on its page.
-            # MiniMax H3's writer is on its page; its Gradio view stays built, unseen.
+            # MiniMax H3's and Image's writers are on their pages; their Gradio views stay built, unseen.
             hidden = [hidden_by_ancestor(key) for key in keys]
-            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 1, label)
+            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 2, label)
 
         endpoints = {
             dependency.get("api_name"): dependency

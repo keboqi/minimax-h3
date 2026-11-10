@@ -112,7 +112,7 @@ def open_engine_js(task: str, engine: str, h3_mode: str | None = None) -> str:
     if (label) label.querySelector("input")?.click();
     else if (tries > 0) setTimeout(() => engine(tries - 1), 100);
   }};
-  requestAnimationFrame(() => requestAnimationFrame(() => engine(50)));{choose_mode}
+  requestAnimationFrame(() => requestAnimationFrame(() => engine({50 if engine else 0})));{choose_mode}
 }}"""
 
 
@@ -814,11 +814,13 @@ class EditTarget:
     ``h3_mode`` is clicked in the browser; ``mode`` is a control set to ``mode_value``.
     """
 
-    picture: Any
+    picture: Any = None
     multiple: bool = True
     h3_mode: str | None = None
     mode: Any = None
     mode_value: str | None = None
+    # ``receive(owner, path)`` takes the frame for a page outside Gradio, in place of ``picture``.
+    receive: Any = None
 
 
 def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHandlers) -> None:
@@ -828,6 +830,16 @@ def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHa
             return gr.update()
         return [path] if target.multiple else path
 
+    if target.receive is not None:
+        def hand_over(request):
+            owner = require_owner(request)
+            path = handlers.outgoing.pop(owner, None)
+            if path:
+                target.receive(owner, path)
+
+        step = button.click(_with_request(hand_over, 0), outputs=None, api_name=False, show_progress="hidden")
+        step.then(None, js=open_engine_js("Image", ""), queue=False, api_name=False)
+        return
     step = button.click(_with_request(outgoing, 0), outputs=target.picture, api_name=False, show_progress="hidden")
     if target.mode is not None:
         step = step.then(lambda: target.mode_value, outputs=target.mode, queue=False, api_name=False,

@@ -15,6 +15,10 @@ from h3_app.capabilities import engines_for_task, TASKS
 
 H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
             'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+IMAGE_FRAME = ('<iframe class="h3-video-frame" src="/image/" title="Image" '
+               'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+# The Image page has its own model picker, so the engine pills stay away for that task.
+IMAGE_HELP = "Create an image or edit your references. Choose the model on the page."
 
 
 @dataclass(frozen=True)
@@ -129,7 +133,10 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     generation = gr.Row(elem_classes=["h3-generator-shell"], visible=False)
                     generation_settings = gr.Column(elem_id="h3-fine-tune", visible=False)
                 with gr.Tab("Image workspace", id="image"):
-                    image = gr.Column(elem_classes=["h3-engine-view"])
+                    # Everything people do happens on the page at /image/ (image/page.py), outside Gradio.
+                    gr.HTML(IMAGE_FRAME)
+                    # The Gradio view stays built but unseen: its job callback runs the page's generations.
+                    image = gr.Column(elem_classes=["h3-engine-view"], visible=False)
                 with gr.Tab("LTX 2.5", id="ltx"):
                     ltx25 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Qwen Image 2.1", id="qwen"):
@@ -280,9 +287,9 @@ def bind_workspace_navigation(
         detail = next((e.description for e in choices if e.id == selected))
         stage(settings_values[-1], task, selected)
         return (
-            gr.update(choices=[(e.label, e.id) for e in choices], value=selected),
+            gr.update(choices=[(e.label, e.id) for e in choices], value=selected, visible=task != "Image"),
             gr.update(selected="image" if task == "Image" else selected),
-            detail,
+            IMAGE_HELP if task == "Image" else detail,
             selected,
             *output_intent(task, settings_memory, settings_values),
         )
@@ -365,9 +372,10 @@ def bind_workspace_navigation(
                 choices=[(item.label, item.id) for item in choices],
                 value=selected.id,
                 interactive=True,
+                visible=task != "Image",
             ),
             gr.update(selected="image" if task == "Image" else selected.id),
-            selected.description,
+            IMAGE_HELP if task == "Image" else selected.description,
             *output_intent(task, settings_memory, settings_values, snap=False),
             False,
             gr.update(interactive=True),

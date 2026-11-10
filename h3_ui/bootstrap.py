@@ -162,19 +162,22 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             app_views.image, app_views, engine_views, engine_handlers, h3_components,
             services.engine_deps, demo,
         )
+        from functools import partial
+
         from .engines.remake import EditTarget, bind_h3_settings
+
+        image_pages = []
+
+        def hand_to_image(engine, owner, path):
+            image_pages[0].receive(owner, engine, path)
 
         bind_h3_settings(
             engine_views["remake"], engine_handlers["remake"], h3_components.values,
             # The MiniMax H3 page hands Remake its settings; nothing is captured from Gradio.
             (),
-            edit_targets={
-                "h3": EditTarget(image_workspace.reference_images, mode=image_workspace.mode, mode_value="Image edit"),
-                "qwen": EditTarget(image_workspace.reference_images, mode=image_workspace.mode,
-                                   mode_value="Image edit"),
-            },
+            # The Image page takes the frame; its Gradio view stays unseen.
+            edit_targets={engine: EditTarget(receive=partial(hand_to_image, engine)) for engine in ("h3", "qwen")},
         )
-        from functools import partial
 
         from .remake_page import install_remake_page
 
@@ -185,9 +188,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         from .drama3.visuals import video_export as soundstage_video_export
 
         build_soundstage_tab(app_views.drama3, engine_actions)
-        # Captures the Image tab's settings as the studio opens or switches task, for the page's export.
-        video_export = soundstage_video_export(image_controller, services.engine_deps,
-                                               triggers=(demo.load, app_views.task.change))
+        # The Image page hands the export its settings; nothing is captured from Gradio.
+        video_export = soundstage_video_export(image_controller, services.engine_deps)
         if services.soundstage_workspace is not None:
             from h3_app.drama3.serving.takes import takes_root
             from .drama3.page import install_soundstage_page
@@ -214,7 +216,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
 
         followers = tuple(handlers for handlers in (engine_handlers["remake"], services.storyboard_handlers)
                           if handlers is not None)
-        demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=H3PageServices(
+        h3_page_services = H3PageServices(
             root=lambda: services.engine_deps.runtime_config().outputs_dir / ".h3-page",
             resolve=services.resolve_request_settings,
             describe=services.describe_settings,
@@ -224,7 +226,39 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             library=lambda: engine_handlers["remake"].library,
             followers=followers,
             attention_backend=catalog.SERVER_ATTENTION_BACKEND,
+        )
+        demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=h3_page_services))
+        from .h3.page import H3PageState
+        from .image.page import ImagePageServices, ImagePageState, install_image_page, spec_of
+        from .image_controller import suggest_prompt
+
+        # Reads what the MiniMax H3 page saved: P-H3-Image runs on that page's settings.
+        h3_saved = H3PageState(h3_page_services)
+        image_fields = {name: component for name, component in image_controller.fields.items()
+                        if not name.startswith("h3__")}
+        # Shown with the model's options, though no generation takes them by name.
+        image_fields["qwen__preset"] = engine_views["qwen"].preset
+        image_fields["moss_image__rewrite_mode"] = engine_views["moss_image"].rewrite_mode
+        image_pages.append(ImagePageState(ImagePageServices(
+            root=lambda: services.engine_deps.runtime_config().outputs_dir / ".image-page",
+            fields={name: spec_of(component) for name, component in image_fields.items()},
+            job_fields=tuple(image_controller.fields),
+            presets={engine: tuple(tuple(value for _label, value in dropdown.choices) for dropdown in pair)
+                     for engine, pair in {
+                         "qwen": (engine_views["qwen"].output_resolution_1k, engine_views["qwen"].output_resolution_2k),
+                         "h3": (image_workspace.h3_resolution_small, image_workspace.h3_resolution_large),
+                         **{engine: (engine_views[engine].resolution_small, engine_views[engine].resolution_large)
+                            for engine in ("flux3", "moss_image", "fibo2")},
+                     }.items()},
+            suggest=partial(suggest_prompt, engine_handlers),
+            h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
+            h3_defaults={name: getattr(component, "value", None)
+                         for name, component in image_controller.h3_fields.items()},
+            interrupt=services.interrupt,
+            library=lambda: engine_handlers["remake"].library,
+            followers=(video_export,),
         )))
+        demo.h3_routes = (*demo.h3_routes, partial(install_image_page, pages=image_pages[0]))
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -289,7 +323,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         for feature in FEATURES:
             if feature.id not in {"qwen", "flux3", "moss_image", "fibo2"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))
-        destinations["Image · Reference images"] = image_workspace.reference_images
+        # The Image page has its own Media library picker, as MiniMax H3's does.
         build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
