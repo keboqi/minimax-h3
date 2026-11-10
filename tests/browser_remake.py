@@ -221,6 +221,11 @@ def main(shots=None):
                 # The manual side: open a window, take its carried frame, regenerate it alone, combine.
                 remake.get_by_role("button", name=re.compile("^Window 2,")).click()
                 expect(remake.get_by_label("Remake prompt")).to_have_value(re.compile("Fixture window"), timeout=15000)
+                expect(primary).to_be_disabled()
+                remake.get_by_label("Remake prompt").fill("Revised prompt for window two.")
+                remake.get_by_label("Remake prompt").blur()
+                expect(primary).to_have_text("Render 1 window")
+                expect(primary).to_be_enabled()
                 expect(remake.get_by_label("Picture 1 frame")).to_be_hidden()
                 remake.get_by_role("button", name="Copy to a slot").click()
                 expect(remake.get_by_label("Picture 1 frame")).to_be_visible(timeout=10000)

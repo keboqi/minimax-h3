@@ -74,7 +74,7 @@ class Drama3Request:
     regenerate: tuple[str, ...] = ()
     remix_only: bool = False
     # Time every word with Qwen3's aligner for word-by-word subtitles.
-    word_timing: bool = False
+    word_timing: bool = True
     # Names the output file; "" keeps the default name.
     title: str = ""
 

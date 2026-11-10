@@ -141,10 +141,10 @@ def save_editor(window: dict[str, Any], pictures: list[str], pins: list[int | No
         window["state"] = CHANGED
 
 
-def record_take(project: dict[str, Any], index: int, take: str) -> None:
+def record_take(project: dict[str, Any], index: int, take: str, *, current_inputs: bool) -> None:
     """A new take: what continues from it no longer matches, but stays usable until regenerated."""
     windows = project["windows"]
-    windows[index].update(take=take, state=DONE)
+    windows[index].update(take=take, state=DONE if current_inputs else CHANGED)
     following = index + 1
     if following < len(windows) and windows[following]["state"] in RENDERED:
         windows[following]["state"] = OUTDATED

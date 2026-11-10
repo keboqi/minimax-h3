@@ -210,7 +210,7 @@ class GenerationHandlers:
         names_end = sound_end + 1 + DRAMA3_VOICE_SLOTS
         names = self._cast_names(names, settings[sound_end + 1:names_end])
         # Word-by-word subtitles come last.
-        word_timing = bool(settings[names_end]) if len(settings) > names_end else False
+        word_timing = bool(settings[names_end]) if len(settings) > names_end else True
         sounds = self._drama3_sounds(sound_slots)
         request = generation_requests.Drama3Request(
             text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),

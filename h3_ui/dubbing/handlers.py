@@ -557,7 +557,7 @@ class DubbingHandlers:
     # -- Generation ---------------------------------------------------------
 
     def _dub_request(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
-                     background_volume=100, keep_original=True, regenerate="", word_timing=False):
+                     background_volume=100, keep_original=True, regenerate="", word_timing=True):
         session = sessions.load(self._runtime(), session_id)
         fresh = tuple(segment_tools.parse_line_numbers(regenerate, len(session.segments)))
         return pipeline.DubRequest(
@@ -607,7 +607,7 @@ class DubbingHandlers:
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
-                     keep_original, regenerate, word_timing=False):
+                     keep_original, regenerate, word_timing=True):
         """Outputs: player, files, status, and a frozen export source for this result."""
         yield (gr.update(value="", visible=False), gr.update(value=None, visible=False), None, None,
                "Generating dub…", None,

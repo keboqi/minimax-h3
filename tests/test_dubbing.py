@@ -1952,13 +1952,13 @@ class DubRenderTests(Workspace):
                               for clip in payload["clips"]]}
 
         session = self.analyze(self.make_video(), separate=True)
-        timed = pipeline.DubRequest(session.id, word_timing=True)
+        timed = pipeline.DubRequest(session.id)
         with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize), \
                 patch.object(pipeline, "_word_timings", REAL_WORD_TIMINGS), \
                 patch.object(pipeline.tools, "run", side_effect=fake_tools):
-            plain = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+            plain = list(pipeline.dub(pipeline.DubRequest(session.id, word_timing=False), runtime=self.runtime,
                                       free_gpu=lambda: None))[-1]
-            self.assertEqual(calls, [])  # off by default
+            self.assertEqual(calls, [])
             self.assertEqual(plain.player.lines[0]["translation_words"], [])
             self.assertFalse(plain.player.word_timing)
             first = list(pipeline.dub(timed, runtime=self.runtime, free_gpu=lambda: None))[-1]

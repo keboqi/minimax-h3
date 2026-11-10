@@ -688,7 +688,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         load(session_id)
         values = [session_id, *dub_settings(body), float(body.get("speech_volume", 100)),
                   float(body.get("background_volume", 100)), bool(body.get("keep_original", True)),
-                  str(body.get("regenerate") or ""), bool(body.get("word_timing", False))]
+                  str(body.get("regenerate") or ""), bool(body.get("word_timing", True))]
         return start(request, DUB, session_id, "dub", handlers.generate_dub, values, reader(4),
                      session_id=session_id)
 

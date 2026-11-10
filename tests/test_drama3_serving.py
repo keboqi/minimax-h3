@@ -692,7 +692,7 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(fake.speech.call_count, 3)
         self.assertIsNotNone(updates[-1].output)
 
-    def test_word_timing_aligns_every_take_only_when_asked(self):
+    def test_word_timing_aligns_every_take_by_default(self):
         def align(take, *_args, **_kwargs):
             samples = len(audio.tidy_take(take.samples, take.rate))
             return [(0, samples)], [[("Hello", 0.0, samples / take.rate)]]
@@ -701,9 +701,9 @@ class GenerateTests(unittest.TestCase):
             return float_wav(tone(expected_seconds(payload["input"])))
 
         voices = ((0, self.clips[0], "Reference 0."),)
-        self.run_route(Drama3Request("Hello.", voices=voices), speech, align=align)
-        self.align_take.assert_not_called()  # one line per take needs no alignment by default
-        _fake, _updates, snapshot = self.run_route(Drama3Request("Hello.", voices=voices, word_timing=True),
+        self.run_route(Drama3Request("Hello.", voices=voices, word_timing=False), speech, align=align)
+        self.align_take.assert_not_called()
+        _fake, _updates, snapshot = self.run_route(Drama3Request("Hello.", voices=voices),
                                                    speech, align=align)
         self.assertEqual(self.align_take.call_count, 1)  # the saved take is aligned, not spoken again
         settings = snapshot.call_args.args[1]["settings"]

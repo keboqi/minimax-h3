@@ -1,5 +1,6 @@
 """The Remake page's JSON API: sources, selections, windows, files and runs."""
 
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,7 +17,9 @@ from PIL import Image
 
 from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
+from h3_app.media_tools import probe_video_metadata
 from h3_app.remake import SECTIONS
+from h3_app.remake.media import join_windows
 from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
 from h3_app.catalog import QWEN_IMAGE21_DEFAULTS
 from h3_ui.engines.feature import EngineDeps
@@ -218,6 +221,33 @@ class RemakePageTests(unittest.TestCase):
         response = self.client.post(f"{API}/save", json={**body, "project": saved["key"]})
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(self.ok(self.client.get(f"{API}/projects"))["projects"], [])
+
+    def test_saving_a_prompt_during_generation_keeps_the_window_queued(self):
+        body = self.editor(self.source())
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        body["project"] = saved["key"]
+        original_take = self.handlers.deps.h3_take
+
+        def edit_during_take(*args):
+            self.ok(self.client.post(f"{API}/save", json={**body, "prompt": "Revised prompt"}))
+            yield from original_take(*args)
+
+        with patch.object(self.handlers, "deps", replace(self.handlers.deps, h3_take=edit_during_take)):
+            self.ok(self.client.post(f"{API}/generate", json=body))
+            self.assertIsNone(self.finished_run()["error"])
+        window = self.ok(self.client.get(f"{API}/projects/{saved['key']}"))["windows"][0]
+        self.assertEqual((window["prompt"], window["state"]), ("Revised prompt", "changed"))
+        self.assertTrue(window["take"])
+
+    def test_join_keeps_every_frame_when_the_soundtrack_ends_early(self):
+        audio = self.root / "short.m4a"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", str(audio)], check=True)
+        output = self.root / "joined.mp4"
+        join_windows([{"path": self.video, "first": 0, "frames": 192, "continues": False}],
+                     audio, start=0, frames=192, mix=0, output=output, has_audio=True)
+        metadata = probe_video_metadata(output)
+        self.assertEqual(metadata.frame_count, 192)
+        self.assertTrue(metadata.has_audio)
 
     def test_save_refuses_a_path_as_project_key(self):
         source = self.source()

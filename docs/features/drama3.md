@@ -189,7 +189,7 @@ take is placed at the pauses between them, or estimated from its length when the
 pauses. Clips that play at the same time stack in rows on the timeline, such as speakers talking
 over each other in a parallel block, or an effect over the music bed. Results made before line or
 sound timings were recorded show no lines or no Sounds lane until they are remixed; Remix gives
-them timings without generating anything. **Word-by-word subtitles** (off by default) times every
+them timings without generating anything. **Word-by-word subtitles** (on by default) times every
 word with Qwen3's forced aligner after speaking; a take the aligner cannot time keeps plain line
 subtitles.
 

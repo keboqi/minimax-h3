@@ -100,7 +100,7 @@ def join_windows(pieces: Sequence[dict[str, Any]], audio_source: str | Path, *, 
     process = run_media_process(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments, *audio,
          "-filter_complex", ";".join(chains), "-map", f"[{joined}]",
-         *(["-map", f"{len(pieces)}:a:0", "-c:a", "aac", "-b:a", "320k", "-shortest"] if has_audio else []),
+         *(["-map", f"{len(pieces)}:a:0", "-c:a", "aac", "-b:a", "320k"] if has_audio else []),
          "-frames:v", str(length), "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
          "-movflags", "+faststart", str(partial)],
         timeout=7200, partial_outputs=(partial,), capture_output=True, text=True,

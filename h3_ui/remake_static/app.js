@@ -195,7 +195,10 @@
   // save that keeps failing must not trap anyone in a project.
   const autosave = async () => {
     try {
-      await saveWindow();
+      if (adoptSaved(await saveWindow())) {
+        renderTimeline();
+        renderAction();
+      }
     } catch (error) {
       toast(`This window's latest edits weren't saved: ${error.message}`, true);
     }
@@ -395,12 +398,7 @@
     renderPictures();
     renderTimeline();
     changed();
-    saveWindow()?.then((project) => {
-      if (adoptSaved(project)) {
-        renderTimeline();
-        renderAction();
-      }
-    }).catch(() => {});
+    autosave();
   };
 
   const uploadPictureFile = safely(async (file, targetSlot = null) => {

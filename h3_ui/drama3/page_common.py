@@ -40,7 +40,7 @@ def check_proposal(proposal: dict, expected) -> None:
 
 # The Speak step's defaults, for a project saved before a field existed.
 SPEECH_DEFAULTS = {"temperature": 2.0, "top_p": 1.0, "top_k": 30, "max_frames": 8192, "parallel": 16, "retries": 0,
-                   "word_timing": False, "script_mode": "Basic", "text": "", "title": ""}
+                   "word_timing": True, "script_mode": "Basic", "text": "", "title": ""}
 
 
 @dataclass

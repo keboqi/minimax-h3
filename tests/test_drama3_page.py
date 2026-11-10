@@ -93,7 +93,7 @@ class Drama3PageTests(unittest.TestCase):
 
     def save_project(self, name="Night Market", generated=True, **fields):
         data = {"text": "Mia: Leo! You kept the stall open?\nLeo: Someone has to.", "title": "Night Market",
-                "script_mode": "Advanced", "temperature": 2.0, "top_p": 1.0, "top_k": 30, "word_timing": True,
+                "script_mode": "Advanced", "temperature": 2.0, "top_p": 1.0, "top_k": 30,
                 "shown_slots": 2, "voice_0_save_name": "Mia", "voice_0_audio": "mia.wav",
                 "voice_0_transcript": "Hello there.", "voice_1_save_name": "Leo", **fields}
         self.store.save_soundstage_project(name, data)
@@ -215,6 +215,8 @@ class Drama3PageTests(unittest.TestCase):
 
     def test_settings_are_saved_with_the_project(self):
         self.save_project()
+        project = self.ok(self.client.get(f"{API}/project", params={"name": "Night Market"}))
+        self.assertTrue(project["settings"]["word_timing"])
         project = self.ok(self.client.patch(f"{API}/project/settings", params={"name": "Night Market"},
                                             json={"temperature": 0.7, "top_p": 0.7, "top_k": 30, "word_timing": False}))
         self.assertEqual(project["settings"]["preset"], "Strict")

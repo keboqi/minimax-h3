@@ -155,6 +155,13 @@ class WindowRunner:
             yield None, f"{label} needs a frame. Skipped."
             return
         window = project["windows"][index]
+
+        def inputs_match(current, prompt):
+            saved = current["windows"][index]
+            return (saved["prompt"] == prompt
+                    and all(saved[key] == window[key] for key in ("pictures", "pins", "use_carried"))
+                    and window_inputs(current, index, pinned=options.pinned, smart=options.smart) == (pictures, pins))
+
         hold = window.get("hold", 0)
         if hold and not project["windows"][index - 1]["take"]:
             yield None, f"{label} continues window {index}, which needs generating first. Skipped."
@@ -178,9 +185,11 @@ class WindowRunner:
                 yield None, f"{label}: writing the prompt"
                 text = self._write_prompt(project, index, str(clip), pictures, pins, options)
             if text != window["prompt"]:
-                self.projects.edit(project, lambda current: current["windows"][index].update(
-                    prompt=text, prompt_auto=True, prompt_pictures=len(pictures),
-                ))
+                def save_prompt(current):
+                    if inputs_match(current, window["prompt"]):
+                        current["windows"][index].update(prompt=text, prompt_auto=True, prompt_pictures=len(pictures))
+
+                self.projects.edit(project, save_prompt)
             staged = self.stage_file(str(clip), "remake_sources", reuse=True)
             held = self._stage_held(project, index) if hold else None
         finally:
@@ -211,7 +220,9 @@ class WindowRunner:
         if take is None:
             raise H3Error(f"{label} finished without a video.")
         previous_take = window["take"]
-        project = self.projects.edit(project, lambda current: record_take(current, index, str(take)))
+        project = self.projects.edit(project, lambda current: record_take(
+            current, index, str(take), current_inputs=inputs_match(current, text),
+        ))
         if previous_take and previous_take != str(take):
             Path(previous_take).unlink(missing_ok=True)
         if index + 1 < len(windows):

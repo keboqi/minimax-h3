@@ -58,7 +58,7 @@ function defaults(boot) {
     aligner: true, merge_gap: 0.35, refine_timestamps: true, translation_context: false,
     voice_mode: boot.voice_modes[0], preset: "Balance", timing: boot.timings[0].key, max_speed: 1.35,
     speech_volume: 100, background_volume: 100, keep_original: true, regenerate: "", parallel: 16,
-    word_timing: false, rewrite: false, rewrite_style: boot.default_rewrite_style, rewrite_by_hand: false,
+    word_timing: true, rewrite: false, rewrite_style: boot.default_rewrite_style, rewrite_by_hand: false,
   };
 }
 

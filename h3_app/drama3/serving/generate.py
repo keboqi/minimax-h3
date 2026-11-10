@@ -939,7 +939,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     # A take of several lines is aligned to cut them; word-by-word subtitles align every take,
     # saved ones too, so turning them on and remixing adds them without speaking again.
     # Report every failed word alignment, including single-line takes.
-    word_timing = bool(getattr(request, "word_timing", False))
+    word_timing = bool(getattr(request, "word_timing", True))
     # A scene whose anchors or holds name a phrase it speaks aligns all its takes, so a phrase
     # crossing takes still resolves and no unaligned take splits the scene's word stream.
     cued_take_indices: set[int] = set()

@@ -186,7 +186,7 @@ class DubRequest:
     keep_original_track: bool = True
     regenerate: tuple[int, ...] = ()
     # Time every subtitle word with Qwen3's aligner; unchanged lines reuse their takes and timing.
-    word_timing: bool = False
+    word_timing: bool = True
 
 
 @dataclass

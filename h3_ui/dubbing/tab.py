@@ -72,7 +72,7 @@ def bind_dubbing_api(actions, *, gpu=True):
             gr.Slider(0, 200, value=100, step=5, label="Background music and effects (%)"),
             gr.Checkbox(True, label="Keep the original audio as a second track"),
             gr.Textbox("", label="Fresh takes for lines"),
-            gr.Checkbox(False, label="Word-by-word subtitles"),
+            gr.Checkbox(True, label="Word-by-word subtitles"),
         ]
         dub_outputs = [gr.HTML(), gr.Video(label="Dubbed video"), gr.Audio(label="Dubbed audio", type="filepath"),
                        gr.File(label="Subtitles", file_count="multiple"), gr.Markdown(), gr.State(None),
