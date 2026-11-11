@@ -229,7 +229,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=h3_page_services))
         from .h3.page import H3PageState
-        from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root, spec_of
+        from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root
+        from .page_fields import spec_of
         from .image_controller import suggest_prompt
         from h3_app.h3_image import H3_IMAGE_16M_PRESETS
         from h3_app.catalog import H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS
@@ -266,6 +267,19 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             followers=(video_export,),
         )))
         demo.h3_routes = (*demo.h3_routes, partial(install_image_page, pages=image_pages[0]))
+        from .song.page import SongPageServices, SongPageState, fields_of, install_song_page, private_song_root
+
+        # The Song page takes each model's options, their defaults and their limits from its unseen Gradio view.
+        song_pages = SongPageState(SongPageServices(
+            root=lambda: private_song_root(services.engine_deps.runtime_config(), JOBS.store.root),
+            fields=fields_of(engine_views),
+            enhance={"music": engine_handlers["music"].enhance_music3_prompt,
+                     "yue2": engine_handlers["yue2"].enhance_yue2_prompt},
+            take_facts={engine: engine_handlers[engine].take_facts for engine in ("music", "yue2")},
+            interrupt=services.interrupt,
+            library=lambda: engine_handlers["remake"].library,
+        ))
+        demo.h3_routes = (*demo.h3_routes, partial(install_song_page, pages=song_pages))
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -325,15 +339,16 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 services.gallery_media_download_path,
             )
             engine_handlers["remake"].library = services.storyboard_handlers.library
-        # MiniMax H3's inputs live on its page, which has its own Media library picker.
+        # MiniMax H3's inputs live on its page, which has its own Media library picker; so do Image's and Song's.
         destinations = {}
         for feature in FEATURES:
-            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2"}:
+            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))
         # The Image page has its own Media library picker, as MiniMax H3's does.
         build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
+            page_targets={"Song · Visual inspiration": song_pages.receive},
         )
         for view in (*engine_views.values(), image_workspace):
             with view.output.h3_metadata_root:

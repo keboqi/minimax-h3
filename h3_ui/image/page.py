@@ -12,7 +12,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 import errno
 import json
-import math
 from pathlib import Path
 import re
 import shutil
@@ -44,6 +43,10 @@ from ..engines.qwen.view import QWEN_IMAGE21_LIGHTNING_MODES
 from ..h3.page import plain
 from ..image_controller import IMAGE_MODELS, draft_issue, image_mode, reference_limit, reference_tag
 from ..job_admission import execute_accepted
+from ..page_fields import (
+    SECRET_FIELDS, UI_LIMIT, FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
+    spool_image, update_value, writer_defaults, writer_rows,
+)
 from ..page_runs import Run, Runs, guarded
 
 STATIC = Path(__file__).with_name("page")
@@ -56,8 +59,6 @@ BUSY = {GENERATE: "An image is already being made.", ENHANCE: "The prompt writer
 GENERATE_MODE, EDIT_MODE = "Text to image", "Image edit"
 MANUAL = catalog.QWEN_EDIT_SIZE_MANUAL
 WRITER_ENGINES = ("h3", "qwen", "flux3", "moss_image")
-SECRET_FIELDS = ("gemini_api_key", "openai_api_key")
-UI_LIMIT = 4096
 REFERENCE_LIMIT = 24  # Kept in the draft; each model's own limit is checked when it runs.
 
 GROUPS = (
@@ -80,41 +81,6 @@ GROUP_OF = {
 COMPOSE = ("preset", "batch_count", "batch_edit_inputs", "edit_size", "layout",
            "output_resolution_1k", "output_resolution_2k")
 EDIT_ONLY = ("reference_resolution", "cache_device", "cache_dtype")
-
-
-@dataclass(frozen=True)
-class FieldSpec:
-    """One option as the page draws it: its kind, its default and what it may be."""
-
-    kind: str  # choice, bool, int, num, text or area
-    label: str
-    default: Any
-    choices: tuple = ()
-    minimum: float | None = None
-    maximum: float | None = None
-    step: float | None = None
-    hint: str = ""
-    placeholder: str = ""
-
-
-def spec_of(component) -> FieldSpec:
-    """The Gradio control a model's view declares, as the option the page shows."""
-    import gradio as gr
-
-    label, hint = component.label or "", getattr(component, "info", None) or ""
-    if isinstance(component, (gr.Dropdown, gr.Radio)):
-        choices = tuple((str(name), value) for name, value in component.choices)
-        return FieldSpec("choice", label, component.value, choices, hint=hint)
-    if isinstance(component, gr.Checkbox):
-        return FieldSpec("bool", label, bool(component.value), hint=hint)
-    if isinstance(component, gr.Slider):
-        whole = float(component.step or 1).is_integer()
-        return FieldSpec("int" if whole else "num", label, component.value, minimum=component.minimum,
-                         maximum=component.maximum, step=component.step, hint=hint)
-    if isinstance(component, gr.Number):
-        return FieldSpec("int" if component.precision == 0 else "num", label, component.value, hint=hint)
-    return FieldSpec("area" if (getattr(component, "lines", 1) or 1) > 1 else "text", label, component.value or "",
-                     hint=hint, placeholder=getattr(component, "placeholder", None) or "")
 
 
 @dataclass(frozen=True)
@@ -159,11 +125,6 @@ class Live(dict):
         return self.load(key)
 
 
-def writer_defaults() -> dict[str, Any]:
-    return {"backend": "Gemini", "model": catalog.DEFAULT_GEMINI_PROMPT_MODEL, "gemini_api_key": "",
-            "openai_api_key": "", "openai_model": catalog.DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": ""}
-
-
 def private_image_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots, including on upgrades."""
     outputs = runtime.outputs_dir.resolve()
@@ -193,53 +154,6 @@ def private_image_root(runtime, workspace: Path) -> Path:
 
 def key_of(engine: str, parameter: str) -> str:
     return f"{'image' if engine == 'h3' else engine}__{parameter}"
-
-
-def coerce(spec: FieldSpec, value: Any) -> Any:
-    """``value`` as the kind ``spec`` holds; a browser sends 6 for 6.0 and may send text for a number."""
-    if spec.kind == "bool":
-        if not isinstance(value, bool):
-            raise H3Error(f"{spec.label} must be on or off.")
-        return value
-    if spec.kind == "choice":
-        allowed = [choice for _name, choice in spec.choices]
-        if value in allowed or (value is None and spec.default is None):
-            return value
-        raise H3Error(f"{spec.label}: choose one of the listed options.")
-    if spec.kind in ("int", "num"):
-        try:
-            number = float(value)
-        except (TypeError, ValueError) as exc:
-            raise H3Error(f"{spec.label} must be a number.") from exc
-        if number != number or number in (float("inf"), float("-inf")):
-            raise H3Error(f"{spec.label} must be a number.")
-        if spec.minimum is not None and not spec.minimum <= number <= spec.maximum:
-            raise H3Error(f"{spec.label} must be between {spec.minimum:g} and {spec.maximum:g}.")
-        if spec.step:
-            steps = (number - (spec.minimum or 0)) / spec.step
-            if not math.isclose(steps, round(steps), rel_tol=0, abs_tol=1e-8):
-                raise H3Error(f"{spec.label} must change in increments of {spec.step:g} from {spec.minimum or 0:g}.")
-        return int(round(number)) if spec.kind == "int" else number
-    return "" if value is None else str(value)
-
-
-def _spool(upload: UploadFile, folder: Path, rollback: ExitStack) -> Path:
-    suffix = Path(upload.filename or "").suffix.lower()
-    if suffix not in catalog.IMAGE_EXTENSIONS:
-        raise H3Error(f"{upload.filename} isn't a supported image ({', '.join(sorted(catalog.IMAGE_EXTENSIONS))}).")
-    stem = re.sub(r"[^\w. -]", "_", Path(upload.filename or "").stem).strip(" .")[:60] or "upload"
-    path = folder / f"{uuid.uuid4().hex[:12]}-{stem}{suffix}"
-    with path.open("xb") as handle:
-        rollback.callback(path.unlink, missing_ok=True)
-        shutil.copyfileobj(upload.file, handle)
-    return path
-
-
-def _update_value(update) -> tuple[bool, Any]:
-    """Whether a Gradio update sets a value, and the value."""
-    if isinstance(update, dict) and update.get("__type__") == "update":
-        return ("value" in update, update.get("value"))
-    return (True, update)
 
 
 def _path_of(value) -> str | None:
@@ -460,10 +374,7 @@ class ImagePageState:
 
     # What the page shows -----------------------------------------------------
     def option(self, name: str, options: Mapping[str, Any], **extra) -> dict[str, Any]:
-        spec = self.services.fields[name]
-        return {"name": name, "label": spec.label, "kind": spec.kind, "value": options[name], "hint": spec.hint,
-                "choices": [list(choice) for choice in spec.choices], "minimum": spec.minimum,
-                "maximum": spec.maximum, "step": spec.step, "placeholder": spec.placeholder, **extra}
+        return option_row(name, self.services.fields[name], options[name], **extra)
 
     def fine(self, engine: str, options: Mapping[str, Any], editing: bool) -> list[dict[str, Any]]:
         clean = self.baseline(engine, options)
@@ -490,24 +401,6 @@ class ImagePageState:
             rows.append(self.option(name, options, group=group, disabled=parameter in locked or idle,
                                     note="applies to edits" if idle else "set by the model" if parameter in locked else "",
                                     preset=clean[name] if changed else None, changed=changed))
-        return rows
-
-    def writer_rows(self, writer: Mapping[str, Any]) -> list[dict[str, Any]]:
-        row = lambda name, label, kind, **extra: {
-            "name": name, "label": label, "kind": kind, "value": writer[name], "group": 4, "store": "writer",
-            "hint": "", "choices": [], **extra}
-        rows = [row("backend", "Prompt writer", "choice", choices=[[name, name] for name in ("OpenAI-compatible", "Gemini")])]
-        if writer["backend"] == "Gemini":
-            rows += [row("model", "Gemini model", "choice", choices=[[name, name] for name in catalog.GEMINI_PROMPT_MODELS]),
-                     row("gemini_api_key", "Temporary Gemini API key", "password", placeholder="Uses GEMINI_API_KEY when blank",
-                         hint="The server does not store keys entered here.")]
-        else:
-            rows += [row("openai_model", "OpenAI-compatible model", "text",
-                         hint="Any model your endpoint serves, for example " + ", ".join(catalog.OPENAI_PROMPT_MODELS[:3]) + "."),
-                     row("openai_api_key", "Temporary OpenAI API key", "password", placeholder="Uses OPENAI_API_KEY when blank",
-                         hint="The server does not store keys entered here."),
-                     row("openai_base_url", "Temporary OpenAI endpoint", "text",
-                         placeholder="Uses OPENAI_BASE_URL, else the official OpenAI API, when blank")]
         return rows
 
     def issue(self, state: Mapping[str, Any]) -> str:
@@ -545,7 +438,7 @@ class ImagePageState:
         issue = self.issue(state)
         rows = self.fine(engine, options, editing)
         if engine in WRITER_ENGINES:
-            rows += self.writer_rows(state["writer"])
+            rows += writer_rows(state["writer"], group=4)
         counts: dict[str, int] = {}
         for row in rows:
             if row.get("changed"):
@@ -656,16 +549,8 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
 
     @app.post(f"{API}/writer", include_in_schema=False)
     @guarded
-    def change_writer(request: Request, body: dict = Body(...)):
-        defaults = writer_defaults()
-
-        def change(state):
-            for name, value in (body.get("changes") or {}).items():
-                if name not in defaults:
-                    raise H3Error(f"Unknown writer setting: {name}")
-                state["writer"][name] = "" if value is None else str(value)
-
-        return edit(request, change)
+    def writer_settings(request: Request, body: dict = Body(...)):
+        return edit(request, lambda state: change_writer(state["writer"], body.get("changes")))
 
     @app.post(f"{API}/empty", include_in_schema=False)
     @guarded
@@ -727,20 +612,14 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
         owner = owner_of(request)
         folder = pages.uploads(owner)
         with ExitStack() as rollback:
-            paths = [str(_spool(upload, folder, rollback)) for upload in files]
+            paths = [str(spool_image(upload, folder, rollback)) for upload in files]
             return add(owner, paths, rollback)
 
     @app.post(f"{API}/references/library", include_in_schema=False)
     @guarded
     def reference_from_library(request: Request, body: dict = Body(...)):
         owner = owner_of(request)
-        library = services.library()
-        if library is None:
-            raise H3Error("The media library isn't available here.")
-        source = str(body.get("source") or "")
-        library.validate_path(source, "Image")
-        if not Path(source).is_file():
-            raise H3Error("This image is unavailable. Refresh the library and choose another.")
+        source = library_source(services.library(), str(body.get("source") or ""))
         with ExitStack() as rollback:
             path = pages.keep(owner, source, rollback)
             return add(owner, [path], rollback)
@@ -788,27 +667,11 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     @guarded
     def library_page(request: Request, query: str = "", limit: int = 24):
         owner_of(request)
-        library = services.library()
-        if library is None:
-            raise H3Error("The media library isn't available here.")
-        limit = max(1, min(limit, 240))
-        page = library.refresh_page("Image", limit, paths=library.index.inventory("Image", query, limit=limit))
-        version = library.index.versions.get("Image", 0)
-        return {"items": [{"path": str(path), "caption": caption,
-                           "thumb": f"/media-previews/{Path(thumb).name}?v={version}"}
-                          for path, (thumb, caption) in zip(page.paths, page.items)]}
+        return library_items(services.library(), query, limit)
 
     @app.get(f"{API}/file", include_in_schema=False)
     def read_file(path: str, request: Request, download: bool = False):
-        try:
-            owner = owner_of(request)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        file = Path(path)
-        if not pages.may_read(owner, path) or not file.is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(file, filename=file.name if download else None,
-                            headers={"Cache-Control": "private, max-age=3600"})
+        return owned_file(lambda: owner_of(request), pages.may_read, path, download)
 
     # Long work -------------------------------------------------------------
     def start(owner: str, kind: str, work: Callable[[ImageRun], None]) -> dict[str, Any]:
@@ -839,11 +702,11 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
                               media_indices=(3,) if references else (), output_indices=(0,))
             run.job_id = job.id
             for update in execute_accepted(job.id, session):
-                sets, value = _update_value(update[0])
+                sets, value = update_value(update[0])
                 if sets and value:
                     items = value if isinstance(value, (list, tuple)) else [value]
                     run.results = [path for path in map(_path_of, items) if path]
-                status = _update_value(update[1])[1] if len(update) > 1 else None
+                status = update_value(update[1])[1] if len(update) > 1 else None
                 if isinstance(status, str) and status:
                     run.status = plain(status)
                 run.revision += 1

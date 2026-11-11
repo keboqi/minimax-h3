@@ -12,8 +12,8 @@ from ...image_library import build_image_input
 from ...prompt_review import build_prompt_review
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
 from ...song_controls import (
-    BRIEF, DRAFT, TAKES, change_request, duration_presets, lyrics_policy, press, reveal, section_inserts,
-    song_check_panel, song_choices, studio_column,
+    BRIEF, DRAFT, DURATION_PRESETS, STARTERS, TAKES, change_request, duration_presets, lyrics_policy, press,
+    reveal, section_inserts, song_check_panel, song_choices, studio_column,
 )
 from ...step_cards import card_heading, intro
 from ...song_takes import SongTakes, build_take_history
@@ -80,14 +80,7 @@ def build_music_view(
                 )
                 with gr.Accordion("Try a starter idea", open=False):
                     gr.Examples(
-                        examples=[
-                            ["An upbeat pop song about starting over, with English lyrics, a warm lead "
-                             "vocal, bright guitars, and a chorus that feels like sunrise."],
-                            ["A gentle Mandarin ballad about missing home, with intimate vocals, piano, "
-                             "soft strings, and a hopeful ending."],
-                            ["An instrumental lo-fi track for a rainy evening, with mellow electric "
-                             "piano, soft drums, warm bass, and no vocals."],
-                        ],
+                        examples=[[idea] for idea in STARTERS["music"]],
                         inputs=caption, label="Choose an idea, then make it your own",
                         cache_examples=False,
                     )
@@ -97,7 +90,7 @@ def build_music_view(
                     info="A length limit, not an exact duration. Write plans a song that fits; "
                          "the song may finish sooner.",
                 )
-                duration_presets(duration, ((30, "30 sec"), (60, "1 min"), (120, "2 min"), (180, "3 min")))
+                duration_presets(duration, DURATION_PRESETS["music"])
                 enhance = gr.Button("Write the song", variant="primary", elem_id="h3-music3-write",
                                     elem_classes=["h3-primary-action"])
                 write_generate = gr.Button("Write & generate a take", variant="secondary")

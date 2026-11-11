@@ -50,7 +50,7 @@ def build_take_history(*, with_score: bool) -> SongTakes:
         with gr.Column(min_width=200):
             take_b = gr.Dropdown([], label="Take B", interactive=True)
             audio_b = gr.Audio(label="Take B", type="filepath", interactive=False, show_label=False)
-    details = gr.HTML(_describe([], None, None))
+    details = gr.HTML(describe_takes([], None, None))
     with gr.Row(elem_classes=["h3-song-take-actions"]):
         reuse_draft = gr.Button("Back to take A's draft", size="sm")
         use_seed = gr.Button("Use take A's seed", size="sm")
@@ -98,7 +98,7 @@ def bind_take_history(
             gr.update(choices=_choices(history), value=None if b is None else str(b)),
             history[a]["path"],
             None if b is None else history[b]["path"],
-            _describe(history, a, b),
+            describe_takes(history, a, b),
             _summary(len(history)),
             *((take.get("score") or "",) if score_outputs else ()),
         )
@@ -115,7 +115,7 @@ def bind_take_history(
         return (
             None if a is None else history[a]["path"],
             None if b is None else history[b]["path"],
-            _describe(history, a, b),
+            describe_takes(history, a, b),
         )
 
     gr.on(
@@ -196,7 +196,7 @@ def _index(history, value) -> int | None:
     return index if 0 <= index < len(history) else None
 
 
-def _label(take) -> str:
+def take_label(take) -> str:
     parts = [f"Take {take['number']}"]
     if take.get("seconds"):
         seconds = round(take["seconds"])
@@ -207,10 +207,10 @@ def _label(take) -> str:
 
 
 def _choices(history) -> list[tuple[str, str]]:
-    return [(_label(take), str(index)) for index, take in reversed(list(enumerate(history)))]
+    return [(take_label(take), str(index)) for index, take in reversed(list(enumerate(history)))]
 
 
-def _describe(history, a, b) -> str:
+def describe_takes(history, a, b) -> str:
     if not history or a is None:
         return '<p class="h3-song-take-details">Takes appear here after you generate.</p>'
     take = history[a]
@@ -219,7 +219,7 @@ def _describe(history, a, b) -> str:
         (str(draft[key]).strip().splitlines()[0] for key in ("caption", "style") if str(draft.get(key) or "").strip()),
         "",
     )
-    lines = [f"<strong>{escape(_label(take))}</strong>"]
+    lines = [f"<strong>{escape(take_label(take))}</strong>"]
     if first:
         lines.append(escape(first if len(first) <= 120 else first[:119] + "…"))
     if b is not None and b != a:
@@ -231,7 +231,7 @@ def _describe(history, a, b) -> str:
         if history[a].get("seed") != history[b].get("seed"):
             changed.append("seed")
         lines.append(
-            "Compared with " + escape(_label(history[b])) + ": "
+            "Compared with " + escape(take_label(history[b])) + ": "
             + (escape(", ".join(changed)) + " changed." if changed else "same draft, same seed.")
         )
     return '<p class="h3-song-take-details">' + "<br>".join(lines) + "</p>"

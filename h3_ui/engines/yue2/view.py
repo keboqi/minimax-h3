@@ -12,8 +12,8 @@ from ..controls import generation_actions
 from ...prompt_review import build_prompt_review
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
 from ...song_controls import (
-    BRIEF, DRAFT, TAKES, change_request, duration_presets, lyrics_policy, press, reveal, section_inserts,
-    song_check_panel, song_choices, studio_column,
+    BRIEF, DRAFT, DURATION_PRESETS, STARTERS, TAKES, change_request, duration_presets, lyrics_policy, press,
+    reveal, section_inserts, song_check_panel, song_choices, studio_column,
 )
 from ...step_cards import card_heading, intro
 from ...song_takes import SongTakes, build_take_history
@@ -98,14 +98,7 @@ def build_yue2_view(
                 )
                 with gr.Accordion("Try a starter idea", open=False):
                     gr.Examples(
-                        examples=[
-                            ["Anthemic indie rock about a night drive, with a raspy male vocal, "
-                             "driving drums, wide guitars, and a big final chorus."],
-                            ["A soulful R&B slow jam about a late-night phone call, with a smooth "
-                             "female vocal, Rhodes piano, and a deep, warm bass."],
-                            ["A bright Mandopop song about the first day of summer, with an airy "
-                             "female vocal, acoustic guitar, and handclaps."],
-                        ],
+                        examples=[[idea] for idea in STARTERS["yue2"]],
                         inputs=style, label="Choose an idea, then make it your own",
                         cache_examples=False,
                     )
@@ -115,7 +108,7 @@ def build_yue2_view(
                     info="A length limit, not an exact duration. Write plans a song that fits; "
                          "the song may finish sooner.",
                 )
-                duration_presets(duration, ((60, "1 min"), (120, "2 min"), (180, "3 min"), (300, "5 min")))
+                duration_presets(duration, DURATION_PRESETS["yue2"])
                 enhance = gr.Button("Write the song", variant="primary", elem_id="h3-yue2-write",
                                     elem_classes=["h3-primary-action"])
                 write_generate = gr.Button("Write & generate a take", variant="secondary")

@@ -37,6 +37,31 @@ def press(label: str, elem_id: str, *, variant: str = "secondary") -> gr.Button:
     return button
 
 
+# Starter ideas and one-click length limits, per song model; the Song page shows the same ones.
+STARTERS = {
+    "music": (
+        "An upbeat pop song about starting over, with English lyrics, a warm lead "
+        "vocal, bright guitars, and a chorus that feels like sunrise.",
+        "A gentle Mandarin ballad about missing home, with intimate vocals, piano, "
+        "soft strings, and a hopeful ending.",
+        "An instrumental lo-fi track for a rainy evening, with mellow electric "
+        "piano, soft drums, warm bass, and no vocals.",
+    ),
+    "yue2": (
+        "Anthemic indie rock about a night drive, with a raspy male vocal, "
+        "driving drums, wide guitars, and a big final chorus.",
+        "A soulful R&B slow jam about a late-night phone call, with a smooth "
+        "female vocal, Rhodes piano, and a deep, warm bass.",
+        "A bright Mandopop song about the first day of summer, with an airy "
+        "female vocal, acoustic guitar, and handclaps.",
+    ),
+}
+DURATION_PRESETS = {
+    "music": ((30, "30 sec"), (60, "1 min"), (120, "2 min"), (180, "3 min")),
+    "yue2": ((60, "1 min"), (120, "2 min"), (180, "3 min"), (300, "5 min")),
+}
+
+
 # Section tags the insert buttons add, in the spelling both writers use.
 SECTION_INSERTS = ("Verse", "Pre-Chorus", "Chorus", "Bridge", "Instrumental")
 

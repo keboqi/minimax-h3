@@ -41,27 +41,27 @@ class ImageLibraryTests(unittest.TestCase):
                 )
             assign = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "assign")
             values = ["previous.png", None, None, ["uploaded.png"], 1]
-            updates = assign("Image", source, "First", *values)
+            updates = assign(None, "Image", source, "First", *values)
             self.assertEqual(updates[first]["value"], source)
             self.assertNotIn(files, updates)
             self.assertNotIn(refs[0], updates)
-            updates = assign("Image", source, "Refs", *values)
+            updates = assign(None, "Image", source, "Refs", *values)
             self.assertEqual(updates[files]["value"], ["uploaded.png", source])
             self.assertNotIn(first, updates)
-            updates = assign("Image", source, "Picture 2", *values)
+            updates = assign(None, "Image", source, "Picture 2", *values)
             self.assertEqual(updates[shown], 2)
             self.assertTrue(updates[refs[0].h3_library_container]["visible"])
             self.assertTrue(updates[refs[1].h3_library_container]["visible"])
             self.assertFalse(updates[add]["interactive"])
             occupied = ["previous.png", "occupied.png", None, ["uploaded.png"], 1]
-            updates = assign("Image", source, "References", *occupied)
+            updates = assign(None, "Image", source, "References", *occupied)
             self.assertEqual(updates[refs[1]]["value"], source)
             self.assertNotIn("value", updates[refs[0]])
             with self.assertRaisesRegex(gr.Error, "full"):
-                assign("Image", source, "References", "previous.png", "occupied.png", "also-occupied.png", [], 2)
+                assign(None, "Image", source, "References", "previous.png", "occupied.png", "also-occupied.png", [], 2)
             for mode, selected, name in (("Video", source, "First"), ("Image", None, "First"), ("Image", source, "Other")):
                 with self.subTest(mode=mode, selected=selected, name=name), self.assertRaises(gr.Error):
-                    assign(mode, selected, name, *values)
+                    assign(None, mode, selected, name, *values)
 
     def test_select_original_and_append_without_replacing_uploads(self):
         with TemporaryDirectory() as directory:

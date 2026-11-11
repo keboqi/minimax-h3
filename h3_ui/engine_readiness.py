@@ -3,6 +3,26 @@
 import gradio as gr
 
 
+def song_issue(family: str, description: str, lyrics: str) -> str:
+    """What a song still needs before Generate, or "" when it may start; the Song page asks too."""
+    description, lyrics = str(description or "").strip(), str(lyrics or "").strip()
+    if family == "music":
+        # Music 3 rejects a request without a caption; lyrics alone need a description first.
+        if description:
+            return ""
+        if lyrics:
+            return "Add a music description in the brief, or press Write the song to draft one from your lyrics."
+        return "Describe your song in the brief, or add lyrics, to start."
+    # YuE2 rejects a request without both, so Generate waits for both.
+    if not description and not lyrics:
+        return "Describe your song in the brief and add lyrics to start."
+    if not lyrics:
+        return "Add lyrics or section tags to the draft, or press Write the song to draft them."
+    if not description:
+        return "Add a style in the brief, or press Write the song to suggest one."
+    return ""
+
+
 def bind_engine_readiness(view, family):
     if family == "ltx":
         inputs = [view.prompt, view.mode, view.image, view.reference_images]
@@ -29,26 +49,14 @@ def bind_engine_readiness(view, family):
     elif family == "music":
         inputs = [view.caption, view.lyrics]
 
-        # Music 3 rejects a request without a caption; lyrics alone need a description first.
         def missing(caption, lyrics):
-            if caption.strip():
-                return ""
-            if lyrics.strip():
-                return "Add a music description in the brief, or press Write the song to draft one from your lyrics."
-            return "Describe your song in the brief, or add lyrics, to start."
+            return song_issue("music", caption, lyrics)
 
     else:
         inputs = [view.style, view.lyrics]
 
-        # YuE2 rejects a request without both, so Generate waits for both.
         def missing(style, lyrics):
-            if not style.strip() and not lyrics.strip():
-                return "Describe your song in the brief and add lyrics to start."
-            if not lyrics.strip():
-                return "Add lyrics or section tags to the draft, or press Write the song to draft them."
-            if not style.strip():
-                return "Add a style in the brief, or press Write the song to suggest one."
-            return ""
+            return song_issue("yue2", style, lyrics)
 
     def readiness(*values):
         message = missing(*values)

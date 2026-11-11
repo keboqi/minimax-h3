@@ -245,7 +245,9 @@ class UiContractTests(unittest.TestCase):
         # MiniMax H3's inputs are on its page, which has its own Media library picker.
         self.assertFalse(any(choice.startswith("H3 ·") for choice in choices))
         self.assertIn("LTX · End keyframe", choices)
-        self.assertIn("Music · Reference images", choices)
+        # Song's pictures are on its page; Media hands them over there.
+        self.assertNotIn("Music · Reference images", choices)
+        self.assertIn("Song · Visual inspiration", choices)
         self.assertFalse(dropdown["props"]["interactive"])
 
     def test_workspace_preserves_published_api_parameters_and_returns(self):
@@ -698,7 +700,7 @@ class UiContractTests(unittest.TestCase):
         children = self.find_layout_node(engine_tabs["id"])["children"]
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
-            ["MiniMax H3", "Image workspace", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
+            ["MiniMax H3", "Image workspace", "LTX 2.5", "Qwen Image 2.1", "Song", "MiniMax Music 3", "YuE2",
              "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Remake", "Storyboard", "Soundstage", "Dubbing"],
         )
         task = next(
@@ -793,9 +795,9 @@ class UiContractTests(unittest.TestCase):
                 if c.get("props", {}).get("label") == label
             ]
             self.assertEqual(len(keys), 8, label)  # Soundstage's are on its page.
-            # MiniMax H3's and Image's writers are on their pages; their Gradio views stay built, unseen.
+            # MiniMax H3's, Image's and Song's writers are on their pages; their Gradio views stay built, unseen.
             hidden = [hidden_by_ancestor(key) for key in keys]
-            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 2, label)
+            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 4, label)
 
         endpoints = {
             dependency.get("api_name"): dependency

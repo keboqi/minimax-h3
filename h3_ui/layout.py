@@ -17,8 +17,13 @@ H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
             'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 IMAGE_FRAME = ('<iframe class="h3-video-frame" src="/image/" title="Image" '
                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
-# The Image page shows its own model pills and their description, so the studio's stay away for that task.
-IMAGE_HELP = ""
+SONG_FRAME = ('<iframe class="h3-video-frame" src="/song/" title="Song" '
+              'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+# The Image and Song pages show their own model pills and their description, so the studio's stay away
+# for those tasks.
+PAGE_HELP = ""
+# The engine tab that holds each such task's own page.
+PAGE_TABS = {"Image": "image", "Audio / Music": "song"}
 
 
 @dataclass(frozen=True)
@@ -141,10 +146,15 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     ltx25 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Qwen Image 2.1", id="qwen"):
                     qwen = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("Song", id="song"):
+                    # Everything people do happens on the page at /song/ (song/page.py), outside Gradio.
+                    gr.HTML(SONG_FRAME)
                 with gr.Tab("MiniMax Music 3", id="music"):
-                    music = gr.Group(elem_classes=["h3-engine-view"])
+                    # The Gradio views stay built but unseen: their job callbacks run the page's takes, and
+                    # they keep the published API endpoints.
+                    music = gr.Group(elem_classes=["h3-engine-view"], visible=False)
                 with gr.Tab("YuE2", id="yue2"):
-                    yue2 = gr.Group(elem_classes=["h3-engine-view"])
+                    yue2 = gr.Group(elem_classes=["h3-engine-view"], visible=False)
                 with gr.Tab("FLUX 3 Image Klein", id="flux3"):
                     flux3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("MOSS-Image", id="moss_image"):
@@ -287,9 +297,9 @@ def bind_workspace_navigation(
         detail = next((e.description for e in choices if e.id == selected))
         stage(settings_values[-1], task, selected)
         return (
-            gr.update(choices=[(e.label, e.id) for e in choices], value=selected, visible=task != "Image"),
-            gr.update(selected="image" if task == "Image" else selected),
-            IMAGE_HELP if task == "Image" else detail,
+            gr.update(choices=[(e.label, e.id) for e in choices], value=selected, visible=task not in PAGE_TABS),
+            gr.update(selected=PAGE_TABS.get(task, selected)),
+            PAGE_HELP if task in PAGE_TABS else detail,
             selected,
             *output_intent(task, settings_memory, settings_values),
         )
@@ -330,8 +340,8 @@ def bind_workspace_navigation(
                 session.remember({"workspace.task": task, "workspace.engine": selected.id}),
             )
         return (
-            gr.update(selected="image" if task == "Image" else selected.id),
-            selected.description,
+            gr.update(selected=PAGE_TABS.get(task, selected.id)),
+            PAGE_HELP if task in PAGE_TABS else selected.description,
             remembered,
             selected.id,
             *saved,
@@ -372,10 +382,10 @@ def bind_workspace_navigation(
                 choices=[(item.label, item.id) for item in choices],
                 value=selected.id,
                 interactive=True,
-                visible=task != "Image",
+                visible=task not in PAGE_TABS,
             ),
-            gr.update(selected="image" if task == "Image" else selected.id),
-            IMAGE_HELP if task == "Image" else selected.description,
+            gr.update(selected=PAGE_TABS.get(task, selected.id)),
+            PAGE_HELP if task in PAGE_TABS else selected.description,
             *output_intent(task, settings_memory, settings_values, snap=False),
             False,
             gr.update(interactive=True),

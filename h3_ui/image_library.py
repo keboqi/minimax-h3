@@ -177,8 +177,13 @@ def library_image_value(source, current, *, validate_path, multiple=False):
     return source
 
 
-def build_media_image_destinations(view, destinations, *, validate_path):
-    """Send the selected library image to a named generator input."""
+def build_media_image_destinations(view, destinations, *, validate_path, page_targets=None):
+    """Send the selected library image to a named generator input.
+
+    ``page_targets`` names inputs that live on a page outside Gradio: each takes the owner and the image's
+    path and answers what it did.
+    """
+    page_targets = dict(page_targets or {})
     slots = {
         name: list(value) if isinstance(value, (tuple, list)) else [value]
         for name, value in destinations.items()
@@ -193,7 +198,7 @@ def build_media_image_destinations(view, destinations, *, validate_path):
         with gr.Group(visible=False, elem_classes=["h3-gallery-set-as"]) as group:
             with gr.Row():
                 destination = gr.Dropdown(
-                    choices=list(destinations), label="Set as", value=None,
+                    choices=[*destinations, *page_targets], label="Set as", value=None,
                     interactive=False,
                     info="Single images replace; references fill the first empty slot or append to the list.",
                 )
@@ -214,9 +219,18 @@ def build_media_image_destinations(view, destinations, *, validate_path):
     if shown is not None:
         outputs.extend([shown, add_reference])
 
-    def assign(mode, selected, name, *values):
+    def assign(request: gr.Request, mode, selected, name, *values):
         if mode != "Image" or not selected:
             raise gr.Error("Select an image in the Media library first.")
+        if name in page_targets:
+            from h3_app.errors import H3Error
+            from .job_admission import require_owner
+
+            library_image_value(selected, None, validate_path=validate_path)
+            try:
+                return {status: page_targets[name](require_owner(request), selected)}
+            except (H3Error, OSError) as exc:
+                raise gr.Error(str(exc)) from exc
         if name not in destinations:
             raise gr.Error("Choose an image input from Set as.")
         group = slots[name]

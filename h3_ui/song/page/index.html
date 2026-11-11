@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Song</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="editor" class="editor" hidden>
+  <p id="workshop-note" class="notice" hidden>Write and shape the song here, then open Song in Studio to generate takes on the GPU.</p>
+  <section class="bar" aria-label="Song model">
+    <div class="seg wrap" role="group" aria-label="Song model" id="models"></div>
+    <span class="small muted grow" id="about"></span>
+  </section>
+  <section class="bar" aria-label="Song run">
+    <nav class="seg" aria-label="Jump to">
+      <a href="#brief">1 · Brief</a>
+      <a href="#draft">2 · Draft</a>
+      <a href="#takes">3 · Takes</a>
+    </nav>
+    <span class="small muted grow">Describe it, shape the draft, record takes and compare them.</span>
+    <div class="action">
+      <div class="readiness">
+        <div class="steps" id="steps"></div>
+        <p class="small muted" id="readiness"></p>
+      </div>
+      <button type="button" class="btn" id="stop" disabled>Interrupt</button>
+      <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter"><span id="run-label">Generate</span> <kbd aria-hidden="true">Ctrl ↵</kbd></button>
+    </div>
+  </section>
+  <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+
+  <div class="workarea">
+    <div class="main">
+      <section class="panel" id="takes" aria-label="Your takes">
+        <div class="head">
+          <div class="title-line"><h2>Your takes</h2><span class="small muted" id="takes-summary"></span></div>
+          <div class="seg" role="group" aria-label="Takes view" id="view-mode"></div>
+        </div>
+        <div class="stage" id="stage-empty"><strong>No takes yet</strong><span id="stage-empty-line">Describe your song on the right and press Write the song, or paste lyrics into the draft.</span></div>
+        <div class="stage players" id="players">
+          <div class="player" id="player-a">
+            <span class="side mono">A</span>
+            <audio controls preload="metadata" id="audio-a" aria-label="Take A"></audio>
+            <span class="mono small name" id="label-a"></span>
+          </div>
+          <div class="player" id="player-b">
+            <span class="side mono b">B</span>
+            <audio controls preload="metadata" id="audio-b" aria-label="Take B"></audio>
+            <span class="mono small name" id="label-b"></span>
+          </div>
+          <p class="stage-hint" id="compare-hint">Click a take below to set A; Shift-click, or B on a card, to set B. Play them back to back and keep the one you like.</p>
+        </div>
+        <div class="take-grid" id="take-list"></div>
+        <div class="take-details small" id="take-details"></div>
+        <div class="row line" id="take-actions">
+          <span class="small muted grow" id="take-actions-line"></span>
+          <button type="button" class="btn compact" id="reuse-draft">Back to take A's draft</button>
+          <button type="button" class="btn compact" id="use-seed">Use take A's seed</button>
+          <button type="button" class="btn compact" id="reuse-score" hidden>Reuse take A's score</button>
+          <a class="btn compact" id="download" download>Download</a>
+        </div>
+        <details class="line-details" id="settings-used-box">
+          <summary>Settings used for this take</summary>
+          <div class="settings-used" id="settings-used"></div>
+        </details>
+      </section>
+
+      <section class="panel" id="draft" aria-label="Draft">
+        <div class="head line-below tabs-head">
+          <h2>Draft</h2>
+          <div class="tabs" role="group" aria-label="Draft editor">
+            <button type="button" class="tab" id="tab-lyrics" aria-pressed="true">Lyrics</button>
+            <button type="button" class="tab" id="tab-score" aria-pressed="false" hidden>Score</button>
+          </div>
+          <span class="small muted grow right" id="draft-hint"></span>
+        </div>
+        <div class="block">
+          <div class="row">
+            <p class="small muted grow" id="writer-status" role="status"></p>
+            <button type="button" class="btn compact" id="undo" hidden>Undo accepted suggestion</button>
+          </div>
+          <div class="suggestion" id="suggestion-box" hidden aria-label="Suggested song draft">
+            <strong class="small">Suggested song draft</strong>
+            <div class="suggested" id="suggestion"></div>
+            <div class="row">
+              <button type="button" class="btn primary" id="accept">Accept suggestion</button>
+              <button type="button" class="btn" id="keep">Keep original</button>
+            </div>
+          </div>
+        </div>
+        <div class="block" aria-label="Song check" id="song-check"></div>
+        <div class="block last" id="lyrics-pane">
+          <label class="strong" for="lyrics">Lyrics and song structure</label>
+          <textarea id="lyrics" class="field mono lyrics" rows="16" placeholder="Leave blank to write from your idea, or paste your lyrics here."></textarea>
+          <p class="small muted" id="lyrics-hint">Mark sections with [Verse], [Chorus], [Bridge]. For an instrumental, choose Who sings → Instrumental and leave this blank.</p>
+          <div class="row tightrow" id="sections"><span class="small muted">Insert</span></div>
+          <div class="row line-above">
+            <span class="small muted">Your lyrics when you press Write</span>
+            <div class="seg" role="group" aria-label="Your lyrics when you press Write" id="policy"></div>
+            <span class="small muted grow" id="policy-hint"></span>
+          </div>
+        </div>
+        <div class="block last" id="score-pane" hidden>
+          <div class="row"><span class="small muted">Composition</span><div class="seg wrap" role="group" aria-label="Composition" id="composition"></div></div>
+          <p class="small muted" id="composition-hint"></p>
+          <p class="small muted">YuE2 writes a score (melody and chords) before it sings. Liked a melody? Reuse its score and change the style or sound around it. The score guides the melody; the voice and performance still vary from take to take.</p>
+          <div class="score-grid">
+            <div class="stack">
+              <div class="row between"><label class="strong" for="last-score">Score from the latest take</label><button type="button" class="link" id="reuse-latest-score">Reuse this score for the next take</button></div>
+              <textarea id="last-score" class="field mono score" rows="7" readonly placeholder="Appears after a take that planned its own score."></textarea>
+            </div>
+            <div class="stack">
+              <label class="strong" for="abc">Score to use (optional)</label>
+              <textarea id="abc" class="field mono score" rows="7" placeholder="Leave blank to let YuE2 compose a new score."></textarea>
+              <span class="small muted">Ignored by No score (fastest).</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stack pad" id="revise-box" aria-label="What should change">
+        <div class="title-line"><h2>What should change?</h2><span class="small muted" id="change-hint"></span></div>
+        <textarea id="notes" class="field" rows="2" aria-label="What should change? (optional)" placeholder="Say what you hear, for example: the chorus feels flat, too busy, too slow"></textarea>
+        <div class="row tightrow" id="quick-fixes"></div>
+        <div class="row">
+          <button type="button" class="btn primary" id="revise">Revise the draft</button>
+          <button type="button" class="btn quiet" id="clear-notes">Clear</button>
+          <span class="small muted grow">Revise sends this to the writer, and so does any later Write until you clear it. Only what you mention changes.</span>
+        </div>
+      </section>
+
+      <section class="panel next-run" aria-label="Next take">
+        <div class="summary-line"><strong>Next take</strong><span class="small muted" id="summary"></span></div>
+        <div class="chips" id="summary-chips"></div>
+        <div class="row">
+          <button type="button" class="btn quiet" id="restore">Restore default settings</button>
+          <span class="small muted grow">Your settings are kept for next time.</span>
+          <button type="button" class="btn" id="fine-toggle" aria-expanded="false" aria-controls="fine">Generation settings <span class="chip warn" id="fine-count" hidden></span></button>
+        </div>
+      </section>
+
+      <section class="panel fine" id="fine" aria-label="Generation settings" hidden>
+        <div class="head line-below">
+          <h2>Generation settings</h2>
+          <span class="small muted grow">Advanced. The defaults suit most songs.</span>
+          <button type="button" class="btn quiet" id="fine-close">Close</button>
+        </div>
+        <div class="fine-body">
+          <nav class="fine-nav" aria-label="Setting groups" id="fine-nav"></nav>
+          <div class="fine-content">
+            <h3 id="fine-title"></h3>
+            <p class="small muted" id="fine-detail"></p>
+            <div id="fine-rows"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" id="brief" aria-label="Brief">
+      <section class="block">
+        <div class="row between">
+          <label class="strong" for="description" id="description-label">Song idea / music description</label>
+          <button type="button" class="btn quiet compact" id="empty" title="Clear the idea, lyrics, score, change notes and pictures">Empty</button>
+        </div>
+        <textarea id="description" class="field prompt" rows="5"></textarea>
+        <p class="small muted" id="description-hint"></p>
+        <details>
+          <summary>Try a starter idea</summary>
+          <div class="stack starters" id="starters"></div>
+        </details>
+      </section>
+
+      <section class="block">
+        <span class="small muted">Who sings</span>
+        <div class="seg wrap" role="group" aria-label="Who sings" id="vocals"></div>
+        <div class="row">
+          <label class="small muted name" for="language">Lyric language</label>
+          <select id="language" class="field select"></select>
+        </div>
+        <span class="small muted">Made for</span>
+        <div class="seg wrap" role="group" aria-label="Made for" id="use"></div>
+      </section>
+
+      <section class="block">
+        <div class="row between">
+          <label class="small muted" for="duration">Maximum seconds</label>
+          <span class="inline"><input id="duration" class="field num mono" type="text" inputmode="numeric" aria-label="Maximum seconds"><span class="small muted mono" id="duration-range"></span></span>
+        </div>
+        <div class="seg wrap" role="group" aria-label="Maximum length presets" id="duration-presets"></div>
+        <p class="small muted">A length limit, not an exact duration. Write plans a song that fits; the song may finish sooner.</p>
+      </section>
+
+      <section class="block">
+        <button type="button" class="btn primary big wide" id="write">Write the song</button>
+        <button type="button" class="btn wide" id="write-generate">Write &amp; generate a take</button>
+        <p class="small muted" id="write-hint"></p>
+        <details id="writer-box">
+          <summary>Writing service <span class="chip good" id="writer-chip"></span></summary>
+          <p class="small muted">Choose a writing service and supply its API key if one isn't configured.</p>
+          <div id="writer-rows"></div>
+        </details>
+      </section>
+
+      <section class="block last" id="references" aria-label="Visual inspiration">
+        <h3>Visual inspiration <span class="small muted plain">optional · up to 3</span></h3>
+        <p class="small muted">Use images to suggest a mood or story for the writer.</p>
+        <div class="pictures" id="reference-list"></div>
+        <div class="row tightrow" id="reference-add">
+          <button type="button" class="empty-slot" id="add-upload">+ Upload or drop images</button>
+          <button type="button" class="empty-slot" id="add-library">+ From Media library</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+  <p class="small muted center">Download any take from its player, or find every song in Media.</p>
+</div>
+
+<div id="loading" class="loading" role="status">Opening Song…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="library" class="library" aria-label="Media library"></dialog>
+<input id="file-input" type="file" accept="image/*" multiple hidden>
+<script src="app.js"></script>
+</body>
+</html>
