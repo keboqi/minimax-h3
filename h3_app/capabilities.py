@@ -15,7 +15,7 @@ ENGINES = (
     EngineCapability(
         "h3",
         "MiniMax H3",
-        ("Video", "Image", "Audio / Music"),
+        ("Video", "Image"),
         "Video/audio generation and official MiniMax H3 Image generation and editing.",
     ),
     EngineCapability(
