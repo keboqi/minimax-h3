@@ -66,6 +66,14 @@ class SetupReuseTests(unittest.TestCase):
         with patch.object(setup, "_setup_inputs", return_value={"changed": "pin"}):
             self.assertFalse(setup.setup_is_current(self.install))
 
+    def test_gpu_reassignment_invalidates_setup_in_both_directions(self):
+        for source, target in (("default", "a100"), ("a100", "default")):
+            with patch.dict(os.environ, H3_GPU_PROFILE=source):
+                setup.record_setup_state(self.install)
+                self.assertTrue(setup.setup_is_current(self.install))
+            with patch.dict(os.environ, H3_GPU_PROFILE=target):
+                self.assertFalse(setup.setup_is_current(self.install))
+
     def test_missing_bundled_node_or_frontend_invalidates_record(self):
         with patch.object(setup, "comfy_frontend_package_is_ready", return_value=False):
             self.assertFalse(setup.setup_is_current(self.install))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_gpu import attention_choices, is_a100
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -75,11 +77,13 @@ def build_performance_section(
             )
     with performance_section:
         attention_mode = gr.Radio(
-            ["Sage 2", "Kitchen", "SLA", "Veda", "Sol-Attn", "Auto"],
+            attention_choices(),
             value=defaults["attention_mode"],
             label="Attention",
-            interactive=services.SERVER_ATTENTION_BACKEND == "sol",
+            interactive=services.SERVER_ATTENTION_BACKEND in {"sol", "sla"},
             info=(
+                "A100 uses SLA sparse attention or PyTorch dense attention. Auto uses PyTorch."
+                if is_a100() else
                 f"Auto enables Sol-Attn for Reference mode or when estimated "
                 f"packed target tokens reach {services.AUTO_SOL_TOKEN_THRESHOLD:,}; "
                 "Sage 2 applies the pinned KJNodes model override. Kitchen "

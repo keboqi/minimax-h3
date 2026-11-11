@@ -6,6 +6,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from h3_gpu import is_a100, normalize_attention_mode
+
 from h3_app.catalog import (
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_RESOLUTION_PIXEL_CAP,
@@ -509,21 +511,23 @@ def resolve_sol_policy(
     use_turbo: bool = False,
     *, attention_backend: str = "sol",
 ) -> tuple[bool, int, str]:
-    requested = str(attention_mode).strip().lower()
+    requested = normalize_attention_mode(attention_mode).lower()
     tokens = estimate_packed_tokens(
         mode, width, height, duration, first_image, last_image
     )
-    if requested in {"dense", "kitchen", "comfy-kitchen"}:
+    if requested == "pytorch":
+        return (False, tokens, "forced PyTorch")
+    if requested == "kitchen":
         return (False, tokens, "forced Comfy Kitchen")
-    if requested in {"sage", "sage 2", "sage2"}:
+    if requested == "sage 2":
         return (False, tokens, "forced Sage 2")
     if requested == "veda":
         return (False, tokens, "forced Veda")
-    if requested in {"sla", "sla attention", "sparse-linear"}:
+    if requested == "sla":
         return (False, tokens, "forced SLA")
-    if attention_backend != "sol":
+    if attention_backend != "sol" or is_a100():
         return (False, tokens, "Sol backend unavailable")
-    if requested in {"sol-attn", "sol", "sparse"}:
+    if requested == "sol-attn":
         return (True, tokens, "forced Sol-Attn")
     if mode == "Reference media":
         prefix = "Auto Turbo" if use_turbo else "Auto"

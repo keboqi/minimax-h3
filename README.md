@@ -1,7 +1,7 @@
 # Prism Studio
 
 A creative workspace for video, images, music, and audio production, with a
-standalone Gradio interface and deployment toolkit for NVIDIA Blackwell GPUs.
+standalone Gradio interface and deployment toolkit for NVIDIA Blackwell and A100 80 GB GPUs.
 Prism Studio brings multiple generation engines together with shared media
 and jobs. It provisions ComfyUI, the required models, and acceleration
 tools for local and Modal deployments.
@@ -196,10 +196,20 @@ backends; GPU inference and deployment are validated separately.
 
 - Linux or WSL2 with Bash
 - Python 3.12
-- An NVIDIA Blackwell GPU and a compatible CUDA 13 driver
+- An NVIDIA Blackwell GPU or A100 80 GB, with a compatible CUDA 13 driver (580.65.06+ on Linux)
 - Git, FFmpeg, and enough disk space for ComfyUI and the model set
 - An NVIDIA driver/GPU for generation; NVENC is optional for faster video encoding
 - Hugging Face access to every configured model repository
+
+The launcher detects A100 assignments before setup and model downloads. A100 uses
+Singularity INT8 with the INT8 ConvRot text encoder, stage offload, FLUX 3 INT8,
+and Drama 3 INT4 by default. Set the notebook's Drama 3 checkpoint to `auto`
+to follow the GPU; explicit checkpoint selections are preserved. A100 uses SLA
+or PyTorch attention, skips the Blackwell Sage wheel, and excludes Sol, Sage,
+Veda and Nemotron NVFP4 from the available backend choices. Video encoding
+automatically falls back to CPU libx264. Other model variants remain optional
+and may need more memory or dequantization. A100 GPU execution still needs a
+Colab smoke test; these defaults do not imply all optional engines are validated.
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python

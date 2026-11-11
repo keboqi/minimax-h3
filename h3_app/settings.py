@@ -9,6 +9,8 @@ import math
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping
 
+from h3_gpu import default_text_encoder, is_a100, validate_attention_mode
+
 from .resources import resolve_decoders
 from .decoder_intent import VideoDecoder
 
@@ -41,8 +43,8 @@ class SamplingSettings:
     attention_mode: str = "SLA"
     sla_preset: str = "Fast"
     latent_upscale_refine_steps: int = 2
-    text_encoder: str = "NVFP4 / AWQ"
-    stage_model_offload: bool = False
+    text_encoder: str = default_text_encoder()
+    stage_model_offload: bool = is_a100()
     encoder_small_input: bool = False
 
 
@@ -210,6 +212,15 @@ def resolve_settings(
         if before != after:
             adjustments.append(Adjustment(key, before, after, reason))
         return after
+
+    try:
+        attention = validate_attention_mode(sampling.attention_mode)
+        sampling = replace(sampling, attention_mode=adjusted(
+            "attention_mode", sampling.attention_mode, attention,
+            "Normalized attention mode for this GPU profile.",
+        ))
+    except ValueError as exc:
+        issues.append(str(exc))
 
     if generation_mode == "Turbo":
         # Resolve legacy and unknown labels here so every later check sees the

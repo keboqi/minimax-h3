@@ -13,6 +13,7 @@ from h3_app.generation.flux3 import generate_flux3, validate_flux3
 from h3_app.generation.requests import Flux3Request
 from h3_app.workflows.flux3 import flux3_sampling_defaults
 from h3_models import DEFAULT_FLUX3_UPSAMPLER, FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES
+from h3_gpu import default_flux3_model
 
 from ..image_library import build_image_file_input
 from ..job_bindings import bind_prompt_action
@@ -129,7 +130,7 @@ def build_flux3_view(root):
                                            gr.update(visible=bool(paths))),
                             inputs=refs, outputs=[expand, edit_size], queue=False, api_name=False)
                 with gr.Accordion("Model and sampling", open=False):
-                    model = gr.Dropdown(list(FLUX3_MODEL_CHOICES), value="NVFP4 (Blackwell)", label="Image model",
+                    model = gr.Dropdown(list(FLUX3_MODEL_CHOICES), value=default_flux3_model(), label="Image model",
                                         info="Distilled uses 16 steps and CFG 1. Base uses 50 steps and CFG 4.")
                     upsampler = gr.Dropdown(list(FLUX3_UPSAMPLER_CHOICES), value=DEFAULT_FLUX3_UPSAMPLER,
                                              label="Prompt upsampler",

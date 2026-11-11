@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 import gradio as gr
 from h3_app.settings import valid_preference, PRESET_FIELDS
+from h3_gpu import attention_choices, is_a100, normalize_attention_mode
 from .settings_controller import SETTING_NAMES
 
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
@@ -222,6 +223,21 @@ def restore_preferences(saved, components):
         )
         for name, value in values.items()
     }
+    if is_a100():
+        # Browser settings survive GPU reassignment in Colab.
+        values = dict(values)
+        if values.get("h3.text_encoder") == "NVFP4 / AWQ":
+            values["h3.text_encoder"] = "INT8 ConvRot"
+        model = values.get("flux3.model")
+        if isinstance(model, str):
+            values["flux3.model"] = {
+                "NVFP4 (Blackwell)": "INT8 ConvRot (lower VRAM)",
+                "Base NVFP4 (Blackwell)": "Base INT8 ConvRot",
+            }.get(model, model)
+        attention = values.get("h3.attention_mode")
+        if isinstance(attention, str):
+            attention = normalize_attention_mode(attention)
+            values["h3.attention_mode"] = attention if attention in attention_choices() else "SLA"
     restored = {
         name: sanitize(component, values.get(name, component.value))
         for name, component in components.items()

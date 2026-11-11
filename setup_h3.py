@@ -14,6 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from h3_gpu import gpu_profile, is_a100
+
 from h3_sources import (
     COMFY_REPO,
     CONTROLNET_AUX_REF,
@@ -100,7 +102,7 @@ def _environment_fingerprint() -> list:
 
 def _setup_inputs() -> dict[str, str]:
     paths = (Path(__file__).resolve(), SCRIPT_DIR / "h3_requirements.py",
-             SCRIPT_DIR / "h3_sources.py", SCRIPT_DIR / "h3_node_patches.py",
+             SCRIPT_DIR / "h3_sources.py", SCRIPT_DIR / "h3_node_patches.py", SCRIPT_DIR / "h3_gpu.py",
              BUNDLED_ACCEL_NODE)
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -152,6 +154,7 @@ def setup_is_current(install_dir: Path) -> bool:
         return False
     try:
         if (state.get("inputs") != _setup_inputs()
+                or state.get("gpu_profile", "default") != gpu_profile()
                 or state.get("python") != sys.executable
                 or state.get("environment") != [list(item) for item in _environment_fingerprint()]
                 or not isinstance(state.get("repositories"), dict)
@@ -179,6 +182,7 @@ def record_setup_state(install_dir: Path) -> None:
                     for name, repo in _SETUP_REPOSITORIES.items()}
     write_json_atomic(install_dir / ".setup-state.json", {
         "inputs": _setup_inputs(), "python": sys.executable,
+        "gpu_profile": gpu_profile(),
         "environment": _environment_fingerprint(), "repositories": repositories,
         "bundled_node": hashlib.sha256((install_dir / "ComfyUI" / "custom_nodes" /
                                        "H3Acceleration" / "__init__.py").read_bytes()).hexdigest(),
@@ -703,6 +707,9 @@ def sageattention_importable() -> bool:
 
 def ensure_sageattention(install_dir: Path) -> bool:
     """Require the prebuilt SageAttention wheel; never compile Sage source."""
+    if is_a100():
+        print("[h3-setup] A100: using PyTorch dense attention; skipping Blackwell Sage wheel", flush=True)
+        return False
     if sageattention_importable():
         print("[h3-setup] Reusing working SageAttention installation", flush=True)
         return True

@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Mapping
 
+from h3_gpu import default_flux3_model
+
 
 @dataclass(frozen=True)
 class Flux3Request:
     prompt: str
-    model_choice: str = "NVFP4 (Blackwell)"
+    model_choice: str = default_flux3_model()
     reference_images: tuple[str, ...] = ()
     width: int = 1024
     height: int = 1024

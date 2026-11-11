@@ -23,7 +23,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
-from h3_app.dubbing import pipeline, projects, segments as segment_tools, session as sessions, shares
+from h3_app.dubbing import nemotron, pipeline, projects, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.results import TRACKS, load_result
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
@@ -347,7 +347,9 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             "styles": list(pipeline.TRANSLATION_STYLES), "default_style": pipeline.DEFAULT_STYLE,
             "rewrite_styles": list(pipeline.REWRITE_STYLES), "default_rewrite_style": pipeline.DEFAULT_REWRITE_STYLE,
             "pipelines": [{"key": key, "label": label, "desc": desc, "cloud": key in pipeline.CLOUD_PIPELINES}
-                          for key, label, desc in TRANSCRIPTIONS if gpu or key in pipeline.CLOUD_PIPELINES],
+                          for key, label, desc in TRANSCRIPTIONS
+                          if (gpu or key in pipeline.CLOUD_PIPELINES)
+                          and (key != pipeline.PIPELINE_NEMOTRON or nemotron.supported())],
             "translators": [{"key": pipeline.TRANSLATOR_HYMT, "label": "Hy-MT2 1.8B"},
                             {"key": pipeline.TRANSLATOR_GEMINI, "label": "Gemini"}],
             "separators": list(pipeline.SEPARATOR_MODELS), "default_separator": DEFAULT_SEPARATOR,

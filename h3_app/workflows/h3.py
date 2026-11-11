@@ -212,6 +212,14 @@ def add_model_stack(
     sla_preset: str = DEFAULT_SLA_PRESET,
     adapter_lora_name: str | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+    from h3_gpu import is_a100, validate_attention_mode
+
+    try:
+        for enabled, mode in ((use_sol, "Sol-Attn"), (use_sage, "Sage 2"), (use_veda, "Veda")):
+            if enabled:
+                validate_attention_mode(mode)
+    except ValueError as exc:
+        raise H3Error(str(exc)) from exc
     if use_veda and (use_sla or use_sol or use_sage):
         raise H3Error("Veda must be selected as the only attention override.")
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
@@ -292,6 +300,7 @@ def add_model_stack(
             # Preserve the audio-safe legacy sparse path and first-step anchor.
             # Kitchen's sparse engine cannot represent all audio/ref spans.
             engine="triton",
+            **({"dense_backend": "pytorch"} if is_a100() else {}),
             use_int8_qk=False,
             tail_correction=False,
             dense_steps="0",

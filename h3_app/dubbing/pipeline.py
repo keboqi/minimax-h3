@@ -495,6 +495,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         raise H3Error("Choose the language to dub into.")
     if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and not request.aligner:
         raise H3Error("Enable Qwen3 word timing before refining it with Align.")
+    if request.pipeline == PIPELINE_NEMOTRON:
+        nemotron.require_supported()
     manual = manual_transcript(request.manual_reply) if request.pipeline == PIPELINE_MANUAL else None
     session, earlier, reused = yield from _open_source(request, manual=manual, runtime=runtime, free_gpu=free_gpu,
                                                        hf_token=hf_token)

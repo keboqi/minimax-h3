@@ -200,6 +200,7 @@ _RUNTIME_LOCAL_MOUNTS = (
        COMFY / "custom_nodes" / "H3Remake" / filename)
       for filename in ("__init__.py", "nodes.py", "hold_audio.py", "hold_frames.py", "UPSTREAM.md", "LICENSE-CODE")),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
+    (LOCAL / "h3_gpu.py", ROOT / "h3_gpu.py"),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),
     *((LOCAL_PROMPTS / name, PROMPTS / name) for name in PROMPT_FILES),
@@ -799,7 +800,7 @@ if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
-        "h3_models.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
+        "h3_models.py", "h3_gpu.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
         "h3_requirements.py", "h3_workshop_requirements.py", "h3_node_patches.py", "prompts/prompt.txt",
     ):
         console_image = console_image.add_local_file(

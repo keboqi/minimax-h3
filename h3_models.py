@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from h3_gpu import is_a100
+
 
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
@@ -1191,7 +1193,7 @@ SHARED_MODEL_KEYS = tuple(
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
     # Keep provisioning aligned with the UI's initial Singularity preset.
-    "text_encoder",
+    "text_encoder_int8" if is_a100() else "text_encoder",
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
@@ -2418,7 +2420,8 @@ def selftest() -> None:
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
     assert "diffusion_models/" + cfg["profiles"]["singularity"]["fl2va"] in missing
     assert "speed_fl2va" not in PRELOAD_MODEL_KEYS
-    assert "text_encoders/" + MODEL_SPECS["text_encoder"].local_name in missing
+    preload_encoder = "text_encoder_int8" if is_a100() else "text_encoder"
+    assert "text_encoders/" + MODEL_SPECS[preload_encoder].local_name in missing
     assert "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
     assert "diffusion_models/" + cfg["profiles"]["speed"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
@@ -2454,10 +2457,10 @@ def selftest() -> None:
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "BF16": "qwen3vl_32b_minimax_h3_bf16.safetensors",
     }
-    assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {"text_encoder"}).isdisjoint(
+    assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {preload_encoder}).isdisjoint(
         PRELOAD_MODEL_KEYS
     )
-    assert "text_encoder" in PRELOAD_MODEL_KEYS
+    assert preload_encoder in PRELOAD_MODEL_KEYS
     assert cfg["video_vae_int8"] == ("minimax_h3_video_vae_int8_convrot.safetensors")
     assert MODEL_SPECS["video_vae_int8"].repo_id == ORIGINAL_MODEL_REPO
     assert MODEL_SPECS["video_vae_int8"].filename == (

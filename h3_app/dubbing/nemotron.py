@@ -30,6 +30,7 @@ from h3_requirements import (
 from h3_app.drama3.serving import checkpoint, environment as sglang_environment
 from h3_app.drama3.serving.server import SglangOmniServer, gpu_memory, reclaim_audio_tools
 from h3_app.errors import H3Error
+from h3_gpu import is_a100
 from h3_app.workers.env import setup_lock, uv_command
 
 from . import segments as segment_tools
@@ -138,8 +139,7 @@ def is_ready(venv: Path) -> bool:
 def prepare(venv: Path, *, run=None, log=print) -> None:
     """Create the environment once; readiness is published only after the smoke test."""
     venv = Path(venv)
-    if not supported():
-        raise H3Error("Nemotron runs on vLLM, which requires Linux.")
+    require_supported()
     run = run or (lambda command, **kwargs: subprocess.run(command, check=True, **kwargs))
     with setup_lock(venv.parent / f".{venv.name}.lock"):
         if is_ready(venv):
@@ -172,7 +172,12 @@ def ensure_model(settings: NemotronSettings, *, token=None, log=print) -> Path:
 
 
 def supported() -> bool:
-    return os.name == "posix"
+    return os.name == "posix" and not is_a100()
+
+
+def require_supported() -> None:
+    if not supported():
+        raise H3Error("Nemotron NVFP4 requires Linux and a Blackwell GPU. Use Qwen3-ASR or Gemini here.")
 
 
 # ---------------------------------------------------------------------------
@@ -567,8 +572,7 @@ def reply_activity(reply: dict, words: list[dict]) -> dict[str, list[list[float]
 def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], None], hf_token=None,
                report: Callable[[str], None] = lambda _message: None) -> dict:
     """``{"segments", "words", "activity"}`` for ``audio`` (16 kHz mono); the server sleeps once they are back."""
-    if not supported():
-        raise H3Error("Nemotron runs on vLLM, which requires Linux. Use Qwen3-ASR or Gemini here.")
+    require_supported()
     if duration > MAX_SECONDS:
         raise H3Error(f"Nemotron transcribes up to {MAX_SECONDS // 60} minutes at once; this source runs "
                       f"{duration / 60:.0f}. Use MOSS or Gemini, or trim the source.")

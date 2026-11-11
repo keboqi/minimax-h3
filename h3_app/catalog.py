@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from h3_app.settings import (
+    PRESETS,
     H3_REGENERATE_16, H3_REGENERATE_384,
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
     PIKA_FLEX, PIKA_FLEX_SIGMAS,
@@ -676,12 +677,7 @@ REFINEMENT_LORA_SETTINGS = dict(TURBO_SETTINGS)
 REFINEMENT_LORA_CHOICES = (SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS)
 
 
-SAMPLING_PRESET_TEXT_ENCODERS = {
-    "Singularity": "NVFP4 / AWQ",
-    "Fast": "NVFP4 / AWQ",
-    "Balanced": "INT8 ConvRot",
-    "Quality": "INT8 ConvRot",
-}
+SAMPLING_PRESET_TEXT_ENCODERS = {name: settings.text_encoder for name, settings in PRESETS.items()}
 
 
 UI_DEFAULTS = {
@@ -690,8 +686,8 @@ UI_DEFAULTS = {
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Singularity",
-    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Fast"],
-    "stage_model_offload": False,
+    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Singularity"],
+    "stage_model_offload": PRESETS["Singularity"].stage_model_offload,
     "encoder_small_input": False,
     "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,

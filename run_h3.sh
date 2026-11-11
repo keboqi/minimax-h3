@@ -61,6 +61,13 @@ else
 fi
 export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
+# Resolve before setup and the early model downloader import their defaults.
+H3_GPU_PROFILE="default"
+if [[ "$APP" == studio ]]; then
+  H3_GPU_PROFILE="$("$PYTHON_BIN" "$SCRIPT_DIR/h3_gpu.py")"
+fi
+export H3_GPU_PROFILE
+
 COMFY_HOST="127.0.0.1"
 COMFY_PORT="8188"
 COMFY_URL="http://127.0.0.1:8188"
@@ -74,6 +81,11 @@ GRADIO_OUTPUT_DIR="$INSTALL_DIR/gradio_outputs"
 SERVER_ATTENTION_BACKEND="sol"
 SERVER_DENSE_ATTENTION_BACKEND="comfy-kitchen"
 COMFY_ATTENTION_ARGS=(--use-ck-attention)
+if [[ "$H3_GPU_PROFILE" == a100 ]]; then
+  SERVER_ATTENTION_BACKEND="sla"
+  SERVER_DENSE_ATTENTION_BACKEND="pytorch"
+  COMFY_ATTENTION_ARGS=(--use-pytorch-cross-attention)
+fi
 
 COMFY_PID=""
 GRADIO_PID=""
@@ -483,7 +495,7 @@ fi
 
 [[ -f "$COMFY_DIR/main.py" ]] || die "ComfyUI installation failed"
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
-log "Dense/fallback attention: Comfy Kitchen"
+log "GPU profile: $H3_GPU_PROFILE; dense/fallback attention: $SERVER_DENSE_ATTENTION_BACKEND"
 
 # The rest of the selected defaults (environments and checkpoints, or everything when the
 # files could not start early) prepare while the servers start; failures only warn.

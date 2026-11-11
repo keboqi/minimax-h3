@@ -174,41 +174,76 @@ class ColabLauncherTests(unittest.TestCase):
         bash = Path(git).resolve().parent.parent / "bin" / "bash.exe" if os.name == "nt" and git else Path(shutil.which("bash") or "")
         if not bash.is_file():
             self.skipTest("Bash unavailable")
+        def shell_path(path):
+            value = path.as_posix()
+            return "/" + value[0].lower() + value[2:] if os.name == "nt" else value
+
         with TemporaryDirectory(prefix="launcher spaces ") as directory:
             root = Path(directory).resolve()
             venv = root / "env with spaces"
             (venv / "bin").mkdir(parents=True)
+            probe = root / "gpu_probe_fixture.py"
+            # Windows subprocess cannot execute an extensionless nvidia-smi shell
+            # fixture. Mock that OS boundary while running the real policy CLI.
+            probe.write_text(
+                "import os, runpy, subprocess, sys\n"
+                "subprocess.check_output = lambda command, **kwargs: (\n"
+                "    os.environ.get('TEST_DRIVER', '580.126.16') if 'driver_version' in command[1]\n"
+                "    else os.environ['TEST_GPU'])\n"
+                "sys.argv = sys.argv[1:]\nrunpy.run_path(sys.argv[0], run_name='__main__')\n",
+                encoding="utf-8")
             python = venv / "bin" / "python3"
-            python.write_text("#!/usr/bin/env bash\nprintf 'selected-venv\\n'\n", encoding="utf-8", newline="\n")
+            python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1-}\" == --version ]]; then printf 'selected-venv\\n'; "
+                'elif [[ "${1-}" == *h3_gpu.py ]]; then '
+                f"exec {shlex.quote(shell_path(Path(sys.executable)))} {shlex.quote(shell_path(probe))} \"$@\"; "
+                f"else exec {shlex.quote(shell_path(Path(sys.executable)))} \"$@\"; fi\n",
+                encoding="utf-8", newline="\n")
             python.chmod(0o755)
-            smi = venv / "bin" / "nvidia-smi"
-            smi.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$TEST_GPU"\n', encoding="utf-8", newline="\n")
-            smi.chmod(0o755)
+            shutil.copyfile(NOTEBOOK.parent / "h3_gpu.py", root / "h3_gpu.py")
             run_script = root / "run_h3.sh"
-            run_script.write_text('printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\nprintf "%s\\n" "$H3_DRAMA3_SGLANG_CHECKPOINT"\n', encoding="utf-8", newline="\n")
+            run_script.write_text(
+                'printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\n'
+                "python3 -c 'import os; from h3_gpu import default_drama3_checkpoint; "
+                'print(os.environ.get("H3_DRAMA3_SGLANG_CHECKPOINT", default_drama3_checkpoint()))' + "'\n",
+                encoding="utf-8", newline="\n")
             tree = ast.parse(cell_source("launcher_source ="))
             assignments = [node for node in tree.body if isinstance(node, ast.Assign) and any(
                 isinstance(t, ast.Name) and t.id in {"command", "launcher_source"} for t in node.targets)]
-            def shell_path(path):
-                value = path.as_posix()
-                return "/" + value[0].lower() + value[2:] if os.name == "nt" else value
             namespace = dict(Path=PurePosixPath, shlex=shlex, ram_env="", VENV_DIR=shell_path(venv), workspace=PurePosixPath(shell_path(root)))
             exec(compile(ast.Module(body=assignments, type_ignores=[]), "<launcher>", "exec"), namespace)
             launcher = root / "run_h3_colab.sh"
             launcher.write_text(namespace["launcher_source"], encoding="utf-8", newline="\n")
-            env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict", TEST_GPU="NVIDIA RTX PRO 6000")
+            env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict", TEST_GPU="NVIDIA RTX PRO 6000, 97887")
             env.pop("H3_APP", None)
+            env.pop("H3_GPU_PROFILE", None)
             env.pop("H3_DRAMA3_SGLANG_CHECKPOINT", None)
-            result = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True, check=True)
+            result = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset", "fp8"])
             chosen = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, H3_DRAMA3_SGLANG_CHECKPOINT="int4"),
                                     capture_output=True, text=True, check=True)
             self.assertEqual(chosen.stdout.splitlines()[-1], "int4")
-            for gpu in ("", "NVIDIA T4", "RTX PRO 6000\nRTX PRO 6000"):
+            for gpu in ("NVIDIA A100-SXM4-80GB, 81920", "NVIDIA A100 80GB PCIe, 81159"):
+                fallback = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, TEST_GPU=gpu),
+                                          capture_output=True, text=True, check=True)
+                self.assertEqual(fallback.stdout.splitlines()[-1], "int4")
+                override = subprocess.run([str(bash), launcher.as_posix()],
+                                          env=dict(env, TEST_GPU=gpu, H3_DRAMA3_SGLANG_CHECKPOINT="fp8"),
+                                          capture_output=True, text=True, check=True)
+                self.assertEqual(override.stdout.splitlines()[-1], "fp8")
+            old_driver = subprocess.run([str(bash), launcher.as_posix()],
+                                        env=dict(env, TEST_GPU="NVIDIA A100-SXM4-80GB, 81920", TEST_DRIVER="550.54.15"),
+                                        capture_output=True, text=True)
+            self.assertNotEqual(old_driver.returncode, 0)
+            self.assertIn("driver 580", old_driver.stderr)
+            self.assertEqual(old_driver.stdout, "")
+            for gpu in ("", "NVIDIA T4, 15360", "NVIDIA A100-SXM4-40GB, 40960", "RTX PRO 6000, 97887\nRTX PRO 6000, 97887"):
                 failed = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, TEST_GPU=gpu),
                                         capture_output=True, text=True)
                 self.assertNotEqual(failed.returncode, 0)
-                self.assertIn("needs the Colab G4", failed.stderr)
+                self.assertIn("Studio", failed.stderr)
                 self.assertEqual(failed.stdout, "")
             workshop = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, TEST_GPU="", H3_APP="workshop"),
                                       capture_output=True, text=True, check=True)
@@ -269,9 +304,9 @@ class ColabLaunchUpdateTests(unittest.TestCase):
         )
         self.assertEqual([call[0] for call in events.mock_calls], ["pull", "launch"])
 
-    def test_studio_needs_g4_but_workshop_runs_on_cpu(self):
-        with self.assertRaisesRegex(RuntimeError, "needs the Colab G4"):
-            self.run_launch_cell(g4=False)
+    def test_stale_hardware_snapshot_does_not_block_launch_validation(self):
+        events, _ = self.run_launch_cell(g4=False)
+        events.launch.assert_called_once_with("fixture.sh")
         events, _ = self.run_launch_cell(app="workshop", g4=False)
         events.launch.assert_called_once_with("fixture.sh")
 
@@ -462,7 +497,7 @@ class CloudflareTests(unittest.TestCase):
             popen.assert_called_once()
             self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "false")
             self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "true")
-            self.assertEqual(popen.call_args.kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
+            self.assertNotIn("H3_DRAMA3_SGLANG_CHECKPOINT", popen.call_args.kwargs["env"])
             self.assertEqual(popen.call_args.kwargs["env"]["H3_PREPARE_MODELS"], "h3")
             self.assertEqual(popen.call_args.kwargs["env"]["H3_APP"], "studio")
 

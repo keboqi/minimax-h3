@@ -16,7 +16,7 @@ import subprocess
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -26,6 +26,7 @@ from requests.adapters import HTTPAdapter
 from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION, DRAMA3_INT4_HF_REPO, DRAMA3_INT4_HF_REVISION
 
 from h3_app.errors import H3Error
+from h3_gpu import default_drama3_checkpoint
 
 from . import checkpoint, environment
 
@@ -106,7 +107,7 @@ class ServerSettings:
     data_dir: Path
     model_root: Path
     port: int = 8096
-    checkpoint: str = "fp8"
+    checkpoint: str = field(default_factory=default_drama3_checkpoint)
     # The engine's share of total GPU memory; None sizes it to the checkpoint's
     # weights plus ENGINE_HEADROOM_GIB. Sleep and Modal snapshots copy all of it.
     engine_memory: float | None = None
@@ -132,7 +133,7 @@ class ServerSettings:
             data_dir=Path(env.get("H3_DRAMA3_SGLANG_DATA") or runtime.comfy_dir.parent / "drama3-serving"),
             model_root=Path(env.get("H3_DRAMA3_SGLANG_MODELS") or runtime.comfy_dir / "models" / "drama3_serving"),
             port=int(env.get("H3_DRAMA3_SGLANG_PORT", "8096")),
-            checkpoint=env.get("H3_DRAMA3_SGLANG_CHECKPOINT", "fp8").lower(),
+            checkpoint=env.get("H3_DRAMA3_SGLANG_CHECKPOINT", default_drama3_checkpoint()).lower(),
             engine_memory=float(engine_memory) if engine_memory else None,
             codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
