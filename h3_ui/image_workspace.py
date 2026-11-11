@@ -47,6 +47,7 @@ class ImageWorkspace:
     h3_edit_size: gr.Radio
     h3_resolution_small: gr.Dropdown
     h3_resolution_large: gr.Dropdown
+    batch_counts: dict[str, gr.Slider]
 
     reference_panel: gr.Column
     guidance: gr.Markdown
@@ -108,10 +109,13 @@ def _build_size_settings(engine_views):
 
 def _build_model_settings(engine_views, h3, labels):
     option_groups = {}
+    batch_counts = {"qwen": engine_views["qwen"].batch_count}
     with gr.Accordion("Model settings", open=False):
         for engine in IMAGE_MODELS:
             with gr.Group(visible=engine == "qwen") as option_groups[engine]:
                 gr.Markdown(f"### {labels[engine]}")
+                if engine != "qwen":
+                    batch_counts[engine] = gr.Slider(1, 4, value=1, step=1, label="Variations")
                 if engine == "h3":
                     backend = gr.Dropdown(H3_IMAGE_BACKENDS, value=H3_IMAGE_OFFICIAL, label="H3 image backend")
                     expand_prompt = gr.Checkbox(value=True, label="Expand official image prompts locally",
@@ -124,7 +128,7 @@ def _build_model_settings(engine_views, h3, labels):
                 else:
                     for name in OPTION_FIELDS[engine]:
                         _move(getattr(engine_views[engine], name))
-    return option_groups, base, backend, expand_prompt
+    return option_groups, base, backend, expand_prompt, batch_counts
 
 
 def build_image_view(root, engine, engine_views, h3):
@@ -167,7 +171,7 @@ def build_image_view(root, engine, engine_views, h3):
                 size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large = (
                     _build_size_settings(engine_views))
             with gr.Column(scale=2, min_width=320):
-                option_groups, base, backend, expand_prompt = _build_model_settings(engine_views, h3, labels)
+                option_groups, base, backend, expand_prompt, batch_counts = _build_model_settings(engine_views, h3, labels)
                 with gr.Accordion("Prompt assistance", open=False):
                     writer, enhance, enhance_status = prompt_writer("Suggest a prompt")
                     enhance.h3_review = build_prompt_review(compact=True)
@@ -175,6 +179,7 @@ def build_image_view(root, engine, engine_views, h3):
         prompt=prompt, mode=mode, reference_images=refs, output=output, run=run, stop=stop, status=status,
         h3_backend=backend, h3_expand_prompt=expand_prompt, h3_width=h3_width, h3_height=h3_height, h3_seed=h3_seed, h3_edit_size=h3_edit_size,
         h3_resolution_small=h3_small, h3_resolution_large=h3_large, reference_panel=reference_panel,
+        batch_counts=batch_counts,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,
         base_summary=base, writer=writer, enhance=enhance, enhance_status=enhance_status,
         selected_result=selected, use_result=use, result_edit_actions=result_edit_actions,

@@ -18,7 +18,7 @@
   };
 
   const app = {boot: null, s: null, runs: {}, progress: [], files: [], take: 0, suggestion: null, previous: null,
-               enhanceVersion: null, polling: false, picking: null,
+               enhanceContext: null, polling: false, picking: null,
                input: {slots: [], preset: "1920 × 1920", width: 1920, height: 1920, model: "", seed: -1, force_offload: false}};
 
   const request = async (method, path, body, {form = false} = {}) => {
@@ -283,7 +283,11 @@
     $("file-input").value = "";
     $("file-input").click();
   };
-  const clearSlot = guard(async (slot) => take(await post("/media/clear", {slot})));
+  const clearSlot = guard(async (slot) => {
+    clearTimeout(promptTimer);
+    await savePrompt();
+    take(await post("/media/clear", {slot}));
+  });
   const openLibrary = guard(async (slot) => {
     const dialog = $("library");
     const grid = h("div", {class: "library-grid"});
@@ -369,9 +373,16 @@
     $("reference-count").textContent = count ? `${count} added` : "";
     $("reference-list").replaceChildren(...cards);
     $("reference-add").replaceChildren(...adders);
-    const waiting = app.s.references.filter((reference) => reference.unresolved);
+    const waiting = app.s.references.filter((reference) => reference.unresolved && (reference.active || app.s.prompt.includes(reference.tag)));
+    const replaced = waiting.filter((reference) => reference.active);
+    const removed = waiting.filter((reference) => !reference.active);
     $("reference-confirm").hidden = !waiting.length;
-    $("reference-confirm-line").textContent = `${waiting.map((reference) => reference.tag).join(", ")} ${waiting.length > 1 ? "were" : "was"} replaced or removed. Confirm before using ${waiting.length > 1 ? "these tags" : "this tag"}.`;
+    $("confirm-references").hidden = !waiting.length;
+    $("confirm-references").textContent = removed.length ? "Clear missing references" : "Confirm replaced references";
+    $("reference-confirm-line").textContent = [
+      removed.length ? `${removed.map((reference) => reference.tag).join(", ")} ${removed.length > 1 ? "have" : "has"} no attached media. Add a replacement or remove ${removed.length > 1 ? "these tags" : "this tag"} from the prompt.` : "",
+      replaced.length ? `${replaced.map((reference) => reference.tag).join(", ")} ${replaced.length > 1 ? "were" : "was"} replaced. Confirm before using ${replaced.length > 1 ? "these tags" : "this tag"}.` : "",
+    ].filter(Boolean).join(" ");
     seg($("ref-size"), app.boot.choices.ref_image_size, v("ref_image_size"), (value) => change("ref_image_size", {ref_image_size: value}));
   };
 
@@ -452,12 +463,17 @@
 
   // Prompt ------------------------------------------------------------------
   let promptTimer;
+  let pendingSave = Promise.resolve();
   const savePrompt = guard(async () => {
     clearTimeout(promptTimer);
     const sent = $("prompt").value;
-    const answer = await post("/prompt", {prompt: sent});
-    // Typing may have gone on while the save was in flight; the newer text stays.
-    if ($("prompt").value === sent) take(answer);
+    const save = pendingSave.then(async () => {
+      const answer = await post("/prompt", {prompt: sent});
+      // Typing may have gone on while the save was in flight; the newer text stays.
+      if ($("prompt").value === sent) take(answer);
+    });
+    pendingSave = save.catch(() => {});
+    await save;
   });
   const promptEdited = () => {
     app.s.prompt = $("prompt").value;
@@ -510,9 +526,18 @@
     }
   };
   const enhanceFinished = (run) => {
+    if (app.enhanceContext === null) return;
     app.enhanceNote = "";
-    if (run?.suggestion) app.suggestion = {text: run.suggestion, original: run.original, version: app.enhanceVersion};
+    if (run?.suggestion) app.suggestion = {text: run.suggestion, original: run.original, context: app.enhanceContext};
     render();
+  };
+  const promptContext = () => {
+    const mode = v("mode");
+    const media = Object.entries(app.s.media).filter(([slot]) => mode === "Reference media" ? slot.startsWith("ref_")
+      : mode === "First / last frame" && (slot === "first_image" || slot === "last_image" || slot.startsWith("fl2va_audio_")))
+      .map(([slot, item]) => [slot, item.path]).sort(([a], [b]) => a.localeCompare(b));
+    return JSON.stringify([mode, v("width"), v("height"), v("duration"),
+      mode === "Reference media" ? app.s.reference_version : null, media]);
   };
 
   const renderReadiness = () => {
@@ -525,10 +550,13 @@
                    ["Settings", app.s.issues.length ? "now" : "done"]];
     $("steps").replaceChildren(...steps.map(([label, state]) => h("span", {class: `step ${state}`}, h("span", {class: "dot", "aria-hidden": "true"}), label)));
     const run = app.runs.generate;
-    const waiting = app.s.references.filter((reference) => reference.unresolved && app.s.prompt.includes(reference.tag));
+    const waiting = mode === "Reference media"
+      ? app.s.references.filter((reference) => reference.unresolved && app.s.prompt.includes(reference.tag)) : [];
+    const missing = waiting.find((reference) => !reference.active);
     const ready = app.s.readiness.ready && hasPrompt && hasMedia !== false && !waiting.length;
     $("readiness").textContent = run?.active ? "Generating. You can keep editing the next run."
       : !hasPrompt ? "Before generating: write a prompt."
+      : missing ? `No media attached for ${missing.tag}. Add a replacement or remove the tag from the prompt.`
       : waiting.length ? `Confirm the replaced reference ${waiting[0].tag} first.`
       : app.s.readiness.message;
     $("run").disabled = !app.boot.gpu || !ready || Boolean(run?.active);
@@ -619,6 +647,18 @@
       if (file && app.picking) upload(app.picking, file);
     });
     $("prompt").addEventListener("input", promptEdited);
+    $("empty").addEventListener("click", guard(async () => {
+      clearTimeout(promptTimer);
+      await pendingSave;
+      const answer = await post("/empty");
+      app.suggestion = null;
+      app.previous = null;
+      app.enhanceContext = null;
+      app.enhanceNote = "";
+      $("prompt").value = "";
+      $("file-input").value = "";
+      take(answer);
+    }));
     $("prompt").addEventListener("blur", savePrompt);
     $("duration").addEventListener("input", () => { $("duration-value").textContent = `${Number($("duration").value).toFixed(1)} s`; });
     $("duration").addEventListener("change", () => change("duration", {duration: Number($("duration").value)}));
@@ -631,17 +671,22 @@
     $("open-writer").addEventListener("click", () => openGroup(2));
     $("open-model").addEventListener("click", () => openGroup(0));
     $("open-size").addEventListener("click", () => openGroup(1));
-    $("confirm-references").addEventListener("click", guard(async () => take(await post("/references/confirm"))));
+    $("confirm-references").addEventListener("click", guard(async () => {
+      await savePrompt();
+      take(await post("/references/confirm"));
+    }));
     $("enhance").addEventListener("click", guard(async () => {
       app.suggestion = null;
       app.enhanceNote = "";
-      app.enhanceVersion = app.s.reference_version;
-      await startRun("/enhance");
+      await savePrompt();
+      app.enhanceContext = promptContext();
+      take(await post("/enhance"));
+      if (!app.runs.enhance?.active) enhanceFinished(app.runs.enhance);
     }));
     $("accept").addEventListener("click", guard(async () => {
       const proposal = app.suggestion;
       app.suggestion = null;
-      if ($("prompt").value !== proposal.original || app.s.reference_version !== proposal.version) {
+      if ($("prompt").value !== proposal.original || promptContext() !== proposal.context) {
         app.enhanceNote = "The prompt or input media changed. Enhance the current draft again.";
         return render();
       }

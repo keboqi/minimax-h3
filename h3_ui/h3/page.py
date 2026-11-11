@@ -548,6 +548,15 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
 
         return edit(request, change)
 
+    @app.post(f"{API}/empty", include_in_schema=False)
+    @guarded
+    def empty_draft(request: Request):
+        def change(state):
+            state.update(prompt="", media={}, references={})
+            pages.apply(state, "mode", {"mode": "Text to video"})
+
+        return edit(request, change)
+
     @app.post(f"{API}/prompt", include_in_schema=False)
     @guarded
     def change_prompt(request: Request, body: dict = Body(...)):
@@ -573,12 +582,28 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
             return catalog.IMAGE_EXTENSIONS
         return catalog.VIDEO_EXTENSIONS if slot in VIDEO_SLOTS else catalog.AUDIO_EXTENSIONS
 
+    def forget_references(state, tags):
+        mapping = _map_from(state.get("references"))
+        state["references"] = _map_to(ReferenceMap(mapping.version + 1,
+            tuple(binding for binding in mapping.bindings if binding.tag not in tags)))
+        for tag in tags:
+            state["prompt"] = state["prompt"].replace(tag, "")
+        state["prompt"] = state["prompt"].strip()
+
+    def leave_empty_reference_mode(state):
+        if state["values"]["mode"] == "Reference media" and not any(state["media"].get(slot) for slot in REFERENCE_SLOTS):
+            pages.apply(state, "mode", {"mode": "Text to video"})
+
     def place(request: Request, slot: str, path: str | None) -> dict[str, Any]:
         def change(state):
             if path:
                 state["media"][slot] = path
             else:
                 state["media"].pop(slot, None)
+                for kind, prefix, _limit in KINDS:
+                    if slot.startswith(f"{prefix}_"):
+                        forget_references(state, {f"<{kind} {slot.removeprefix(prefix + '_')}>"})
+                        leave_empty_reference_mode(state)
             pages.apply(state, slot, {})
 
         return edit(request, change)
@@ -614,7 +639,16 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
     @app.post(f"{API}/references/confirm", include_in_schema=False)
     @guarded
     def confirm_references(request: Request):
-        return edit(request, lambda state: pages.references(state, repair=True))
+        def change(state):
+            mapping = pages.references(state)
+            missing = [binding.tag for binding in mapping.bindings
+                       if not binding.engine_ordinal and binding.tag in state["prompt"]]
+            if missing:
+                forget_references(state, set(missing))
+                leave_empty_reference_mode(state)
+            pages.references(state, repair=True)
+
+        return edit(request, change)
 
     @app.get(f"{API}/library", include_in_schema=False)
     @guarded
@@ -780,6 +814,9 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
                 with pages.lock:
                     latest = pages.load(owner)
                     for name, path in replaced.items():
+                        # A completed job may update only the input it started with.
+                        if not media.get(name) or latest["media"].get(name) != media[name]:
+                            continue
                         target = pages.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(path).name}"
                         shutil.copy2(path, target)
                         latest["media"][name] = str(target)

@@ -163,6 +163,78 @@ class ImageGenerationControllerTests(unittest.TestCase):
         self.values = {**self.controller.fields, "image__backend": "Pruna P-H3-Image", "qwen__turbo_variant": "Off", "qwen__batch_edit_inputs": False,
                        "fibo2__model_choice": "Dev"}
 
+    def test_variations_accumulate_outputs_with_distinct_seeds_and_edit_inputs(self):
+        for engine in ("flux3", "fibo2", "moss_image"):
+            modes = ("Text to image",) if engine == "moss_image" else ("Text to image", "Image edit")
+            for mode in modes:
+                with self.subTest(engine=engine, mode=mode):
+                    handler = getattr(self.handlers[engine], GENERATION_METHODS[engine])
+                    handler.reset_mock()
+                    handler.side_effect = lambda **options: iter([
+                        (None, "Preparing"), ([f"{options['seed']}.png"], "Done")])
+                    captured = {**self.values, f"{engine}__batch_count": 3, f"{engine}__seed": 42}
+                    updates = list(self.controller.generate(engine, mode, "bird", ["ref.png"], captured))
+                    self.assertEqual(updates[-1].output, ["42.png", "43.png", "44.png"])
+                    self.assertEqual(updates[2].output, ["42.png"])
+                    self.assertEqual([call.kwargs["seed"] for call in handler.call_args_list], [42, 43, 44])
+                    if engine != "moss_image":
+                        self.assertEqual(handler.call_args.kwargs["reference_images"],
+                                         ["ref.png"] if mode == "Image edit" else [])
+                    self.assertEqual(captured[f"{engine}__seed"], 42)
+
+    def test_h3_variations_support_both_backends(self):
+        for backend, target in (("MiniMax H3 Image (Official)", "h3_app.generation.h3_image.generate_h3_image"),
+                                ("Pruna P-H3-Image", "h3_app.generation.ph3_image.generate_ph3_image")):
+            with self.subTest(backend=backend), patch(target) as generate:
+                generate.side_effect = lambda *args: iter([([f"{generate.call_count}.png"], "Done")])
+                updates = list(self.controller.generate("h3", "Text to image", "bird", [], {
+                    **self.values, "image__backend": backend, "image__batch_count": 2}))
+                self.assertEqual(updates[-1].output, ["1.png", "2.png"])
+                requests = [call.args[0] for call in generate.call_args_list]
+                seeds = [request.seed if backend.startswith("MiniMax") else request.output.seed for request in requests]
+                self.assertEqual(seeds, [27, 28])
+
+    def test_variations_stop_on_failure_without_losing_completed_images(self):
+        handler = self.handlers["flux3"].generate_flux3
+        handler.side_effect = [iter([(["first.png"], "Done")]), iter([(None, "Error: failed")])]
+        updates = list(self.controller.generate("flux3", "Text to image", "bird", [], {
+            **self.values, "flux3__seed": 10, "flux3__batch_count": 4}))
+        self.assertEqual(handler.call_count, 2)
+        self.assertEqual(updates[-1].output, ["first.png"])
+        self.assertIn("Error: failed", updates[-1].status)
+
+    def test_variations_replay_the_selected_index_and_recorded_seed(self):
+        from h3_app.jobs import CURRENT_JOB
+
+        job = SimpleNamespace(replay_indices=[2], variant_seeds={2: 1234}, variant=0,
+                              check=Mock(), persist=Mock())
+        token = CURRENT_JOB.set(job)
+        self.addCleanup(CURRENT_JOB.reset, token)
+        handler = self.handlers["flux3"].generate_flux3
+        handler.side_effect = lambda **options: iter([(["replayed.png"], "Done")])
+        updates = list(self.controller.generate("flux3", "Text to image", "bird", [], {
+            **self.values, "flux3__seed": -1, "flux3__batch_count": 4}))
+        handler.assert_called_once()
+        self.assertEqual(handler.call_args.kwargs["seed"], 1234)
+        self.assertEqual(job.variant, 2)
+        self.assertEqual(updates[-1].output, ["replayed.png"])
+
+    def test_variations_stop_before_starting_the_next_cancelled_image(self):
+        from h3_app.jobs import CURRENT_JOB, JobCancelled
+
+        job = SimpleNamespace(replay_indices=[], variant_seeds={}, variant=0,
+                              check=Mock(side_effect=[None, JobCancelled("Stopped")]), persist=Mock())
+        token = CURRENT_JOB.set(job)
+        self.addCleanup(CURRENT_JOB.reset, token)
+        handler = self.handlers["flux3"].generate_flux3
+        handler.side_effect = lambda **options: iter([(["first.png"], "Done")])
+        updates = self.controller.generate("flux3", "Text to image", "bird", [], {
+            **self.values, "flux3__seed": 10, "flux3__batch_count": 4})
+        self.assertEqual(next(updates).output, ["first.png"])
+        with self.assertRaises(JobCancelled):
+            next(updates)
+        handler.assert_called_once()
+
     def test_dispatch_preserves_selected_options_and_excludes_inactive_references(self):
         self.controller.generate("qwen", "Text to image", "a bird", ["saved.png"], self.values)
         kwargs = self.handlers["qwen"].generate_qwen_image21.call_args.kwargs

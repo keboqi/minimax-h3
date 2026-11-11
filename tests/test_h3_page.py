@@ -2,9 +2,11 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -90,6 +92,22 @@ class H3PageTests(unittest.TestCase):
         self.assertEqual(self.boot["state"]["values"], defaults)
         self.assertEqual(self.boot["state"]["values"]["result_format"], "Video")
 
+    def test_empty_clears_prompt_and_all_media_and_persists(self):
+        self.change("mode", mode="Reference media")
+        self.upload("ref_image_1")
+        self.upload("first_image", "first.png")
+        self.upload("ref_video_1", "reference.mp4")
+        self.upload("ref_audio_1", "voice.wav")
+        before = self.change("batch_count", batch_count=3)
+        self.ok(self.client.post(f"{API}/prompt", json={"prompt": "A bird <Image 1>"}))
+        state = self.ok(self.client.post(f"{API}/empty"))["state"]
+        self.assertEqual(state["prompt"], "")
+        self.assertEqual(state["media"], {})
+        self.assertEqual(state["values"]["mode"], "Text to video")
+        self.assertEqual(state["values"]["batch_count"], before["values"]["batch_count"])
+        restored = self.ok(self.client.get(f"{API}/boot"))["state"]
+        self.assertEqual((restored["prompt"], restored["media"]), ("", {}))
+
     def test_a_recipe_sets_its_sampling_and_a_change_is_counted(self):
         state = self.change("preset", preset="Quality")
         self.assertEqual(state["values"]["text_encoder"], "INT8 ConvRot")
@@ -162,6 +180,96 @@ class H3PageTests(unittest.TestCase):
         self.assertFalse(state["references"][0]["unresolved"])
         state = self.ok(self.client.post(f"{API}/media/clear", json={"slot": "ref_image_2"}))["state"]
         self.assertNotIn("ref_image_2", state["media"])
+
+    def test_removing_the_last_reference_clears_its_tag_and_returns_to_text_generation(self):
+        self.change("mode", mode="Reference media")
+        self.upload("ref_image_1")
+        self.ok(self.client.post(f"{API}/prompt", json={"prompt": "Animate <Picture 1>"}))
+        state = self.ok(self.client.post(f"{API}/media/clear", json={"slot": "ref_image_1"}))["state"]
+        self.assertEqual(state["prompt"], "Animate")
+        self.assertEqual(state["references"], [])
+        self.assertEqual(state["values"]["mode"], "Text to video")
+        self.assertTrue(state["readiness"]["ready"])
+        restored = self.ok(self.client.get(f"{API}/boot"))["state"]
+        self.assertEqual(restored["references"], [])
+        self.assertEqual(restored["prompt"], "Animate")
+        state = self.upload("ref_image_1", "replacement.png")
+        self.assertFalse(state["references"][0]["unresolved"])
+
+    def test_confirm_clears_missing_reference_tags_in_existing_drafts(self):
+        self.change("mode", mode="Reference media")
+        self.upload("ref_image_1")
+        self.ok(self.client.post(f"{API}/prompt", json={"prompt": "Animate <Picture 1>"}))
+        # A missing file reproduces the stale binding left by older Remove behavior.
+        for file in (self.root / "pages").rglob("*-frame.png"):
+            file.unlink()
+        state = self.ok(self.client.post(f"{API}/references/confirm"))["state"]
+        self.assertEqual(state["prompt"], "Animate")
+        self.assertEqual(state["references"], [])
+        self.assertEqual(state["values"]["mode"], "Text to video")
+
+    def test_first_frame_generation_ignores_unconfirmed_reference_media(self):
+        self.change("mode", mode="Reference media")
+        self.upload("ref_image_1")
+        state = self.upload("ref_image_1", "replacement.png")
+        self.assertTrue(state["references"][0]["unresolved"])
+        self.upload("first_image", "first.png")
+        self.change("mode", mode="First / last frame")
+        self.ok(self.client.post(f"{API}/prompt", json={"prompt": "Animate <Picture 1>"}))
+        self.ok(self.client.post(f"{API}/generate"))
+        result = self.finished("generate")
+        self.assertIsNone(result["runs"]["generate"]["error"])
+        self.assertTrue(self.generated)
+        captured = self.generated[-1]
+        self.assertEqual(captured["mode"], "First / last frame")
+        self.assertTrue(captured["first_image"])
+        self.assertIsNone(captured["ref_image_1"])
+
+    def test_upscale_updates_only_inputs_that_have_not_been_changed(self):
+        from h3_ui.h3.page import UPSCALE_OUTPUTS
+
+        for action in ("unchanged", "empty", "remove", "replace"):
+            with self.subTest(action=action):
+                self.upload("first_image", f"{action}.png")
+                self.upload("last_image", f"{action}-last.png")
+                output = self.root / f"upscaled-{action}.png"
+                Image.new("RGB", (64, 64), "blue").save(output)
+                started, release = Event(), Event()
+
+                def updates(*args):
+                    started.set()
+                    if not release.wait(5):
+                        raise RuntimeError("Upscale fixture timed out")
+                    yield [str(output), str(output), *[{"__type__": "update"} for _ in UPSCALE_OUTPUTS[2:]], [], "Done"]
+
+                with patch.dict(JOBS.callbacks, {"h3-input": lambda: None}), \
+                        patch.object(JOBS, "accept", return_value=SimpleNamespace(id="fixture-upscale")), \
+                        patch("h3_ui.h3.page.execute_accepted", updates):
+                    try:
+                        self.ok(self.client.post(f"{API}/input-upscale", json={"slots": ["First frame", "Last frame"]}))
+                        self.assertTrue(started.wait(3))
+                        if action == "empty":
+                            self.ok(self.client.post(f"{API}/empty"))
+                        elif action == "remove":
+                            self.ok(self.client.post(f"{API}/media/clear", json={"slot": "first_image"}))
+                        elif action == "replace":
+                            replacement = self.upload("first_image", "new-first.png")["media"]["first_image"]["path"]
+                        release.set()
+                        answer = self.finished("input-upscale")
+                        self.assertIsNone(answer["runs"]["input-upscale"]["error"])
+                        media = answer["state"]["media"]
+                        if action in ("empty", "remove"):
+                            self.assertNotIn("first_image", media)
+                        elif action == "replace":
+                            self.assertEqual(media["first_image"]["path"], replacement)
+                        else:
+                            self.assertIn(output.name, media["first_image"]["path"])
+                        if action == "empty":
+                            self.assertEqual(media, {})
+                        else:
+                            self.assertIn(output.name, media["last_image"]["path"])
+                    finally:
+                        release.set()
 
     def test_wrong_files_and_foreign_paths_are_refused(self):
         path = self.root / "notes.txt"

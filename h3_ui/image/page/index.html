@@ -93,7 +93,10 @@
       </section>
 
       <section class="block" aria-label="Prompt">
-        <label class="strong" for="prompt" id="prompt-label">Image prompt</label>
+        <div class="row between">
+          <label class="strong" for="prompt" id="prompt-label">Image prompt</label>
+          <button type="button" class="btn quiet" id="empty" title="Clear prompt and all image inputs">Empty</button>
+        </div>
         <textarea id="prompt" class="field prompt" rows="7"></textarea>
         <p class="small muted" id="generate-note" hidden></p>
         <div class="row">

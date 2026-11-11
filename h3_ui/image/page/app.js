@@ -400,7 +400,13 @@
     seg($("takes"), Array.from({length: Math.max(1, images.length)}, (_, index) => [`Image ${index + 1}`, index]), app.take, (index) => { app.take = index; render(); });
     const current = images[app.take];
     const picture = $("result-image");
-    if (current && picture.dataset.path !== current.path) { picture.src = current.url; picture.dataset.path = current.path; $("result-link").href = current.url; }
+    if (current && (picture.dataset.path !== current.path || picture.getAttribute("src") !== current.url)) {
+      // A fresh image element clears the old decoded frame immediately on selection.
+      const next = h("img", {id: "result-image", alt: "Generated image", src: current.url});
+      next.dataset.path = current.path;
+      picture.replaceWith(next);
+      $("result-link").href = current.url;
+    }
     $("result-link").hidden = !current;
     $("stage-empty").hidden = Boolean(current);
     $("empty-title").textContent = run?.active ? "Making your image" : "Nothing generated yet";
@@ -483,6 +489,19 @@
     });
     $("prompt").addEventListener("input", promptEdited);
     $("prompt").addEventListener("blur", autosave);
+    $("empty").addEventListener("click", guard(async () => {
+      clearTimeout(promptTimer);
+      await pendingSave;
+      const answer = await post("/empty");
+      app.suggestion = null;
+      app.previous = null;
+      app.enhancePending = app.enhanceStarted = false;
+      app.enhanceNote = "";
+      $("prompt").value = "";
+      $("layout").value = "";
+      $("file-input").value = "";
+      take(answer);
+    }));
     $("layout").addEventListener("change", autosave);
     $("run").addEventListener("click", () => { app.progress = []; app.take = 0; startRun("/generate"); });
     $("stop").addEventListener("click", guard(async () => {

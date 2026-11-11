@@ -667,6 +667,18 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
 
         return edit(request, change)
 
+    @app.post(f"{API}/empty", include_in_schema=False)
+    @guarded
+    def empty_draft(request: Request):
+        def change(state):
+            state.update(prompt="", references=[], mode=GENERATE_MODE)
+            for engine in IMAGE_MODELS:
+                name = key_of(engine, "layout")
+                if name in state["options"]:
+                    state["options"][name] = ""
+
+        return edit(request, change)
+
     @app.post(f"{API}/prompt", include_in_schema=False)
     @guarded
     def change_prompt(request: Request, body: dict = Body(...)):

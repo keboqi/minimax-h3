@@ -3,6 +3,8 @@
 from h3_app.catalog import H3_EDIT_SIZE_CAP, H3_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MANUAL
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from h3_app.errors import H3Error
+from h3_app.jobs import check_cancelled, variant_indices, variant_seed
+from h3_app.generation.results import GenerationUpdate
 from h3_app.generation.requests import H3Request
 from h3_models import qwen_image21_reference_limit
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA, H3_IMAGE_EDIT_SIZE_MAX, H3_IMAGE_MAX_REFERENCES, official_edit_dimensions
@@ -142,12 +144,44 @@ class ImageGenerationController:
         self.fields.update({f"h3__{name}": component for name, component in self.h3_fields.items()})
         self.fields.update(image__width=view.h3_width, image__height=view.h3_height, image__seed=view.h3_seed,
                            image__edit_size=view.h3_edit_size)
+        self.fields.update({f"{'image' if engine == 'h3' else engine}__batch_count": component
+                            for engine, component in getattr(view, "batch_counts", {}).items() if engine != "qwen"})
         for name in ("backend", "expand_prompt"):
             component = getattr(view, f"h3_{name}", None)
             if component is not None:
                 self.fields[f"image__{name}"] = component
 
     def generate(self, engine, mode, prompt, references, captured):
+        # Qwen already handles variations (and separate edit inputs) in its native job.
+        if engine != "qwen":
+            prefix = "image" if engine == "h3" else engine
+            count = captured.get(f"{prefix}__batch_count", 1)
+            if isinstance(count, bool) or not isinstance(count, (int, float)) or count not in (1, 2, 3, 4):
+                raise H3Error("Variations must be between 1 and 4.")
+            if count > 1:
+                return self._variations(engine, mode, prompt, references, captured, prefix, int(count))
+        return self._generate_one(engine, mode, prompt, references, captured)
+
+    def _variations(self, engine, mode, prompt, references, captured, prefix, count):
+        import random
+
+        outputs = []
+        base_seed = captured[f"{prefix}__seed"]
+        for index in variant_indices(count):
+            check_cancelled()
+            seed = variant_seed(index, lambda: random.randrange(2**63 - 1) if base_seed < 0 else int(base_seed) + index)
+            values = {**captured, f"{prefix}__seed": seed}
+            current = []
+            for result, status in self._generate_one(engine, mode, prompt, references, values):
+                if result is not None:
+                    current = [result] if isinstance(result, str) else list(result)
+                yield GenerationUpdate(outputs + current, f"Image {index + 1}/{count} · {status}")
+            check_cancelled()
+            if not current:
+                return  # Preserve completed images and the failing variation's error status.
+            outputs.extend(current)
+
+    def _generate_one(self, engine, mode, prompt, references, captured):
         options = {name: captured[f"{engine}__{name}"] for name, _ in GENERATION_OPTIONS.get(engine, ())}
         backend = captured.get("image__backend", H3_IMAGE_OFFICIAL)
         issue = draft_issue(engine, mode, prompt, references, variant=options.get("turbo_variant", "Off"),

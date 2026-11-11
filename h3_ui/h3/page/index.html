@@ -99,7 +99,10 @@
       </section>
 
       <section class="block" aria-label="Prompt">
-        <label class="strong" for="prompt">Prompt</label>
+        <div class="row between">
+          <label class="strong" for="prompt">Prompt</label>
+          <button type="button" class="btn quiet" id="empty" title="Clear prompt and all media inputs">Empty</button>
+        </div>
         <textarea id="prompt" class="field prompt" rows="8" placeholder="A quiet seaside town at sunrise. The camera drifts over the rooftops as waves break in the distance…"></textarea>
         <div class="row">
           <button type="button" class="btn" id="enhance">Generate / enhance prompt</button>

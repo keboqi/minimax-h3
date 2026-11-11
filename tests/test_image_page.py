@@ -114,6 +114,30 @@ class ImagePageTests(unittest.TestCase):
         state = self.change(image__backend="MiniMax H3 Image (Official)")
         self.assertTrue(state["readiness"]["ready"])
 
+    def test_every_model_exposes_and_saves_variations(self):
+        for engine in ("h3", "qwen", "flux3", "moss_image", "fibo2"):
+            with self.subTest(engine=engine):
+                state = self.change("engine", engine=engine)
+                batch = state["batch"]
+                self.assertEqual((batch["minimum"], batch["maximum"]), (1, 4))
+                state = self.change(**{batch["name"]: 4})
+                self.assertEqual(state["batch"]["value"], 4)
+                self.assertEqual(self.ok(self.client.get(f"{API}/boot"))["state"]["batch"]["value"], 4)
+                self.assertEqual(self.post("/settings", action="engine", changes={"engine": engine})["state"]["batch"]["value"], 4)
+
+    def test_empty_clears_shared_inputs_and_layouts_and_persists(self):
+        self.post("/prompt", prompt="Edit this bird")
+        self.upload("bird.png")
+        self.change(flux3__layout="layout", moss_image__layout="layout", qwen__batch_count=3)
+        state = self.post("/empty")["state"]
+        self.assertEqual((state["prompt"], state["references"], state["mode"]), ("", [], GENERATE_MODE))
+        self.assertEqual(state["options"]["flux3__layout"], "")
+        self.assertEqual(state["options"]["moss_image__layout"], "")
+        self.assertEqual(state["batch"]["value"], 3)
+        restored = self.ok(self.client.get(f"{API}/boot"))["state"]
+        self.assertEqual((restored["prompt"], restored["references"]), ("", []))
+        self.assertFalse(restored["readiness"]["ready"])
+
     def test_h3_prompt_assistance_passes_image_settings_and_acceptance_skips_local_expansion(self):
         self.change("engine", engine="h3")
         self.change(image__width=4736, image__height=3552)
