@@ -388,9 +388,11 @@ class PreferenceTests(unittest.TestCase):
         self.assertEqual(restored["qwen_image21.seed"], 42)
         self.assertNotIn("qwen_image21.prompt", restored)
         self.assertNotIn("qwen_image21.api_key", restored)
-        for task, default, alternative in (("Audio / Music", "music", "yue2"), ("Image", "h3", "fibo2")):
+        # MiniMax H3 is an Image engine but no longer a Song one, so a saved "h3" falls back on Song.
+        for task, default, alternative, h3 in (("Audio / Music", "music", "yue2", "music"),
+                                                ("Image", "h3", "fibo2", "h3")):
             for version, engine, expected in (
-                (8, None, default), (8, "unknown", default), (8, "h3", "h3"),
+                (8, None, default), (8, "unknown", default), (8, "h3", h3),
                 (8, alternative, alternative), (7, "h3", default), (7, alternative, alternative),
             ):
                 with self.subTest(task=task, version=version, engine=engine):
