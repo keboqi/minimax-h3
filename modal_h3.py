@@ -1013,6 +1013,12 @@ def start_comfy() -> subprocess.Popen:
         "--fast",
         "fp16_accumulation",
         "--use-ck-attention",
+        # ComfyUI's default RAM-pressure cache keeps every node result until free RAM
+        # runs low. Inside a Modal container it measures the whole host's RAM, so the
+        # decoded frames and latents of every render pile up (hundreds of GiB over a
+        # storyboard queue) and are billed. Classic caching keeps only the latest
+        # prompt's results, which is all the unchanged-node reuse between renders needs.
+        "--cache-classic",
     ]
     print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
     comfy_args += ["--enable-cors-header", "*"]
