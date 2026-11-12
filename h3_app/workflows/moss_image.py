@@ -83,7 +83,7 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
         model = add(MOSS_SPECTRUM_NODE, model=model, warmup_steps=8,
                     detail_guard_steps=8, tail_actual_steps=2, post_guard_horizon_cap=6,
                     window_size=2.0, flex_window=0.5, cache_device="main_device",
-                    debug=False, error_tolerance=1.0)
+                    debug=False, error_tolerance=1.0, warn_unverified_sampler=True)
     clip = add("CLIPLoader", clip_name=MODEL_SPECS[MOSS_IMAGE_TEXT_ENCODER_CHOICES[text_encoder_choice]].local_name,
                type="moss_image", device="default")
     vae = add("VAELoader", vae_name=MODEL_SPECS[MOSS_IMAGE_VAE_CHOICES[vae_choice]].local_name)

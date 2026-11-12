@@ -63,6 +63,8 @@ class MossImagePresetTests(unittest.TestCase):
         self.assertEqual(graph[spectrum["model"][0]]["class_type"], "SkipLayerGuidanceDiTSimple")
         sampler, = nodes(graph, "KSampler")
         self.assertEqual(graph[sampler["model"][0]]["class_type"], "SpectrumMOSSImageAdaptive")
+        self.assertTrue(spectrum["warn_unverified_sampler"])
+        self.assertEqual(sampler["sampler_name"], "euler")
         self.assertEqual(sampler["scheduler"], "sgm_uniform")
         original = graph_for("Quality", accelerate=False)
         self.assertFalse(nodes(original, "SpectrumMOSSImageAdaptive"))

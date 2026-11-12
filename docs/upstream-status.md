@@ -1,5 +1,91 @@
 # Upstream status
 
+## Spectrum upgrades implemented — 2026-11-12
+
+The shared source catalog now pins H3 Spectrum **v0.2.30**
+(`7df883bb2361b7884ad789e97effd1dc37c8963a`) and Spectrum-MOSS
+`1e5eb359160b50be02ff95d1a93f22af2947888c` for local setup and Modal builds.
+H3 Spectrum supports the native PDD `grids` output interface and both reviewed
+`PackedLayout` constructors. MOSS graphs now supply the new required
+`warn_unverified_sampler=True` input, retaining Euler/SGM-uniform and the existing
+forecast settings. ER-SDE remains a separate experiment.
+
+Validation: 51 focused MOSS, H3 workflow, Remake wrapper and setup-reuse tests
+ran; **50 passed and one optional test was skipped**. Exact-source checks
+verified one-/three-/six-head native PDD grid dispatch and cache reuse, old/new
+layout constructors and padding, and both graph schemas/execution signatures.
+The source checks are in `.cache/spectrum-upgrade-2026-11-12/`. Gradio's UI test
+needed execution outside the sandbox for its asyncio socket pair. GPU inference
+and forecast quality remain unverified; no full test suite was run.
+
+Re-run local setup/restart ComfyUI, or rebuild/redeploy Modal, to apply the node
+updates. Local setup detects the changed `h3_sources.py` input automatically.
+ComfyUI, its paired frontend/Kitchen, other components and model selections
+retain their existing pins. The audit below records the pre-upgrade findings.
+
+## Component and LoRA audit — 2026-11-12
+
+Refreshed **19 pinned Git repositories**, **25 PyPI packages**, and **27 LoRA
+source repositories** against public upstream metadata. Eight source pins match
+their default-branch heads; eleven have later commits. All **38 configured LoRA
+files exist**, and all **19 configured SHA-256 values match**. The other nineteen
+have no configured checksum baseline. This checks the project configuration,
+not packages or weights installed in a deployment. Evidence and exact source
+comparisons are saved under `.cache/upstream-audit-2026-11-12/`.
+
+### Upgrade and adaptation priorities
+
+| Priority | Finding | Recommendation |
+| --- | --- | --- |
+| **First: H3 Spectrum compatibility** | Pinned v0.2.29 (`806fe498`) does not accept the native PDD `grids` interface in our current ComfyUI pin `ede4e5fe`. Its output-head detector raises `native MiniMax H3 FinalLayer exposes an incomplete PDD projection contract`. Upstream v0.2.30 (`7df883bb`) adds grid-based projection and conditional `PackedLayout.frame_count` handling. | Upgrade Spectrum first. This affects the project's default H3 accelerator. Validate forecast steps, CPU streaming, and combinations with Sol/LoRA patches before rollout. The exact pinned detector/signature mismatch was reproduced without loading weights; GPU behavior remains unverified. [Source comparison](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/compare/806fe498d574a726fecb8818917f00a4b993fd77...7df883bb2361b7884ad789e97effd1dc37c8963a). |
+| **Adapt before upgrading: LTXVideo** | Head remains `220e1d45` (six commits beyond our pin). It removes `LTXVSDRToHDRWorkingSpace` and `LTXVSaveHLG`, both still emitted and required by `h3_app/workflows/upscale.py`. | Keep the pin until HDR ingest uses native color conversion and HLG delivery uses native Create/Save Video. Check ACEScg/Rec.2020 primaries, transfer, bit depth, FPS and audio. Other removed nodes also require a saved-workflow review. [Source comparison](https://github.com/Lightricks/ComfyUI-LTXVideo/compare/3bf3ca62595f1764c47d01c35c8e5dfe47e1a88f...220e1d45aa0469f518e982102fca4dca92a61862). |
+| **Adapt before upgrading: Spectrum-MOSS** | Head remains `1e5eb359`; its adaptive node requires `warn_unverified_sampler`, which our graph does not supply. It also adds an ER-SDE solver bridge. | Add the required input as part of the pin upgrade. Preserve the existing Euler/SGM-uniform schedule initially; evaluate ER-SDE independently. [Source comparison](https://github.com/Rkkss/ComfyUI-Spectrum-MOSS/compare/3fde0674b29342565e7f42a0674af48d65aabc4a...1e5eb359160b50be02ff95d1a93f22af2947888c). |
+| **Evaluate: T8 Audio v1.105.0** | New head `ee569dab` adds stage recovery, progressive noise, local SFX, refinement endpoints, masked color stabilization and AV fixes. Although one commit beyond our pin, the comparison contains 146 changed files. | Review the existing `MiniMaxH3AudioConditioningT8` execution/schema and extension registration before upgrading. New stage-reuse and sampling features need explicit integration work; the single-commit count does not make this a small update. [Release notes](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/blob/ee569dab831cf0d14bf8578215c7250874fad2f6/docs/RELEASE_1.105.0.md). |
+| **Optional: ComfyUI maintenance** | Current head `b2f67074` is ten commits after our official H3 Image pin. It adds mixed-FPS/audio conformance for concatenated clips, workflow fixes and partner API changes. Requirements only move workflow templates 0.11.103 to 0.11.106; frontend 1.58.5 and Kitchen 0.2.41 stay paired. | Lower priority than fixing Spectrum. Test mixed-FPS clips and audio materialization if adopting the video changes. Do not independently bump frontend merely because PyPI has 1.59.1. [Source comparison](https://github.com/Comfy-Org/ComfyUI/compare/ede4e5fe8d15445c6fcd6828d70b202c22f9502c...b2f670744386d36d39c41cc37cd1e30151046222). |
+
+KJNodes, ControlNet Aux and PlagueKind retain the November 9 candidates. Drama3's
+one newer commit concerns Registry packaging, not inference. SGLang-Omni is now
+244 commits beyond our v0.2.0 pin; retain the release until a separately scoped
+Drama serving review. NeMo Speech remains a separate compatibility evaluation.
+The eight matching sources are Larry Turbo, Veda, Sol, FaceRefine, Qwen Spectrum,
+Video Depth Anything, stable-audio-tools and TensorRT VAE.
+
+### LoRA findings
+
+Only Kijai's experimental H3 repository has a changed head relative to the
+November 9 audit. The added file is
+`loras/minimax_h3_open_regenerate_2k_ic_lora_avg_rank_21_bf16.safetensors`
+(199,951,344 bytes, SHA-256
+`96f7cbe37883a15c3986821d768d28e565ad966ceba35b02c46140daae5c81c2`),
+uploaded November 9 at 11:22 UTC. Treat it as a **new optional IC-LoRA candidate**,
+not an automatic replacement for the configured rank-16/rank-384 refiners:
+its card does not establish the new adapter's conditioning/sampler contract.
+Inspect tensor keys, required conditioning and a reference workflow before
+adding it. [Upload](https://huggingface.co/Kijai/MiniMax-H3-experimental/commit/c2e7b89b1800123c49a0f620a1932c01d8952256).
+
+The **DMAD eight-step** option remains the strongest previously identified
+acceleration candidate, as a separate preset using the author's LCM/simple,
+CFG 1, strength 1 and video/audio shifts 12/2. Larry v4-600 EMA, LightX2V H3,
+Qwen Lightning/Pruna/Viggle and the configured LTX adapters have no newer heads
+since November 9. Keep current selections pending matched-seed GPU comparisons.
+Viggle Remake low-rank, MOSS three-step and Fibo Turbo remain optional experiments.
+[DMAD sampler instructions](https://huggingface.co/ZhengmingYu/DMAD),
+[Larry instructions](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora).
+
+### Package policy and verification scope
+
+Gradio 6.31.0, audio-separator 0.48.0 and Kitchen 0.2.41 remain current.
+Since November 9, independently published frontend moves 1.58.7 to 1.59.1,
+kernels 0.18.1 to 0.18.2, OpenAI SDK 3.46.0 to 3.49.0 and Playwright 1.64.1
+to 1.65.1. These do not justify changing the validated runtime stack by
+themselves. Keep Torch/CUDA/NumPy and the Transformers/kernels limits together;
+Transformers 5.22.2, Hub 2.x and Diffusers 0.42.x remain outside current policy.
+
+This audit changes documentation only. No runtime pins/defaults, model weights,
+deployments or installed dependencies were changed. No full test suite or GPU
+inference was run. The focused Spectrum source-contract reproduction is saved
+as `spectrum-contract-check.json` with the other audit evidence.
+
 ## Official H3 Image integrated — 2026-11-11
 
 ComfyUI now pins the November 10 image-support merge `ede4e5fe` (#17655), eight

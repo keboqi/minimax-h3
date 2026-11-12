@@ -173,7 +173,7 @@ backends; GPU inference and deployment are validated separately.
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.29 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.30 in legacy mode as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
