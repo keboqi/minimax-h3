@@ -1,6 +1,7 @@
 """Composition root with explicit catalogs and callbacks; no generation policy."""
 
 from contextlib import nullcontext
+from types import SimpleNamespace
 import gradio as gr
 from .app_bindings import bind_app
 from .contracts import AppComponents, BootstrapCatalog, BootstrapServices
@@ -345,11 +346,28 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))
         # The Image page has its own Media library picker, as MiniMax H3's does.
-        build_media_image_destinations(
+        set_as = build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
             page_targets={"Song · Visual inspiration": song_pages.receive},
+            apply_on=[app_views.create_tab.select] if app_views.create_tab is not None else [],
         )
+        from .media.page import MediaPageServices, MediaPageState, install_media_page
+
+        # The Media page browses, annotates, deletes and enhances through the services its Gradio view used.
+        media_pages = MediaPageState(MediaPageServices(
+            controller=SimpleNamespace(**{name: getattr(services, name) for name in (
+                "gallery_media_download_path", "refresh_media_page", "list_media_paths", "import_gallery_media",
+                "delete_selected_gallery_media", "empty_generated_media_gallery")}),
+            index=lambda: gallery_components.search.h3_asset_index,
+            downloads=services.dubbing_actions,
+            set_as=lambda: set_as,
+            enhance=True,
+            h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
+            interrupt=services.interrupt,
+            seedvr2_default=defaults["seedvr2_model"],
+        ))
+        demo.h3_routes = (*demo.h3_routes, partial(install_media_page, pages=media_pages))
         for view in (*engine_views.values(), image_workspace):
             with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(

@@ -71,6 +71,17 @@ LINEAGE_EMPTY = '<p class="h3-lineage-empty">Select an output to see where it ca
 
 def lineage_html(path, metadata, sources, copies):
     """Sources, this item, its enhanced copies and the job that made it, oldest first."""
+    current_mark = ' aria-current="true"'
+    items = "".join(
+        f"<li{current_mark if current else ''}><strong>{escape(name)}</strong>"
+        f"<span>{escape(note)}</span></li>"
+        for name, note, current in lineage_steps(path, metadata, sources, copies)
+    )
+    return f'<ol class="h3-lineage" aria-label="Lineage">{items}</ol>'
+
+
+def lineage_steps(path, metadata, sources, copies):
+    """(name, note, is this item) for each step of an item's lineage, oldest first."""
     settings = metadata.get("settings") or {}
     steps = [(Path(source).name, "Made from", False) for source, _metadata in sources]
     if not sources and settings.get("source"):
@@ -83,13 +94,7 @@ def lineage_html(path, metadata, sources, copies):
         steps.append((Path(copy_path).name, "Enhanced copy" + (f" · {method}" if method else ""), False))
     if metadata.get("job_id"):
         steps.append((f"Job {str(metadata['job_id'])[:8]}", "The run that made this item", False))
-    current_mark = ' aria-current="true"'
-    items = "".join(
-        f"<li{current_mark if current else ''}><strong>{escape(name)}</strong>"
-        f"<span>{escape(note)}</span></li>"
-        for name, note, current in steps
-    )
-    return f'<ol class="h3-lineage" aria-label="Lineage">{items}</ol>'
+    return steps
 
 
 def build_library_tools(

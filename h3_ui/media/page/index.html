@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="results.css">
+</head>
+<body>
+<p id="loading" class="loading muted">Opening the library…</p>
+<div id="app" class="app" hidden>
+  <section class="bar panel" aria-label="Library filters">
+    <div class="seg" role="group" aria-label="Media type" id="kinds"></div>
+    <form class="search" role="search" id="search-form">
+      <label class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <span class="sr-only">Search media</span>
+        <input type="search" id="query" placeholder="Search filenames, tags or settings…" autocomplete="off">
+      </label>
+      <button type="submit" class="btn">Search</button>
+    </form>
+    <button type="button" class="btn" id="favorite-only" aria-pressed="false">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"></path></svg>
+      Favorites only
+    </button>
+    <label class="inline small muted">Made with <select class="field" id="engine"></select></label>
+    <label class="inline small muted">Sort <select class="field" id="sort"></select></label>
+    <span class="grow"></span>
+    <button type="button" class="btn quiet icon" id="refresh" aria-label="Refresh library" title="Refresh">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+    </button>
+    <button type="button" class="btn primary" id="add-open" aria-haspopup="dialog">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      Add media
+    </button>
+  </section>
+
+  <div class="status-line small muted">
+    <span id="status" role="status"></span>
+    <button type="button" class="pill" id="favorite-chip" hidden>Favorites only ✕</button>
+  </div>
+
+  <div class="workarea">
+    <div class="browse">
+      <section class="panel library" aria-label="Library">
+        <div class="empty" id="empty" hidden><strong>Nothing matches</strong><span>Clear the filters, import a file, or use Scan historical media.</span></div>
+        <div class="grid" id="grid"></div>
+        <div class="center"><button type="button" class="btn" id="more" disabled>Show more</button></div>
+      </section>
+
+      <section class="panel tray" id="tray" aria-label="Compare two outputs" hidden>
+        <div class="row">
+          <h2>Compare two outputs</h2>
+          <span class="small muted grow">Add two different images or two different videos. Your picks stay here while you search and browse. Adding another media type starts a new pair.</span>
+        </div>
+        <div class="slots" id="slots"></div>
+        <div class="row">
+          <span class="small muted grow" id="compare-status" role="status"></span>
+          <button type="button" class="btn primary" id="compare-run" disabled>Compare selected outputs</button>
+        </div>
+        <div id="compare-view"></div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" aria-label="Selected item">
+      <div class="inspector-empty muted small" id="no-selection">Select an output to inspect it.</div>
+      <div id="selection" hidden>
+        <div class="preview-block">
+          <div class="seg" role="group" aria-label="Soundstage mix view" id="stage-switch" hidden>
+            <button type="button" data-stage="audio" aria-pressed="true">Audio</button>
+            <button type="button" data-stage="video" aria-pressed="false">Video</button>
+          </div>
+          <div id="preview"></div>
+          <div id="views"></div>
+          <div class="title-row">
+            <div class="grow">
+              <h2 class="mono name" id="item-name"></h2>
+              <span class="small muted" id="item-caption"></span>
+            </div>
+            <button type="button" class="btn" id="favorite" aria-pressed="false">
+              <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"></path></svg>
+              Favorite
+            </button>
+          </div>
+          <div class="row tight">
+            <a class="btn compact" id="download" download>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>
+              <span id="download-label">Download</span>
+            </a>
+            <button type="button" class="btn compact" id="add-a" hidden>Add to compare A</button>
+            <button type="button" class="btn compact" id="add-b" hidden>Add to compare B</button>
+          </div>
+          <div class="set-as" id="set-as" hidden>
+            <div class="row tight end">
+              <label class="stack grow small muted">Set as
+                <select class="field" id="set-as-name"></select>
+              </label>
+              <button type="button" class="btn" id="set-as-apply">Set image</button>
+            </div>
+            <span class="small muted" id="set-as-status" role="status">Single images replace; references fill the first empty slot or append to the list.</span>
+          </div>
+        </div>
+
+        <div class="tabs-row">
+          <div class="seg" role="tablist" aria-label="Inspector" id="tabs">
+            <button type="button" role="tab" data-tab="details">Details</button>
+            <button type="button" role="tab" data-tab="tags">Tags &amp; lineage</button>
+            <button type="button" role="tab" data-tab="enhance" id="tab-enhance">Enhance selected media</button>
+          </div>
+        </div>
+
+        <div class="tab-body" id="panel-details" role="tabpanel">
+          <details open>
+            <summary id="settings-title">Settings used</summary>
+            <pre id="settings"></pre>
+          </details>
+        </div>
+
+        <div class="tab-body" id="panel-tags" role="tabpanel" hidden>
+          <p class="small muted">Organize this asset with tags and favorites. Annotations are shared across the library.</p>
+          <label class="stack small muted">Tags (comma separated)
+            <input class="field" id="tags" autocomplete="off">
+          </label>
+          <div class="row tight">
+            <button type="button" class="btn" id="tags-save">Save tags</button>
+            <span class="small ink" id="tags-status" role="status"></span>
+          </div>
+          <h3>Lineage</h3>
+          <ol class="lineage" id="lineage" aria-label="Lineage"></ol>
+          <details>
+            <summary>Asset identity and lineage</summary>
+            <pre id="identity"></pre>
+          </details>
+        </div>
+
+        <div class="tab-body" id="panel-enhance" role="tabpanel" hidden>
+          <p class="small muted">Enhancing saves a new copy beside the original.</p>
+          <label class="stack small muted">Method
+            <select class="field" id="method"></select>
+            <span id="method-help"></span>
+          </label>
+          <div class="pair">
+            <label class="stack small muted" id="resolution-box">Target resolution
+              <select class="field" id="resolution"></select>
+              <span>Fits the source inside this frame while preserving its aspect ratio.</span>
+            </label>
+            <label class="stack small muted" id="seedvr2-box">SeedVR2 model
+              <select class="field" id="seedvr2"></select>
+              <span id="seedvr2-help"></span>
+            </label>
+            <label class="stack small muted" id="ltx-box">Finishing LTX model
+              <select class="field" id="ltx"></select>
+              <span>Used only for this finishing request. Downloaded on first use.</span>
+            </label>
+          </div>
+          <label class="stack small muted" id="prompt-box">Scene prompt
+            <textarea class="field" id="prompt" rows="3" placeholder="Describe the source scene and desired fine detail"></textarea>
+            <span id="prompt-help"></span>
+          </label>
+          <details id="seed-box">
+            <summary>Seed and memory</summary>
+            <div class="row">
+              <label class="inline small">Seed (-1 random) <input class="field num" type="number" id="seed" value="-1" step="1"></label>
+              <label class="inline small"><input type="checkbox" id="offload"> Unload resident models first</label>
+            </div>
+            <p class="small muted">Unloading can lower peak VRAM before AI processing starts.</p>
+          </details>
+          <div class="row tight">
+            <button type="button" class="btn primary big grow" id="enhance-run">Enhance selected media</button>
+            <button type="button" class="btn big" id="enhance-stop">Interrupt</button>
+          </div>
+          <span class="small muted" id="enhance-status" role="status"></span>
+        </div>
+
+        <div class="manage">
+          <div class="row tight" id="manage-actions">
+            <span class="small muted grow">Media used by queued or active jobs stays protected.</span>
+            <button type="button" class="btn compact danger" id="delete-selected">Delete selected…</button>
+            <button type="button" class="btn compact quiet danger-text" id="empty-library">Empty library…</button>
+          </div>
+          <div class="confirm" id="confirm" role="alertdialog" aria-label="Confirm permanent deletion" hidden>
+            <span id="confirm-text"></span>
+            <div class="row tight">
+              <button type="button" class="btn compact solid-danger" id="confirm-yes">Confirm permanent deletion</button>
+              <button type="button" class="btn compact" id="confirm-no">Keep media</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<dialog id="add-dialog" class="sheet" aria-label="Add media">
+  <header class="sheet-head">
+    <div class="grow">
+      <h2>Add media</h2>
+      <span class="small muted">Bring a file or a link into the library, next to everything you've generated.</span>
+    </div>
+    <button type="button" class="btn quiet icon" id="add-close" aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+  </header>
+  <div class="sheet-tabs">
+    <div class="seg" role="tablist" aria-label="Add from" id="add-tabs">
+      <button type="button" role="tab" data-add="file">From your computer</button>
+      <button type="button" role="tab" data-add="link" id="add-tab-link">From a link</button>
+      <button type="button" role="tab" data-add="upkeep">Library upkeep</button>
+    </div>
+  </div>
+  <div class="sheet-body">
+    <div id="add-file">
+      <label class="drop" id="drop">
+        <span class="drop-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"></path></svg></span>
+        <strong>Drop a file here, or choose one</strong>
+        <span class="small muted">A video, image or audio file. It joins the library under its own type, next to your generated outputs.</span>
+        <input type="file" id="import-file" accept="video/*,image/*,audio/*">
+      </label>
+      <div class="row tight">
+        <span class="small muted grow" id="import-status" role="status">The library switches to the file's type and selects it.</span>
+        <button type="button" class="btn primary big" id="import-run" disabled>Add to library</button>
+      </div>
+    </div>
+
+    <div id="add-link" hidden>
+      <p class="small muted">Paste a video page link (YouTube, Bilibili, X and most video sites). The video joins the library, ready for Dubbing.</p>
+      <div class="row tight end">
+        <label class="stack grow small muted">Video URL <input class="field" type="url" id="url" placeholder="https://…"></label>
+        <label class="stack small muted">Quality <select class="field" id="quality"></select></label>
+      </div>
+      <div class="row tight">
+        <button type="button" class="btn primary big" id="download-run">Download video</button>
+        <button type="button" class="btn big" id="download-info">Check link</button>
+        <span class="grow"></span>
+        <button type="button" class="btn big quiet" id="download-stop">Interrupt</button>
+      </div>
+      <p class="note-box small" id="download-status" role="status" hidden></p>
+      <details class="cookies" id="cookies">
+        <summary>Cookies for sign-in downloads <span class="pill" id="cookie-count" hidden></span></summary>
+        <div class="stack-gap">
+          <p class="small muted">Age-restricted, members-only or sign-in videos need your browser's cookies for that site. They are stored privately on this server and used only for that site's links.</p>
+          <p class="small" id="cookie-summary"></p>
+          <div class="seg" role="group" aria-label="Cookie source" id="cookie-source">
+            <button type="button" data-cookie="curl" aria-pressed="true">From cURL</button>
+            <button type="button" data-cookie="file" aria-pressed="false">From cookies.txt</button>
+          </div>
+          <label class="stack small muted" id="curl-box">Copy as cURL
+            <textarea class="field mono" id="curl" rows="3" placeholder="curl 'https://www.youtube.com/…' -H 'cookie: …'"></textarea>
+            <span>Signed in, open DevTools → Network, right-click a request on the site → Copy → Copy as cURL (bash).</span>
+          </label>
+          <label class="stack small muted" id="cookie-file-box" hidden>Netscape cookies.txt
+            <input type="file" id="cookie-file" accept=".txt">
+          </label>
+          <div class="row tight end">
+            <label class="stack grow small muted">Site <input class="field" id="cookie-domain" placeholder="Detected from the command"></label>
+            <button type="button" class="btn" id="cookie-save">Save cookies</button>
+          </div>
+          <div class="row tight end line-above">
+            <label class="stack grow small muted">Saved site <select class="field" id="cookie-site"></select></label>
+            <button type="button" class="btn danger" id="cookie-delete">Delete cookies</button>
+          </div>
+          <span class="small muted" id="cookie-status" role="status"></span>
+        </div>
+      </details>
+    </div>
+
+    <div id="add-upkeep" hidden>
+      <div class="box">
+        <h3>Library upkeep</h3>
+        <p class="small muted">Scan historical media to add older or externally created files and repair missing previews.</p>
+        <div><button type="button" class="btn" id="scan">Scan historical media</button></div>
+        <span class="small muted" id="scan-status" role="status"></span>
+      </div>
+    </div>
+  </div>
+  <footer class="sheet-foot"><button type="button" class="btn" id="add-done">Done</button></footer>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

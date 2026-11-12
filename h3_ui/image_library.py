@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
+from types import SimpleNamespace
 
 import gradio as gr
 from .media_previews import browser_gallery_items
@@ -177,11 +179,12 @@ def library_image_value(source, current, *, validate_path, multiple=False):
     return source
 
 
-def build_media_image_destinations(view, destinations, *, validate_path, page_targets=None):
+def build_media_image_destinations(view, destinations, *, validate_path, page_targets=None, apply_on=()):
     """Send the selected library image to a named generator input.
 
     ``page_targets`` names inputs that live on a page outside Gradio: each takes the owner and the image's
-    path and answers what it did.
+    path and answers what it did. The answer's ``queue(owner, name, path)`` is the Media page's Set as;
+    what it queues for a Create input lands on the ``apply_on`` events (opening Create).
     """
     page_targets = dict(page_targets or {})
     slots = {
@@ -233,6 +236,10 @@ def build_media_image_destinations(view, destinations, *, validate_path, page_ta
                 raise gr.Error(str(exc)) from exc
         if name not in destinations:
             raise gr.Error("Choose an image input from Set as.")
+        return place(name, selected, values)
+
+    def place(name, selected, values):
+        """Updates that put ``selected`` in the input ``name``; ``values`` are the targets' current values."""
         group = slots[name]
         if len(group) > 1:
             component = next((c for c in group if not values[targets.index(c)]), None)
@@ -263,13 +270,58 @@ def build_media_image_destinations(view, destinations, *, validate_path, page_ta
                 updates[reference.h3_library_container] = gr.update(visible=True)
         return updates
 
+    target_inputs = [*targets] + ([shown] if shown is not None else [])
     apply.click(
         assign,
-        inputs=[view.mode, view.selected, destination, *targets]
-        + ([shown] if shown is not None else []),
+        inputs=[view.mode, view.selected, destination, *target_inputs],
         outputs=outputs, queue=True, concurrency_id="h3-settings",
         concurrency_limit=1, api_name=False, show_progress="hidden",
     )
+
+    # The Media page sits outside Gradio, so it can't fill a Create input itself: its Set as waits
+    # here for its owner and lands when that browser next opens Create.
+    pending: dict[str, list[tuple[str, str]]] = {}
+    lock = Lock()
+
+    def queue(owner: str, name: str, selected: str) -> str:
+        from h3_app.errors import H3Error
+
+        if name not in destinations and name not in page_targets:
+            raise H3Error("Choose an image input from Set as.")
+        try:
+            library_image_value(selected, None, validate_path=validate_path)
+        except gr.Error as exc:
+            raise H3Error(str(exc)) from exc
+        if name in page_targets:
+            return page_targets[name](owner, selected)
+        with lock:
+            pending.setdefault(owner, []).append((name, selected))
+        return f"Set image as {name}. Open Create to use it."
+
+    def apply_pending(request: gr.Request, *values):
+        from .job_admission import require_owner
+
+        with lock:
+            waiting = pending.pop(require_owner(request), [])
+        values, updates = list(values), {}
+        for name, selected in waiting:
+            try:
+                placed = place(name, selected, values)
+            except gr.Error as exc:
+                gr.Warning(str(exc))
+                continue
+            for component, update in placed.items():
+                updates[component] = update
+                if component in targets and isinstance(update, dict) and "value" in update:
+                    values[targets.index(component)] = update["value"]
+                elif shown is not None and component is shown:
+                    values[-1] = update
+        return updates
+
+    for trigger in apply_on:
+        trigger(apply_pending, inputs=target_inputs, outputs=outputs, queue=True, concurrency_id="h3-settings",
+                concurrency_limit=1, api_name=False, show_progress="hidden")
+    return SimpleNamespace(names=[*destinations, *page_targets], queue=queue)
 
 
 def bind_image_library(component, *, index, refresh_page, validate_path):

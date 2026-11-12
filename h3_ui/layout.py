@@ -19,6 +19,8 @@ IMAGE_FRAME = ('<iframe class="h3-video-frame" src="/image/" title="Image" '
                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 SONG_FRAME = ('<iframe class="h3-video-frame" src="/song/" title="Song" '
               'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+MEDIA_FRAME = ('<iframe class="h3-video-frame" src="/media/" title="Media" '
+               'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 # The Image and Song pages show their own model pills and their description, so the studio's stay away
 # for those tasks.
 PAGE_HELP = ""
@@ -170,7 +172,11 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                 with gr.Tab("Dubbing", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
-            gallery = gr.Column(elem_classes=["h3-gallery-shell"])
+            # Everything people do happens on the page at /media/ (media/page.py), outside Gradio.
+            gr.HTML(MEDIA_FRAME)
+            # The Gradio library stays built but unseen: it keeps the published API, the enhancement job
+            # callback and the components other views still read.
+            gallery = gr.Column(elem_classes=["h3-gallery-shell"], visible=False)
         with gr.Tab("Jobs", id="jobs") as jobs_tab:
             jobs = gr.Column(elem_classes=["h3-jobs-shell"])
         with gr.Tab("System", id="system") as system_tab:

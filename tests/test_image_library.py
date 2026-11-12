@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import gradio as gr
 
@@ -62,6 +62,41 @@ class ImageLibraryTests(unittest.TestCase):
             for mode, selected, name in (("Video", source, "First"), ("Image", None, "First"), ("Image", source, "Other")):
                 with self.subTest(mode=mode, selected=selected, name=name), self.assertRaises(gr.Error):
                     assign(None, mode, selected, name, *values)
+
+    def test_media_page_set_as_waits_for_its_owner_to_open_create(self):
+        from h3_app.errors import H3Error
+
+        with TemporaryDirectory() as directory:
+            source = str(Path(directory) / "original.png")
+            Path(source).touch()
+            received = []
+            with gr.Blocks() as demo:
+                first = build_image_input(type="filepath", label="First")
+                files = build_image_file_input(file_count="multiple", type="filepath", label="Refs")
+                create = gr.Tab("Create")
+                view = SimpleNamespace(actions=gr.Column(), mode=gr.Radio(["Image", "Video"]), selected=gr.State(None))
+                set_as = build_media_image_destinations(
+                    view, {"First": first, "Refs": files}, validate_path=Mock(),
+                    page_targets={"Song": lambda owner, path: received.append((owner, path)) or "Added to Song."},
+                    apply_on=[create.select],
+                )
+            self.assertEqual(set_as.names, ["First", "Refs", "Song"])
+            self.assertEqual(set_as.queue("alice", "Song", source), "Added to Song.")
+            self.assertEqual(received, [("alice", source)])
+            with self.assertRaisesRegex(H3Error, "Choose an image input"):
+                set_as.queue("alice", "Other", source)
+            with self.assertRaisesRegex(H3Error, "unavailable"):
+                set_as.queue("alice", "First", str(Path(directory) / "missing.png"))
+            self.assertEqual(set_as.queue("alice", "First", source), "Set image as First. Open Create to use it.")
+            set_as.queue("alice", "Refs", source)
+            apply = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "apply_pending")
+            with patch("h3_ui.job_admission.require_owner", side_effect=lambda request: request):
+                self.assertEqual(apply("bob", None, ["uploaded.png"]), {})
+                updates = apply("alice", None, ["uploaded.png"])
+                self.assertEqual(updates[first]["value"], source)
+                self.assertEqual(updates[files]["value"], ["uploaded.png", source])
+                # Each queued image lands once.
+                self.assertEqual(apply("alice", None, ["uploaded.png"]), {})
 
     def test_select_original_and_append_without_replacing_uploads(self):
         with TemporaryDirectory() as directory:

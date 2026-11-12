@@ -3,11 +3,21 @@
 The Media library and the upscale, restoration, HDR and interpolation methods
 available from Media and as automatic H3 finishing.
 
-Open **Media** to browse the video library (the default), or switch **Media
-type** to **Image** or **Audio**. Image mode includes generated Qwen/H3 stills
+Open **Media** to browse the video library (the default), or switch the type
+at the top to **Image** or **Audio**; each shows its item count. Media is its own
+page at `/media/` (`h3_ui/media/page.py`), outside Gradio like Song and Image;
+the Gradio library stays built but hidden for the published API and the
+enhancement job. Image mode includes generated Qwen/H3 stills
 and SeedVR2 results; Audio mode includes MiniMax H3, MiniMax Music 3, and YuE2
-outputs. All three use the same card, preview, settings, import, and download
-layout. **Import local media** accepts a matching file for the active library.
+outputs. All three use the same card grid and inspector: the preview, Favorite,
+download, and the **Details**, **Tags & lineage** and **Enhance selected media**
+tabs. Search filters as you type. **Add media** opens one sheet with **From your
+computer** (a video, image or audio file joins the library under its own type
+and is selected), **From a link** (yt-dlp download with saved sign-in cookies)
+and **Library upkeep** (Scan historical media). **Set as** sends the selected
+image to a Create input; it lands the next time you open **Create**.
+**Delete selected…** and **Empty library…** list what goes and ask once more;
+media used by a queued or active job stays protected.
 New and imported images, videos, and audio create their thumbnails and catalog
 metadata when they are saved. The persistent SQLite catalog lives at
 `outputs/.h3-workspace/workspace.sqlite3`, and thumbnails live in
