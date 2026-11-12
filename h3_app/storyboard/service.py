@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.media_review import review_path
 from h3_app.processes import run_media_process
 
 from . import model
@@ -491,6 +492,7 @@ class StoryboardService:
                 path = Path(value) if Path(value).is_absolute() else self.output_path(value)
                 path.unlink(missing_ok=True)
                 Path(str(path) + ".settings.json").unlink(missing_ok=True)
+                review_path(path).unlink(missing_ok=True)
 
     def _all_ids(self):
         with self.store.connect() as db:

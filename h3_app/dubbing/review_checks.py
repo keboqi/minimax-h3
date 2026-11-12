@@ -2,8 +2,8 @@
 
 Translation checks ask Gemini Decision two yes/no questions per line in batched requests
 (does the translation keep the original's meaning, and does it sound like natural speech).
-Lines that fail are marked under the line as voiced, like failed takes, so editing the
-translation clears the mark.
+Lines that fail are marked under the line as checked (its start, speaker and both texts),
+so editing the original or the translation clears the mark.
 
 Combine suggestions are fixed rules over times, speakers and punctuation; they only
 pick lines for the viewer to review, and nothing is combined until the viewer says so.
@@ -28,9 +28,35 @@ NATURAL_THRESHOLD = 0.35
 LINES_PER_REQUEST = 100
 
 
+def _check_mark(line: dict) -> tuple[float, str, str, str]:
+    """What a translation-check mark is filed under: the line as checked, not its position, so
+    adding or deleting other lines keeps it and editing this line's start or either text drops it."""
+    return (round(float(line["start"]), 3), str(line.get("speaker") or ""), str(line["source"]),
+            str(line["translation"]))
+
+
+def _stored_checks(session: sessions.Session) -> dict[tuple[float, str, str, str], str]:
+    marks = {}
+    stored = session.data.get(TRANSLATION_CHECKS)
+    for entry in stored if isinstance(stored, list) else ():
+        try:
+            marks[_check_mark(entry)] = str(entry["reason"])
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return marks
+
+
+def _save_checks(latest: sessions.Session, marks: dict[tuple[float, str, str, str], str]) -> None:
+    latest.data[TRANSLATION_CHECKS] = [
+        {"start": start, "speaker": speaker, "source": source, "translation": translation, "reason": reason}
+        for (start, speaker, source, translation), reason in marks.items()]
+
+
 def translation_checks(session: sessions.Session) -> dict[int, str]:
-    """The lines a translation check flagged, with why; editing a line's translation clears it."""
-    return pipeline._line_marks(session, TRANSLATION_CHECKS)
+    """The voiced lines a translation check flagged, with why; editing a line's text clears it."""
+    marks = _stored_checks(session)
+    return {index: marks[_check_mark(line)] for index, line in enumerate(session.segments)
+            if line["translation"] and line.get("dub", True) and _check_mark(line) in marks}
 
 
 def _questions(index: int, line: dict, target: str, same: bool) -> dict[str, dict[str, Any]]:
@@ -95,15 +121,15 @@ def check_translations(session_id: str, indices: list[int] | None, *, runtime,
                 continue
             answered.add(index)
             verdicts[index] = _reason(meaning, natural)
-    marked = {pipeline._take_mark(lines[i]): reason for i, reason in verdicts.items() if reason}
-    cleared = {pipeline._take_mark(lines[i]) for i in answered}
+    marked = {_check_mark(lines[i]): reason for i, reason in verdicts.items() if reason}
+    cleared = {_check_mark(lines[i]) for i in answered}
 
     def change(latest: sessions.Session) -> None:
-        current = {pipeline._take_mark(line) for line in latest.segments}
-        marks = {mark: reason for mark, reason in pipeline._stored_marks(latest, TRANSLATION_CHECKS).items()
+        current = {_check_mark(line) for line in latest.segments}
+        marks = {mark: reason for mark, reason in _stored_checks(latest).items()
                  if mark in current and mark not in cleared}
         marks.update({mark: reason for mark, reason in marked.items() if mark in current})
-        pipeline._save_marks(latest, TRANSLATION_CHECKS, marks)
+        _save_checks(latest, marks)
 
     sessions.modify(session, change)
     session = sessions.load(runtime, session_id)

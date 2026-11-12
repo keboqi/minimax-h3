@@ -35,6 +35,7 @@ from h3_app.workflows.relayvsr import (
 )
 from h3_app.jobs import record_failure
 from h3_app.provenance import copy_media, score_path, snapshot_path
+from h3_app.media_review import review_path
 from h3_app.status import progress_status
 from h3_app.workflows.upscale import (
     required_cq_image_enhance_nodes,
@@ -996,6 +997,7 @@ class MediaController:
         self.forget_gallery_metadata(media)
         snapshot_path(media).unlink(missing_ok=True)
         score_path(media).unlink(missing_ok=True)
+        review_path(media).unlink(missing_ok=True)
         thumbnail.unlink(missing_ok=True)
         placeholder.unlink(missing_ok=True)
         return media.name

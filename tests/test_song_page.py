@@ -338,6 +338,14 @@ class SongPageTests(unittest.TestCase):
             workspace = output / "workspace" if output.name == "nested" else self.root / "workspace"
             root = private_song_root(runtime, workspace)
             self.assertFalse(any(root.is_relative_to(public) for public in (output, runtime.output_dir)))
+        # A workspace inside the ComfyUI folder when the outputs folder is elsewhere moves out of the
+        # folder that holds it, and two workspaces keep separate drafts.
+        runtime = SimpleNamespace(outputs_dir=self.root / "outputs", output_dir=self.root / "comfy")
+        first = private_song_root(runtime, self.root / "comfy" / "a")
+        second = private_song_root(runtime, self.root / "comfy" / "b")
+        self.assertNotEqual(first, second)
+        self.assertFalse(any(path.is_relative_to(public) for path in (first, second)
+                             for public in (runtime.outputs_dir.resolve(), runtime.output_dir.resolve())))
 
 
 if __name__ == "__main__":

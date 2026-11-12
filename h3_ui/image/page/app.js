@@ -401,10 +401,13 @@
     const review = current?.review;
     box.hidden = !review;
     clearTimeout(reviewTimer);
+    // Every result of a batch is scored on its own; keep asking while any of them is pending.
+    if (current && app.s.results.images.some((item) => item.review?.status === "pending")) {
+      reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
+    }
     if (!review) return;
     if (review.status === "pending") {
       box.replaceChildren(h("span", {class: "muted", text: "Scoring the result against the prompt…"}));
-      reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
     } else if (review.status === "done") {
       box.replaceChildren(
         h("span", {class: `chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`, title: "How well the result fits its prompt, scored by Gemini Decision", text: `Prompt fit ${review.fit} · ${review.label}`}),

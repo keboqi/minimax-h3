@@ -132,13 +132,15 @@ def key_of(engine: str, parameter: str) -> str:
 
 def private_song_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots."""
-    outputs = runtime.outputs_dir.resolve()
-    comfy = runtime.output_dir.resolve()
+    publics = (runtime.outputs_dir.resolve(), runtime.output_dir.resolve())
     root = (workspace / "song-page").resolve()
-    if any(root.is_relative_to(public) for public in (outputs, comfy)):
-        outer = comfy if outputs.is_relative_to(comfy) else outputs
-        root = (outer.with_name(f".{outer.name}-song-drafts") / outputs.relative_to(outer)).resolve()
-        if any(root.is_relative_to(public) for public in (outputs, comfy)):
+    holding = [public for public in publics if root.is_relative_to(public)]
+    if holding:
+        # The outermost served folder that holds the drafts; they move beside it, keeping their own
+        # path inside it so two workspaces never share one drafts folder.
+        outer = min(holding, key=lambda public: len(public.parts))
+        root = (outer.with_name(f".{outer.name}-song-drafts") / root.relative_to(outer)).resolve()
+        if any(root.is_relative_to(public) for public in publics):
             raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private song drafts.")
     return root
 

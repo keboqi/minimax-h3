@@ -23,7 +23,7 @@
   const app = {
     boot: null, mode: "Video", query: "", favorite: false, engine: "", sort: "newest", limit: 48,
     items: [], selected: null, item: null, tab: "details", stage: "audio",
-    pair: {kind: null, a: null, b: null}, pairMessage: null, runs: {}, seen: {}, polling: false, results: null,
+    pair: {kind: null, a: null, b: null}, pairMessage: null, runs: {}, seen: {}, baselined: false, polling: false, results: null,
   };
 
   const request = async (method, path, body, {form = false} = {}) => {
@@ -401,9 +401,13 @@
       node.textContent = run.error ? `${run.status} ${run.error}` : run.status;
       node.hidden = false;
       const seen = app.seen[kind];
-      if (seen && seen.id === run.id && seen.active && !run.active) finished(run);
+      const watched = seen && seen.id === run.id && seen.active;
+      const unseen = app.baselined && (!seen || seen.id !== run.id);
+      if (!run.active && (watched || unseen)) finished(run);
       app.seen[kind] = {id: run.id, active: run.active};
     }
+    // Runs reported before this point were there when the page opened; they never complete here.
+    app.baselined = true;
     $("scan").disabled = Boolean(app.runs.scan?.active);
     $("download-run").disabled = Boolean(app.runs.download?.active);
     $("enhance-run").disabled = Boolean(app.runs.enhance?.active);

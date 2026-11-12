@@ -126,11 +126,18 @@ def score_fraction(answer: Mapping[str, Any] | None) -> float | None:
 def _post(http: requests.Session, key: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     for attempt in range(3):
-        response = http.post(ENDPOINT, headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-                             json=body, timeout=max(1.0, deadline - time.monotonic()))
         backoff = 2.0 * (attempt + 1)
-        if response.ok or response.status_code not in RETRY_STATUS or attempt == 2 \
-                or deadline - time.monotonic() < backoff + 5:
+        last = attempt == 2 or deadline - time.monotonic() < backoff + 5
+        try:
+            response = http.post(ENDPOINT, headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                                 json=body, timeout=max(1.0, deadline - time.monotonic()))
+        except (requests.Timeout, requests.ConnectionError):
+            # A dropped connection or a slow answer is as transient as a 503.
+            if last:
+                raise
+            time.sleep(backoff)
+            continue
+        if response.ok or response.status_code not in RETRY_STATUS or last:
             break
         time.sleep(backoff)
     if not response.ok:
@@ -152,8 +159,8 @@ def decide(questions: Mapping[str, dict[str, Any]], input: Any, *, key: str,
     ``input`` is shared by every request: a string, one block or a list of blocks. Questions
     go out ``chunk`` at a time. A chunk the API refuses as a bad request (a blocked item or a
     limit) is retried in halves until single questions fail, which are then skipped, up to
-    ``MAX_REFUSED`` refusals; a lone question refused before any answer means the input itself
-    is blocked, and stops it. Any other failure (a bad key, rate limits, no connection) stops
+    ``MAX_REFUSED`` refusals; two lone questions refused before any answer mean the input itself
+    is blocked, and stop it. Any other failure (a bad key, rate limits, no connection) stops
     at once. If nothing at all could be answered, the first error is raised.
     """
     items = list(questions.items())
@@ -165,9 +172,10 @@ def decide(questions: Mapping[str, dict[str, Any]], input: Any, *, key: str,
     found: dict[str, dict[str, Any]] = {}
     first_error: DecisionError | None = None
     refused = 0
+    lone_refusals = 0
 
     def ask(part: list[tuple[str, dict[str, Any]]]) -> None:
-        nonlocal first_error, refused
+        nonlocal first_error, refused, lone_refusals
         try:
             found.update(_post(http, key, {"model": MODEL, "input": input, "questions": dict(part)}, timeout))
         except requests.RequestException as exc:
@@ -175,9 +183,12 @@ def decide(questions: Mapping[str, dict[str, Any]], input: Any, *, key: str,
         except DecisionError as exc:
             first_error = first_error or exc
             refused += 1
-            # A single question refused before anything was answered means the shared input itself
-            # is blocked; splitting further would only repeat the refusal for every question.
-            if exc.status != 400 or refused > MAX_REFUSED or (len(part) == 1 and not found):
+            if len(part) == 1 and not found:
+                lone_refusals += 1
+            # Two single questions refused before anything was answered means the shared input itself
+            # is blocked (one alone may just be a bad first question); splitting further would only
+            # repeat the refusal for every question.
+            if exc.status != 400 or refused > MAX_REFUSED or lone_refusals >= 2:
                 raise
             if len(part) > 1:
                 middle = len(part) // 2

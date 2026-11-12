@@ -32,6 +32,8 @@ export const app = {
   focus: 0,
   picks: new Set(),
   mergeGroups: [],
+  // The lines as they were when the picks and mergeGroups were made; see lineSignature.
+  linesSignature: "",
   mergeRelabel: false,
   checking: false,
   filter: "all",
@@ -141,6 +143,13 @@ export function go(screen) {
 // Sessions, projects and runs
 // ---------------------------------------------------------------------------
 
+// What identifies each line by position: its start, speaker and original text. Picks and combine
+// suggestions hold line numbers, so they are only valid while this is unchanged; translations,
+// Dub switches and end times may still be edited.
+export function lineSignature(session) {
+  return JSON.stringify((session?.board.lines || []).map((line) => [line.s, line.speakerId, line.source]));
+}
+
 export function setSession(session, {focus, keepSettings = false} = {}) {
   const changed = !app.session || app.session.id !== session?.id;
   app.session = session;
@@ -152,6 +161,14 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
     app.linesRequest = null;
     if (session && !keepSettings) app.settings.voice_mode = session.voice_default;
   }
+  const signature = lineSignature(session);
+  if (!changed && signature !== app.linesSignature) {
+    // Lines were added, deleted, moved or changed: picked and detected line numbers no longer fit.
+    app.picks = new Set();
+    app.mergeGroups = [];
+    if (app.filter === "combine") app.filter = "all";
+  }
+  app.linesSignature = signature;
   if (typeof focus === "number") app.focus = focus;
   const count = session?.board.lines.length || 0;
   app.focus = count ? Math.min(Math.max(0, app.focus), count - 1) : 0;

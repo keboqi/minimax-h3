@@ -57,6 +57,19 @@ class DecisionClientTests(unittest.TestCase):
         http.post.side_effect = post
         questions = {"a": decisions.yes_no("A?"), "bad": decisions.yes_no("B?"), "c": decisions.yes_no("C?")}
         self.assertEqual(set(decisions.decide(questions, "x", key="k", http=http)), {"a", "c"})
+        # The blocked question first: the others are still answered.
+        first = {"bad": decisions.yes_no("B?"), "a": decisions.yes_no("A?"), "c": decisions.yes_no("C?")}
+        self.assertEqual(set(decisions.decide(first, "x", key="k", http=http)), {"a", "c"})
+
+    def test_a_dropped_connection_is_retried(self):
+        import requests
+
+        http = MagicMock()
+        http.post.side_effect = [requests.ConnectionError("reset"),
+                                 response(payload={"answers": {"q": {"type": "noul", "noul": 0.7}}})]
+        with patch.object(decisions.time, "sleep"):
+            answers = decisions.decide({"q": decisions.yes_no("?")}, "x", key="k", http=http)
+        self.assertEqual(decisions.yes_probability(answers["q"]), 0.7)
 
     def test_a_blocked_input_is_not_retried_for_every_question(self):
         http = MagicMock()
@@ -218,6 +231,18 @@ class DubReviewPageTests(PageTests):
             "session": created.id, "key": {"index": 2, "start": line["s"], "speaker": line["speakerId"], "source": line["source"]},
             "start": "0:05.000", "end": "0:07.000", "speaker": line["speakerId"], "original": line["source"],
             "translation": "It is cold.", "dub": True}).json()
+        self.assertEqual(saved["session"]["board"]["lines"][2]["check"], "")
+
+    def test_fixing_the_original_clears_a_translation_check(self):
+        created = self.session([dict(line) for line in self.LINES], target_language="English")
+        decide = lambda questions, context, *, key, **kwargs: {
+            name: {"type": "noul", "noul": 0.1 if name == "meaning_2" else 0.9} for name in questions}
+        with patch.object(decisions, "key_or_none", return_value="k"), patch.object(decisions, "decide", side_effect=decide):
+            line = self.client.post(f"{API}/check-translations", json={"session": created.id}).json()["session"]["board"]["lines"][2]
+        saved = self.client.patch(f"{API}/line", json={
+            "session": created.id, "key": {"index": 2, "start": line["s"], "speaker": line["speakerId"], "source": line["source"]},
+            "start": "0:05.000", "end": "0:07.000", "speaker": line["speakerId"], "original": "Il fait chaud.",
+            "translation": line["translation"], "dub": True}).json()
         self.assertEqual(saved["session"]["board"]["lines"][2]["check"], "")
 
     def test_translation_check_needs_a_key(self):

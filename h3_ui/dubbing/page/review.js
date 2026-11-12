@@ -56,7 +56,8 @@ function summary(app) {
       <span><b class="big ok">${r.voiced}</b> edited · will be voiced</span>
       <span><b class="big">${r.kept}</b> unchanged · original audio</span>
       ${r.failed.length ? `<span><b class="big fail">${r.failed.length}</b> take failed</span>` : ""}
-      ${r.long.length ? `<span><b class="big warn">${r.long.length}</b> may be too long</span>` : ""}`;
+      ${r.long.length ? `<span><b class="big warn">${r.long.length}</b> may be too long</span>` : ""}
+      ${r.issues.length ? `<span><b class="big warn">${r.issues.length}</b> to check</span>` : ""}`;
   }
   return `
     <span><b class="big">${r.voiced}</b> ready</span>
@@ -366,14 +367,17 @@ function saveLine(app, fields) {
   });
 }
 
+// Returns whether the edit was saved; a refusal is reported and leaves the page as it was.
 async function edit(app, path, body) {
   try {
     const data = await api.post(path, {session: app.session.id, ...body});
     app.setSession(data.session, {focus: data.focus});
     if (data.status) toast(data.status.replace(/\*\*/g, ""));
     app.render();
+    return true;
   } catch (error) {
     toast(error.message, {error: true});
+    return false;
   }
 }
 
@@ -463,11 +467,13 @@ export function bindReview(app) {
         app.render();
       }
     } else if (action === "merge-groups") {
-      const groups = pickedGroups(app);
-      app.picks.clear();
-      app.mergeGroups = [];
-      if (app.filter === "combine") app.filter = "all";
-      await edit(app, "line/merge-groups", {groups, relabel: app.mergeRelabel});
+      // The picks and groups are cleared only once the lines are combined, so a refusal keeps them.
+      if (await edit(app, "line/merge-groups", {groups: pickedGroups(app), relabel: app.mergeRelabel})) {
+        app.picks.clear();
+        app.mergeGroups = [];
+        if (app.filter === "combine") app.filter = "all";
+        app.render();
+      }
     } else if (action === "check-translations") {
       app.checking = true;
       app.render();
@@ -539,9 +545,11 @@ export function bindReview(app) {
       }
     } else if (action === "merge-lines") {
       const picked = [...app.picks].sort((a, b) => a - b);
-      app.picks.clear();
-      app.mergeGroups = [];
-      await edit(app, "line/merge", {picked});
+      if (await edit(app, "line/merge", {picked})) {
+        app.picks.clear();
+        app.mergeGroups = [];
+        app.render();
+      }
     } else if (action === "add-line") {
       edit(app, "line/add", {focus: app.focus});
     } else if (action === "delete-line") {
