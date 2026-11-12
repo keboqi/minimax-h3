@@ -119,6 +119,25 @@ class WorkshopPageTests(PageTests):
         table = self.client.put(f"{API}/lines", json={"session": created.id, "rows": rows}).json()
         self.assertEqual(table["session"]["board"]["lines"][0]["translation"], "Bonjour")
 
+    def test_combining_picked_lines(self):
+        created = self.session([
+            {"start": 1, "end": 2, "speaker": "speaker1", "source": "赫恩篇", "translation": "Horn story"},
+            {"start": 3, "end": 4.3, "speaker": "speaker1", "source": "盗版危机", "translation": "Piracy crisis",
+             "dub": False},
+            {"start": 5, "end": 6, "speaker": "speaker1", "source": "第三集", "translation": ""},
+            {"start": 8, "end": 9, "speaker": "speaker2", "source": "Hi", "translation": "Salut"}])
+        merged = self.client.post(f"{API}/line/merge", json={"session": created.id, "picked": [2, 0, 1]}).json()
+        lines = merged["session"]["board"]["lines"]
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(merged["focus"], 0)
+        self.assertEqual((lines[0]["s"], lines[0]["e"], lines[0]["source"], lines[0]["translation"], lines[0]["dub"]),
+                         (1, 6, "赫恩篇盗版危机第三集", "Horn story Piracy crisis", True))
+        self.assertIn("Combined 3 lines", merged["status"])
+        other = self.client.post(f"{API}/line/merge", json={"session": created.id, "picked": [0, 1]}).json()
+        self.assertIn("one speaker", other["error"])
+        self.assertIn("two or more", self.client.post(f"{API}/line/merge",
+                                                      json={"session": created.id, "picked": [0]}).json()["error"])
+
     def test_runs_report_progress_and_open_the_analyzed_session(self):
         analyzed = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
 

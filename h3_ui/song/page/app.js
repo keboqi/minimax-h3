@@ -43,7 +43,7 @@
     "Polish my lyrics": "Polish fixes structure, long lines and rhymes but keeps your meaning; you review every change.",
   };
 
-  const app = {boot: null, s: null, runs: {}, gpu: false, tab: "lyrics", polling: false, writeSeen: null};
+  const app = {boot: null, s: null, runs: {}, settled: {}, gpu: false, tab: "lyrics", polling: false, writeSeen: null};
 
   const request = async (method, path, body, {form = false} = {}) => {
     const options = {method, credentials: "same-origin"};
@@ -83,6 +83,9 @@
     if (!answer) return;
     if (answer.state) app.s = answer.state;
     if (answer.runs) app.runs = answer.runs;
+    if (answer.state) {
+      for (const [kind, run] of Object.entries(app.runs)) if (run && !run.active) app.settled[kind] = run.id;
+    }
     if (answer.gpu !== undefined) app.gpu = answer.gpu;
     render();
     if (Object.values(app.runs).some((run) => run?.active)) poll();
@@ -365,9 +368,13 @@
     const compare = Boolean(app.s.ui.compare) && items.length > 1;
     $("takes-summary").textContent = summary;
     seg($("view-mode"), [["Listen", false], ["Compare A / B", true]], compare, (value) => {
-      saveUi({compare: value});
-      if (value && (b === null || b === undefined) && items.length > 1) selectTakes({b: a === items.length - 1 ? items.length - 2 : items.length - 1});
-      else render();
+      if (value && (b === null || b === undefined) && items.length > 1) {
+        app.s.ui = {...app.s.ui, compare: true};
+        selectTakes({compare: true, b: a === items.length - 1 ? items.length - 2 : items.length - 1});
+      } else {
+        saveUi({compare: value});
+        render();
+      }
     });
     $("view-mode").hidden = items.length < 2;
     const run = app.runs.generate;
@@ -497,9 +504,11 @@
   };
 
   // Runs --------------------------------------------------------------------
+  const hasUnsettledRun = (runs) => Object.entries(runs || {}).some(([kind, run]) => run && !run.active && app.settled[kind] !== run.id);
   const startRun = guard(async (path) => {
     await saveDraft();
-    take(await post(path));
+    const answer = await post(path);
+    take(hasUnsettledRun(answer?.runs) ? await request("GET", "/run?state=true") : answer);
   });
   const poll = async () => {
     if (app.polling) return;
@@ -507,10 +516,8 @@
     try {
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        const before = app.runs;
         const answer = await request("GET", "/run");
-        const settled = Object.keys(answer.runs).some((kind) => before[kind]?.active && !answer.runs[kind]?.active);
-        take(settled ? await request("GET", "/run?state=true") : answer);
+        take(hasUnsettledRun(answer.runs) ? await request("GET", "/run?state=true") : answer);
         if (!Object.values(app.runs).some((run) => run?.active)) break;
       }
     } catch (error) {

@@ -15,7 +15,7 @@ from h3_app.jobs import JOBS
 from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
 from h3_ui import application as gradio_app
 from h3_ui.job_bindings import owned_generation
-from h3_ui.song.page import JOB_ORDER, SongPageState, install_song_page, score_and_mode
+from h3_ui.song.page import JOB_ORDER, SongPageState, install_song_page, private_song_root, score_and_mode
 
 API = "/song/api"
 
@@ -218,7 +218,9 @@ class SongPageTests(unittest.TestCase):
         self.assertEqual((takes["a"], takes["b"]), (1, 0))
         self.assertIn("lyrics", takes["details"])
         # Back to take 1's draft, and its seed.
-        self.post("/takes/select", a=0, b=1)
+        selected = self.post("/takes/select", a=0, b=1, compare=True)["state"]
+        self.assertTrue(selected["ui"]["compare"])
+        self.assertEqual((selected["takes"]["a"], selected["takes"]["b"]), (0, 1))
         state = self.post("/takes/reuse-draft", index=0)["state"]
         self.assertEqual(state["draft"]["lyrics"], "[Chorus]\nLa")
         self.assertEqual(state["brief"]["duration"]["value"], 60)
@@ -327,6 +329,15 @@ class SongPageTests(unittest.TestCase):
         state = self.ok(self.client.get(f"{API}/run?state=true"))["state"]
         self.assertEqual(state["writer"]["gemini_api_key"], "secret-key")
         self.assertIn("openai_base_url", {row["name"] for row in state["writer_rows"]})
+
+    def test_private_song_root_stays_outside_both_public_output_roots(self):
+        from types import SimpleNamespace
+
+        for output in (self.root / "public" / "nested", self.root / "separate"):
+            runtime = SimpleNamespace(outputs_dir=output, output_dir=self.root / "public")
+            workspace = output / "workspace" if output.name == "nested" else self.root / "workspace"
+            root = private_song_root(runtime, workspace)
+            self.assertFalse(any(root.is_relative_to(public) for public in (output, runtime.output_dir)))
 
 
 if __name__ == "__main__":

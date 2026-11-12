@@ -132,9 +132,13 @@ def key_of(engine: str, parameter: str) -> str:
 
 def private_song_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots."""
+    outputs = runtime.outputs_dir.resolve()
+    comfy = runtime.output_dir.resolve()
     root = (workspace / "song-page").resolve()
-    for public in (runtime.outputs_dir.resolve(), runtime.output_dir.resolve()):
-        if root.is_relative_to(public):
+    if any(root.is_relative_to(public) for public in (outputs, comfy)):
+        outer = comfy if outputs.is_relative_to(comfy) else outputs
+        root = (outer.with_name(f".{outer.name}-song-drafts") / outputs.relative_to(outer)).resolve()
+        if any(root.is_relative_to(public) for public in (outputs, comfy)):
             raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private song drafts.")
     return root
 
@@ -679,6 +683,8 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
                     if value is not None:
                         pages.take_at(state, value)
                     state["ui"][f"{engine}_{side}"] = value
+            if "compare" in body:
+                state["ui"]["compare"] = bool(body["compare"])
 
         return edit(request, change)
 

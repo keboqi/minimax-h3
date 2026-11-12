@@ -239,8 +239,8 @@ def bind_workspace_navigation(
         Restoration keeps the saved dimensions; only a task switch realigns
         them for the new result format.
         """
-        if task == "Image":
-            # Image has its own composer; visiting it must not rewrite Video settings.
+        if task in PAGE_TABS:
+            # Image and Song have their own composers; visiting them must not rewrite Video settings.
             return [gr.skip() for _ in (*controller.outputs, *layout_outputs)]
         values = list(values)
         session = values[-1]
