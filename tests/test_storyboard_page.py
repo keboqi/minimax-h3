@@ -377,6 +377,82 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(joined, [False])
         self.assertEqual(self.client.get(run["result_url"]).content, b"mp4")
 
+    def wait_for_auto(self):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            auto = self.client.get(f"{API}/auto?boards=false").json()["auto"]
+            if auto and not auto["active"]:
+                return auto
+            time.sleep(0.01)
+        self.fail("Auto render never finished.")
+
+    def fake_render(self, document, destination, *, include_outdated=True):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"mp4")
+        return destination
+
+    def test_auto_render_generates_and_exports_each_selected_storyboard_in_turn(self):
+        first, second, unselected = self.create(), self.create("Alpha.\n\n---\n\nBeta."), self.create()
+        published = []
+        self.handlers.services = replace(self.handlers.services,
+                                         publish=lambda path, metadata: published.append(metadata["storyboard"]["id"]))
+        listed = {row["id"]: row for row in self.client.get(f"{API}/auto").json()["boards"]}
+        self.assertEqual((listed[second["id"]]["pending"], listed[second["id"]]["needs_input"]), (2, []))
+        with patch.object(self.service, "render", self.fake_render):
+            started = self.client.post(f"{API}/auto", json={"ids": [first["id"], second["id"]]})
+            self.assertEqual(started.status_code, 200, started.text)
+            again = self.client.post(f"{API}/auto", json={"ids": [unselected["id"]]})
+            auto = self.wait_for_auto()
+        self.assertEqual(again.status_code, 400)
+        self.assertEqual([item["state"] for item in auto["items"]], ["exported", "exported"])
+        self.assertEqual(published, [first["id"], second["id"]])
+        self.assertEqual(self.client.get(f"{API}/boards/{second['id']}").json()["done"], 2)
+        self.assertEqual(self.client.get(f"{API}/boards/{unselected['id']}").json()["done"], 0)
+        self.assertEqual(self.client.get(f"{API}/boot").json()["auto"]["id"], auto["id"])
+
+    def test_auto_render_does_not_export_a_storyboard_with_scenes_that_need_input(self):
+        blocked, ready = self.create(), self.create("Alpha.")
+        self.client.patch(self.scene_url(blocked, 1), json={"prompt": ""})
+        published = []
+        self.handlers.services = replace(self.handlers.services,
+                                         publish=lambda path, metadata: published.append(metadata["storyboard"]["id"]))
+        listed = {row["id"]: row for row in self.client.get(f"{API}/auto").json()["boards"]}
+        self.assertEqual(listed[blocked["id"]]["needs_input"], [2])
+        with patch.object(self.service, "render", self.fake_render):
+            self.client.post(f"{API}/auto", json={"ids": [blocked["id"], ready["id"]]})
+            auto = self.wait_for_auto()
+        self.assertEqual([item["state"] for item in auto["items"]], ["incomplete", "exported"])
+        self.assertIn("scene 2, 3", auto["items"][0]["detail"])
+        self.assertEqual(published, [ready["id"]])
+        self.assertEqual(self.client.get(f"{API}/boards/{blocked['id']}").json()["done"], 1)
+
+    def test_stopping_auto_render_interrupts_the_current_storyboard_and_skips_the_rest(self):
+        started, release = Event(), Event()
+        finish = self.fake_take
+
+        def held(values, graph, outputs):
+            started.set()
+            release.wait(10)
+            yield from finish(values, graph, outputs)
+
+        self.handlers.services = replace(self.handlers.services, generate_take=held)
+        first, second = self.create(), self.create()
+        self.client.post(f"{API}/auto", json={"ids": [first["id"], second["id"]]})
+        self.assertTrue(started.wait(10))
+        try:
+            deadline = time.monotonic() + 10
+            while (self.client.get(f"{API}/boards/{first['id']}/run").json()["run"] or {}).get("status", "").startswith(
+                    "Waiting") and time.monotonic() < deadline:
+                time.sleep(0.01)
+            stopped = self.client.post(f"{API}/auto/stop").json()
+            self.assertTrue(stopped["auto"]["stopping"])
+            self.assertEqual([family for family, _ in self.interrupted], ["storyboard"])
+        finally:
+            release.set()
+        auto = self.wait_for_auto()
+        self.assertEqual([item["state"] for item in auto["items"]], ["stopped", "stopped"])
+        self.assertEqual(self.client.get(f"{API}/boards/{second['id']}").json()["done"], 0)
+
     def test_page_and_assets_are_served(self):
         self.assertIn("app.js", self.client.get("/storyboard/").text)
         self.assertEqual(self.client.get("/storyboard/app.js").status_code, 200)

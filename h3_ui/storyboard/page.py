@@ -31,6 +31,7 @@ from h3_app.workspace_store import request_owner
 from ..job_admission import execute_accepted
 # Compatibility exports for existing callers.
 from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
+from .auto import AutoRenders
 from .handlers import GENERATE_REMAINING, GENERATE_SCENE, SWITCH_AND_REGENERATE, StoryboardHandlers
 from .payload import board_payload, file_url, referenced_paths
 
@@ -91,6 +92,50 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             return None
         return run.public(handlers.running_scene.get((owner, storyboard_id)) if run.kind == "generate" else None)
 
+    def start_generation(owner, storyboard_id, action, session, scene_id=None, take_id=None) -> Run:
+        def work(run):
+            # Accepted here, once this is the storyboard's only run: a refused run leaves no job.
+            job = JOBS.accept(owner, "storyboard", [action, storyboard_id, scene_id, take_id],
+                              callback=handlers.run_job, output_indices=(1,), key=uuid.uuid4().hex)
+            run.job_id = job.id
+            try:
+                for status, changed in execute_accepted(job.id, session):
+                    run.status = status
+                    if changed:
+                        run.revision += 1
+            finally:
+                handlers.running_scene.pop((owner, storyboard_id), None)
+
+        return runs.start(Run(owner, storyboard_id, "generate"), work)
+
+    def start_join(owner, storyboard_id, include, export) -> Run:
+        def work(run):
+            run.status = "Exporting to Media…" if export else "Joining the takes…"
+            if export:
+                path = handlers.export(owner, storyboard_id, include)
+                run.message = f"Exported {path.name} to Media and saved a version."
+            else:
+                path = handlers.play_all(owner, storyboard_id, include)
+                run.result_url = file_url(storyboard_id, str(path), v=path.stat().st_mtime_ns)
+                run.message = "Full video ready. Continuing scenes drop their repeated opening; fresh starts cut."
+            run.status = "Done."
+
+        return runs.start(Run(owner, storyboard_id, "export" if export else "join"), work)
+
+    autos = AutoRenders(
+        lambda: handlers.service,
+        start_generation=lambda owner, storyboard_id, session: start_generation(
+            owner, storyboard_id, GENERATE_REMAINING, session),
+        # Every scene is current by then, so nothing out of date is joined.
+        start_export=lambda owner, storyboard_id: start_join(owner, storyboard_id, False, True),
+        interrupt=(None if interrupt is None else
+                   lambda session, run: interrupt(session, family="storyboard", job_id=run.job_id)),
+    )
+
+    def auto_payload(owner):
+        queue = autos.latest(owner)
+        return queue.public() if queue is not None else None
+
     @app.get("/storyboard", include_in_schema=False)
     def storyboard_redirect():
         return RedirectResponse("/storyboard/")
@@ -115,7 +160,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                        for row in handlers.service.list(owner)],
             "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],
             "overlaps": list(OVERLAP_FRAMES), "max_takes": MAX_TAKES_PER_RUN,
-            "library": handlers.library is not None,
+            "library": handlers.library is not None, "auto": auto_payload(owner),
             "enhance": handlers.services.enhance_prompt is not None,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_default": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS)},
@@ -410,23 +455,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         board = handlers.service.load(owner, storyboard_id)
         if action == GENERATE_SCENE:
             sb.check_scene(board, handlers.service.scene_index(board, body.get("scene_id")))
-        session = session_of(request)
-
-        def work(run):
-            # Accepted here, once this is the storyboard's only run: a refused run leaves no job.
-            job = JOBS.accept(owner, "storyboard",
-                              [action, storyboard_id, body.get("scene_id"), body.get("take_id")],
-                              callback=handlers.run_job, output_indices=(1,), key=uuid.uuid4().hex)
-            run.job_id = job.id
-            try:
-                for status, changed in execute_accepted(job.id, session):
-                    run.status = status
-                    if changed:
-                        run.revision += 1
-            finally:
-                handlers.running_scene.pop((owner, storyboard_id), None)
-
-        runs.start(Run(owner, storyboard_id, "generate"), work)
+        start_generation(owner, storyboard_id, action, session_of(request), body.get("scene_id"), body.get("take_id"))
         return {"run": run_payload(owner, storyboard_id)}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/interrupt", include_in_schema=False)
@@ -451,17 +480,46 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         owner = owner_of(request)
         include = bool(body.get("include_outdated", True))
         export = bool(body.get("export"))
-
-        def work(run):
-            run.status = "Exporting to Media…" if export else "Joining the takes…"
-            if export:
-                path = handlers.export(owner, storyboard_id, include)
-                run.message = f"Exported {path.name} to Media and saved a version."
-            else:
-                path = handlers.play_all(owner, storyboard_id, include)
-                run.result_url = file_url(storyboard_id, str(path), v=path.stat().st_mtime_ns)
-                run.message = "Full video ready. Continuing scenes drop their repeated opening; fresh starts cut."
-            run.status = "Done."
-
-        runs.start(Run(owner, storyboard_id, "export" if export else "join"), work)
+        start_join(owner, storyboard_id, include, export)
         return {"run": run_payload(owner, storyboard_id)}
+
+    # Auto render -----------------------------------------------------------
+    @app.get(f"{api}/auto", include_in_schema=False)
+    @guarded
+    def read_auto(request: Request, boards: bool = True):
+        """The queue, and with ``boards`` what each storyboard has left to render."""
+        owner = owner_of(request)
+        if not boards:
+            return {"auto": auto_payload(owner)}
+        boards = []
+        for row in handlers.service.list(owner):
+            try:
+                board = handlers.service.load(owner, row["id"])
+            except (H3Error, ValueError, KeyError):
+                continue
+            states = sb.scene_states(board)
+            pending = sb.pending_scenes(board)
+            blocked = [index + 1 for index in pending
+                       if any(not issue.startswith("Generate scene") for issue in sb.scene_issues(board, index, states))]
+            boards.append({"id": row["id"], "name": row["name"], "scenes": len(states),
+                           "pending": len(pending), "needs_input": blocked})
+        return {"auto": auto_payload(owner), "boards": boards}
+
+    @app.post(f"{api}/auto", include_in_schema=False)
+    @guarded
+    def start_auto(request: Request, body: dict = Body(...)):
+        if not gpu:
+            raise H3Error("Scenes are generated on the GPU endpoint.")
+        owner = owner_of(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list):
+            raise H3Error("Select at least one storyboard to render.")
+        autos.start(owner, ids, session_of(request))
+        return {"auto": auto_payload(owner)}
+
+    @app.post(f"{api}/auto/stop", include_in_schema=False)
+    @guarded
+    def stop_auto(request: Request):
+        owner = owner_of(request)
+        message = autos.stop(owner, session_of(request))
+        return {"message": message, "auto": auto_payload(owner)}

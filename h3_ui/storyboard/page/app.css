@@ -174,6 +174,17 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 .state-outdated { color: var(--warn); background: var(--warn-bg); }
 .state-needs { color: var(--needs); background: var(--needs-bg); }
 .state-draft { color: var(--muted); background: var(--raised); font-weight: 500; }
+.auto-badge {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  white-space: nowrap; color: var(--muted); background: var(--raised);
+}
+.auto-badge.rendering, .auto-badge.exporting { color: var(--accent-ink); background: var(--accent); }
+.auto-badge.exported { color: var(--done); background: var(--done-bg); }
+.auto-badge.incomplete, .auto-badge.stopped { color: var(--warn); background: var(--warn-bg); }
+.auto-badge.failed { color: var(--needs); background: var(--needs-bg); }
+.auto-pick { cursor: pointer; align-items: flex-start; }
+.auto-pick input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); }
+.inspector h3 { font-size: 16px; margin: 4px 0 0; }
 .add-frame { flex: 0 0 104px; min-height: 92px; border: 1px dashed var(--dash); border-radius: 6px; background: transparent; font-weight: 600; }
 .add-frame:hover { border-color: var(--accent); background: var(--accent-soft); }
 .strip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }

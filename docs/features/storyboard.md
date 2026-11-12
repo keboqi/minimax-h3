@@ -97,6 +97,25 @@ scenes that still need input. **Play full video** and **Export to Media** join t
 in use: continuing scenes drop their repeated opening, fresh starts join as cuts. Export
 saves a version. **Versions** keeps scene lists to come back to or branch.
 
+## Auto render
+
+**Auto render** in the top bar (GPU endpoint only) renders several storyboards
+unattended. Tick the storyboards, each listed with how many scenes it has left and any
+scene that still needs input, then **Render and export**. They run in the order listed:
+each storyboard generates its remaining scenes exactly as **Generate all remaining
+scenes** would, and once every scene is done its full video is exported to Media (with a
+saved version) before the next storyboard starts. A storyboard whose scenes are already
+all done is only exported. One with a scene that still needs input gets the scenes it
+can, is marked **Not exported**, and the queue moves on; a failed storyboard is marked
+**Failed** and the queue moves on too.
+
+The queue runs on the server, so the page can be closed. While it runs, the top bar shows
+which storyboard it is on, and a page showing the storyboard the queue just finished moves
+to the next one with it. **Stop auto render** interrupts the current storyboard, keeping
+the scenes made so far, and the rest don't start. Each storyboard's generation is its own
+job in **Jobs**. The queue lives in the server process: a restart ends it, and nothing
+resumes on its own.
+
 ## How continuing works
 
 Every take saves its final H3 audio-video latent (and the stage-one latent with latent

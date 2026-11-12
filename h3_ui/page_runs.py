@@ -6,7 +6,7 @@ polling; they do not survive server restarts or coordinate separate processes.
 from __future__ import annotations
 from dataclasses import dataclass, field
 import functools
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
 import time
 from typing import Any, Callable
 import uuid
@@ -35,6 +35,8 @@ class Run:
     error: str | None = None
     result_url: str | None = None
     message: str | None = None
+    # Set once the run has finished, for work that waits on it.
+    done: Event = field(default_factory=Event, repr=False, compare=False)
 
     def public(self, scene_id) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "status": self.status, "revision": self.revision,
@@ -72,6 +74,7 @@ class Runs:
             finally:
                 run.revision += 1
                 run.finished_at = time.time()
+                run.done.set()
 
         Thread(target=execute, name=f"page-{run.kind}", daemon=True).start()
         return run

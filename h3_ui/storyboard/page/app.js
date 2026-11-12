@@ -42,6 +42,7 @@
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
     includeOutdated: true, fullVideo: null, saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
+    auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
   };
   const scenes = () => state.board.scenes;
   const scene = () => scenes().find((item) => item.id === state.sceneId) || scenes()[0];
@@ -206,6 +207,7 @@
       state.confirmProfile = false;
       renderTopbar();
       renderInspector();
+      if (state.panel === "auto") loadAuto();
     });
     const select = h("select", {"aria-label": "Storyboard", onchange: (event) => openBoard(event.target.value)},
       state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
@@ -217,6 +219,8 @@
         `${scenes().length} scenes · ${state.board.total} · ${state.board.done} done`),
       h("div", {className: "small muted", id: "save-state", role: "status"}, state.saveLabel),
       h("div", {className: "grow"}),
+      state.auto?.active ? h("div", {className: "small muted", id: "auto-state", role: "status"}, autoSummary()) : null,
+      state.boot.gpu ? panelButton("auto", "Auto render") : null,
       panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings"),
     );
   };
@@ -549,7 +553,7 @@
 
   // The inspector ---------------------------------------------------------
   const renderInspector = () => {
-    const panels = {cast: castPanel, versions: versionsPanel, settings: settingsPanel};
+    const panels = {cast: castPanel, versions: versionsPanel, settings: settingsPanel, auto: autoPanel};
     const nodes = (panels[state.panel] || scenePanel)();
     $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
   };
@@ -915,6 +919,80 @@
     ];
   };
 
+  const AUTO_LABELS = {waiting: "Waiting", rendering: "Rendering", exporting: "Exporting", exported: "Exported",
+    incomplete: "Not exported", failed: "Failed", stopped: "Stopped"};
+  const autoSummary = () => {
+    const auto = state.auto;
+    const current = auto.items.find((item) => item.id === auto.current);
+    return `Auto render ${Math.min(auto.finished + 1, auto.items.length)}/${auto.items.length}`
+      + (current ? ` · ${current.name}` : "") + (auto.stopping ? " · stopping" : "");
+  };
+  const autoBoardNote = (board) => {
+    const notes = [board.pending
+      ? `${board.pending} of ${board.scenes} scene${board.scenes === 1 ? "" : "s"} to render, then export`
+      : "Every scene is done: exports only"];
+    if (board.needs_input.length) {
+      notes.push(`scene ${board.needs_input.join(", ")} need${board.needs_input.length === 1 ? "s" : ""} input, so it won't be exported`);
+    }
+    return notes.join(" · ");
+  };
+  const autoPanel = () => {
+    const auto = state.auto;
+    const nodes = [
+      panelHead("Auto render"),
+      h("p", {className: "small muted"}, "Renders each selected storyboard's remaining scenes in turn. Once every scene of a storyboard is done, its full video is exported to Media and the next storyboard starts. It runs on the server, so this page can be closed; Jobs lists each storyboard's run."),
+    ];
+    if (auto) {
+      nodes.push(h("h3", {className: "small"}, auto.active ? "Rendering" : "Last auto render"),
+        auto.items.map((item) => {
+          const live = item.id === auto.current && auto.status;
+          return h("div", {className: "list-row"},
+            h("div", {className: "grow"},
+              h("div", {}, item.name),
+              (live || item.detail) ? h("div", {className: "small muted", id: item.id === auto.current ? "auto-status" : null},
+                live ? auto.status : item.detail) : null),
+            h("span", {className: `auto-badge ${item.state}`}, AUTO_LABELS[item.state] || item.state),
+            button("Open", () => openBoard(item.id), "btn sm", {disabled: item.id === state.board.id}));
+        }));
+      if (auto.error) nodes.push(h("div", {className: "warning", role: "status"}, auto.error));
+      if (auto.active) {
+        nodes.push(h("div", {className: "chips"},
+          button(auto.stopping ? "Stopping…" : "Stop auto render", stopAuto, "btn danger", {disabled: auto.stopping})));
+        return nodes;
+      }
+    }
+    const boards = state.autoBoards;
+    if (!boards) return [...nodes, h("p", {className: "muted"}, "Loading storyboards…")];
+    const known = new Set(boards.map((board) => board.id));
+    for (const id of [...state.autoSelected]) if (!known.has(id)) state.autoSelected.delete(id);
+    const chosen = boards.filter((board) => state.autoSelected.has(board.id));
+    const toggle = (id, on) => {
+      if (on) state.autoSelected.add(id); else state.autoSelected.delete(id);
+      renderInspector();
+    };
+    nodes.push(
+      h("div", {className: "row"},
+        h("h3", {className: "small"}, "Choose storyboards"),
+        h("div", {className: "chips"},
+          button("Select all with scenes left", () => {
+            boards.filter((board) => board.pending).forEach((board) => state.autoSelected.add(board.id));
+            renderInspector();
+          }, "btn sm"),
+          button("Clear", () => { state.autoSelected.clear(); renderInspector(); }, "btn sm", {disabled: !chosen.length}))),
+      boards.map((board) => h("label", {className: "list-row auto-pick"},
+        h("input", {type: "checkbox", checked: state.autoSelected.has(board.id),
+          onchange: (event) => toggle(board.id, event.target.checked)}),
+        h("div", {className: "grow"},
+          h("div", {}, board.name),
+          h("div", {className: board.needs_input.length ? "small needs" : "small muted"}, autoBoardNote(board))))),
+      h("p", {className: "small muted"}, "Storyboards render in the order listed. Scenes that still need input are skipped, and their storyboard isn't exported."),
+      h("div", {className: "chips"},
+        button(chosen.length ? `Render and export ${chosen.length} storyboard${chosen.length === 1 ? "" : "s"}` : "Select storyboards to render",
+          startAuto, "btn primary", {disabled: !chosen.length})),
+    );
+    return nodes;
+  };
+
   const WRITER_KEY = "h3-storyboard-writer";
   const writerSettings = () => {
     try { return JSON.parse(stored.get(WRITER_KEY)) || {}; } catch { return {}; }
@@ -1024,6 +1102,89 @@
   const interrupt = async () => {
     const data = await act(() => request("POST", boardUrl("/interrupt")));
     if (data) toast(data.message);
+  };
+
+  // Auto render ------------------------------------------------------------
+  const AUTO_POLL_MS = 3000;
+  const autoKey = (auto) => auto
+    ? JSON.stringify([auto.id, auto.active, auto.stopping, auto.current, auto.items.map((item) => [item.state, item.detail])])
+    : "";
+  const loadAuto = async () => {
+    let data;
+    try {
+      data = await request("GET", `${API}/auto`);
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+    state.autoBoards = data.boards;
+    followAuto(data.auto, {render: true});
+  };
+  const followAuto = (auto, {render = false} = {}) => {
+    const before = state.auto;
+    const changed = autoKey(auto) !== autoKey(before);
+    state.auto = auto;
+    if (auto?.active && !state.autoTimer) state.autoTimer = setTimeout(pollAuto, AUTO_POLL_MS);
+    if (!state.board) return;
+    const sameQueue = before && auto && before.id === auto.id;
+    if (sameQueue && before.active && !auto.active) announceAuto(auto);
+    // The page moves on with the queue while it shows the storyboard the queue just left.
+    if (sameQueue && auto.active && auto.current && before.current !== auto.current
+        && state.board.id === before.current) {
+      openBoard(auto.current);
+    } else if (changed && auto && (auto.current === state.board.id || before?.current === state.board.id)
+               && !state.run?.active) {
+      // A run the queue started here since this page last looked.
+      refreshBoard();
+    }
+    if (render || changed || Boolean(before?.active) !== Boolean(auto?.active)) {
+      renderTopbar();
+      if (state.panel === "auto") renderInspector();
+    } else {
+      const summary = $("auto-state");
+      if (summary && auto?.active) summary.textContent = autoSummary();
+      const status = $("auto-status");
+      if (status && auto?.status) status.textContent = auto.status;
+    }
+  };
+  const pollAuto = async () => {
+    state.autoTimer = null;
+    let auto;
+    try {
+      ({auto} = await request("GET", `${API}/auto?boards=false`));
+    } catch {
+      state.autoTimer = setTimeout(pollAuto, AUTO_POLL_MS * 2);
+      return;
+    }
+    const wasActive = state.auto?.active;
+    followAuto(auto);
+    // Finished: the list's counts changed.
+    if (wasActive && !auto?.active && state.panel === "auto") loadAuto();
+  };
+  const announceAuto = (auto) => {
+    const count = (name) => auto.items.filter((item) => item.state === name).length;
+    const parts = [`${count("exported")} exported`];
+    if (count("incomplete")) parts.push(`${count("incomplete")} not exported (scenes need input)`);
+    if (count("failed")) parts.push(`${count("failed")} failed`);
+    if (count("stopped")) parts.push(`${count("stopped")} stopped`);
+    toast(`Auto render finished: ${parts.join(", ")}.`, Boolean(count("failed") || auto.error));
+  };
+  const startAuto = async () => {
+    await flush();
+    await saves;
+    const ids = state.autoBoards.filter((board) => state.autoSelected.has(board.id)).map((board) => board.id);
+    const data = await act(() => request("POST", `${API}/auto`, {ids}), "Auto render started.");
+    if (!data) return;
+    state.autoSelected.clear();
+    followAuto(data.auto, {render: true});
+    const first = data.auto.current || data.auto.items[0]?.id;
+    if (first && first !== state.board.id) openBoard(first);
+  };
+  const stopAuto = async () => {
+    const data = await act(() => request("POST", `${API}/auto/stop`));
+    if (!data) return;
+    toast(data.message);
+    followAuto(data.auto, {render: true});
   };
 
   // Runs already reported in this tab, so a reload or a board switch doesn't repeat them.
@@ -1193,7 +1354,8 @@
     state.previewTake = null;
     state.question = null;
     state.deletingTake = null;
-    state.panel = null;
+    // Auto render follows the queue from board to board, so its panel stays open.
+    state.panel = state.panel === "auto" ? "auto" : null;
     state.confirmProfile = false;
     state.fullVideo = null;
     stored.set("h3-storyboard-board", data.id);
@@ -1267,6 +1429,8 @@
     try {
       state.boot = await request("GET", `${API}/boot`);
       $("gpu-note").hidden = state.boot.gpu;
+      state.auto = state.boot.auto ?? null;
+      if (state.auto?.active) state.autoTimer = setTimeout(pollAuto, AUTO_POLL_MS);
       const boards = state.boot.boards;
       if (!boards.length) {
         showStart();
