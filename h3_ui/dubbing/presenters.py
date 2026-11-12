@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import time
 
-from h3_app.dubbing import pipeline, session as sessions
+from h3_app.dubbing import pipeline, review_checks, session as sessions
 from h3_app.dubbing.segments import DEFAULT_SPEAKER
 
 # Speakers take name colors in order of first line; the ninth reuses the first.
@@ -45,6 +45,11 @@ def _plural(count: int, word: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def translation_flags(session: sessions.Session) -> list[int]:
+    """Lines whose translation needs a look: it reads like an explanation, or a translation check flagged it."""
+    return sorted(set(pipeline.translation_issues(session.segments)) | set(review_checks.translation_checks(session)))
+
+
 def summary_html(session: sessions.Session, long: set[int] | None = None) -> str:
     """One line on the session's lines: how many, who speaks, what is ready and what needs a look."""
     lines = session.segments
@@ -58,7 +63,7 @@ def summary_html(session: sessions.Session, long: set[int] | None = None) -> str
              f"<strong>{ready} ready</strong> to dub into {target}"]
     if untranslated:
         parts.append(f"{untranslated} untranslated")
-    issues = pipeline.translation_issues(lines)
+    issues = translation_flags(session)
     if issues:
         parts.append(f"{_plural(len(issues), 'translation')} {'needs' if len(issues) == 1 else 'need'} review")
     failed = pipeline.take_problems(session)
@@ -88,7 +93,8 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
     failed = pipeline.take_problems(session)
     rushed = pipeline.timing_problems(session)
     items = []
-    issues = set(pipeline.translation_issues(lines))
+    checks = review_checks.translation_checks(session)
+    issues = set(pipeline.translation_issues(lines)) | set(checks)
     for number, line in enumerate(lines):
         flags = []
         if not line.get("dub", True):
@@ -110,6 +116,7 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
             "tone": index[line["speaker"]] % TONES, "source": escape(line["source"]),
             "translation": escape(line["translation"]), "dub": bool(line.get("dub", True)), "flags": flags,
             "problem": escape(failed.get(number, ""), quote=True),
+            "check": escape(checks.get(number, ""), quote=True),
             "timing": escape(rushed.get(number, ""), quote=True),
         })
     count = len(items)

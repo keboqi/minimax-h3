@@ -297,6 +297,17 @@
       row.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
         {disabled: busy, title: busy ? "Wait for generation to finish." : "Delete this take for good"}));
     }
+    clearTimeout(state.reviewTimer);
+    const review = shown?.review;
+    if (review?.status === "pending") {
+      row.push(h("span", {className: "small muted"}, "Scoring this take…"));
+      // A take's score arrives after its run; look again until it has.
+      if (!activeGenerate()) state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
+    } else if (review?.status === "done") {
+      row.push(h("span", {className: `review-chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`,
+        title: `How well this take fits the scene prompt, scored by Gemini Decision.${review.tags.length ? ` Tags: ${review.tags.join(", ")}` : ""}`},
+        `Prompt fit ${review.fit} · ${review.label}`));
+    }
     if (shown) {
       row.push(h("span", {className: "take-meta mono"},
         `Seed ${shown.seed}`,

@@ -29,6 +29,7 @@ from h3_app.contracts import GENERATION_FIELDS
 from h3_app.decoder_intent import VideoDecoder
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_app import media_review
 from h3_app.provenance import render_snapshot
 from h3_app.reference_bindings import KINDS, ReferenceBinding, ReferenceMap
 from h3_app.reference_metadata import describe_reference
@@ -124,6 +125,8 @@ def writer_defaults() -> dict[str, Any]:
         "local_prompt_greedy": True, "local_prompt_seed": 42,
         "gemini_prompt_model": catalog.DEFAULT_GEMINI_PROMPT_MODEL, "gemini_api_key": "", "openai_api_key": "",
         "openai_model": catalog.DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": "",
+        # Score each video against its prompt and tag it with Gemini Decision; Storyboard follows it.
+        "review": True,
     }
 
 
@@ -268,7 +271,8 @@ class H3PageState:
     def followed(follower, state: dict[str, Any]):
         profile = {name: state["values"][name] for name in PROFILE_FIELDS if name in state["values"]}
         if hasattr(follower, "capture_settings"):
-            return {"profile": profile, "writer": {name: state["writer"].get(name) for name in WRITER_FIELDS}}
+            return {"profile": profile, "writer": {name: state["writer"].get(name) for name in WRITER_FIELDS},
+                    "review": bool(state["writer"].get("review", True))}
         return profile
 
     def may_read(self, owner: str, path) -> bool:
@@ -398,8 +402,8 @@ class H3PageState:
 
     def results(self, owner: str, state: dict[str, Any]) -> dict[str, Any]:
         paths = [self.grant(owner, path) for path in state["results"]]
-        return {"videos": [{"path": path, "name": Path(path).name, "url": f"{API}/file?path={_quote(path)}"}
-                           for path in paths],
+        return {"videos": [{"path": path, "name": Path(path).name, "url": f"{API}/file?path={_quote(path)}",
+                            "review": media_review.public(path)} for path in paths],
                 "settings": render_snapshot(paths) if paths else ""}
 
 
@@ -733,6 +737,10 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
                     run.status = status
                 run.revision += 1
             finished = [run.results[index] for index in sorted(run.results) if index < count]
+            for path in finished:
+                # In the background: the score and tags arrive after the run has finished.
+                media_review.schedule(path, state["prompt"], api_key=state["writer"].get("gemini_api_key") or "",
+                                      enabled=bool(state["writer"].get("review", True)))
             if finished:
                 with pages.lock:
                     latest = pages.load(owner)

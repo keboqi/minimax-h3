@@ -32,16 +32,18 @@ function filters(app) {
   if (same) list.push(["edited", "Edited"]);
   else list.push(["untranslated", "Untranslated"]);
   if (session.board.lines.some((line) => line.flags.includes("failed"))) list.push(["failed", "Failed takes"]);
+  if (app.mergeGroups?.length) list.push(["combine", "To combine"]);
   if (session.board.speakers.length > 1) list.push(...session.board.speakers.map((s) => [`speaker:${s.k}`, s.label]));
   return list;
 }
 
-function visible(app, line) {
+function visible(app, line, index) {
   const f = app.filter;
   if (f === "attention") return needsAttention(line);
   if (f === "untranslated") return !line.translation;
   if (f === "edited") return line.dub && line.translation && line.edited;
   if (f === "failed") return line.flags.includes("failed");
+  if (f === "combine") return groupOf(app, index) !== null;
   if (f.startsWith("speaker:")) return line.speaker === Number(f.slice(8));
   return true;
 }
@@ -86,11 +88,43 @@ function timeline(app) {
     </section>`;
 }
 
+// The detected group (its position in app.mergeGroups) a line belongs to, or null.
+function groupOf(app, index) {
+  const found = (app.mergeGroups || []).findIndex((group) => group.includes(index));
+  return found < 0 ? null : found;
+}
+
+// The detected groups as the viewer left them: each keeps its picked lines that are still next to
+// each other, so unticking a line splits or drops its group. Runs of fewer than two lines are dropped.
+function pickedGroups(app) {
+  const groups = [];
+  for (const group of app.mergeGroups || []) {
+    let run = [];
+    for (const index of group) {
+      if (app.picks.has(index) && (!run.length || index === run.at(-1) + 1)) run.push(index);
+      else {
+        if (run.length > 1) groups.push(run);
+        run = app.picks.has(index) ? [index] : [];
+      }
+    }
+    if (run.length > 1) groups.push(run);
+  }
+  return groups;
+}
+
+// Two or more picked lines next to each other, all of one speaker, can become one line.
+function mergeable(app) {
+  const picks = [...app.picks].sort((a, b) => a - b);
+  const lines = app.session.board.lines;
+  if (picks.length < 2 || picks.some((n, i) => i && n !== picks[i - 1] + 1)) return false;
+  return picks.every((n) => lines[n] && lines[n].speakerId === lines[picks[0]].speakerId);
+}
+
 function board(app) {
   const lines = app.session.board.lines;
   const same = app.session.same;
   const picks = [...app.picks];
-  const shown = lines.map((line, index) => [line, index]).filter(([line]) => visible(app, line));
+  const shown = lines.map((line, index) => [line, index]).filter(([line, index]) => visible(app, line, index));
   return `
     <section class="card board" aria-label="Lines">
       ${picks.length ? `
@@ -98,6 +132,8 @@ function board(app) {
           <strong>${picks.length} picked</strong>
           <span class="muted small">Line actions use these; Listen and Preview play the first.</span>
           <span class="spacer"></span>
+          ${pickedGroups(app).length ? `<button type="button" class="btn btn-small btn-primary" data-action="merge-groups" title="Join each detected group into one line">Combine ${plural(pickedGroups(app).length, "group")}</button>`
+            : mergeable(app) ? '<button type="button" class="btn btn-small" data-action="merge-lines" title="Join these lines into one line">Combine</button>' : ""}
           <button type="button" class="btn btn-small" data-action="translate" data-busy="lines">${againLabel(app)}</button>
           ${app.boot.gpu ? '<button type="button" class="btn btn-small" data-action="take" data-busy="lines">New takes</button>' : ""}
           <button type="button" class="btn btn-small" data-action="copy-lines-prompt">Copy ${same ? "rewrite" : "translation"} prompt</button>
@@ -110,7 +146,7 @@ function board(app) {
       <div class="line-list">${shown.length ? shown.map(([line, index]) => {
         const flag = flagOf(line, same);
         return `
-        <div class="line-row ${index === app.focus ? "selected" : ""}">
+        <div class="line-row ${index === app.focus ? "selected" : ""} ${groupOf(app, index) !== null ? `combine-group combine-${groupOf(app, index) % 2}` : ""}">
           <span><input type="checkbox" data-action="pick" data-line="${index}" ${app.picks.has(index) ? "checked" : ""} aria-label="Pick line ${index + 1}"></span>
           <span class="mono muted">${index + 1}</span>
           <span class="mono muted small">${clock(line.s)}<br>${(line.e - line.s).toFixed(1)} s</span>
@@ -119,6 +155,7 @@ function board(app) {
               <span class="muted small ellipsis">${esc(line.source)}</span></span>
             <span class="${line.translation ? (line.dub ? "" : "muted") : "missing"}">${esc(line.translation || (same ? "No new text" : "Not translated yet"))}</span>
             ${line.problem ? `<span class="small fail-text">${esc(line.problem)}</span>` : ""}
+            ${line.check ? `<span class="small warn-text">${esc(line.check)}</span>` : ""}
           </button>
           <span>${flag ? `<span class="flag ${flag[1]}">${flag[0]}</span>` : ""}</span>
           <button type="button" class="switch" role="switch" aria-checked="${line.dub}" aria-label="Dub line ${index + 1}"
@@ -201,6 +238,7 @@ function inspector(app) {
       <div class="card-body stack-14" data-inspector="${app.focus}">
         ${line.problem ? `<div class="alert alert-fail" role="alert"><strong>Take failed, so the original voice was kept.</strong>
           ${esc(line.problem)} Use New take, then dub again.</div>` : ""}
+        ${line.check ? `<div class="alert alert-warn" role="status">${esc(line.check)} Edit the line or translate it again; editing clears this.</div>` : ""}
         <div class="grid-3">
           <label class="field">Start<input class="mono" data-line-field="start" value="${esc(editTime(line.s))}"></label>
           <label class="field">End<input class="mono" data-line-field="end" value="${esc(editTime(line.e))}"></label>
@@ -264,6 +302,14 @@ export function renderReview(app) {
         <div class="seg" role="group" aria-label="Show">${filters(app).map(([key, label]) => `
           <button type="button" data-action="filter" data-filter="${esc(key)}" aria-pressed="${app.filter === key}">${esc(label)}</button>`).join("")}</div>
         ${fillable ? `<button type="button" class="btn btn-small" data-action="fill" data-busy="lines">Fill untranslated (${session.readiness.untranslated})</button>` : ""}
+        ${session.board.lines.some((line) => line.translation && line.dub) ? `<button type="button" class="btn btn-small" data-action="check-translations" ${app.checking ? "disabled" : ""}
+          title="Ask Gemini Decision whether each ${same ? "rewritten" : "translated"} line keeps its meaning and sounds natural. Uses the picked lines, or every line.">${app.checking ? "Checking…" : same ? "Check rewrites" : "Check translations"}</button>` : ""}
+        <span class="combine-tools">
+          <button type="button" class="btn btn-small" data-action="detect-combine" ${app.detecting ? "disabled" : ""}
+            title="Pick neighbouring lines that read as one sentence, to review and combine">${app.detecting ? "Detecting…" : "Auto-detect combine"}</button>
+          <label class="check small" title="Confirm each pair with Gemini Decision from the lines around it, so missing or wrong speaker labels don't decide. Off, or without a Gemini key, fixed rules decide and trust the speaker labels.">
+            <input type="checkbox" data-action="combine-context" ${app.settings.combine_context ? "checked" : ""}> By context</label>
+        </span>
         <button type="button" class="btn btn-small" data-action="table-open">Edit as a table</button>
         <button type="button" class="btn btn-small btn-primary" data-action="to-dub">Next: dub →</button>
       </div>
@@ -389,12 +435,52 @@ export function bindReview(app) {
       if (target.checked) app.picks.add(index); else app.picks.delete(index);
       app.render();
     } else if (action === "pick-all") {
-      const shown = app.session.board.lines.map((line, i) => [line, i]).filter(([line]) => visible(app, line)).map(([, i]) => i);
+      const shown = app.session.board.lines.map((line, i) => [line, i]).filter(([line, i]) => visible(app, line, i)).map(([, i]) => i);
       if (target.checked) shown.forEach((i) => app.picks.add(i)); else shown.forEach((i) => app.picks.delete(i));
       app.render();
     } else if (action === "clear-picks") {
       app.picks.clear();
+      app.mergeGroups = [];
+      if (app.filter === "combine") app.filter = "all";
       app.render();
+    } else if (action === "combine-context") {
+      app.settings.combine_context = target.checked;
+    } else if (action === "detect-combine") {
+      app.detecting = true;
+      app.render();
+      try {
+        const data = await api.post("combine-suggestions", {session: app.session.id,
+          context: app.settings.combine_context, api_key: app.apiKey});
+        app.mergeGroups = data.groups;
+        app.mergeRelabel = data.context;
+        app.picks = new Set(data.groups.flat());
+        if (data.groups.length) app.filter = "combine";
+        toast(data.groups.length ? `${data.status} Untick any to keep apart, then Combine.` : data.status);
+      } catch (error) {
+        toast(error.message, {error: true});
+      } finally {
+        app.detecting = false;
+        app.render();
+      }
+    } else if (action === "merge-groups") {
+      const groups = pickedGroups(app);
+      app.picks.clear();
+      app.mergeGroups = [];
+      if (app.filter === "combine") app.filter = "all";
+      await edit(app, "line/merge-groups", {groups, relabel: app.mergeRelabel});
+    } else if (action === "check-translations") {
+      app.checking = true;
+      app.render();
+      try {
+        const data = await api.post("check-translations", {session: app.session.id, picked: [...app.picks], api_key: app.apiKey});
+        app.setSession(data.session);
+        toast(data.status);
+      } catch (error) {
+        toast(error.message, {error: true});
+      } finally {
+        app.checking = false;
+        app.render();
+      }
     } else if (action === "filter") {
       app.filter = target.dataset.filter;
       app.render();
@@ -451,6 +537,11 @@ export function bindReview(app) {
       } catch (error) {
         toast(error.message, {error: true});
       }
+    } else if (action === "merge-lines") {
+      const picked = [...app.picks].sort((a, b) => a - b);
+      app.picks.clear();
+      app.mergeGroups = [];
+      await edit(app, "line/merge", {picked});
     } else if (action === "add-line") {
       edit(app, "line/add", {focus: app.focus});
     } else if (action === "delete-line") {

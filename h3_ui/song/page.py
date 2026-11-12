@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from h3_app import song_brief
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
+from h3_app import media_review
 from h3_app.jobs import JOBS
 from h3_app.provenance import render_snapshot
 from h3_app.reference_metadata import describe_reference
@@ -433,7 +434,7 @@ class SongPageState:
                     "time": _clock(take["seconds"]) if take.get("seconds") else "",
                     "seed": take.get("seed"), "has_score": bool(take.get("score")),
                     "note": first[0] if first else "", "name": Path(path).name,
-                    "url": f"{API}/file?path={_quote(path)}"}
+                    "url": f"{API}/file?path={_quote(path)}", "review": media_review.public(path)}
 
         count = len(takes)
         return {
@@ -715,6 +716,8 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
             values = pages.job_values(state, engine)
             # The draft is captured when the take starts, so edits made while it renders are not credited to it.
             draft = pages.take_draft(state, engine)
+            brief = dict(state["drafts"][engine])
+            writer = dict(state["writer"])
         label = pages.labels.get(engine, engine)
 
         def work(run: SongRun):
@@ -735,6 +738,10 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
                     latest = pages.load(owner)
                     pages.add_take(latest, engine, run.result, draft, facts)
                     pages.save(owner, latest)
+                # In the background: the take is playable before its score and tags arrive.
+                media_review.schedule(run.result, brief.get("description") or "", lyrics=brief.get("lyrics") or "",
+                                      api_key=writer.get("gemini_api_key") or "",
+                                      enabled=bool(writer.get("review", True)))
             if not run.status.startswith(label):
                 run.status = f"{label} · {run.status}"
 

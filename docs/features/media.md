@@ -3,6 +3,24 @@
 The Media library and the upscale, restoration, HDR and interpolation methods
 available from Media and as automatic H3 finishing.
 
+## Result scores and automatic tags
+
+With **Score results and tag them** on (the default; it sits with the prompt
+writer on the MiniMax H3, Image and Song pages, and Storyboard follows MiniMax
+H3's), each saved video, image, Storyboard take and song is sent with its prompt
+to Gemini Decision (`h3_app/media_review.py`) in a background thread, so
+generation never waits for it. One request asks how well the result fits the
+prompt (a five-level rubric shown as **Prompt fit 0–100** with a label; for an
+edit, whether the edit was made; for a song, the brief and lyrics) and a set of
+tag questions from a fixed vocabulary: shot, setting, time of day, mood, style,
+people, animals and text for pictures, plus speech, music and motion for video;
+genre, vocals, mood and tempo for songs. The result is saved beside the file as
+`<name>.review.json` and the tags are added to its Media library tags (your own
+tags and Favorite are kept), so search finds them. Pages show **Scoring…** until
+it arrives. It uses the page's temporary Gemini key, else `GEMINI_API_KEY`; with
+no key, or `H3_DECISION=0`, nothing is sent. At most three reviews run at once
+(`H3_REVIEW_WORKERS`).
+
 Open **Media** to browse the video library (the default), or switch the type
 at the top to **Image** or **Audio**; each shows its item count. Media is its own
 page at `/media/` (`h3_ui/media/page.py`), outside Gradio like Song and Image;

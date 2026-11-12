@@ -379,6 +379,22 @@ class WorkspaceStore:
                 (asset_id, json.dumps(tags), int(bool(favorite))),
             )
 
+    def add_tags(self, path, tags):
+        """Merge ``tags`` into an indexed file's tags, keeping its own tags and favorite; False if not indexed."""
+        asset_id = uuid.uuid5(uuid.NAMESPACE_URL, Path(path).resolve().as_uri()).hex
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT id FROM assets WHERE id=?", (asset_id,)).fetchone():
+                return False
+            row = db.execute("SELECT tags, favorite FROM annotations WHERE asset_id=?", (asset_id,)).fetchone()
+            current = json.loads(row["tags"]) if row else []
+            merged = sorted({str(tag).strip()[:40] for tag in [*current, *tags] if str(tag).strip()})[:32]
+            db.execute(
+                "INSERT INTO annotations VALUES (?, ?, ?) ON CONFLICT(asset_id) DO UPDATE SET tags=excluded.tags",
+                (asset_id, json.dumps(merged), int(row["favorite"]) if row else 0),
+            )
+        return True
+
     def search_assets(self, *, query="", kind=None, favorite=False, limit=200):
         pattern = (
             "%"

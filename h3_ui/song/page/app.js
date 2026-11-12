@@ -351,8 +351,17 @@
     }
   };
   const selectTakes = guard(async (patch) => take(await post("/takes/select", patch)));
+  // A take's prompt-fit score and tags from Gemini Decision; while one is pending the page asks again.
+  let reviewTimer = null;
+  const reviewText = (review) => review?.status === "done"
+    ? `Fit ${review.fit} · ${review.label}${review.tags.length ? ` · ${review.tags.join(", ")}` : ""}`
+    : review?.status === "pending" ? "Scoring…" : "";
   const renderTakes = () => {
     const {items, a, b, summary, details, settings} = app.s.takes;
+    clearTimeout(reviewTimer);
+    if (items.some((item) => item.review?.status === "pending") && !app.runs.generate?.active) {
+      reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
+    }
     const compare = Boolean(app.s.ui.compare) && items.length > 1;
     $("takes-summary").textContent = summary;
     seg($("view-mode"), [["Listen", false], ["Compare A / B", true]], compare, (value) => {
@@ -384,7 +393,9 @@
           h("span", {class: `badge mono${isB ? " b" : ""}`, text: isA && compare ? "A" : isB ? "B" : String(item.number)}),
           h("span", {class: "text"},
             h("strong", {}, `Take ${item.number} `, h("span", {class: "muted mono", text: [item.time, item.seed !== null && item.seed !== undefined ? `seed ${item.seed}` : ""].filter(Boolean).join(" · ")})),
-            h("span", {class: "small muted", text: item.note || " "})));
+            h("span", {class: "small muted", text: item.note || " "}),
+            reviewText(item.review) ? h("span", {class: "small review", title: "How well the take fits its brief, scored by Gemini Decision; the tags are added in Media",
+                                                 text: reviewText(item.review)}) : null));
         if (!compare) return card;
         return h("div", {class: "take-cell"}, card,
           h("button", {type: "button", class: "set-b", text: "B", title: `Set take ${item.number} as B`, "aria-label": `Set take ${item.number} as B`,

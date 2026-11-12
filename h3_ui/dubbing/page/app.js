@@ -31,6 +31,9 @@ export const app = {
   pendingRuns: {},
   focus: 0,
   picks: new Set(),
+  mergeGroups: [],
+  mergeRelabel: false,
+  checking: false,
   filter: "all",
   table: false,
   linesRequest: null,
@@ -59,6 +62,8 @@ function defaults(boot) {
     voice_mode: boot.voice_modes[0], preset: "Balance", timing: boot.timings[0].key, max_speed: 1.35,
     speech_volume: 100, background_volume: 100, keep_original: true, regenerate: "", parallel: 16,
     word_timing: true, rewrite: false, rewrite_style: boot.default_rewrite_style, rewrite_by_hand: false,
+    // Auto-detect combine confirms neighbouring lines by context with Gemini Decision.
+    combine_context: true,
   };
 }
 
@@ -142,6 +147,7 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
   app.sessionId = session?.id || null;
   if (changed) {
     app.picks = new Set();
+    app.mergeGroups = [];
     app.focus = 0;
     app.linesRequest = null;
     if (session && !keepSettings) app.settings.voice_mode = session.voice_default;

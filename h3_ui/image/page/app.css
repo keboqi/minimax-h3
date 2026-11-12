@@ -181,3 +181,4 @@ textarea.field.area { min-height: 72px; resize: vertical; }
 .field.layout { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
 .summary-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }

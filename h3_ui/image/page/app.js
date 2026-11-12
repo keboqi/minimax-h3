@@ -393,6 +393,27 @@
     status.textContent = run?.error || run?.status || "";
   };
 
+
+  // The result's prompt-fit score and tags from Gemini Decision; while one is pending the page asks again.
+  let reviewTimer = null;
+  const renderReview = (current) => {
+    const box = $("result-review");
+    const review = current?.review;
+    box.hidden = !review;
+    clearTimeout(reviewTimer);
+    if (!review) return;
+    if (review.status === "pending") {
+      box.replaceChildren(h("span", {class: "muted", text: "Scoring the result against the prompt…"}));
+      reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
+    } else if (review.status === "done") {
+      box.replaceChildren(
+        h("span", {class: `chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`, title: "How well the result fits its prompt, scored by Gemini Decision", text: `Prompt fit ${review.fit} · ${review.label}`}),
+        ...review.tags.map((tag) => h("span", {class: "chip", title: "Added to Media library tags", text: tag})));
+    } else {
+      box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No prompt-fit score: the review failed."}));
+    }
+  };
+
   const renderViewer = () => {
     const run = app.runs.generate;
     const images = run?.active ? app.progress : app.s.results.images;
@@ -413,6 +434,7 @@
     $("empty-line").textContent = run?.active ? run.status : "Write a prompt on the right, then press Generate image.";
     $("viewer-line").textContent = current ? `${images.length} ${images.length === 1 ? "image" : "images"}` : "No result yet";
     $("result-name").textContent = current?.name || "";
+    renderReview(run?.active ? null : current);
     $("download").hidden = !current;
     if (current) { $("download").href = `${current.url}&download=true`; $("download").download = current.name; }
     $("use-result").hidden = !current || run?.active || app.s.generate_only;

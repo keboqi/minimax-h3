@@ -135,6 +135,9 @@
     [2, "openai_model", "OpenAI-compatible model", "text", {store: "writer", when: writerIs("OpenAI-compatible"), hint: "Uses the active text and images plus prompt.txt. Video and audio references require Gemini."}],
     [2, "openai_api_key", "Temporary OpenAI API key", "password", {store: "writer", when: writerIs("OpenAI-compatible"), placeholder: "Uses OPENAI_API_KEY when blank", hint: "The server does not store keys entered here."}],
     [2, "openai_base_url", "Base URL", "text", {store: "writer", when: writerIs("OpenAI-compatible"), placeholder: "Uses OPENAI_BASE_URL when blank"}],
+    [2, null, "Result review", "head"],
+    [2, "review", "Score videos and tag them", "bool", {store: "writer", hint: "After each video is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Storyboard takes are scored too. Uses the Gemini key here, else GEMINI_API_KEY."}],
+    [2, "gemini_api_key", "Temporary Gemini API key", "password", {store: "writer", when: () => w("review") && !writerIs("Gemini")(), placeholder: "Uses GEMINI_API_KEY when blank", hint: "Only for video scores and tags. The server does not store keys entered here."}],
 
     [3, "attention_mode", "Attention", "choice", {locked: () => app.boot.attention_locked, hint: "SLA is the default: block-sparse, audio-safe, and dense for short sequences. Veda is experimental learned sparse attention. Auto enables Sol-Attn for Reference mode or large jobs and uses Kitchen for smaller ones. Sage 2 applies the pinned KJNodes override."}],
     [3, "sla_preset", "SLA / Veda preset", "choice", {when: is("attention_mode", "SLA", "Veda"), hint: "Fast uses validated 0.90 sparsity. Balanced uses the LoRA-distilled 0.85 sparsity. Quality also runs the final sampling step dense to recover fine detail."}],
@@ -567,6 +570,27 @@
     status.textContent = run?.error || run?.status || "";
   };
 
+
+  // The result's prompt-fit score and tags from Gemini Decision; while one is pending the page asks again.
+  let reviewTimer = null;
+  const renderReview = (current) => {
+    const box = $("result-review");
+    const review = current?.review;
+    box.hidden = !review;
+    clearTimeout(reviewTimer);
+    if (!review) return;
+    if (review.status === "pending") {
+      box.replaceChildren(h("span", {class: "muted", text: "Scoring the result against the prompt…"}));
+      reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
+    } else if (review.status === "done") {
+      box.replaceChildren(
+        h("span", {class: `chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`, title: "How well the result fits its prompt, scored by Gemini Decision", text: `Prompt fit ${review.fit} · ${review.label}`}),
+        ...review.tags.map((tag) => h("span", {class: "chip", title: "Added to Media library tags", text: tag})));
+    } else {
+      box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No prompt-fit score: the review failed."}));
+    }
+  };
+
   const renderViewer = () => {
     const run = app.runs.generate;
     const videos = run?.active || (run && app.progress.length && !app.s.results.videos.length) ? app.progress : app.s.results.videos;
@@ -588,6 +612,7 @@
     $("empty-line").textContent = run?.active ? run.status : "Write a prompt on the right, then press Generate video.";
     $("viewer-line").textContent = current ? `${videos.length} ${videos.length === 1 ? "video" : "videos"}` : "No result yet";
     $("result-name").textContent = current?.name || "";
+    renderReview(run?.active ? null : current);
     $("download").hidden = !current;
     if (current) { $("download").href = `${current.url}&download=true`; $("download").download = current.name; }
     const used = app.s.results.settings || "Settings used will appear with the generated result.";

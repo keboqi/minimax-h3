@@ -95,7 +95,18 @@ def option_row(name: str, spec: FieldSpec, value: Any, **extra) -> dict[str, Any
 # The prompt writer ---------------------------------------------------------------
 def writer_defaults() -> dict[str, Any]:
     return {"backend": "Gemini", "model": catalog.DEFAULT_GEMINI_PROMPT_MODEL, "gemini_api_key": "",
-            "openai_api_key": "", "openai_model": catalog.DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": ""}
+            "openai_api_key": "", "openai_model": catalog.DEFAULT_OPENAI_PROMPT_MODEL, "openai_base_url": "",
+            # Score each result against its prompt and tag it with Gemini Decision (h3_app.media_review).
+            "review": True}
+
+
+REVIEW_HINT = ("After each result is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Uses the Gemini key above, else GEMINI_API_KEY.")
+
+
+def review_row(writer: Mapping[str, Any], **extra) -> dict[str, Any]:
+    """The option row for prompt-fit scores and library tags; it is shown whatever writer is chosen."""
+    return {"name": "review", "label": "Score results and tag them", "kind": "bool", "value": bool(writer["review"]),
+            "store": "writer", "hint": REVIEW_HINT, "choices": [], **extra}
 
 
 def writer_rows(writer: Mapping[str, Any], *, backends=("OpenAI-compatible", "Gemini"), **extra) -> list[dict[str, Any]]:
@@ -115,7 +126,11 @@ def writer_rows(writer: Mapping[str, Any], *, backends=("OpenAI-compatible", "Ge
                      hint="The server does not store keys entered here."),
                  row("openai_base_url", "Temporary OpenAI endpoint", "text",
                      placeholder="Uses OPENAI_BASE_URL, else the official OpenAI API, when blank")]
-    return rows
+        if writer["review"]:
+            rows.append(row("gemini_api_key", "Temporary Gemini API key", "password",
+                            placeholder="Uses GEMINI_API_KEY when blank",
+                            hint="Only for result scores and tags. The server does not store keys entered here."))
+    return [*rows, review_row(writer, **extra)]
 
 
 def change_writer(writer: dict[str, Any], changes: Mapping[str, Any]) -> None:
@@ -123,7 +138,12 @@ def change_writer(writer: dict[str, Any], changes: Mapping[str, Any]) -> None:
     for name, value in (changes or {}).items():
         if name not in defaults:
             raise H3Error(f"Unknown writer setting: {name}")
-        writer[name] = "" if value is None else str(value)
+        if isinstance(defaults[name], bool):
+            if not isinstance(value, bool):
+                raise H3Error(f"{name} must be on or off.")
+            writer[name] = value
+        else:
+            writer[name] = "" if value is None else str(value)
 
 
 # Pictures, the Media library and files -----------------------------------------

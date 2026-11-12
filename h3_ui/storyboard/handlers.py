@@ -15,6 +15,7 @@ from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_PROMPT_WRITER_BACKEND,
 )
 from h3_app.errors import H3Error
+from h3_app import media_review
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB
 from h3_app.storyboard.text import parse_scenes
@@ -231,6 +232,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
         job = CURRENT_JOB.get()
         service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
                             seed=seed, inputs=inputs, job_id=job.id if job else None)
+        # Scored in the background with the MiniMax H3 page's option, so the next take starts at once.
+        captured = self.settings.get(owner, {})
+        media_review.schedule(video, values.get("prompt") or scene["prompt"],
+                              api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
+                              enabled=bool(captured.get("review", True)))
 
     def _run_scene(self, owner, storyboard_id, scene_id):
         board = self.service.load(owner, storyboard_id)

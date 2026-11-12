@@ -73,6 +73,11 @@ def _api_key() -> str:
     return _key.get() or os.getenv("GEMINI_API_KEY", "").strip()
 
 
+def current_key() -> str:
+    """The key Gemma calls use here: one a writer set with ``credentials``, else GEMINI_API_KEY."""
+    return _api_key()
+
+
 def estimate_tokens(text: str) -> int:
     """A cautious count: about four ASCII characters a token, one token per other character."""
     text = str(text or "")

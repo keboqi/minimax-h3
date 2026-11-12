@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from h3_app import storyboard as sb
+from h3_app import media_review, storyboard as sb
 
 MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
 TAKE_NOTE = "Every take is kept. Generate again for another version, then choose which one to use."
@@ -111,7 +111,8 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
          "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
          "poster": poster_url(board["takes"][take_id]["video"]),
          "missing": not Path(board["takes"][take_id]["video"]).is_file(),
-         "continued_by": _continued_by(board, take_id)}
+         "continued_by": _continued_by(board, take_id),
+         "review": media_review.public(board["takes"][take_id]["video"])}
         for number, take_id in enumerate(scene["takes"], 1) if take_id in board["takes"]
     ]
     pictures = []

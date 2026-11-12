@@ -68,6 +68,33 @@ def _find_line(lines: list[dict], key) -> int | None:
     return key.get("index") if key.get("index") in found else found[0]
 
 
+def _spaceless(char: str) -> bool:
+    """CJK, kana, Thai and similar scripts that join words without spaces."""
+    code = ord(char)
+    return (0x2E80 <= code <= 0x9FFF or 0xAC00 <= code <= 0xD7AF or 0xF900 <= code <= 0xFAFF
+            or 0xFF00 <= code <= 0xFFEF or 0x0E00 <= code <= 0x0EFF or 0x20000 <= code <= 0x3FFFF)
+
+
+def _merged(group: list[dict]) -> dict:
+    """Neighbouring lines of one speaker as one line: their span, texts joined, dubbed if any was."""
+    return {**group[0], "start": min(line["start"] for line in group), "end": max(line["end"] for line in group),
+            "source": _join_text(line["source"] for line in group),
+            "translation": _join_text(line["translation"] for line in group),
+            "dub": any(line.get("dub", True) for line in group)}
+
+
+def _join_text(texts) -> str:
+    """Join line texts, with a space only between scripts that use spaces."""
+    joined = ""
+    for text in (str(text or "").strip() for text in texts):
+        if not text:
+            continue
+        if joined and not (_spaceless(joined[-1]) or _spaceless(text[0])):
+            joined += " "
+        joined += text
+    return joined
+
+
 class DubbingHandlers:
     """Every Dubbing and Media download handler, bound to one set of services."""
 
@@ -299,6 +326,70 @@ class DubbingHandlers:
             return None
 
         return self._edit_lines(session_id, board, change, "Line deleted.")
+
+    def merge_lines(self, session_id, board, picked):
+        """Combine consecutive picked lines of one speaker into the first. Outputs: board, rows, status."""
+        numbers = sorted({int(n) for n in picked or [] if isinstance(n, int) and not isinstance(n, bool)})
+
+        def change(lines):
+            if len(numbers) < 2:
+                raise H3Error("Pick two or more lines in a row to combine.")
+            if numbers[0] < 0 or numbers[-1] >= len(lines):
+                raise H3Error("Those lines have changed; pick them again.")
+            if numbers != list(range(numbers[0], numbers[-1] + 1)):
+                raise H3Error("Only lines next to each other can be combined.")
+            group = lines[numbers[0]:numbers[-1] + 1]
+            if len({line["speaker"] for line in group}) > 1:
+                raise H3Error("Only lines of one speaker can be combined.")
+            merged = _merged(group)
+            lines[numbers[0]:numbers[-1] + 1] = [merged]
+            return merged
+
+        return self._edit_lines(session_id, board, change, f"Combined {len(numbers)} lines into one.")
+
+    def merge_groups(self, session_id, board, groups, relabel=False):
+        """Combine several runs of neighbouring lines at once. Outputs: board, rows, status.
+
+        Each group is a list of line numbers next to each other; groups may not overlap. They
+        are combined last first, so the numbers of the earlier groups still hold. Lines of more
+        than one speaker are combined only with ``relabel`` (groups confirmed by context, where
+        the speaker separation may be wrong); the combined line takes the speaker heard longest.
+        """
+        runs = []
+        for group in groups if isinstance(groups, list) else []:
+            numbers = sorted({int(n) for n in group or [] if isinstance(n, int) and not isinstance(n, bool)})
+            if len(numbers) >= 2:
+                runs.append(numbers)
+
+        def change(lines):
+            if not runs:
+                raise H3Error("Pick two or more lines in a row to combine.")
+            seen = set()
+            for numbers in runs:
+                if numbers[0] < 0 or numbers[-1] >= len(lines):
+                    raise H3Error("Those lines have changed; detect them again.")
+                if numbers != list(range(numbers[0], numbers[-1] + 1)):
+                    raise H3Error("Only lines next to each other can be combined.")
+                if seen & set(numbers):
+                    raise H3Error("Two groups share a line; detect them again.")
+                seen |= set(numbers)
+                if not relabel and len({lines[n]["speaker"] for n in numbers}) > 1:
+                    raise H3Error(f"Lines {numbers[0] + 1}–{numbers[-1] + 1} have more than one speaker.")
+            first = None
+            for numbers in sorted(runs, reverse=True):
+                group = lines[numbers[0]:numbers[-1] + 1]
+                merged = _merged(group)
+                heard: dict[str, float] = {}
+                for line in group:
+                    heard[line["speaker"]] = heard.get(line["speaker"], 0.0) + line["end"] - line["start"]
+                merged["speaker"] = max(heard, key=heard.get)
+                lines[numbers[0]:numbers[-1] + 1] = [merged]
+                first = merged
+            return first
+
+        count = sum(len(numbers) for numbers in runs)
+        return self._edit_lines(session_id, board, change,
+                                f"Combined {count} lines into {len(runs)}." if runs else "")
 
     def save_lines(self, session_id, rows):
         """Save the table's rows as the session's lines (runs on every edit).

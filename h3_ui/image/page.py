@@ -26,7 +26,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
-from h3_app import catalog
+from h3_app import catalog, media_review
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
@@ -45,7 +45,7 @@ from ..image_controller import IMAGE_MODELS, draft_issue, image_mode, reference_
 from ..job_admission import execute_accepted
 from ..page_fields import (
     SECRET_FIELDS, UI_LIMIT, FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
-    spool_image, update_value, writer_defaults, writer_rows,
+    review_row, spool_image, update_value, writer_defaults, writer_rows,
 )
 from ..page_runs import Run, Runs, guarded
 
@@ -439,6 +439,14 @@ class ImagePageState:
         rows = self.fine(engine, options, editing)
         if engine in WRITER_ENGINES:
             rows += writer_rows(state["writer"], group=4)
+        else:
+            rows.append(review_row(state["writer"], group=4))
+        if engine not in WRITER_ENGINES and state["writer"]["review"]:
+            # Models without a prompt writer still need a key for result scores and tags.
+            rows.append({"name": "gemini_api_key", "label": "Temporary Gemini API key", "kind": "password",
+                         "value": state["writer"]["gemini_api_key"], "store": "writer", "group": 4, "choices": [],
+                         "placeholder": "Uses GEMINI_API_KEY when blank",
+                         "hint": "Only for result scores and tags. The server does not store keys entered here."})
         counts: dict[str, int] = {}
         for row in rows:
             if row.get("changed"):
@@ -464,8 +472,8 @@ class ImagePageState:
                           "message": issue or f"Ready to {'edit' if editing else 'generate'} with {self.labels[engine]}."},
             "can_enhance": engine in WRITER_ENGINES,
             "writer": state["writer"]["backend"],
-            "results": {"images": [{"path": path, "name": Path(path).name, "url": f"{API}/file?path={_quote(path)}"}
-                                   for path in paths],
+            "results": {"images": [{"path": path, "name": Path(path).name, "url": f"{API}/file?path={_quote(path)}",
+                                    "review": media_review.public(path)} for path in paths],
                         "settings": render_snapshot(paths) if paths else ""},
         }
 
@@ -693,6 +701,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
             engine = state["engine"]
             mode = image_mode(engine, state["mode"])
             references = list(state["references"]) if mode == EDIT_MODE else []
+            prompt, writer = state["prompt"], dict(state["writer"])
             values = [engine, mode, state["prompt"], references,
                       *pages.job_values(owner, state["options"]).values()]
         label = pages.labels[engine]
@@ -710,6 +719,10 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
                 if isinstance(status, str) and status:
                     run.status = plain(status)
                 run.revision += 1
+            for path in run.results:
+                # In the background: the score and tags arrive after the image is shown.
+                media_review.schedule(path, prompt, api_key=writer.get("gemini_api_key") or "",
+                                      enabled=bool(writer.get("review", True)), edited=bool(references))
             if run.results:
                 with pages.lock:
                     latest = pages.load(owner)

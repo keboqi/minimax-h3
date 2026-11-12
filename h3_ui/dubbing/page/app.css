@@ -65,6 +65,9 @@ a { color: var(--accent); }
 .linkish { padding: 0; border: 0; background: none; color: var(--accent); font-weight: 600; text-decoration: underline; }
 .info-text { color: var(--info); }
 .fail-text { color: var(--flag); }
+.warn-text { color: var(--warn); }
+.line-row.combine-group { box-shadow: inset 3px 0 0 var(--accent); }
+.line-row.combine-1 { box-shadow: inset 3px 0 0 var(--info); }
 
 /* Controls */
 .btn {
@@ -130,6 +133,7 @@ details.sub > summary { cursor: pointer; min-height: 28px; display: flex; align-
 .alert { padding: 12px 14px; border-radius: 10px; font-size: 14px; }
 .alert-fail { background: var(--flag-bg); color: var(--flag); }
 .alert-info { background: var(--info-bg); color: var(--info); }
+.alert-warn { background: var(--warn-bg); color: var(--warn); }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent; animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .run-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
@@ -350,3 +354,5 @@ li.active .h3-word:not(.spoken) { color: var(--muted); }
   .cue-tools, .h3-dub-player-cues { border-left: 0; }
   .h3-dub-player-cues { height: auto; min-height: 0; max-height: 50vh; }
 }
+
+.combine-tools { display: inline-flex; align-items: center; gap: 8px; }

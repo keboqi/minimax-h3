@@ -283,7 +283,7 @@ def parse_drama3_reply(
             if note and notes is not None:
                 notes.append(note)
         elif notes is not None:
-            note = source_change_note(source_changes(original, script, **checked))
+            note = source_change_note(source_changes(original, script, label=True, **checked))
             if note:
                 notes.append(note)
         if notes is not None:

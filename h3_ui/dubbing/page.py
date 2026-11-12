@@ -23,7 +23,7 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
-from h3_app.dubbing import nemotron, pipeline, projects, segments as segment_tools, session as sessions, shares
+from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.results import TRACKS, load_result
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
@@ -135,6 +135,7 @@ def lines_payload(session: sessions.Session) -> dict:
     for item, line in zip(board["lines"], session.segments):
         item.update(source=line["source"], translation=line["translation"], speakerId=line["speaker"],
                     label=presenters.speaker_label(line["speaker"]), problem=_plain(item["problem"]),
+                    check=_plain(item["check"]),
                     timing=_plain(item["timing"]), fit=presenters.fit_note(line),
                     edited=not pipeline.unchanged(line))
     for speaker in board["speakers"]:
@@ -153,7 +154,7 @@ def readiness_payload(session: sessions.Session) -> dict:
         "failed": sorted(pipeline.take_problems(session)),
         "rushed": sorted(pipeline.timing_problems(session)),
         "long": pipeline.long_lines(lines),
-        "issues": pipeline.translation_issues(lines),
+        "issues": presenters.translation_flags(session),
     }
 
 
@@ -472,6 +473,47 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         session_id = body.get("session")
         board = {"session": session_id, "focus": body.get("focus")}
         return edited(request, session_id, handlers.delete_line(session_id, board), status_index=2)
+
+    @app.post(f"{API}/line/merge", include_in_schema=False)
+    @guarded
+    def merge_lines(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = body.get("session")
+        picked = body.get("picked") or []
+        board = {"session": session_id, "focus": min(picked) if picked and all(isinstance(n, int) for n in picked)
+                 else None}
+        return edited(request, session_id, handlers.merge_lines(session_id, board, picked), status_index=2)
+
+    @app.post(f"{API}/line/merge-groups", include_in_schema=False)
+    @guarded
+    def merge_groups(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = body.get("session")
+        groups = body.get("groups") or []
+        board = {"session": session_id, "focus": None}
+        answer = handlers.merge_groups(session_id, board, groups, relabel=bool(body.get("relabel")))
+        return edited(request, session_id, answer, status_index=2)
+
+    @app.post(f"{API}/combine-suggestions", include_in_schema=False)
+    @guarded
+    def combine_suggestions(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = str(body.get("session") or "")
+        load(session_id)
+        groups, by_context, status = review_checks.detect_combine(
+            session_id, runtime=runtime(), context=bool(body.get("context", True)),
+            api_key=str(body.get("api_key") or ""))
+        return {"groups": groups, "context": by_context, "status": status}
+
+    @app.post(f"{API}/check-translations", include_in_schema=False)
+    @guarded
+    def check_translations(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = str(body.get("session") or "")
+        picked = [n for n in body.get("picked") or [] if isinstance(n, int) and not isinstance(n, bool)]
+        _session, status = review_checks.check_translations(session_id, picked or None, runtime=runtime(),
+                                                            api_key=str(body.get("api_key") or ""))
+        return session_answer(request, session_id, status=status)
 
     @app.put(f"{API}/lines", include_in_schema=False)
     @guarded

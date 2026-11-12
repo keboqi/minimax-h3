@@ -230,6 +230,30 @@ use the focused line:
 - **Translate again** retranslates the picked lines. With none picked, it fills
   lines that have no translation, or translates every line when **Dub into**
   has changed since the last translation.
+- **Combine** appears when two or more lines in a row of one speaker are picked.
+  It joins them into one line from the first start to the last end, with their
+  original texts and translations joined (spaces only between languages that use
+  them). The combined line is dubbed if any of them was.
+- **Auto-detect combine** picks runs of neighbouring lines that read as one:
+  less than 0.6 s apart and together at most 8 s and 120 characters; lines that
+  are dubbed are never grouped with lines that are not. With **By context** on
+  (the default), every such pair goes to Gemini Decision in one batch with the
+  lines around it, and only pairs it confirms as one sentence or thought by one
+  person are joined, whatever their speaker labels say: not every transcription
+  separates speakers, and separation can be wrong. A group of more than one
+  label takes the speaker heard longest. With it off, or without a Gemini key,
+  fixed rules decide instead: one speaker label, and either a sentence that
+  continues into the next line or a fragment shorter than 1.2 s. The board
+  switches to **To combine** with the groups marked; untick any line to keep it
+  apart (which splits its group), then **Combine N groups** joins every group at
+  once.
+- **Check translations** (**Check rewrites** in the same language) asks Gemini
+  Decision two yes/no questions about each picked line, or every voiced line:
+  does it keep the original's meaning, names, numbers and negation, and does it
+  sound like natural speech. A hundred lines go in one request. Lines below 50%
+  for meaning or 35% for naturalness get **Check translation** with the reason
+  under the line and in the inspector; editing the translation clears it. It needs
+  `GEMINI_API_KEY` or the temporary key from Analyze.
 
 **Translate by hand in a chat model** does this without an API key, also in Workshop.
 **Copy translation prompt** copies the picked lines, or every line when none

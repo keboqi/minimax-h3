@@ -163,13 +163,18 @@ def _joined(tokens: list[str]) -> str:
 
 
 def source_changes(source: str, script: str, *, single: bool = False, expansion: bool = False,
-                   sequential_joint: bool = False) -> list[tuple[str, str, str]]:
+                   sequential_joint: bool = False, label: bool = False) -> list[tuple]:
     """Every change the source check does not accept, as ``(kind, source words, script words)``.
 
     ``kind`` is "speaker" for a supplied label performed by another voice, otherwise "words".
+    With ``label`` each entry gets a fourth item: Gemini Decision's probability that it is a
+    typo repair, or None (speaker changes, no Decision key, or no answer).
     """
-    return [change[:3] for change in _changes(source, script, single=single, expansion=expansion,
-                                              sequential_joint=sequential_joint)]
+    changes = _changes(source, script, single=single, expansion=expansion, sequential_joint=sequential_joint)
+    if not label:
+        return [change[:3] for change in changes]
+    verdicts = repair_probabilities(changes) if changes else None
+    return [(*change[:3], verdicts[index] if verdicts else None) for index, change in enumerate(changes)]
 
 
 def _changes(source: str, script: str, *, single: bool, expansion: bool, sequential_joint: bool) -> list[tuple]:
@@ -224,7 +229,7 @@ def _changes(source: str, script: str, *, single: bool, expansion: bool, sequent
     return changes
 
 
-# Changes small enough for Gemma to judge as typo repairs; anything larger is always rejected.
+# Changes small enough to judge as typo repairs; anything larger is always rejected.
 MAX_JUDGED_CHANGES = 8
 MAX_JUDGED_TOKENS = 3
 
@@ -254,17 +259,74 @@ def _judgeable(change: tuple) -> bool:
             and not any(token in _NUMBER_WORDS or any(char.isdigit() for char in token) for token in old + new))
 
 
+def _change_lines(changes: list[tuple]) -> list[tuple[str, str]]:
+    """Each "words" change as (source, script) context lines with the edited words in brackets."""
+    lines = []
+    for _kind, _old, _new, (before, old, new, after) in changes:
+        source = " ".join(filter(None, (_joined(before), f"[{_joined(old)}]", _joined(after))))
+        script = " ".join(filter(None, (_joined(before), f"[{_joined(new)}]", _joined(after))))
+        lines.append((source, script))
+    return lines
+
+
+_DECISION_REPAIR = (
+    "A script writer copied an author's text and may only fix obvious typos: a misspelling, a wrong "
+    "Chinese character that sounds the same, an accidentally doubled word or character, or a dropped "
+    "character restored in a name. Is this change such a repair, with what is heard and meant unchanged?\n"
+    "source: {source}\nscript: {script}")
+# A Decision verdict counts as a typo repair at or above this probability.
+REPAIR_THRESHOLD = 0.85
+# With Decision, more and larger changes can be judged in one request than Gemma's JSON reply allows.
+MAX_DECISION_CHANGES = 60
+
+
+def _decision_key() -> str | None:
+    from h3_app.llm import decisions, gemma
+
+    # The writer's own Gemini key, when it set one for its Gemma checks, else GEMINI_API_KEY.
+    return decisions.key_or_none(gemma.current_key())
+
+
+def repair_probabilities(changes: list[tuple]) -> list[float | None] | None:
+    """Gemini Decision's probability that each "words" change is a typo repair, in one request.
+
+    Speaker changes and anything Decision did not answer are None. Returns None when no
+    Decision key is set or the request failed, so callers keep their other checks.
+    """
+    from h3_app.llm import decisions
+
+    key = _decision_key()
+    words = [index for index, change in enumerate(changes) if change[0] == "words" and len(change) > 3]
+    if key is None or not words:
+        return None
+    lines = _change_lines([changes[index] for index in words])
+    questions = {f"change_{index}": decisions.yes_no(_DECISION_REPAIR.format(source=source, script=script))
+                 for index, (source, script) in zip(words, lines)}
+    try:
+        answers = decisions.decide(questions, decisions.text(
+            "Each question shows one edit an AI script writer made to an author's text."), key=key, timeout=30)
+    except H3Error:
+        return None
+    return [decisions.yes_probability(answers.get(f"change_{index}")) for index in range(len(changes))]
+
+
 def _judged_repairs(changes: list[tuple]) -> bool:
-    """Whether Gemma judges every remaining change a typo repair; False when it cannot answer."""
-    if not changes or len(changes) > MAX_JUDGED_CHANGES or not all(map(_judgeable, changes)):
+    """Whether every remaining change is judged a typo repair; False when it cannot be answered.
+
+    Gemini Decision judges when a key is set, else Gemma. Numbers and long edits are never judged.
+    """
+    if not changes or not all(map(_judgeable, changes)):
+        return False
+    if len(changes) <= MAX_DECISION_CHANGES:
+        verdicts = repair_probabilities(changes)
+        if verdicts is not None:
+            return all(p is not None and p >= REPAIR_THRESHOLD for p in verdicts)
+    if len(changes) > MAX_JUDGED_CHANGES:
         return False
     from h3_app.llm import gemma
 
-    lines = []
-    for number, (_kind, _old, _new, (before, old, new, after)) in enumerate(changes, 1):
-        source = " ".join(filter(None, (_joined(before), f"[{_joined(old)}]", _joined(after))))
-        script = " ".join(filter(None, (_joined(before), f"[{_joined(new)}]", _joined(after))))
-        lines.append(f"{number}. source: {source}\n   script: {script}")
+    lines = [f"{number}. source: {source}\n   script: {script}"
+             for number, (source, script) in enumerate(_change_lines(changes), 1)]
     answer = gemma.ask_json(_JUDGE_REQUEST.format(items="\n".join(lines)), max_output_tokens=16 * len(changes) + 32)
     verdicts = answer.get("ok") if answer else None
     return isinstance(verdicts, list) and len(verdicts) == len(changes) and all(v is True for v in verdicts)
@@ -274,7 +336,7 @@ def validate_source_fidelity(source: str, script: str, *, single: bool = False,
                              expansion: bool = False, sequential_joint: bool = False) -> list[tuple[str, str, str]]:
     """Reject source loss, reordering and changed known labels, allowing narrow repairs.
 
-    Small leftover word changes that Gemma judges typo repairs are accepted and returned,
+    Small leftover word changes judged typo repairs (Gemini Decision, else Gemma) are accepted and returned,
     so the caller can list them; with no verdict the script is rejected as before.
     """
     changes = _changes(source, script, single=single, expansion=expansion, sequential_joint=sequential_joint)
@@ -300,9 +362,27 @@ def accepted_repairs_note(changes: list[tuple[str, str, str]], limit: int = 4) -
             f"({_listed(changes, limit)}).")
 
 
-def source_change_note(changes: list[tuple[str, str, str]], limit: int = 4) -> str:
-    """A status note listing changes kept because the source check was set to warn."""
+def source_change_note(changes: list[tuple], limit: int = 4) -> str:
+    """A status note listing changes kept because the source check was set to warn.
+
+    Entries labelled by ``source_changes(label=True)`` are sorted: changes that may alter the
+    meaning come first and are named as such; likely typo fixes are counted after them.
+    """
     if not changes:
         return ""
-    return (f"Source check off: kept {len(changes)} change{'s' if len(changes) != 1 else ''} to your words "
-            f"({_listed(changes, limit)}). Review them in the script.")
+    labelled = [change for change in changes if len(change) > 3 and change[3] is not None]
+    if not labelled:
+        plain = [change[:3] for change in changes]
+        return (f"Source check off: kept {len(changes)} change{'s' if len(changes) != 1 else ''} to your words "
+                f"({_listed(plain, limit)}). Review them in the script.")
+    typos = [change for change in labelled if change[3] >= REPAIR_THRESHOLD]
+    risky = sorted((change for change in changes if change not in typos),
+                   key=lambda change: change[3] if len(change) > 3 and change[3] is not None else -1.0)
+    note = f"Source check off: kept {len(changes)} change{'s' if len(changes) != 1 else ''} to your words."
+    if risky:
+        note += (f" {len(risky)} may change the meaning ({_listed([change[:3] for change in risky], limit)});"
+                 " review them in the script.")
+    if typos:
+        note += (f" {len(typos)} look{'s' if len(typos) == 1 else ''} like typo fixes"
+                 f" ({_listed([change[:3] for change in typos], 2)}).")
+    return note

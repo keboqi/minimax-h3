@@ -168,3 +168,5 @@ input[type="range"] { accent-color: var(--accent); }
   .action .btn.primary { flex: 1 1 100%; }
   .fine-content { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+.review-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
