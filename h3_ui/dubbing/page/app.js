@@ -154,19 +154,17 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
   const changed = !app.session || app.session.id !== session?.id;
   app.session = session;
   app.sessionId = session?.id || null;
-  if (changed) {
-    app.picks = new Set();
-    app.mergeGroups = [];
-    app.focus = 0;
-    app.linesRequest = null;
-    if (session && !keepSettings) app.settings.voice_mode = session.voice_default;
-  }
   const signature = lineSignature(session);
-  if (!changed && signature !== app.linesSignature) {
-    // Lines were added, deleted, moved or changed: picked and detected line numbers no longer fit.
+  if (changed || signature !== app.linesSignature) {
+    // A new session, or lines added, deleted, moved or changed: picked and detected line numbers no longer fit.
     app.picks = new Set();
     app.mergeGroups = [];
     if (app.filter === "combine") app.filter = "all";
+  }
+  if (changed) {
+    app.focus = 0;
+    app.linesRequest = null;
+    if (session && !keepSettings) app.settings.voice_mode = session.voice_default;
   }
   app.linesSignature = signature;
   if (typeof focus === "number") app.focus = focus;

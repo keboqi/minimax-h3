@@ -9,6 +9,7 @@ from PIL import Image
 from h3_app import gallery_store
 from h3_app.config import RuntimeConfig
 from h3_app.media_catalog import MediaCatalog
+from h3_app.media_review import review_path
 from h3_app.provenance import snapshot_path, write_snapshot
 from h3_app.workspace_store import WorkspaceStore
 from h3_ui import application as app
@@ -43,6 +44,7 @@ class MediaDeletionTests(TestCase):
             Image.new("RGB", (32, 24), "red").save(source)
         else:
             source.write_bytes(b"media fixture")
+        review_path(source).write_text('{"status": "done", "fit": 80}', encoding="utf-8")
         with patch.object(gallery_store, "gallery_thumbnail", return_value=None):
             write_snapshot(source, {"family": "Deletion test"})
         record = self.index.inventory(mode).records[0]
@@ -58,11 +60,13 @@ class MediaDeletionTests(TestCase):
                 self.assertTrue(source.exists())
                 self.assertTrue(preview.exists())
                 self.assertTrue(snapshot_path(source).exists())
+                self.assertTrue(review_path(source).exists())
                 result = app.MEDIA.delete_selected_gallery_media(mode, str(source), True)
                 self.assertIn(f"Deleted `{source.name}`", result[2])
                 self.assertFalse(source.exists())
                 self.assertFalse(preview.exists())
                 self.assertFalse(snapshot_path(source).exists())
+                self.assertFalse(review_path(source).exists())
                 self.assertIsNone(result[7])
                 self.assertEqual(result[1], [])
                 reopened = WorkspaceStore(self.store.root)

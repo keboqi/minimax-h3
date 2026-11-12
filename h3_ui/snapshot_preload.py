@@ -26,9 +26,10 @@ def _log(message: str) -> None:
 
 
 def _remove_result(path: Path) -> None:
+    from h3_app.media_review import review_path
     from h3_app.provenance import score_path, snapshot_path
 
-    for item in (path, snapshot_path(path), score_path(path)):
+    for item in (path, snapshot_path(path), score_path(path), review_path(path)):
         item.unlink(missing_ok=True)
 
 
