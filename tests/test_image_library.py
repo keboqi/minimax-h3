@@ -89,14 +89,22 @@ class ImageLibraryTests(unittest.TestCase):
                 set_as.queue("alice", "First", str(Path(directory) / "missing.png"))
             self.assertEqual(set_as.queue("alice", "First", source), "Set image as First. Open Create to use it.")
             set_as.queue("alice", "Refs", source)
-            apply = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "apply_pending")
+            block = next(fn for fn in demo.fns.values() if fn.fn.__name__ == "apply_pending")
+            skip = gr.skip()
+
+            def apply(owner):
+                # Gradio needs one value per output, even when nothing is waiting.
+                answer = block.fn(owner, None, ["uploaded.png"])
+                self.assertEqual(len(answer), len(block.outputs))
+                return dict(zip(block.outputs, answer))
+
             with patch("h3_ui.job_admission.require_owner", side_effect=lambda request: request):
-                self.assertEqual(apply("bob", None, ["uploaded.png"]), {})
-                updates = apply("alice", None, ["uploaded.png"])
+                self.assertTrue(all(value == skip for value in apply("bob").values()))
+                updates = apply("alice")
                 self.assertEqual(updates[first]["value"], source)
                 self.assertEqual(updates[files]["value"], ["uploaded.png", source])
                 # Each queued image lands once.
-                self.assertEqual(apply("alice", None, ["uploaded.png"]), {})
+                self.assertTrue(all(value == skip for value in apply("alice").values()))
 
     def test_select_original_and_append_without_replacing_uploads(self):
         with TemporaryDirectory() as directory:

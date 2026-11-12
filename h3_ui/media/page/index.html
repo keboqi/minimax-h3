@@ -213,12 +213,14 @@
     <div id="add-file">
       <label class="drop" id="drop">
         <span class="drop-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"></path></svg></span>
-        <strong>Drop a file here, or choose one</strong>
-        <span class="small muted">A video, image or audio file. It joins the library under its own type, next to your generated outputs.</span>
-        <input type="file" id="import-file" accept="video/*,image/*,audio/*">
+        <strong>Drop files here, or choose them</strong>
+        <span class="small muted">Videos, images and audio, as many as you like. Each joins the library under its own type, next to your generated outputs.</span>
+        <input type="file" id="import-file" accept="video/*,image/*,audio/*" multiple>
       </label>
+      <ul class="picked" id="picked" aria-label="Files to add" hidden></ul>
       <div class="row tight">
-        <span class="small muted grow" id="import-status" role="status">The library switches to the file's type and selects it.</span>
+        <span class="small muted grow" id="import-status" role="status">The library switches to the last file's type and selects it.</span>
+        <button type="button" class="btn quiet" id="import-clear" hidden>Clear</button>
         <button type="button" class="btn primary big" id="import-run" disabled>Add to library</button>
       </div>
     </div>

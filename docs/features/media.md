@@ -12,8 +12,10 @@ and SeedVR2 results; Audio mode includes MiniMax H3, MiniMax Music 3, and YuE2
 outputs. All three use the same card grid and inspector: the preview, Favorite,
 download, and the **Details**, **Tags & lineage** and **Enhance selected media**
 tabs. Search filters as you type. **Add media** opens one sheet with **From your
-computer** (a video, image or audio file joins the library under its own type
-and is selected), **From a link** (yt-dlp download with saved sign-in cookies)
+computer** (pick or drop any number of videos, images and audio at once, up to
+100 per batch; each joins the library under its own type, the last one is
+selected, and a file that can't be added stays listed while the rest go in),
+**From a link** (yt-dlp download with saved sign-in cookies)
 and **Library upkeep** (Scan historical media). **Set as** sends the selected
 image to a Create input; it lands the next time you open **Create**.
 **Delete selected…** and **Empty library…** list what goes and ask once more;

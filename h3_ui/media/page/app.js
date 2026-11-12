@@ -447,31 +447,62 @@
     $("add-link").hidden = name !== "link";
     $("add-upkeep").hidden = name !== "upkeep";
   };
-  let pickedFile = null;
-  const pickFile = (file) => {
-    pickedFile = file || null;
-    $("import-run").disabled = !pickedFile;
-    $("import-status").textContent = pickedFile ? `Ready: ${pickedFile.name}` : "The library switches to the file's type and selects it.";
+  // Files waiting to be added; picking or dropping more adds to the batch.
+  const IMPORT_IDLE = "The library switches to the last file's type and selects it.";
+  let picked = [];
+  const kindOf = (file) => ({video: "Video", image: "Image", audio: "Audio"})[file.type.split("/")[0]] || null;
+  const size = (bytes) => bytes >= 1 << 30 ? `${(bytes / (1 << 30)).toFixed(1)} GB`
+    : bytes >= 1 << 20 ? `${(bytes / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  const renderPicked = () => {
+    const list = $("picked");
+    list.hidden = !picked.length;
+    list.replaceChildren(...picked.map((file, index) => {
+      const kind = kindOf(file);
+      return h("li", {},
+        h("span", {class: kind ? "kind" : "kind bad", text: kind || "Other"}),
+        h("span", {class: "file", text: file.name, title: file.name}),
+        h("span", {class: "size", text: size(file.size)}),
+        h("button", {type: "button", class: "btn quiet icon", "aria-label": `Remove ${file.name}`, text: "✕",
+          onclick: () => { picked.splice(index, 1); renderPicked(); }}));
+    }));
+    const count = picked.length;
+    $("import-run").disabled = !count;
+    $("import-run").textContent = count > 1 ? `Add ${count} files to library` : "Add to library";
+    $("import-clear").hidden = !count;
+    const unsupported = picked.filter((file) => !kindOf(file)).length;
+    $("import-status").textContent = !count ? IMPORT_IDLE
+      : unsupported ? `${unsupported} file${unsupported > 1 ? "s aren't" : " isn't"} video, image or audio and may be refused.`
+        : IMPORT_IDLE;
+    queueFit();
   };
-  const importFile = guard(async () => {
-    if (!pickedFile) return;
+  const pickFiles = (files) => {
+    const key = (file) => `${file.name}:${file.size}:${file.lastModified}`;
+    const known = new Set(picked.map(key));
+    picked = [...picked, ...[...files].filter((file) => !known.has(key(file)))];
+    $("import-file").value = "";
+    renderPicked();
+  };
+  const importFiles = guard(async () => {
+    if (!picked.length) return;
     const form = new FormData();
-    form.append("file", pickedFile);
+    for (const file of picked) form.append("files", file);
     $("import-run").disabled = true;
-    $("import-status").textContent = `Adding ${pickedFile.name}…`;
+    $("import-status").textContent = picked.length > 1 ? `Adding ${picked.length} files…` : `Adding ${picked[0].name}…`;
     try {
       const answer = await request("POST", "/import", form, {form: true});
+      toast(answer.status, answer.failed.length > 0);
+      // Keep only the files that were refused, so they can be removed or tried again.
+      const refused = new Set(answer.failed.map((item) => item.name));
+      picked = picked.filter((file) => refused.has(file.name));
+      renderPicked();
       $("import-status").textContent = answer.status;
-      toast(answer.status);
       app.mode = answer.mode;
       app.engine = "";
       await loadItems({reset: true});
       await select(answer.selected);
-      $("import-file").value = "";
-      pickFile(null);
-      $("add-dialog").close();
+      if (!picked.length) $("add-dialog").close();
     } finally {
-      $("import-run").disabled = !pickedFile;
+      $("import-run").disabled = !picked.length;
     }
   });
   const cookieSource = () => $("cookie-source").querySelector('[aria-pressed="true"]').dataset.cookie;
@@ -579,16 +610,17 @@
       const button = event.target.closest("button[data-add]");
       if (button) showAddTab(button.dataset.add);
     });
-    $("import-file").addEventListener("change", (event) => pickFile(event.target.files?.[0]));
+    $("import-file").addEventListener("change", (event) => pickFiles(event.target.files || []));
     const drop = $("drop");
     drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
     drop.addEventListener("drop", (event) => {
       event.preventDefault();
       drop.classList.remove("over");
-      if (event.dataTransfer?.files?.length) pickFile(event.dataTransfer.files[0]);
+      if (event.dataTransfer?.files?.length) pickFiles(event.dataTransfer.files);
     });
-    $("import-run").addEventListener("click", importFile);
+    $("import-run").addEventListener("click", importFiles);
+    $("import-clear").addEventListener("click", () => { picked = []; renderPicked(); });
     $("download-run").addEventListener("click", guard(async () => {
       const answer = await post("/download", {url: $("url").value, quality: $("quality").value});
       takeRuns(answer.runs);

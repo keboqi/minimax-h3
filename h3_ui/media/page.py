@@ -44,6 +44,7 @@ ROUTE = "/media"
 API = f"{ROUTE}/api"
 KINDS = ("Video", "Image", "Audio")
 PAGE_SIZE = 48
+IMPORT_LIMIT = 100  # Files in one Add media batch.
 SORTS = (("Newest first", "newest"), ("Oldest first", "oldest"), ("Name", "name"))
 EXTENSIONS = {"Video": VIDEO_EXTENSIONS, "Image": IMAGE_EXTENSIONS, "Audio": AUDIO_EXTENSIONS}
 NOUNS = {"Video": "video", "Image": "image", "Audio": "audio"}
@@ -363,17 +364,44 @@ class MediaPageState:
 
     # Import ---------------------------------------------------------------------
     def import_file(self, upload: Path, filename: str) -> dict[str, Any]:
-        suffix = Path(filename).suffix.lower()
+        """One uploaded file into the library under its own type, or why not."""
+        name = Path(filename).name
+        suffix = Path(name).suffix.lower()
         mode = next((kind for kind, extensions in EXTENSIONS.items() if suffix in extensions), None)
         if mode is None:
-            raise H3Error("Choose a video, image, or audio file.")
-        named = upload.with_name(Path(filename).name)
+            raise H3Error(f"{name or 'This file'} is not a video, image, or audio file.")
+        named = upload.with_name(name)
         upload.replace(named)
         result = self.controller.import_gallery_media(mode, str(named))
         selected = result[7]
         if not selected or not isinstance(selected, str):
             raise H3Error(plain(result[2]))
-        return {"mode": mode, "selected": selected, "status": plain(result[2])}
+        return {"name": name, "mode": mode, "selected": selected, "status": plain(result[2])}
+
+    def import_files(self, uploads: list[tuple[Path, str]]) -> dict[str, Any]:
+        """Each uploaded file under its own type; one that fails leaves the others imported."""
+        if not uploads:
+            raise H3Error("Choose a video, image, or audio file.")
+        imported, failed = [], []
+        for upload, filename in uploads:
+            try:
+                imported.append(self.import_file(upload, filename))
+            except (H3Error, OSError, ValueError) as exc:
+                failed.append({"name": Path(filename).name, "error": str(exc)})
+        if not imported:
+            raise H3Error(" ".join(item["error"] for item in failed))
+        counts = {}
+        for item in imported:
+            counts[item["mode"]] = counts.get(item["mode"], 0) + 1
+        added = ", ".join(f"{count} {NOUNS[mode]}{'s' if count > 1 and mode != 'Audio' else ''}"
+                          for mode, count in counts.items())
+        status = (imported[0]["status"] if len(imported) == 1 and not failed
+                  else f"Added {len(imported)} file{'s' if len(imported) > 1 else ''} ({added}).")
+        if failed:
+            status += f" Not added: {', '.join(item['name'] for item in failed)}."
+        # The page shows the last file added, under its type.
+        return {"imported": imported, "failed": failed, "status": status,
+                "mode": imported[-1]["mode"], "selected": imported[-1]["selected"]}
 
 
 def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
@@ -537,14 +565,21 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
     # Import ---------------------------------------------------------------------------
     @app.post(f"{API}/import", include_in_schema=False)
     @guarded
-    def import_media(request: Request, file: UploadFile = File(...)):
+    def import_media(request: Request, files: list[UploadFile] = File(...)):
         owner_of(request)
+        if len(files) > IMPORT_LIMIT:
+            raise H3Error(f"Add up to {IMPORT_LIMIT} files at a time.")
         folder = Path(tempfile.mkdtemp(prefix="h3-media-import-"))
         try:
-            upload = folder / uuid.uuid4().hex
-            with upload.open("wb") as handle:
-                shutil.copyfileobj(file.file, handle)
-            return pages.import_file(upload, file.filename or "")
+            uploads = []
+            for file in files:
+                # Each upload gets its own folder, so two files with the same name stay apart.
+                upload = folder / uuid.uuid4().hex / uuid.uuid4().hex
+                upload.parent.mkdir()
+                with upload.open("wb") as handle:
+                    shutil.copyfileobj(file.file, handle)
+                uploads.append((upload, file.filename or ""))
+            return pages.import_files(uploads)
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 

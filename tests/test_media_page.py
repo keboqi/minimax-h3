@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import time
 import unittest
+from unittest.mock import patch
+import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -58,7 +60,8 @@ class FakeController:
 
     def import_gallery_media(self, mode, uploaded):
         source = Path(uploaded)
-        target = self.root / mode / f"import_{source.name}"
+        # As the real controller does, every import gets a name of its own.
+        target = self.root / mode / f"import_{uuid.uuid4().hex[:8]}_{source.name}"
         shutil.copy(source, target)
         return self.result(mode, f"Imported `{source.name}`", str(target))
 
@@ -288,12 +291,36 @@ class MediaPageTests(unittest.TestCase):
 
     # Import, Set as, scan -----------------------------------------------------------------
     def test_import_files_the_upload_under_its_type(self):
-        answer = self.ok(self.client.post(f"{API}/import", files={"file": ("photo.png", b"png", "image/png")}))
+        answer = self.ok(self.client.post(f"{API}/import", files=[("files", ("photo.png", b"png", "image/png"))]))
         self.assertEqual(answer["mode"], "Image")
         self.assertTrue(Path(answer["selected"]).is_file())
         self.assertIn("photo.png", answer["status"])
-        self.refused(self.client.post(f"{API}/import", files={"file": ("notes.txt", b"x", "text/plain")}),
-                     "video, image, or audio")
+        self.assertEqual(answer["failed"], [])
+        self.refused(self.client.post(f"{API}/import", files=[("files", ("notes.txt", b"x", "text/plain"))]),
+                     "not a video, image, or audio file")
+
+    def test_a_batch_imports_each_file_under_its_own_type(self):
+        answer = self.ok(self.client.post(f"{API}/import", files=[
+            ("files", ("a.png", b"a", "image/png")), ("files", ("b.png", b"b", "image/png")),
+            ("files", ("clip.mp4", b"v", "video/mp4")), ("files", ("notes.txt", b"x", "text/plain")),
+            # The same name twice stays two files.
+            ("files", ("a.png", b"other", "image/png")),
+        ]))
+        self.assertEqual([item["mode"] for item in answer["imported"]], ["Image", "Image", "Video", "Image"])
+        self.assertEqual(answer["failed"], [{"name": "notes.txt",
+                                             "error": "notes.txt is not a video, image, or audio file."}])
+        self.assertEqual(answer["status"], "Added 4 files (3 images, 1 video). Not added: notes.txt.")
+        # The page shows the last file added.
+        self.assertEqual((answer["mode"], answer["selected"]), ("Image", answer["imported"][-1]["selected"]))
+        self.assertEqual(len(self.controller.list_media_paths("Image")), 3)
+        self.assertEqual(len(self.controller.list_media_paths("Video")), 1)
+
+    def test_a_batch_has_a_limit(self):
+        from h3_ui.media import page
+
+        with patch.object(page, "IMPORT_LIMIT", 2):
+            self.refused(self.client.post(f"{API}/import", files=[
+                ("files", (f"{index}.png", b"x", "image/png")) for index in range(3)]), "up to 2 files")
 
     def test_set_as_queues_a_library_image(self):
         image = self.controller.add("Image", "frame.png")
