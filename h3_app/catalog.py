@@ -57,9 +57,6 @@ REFERENCE_VIDEO_TRANSCODE_CACHE_VERSION = "video-v1"
 GEMINI_PROMPT_MODELS = (
     "gemini-4-hydrogen",
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
 
