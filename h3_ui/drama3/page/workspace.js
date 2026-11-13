@@ -4,6 +4,7 @@ import {createCast} from "./cast.js";
 import {createMix} from "./mix.js";
 import {createVideo} from "./video.js";
 import {createLibrary} from "./library.js";
+import {createBatch} from "./batch.js";
 import {createProjects} from "./project.js";
 import {createApi, createPoller, StaleResponse} from "./transport.js";
 
@@ -1107,6 +1108,7 @@ export function startWorkspace() {
     $("new-group").addEventListener("click", newGroup);
     $("open-library").addEventListener("click", openLibrary);
     $("library-close").addEventListener("click", () => $("library-dialog").close());
+    batch.bind();
     $("add-sound").addEventListener("click", () => resizeSlots("sound", true));
     $("speaker-group").addEventListener("change", (event) => saveCastSettings({speaker_group: event.target.value}));
     $("clip-input").addEventListener("change", (event) => uploadClip(event.target.files[0]));
@@ -1159,6 +1161,7 @@ export function startWorkspace() {
     $("loading").hidden = true;
     $("app").hidden = false;
     paintEditor();  // Sizes the editor now that it can be measured.
+    batch.resume();
   }
 
 
@@ -1265,6 +1268,25 @@ export function startWorkspace() {
     field,
     toast,
     poller
+  });
+
+  const batch = createBatch({
+    state,
+    $: (...args) => $(...args),
+    h,
+    api,
+    toast,
+    NO_GPU,
+    flushEdits: () => flushEdits(),
+    isRunning,
+    writerService,
+    openProject: (name) => loadProject(name, {keepPick: name === state.project?.name}).catch((error) => toast(error.message)),
+    refreshProjects: async () => {
+      try {
+        state.boot.projects = (await api("/boot", {unscoped: true})).projects;
+        if (state.project) renderHeader();
+      } catch { /* The picker catches up on the next load. */ }
+    },
   });
 
   const {saves, reconcile, saveSettings, flushEdits} = createProjects({

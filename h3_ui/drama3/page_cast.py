@@ -81,6 +81,7 @@ class CastJobs:
     job_for: Callable
     execute: Callable
     save_all: Callable
+    match_all: Callable
 
 
 def _setting(data: dict, key: str):
@@ -192,8 +193,11 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
     def edit(name: str, change: Callable[[dict], Any]):
         return edit_project(store, name, change)
 
-    def match_saved(data: dict, slot: int) -> None:
-        """Give a voiceless speaker the saved voice of the same name in the group (or Global), as the tab does."""
+    def match_saved(data: dict, slot: int, match: Callable | None = None) -> None:
+        """Give a voiceless speaker the saved voice of the same name in the group (or Global), as the tab does.
+
+        ``match`` is a name lookup over the project's group, made once for several slots.
+        """
         preset = data.get(f"voice_{slot}_preset")
         if _is_saved(preset, UPLOAD_VOICE) or clip(data.get(f"voice_{slot}_audio")):
             return
@@ -201,7 +205,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         if not name.strip() or runtime is None:
             return
         try:
-            saved = drama3_speakers.speaker_matcher(runtime(), _setting(data, "speaker_group"))(name)
+            saved = (match or drama3_speakers.speaker_matcher(runtime(), _setting(data, "speaker_group")))(name)
         except (H3Error, OSError):
             return
         if saved:
@@ -209,6 +213,25 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             data[f"voice_{slot}_save_name"] = saved.name
             if saved.description:
                 data[f"voice_{slot}_description"] = saved.description
+
+    def match_all(name: str) -> None:
+        """Give every voiceless speaker of ``name`` the group's saved voice of the same name.
+
+        Auto runs this before making voices, so a project prepared before an earlier one saved
+        its speakers (a later chapter of a series, say) reuses them instead of designing new ones.
+        """
+        if runtime is None:
+            return
+
+        def change(data):
+            try:
+                match = drama3_speakers.speaker_matcher(runtime(), _setting(data, "speaker_group"))
+            except (H3Error, OSError):
+                return
+            for slot in range(min(int(data.get("shown_slots") or 1), DRAMA3_VOICE_SLOTS)):
+                match_saved(data, slot, match)
+
+        edit(name, change)
 
     def slot_of(kind: str, slot) -> int:
         slot = int(slot)
@@ -652,4 +675,4 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
             message = interrupt(session_of(request), family=run.family, job_id=run.job_id)
         return {"message": message}
 
-    return CastJobs(runs=runs, job_for=job_for, execute=execute, save_all=save_all)
+    return CastJobs(runs=runs, job_for=job_for, execute=execute, save_all=save_all, match_all=match_all)

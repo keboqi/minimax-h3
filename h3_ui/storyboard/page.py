@@ -31,7 +31,7 @@ from h3_app.workspace_store import request_owner
 from ..job_admission import execute_accepted
 # Compatibility exports for existing callers.
 from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
-from .auto import EXPORTING, RENDERING, WAITING, AutoRenders
+from .auto import WAITING, AutoRenders
 from .handlers import GENERATE_REMAINING, GENERATE_SCENE, SWITCH_AND_REGENERATE, StoryboardHandlers
 from .payload import board_payload, file_url, referenced_paths
 
@@ -136,9 +136,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                    lambda session, run: interrupt(session, family="storyboard", job_id=run.job_id)),
     )
 
-    def auto_payload(owner):
-        queue = autos.latest(owner)
-        return queue.public() if queue is not None else None
+    auto_payload = autos.payload
 
     @app.get("/storyboard", include_in_schema=False)
     def storyboard_redirect():
@@ -218,7 +216,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             raise H3Error("Wait for this storyboard's run to finish before deleting it.")
         queue = autos.latest(owner)
         if queue is not None and queue.finished_at is None and any(
-                item.storyboard_id == storyboard_id and item.state in (WAITING, RENDERING, EXPORTING)
+                item.key == storyboard_id and item.state in (WAITING, *autos.working)
                 for item in queue.items):
             raise H3Error("Auto render still has this storyboard queued. Stop auto render first.")
         handlers.service.delete(owner, storyboard_id)

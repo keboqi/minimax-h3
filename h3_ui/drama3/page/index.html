@@ -36,6 +36,11 @@
       <span id="auto-status-text"></span>
       <button type="button" class="btn btn-small" id="auto-interrupt">Interrupt</button>
     </div>
+    <button type="button" class="chip batch-chip" id="batch-state" hidden></button>
+    <button type="button" class="btn btn-small" id="batch-open" title="Produce several prepared projects one after another">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
+      Batch
+    </button>
     <div class="auto-split" id="auto-split">
       <button type="button" class="btn btn-small" id="auto" title="Rewrite the script if it needs it, make every missing voice and sound, then speak">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
@@ -264,6 +269,14 @@
     <button type="button" class="btn btn-icon" id="library-close" aria-label="Close">×</button>
   </div>
   <div class="library-body" id="library-body"></div>
+</dialog>
+<dialog id="batch-dialog" class="dialog batch-dialog" aria-labelledby="batch-title">
+  <div class="library-head">
+    <h2 id="batch-title">Batch produce</h2>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-icon" id="batch-close" aria-label="Close">×</button>
+  </div>
+  <div class="batch-body" id="batch-body"></div>
 </dialog>
 <input id="clip-input" type="file" accept="audio/*" hidden>
 <audio id="mix-audio" preload="metadata"></audio>

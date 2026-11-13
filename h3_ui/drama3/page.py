@@ -9,6 +9,7 @@ the page polls it, so it outlives the page that started it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from threading import RLock
@@ -20,7 +21,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
-from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED
+from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from h3_app.workspace_store import request_owner
 
 from ..job_bindings import owned_generation
@@ -34,10 +35,11 @@ from .page_store import editing
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line
 from .page_adapter import generation_values as generation_values, SpeechProgress
+from .page_batch import Batches
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
-                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "library.js", "project.js")}
+                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "library.js", "project.js", "batch.js")}
 STATIC_TYPES["app.css"] = "text/css"
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,
@@ -118,6 +120,27 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None) ->
                      "preset": _preset(data)},
         "result": result_payload(result),
         "script": script_payload(data),
+    }
+
+
+def natural_key(name: str) -> list:
+    """Sort "Chapter 2" before "Chapter 10": digit runs compare as numbers, the rest ignoring case."""
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part.casefold())
+            for part in re.split(r"(\d+)", str(name)) if part]
+
+
+def batch_row(name: str, generated: bool, data: dict, clip, runtime, *, busy: bool = False) -> dict:
+    """What Auto would do for one project, for the batch list."""
+    text = str(speech_value(data, "text"))
+    speakers = speakers_payload(name, data, clip, runtime)
+    advanced = speech_value(data, "script_mode") == DRAMA3_SCRIPT_ADVANCED
+    return {
+        "name": name, "generated": bool(generated), "busy": busy,
+        "lines": sum(1 for line in text.splitlines() if line.strip()),
+        "prepared": bool(data.get("prepared")),
+        # The speakers who are someone without a voice yet, and sounds without a clip (Advanced only).
+        "voices": sum(1 for speaker in speakers if (speaker["save_name"] or speaker["saved_name"]) and not speaker["ready"]),
+        "sounds": sum(1 for sound in sounds_payload(name, data, clip) if not sound["ready"]) if advanced else 0,
     }
 
 
@@ -306,23 +329,20 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                    lambda run: speak_job(run, owner, session, name, action, body.get("line")))
         return {"run": run_payload(owner, name)}
 
-    @app.post(f"{api}/auto", include_in_schema=False)
-    @guarded
-    def auto(name: str, request: Request, body: dict = Body(default={})):
+    def start_auto(owner: str, name: str, session, body: dict | None) -> SpeakRun:
         """Auto: rewrite the script (unless it is prepared), make every missing voice and sound, then speak.
 
         Each step starts only after the one before it worked, as the tab's Auto does; ``body``
-        carries the writer service for the rewrite.
+        carries the writer service for the rewrite, as the page's request does.
         """
         if not gpu:
             raise H3Error("Open Soundstage in Studio to run Auto on the GPU.")
-        owner = owner_of(request)
         if cast_jobs.runs.active(owner, name, "cast") is not None:
             raise H3Error("Wait for the voices and sounds being made, then run Auto.")
         data, _ = project(name)
         if not (data.get("text") or "").strip():
             raise H3Error("Write or paste some text on Script first.")
-        session = session_of(request)
+        body = dict(body or {})
 
         def stopped(run) -> bool:
             if run.stop_requested:
@@ -342,6 +362,8 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             if stopped(run):
                 return
             run.stage, run.status = "cast", "Making the missing voices and sounds…"
+            # Speakers the group already has a voice for (saved by an earlier chapter, say) reuse it.
+            cast_jobs.match_all(name)
             data, _ = project(name)
             _, family, callback, values = cast_jobs.job_for(data, "prepare")
             cast_jobs.execute(run, owner, session, name, "prepare", None, family, callback, values, expected=data)
@@ -349,11 +371,65 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 return
             # The cast job's own summary is in the slots' notes; Auto's message is only what it saved.
             run.message = cast_jobs.save_all(name) if data.get("auto_save_speakers") else None
+            if stopped(run):
+                return
             run.stage, run.status, run.job_id = "speak", "Speaking…", None
             speak_job(run, owner, session, name, GENERATE)
 
-        runs.start(SpeakRun(owner, name, RUN_KIND, auto=True, stage="script"), work)
+        return runs.start(SpeakRun(owner, name, RUN_KIND, auto=True, stage="script"), work)
+
+    @app.post(f"{api}/auto", include_in_schema=False)
+    @guarded
+    def auto(name: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        start_auto(owner, name, session_of(request), body)
         return {"run": run_payload(owner, name)}
+
+    # Batch produce ---------------------------------------------------------
+    batches = Batches(
+        lambda owner, name, session, writer: start_auto(owner, name, session, {"writer": writer}),
+        interrupt=(None if interrupt is None else
+                   lambda session, run: interrupt(session, family=run.family or "drama3", job_id=run.job_id)))
+    batch_payload = batches.payload
+
+    @app.get(f"{api}/batch", include_in_schema=False)
+    @guarded
+    def read_batch(request: Request, projects: bool = True):
+        """The batch queue, and with ``projects`` what Auto would do for each project."""
+        owner = owner_of(request)
+        if not projects:
+            return {"batch": batch_payload(owner)}
+        rows = []
+        # In name order, so a series' chapters run in turn and later ones reuse earlier ones' voices.
+        for name, generated in sorted(store.soundstage_projects(), key=lambda row: natural_key(row[0])):
+            try:
+                data, _ = project(name)
+            except (H3Error, ValueError, KeyError):
+                continue
+            rows.append(batch_row(name, generated, data, clip, runtime_config,
+                                  busy=runs.active(owner, name) is not None
+                                  or cast_jobs.runs.active(owner, name) is not None))
+        return {"batch": batch_payload(owner), "projects": rows}
+
+    @app.post(f"{api}/batch", include_in_schema=False)
+    @guarded
+    def start_batch(request: Request, body: dict = Body(...)):
+        if not gpu:
+            raise H3Error("Open Soundstage in Studio to produce projects on the GPU.")
+        owner = owner_of(request)
+        names = body.get("names")
+        if not isinstance(names, list):
+            raise H3Error("Select at least one project to produce.")
+        writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
+        batches.start(owner, names, session_of(request), writer)
+        return {"batch": batch_payload(owner)}
+
+    @app.post(f"{api}/batch/stop", include_in_schema=False)
+    @guarded
+    def stop_batch(request: Request):
+        owner = owner_of(request)
+        message = batches.stop(owner, session_of(request))
+        return {"message": message, "batch": batch_payload(owner)}
 
     @app.post(f"{api}/words", include_in_schema=False)
     @guarded

@@ -547,3 +547,28 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
   .outline-col { order: 2; }
   .writer-col { order: 3; }
 }
+
+/* Batch produce: the projects to produce in turn, and the queue as it runs. */
+.batch-chip { border: 0; cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-dialog { width: min(640px, calc(100% - 32px)); max-height: calc(100vh - 48px); padding: 0; display: none; }
+.batch-dialog[open] { display: flex; flex-direction: column; }
+.batch-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 18px; overflow: auto; }
+.batch-body h3 { font-size: 15px; margin: 0; }
+.batch-body p { margin: 0; }
+.batch-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.batch-list { flex: none; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.batch-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line-soft); }
+.batch-row:first-child { border-top: 0; }
+label.batch-row { cursor: pointer; }
+label.batch-row:hover { background: var(--raised); }
+.batch-row input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.batch-row .grow { flex: 1; min-width: 0; }
+.batch-row .name { font-weight: 600; overflow-wrap: anywhere; }
+.batch-note { font-size: 13px; color: var(--muted); }
+.batch-note.warn { color: var(--warn); }
+.batch-badge { flex: none; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--reused-bg); color: var(--reused); }
+.batch-badge.producing { background: var(--accent); color: var(--accent-ink); }
+.batch-badge.done { background: var(--accent-soft); color: var(--accent); }
+.batch-badge.stopped { background: var(--warn-bg); color: var(--warn); }
+.batch-badge.failed { background: var(--flag-bg); color: var(--flag); }
+.batch-error { color: var(--flag); }

@@ -443,6 +443,118 @@ class Drama3PageAutoTests(CastFixture):
         self.assertEqual((saved["parallel"], saved["temperature"]), (32, 1.3))
 
 
+class Drama3PageBatchTests(CastFixture):
+    """Batch produce: Auto on several projects in turn, on the same fake GPU work."""
+
+    WRITER = Drama3PageAutoTests.WRITER
+
+    def project(self, name, text="Mia sells plums in the rain."):
+        self.ok(self.client.post(f"{API}/projects", json={"name": name}))
+        self.ok(self.client.patch(f"{API}/project/script", params={"name": name}, json={"text": text}))
+
+    def wait_batch(self):
+        for _ in range(500):
+            batch = self.ok(self.client.get(f"{API}/batch", params={"projects": "false"}))["batch"]
+            if batch and not batch["active"]:
+                return batch
+            time.sleep(0.02)
+        self.fail("The batch did not finish.")
+
+    def test_batch_lists_what_auto_would_do_and_produces_each_project_in_turn(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums."}))
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", return_value=self.WRITER):
+            self.ok(self.client.post(f"{API}/project/rewrite", params=NAME, json={}))
+        self.project("Harbor")
+        self.ok(self.client.post(f"{API}/projects", json={"name": "Empty"}))
+        rows = {row["name"]: row for row in self.ok(self.client.get(f"{API}/batch"))["projects"]}
+        self.assertEqual((rows["Night Market"]["prepared"], rows["Night Market"]["voices"]), (True, 1))
+        self.assertEqual((rows["Harbor"]["prepared"], rows["Harbor"]["generated"]), (False, False))
+        self.assertEqual(rows["Empty"]["lines"], 0)
+
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", return_value=self.WRITER) as writer:
+            batch = self.ok(self.client.post(f"{API}/batch", json={
+                "names": ["Night Market", "Empty", "Harbor"], "writer": {"gemini_api_key": "k"}}))["batch"]
+            self.assertTrue(batch["active"])
+            self.assertIn("already running", self.client.post(f"{API}/batch", json={"names": ["Harbor"]}).json()["error"])
+            batch = self.wait_batch()
+        states = {item["name"]: (item["state"], item["detail"]) for item in batch["items"]}
+        self.assertEqual(states["Night Market"][0], "done")
+        self.assertEqual(states["Empty"][0], "failed")
+        self.assertIn("Script first", states["Empty"][1])
+        self.assertEqual(states["Harbor"][0], "done")
+        writer.assert_called_once()  # Only Harbor needed the writer; Night Market was prepared.
+        self.assertIn("k", [*writer.call_args.args, *writer.call_args.kwargs.values()])  # The batch's writer service.
+        self.assertEqual([call[0] for call in self.calls], ["voices", "speak", "voices", "speak"])
+        rows = {row["name"]: row for row in self.ok(self.client.get(f"{API}/batch"))["projects"]}
+        self.assertTrue(rows["Night Market"]["generated"] and rows["Harbor"]["generated"])
+
+    def test_a_series_runs_in_chapter_order_and_later_chapters_reuse_saved_voices(self):
+        self.ok(self.client.post(f"{API}/library/groups", json={"name": "Saga"}))
+        chapters = ["Chapter 10", "Chapter 2"]  # Chapter 10 is the newest, so it lists first by date.
+        for name in reversed(chapters):
+            self.project(name)
+        for name in chapters:
+            params = {"name": name}
+            self.ok(self.client.patch(f"{API}/project/cast-settings", params=params, json={"speaker_group": "Saga"}))
+            self.ok(self.client.patch(f"{API}/project/settings", params=params, json={"auto_save_speakers": True}))
+            # Both are prepared before any voice is saved, as in the Workshop.
+            with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", return_value=self.WRITER):
+                self.ok(self.client.post(f"{API}/project/rewrite", params=params, json={}))
+        listed = [row["name"] for row in self.ok(self.client.get(f"{API}/batch"))["projects"]]
+        self.assertEqual(listed, ["Chapter 2", "Chapter 10", "Night Market"])
+
+        voices = self.handlers.generate_drama3_voices
+        presets = []
+
+        def recording(*values):
+            presets.append({name: self.store.soundstage_project(name)[0].get("voice_0_preset") for name in chapters})
+            yield from voices(*values)
+
+        self.handlers.generate_drama3_voices = recording
+        self.ok(self.client.post(f"{API}/batch", json={"names": listed[:2]}))
+        batch = self.wait_batch()
+        self.assertEqual([(item["name"], item["state"]) for item in batch["items"]],
+                         [("Chapter 2", "done"), ("Chapter 10", "done")])
+        saved = self.store.soundstage_project("Chapter 2")[0]["voice_0_preset"]
+        self.assertIn("Saga", saved)
+        # Chapter 2 designed Mia; by the time Chapter 10 made its cast, Mia was already its saved voice.
+        self.assertNotEqual(presets[0]["Chapter 2"], saved)
+        self.assertEqual(presets[1]["Chapter 10"], saved)
+        chapter_10 = self.ok(self.client.get(f"{API}/project", params={"name": "Chapter 10"}))["speakers"][0]
+        self.assertEqual((chapter_10["source"], chapter_10["saved_name"]), ("saved", "Mia"))
+
+    def test_stopping_the_batch_stops_the_current_project_and_skips_the_rest(self):
+        self.ok(self.client.patch(f"{API}/project/script", params=NAME, json={"text": "Mia sells plums."}))
+        self.project("Harbor")
+
+        def slow_writer(*args, **kwargs):
+            time.sleep(0.3)
+            return self.WRITER
+
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text", side_effect=slow_writer):
+            self.ok(self.client.post(f"{API}/batch", json={"names": ["Night Market", "Harbor"]}))
+            time.sleep(0.05)
+            stopped = self.ok(self.client.post(f"{API}/batch/stop"))
+            self.assertIn("rest won't start", stopped["message"])
+            batch = self.wait_batch()
+        self.assertEqual([item["state"] for item in batch["items"]], ["stopped", "stopped"])
+        self.assertIn("Not started", batch["items"][1]["detail"])
+        self.assertEqual(self.calls, [])  # No voices, sounds or speech.
+        self.assertEqual(self.ok(self.client.post(f"{API}/batch/stop"))["message"], "No batch is running.")
+
+    def test_the_workshop_lists_projects_but_cannot_start_a_batch(self):
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        install_soundstage_page(app, Drama3Actions.of(self.handlers, interrupt=None), store=self.store,
+                                output_dir=self.root / "outputs", takes_dir=lambda: self.root,
+                                runtime_config=lambda: self.runtime, gpu=False)
+        client = TestClient(app)
+        client.get(f"{API}/boot")
+        self.assertEqual([row["name"] for row in client.get(f"{API}/batch").json()["projects"]], ["Night Market"])
+        self.assertIn("Studio", client.post(f"{API}/batch", json={"names": ["Night Market"]}).json()["error"])
+        self.assertIn("Select at least one", self.client.post(f"{API}/batch", json={"names": []}).json()["error"])
+
+
 class Drama3PageLibraryTests(CastFixture):
     """Word timing for a mix, managing saved speakers and sounds, and trying new voices."""
 

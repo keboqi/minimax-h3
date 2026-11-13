@@ -21,7 +21,8 @@ There it prepares projects: write and rewrite the script, cast speakers and soun
 upload, transcripts, saved voices and the Voice library), set the speech and video settings, and
 play a mix already made. The top bar says **Prepare only**; anything that needs the GPU (speaking,
 Auto, making voices or sounds, transcribing, word timing, new voices and the illustrated video)
-is off and says to open the project in Studio, where the same project continues.
+is off and says to open the project in Studio, where the same project continues. **Batch** then
+produces many prepared projects in one go there.
 
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
@@ -34,7 +35,28 @@ speech jobs wait; it opens Mix & review when it finishes, or says which step sto
 Interrupting it while the writer works stops it once the writer answers, before any GPU work. Its
 menu has **Save the voices it makes to the speaker group**, which saves every voiced speaker to the
 group selected on Cast & sounds after the voices are made. Like speaking, it carries on if the page
-is closed.
+is closed. Before making voices, Auto gives every speaker without a voice the saved voice of the same
+name in the speaker group (or Global), as typing the name would, so a project prepared before those
+voices were saved still uses them.
+
+**Batch**, beside Auto-produce, runs Auto-produce on several projects one after another, so
+projects prepared in the CPU Workshop can all be produced in one go once Studio is up. Tick the
+projects; each says whether its script is prepared or the writer rewrites it first, how many voices
+and sounds it still needs, and whether it was spoken before (it then speaks again). **Select all not
+yet spoken** ticks the projects with a script that have no mix. A project without a script, or one
+that is already running something, can't be ticked. **Produce** starts them in the order listed,
+by name with numbers in numeric order (Chapter 2 before Chapter 10); projects the writer hasn't
+prepared are rewritten with the writer service set on Script in that browser tab. Each project runs exactly as its own Auto-produce would, and a project
+that fails is marked **Failed** with its reason while the queue moves on. For a series, put every
+chapter in the same speaker group and tick **Save the voices it makes to the speaker group** in
+each: the first chapter designs and saves its speakers, and each later chapter reuses the ones it
+shares by name, designing only new characters. The queue runs on the
+server, so the page can be closed; while it runs, the top bar shows which project it is on (click it
+to open the list), and a page showing the project the queue just finished moves to the next one.
+**Stop the batch** interrupts the current project, keeping what it made, and the rest don't start;
+interrupting the current project from its own page stops the batch the same way.
+The queue lives in the server process: a restart ends it, and nothing resumes on its own. In the
+Workshop the list shows what each project still needs, but the batch starts only in Studio.
 
 ### Script
 
