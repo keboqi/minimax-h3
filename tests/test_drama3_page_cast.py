@@ -282,9 +282,22 @@ class Drama3PageCastTests(CastFixture):
         library = self.ok(self.client.get(f"{API}/library"))
         self.assertEqual([sound["name"] for sound in library["sounds"]], ["rain"])
         project = self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "sound"}, json={"add": True}))
+        # The new, empty slot is listed (as open) so the page can select it.
+        self.assertEqual([(sound["slot"], sound["open"], sound["ready"]) for sound in project["sounds"]],
+                         [(0, False, True), (1, True, False)])
         project = self.patch_slot("sound", 1, save_name="thunder", description="Distant thunder", duration=4)
         self.assertEqual([(sound["name"], sound["duration"], sound["loop"]) for sound in project["sounds"]],
                          [("rain", 8, True), ("thunder", 4, None)])
+
+    def test_adding_a_sound_opens_the_first_empty_slot(self):
+        project = self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "sound"}, json={"add": True}))
+        self.assertEqual([(sound["slot"], sound["open"]) for sound in project["sounds"]], [(0, True)])
+        # Adding again while it is still empty keeps the same slot instead of hiding more.
+        again = self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "sound"}, json={"add": True}))
+        self.assertEqual([sound["slot"] for sound in again["sounds"]], [0])
+        self.patch_slot("sound", 0, save_name="rain", description="Rain", duration=5)
+        third = self.ok(self.client.post(f"{API}/project/slots", params={**NAME, "kind": "sound"}, json={"add": True}))
+        self.assertEqual([(sound["slot"], sound["open"]) for sound in third["sounds"]], [(0, False), (1, True)])
 
     def test_making_one_voice_keeps_its_clip_and_transcript_in_the_slot(self):
         refused = self.client.post(f"{API}/project/make", params=NAME, json={"target": "voice", "slot": 0})

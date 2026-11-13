@@ -19,7 +19,7 @@ from h3_app.errors import H3Error
 from h3_app.prompt_writers import drama3 as writer
 
 from ..page_runs import guarded
-from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
+from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND
 from .page_common import apply_fields, check_proposal, proposal_token, timeline_payload, value, writer_service
 from .page_store import edit_project, editing, project_lock
 from .result_view import clean_line, preview_source_lines, script_preview_settings
@@ -76,6 +76,22 @@ def sync_sounds(actions, data: dict) -> None:
     outputs = list(actions.sync_drama3_script_sounds(data.get("text") or "", data.get("script_mode"),
                                                      int(data.get("shown_sound_slots") or 1), *meta))
     _apply_sounds(data, outputs[:3 * DRAMA3_SOUND_SLOTS], outputs[3 * DRAMA3_SOUND_SLOTS:])
+
+
+def clear_cast_clips(data: dict) -> None:
+    """Let go of every slot's clip, transcript and saved sound, and of results kept for review.
+
+    Loading an example replaces the whole cast; a clip left in a slot would become the voice or
+    sound of whoever the example puts there.
+    """
+    for slot in range(DRAMA3_VOICE_SLOTS):
+        data.pop(f"voice_{slot}_audio", None)
+        data.pop(f"voice_{slot}_transcript", None)
+    for slot in range(DRAMA3_SOUND_SLOTS):
+        data.pop(f"sound_{slot}_audio", None)
+        data[f"sound_{slot}_preset"] = UPLOAD_SOUND
+    for key in ("_cast_proposals", "_writer_proposal", "_open_sound_slot"):
+        data.pop(key, None)
 
 
 def failed(status: str) -> bool:
@@ -300,6 +316,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
                                                              strict_source=bool(_setting(data, "strict_source"))))
             status = str(outputs[1])
             if not failed(status):
+                data.pop("_writer_proposal", None)  # The pasted reply replaces any saved writer answer.
                 _apply_cast(data, outputs)
                 data["prepared"] = True
                 sync_sounds(actions, data)
@@ -316,6 +333,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         with editing(store, name) as data:
             before = data.get("text") or ""
             outputs = list(loader(_setting(data, "speaker_group")))
+            clear_cast_clips(data)
             rest = _apply_cast(data, outputs)
             data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
             meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]

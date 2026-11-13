@@ -265,6 +265,39 @@ class Drama3PageScriptTests(unittest.TestCase):
         self.assertIn("Unknown", self.client.post(f"{API}/project/example", params={"name": "Night Market"},
                                                   json={"example": "fr"}).json()["error"])
 
+    def test_an_example_lets_go_of_the_old_clips_and_saved_answers(self):
+        """The example's speakers get voices of their own, not the clips the old cast left in their slots."""
+        self.create()
+        clips = self.root / "outputs" / "h3" / ".soundstage" / "clips"
+        clips.mkdir(parents=True)
+        (clips / "old-voice.wav").write_bytes(b"RIFF")
+        data, _ = self.store.soundstage_project("Night Market")
+        data.update({"voice_0_audio": "old-voice.wav", "voice_0_transcript": "Old words.",
+                     "sound_0_audio": "old-voice.wav", "_writer_proposal": {"id": "x", "outputs": [], "source": ""},
+                     "_cast_proposals": {"voice:0": {"id": "y", "patch": {}}}})
+        self.store.save_soundstage_project("Night Market", data)
+        loaded = self.ok(self.client.post(f"{API}/project/example", params={"name": "Night Market"}, json={"example": "en"}))
+        self.assertFalse(any(speaker["ready"] for speaker in loaded["speakers"]))
+        self.assertFalse(any(sound["ready"] for sound in loaded["sounds"]))
+        self.assertFalse(loaded["script"]["proposal"])
+        saved, _ = self.store.soundstage_project("Night Market")
+        self.assertNotIn("voice_0_audio", saved)
+        self.assertNotIn("voice_0_transcript", saved)
+        self.assertNotIn("_cast_proposals", saved)
+
+    def test_a_pasted_reply_replaces_a_saved_writer_answer(self):
+        self.create()
+        params = {"name": "Night Market"}
+        self.ok(self.client.patch(f"{API}/project/script", params=params,
+                                  json={"text": "Hello, Leo.", "script_mode": DRAMA3_SCRIPT_BASIC}))
+        data, _ = self.store.soundstage_project("Night Market")
+        data["_writer_proposal"] = {"id": "old", "outputs": [], "source": "Hello, Leo."}
+        self.store.save_soundstage_project("Night Market", data)
+        reply = json.dumps({"script": "<|speaker:0|>Hello, Leo.", "speakers": CAST[:1], "title": "Greeting"})
+        applied = self.ok(self.client.post(f"{API}/project/reply", params=params, json={"reply": reply}))
+        self.assertFalse(applied["failed"], applied["status"])
+        self.assertFalse(applied["script"]["proposal"])
+
     def test_the_preview_estimates_a_timeline_without_audio(self):
         preview = self.ok(self.client.post(f"{API}/preview", json={
             "text": 'Mia: Plums, two for one!\n<sound name="thunder" duration="3">Distant thunder</sound>\nLeo: Someone has to.',

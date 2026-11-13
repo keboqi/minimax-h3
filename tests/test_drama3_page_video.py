@@ -147,6 +147,24 @@ class Drama3PageVideoTests(unittest.TestCase):
         plan = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_style": "Pixel art"}))["video"]["plan"]
         self.assertEqual((plan["rows"], plan["stale"]), ([], True))
 
+    def test_drawing_waits_for_planning_on_the_same_mix(self):
+        """Drawing uses the plan and saving the stills, so a mix runs one of them at a time."""
+        from threading import Event
+
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        release = Event()
+
+        def slow_writer(*args, **kwargs):
+            release.wait(10)
+            return json.dumps(PLAN), "ok"
+
+        with patch("h3_app.drama3.visual_plan.write_prompt", side_effect=slow_writer):
+            self.ok(self.client.post(f"{API}/project/video/plan", params=NAME, json={}))
+            refused = self.client.post(f"{API}/project/video/draw", params=NAME)
+            self.assertIn("already being planned", refused.json()["error"])
+            release.set()
+            self.wait()
+
     def test_a_pasted_plan_is_checked_then_saved(self):
         refused = self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": "not json"})
         self.assertIn("error", refused.json())

@@ -904,7 +904,8 @@ export function startWorkspace() {
     castCall(`/project/slots?kind=${kind}`, {method: "POST", body: {add}}).then((project) => {
       if (!project) return;
       const list = kind === "voice" ? project.speakers : project.sounds;
-      if (add && list.length) pickSlot(kind, list.at(-1).slot);
+      const added = kind === "sound" ? list.find((sound) => sound.open) : list.at(-1);
+      if (add && added) pickSlot(kind, added.slot);
       else { state.castPick = null; renderCast(); }
     });
   }

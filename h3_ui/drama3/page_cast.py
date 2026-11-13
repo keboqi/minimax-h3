@@ -157,8 +157,9 @@ def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None]) -> 
             if audio:
                 entry.update(source="clip", clip=clip_url(name, "sound", slot, Path(audio).name))
         entry["name"] = entry["save_name"] or (preset if entry["source"] == "saved" else "") or entry["description"]
-        if not entry["name"] and not entry["clip"]:
-            continue  # An empty slot is no sound yet.
+        entry["open"] = slot == data.get("_open_sound_slot")
+        if not entry["name"] and not entry["clip"] and not entry["open"]:
+            continue  # An empty slot is no sound yet, unless Add sound just opened it.
         entry["loop"] = loops.get(str(entry["name"]).casefold())
         entry["ready"] = bool(entry["clip"])
         entry["proposal"] = f"sound:{slot}" in (data.get("_cast_proposals") or {})
@@ -307,10 +308,20 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
 
         def change(data):
             shown = int(data.get(key) or 1)
-            if kind == "sound":
-                # Sound slots hidden as empty still count; a new sound takes the first empty one.
-                shown = max(shown, max((entry["slot"] + 1 for entry in sounds_payload(name, data, clip)), default=0))
+            if kind == "sound" and step > 0:
+                # The page lists only sounds with a name or clip, so a new sound takes the first empty
+                # slot, which stays listed (as open) until it is filled or another one is opened.
+                data.pop("_open_sound_slot", None)
+                listed = {entry["slot"] for entry in sounds_payload(name, {**data, key: limit}, clip)}
+                free = next((slot for slot in range(limit) if slot not in listed), None)
+                if free is None:
+                    raise H3Error("Every sound slot is in use.")
+                data["_open_sound_slot"] = free
+                data[key] = max(shown, free + 1)
+                return
             data[key] = max(1, min(limit, shown + step))
+            if kind == "sound" and int(data.get("_open_sound_slot") or 0) >= data[key]:
+                data.pop("_open_sound_slot", None)
 
         edit(name, change)
         return payload(owner_of(request), name)

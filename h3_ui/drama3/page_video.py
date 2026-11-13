@@ -103,7 +103,9 @@ def boot_payload(engines: list) -> dict:
 def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, session_of, payload,
                          project: Callable[[str], tuple[dict, str | None]], gpu: bool, interrupt) -> Runs:
     """The video routes; ``export`` is the tab's :class:`visuals.VideoExport`. Returns the video runs."""
-    runs = Runs(busy="This mix is already being planned, drawn or saved.")
+    busy = "This mix is already being planned, drawn or saved."
+    # One run per mix, of any kind: drawing uses the plan and saving uses the stills.
+    runs = Runs(busy=busy, blocked=lambda run: busy if runs.active(run.owner, run.storyboard_id) else None)
 
     def mix_of(name: str):
         data, result = project(name)

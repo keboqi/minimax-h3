@@ -112,6 +112,9 @@ def run():
             page.locator("#open-library").click()
             expect(page.locator("#library-dialog")).to_be_visible()
             page.locator("#library-close").click()
+            # Add sound lists the new, empty slot and selects it.
+            page.locator("#add-sound").click()
+            expect(page.locator('#sound-table tr[aria-selected="true"]')).to_contain_text("Sound 1")
             page.locator("#project").select_option("Night Market")
             page.locator("#step-mix").click()
             expect(page.locator("#player .player-title")).to_be_visible()
