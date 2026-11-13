@@ -12,7 +12,7 @@ from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate
 from h3_app.media_tools import probe_video_metadata
 from h3_app.prompt_writers.remake import enhance_remake_prompt
-from h3_app.provenance import write_snapshot
+from h3_app.provenance import snapshot_path, write_snapshot
 
 from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
 from .model import FPS, RemakeGraph, RenderSize, check_pins, frames_for_seconds, render_size, request_overrides
@@ -68,6 +68,14 @@ CONTINUE_REQUEST = "Continue the same edit through this window."
 
 def _scratch_clip() -> Path:
     return Path(tempfile.gettempdir()) / f"h3-remake-{uuid.uuid4().hex}.mp4"
+
+
+def _drop_extras(take: Path, name: str) -> None:
+    """Remove what a render left beside its take, such as the clip before face refine."""
+    keep = {take.name, snapshot_path(take).name}
+    for path in take.parent.glob(f"{name}*"):
+        if path.name not in keep and path.is_file():
+            path.unlink(missing_ok=True)
 
 
 def active_pins(pins: Sequence[int | None]) -> tuple[int | None, ...]:
@@ -204,10 +212,11 @@ class WindowRunner:
         # Upscaling would change the size windows join at. Face refine keeps it, so it runs per window.
         values["postprocess"] = "None"
         prefix = Path(project["folder"]).relative_to(Path(self.runtime().output_dir)).as_posix()
+        name = f"w{index + 1:02d}_{uuid.uuid4().hex[:8]}"
         remake = RemakeGraph(
             mode=options.mode, source_video=staged,
             pictures=tuple(self.stage_file(str(path), "remake_pictures", reuse=True) for path in pictures),
-            pins=pinned, frames=frames, output_prefix=f"{prefix}/w{index + 1:02d}_{uuid.uuid4().hex[:8]}",
+            pins=pinned, frames=frames, output_prefix=f"{prefix}/{name}",
             held_frames=held,
         )
         take = None
@@ -223,8 +232,10 @@ class WindowRunner:
         project = self.projects.edit(project, lambda current: record_take(
             current, index, str(take), current_inputs=inputs_match(current, text),
         ))
+        _drop_extras(Path(take), name)
         if previous_take and previous_take != str(take):
             Path(previous_take).unlink(missing_ok=True)
+            snapshot_path(previous_take).unlink(missing_ok=True)
         if index + 1 < len(windows):
             self._carry(project, index + 1)
         yield str(take), f"{label} done"

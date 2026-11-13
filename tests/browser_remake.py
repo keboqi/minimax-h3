@@ -97,38 +97,30 @@ def main(shots=None):
                 remake.get_by_label("Edit with").select_option(label="MiniMax H3")
                 remake.get_by_role("button", name="Edit in Image").first.click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
-                expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
-                    "MiniMax H3", timeout=10000)
-                expect(page.locator(".h3-engine-view:visible").get_by_label("Edit", exact=True)).to_be_checked(
-                    timeout=10000)
-                references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
-                    has=page.locator(".h3-input-thumbnails"))
-                expect(references.locator(".h3-input-thumbnails img").first).to_be_visible(timeout=10000)
+                # Image is its own page, in a frame.
+                image = page.frame_locator('iframe[src="/image/"]')
+                expect(image.locator('#models button[aria-pressed="true"]')).to_have_text("MiniMax H3", timeout=10000)
+                expect(image.locator('#mode button[aria-pressed="true"]')).to_have_text("Edit", timeout=10000)
+                expect(image.locator("#reference-list .pic img")).to_have_count(1, timeout=10000)
                 picker.filter(has_text="Remake").click()
 
                 # Any other model still opens with the frame.
                 remake.get_by_label("Edit with").select_option(label="Qwen Image 2.1")
                 remake.get_by_role("button", name="Edit in Image").first.click()
                 expect(page.locator(".h3-task-picker label:has(input:checked)")).to_have_text("Image", timeout=10000)
-                expect(page.locator(".h3-engine-bar label:has(input:checked):visible")).to_have_text(
+                expect(image.locator('#models button[aria-pressed="true"]')).to_have_text(
                     "Qwen Image 2.1", timeout=10000)
                 # It opens ready to edit, with the frame itself, not just the task.
-                expect(page.locator(".h3-engine-view:visible").get_by_label("Edit", exact=True)).to_be_checked(
-                    timeout=10000)
-                references = page.locator(".h3-engine-view:visible .h3-image-library-input").filter(
-                    has=page.locator(".h3-input-thumbnails"))
-                expect(references.locator(".h3-input-thumbnails img").first).to_be_visible(timeout=10000)
-                expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
+                expect(image.locator('#mode button[aria-pressed="true"]')).to_have_text("Edit", timeout=10000)
+                pictures = image.locator("#reference-list .pic")
+                expect(pictures).to_have_count(1, timeout=10000)
                 if shots:
                     page.screenshot(path=str(Path(shots) / "qwen-thumbnails.png"), full_page=True)
-                # Adding one and clicking the × on a thumbnail both reach the input the request reads.
-                references.locator('.h3-input-files input[type="file"]').first.set_input_files(str(extra))
-                expect(references.locator(".h3-input-files tbody tr")).to_have_count(2, timeout=10000)
-                expect(references.locator(".h3-input-thumbnails img")).to_have_count(2, timeout=10000)
-                thumb = references.locator(".h3-input-thumbnails .thumbnail-item").first
-                thumb.scroll_into_view_if_needed()
-                thumb.click(position={"x": thumb.bounding_box()["width"] - 14, "y": 14})
-                expect(references.locator(".h3-input-files tbody tr")).to_have_count(1, timeout=10000)
+                # Adding one and removing one both reach the draft the request reads.
+                image.locator("#file-input").set_input_files(str(extra))
+                expect(pictures).to_have_count(2, timeout=10000)
+                image.get_by_role("button", name="Remove image 1", exact=True).click()
+                expect(pictures).to_have_count(1, timeout=10000)
                 picker.filter(has_text="Remake").click()
                 expect(readiness).to_contain_text("Edit Picture 1")
 
@@ -263,15 +255,17 @@ def main(shots=None):
                 expect(picker.first).to_be_visible(timeout=60000)
                 # An edit comes back from Media, even before Remake has been opened.
                 page.get_by_role("tab", name="Media", exact=True).click()
-                media = page.locator(".h3-gallery-shell")
-                media.locator("#h3-library-kind").get_by_label("Image", exact=True).check()
-                media.get_by_label("Search media", exact=True).fill("alpha.png")
-                media.get_by_role("button", name="Search library", exact=True).click()
-                expect(media.locator("#generated-video-gallery .thumbnail-item")).to_have_count(1)
-                media.locator("#generated-video-gallery .thumbnail-item").click()
-                media.get_by_label("Set as", exact=True).click()
-                page.get_by_role("option", name="Remake · Picture 2", exact=True).click()
-                media.get_by_role("button", name="Set image", exact=True).click()
+                # Media is its own page, in a frame.
+                media = page.frame_locator('iframe[src="/media/"]')
+                media.locator("#kinds").get_by_role("button", name=re.compile("^Image")).click()
+                media.locator("#query").fill("alpha.png")
+                media.get_by_role("button", name="Search", exact=True).click()
+                cards = media.locator("#grid .card")
+                expect(cards).to_have_count(1, timeout=10000)
+                cards.click()
+                media.locator("#set-as-name").select_option(label="Remake · Picture 2")
+                media.locator("#set-as-apply").click()
+                expect(media.locator("#set-as-status")).to_contain_text("Remake · Picture 2", timeout=10000)
                 picker.filter(has_text="Remake").click()
                 # Session persistence reopens the project automatically after reload.
                 expect(remake.locator("#summary")).to_contain_text("rendered", timeout=20000)

@@ -344,6 +344,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         suggestion, status = handlers.rewrite_prompt(
             owner, _selection(body), int(body.get("window") or 0), body.get("request", ""),
             body.get("mode"), body.get("video"), bool(body.get("pinned")), pictures, pins, body.get("writer") or {},
+            smart=bool(body.get("smart")), use_carried=body.get("use_carried", True) is not False,
         )
         return {"suggestion": suggestion, "status": status}
 

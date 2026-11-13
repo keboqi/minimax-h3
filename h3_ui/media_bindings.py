@@ -222,7 +222,7 @@ def bind_gallery_view(
         mode_changed = mode != current.get("_mode", mode) or (
             "_mode" not in current and target is view.mode
         )
-        query, starred = text.strip(), bool(favorite)
+        query, starred = (text or "").strip(), bool(favorite)
         # Engines differ per media type, so a type switch shows every engine again.
         engine, sort = ("" if mode_changed else engine or ""), sort or "newest"
         filters_changed = (query, starred, engine, sort) != (

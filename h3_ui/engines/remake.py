@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import gradio as gr
 
@@ -35,8 +35,8 @@ from h3_app.remake import (
 )
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
 from h3_app.remake.media import extract_frame, filmstrip, frame_seconds, trim_source
-from h3_app.remake.project import CHANGED, RENDERED, STATE_NAMES, with_selection
-from h3_app.remake.runner import RunOptions, Selection, WindowRunner
+from h3_app.remake.project import CHANGED, RENDERED, STATE_NAMES, window_inputs, with_selection
+from h3_app.remake.runner import CONTINUE_REQUEST, RunOptions, Selection, WindowRunner
 from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, needs_windows, selection_frames
 from h3_app.staging import file_content_sha256
 from h3_app.storyboard import PROFILE_FIELDS
@@ -610,17 +610,35 @@ class RemakeHandlers:
         return str(aligned)
 
     # Prompt ----------------------------------------------------------------
-    def rewrite_prompt(self, owner, selection, index, request, mode, video, pin_frames, pictures, pins, writer):
-        """The writer's suggestion for the open window; the current prompt stays until it's accepted."""
+    def rewrite_prompt(self, owner, selection, index, request, mode, video, pin_frames, pictures, pins, writer, *,
+                       smart=False, use_carried=True):
+        """The writer's suggestion for the open window; the current prompt stays until it's accepted.
+
+        A later window is written as a run writes it: with the pictures it renders with and the prompt before it.
+        """
         pictures, pins = filled_slots(pictures, pins)
         if not video:
             return "", "Add a source video first."
+        project = self.runner.saved(owner, selection)
+        index = int(index or 0)
+        previous, carried = "", None
+        if project is not None and index:
+            window = {**project["windows"][index], "pictures": list(pictures), "pins": list(pins),
+                      "use_carried": bool(use_carried)}
+            windows = [*project["windows"]]
+            windows[index] = window
+            pictures, pins = window_inputs({**project, "windows": windows}, index, pinned=bool(pin_frames),
+                                           smart=bool(smart))
+            previous = project["windows"][index - 1]["prompt"]
+            request = str(request or "").strip() or (CONTINUE_REQUEST if previous.strip() else "")
+            carried = pictures.index(window["carried"]) + 1 if window["carried"] in pictures else None
+        else:
+            pins = resolved_pins(pin_frames, pins)
         if not pictures:
             return "", "Add at least one edited frame first."
-        project = self.runner.saved(owner, selection)
         try:
             if project is not None:
-                first, last = project["windows"][int(index or 0)]["render"]
+                first, last = project["windows"][index]["render"]
                 start, frames = project["start"] + first / FPS, last - first
             else:
                 start, frames = float(selection.start or 0), min(selected_frames(selection.start, selection.end),
@@ -633,11 +651,12 @@ class RemakeHandlers:
             return "", f"Prompt enhancement failed: {exc}"
         try:
             suggestion, status = enhance_remake_prompt(
-                request, mode, str(clip), pictures, resolved_pins(pin_frames, pins), frames, width, height,
+                request, mode, str(clip), pictures, pins, frames, width, height,
                 writer.get("model") or DEFAULT_GEMINI_PROMPT_MODEL, writer.get("gemini_key") or "",
                 writer.get("backend") or "Gemini", writer.get("openai_key") or "",
                 writer.get("openai_model") or DEFAULT_OPENAI_PROMPT_MODEL, writer.get("openai_url"),
                 runtime=self.deps.runtime_config(),
+                previous_prompt=previous, carried_picture=carried,
             )
         finally:
             clip.unlink(missing_ok=True)
@@ -795,6 +814,21 @@ def _receiver(handlers: RemakeHandlers, slot: int):
             handlers.inbox.setdefault(owner, {})[slot] = handlers.adopt_picture(owner, path)
 
     return received
+
+
+def media_targets(handlers: RemakeHandlers) -> dict[str, Callable[[str, str], str]]:
+    """Media's Set as for each picture slot, delivered straight to the page's inbox.
+
+    Going through the hidden Gradio picture would miss a picture sent again to the same slot.
+    """
+    def target(slot: int):
+        def deliver(owner: str, selected: str) -> str:
+            handlers.inbox.setdefault(owner, {})[slot] = handlers.adopt_picture(owner, selected)
+            return f"Set image as Remake · Picture {slot}. Open Remake to use it."
+
+        return deliver
+
+    return {f"Remake · Picture {slot}": target(slot) for slot in SLOTS}
 
 
 def bind_remake(view: RemakeView, deps: EngineDeps) -> RemakeHandlers:

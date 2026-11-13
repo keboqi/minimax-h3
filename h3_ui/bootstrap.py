@@ -165,7 +165,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         from functools import partial
 
-        from .engines.remake import EditTarget, bind_h3_settings
+        from .engines.remake import EditTarget, bind_h3_settings, media_targets as remake_media_targets
 
         image_pages = []
 
@@ -343,13 +343,15 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         # MiniMax H3's inputs live on its page, which has its own Media library picker; so do Image's and Song's.
         destinations = {}
         for feature in FEATURES:
-            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music"}:
+            # Remake's pictures are delivered to its page directly, below.
+            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music", "remake"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))
         # The Image page has its own Media library picker, as MiniMax H3's does.
         set_as = build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
-            page_targets={"Song · Visual inspiration": song_pages.receive},
+            page_targets={**remake_media_targets(engine_handlers["remake"]),
+                          "Song · Visual inspiration": song_pages.receive},
             apply_on=[app_views.create_tab.select] if app_views.create_tab is not None else [],
         )
         from .media.page import MediaPageServices, MediaPageState, install_media_page

@@ -28,13 +28,17 @@ from h3_app.remake import (
 from h3_app.remake.model import REQUEST_STEPS
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
 from h3_app.remake.media import detect_cuts, extract_frame, join_windows, trim_source
+from h3_app.remake.project import window_inputs
+from h3_app.provenance import snapshot_path
 from h3_app.remake.runner import CONTINUE_REQUEST, Selection
 from h3_app.remake.windows import LENGTHS, carried_frame, needs_windows, plan_windows
 from h3_app.staging import file_content_sha256
 from h3_app.workflows import h3
 from h3_models import MODEL_SPECS
 from h3_ui.engines.feature import EngineDeps
-from h3_ui.engines.remake import READY, RemakeHandlers, next_run_details, readiness_message, selection_text
+from h3_ui.engines.remake import (
+    READY, RemakeHandlers, media_targets, next_run_details, readiness_message, selection_text,
+)
 from h3_ui.h3.handlers import default_request
 from tests.workflow_cases import H3_DEFAULTS
 
@@ -478,6 +482,15 @@ class HandlerTests(unittest.TestCase):
         with Image.open(path) as aligned:
             remaining = measure_drift(load_image(self.root / "frame.png"), aligned)
         self.assertFalse(remaining.visible)
+
+    def test_media_set_as_reaches_the_page_inbox_even_when_sent_again(self):
+        targets = media_targets(self.handlers)
+        self.assertEqual(list(targets), [f"Remake · Picture {slot}" for slot in range(1, 5)])
+        for _attempt in range(2):
+            self.assertIn("Picture 2", targets["Remake · Picture 2"]("local", str(self.picture)))
+            arrived = self.handlers.inbox.pop("local")
+            self.assertEqual(list(arrived), [2])
+            self.assertEqual(Path(arrived[2]).read_bytes(), self.picture.read_bytes())
 
     def test_a_failed_rewrite_suggests_nothing(self):
         self.handlers.deps = EngineDeps(
@@ -993,6 +1006,47 @@ class WindowRunTests(unittest.TestCase):
         ))
         self.run_windows(index=1, pin=None)
         self.assertEqual(len(self.written), written + 1)
+
+    def test_a_window_keeps_only_its_take_and_a_regenerated_one_leaves_nothing_behind(self):
+        def take(values, remake, progress):
+            # Like face refine: the raw clip stays beside the refined take.
+            raw = self.output_dir / f"{remake.output_prefix}_00001_.mp4"
+            refined = self.output_dir / f"{remake.output_prefix}_face_00001_.mp4"
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            for path in (raw, refined):
+                shutil.copy2(self.input_dir / remake.source_video, path)
+                snapshot_path(path).write_text("{}")
+            yield GenerationUpdate(str(refined), "done")
+
+        self.handlers.deps = replace(self.handlers.deps, h3_take=take)
+        self.run_windows(picture=str(self.picture))
+        project = self.project()
+        folder = Path(project["folder"])
+        takes = {Path(window["take"]).name for window in project["windows"]}
+        expected = takes | {snapshot_path(name).name for name in takes}
+        self.assertEqual({path.name for path in folder.glob("w*")}, expected)
+        first = project["windows"][0]["take"]
+        self.handlers.runner.projects.edit(project, lambda current: current["windows"][0].update(state="changed"))
+        self.run_windows(picture=str(self.picture))
+        self.assertFalse(Path(first).exists())
+        self.assertFalse(snapshot_path(first).exists())
+
+    def test_rewrite_on_a_later_window_uses_the_pictures_and_prompt_a_run_would(self):
+        self.run_windows(picture=str(self.picture))
+        project = self.project()
+        window = project["windows"][1]
+        with patch("h3_ui.engines.remake.enhance_remake_prompt", return_value=("text", "Enhanced.")) as write,                 patch("h3_ui.engines.remake.trim_source"):
+            suggestion, _status = self.handlers.rewrite_prompt(
+                "local", self.selection(), 1, "", SWAP, str(self.video), True, [None] * 4, [None] * 4,
+                {"model": "gemini-model", "backend": "Gemini", "openai_model": "model"},
+                smart=True, use_carried=True,
+            )
+        self.assertEqual(suggestion, "text")
+        expected = window_inputs(project, 1, pinned=True, smart=True)
+        self.assertEqual((list(write.call_args.args[3]), list(write.call_args.args[4])), expected)
+        self.assertEqual(write.call_args.args[0], CONTINUE_REQUEST)
+        self.assertEqual(write.call_args.kwargs["previous_prompt"], project["windows"][0]["prompt"])
+        self.assertEqual(write.call_args.kwargs["carried_picture"], expected[0].index(window["carried"]) + 1)
 
     def test_marking_a_window_uses_changed_not_failed(self):
         self.run_windows(picture=str(self.picture))

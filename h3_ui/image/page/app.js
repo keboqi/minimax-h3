@@ -594,13 +594,21 @@
     new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"]});
     document.addEventListener("toggle", queueFit, true);
     window.addEventListener("resize", queueFit);
+    // A frame in a hidden tab keeps its last size, so its own size can't tell it was shown again:
+    // the frame element is watched from the page around it instead.
+    const whenShown = (callback) => {
+      let frame = null;
+      try { frame = window.frameElement; } catch { /* Framed by another origin. */ }
+      const isShown = () => (frame ? frame.getClientRects().length > 0 : innerWidth > 0);
+      let shown = isShown();
+      new (frame ? window.parent.ResizeObserver : ResizeObserver)(() => {
+        const visible = isShown();
+        if (visible && !shown) callback();
+        shown = visible;
+      }).observe(frame || document.documentElement);
+    };
     // Another page may have handed over a picture while this tab was out of sight.
-    let shown = innerWidth > 0;
-    new ResizeObserver(() => {
-      const visible = innerWidth > 0;
-      if (visible && !shown && app.s) refresh();
-      shown = visible;
-    }).observe(document.documentElement);
+    whenShown(() => { if (app.s) refresh(); });
     try {
       app.boot = await request("GET", "/boot");
       bind();

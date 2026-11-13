@@ -30,7 +30,9 @@ CANVAS = 768
 def build_h3_face_refine_graph(
     *, source_video: str, seed: int, models: ModelConfig, prompt: str, fps: float,
     strength: float, refinement: dict[str, Any], output_nonce: str = "",
+    output_prefix: str | None = None,
 ) -> dict[str, Any]:
+    """``output_prefix`` keeps the refined clip beside its source, such as inside a Remake project."""
     from .h3 import add_h3_stage_offload, h3_conditioning_cache_key
     from .refinement import add_refinement_stack
 
@@ -110,5 +112,5 @@ def build_h3_face_refine_graph(
     )
     video = graph.add("CreateVideo", images=Graph.out(stitched), audio=audio, fps=float(fps), bit_depth=8)
     graph.add(H3_NVENC_SAVE_NODE, video=Graph.out(video),
-              filename_prefix=f"h3/face_refine_{output_nonce}", preset="p4", constant_quality=23)
+              filename_prefix=output_prefix or f"h3/face_refine_{output_nonce}", preset="p4", constant_quality=23)
     return graph.nodes

@@ -131,7 +131,8 @@ class FaceRefineGraphTests(unittest.TestCase):
 
 
 class FaceRefineFinishingTests(unittest.TestCase):
-    def run_finish(self, *, face_refine=True, history=None, postprocess="None", job=None, face_refined=False):
+    def run_finish(self, *, face_refine=True, history=None, postprocess="None", job=None, face_refined=False,
+                   output_prefix=None):
         source, refined = Path("source.mp4"), Path("refined.mp4")
         finishing = SimpleNamespace(
             face_refine=face_refine, face_refine_strength=0.45, postprocess=postprocess)
@@ -155,7 +156,7 @@ class FaceRefineFinishingTests(unittest.TestCase):
         timings = SimpleNamespace(transition=Mock())
         generator = finish_video(
             request, SimpleNamespace(actual_seed=7, models=models()), services, source,
-            "client", 0.0, timings, lambda *a, **k: None, face_refined=face_refined)
+            "client", 0.0, timings, lambda *a, **k: None, face_refined=face_refined, output_prefix=output_prefix)
         statuses = []
         token = CURRENT_JOB.set(job)
         try:
@@ -180,6 +181,27 @@ class FaceRefineFinishingTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs["refinement"]["_source_duration"], 12.5)
         services.models.ensure_model_keys.assert_called_once_with(("face_yolov8m",))
         services.media.postprocess_video.assert_called_once_with(Path("refined.mp4"), "None")
+
+    def test_a_take_with_its_own_prefix_keeps_the_face_pass_beside_it(self):
+        _, _, build, _ = self.run_finish(output_prefix="h3/.remake/local/key/w01_abc")
+        self.assertEqual(build.call_args.kwargs["output_prefix"], "h3/.remake/local/key/w01_abc_face")
+        _, _, build, _ = self.run_finish()
+        self.assertIsNone(build.call_args.kwargs["output_prefix"])
+
+    def test_the_graph_saves_to_the_given_prefix(self):
+        config = models()
+        config.turbo_lora_for = lambda mode, variant: "turbo8.safetensors"
+        values = {**catalog.UI_DEFAULTS, "mode": "First / last frame", "generation_mode": "Normal"}
+
+        def prefix(**options):
+            graph = build_h3_face_refine_graph(source_video="source.mp4", seed=7, models=config, prompt="x",
+                                               fps=24.0, strength=0.4, refinement=values, output_nonce="abc",
+                                               **options)
+            return next(node["inputs"]["filename_prefix"] for node in graph.values()
+                        if "filename_prefix" in node["inputs"])
+
+        self.assertEqual(prefix(), "h3/face_refine_abc")
+        self.assertEqual(prefix(output_prefix="h3/.remake/w01_face"), "h3/.remake/w01_face")
 
     def test_no_face_keeps_the_clip(self):
         history = Mock(side_effect=RuntimeError(f"{NO_FACE_ERROR}. Lower `confidence`"))

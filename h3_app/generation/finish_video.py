@@ -30,7 +30,7 @@ from .services import GenerationServices
 NO_FACE_ERROR = "No face detected in any frame"
 
 
-def make_finishing_retry(request, prepared, services, execution_snapshot, raw_source=None):
+def make_finishing_retry(request, prepared, services, execution_snapshot, raw_source=None, output_prefix=None):
     """Start at finishing using the retained source and resolved model policy.
 
     A retained clip other than ``raw_source`` already has its faces refined.
@@ -59,6 +59,7 @@ def make_finishing_retry(request, prepared, services, execution_snapshot, raw_so
                 timings,
                 lambda *args, **kwargs: None,
                 face_refined=raw_source is not None and source != Path(raw_source),
+                output_prefix=output_prefix,
             )
             write_snapshot(result, execution_snapshot)
             yield GenerationUpdate(
@@ -85,6 +86,7 @@ def refine_faces(
     started: float,
     timings: StageTimings,
     progress: ProgressCallback,
+    output_prefix: str | None = None,
 ) -> Generator[GenerationUpdate, None, Path]:
     """Re-render the largest face and return the new clip, or the source if none is found."""
     job = CURRENT_JOB.get()
@@ -107,6 +109,7 @@ def refine_faces(
         strength=request.finishing.face_refine_strength,
         refinement={**request.values(), "_source_duration": metadata.duration},
         output_nonce=client_id,
+        output_prefix=f"{output_prefix}_face" if output_prefix else None,
     )
     queued_at = time.time()
     prompt_id = services.execution.submit_prompt(graph, client_id)
@@ -158,10 +161,13 @@ def finish_video(
     progress: ProgressCallback,
     *,
     face_refined: bool = False,
+    output_prefix: str | None = None,
 ) -> Generator[GenerationUpdate, None, Path]:
+    """``output_prefix`` is where the take was saved; the face pass saves beside it."""
     if request.finishing.face_refine and not face_refined:
         source = yield from refine_faces(
-            request, prepared, services, source, client_id, started, timings, progress
+            request, prepared, services, source, client_id, started, timings, progress,
+            output_prefix=output_prefix,
         )
     if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
         if request.finishing.postprocess in H3_REGENERATE_MODELS:

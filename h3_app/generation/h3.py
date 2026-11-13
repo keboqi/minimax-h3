@@ -369,12 +369,15 @@ def generate(
             storyboard_outputs.update(_storyboard_latents(runtime, history))
         job = CURRENT_JOB.get()
         finishing_needed = request.finishing.postprocess != "None" or request.finishing.face_refine
+        # A Remake window's face pass stays in its project, out of Media.
+        output_prefix = remake.output_prefix if remake is not None else None
         if job is not None and finishing_needed:
             # Retain only process-local policy objects, never model weights.
             # The callback starts directly at finishing with the same seed.
             job.recoverable_sources[job.variant] = str(source)
             job.finishing_callbacks[job.variant] = make_finishing_retry(
                 request, prepared, services, execution_snapshot, raw_source=source,
+                output_prefix=output_prefix,
             )
             job.finishing_offsets[job.variant] = sum(
                 entry["variant"] == job.variant for entry in job.ledger
@@ -397,7 +400,8 @@ def generate(
                 progress_status(f"Post-processing: {finishing_name}", started=started),
             )
         result = yield from finish_video(
-            request, prepared, services, source, client_id, started, timings, progress
+            request, prepared, services, source, client_id, started, timings, progress,
+            output_prefix=output_prefix,
         )
         write_snapshot(result, execution_snapshot)
         finished_at = time.monotonic()
