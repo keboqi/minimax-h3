@@ -226,6 +226,7 @@ class SongPageState:
                        if name in writer and name not in SECRET_FIELDS})
         writer.update(self.secrets.get(owner, {}))
         uploads = self.owner_root(owner) / "uploads"
+        ui = dict(saved["ui"]) if isinstance(saved.get("ui"), dict) else {}
         drafts, takes = {}, {}
         for engine in ENGINES:
             draft = blank_draft()
@@ -238,9 +239,16 @@ class SongPageState:
                 for name in ("score_words", "previous"):
                     draft[name] = kept.get(name) if isinstance(kept.get(name), dict) else None
             drafts[engine] = draft
-            takes[engine] = [take for take in ((saved.get("takes") or {}).get(engine) or [])
-                             if isinstance(take, dict) and take.get("path") and Path(take["path"]).is_file()]
-        ui = saved.get("ui") if isinstance(saved.get("ui"), dict) else {}
+            # A take whose file is gone drops out; the takes being compared keep pointing at the same takes.
+            takes[engine], moved = [], {}
+            for position, take in enumerate((saved.get("takes") or {}).get(engine) or []):
+                if isinstance(take, dict) and take.get("path") and Path(take["path"]).is_file():
+                    moved[position] = len(takes[engine])
+                    takes[engine].append(take)
+            for side in ("a", "b"):
+                chosen = ui.get(f"{engine}_{side}")
+                if isinstance(chosen, int) and not isinstance(chosen, bool):
+                    ui[f"{engine}_{side}"] = moved.get(chosen)
         return {"engine": saved.get("engine") if saved.get("engine") in ENGINES else ENGINES[0],
                 "drafts": drafts, "options": options, "writer": writer, "takes": takes, "ui": ui}
 
@@ -555,10 +563,23 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
             raise H3Error("Send the changed draft by name.")
         return edit(request, lambda state: pages.edit_draft(state, str(body.get("engine") or ""), changes))
 
+    def forget(paths: list[str]) -> None:
+        """Delete pictures the draft no longer holds, once the draft without them is saved."""
+        for path in paths:
+            Path(path).unlink(missing_ok=True)
+
     @app.post(f"{API}/empty", include_in_schema=False)
     @guarded
     def empty_draft(request: Request):
-        return edit(request, lambda state: state["drafts"].update({state["engine"]: blank_draft()}))
+        dropped: list[str] = []
+
+        def change(state):
+            dropped.extend(state["drafts"][state["engine"]]["references"])
+            state["drafts"][state["engine"]] = blank_draft()
+
+        answered = edit(request, change)
+        forget(dropped)
+        return answered
 
     @app.post(f"{API}/ui", include_in_schema=False)
     @guarded
@@ -654,14 +675,18 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
     @app.post(f"{API}/references/remove", include_in_schema=False)
     @guarded
     def remove_reference(request: Request, body: dict = Body(...)):
+        dropped: list[str] = []
+
         def change(state):
             references = state["drafts"]["music"]["references"]
             index = body.get("index")
             if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(references):
                 raise H3Error("Choose one of the pictures.")
-            references.pop(index)
+            dropped.append(references.pop(index))
 
-        return edit(request, change)
+        answered = edit(request, change)
+        forget(dropped)
+        return answered
 
     @app.get(f"{API}/library", include_in_schema=False)
     @guarded

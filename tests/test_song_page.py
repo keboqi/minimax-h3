@@ -227,6 +227,18 @@ class SongPageTests(unittest.TestCase):
         state = self.post("/takes/use-seed", index=0)["state"]
         self.assertEqual(state["seed"], 42)
 
+    def test_compared_takes_stay_put_when_an_earlier_take_file_is_gone(self):
+        self.draft(description="Warm pop", lyrics="[Chorus]\nLa")
+        for _ in range(3):
+            self.post("/generate")
+            self.settle("generate")
+        self.post("/takes/select", a=2, b=1, compare=True)  # A is take 3, B is take 2.
+        (self.root / "out" / "music-1.wav").unlink()
+        takes = self.ok(self.client.get(f"{API}/run?state=true"))["state"]["takes"]
+        numbers = [item["number"] for item in takes["items"]]
+        self.assertEqual(numbers, [2, 3])
+        self.assertEqual((numbers[takes["a"]], numbers[takes["b"]]), (3, 2))
+
     def test_another_owner_cannot_read_a_take(self):
         self.draft(description="Warm pop")
         self.post("/generate")
@@ -271,8 +283,12 @@ class SongPageTests(unittest.TestCase):
         self.post("/write")
         self.settle("write")
         self.assertTrue(all(self.written[-1][1][4:6]))
+        removed, kept = (Path(item["path"]) for item in state["draft"]["references"])
         state = self.post("/references/remove", index=0)["state"]
         self.assertEqual(len(state["draft"]["references"]), 1)
+        self.assertFalse(removed.exists())  # A removed picture leaves the drafts folder too.
+        self.post("/empty")
+        self.assertFalse(kept.exists())
         self.change("engine", engine="yue2")
         self.refused(self.client.post(f"{API}/references/upload", files=files[:1]), "Music 3")
 

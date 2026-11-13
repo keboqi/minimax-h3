@@ -98,7 +98,10 @@
   };
   const engine = () => app.boot.engines.find((item) => item.id === app.s.engine);
   const copy = () => COPY[app.s.engine];
-  const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.round(seconds) % 60).padStart(2, "0")}`;
+  const clock = (seconds) => {
+    const total = Math.round(seconds);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  };
 
   // Controls ----------------------------------------------------------------
   // The buttons stay in place while their labels do, so a redraw between press and release keeps the click.
@@ -160,17 +163,25 @@
   const TEXT = {description: "description", lyrics: "lyrics", abc: "abc", notes: "notes"};
   let draftTimer;
   let pendingSave = Promise.resolve();
+  // The text each box last held from the server, or last sent to it. A box that still holds it was
+  // not edited, even when the server has rewritten that text since (a focused box keeps its text).
+  const synced = {};
+  const fill = (name, value) => {
+    $(name).value = value;
+    synced[name] = value;
+  };
   const saveDraft = () => {
     clearTimeout(draftTimer);
-    // Only the boxes edited since the server's last answer, so a blur cannot write stale text over a
-    // draft the server rewrote meanwhile (Write & generate, a reused take).
-    const changes = Object.fromEntries(Object.keys(TEXT).filter((name) => $(name).value !== app.s.draft[name])
+    // Only the boxes edited since they were filled, so a blur cannot write stale text over a draft
+    // the server rewrote meanwhile (Write & generate, a reused take).
+    const changes = Object.fromEntries(Object.keys(TEXT).filter((name) => $(name).value !== synced[name])
       .map((name) => [name, $(name).value]));
     if (!Object.keys(changes).length) return pendingSave;
     const body = {engine: app.s.engine, changes};
     // Blur, autosave and Generate can overlap. Write their snapshots in the order taken.
     const save = pendingSave.then(async () => {
       const answer = await post("/draft", body);
+      if (app.s.engine === body.engine) Object.assign(synced, changes);
       const unchanged = Object.entries(changes).every(([name, value]) => $(name).value === value);
       if (unchanged && app.s.engine === body.engine) take(answer);
     });
@@ -182,8 +193,12 @@
     clearTimeout(draftTimer);
     draftTimer = setTimeout(autosave, 500);
   };
+  // A box being typed in, or holding edits not yet saved, keeps its text; the rest show the server's.
   const setText = (name, value) => {
-    if (document.activeElement !== $(name) && $(name).value !== value) $(name).value = value;
+    const box = $(name);
+    if (synced[name] !== undefined && (document.activeElement === box || box.value !== synced[name])) return;
+    if (box.value !== value) box.value = value;
+    synced[name] = value;
   };
   const appendLyrics = (text) => {
     const area = $("lyrics");
@@ -550,7 +565,7 @@
   const refresh = guard(async () => take(await request("GET", "/run?state=true")));
   // After an action that rewrote the draft, the boxes take the server's text even while focused.
   const takeRewrite = (answer) => {
-    if (answer?.state) for (const name of Object.keys(TEXT)) $(name).value = answer.state.draft[name];
+    if (answer?.state) for (const name of Object.keys(TEXT)) fill(name, answer.state.draft[name]);
     take(answer);
   };
   const takeAction = (path) => guard(async () => {
@@ -564,7 +579,8 @@
   const bind = () => {
     for (const name of Object.keys(TEXT)) {
       $(name).addEventListener("input", edited);
-      $(name).addEventListener("blur", autosave);
+      // After the save, a box that was focused while the server rewrote its text catches up.
+      $(name).addEventListener("blur", async () => { await autosave(); render(); });
     }
     $("duration").addEventListener("change", guard(async (event) => {
       const value = Number(event.target.value);
@@ -588,7 +604,7 @@
     $("empty").addEventListener("click", guard(async () => {
       clearTimeout(draftTimer);
       await pendingSave;
-      for (const name of Object.keys(TEXT)) $(name).value = "";
+      for (const name of Object.keys(TEXT)) fill(name, "");
       take(await post("/empty"));
     }));
     $("run").addEventListener("click", () => startRun("/generate"));
@@ -602,7 +618,13 @@
     $("write-generate").addEventListener("click", () => startRun("/write-generate"));
     $("accept").addEventListener("click", guard(async () => {
       await saveDraft();
-      takeRewrite(await post("/accept"));
+      try {
+        takeRewrite(await post("/accept"));
+      } catch (error) {
+        // A refused Accept may still have closed the suggestion (the draft changed meanwhile).
+        await refresh();
+        throw error;
+      }
     }));
     $("keep").addEventListener("click", guard(async () => take(await post("/keep"))));
     $("undo").addEventListener("click", guard(async () => {
