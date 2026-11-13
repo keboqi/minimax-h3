@@ -350,6 +350,35 @@ class ImagePageTests(unittest.TestCase):
         self.finished("generate")
         self.assertEqual(self.generated[0]["references"], [])
 
+    def test_completed_images_survive_an_interrupted_or_failed_batch(self):
+        from h3_app.jobs import JobCancelled
+
+        for failure in (JobCancelled(), RuntimeError("Later variation failed")):
+            with self.subTest(failure=type(failure).__name__):
+                def partial(*args):
+                    yield from self.generate(*args)
+                    # The user can keep editing while a later variation runs.
+                    self.post("/prompt", prompt="The next draft")
+                    raise failure
+
+                names = ("engine", "mode", "prompt", "reference_images", *self.services.job_fields)
+                JOBS.callbacks["image"] = owned_generation(partial, "image", input_names=names)
+                self.post("/prompt", prompt="A fox")
+                self.post("/generate")
+                answer = self.finished("generate")
+                run = answer["runs"]["generate"]
+                if isinstance(failure, JobCancelled):
+                    self.assertEqual(run["status"], "Interrupted.")
+                else:
+                    self.assertIn("Later variation failed", run["error"])
+                results = answer["state"]["results"]["images"]
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0]["path"], answer["progress"][0]["path"])
+                restored = self.boot_state()
+                self.assertEqual(restored["results"]["images"], results)
+                self.assertEqual(restored["prompt"], "The next draft")
+                self.assertEqual(self.client.get(results[0]["url"]).status_code, 200)
+
     def test_a_suggestion_is_reviewed_and_accepting_it_settles_the_models_helpers(self):
         self.change("engine", engine="flux3")
         self.post("/prompt", prompt="A fox")

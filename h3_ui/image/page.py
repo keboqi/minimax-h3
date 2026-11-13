@@ -710,24 +710,28 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
             job = JOBS.accept(owner, "image", values, callback=JOBS.callbacks["image"], key=uuid.uuid4().hex,
                               media_indices=(3,) if references else (), output_indices=(0,))
             run.job_id = job.id
-            for update in execute_accepted(job.id, session):
-                sets, value = update_value(update[0])
-                if sets and value:
-                    items = value if isinstance(value, (list, tuple)) else [value]
-                    run.results = [path for path in map(_path_of, items) if path]
-                status = update_value(update[1])[1] if len(update) > 1 else None
-                if isinstance(status, str) and status:
-                    run.status = plain(status)
-                run.revision += 1
+            try:
+                for update in execute_accepted(job.id, session):
+                    sets, value = update_value(update[0])
+                    if sets and value:
+                        items = value if isinstance(value, (list, tuple)) else [value]
+                        run.results = [path for path in map(_path_of, items) if path]
+                    status = update_value(update[1])[1] if len(update) > 1 else None
+                    if isinstance(status, str) and status:
+                        run.status = plain(status)
+                    run.revision += 1
+            finally:
+                # Interrupted or failed later variations still leave usable images.
+                # Read the latest draft so edits made during generation survive.
+                if run.results:
+                    with pages.lock:
+                        latest = pages.load(owner)
+                        latest["results"] = list(run.results)
+                        pages.save(owner, latest)
             for path in run.results:
                 # In the background: the score and tags arrive after the image is shown.
                 media_review.schedule(path, prompt, api_key=writer.get("gemini_api_key") or "",
                                       enabled=bool(writer.get("review", True)), edited=bool(references))
-            if run.results:
-                with pages.lock:
-                    latest = pages.load(owner)
-                    latest["results"] = list(run.results)
-                    pages.save(owner, latest)
             if not run.status.startswith(label):
                 run.status = f"{label} · {run.status}"
 

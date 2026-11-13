@@ -1,7 +1,8 @@
-"""Backend-free regression for switching generated images in the Image page."""
+"""Backend-free regressions for draft saves and generated images in the Image page."""
 
 import io
 from pathlib import Path
+import time
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
@@ -17,17 +18,38 @@ def run():
                  width=1024, height=1024, seed=-1, guidance="", readiness={"ready": True, "message": "Ready"},
                  can_enhance=False, writer="", results={"images": images, "settings": ""})
     boot = dict(state=state, runs={}, gpu=True, modes=["Text to image", "Image edit"],
-                engines=[{"id": "qwen", "label": "Qwen", "description": "Fixture"}], sizes={}, groups=[])
+                engines=[{"id": "qwen", "label": "Qwen", "description": "Fixture"},
+                         {"id": "flux3", "label": "FLUX", "description": "Fixture"}], sizes={}, groups=[])
     colors = ["red", "green", "blue", "yellow"]
     writes = []
+    held = []
+    delay_prompt = False
+
+    def save_prompt(request):
+        writes.append("prompt")
+        body = request.request.post_data_json
+        state["prompt"] = body["prompt"]
+        if "layout" in body:
+            assert body["layout"]["name"] == state["layout"]["name"]
+            state["layout"]["value"] = body["layout"]["value"]
+        request.fulfill(json={"state": state, "runs": {}})
 
     def route(request):
         path = request.request.url.split("test.local", 1)[1]
         if path == "/image/api/boot":
             request.fulfill(json=boot)
         elif path == "/image/api/prompt":
-            writes.append("prompt")
-            state["prompt"] = request.request.post_data_json["prompt"]
+            if delay_prompt:
+                held.append(request)
+            else:
+                save_prompt(request)
+        elif path == "/image/api/settings":
+            writes.append("settings")
+            if state["engine"] == "flux3":
+                assert state["layout"]["value"] == "A box around the bird"
+            state["engine"] = request.request.post_data_json["changes"]["engine"]
+            state["layout"] = (dict(name="flux3__layout", value="", hint="", placeholder="")
+                               if state["engine"] == "flux3" else None)
             request.fulfill(json={"state": state, "runs": {}})
         elif path == "/image/api/empty":
             writes.append("empty")
@@ -53,6 +75,37 @@ def run():
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("**/*", route)
         page.goto("http://test.local/image/")
+
+        def switch_with_delayed_save(label, text, layout=None):
+            nonlocal delay_prompt
+            delay_prompt = True
+            page.locator("#prompt").fill(text)
+            if layout is not None:
+                page.locator("#layout-box").evaluate("node => { node.open = true; }")
+                page.locator("#layout").fill(layout)
+            before = writes.count("settings")
+            page.get_by_role("button", name=label, exact=True).click()
+            # Hold blur saves while the settings click is processed.
+            page.wait_for_timeout(100)
+            assert held, "Expected a pending draft save"
+            assert writes.count("settings") == before, "Settings overtook the draft save"
+            expect(page.locator("#prompt")).to_have_value(text)
+            if layout is not None:
+                expect(page.locator("#layout")).to_have_value(layout)
+            deadline = time.monotonic() + 5
+            while writes.count("settings") == before and time.monotonic() < deadline:
+                if held:
+                    save_prompt(held.pop(0))
+                page.wait_for_timeout(10)
+            assert writes.count("settings") == before + 1
+            delay_prompt = False
+            expect(page.locator("#prompt")).to_have_value(text)
+            assert state["prompt"] == text
+
+        switch_with_delayed_save("FLUX", "A new prompt")
+        switch_with_delayed_save("Qwen", "An edited prompt", "A box around the bird")
+        page.reload()
+        expect(page.locator("#prompt")).to_have_value("An edited prompt")
         for index in (0, 1, 2, 3, 0, 3, 1):
             page.get_by_role("button", name=f"Image {index + 1}", exact=True).click()
             picture = page.locator("#result-image")
@@ -75,7 +128,7 @@ def run():
         expect(page.locator("#result-image")).to_be_visible()
         assert not errors, errors
         browser.close()
-    print("Image preview switching and Empty: passed (7 selections, decoded pixels and reload verified).")
+    print("Image page: delayed draft saves, model switching, preview pixels and Empty passed.")
 
 
 if __name__ == "__main__":

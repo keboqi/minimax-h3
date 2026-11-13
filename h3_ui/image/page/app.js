@@ -70,8 +70,16 @@
     render();
     if (Object.values(app.runs).some((run) => run?.active)) poll();
   };
-  const change = guard(async (action, changes = {}, name) => take(await post("/settings", {action, changes, name})));
-  const changeWriter = guard(async (changes) => take(await post("/writer", {changes})));
+  const change = guard(async (action, changes = {}, name) => {
+    // A settings response contains the draft too. Flush the text before asking
+    // for it, so a slow blur save cannot be overtaken by the settings request.
+    await saveDraft();
+    take(await post("/settings", {action, changes, name}));
+  });
+  const changeWriter = guard(async (changes) => {
+    await saveDraft();
+    take(await post("/writer", {changes}));
+  });
   const saveUi = (patch) => {
     app.s.ui = {...app.s.ui, ...patch};
     post("/ui", {ui: app.s.ui}).catch(() => { /* Remembering the open group is a convenience. */ });
