@@ -58,6 +58,8 @@ def bind_dubbing_api(actions, *, gpu=True):
             gr.Dropdown(list(pipeline.TRANSLATION_STYLES), value=pipeline.DEFAULT_STYLE, label="Translation style",
                         allow_custom_value=True),
             gr.Checkbox(False, label="Rewrite in the same language"),
+            gr.Checkbox(False, label="Shorten long lines (Gemini)"),
+            gr.Checkbox(False, label="Mark Chinese readings (Gemini)"),
         ]
         analyze_outputs = [gr.Textbox(label="Session"), gr.JSON(label="Board"), gr.Dataframe(label="Lines"),
                            gr.Markdown(), gr.HTML()]

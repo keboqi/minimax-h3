@@ -142,12 +142,14 @@ class WorkshopPageTests(PageTests):
         analyzed = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
 
         def analyze(*values):
-            self.assertTrue(values[-1])  # Rewrite reaches the handler.
+            # Rewrite and the Gemini prompt options reach the handler.
+            self.assertEqual(values[-3:], (True, False, True))
             yield None, None, None, "Transcribing with Gemini", None
             yield analyzed.id, {}, [], "Found 1 line(s).", None
 
         with patch.object(self.handlers, "analyze_source", analyze):
             started = self.client.post(f"{API}/analyze", json={"source": str(self.media), "rewrite": True,
+                                                               "readings": True,
                                                                "target_language": pipeline.SAME_LANGUAGE}).json()
             self.assertEqual(started["run"]["task"], "analyze")
             run = self.wait("analyze")

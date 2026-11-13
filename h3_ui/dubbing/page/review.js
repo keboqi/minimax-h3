@@ -2,7 +2,7 @@
 // Edits save as soon as a field is left; the server answers with the session as saved.
 
 import {api} from "./api.js";
-import {clock, copyText, esc, icon, plural, ranges, rich, toast} from "./ui.js";
+import {clock, copyText, esc, icon, plural, promptOptions, ranges, rich, toast} from "./ui.js";
 
 const TONES = ["#c92a2a", "#1864ab", "#2b8a3e", "#6741d9", "#d9480f", "#9c36b5", "#c2255c", "#a07800"];
 
@@ -276,6 +276,7 @@ function inspector(app) {
           <div class="stack-12 top-gap">
             <p class="muted small">Copies the picked lines, or every line, with their times, style and notes. No API key.
               Replies reach the copied lines even after other edits.</p>
+            ${promptOptions(app.settings, {same})}
             <button type="button" class="btn btn-small" data-action="copy-lines-prompt">Copy ${same ? "rewrite" : "translation"} prompt</button>
             <label class="field">Reply<textarea class="mono" rows="4" data-action="lines-reply" placeholder='["First line", "Second line"]'>${esc(app.linesReply || "")}</textarea></label>
             <button type="button" class="btn btn-small" data-action="apply-lines-reply">Apply pasted ${same ? "lines" : "translations"}</button>
@@ -394,7 +395,7 @@ function translateBody(app, picked) {
   return {session: app.session.id, picked, target_language: app.session.target_language || s.target_language,
     translator: s.translator, gemini_model: s.gemini_model, api_key: app.apiKey, notes: s.notes,
     translation_context: s.translation_context, style: same && s.rewrite ? s.rewrite_style : s.style,
-    rewrite: same && s.rewrite && !s.rewrite_by_hand};
+    rewrite: same && s.rewrite && !s.rewrite_by_hand, shorten_lines: s.shorten_lines, readings: s.readings};
 }
 
 function tableRows(app) {
@@ -525,7 +526,8 @@ export function bindReview(app) {
       try {
         const data = await api.post("lines-prompt", {session: app.session.id, picked: [...app.picks],
           target_language: app.session.target_language || s.target_language, notes: s.notes,
-          style: app.session.same && s.rewrite ? s.rewrite_style : s.style});
+          style: app.session.same && s.rewrite ? s.rewrite_style : s.style, shorten_lines: s.shorten_lines,
+          readings: s.readings});
         app.linesRequest = data.request;
         toast(await copyText(data.prompt) ? data.status : "Copy failed.");
       } catch (error) {

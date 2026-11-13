@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, Iterable
 
+from h3_app.drama3.phonemes import keep_valid_notes
+
 TABLE_HEADERS = ["#", "Start", "End", "Speaker", "Original", "Translation", "Dub"]
 TABLE_TYPES = ["number", "str", "str", "str", "str", "str", "bool"]
 DEFAULT_SPEAKER = "speaker1"
@@ -134,7 +136,10 @@ def parse_transcript_reply(text: str) -> tuple[list[dict], dict[str, str]]:
         data = data.get("segments")
     if not isinstance(data, list):
         raise ValueError("The reply has no segments array.")
-    return normalize(data), speakers
+    found = normalize(data)
+    for segment in found:
+        segment["translation"] = keep_valid_notes(segment["translation"])
+    return found, speakers
 
 
 def parse_translation_reply(text: str, count: int) -> list[str]:
@@ -148,7 +153,7 @@ def parse_translation_reply(text: str, count: int) -> list[str]:
     for item in data:
         if isinstance(item, dict):
             item = item.get("translation") or item.get("text") or item.get("translated_text") or ""
-        texts.append(str(item or "").strip())
+        texts.append(keep_valid_notes(str(item or "").strip()))
     if len(texts) != count:
         raise ValueError(f"Expected {count} translations, got {len(texts)}.")
     return texts

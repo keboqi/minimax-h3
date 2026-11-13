@@ -117,6 +117,27 @@ lines translated after it is chosen: to restyle existing lines, pick them and us
 **Translate again**.
 Turn off **Translate now** to transcribe only.
 
+**Gemini prompt** appears under How to find the lines whenever a Gemini prompt
+writes the new text: Gemini (cloud) or Gemini by hand when translating, the Gemini
+translator, or a Gemini or by-hand rewrite. Its two options are off by default, and
+each one changes only the prompt:
+
+- **Shorten long lines** asks Gemini to shorten a translation (or rewrite) only
+  when it would take clearly longer to say than the original line, keeping its
+  meaning; other lines are translated as usual. Gemini judges this itself: the
+  prompt sets no speech rate or length limit.
+- **Mark Chinese readings** asks Gemini to add tone-number pinyin, such as
+  `还{huan2}`, only to easily misread characters in Chinese text, in the same
+  format as [Soundstage's notes](drama3.md). Drama 3 receives the notes as phoneme
+  tags. Review lines shows them so you can fix or delete them, and the subtitles,
+  word timing and result player show only the characters. A malformed note in
+  Gemini's reply is dropped and the line keeps its text.
+
+The options apply to Analyze, **Translate again** and both **Copy prompt** buttons,
+and the page remembers them. When Gemini translates while it transcribes, turning
+either one on makes it transcribe again instead of reusing an earlier transcript.
+Hy-MT ignores both.
+
 **Refine speech boundaries with Align (experimental)** adds
 [Desert Ant Labs Align](https://desertant.com/models/align/) after local
 Qwen transcription. It is on by default; turn it off to compare the same source
@@ -258,6 +279,8 @@ use the focused line:
 **Translate by hand in a chat model** does this without an API key, also in Workshop.
 **Copy translation prompt** copies the picked lines, or every line when none
 are picked, with their times, **Translation style** and **Translation notes**.
+Its **Shorten long lines** and **Mark Chinese readings** boxes are the
+[Gemini prompt](#1--source) options, shared with the Source step.
 Fine-tune it in the chat, paste the JSON array in **Reply**, then **Apply pasted translations**. Replies
 reach the lines that were copied, even after other edits; a line edited since
 copying is left as it is. Long sessions may fit better a few dozen lines at a time.

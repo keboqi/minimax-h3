@@ -83,3 +83,15 @@ export const seg = (name, options, current, {label = "", disabled = false} = {})
   <div class="seg" role="group" aria-label="${esc(label || name)}">${options.map(([value, text]) => `
     <button type="button" data-seg="${esc(name)}" data-value="${esc(value)}" aria-pressed="${String(value) === String(current)}"
       ${disabled ? "disabled" : ""}>${esc(text)}</button>`).join("")}</div>`;
+
+// Gemini prompt options, off by default: used by Gemini transcription, the Gemini translator or
+// rewriter, and every copied prompt.
+export const promptOptions = (settings, {same = false} = {}) => `
+  <div class="stack-8">
+    <label class="check"><input type="checkbox" data-setting="shorten_lines" ${settings.shorten_lines ? "checked" : ""}>
+      <span>Shorten long lines<br><span class="muted small">Gemini shortens a ${same ? "rewrite" : "translation"}
+      only when it would take clearly longer to say than the original line.</span></span></label>
+    <label class="check"><input type="checkbox" data-setting="readings" ${settings.readings ? "checked" : ""}>
+      <span>Mark Chinese readings<br><span class="muted small">For Chinese dubs: Gemini adds pinyin only to easily
+      misread characters, such as 还{huan2}. Subtitles show the characters only.</span></span></label>
+  </div>`;

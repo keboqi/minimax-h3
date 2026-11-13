@@ -1,7 +1,7 @@
 // Step 1, Source: the file, its languages, how to find the lines, and the analysis.
 
 import {api} from "./api.js";
-import {clock, copyText, esc, icon, rich, seg, size, toast} from "./ui.js";
+import {clock, copyText, esc, icon, promptOptions, rich, seg, size, toast} from "./ui.js";
 
 const CUSTOM = "__custom";
 const SAME_HINT = "No translation: fix lines, or rewrite them for an audience.";
@@ -158,8 +158,12 @@ function transcription(app) {
   const manual = pipe === app.boot.pipelines.find((p) => p.label === "Gemini by hand")?.key;
   const same = isSame(app);
   const translator = app.settings.translator;
-  const needsGemini = pipe === app.boot.pipelines.find((p) => p.label === "Gemini (cloud)")?.key
+  const cloud = pipe === app.boot.pipelines.find((p) => p.label === "Gemini (cloud)")?.key;
+  const needsGemini = cloud
     || (translator === gemini(app) && (!same || app.settings.rewrite) && !app.settings.rewrite_by_hand);
+  // Any Gemini prompt that writes the new text: transcription that translates, the translator or rewriter.
+  const prompted = same ? app.settings.rewrite && (translator === gemini(app) || app.settings.rewrite_by_hand)
+    : app.settings.translate && (cloud || manual || translator === gemini(app));
   const prepare = app.runs.analyze;
   const speech = prepare && prepare.task === "prepare" && prepare.file && !prepare.active
     ? `<a class="btn btn-small" href="${api.url("run-file", {id: prepare.id})}">${icon("download", 14)} ${esc(prepare.file)}</a>` : "";
@@ -208,6 +212,8 @@ function transcription(app) {
             <input type="password" data-action="api-key" value="${esc(app.apiKey)}" placeholder="Uses GEMINI_API_KEY when empty" autocomplete="off">
           </label>
         </div>` : ""}
+      ${prompted ? `<div class="sub stack-8"><strong>Gemini prompt</strong>
+        ${promptOptions(app.settings, {same})}</div>` : ""}
     </section>`;
 }
 
@@ -392,7 +398,7 @@ export function bindSource(app) {
     } else if (action === "copy-source-prompt") {
       try {
         const {prompt} = await api.post("source-prompt", {target_language: s.target_language, translate: s.translate,
-          notes: s.notes, style: s.style});
+          notes: s.notes, style: s.style, shorten_lines: s.shorten_lines, readings: s.readings});
         toast(await copyText(prompt) ? "Prompt copied. Paste it with the audio in your chat model." : "Copy failed.");
       } catch (error) {
         toast(error.message, {error: true});

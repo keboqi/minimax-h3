@@ -100,6 +100,23 @@ def strip_notes(text: str) -> str:
     return NOTE_RE.sub("", str(text or ""))
 
 
+def keep_valid_notes(text: str) -> str:
+    """``text`` with only its usable pronunciation notes: malformed notes and stray braces are removed.
+
+    For notes a model added: one wrong note costs only its reading, never the line.
+    """
+    text = str(text or "")
+    if "{" not in text and "}" not in text:
+        return text
+    kept, cursor = "", 0
+    for match in NOTE_RE.finditer(text):
+        kept += text[cursor:match.start()].replace("{", "").replace("}", "")
+        if not note_problems(kept + match.group(0)):
+            kept += match.group(0)
+        cursor = match.end()
+    return kept + text[cursor:].replace("{", "").replace("}", "")
+
+
 def to_phoneme_tags(text: str) -> str:
     """Replace every noted character or English word with Fish Audio phoneme tags, for the Drama 3 request.
 

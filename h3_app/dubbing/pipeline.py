@@ -35,6 +35,7 @@ import wave
 import numpy as np
 
 from h3_app.catalog import VIDEO_EXTENSIONS
+from h3_app.drama3.phonemes import strip_notes
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 from h3_app.media_tools import probe_audio_seconds, run_media_process
@@ -171,6 +172,10 @@ class AnalyzeRequest:
     style: str = DEFAULT_STYLE
     # With target SAME_LANGUAGE: rewrite every line in ``style`` instead of copying what was said.
     rewrite: bool = False
+    # Gemini prompts only, both off by default: shorten lines that would clearly run long, and mark easily
+    # misread Chinese characters with pinyin notes for Drama 3.
+    shorten_lines: bool = False
+    readings: bool = False
 
 
 @dataclass(frozen=True)
@@ -544,7 +549,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                                               target_language=target_language,
                                               translate=request.translate and not same,
                                               ignore_non_speech=request.ignore_non_speech,
-                                              notes=request.notes, style=style_text(request.style)))
+                                              notes=request.notes, style=style_text(request.style),
+                                              shorten=request.shorten_lines, readings=request.readings))
         transcript = {"segments": found, "speakers": speakers}
     else:
         reply = yield from blocking(
@@ -625,6 +631,11 @@ def _transcript_key(request: AnalyzeRequest) -> str:
         # Precise adds nothing, so transcripts from before styles stay reusable.
         if translating and style_text(request.style) != style_text(DEFAULT_STYLE):
             settings["style"] = style_text(request.style)
+        # Added only when on, so transcripts from before these options stay reusable.
+        if translating and request.shorten_lines:
+            settings["shorten"] = True
+        if translating and request.readings:
+            settings["readings"] = True
     elif request.pipeline == PIPELINE_MANUAL:
         settings.update(reply=hashlib.sha256(str(request.manual_reply).encode("utf-8")).hexdigest())
     else:
@@ -735,7 +746,8 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
                 lambda _report, batch=batch, first=first: gemini.translate(
                     batch, model=request.gemini_model, api_key=request.api_key, target_language=target,
                     source_language=session.data.get("source_language", ""), notes=request.notes,
-                    seconds=seconds[first:first + len(batch)], style=style_text(request.style)))
+                    seconds=seconds[first:first + len(batch)], style=style_text(request.style),
+                    shorten=request.shorten_lines, readings=request.readings))
     else:
         # Hy-MT translates one line at a time; the lines before it give it the conversation so far.
         contexts = ["\n".join(s["source"] for s in lines[max(0, i - CONTEXT_LINES):i] if s["source"])
@@ -769,7 +781,8 @@ def _rewrite(session: sessions.Session, indices: list[int], request, *, runtime,
                 f"Rewriting lines {first + 1}-{first + len(batch)} of {len(texts)} with Gemini",
                 lambda _report, batch=batch, first=first: gemini.rewrite(
                     batch, model=request.gemini_model, api_key=request.api_key, language=language,
-                    notes=request.notes, seconds=seconds[first:first + len(batch)], style=style))
+                    notes=request.notes, seconds=seconds[first:first + len(batch)], style=style,
+                    shorten=request.shorten_lines, readings=request.readings))
     else:
         # Experimental: Hy-MT is a translator, asked here to translate into the same language in the style.
         reply = yield from blocking(
@@ -826,7 +839,8 @@ def _save_translations(session: sessions.Session, results: dict, target: str) ->
 
 
 def translation_request(session: sessions.Session, indices: list[int] | None, target_language: str,
-                        notes: str = "", style: str = DEFAULT_STYLE) -> tuple[str, dict]:
+                        notes: str = "", style: str = DEFAULT_STYLE, *, shorten: bool = False,
+                        readings: bool = False) -> tuple[str, dict]:
     """A prompt to copy for these lines (all without a choice), and what its reply will answer.
 
     The answer is matched to the lines by that record, so edits made meanwhile cannot misplace it.
@@ -842,11 +856,12 @@ def translation_request(session: sessions.Session, indices: list[int] | None, ta
     seconds = [lines[i]["end"] - lines[i]["start"] for i in chosen]
     if target == SAME_LANGUAGE:
         prompt = gemini.rewrite_prompt(texts, language=spoken_language(session), notes=str(notes or ""),
-                                       seconds=seconds, style=rewrite_style_text(style))
+                                       seconds=seconds, style=rewrite_style_text(style), shorten=shorten,
+                                       readings=readings)
     else:
         prompt = gemini.translation_prompt(
             texts, target_language=target, source_language=session.data.get("source_language", ""),
-            notes=str(notes or ""), seconds=seconds, style=style_text(style))
+            notes=str(notes or ""), seconds=seconds, style=style_text(style), shorten=shorten, readings=readings)
     return prompt, {"session": session.id, "target": target,
                     "lines": [list(_translation_key(i, lines[i])) for i in chosen]}
 
@@ -2031,6 +2046,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                  f"[0:a]volume={background_gain:.3f}[bg];"
                  "[bg][key]sidechaincompress=threshold=0.02:ratio=12:attack=20:release=400[ducked];"
                  "[ducked][sp]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.97[out]")
+    # Pronunciation notes (还{huan2}) are only for Drama 3: subtitles, word timing and the player show the words.
+    lines = [{**line, "translation": strip_notes(line["translation"])} for line in lines]
     yield "Mixing the dub over the background"
     mix = _ffmpeg(["-i", str(background), "-i", str(speech), "-filter_complex", graph, "-map", "[out]",
                    "-ar", str(RATE), "-c:a", "pcm_s16le"], session.root / "mix.wav", action="Mixing the dub")

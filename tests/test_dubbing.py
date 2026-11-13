@@ -118,6 +118,17 @@ class SegmentTests(unittest.TestCase):
             segments.parse_line_numbers("two", 6)
 
 
+class PronunciationNoteReplyTests(unittest.TestCase):
+    def test_replies_keep_valid_notes_and_drop_malformed_ones(self):
+        reply = json.dumps({"segments": [{"start": "00:00.000", "end": "00:02.000", "source_text": "Give it back.",
+                                          "translated_text": "把书还{huan2}给他{ta}。"}]}, ensure_ascii=False)
+        found, _speakers = segments.parse_transcript_reply(reply)
+        self.assertEqual(found[0]["translation"], "把书还{huan2}给他。")
+        self.assertEqual(segments.parse_translation_reply('["尉迟{yu4 chi2}恭来了", "a{b"]', 2),
+                         ["尉迟{yu4 chi2}恭来了", "ab"])
+        self.assertEqual(segments.parse_translation_reply('["{hai2}还"]', 1), ["还"])
+
+
 class WorkerHelperTests(unittest.TestCase):
     def test_spans_merge_across_short_pauses(self):
         self.assertEqual(tools_worker.merge_spans([(3, 4), (0, 1), (1.2, 2)], 0.35), [(0.0, 2.0), (3.0, 4.0)])
@@ -1066,7 +1077,7 @@ class HandlerTests(Workspace):
         self.assertEqual(len(generation.inputs), 11)
         self.assertEqual(len(generation.outputs), 9)
         analysis = next(fn for fn in demo.fns.values() if fn.api_name == "dub_analyze_source")
-        self.assertEqual(len(analysis.inputs), 21)
+        self.assertEqual(len(analysis.inputs), 23)
         self.assertEqual(len(analysis.outputs), 5)
         with gr.Blocks() as workshop:
             build_dubbing_tab(gr.Column(), self.handlers, gpu=False)
@@ -2173,6 +2184,74 @@ class DubRenderTests(Workspace):
             "a", pipeline=pipeline.PIPELINE_GEMINI, **settings)))
         self.assertNotIn("notes", key())
         self.assertEqual(key(notes="Formal")["notes"], "Formal")
+
+    def test_gemini_shorten_and_readings_are_optional_prompt_sections(self):
+        from h3_app.dubbing import gemini as dub_gemini
+
+        texts, seconds = ["Hello there, how are you?", "Yes."], [2.0, 0.3]
+        plain = dub_gemini.translation_prompt(texts, target_language="Chinese", seconds=seconds)
+        self.assertEqual(plain, dub_gemini.translation_prompt(texts, target_language="Chinese", seconds=seconds,
+                                                              shorten=False, readings=False))
+        self.assertNotIn("Shorten", plain)
+        self.assertNotIn("pinyin", plain)
+        # Shortening is left to the model: no speech rate or per-line budget.
+        shortened = dub_gemini.translation_prompt(texts, target_language="Chinese", seconds=seconds, shorten=True)
+        self.assertIn("only when it would take clearly longer to say", shortened)
+        self.assertNotIn("a second", shortened)
+        self.assertNotIn("max", shortened)
+        self.assertIn('"seconds": 2.0', shortened)
+        self.assertNotIn("pinyin", shortened)
+        noted = dub_gemini.translation_prompt(texts, target_language="Chinese", seconds=seconds, readings=True)
+        self.assertIn("only when it is easily misread", noted)
+        self.assertIn("还{huan2}", noted)
+        self.assertNotIn("Shorten", noted)
+        rewrite = dub_gemini.rewrite_prompt(["我们现在就走吧"], seconds=[1.0], shorten=True, readings=True)
+        self.assertIn("Shorten a rewrite only", rewrite)
+        self.assertNotIn("a second", rewrite)
+        self.assertIn("When the rewrite is in Chinese", rewrite)
+        # Transcription adds them only when it translates.
+        base = dict(target_language="Chinese", translate=True, ignore_non_speech=True)
+        both = dub_gemini.transcribe_prompt(**base, shorten=True, readings=True)
+        self.assertEqual(both, dub_gemini.transcribe_prompt(**base) + dub_gemini.SHORTEN_TRANSCRIBE
+                         + dub_gemini.READINGS_TRANSCRIBE)
+        self.assertIn("Never mark source_text", both)
+        self.assertEqual(dub_gemini.transcribe_prompt(target_language="", translate=False, ignore_non_speech=True,
+                                                      shorten=True, readings=True),
+                         dub_gemini.transcribe_prompt(target_language="", translate=False, ignore_non_speech=True))
+        key = lambda **settings: json.loads(pipeline._transcript_key(pipeline.AnalyzeRequest(
+            "a", pipeline=pipeline.PIPELINE_GEMINI, **settings)))
+        self.assertNotIn("shorten", key())
+        self.assertNotIn("readings", key())
+        self.assertTrue(key(shorten_lines=True, readings=True)["shorten"])
+        self.assertTrue(key(shorten_lines=True, readings=True)["readings"])
+        self.assertNotIn("shorten", key(shorten_lines=True, translate=False))
+        # The copied translation prompt in Review lines carries both.
+        session = self.analyze(self.make_video(), separate=False, calls=[], translate=False)
+        prompt, _request = pipeline.translation_request(session, None, "Chinese", shorten=True, readings=True)
+        self.assertIn("Shorten a translation only", prompt)
+        self.assertIn("pinyin", prompt)
+        self.assertNotIn("Shorten", pipeline.translation_request(session, None, "Chinese")[0])
+
+    def test_pronunciation_notes_reach_drama3_but_not_subtitles(self):
+        session = self.analyze(self.make_video(), separate=True)
+        lines = session.segments
+        lines[0]["translation"] = "把书还{huan2}给他。"
+        sessions.update_segments(self.runtime, session.id, lines)
+        voiced = []
+
+        def synthesize(planned, *args, **kwargs):
+            voiced.extend(line.segment["translation"] for line in planned)
+            return (yield from self.fake_synthesize(planned, *args, **kwargs))
+
+        with patch.object(pipeline, "_synthesize", side_effect=synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id, word_timing=False),
+                                       runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertIn("把书还{huan2}给他。", voiced)
+        subtitles = result.subtitles[0].read_text(encoding="utf-8")
+        self.assertIn("把书还给他。", subtitles)
+        self.assertNotIn("{", subtitles)
+        self.assertEqual(result.player.lines[0]["translation"], "把书还给他。")
+        self.assertEqual(sessions.load(self.runtime, session.id).segments[0]["translation"], "把书还{huan2}给他。")
 
     def test_translation_style_reaches_hymt_and_gemini(self):
         from h3_app.dubbing import gemini as dub_gemini

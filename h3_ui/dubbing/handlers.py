@@ -540,7 +540,8 @@ class DubbingHandlers:
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
                        reuse=True, refine_timestamps=True, translation_context=False, project=None,
-                       manual_reply="", style=pipeline.DEFAULT_STYLE, rewrite=False):
+                       manual_reply="", style=pipeline.DEFAULT_STYLE, rewrite=False, shorten_lines=False,
+                       readings=False):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -554,7 +555,7 @@ class DubbingHandlers:
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
                 str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps),
                 bool(translation_context), str(manual_reply or ""), not self.services.gpu, str(style or ""),
-                bool(rewrite))
+                bool(rewrite), shorten_lines=bool(shorten_lines), readings=bool(readings))
             for update in self._cloud(lambda **kw: pipeline.analyze(request, **kw),
                                       without_gpu=transcription in pipeline.CLOUD_PIPELINES):
                 if isinstance(update, pipeline.Analysis):
@@ -581,7 +582,8 @@ class DubbingHandlers:
             yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc), presenters.plan_html(steps)
 
     def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes,
-                        translation_context=False, style=pipeline.DEFAULT_STYLE, rewrite=False):
+                        translation_context=False, style=pipeline.DEFAULT_STYLE, rewrite=False, shorten_lines=False,
+                        readings=False):
         """Translate the picked lines again; with none picked, fill the untranslated ones.
 
         In the same language, Copy puts the lines back to what was said and Rewrite rewrites them.
@@ -595,7 +597,8 @@ class DubbingHandlers:
                                               translator=translator, gemini_model=gemini_model,
                                               api_key=str(api_key or ""), notes=str(notes or ""),
                                               translation_context=bool(translation_context),
-                                              style=str(style or ""), rewrite=bool(rewrite))
+                                              style=str(style or ""), rewrite=bool(rewrite),
+                                              shorten_lines=bool(shorten_lines), readings=bool(readings))
             for update in self._cloud(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw),
                                       without_gpu=translator == pipeline.TRANSLATOR_GEMINI):
                 if isinstance(update, pipeline.Analysis):
@@ -608,14 +611,16 @@ class DubbingHandlers:
 
     # -- Chat models, by hand -------------------------------------------------
 
-    def source_prompt(self, target_language, translate, notes, style=pipeline.DEFAULT_STYLE):
+    def source_prompt(self, target_language, translate, notes, style=pipeline.DEFAULT_STYLE, shorten_lines=False,
+                      readings=False):
         """The prompt to send a chat model with the audio."""
         target = str(target_language or "").strip()
         if translate and not target:
             raise gr.Error("Choose the language to dub into.")
         return dub_gemini.transcribe_prompt(target_language=target, translate=bool(translate),
                                             ignore_non_speech=True, notes=str(notes or ""),
-                                            style=pipeline.style_text(style))
+                                            style=pipeline.style_text(style), shorten=bool(shorten_lines),
+                                            readings=bool(readings))
 
     def prepare_speech(self, source, library, separate, separator_model, reuse, target_language):
         """Outputs: audio file, status. Studio attaches the vocals; Workshop the soundtrack, or stems it has."""
@@ -638,12 +643,14 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def lines_prompt(self, session_id, board, target_language, notes, style=pipeline.DEFAULT_STYLE):
+    def lines_prompt(self, session_id, board, target_language, notes, style=pipeline.DEFAULT_STYLE, shorten_lines=False,
+                     readings=False):
         """Outputs: hidden prompt, the record of its lines, line status. Picked lines, else every line."""
         try:
             session = sessions.load(self._runtime(), session_id)
             picked = [index for index in presenters.board_picks(board) if index < len(session.segments)] or None
-            prompt, request = pipeline.translation_request(session, picked, target_language, notes, style)
+            prompt, request = pipeline.translation_request(session, picked, target_language, notes, style,
+                                                           shorten=bool(shorten_lines), readings=bool(readings))
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
         return prompt, request, f"Copied a prompt for {len(request['lines'])} line(s) into {request['target']}."

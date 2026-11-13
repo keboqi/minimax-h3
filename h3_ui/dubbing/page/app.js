@@ -61,6 +61,8 @@ function defaults(boot) {
     translate: true, translator: local(boot.translators[0].key, boot.translators[1].key),
     gemini_model: boot.default_gemini_model, separate: true, separator_model: boot.default_separator, reuse: true,
     aligner: true, merge_gap: 0.35, refine_timestamps: true, translation_context: false,
+    // Gemini prompt options, off by default.
+    shorten_lines: false, readings: false,
     voice_mode: boot.voice_modes[0], preset: "Balance", timing: boot.timings[0].key, max_speed: 1.35,
     speech_volume: 100, background_volume: 100, keep_original: true, regenerate: "", parallel: 16,
     word_timing: true, rewrite: false, rewrite_style: boot.default_rewrite_style, rewrite_by_hand: false,

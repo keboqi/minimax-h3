@@ -567,7 +567,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner_of(request)
         prompt = gradio_errors(lambda: handlers.source_prompt(
             body.get("target_language"), bool(body.get("translate", True)), body.get("notes"),
-            body.get("style") or pipeline.DEFAULT_STYLE))
+            body.get("style") or pipeline.DEFAULT_STYLE, bool(body.get("shorten_lines", False)),
+            bool(body.get("readings", False))))
         return {"prompt": prompt}
 
     @app.post(f"{API}/lines-prompt", include_in_schema=False)
@@ -576,7 +577,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner_of(request)
         prompt, record, status = gradio_errors(lambda: handlers.lines_prompt(
             body.get("session"), {"picked": body.get("picked") or []}, body.get("target_language"),
-            body.get("notes"), body.get("style") or pipeline.DEFAULT_STYLE))
+            body.get("notes"), body.get("style") or pipeline.DEFAULT_STYLE, bool(body.get("shorten_lines", False)),
+            bool(body.get("readings", False))))
         return {"prompt": prompt, "request": record, "status": status}
 
     @app.post(f"{API}/lines-reply", include_in_schema=False)
@@ -667,7 +669,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                   bool(body.get("translation_context", False)),
                   project,
                   body.get("manual_reply") or "", body.get("style") or pipeline.DEFAULT_STYLE,
-                  bool(body.get("rewrite", False))]
+                  bool(body.get("rewrite", False)), bool(body.get("shorten_lines", False)),
+                  bool(body.get("readings", False))]
         if not values[0]:
             raise H3Error("Upload a video or audio file, or pick one from Media.")
         read_frame = reader(3, session_index=0)
@@ -699,7 +702,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                   body.get("translator") or pipeline.TRANSLATOR_HYMT,
                   body.get("gemini_model") or DEFAULT_GEMINI_PROMPT_MODEL, body.get("api_key") or "",
                   body.get("notes") or "", bool(body.get("translation_context", False)),
-                  body.get("style") or pipeline.DEFAULT_STYLE, bool(body.get("rewrite", False))]
+                  body.get("style") or pipeline.DEFAULT_STYLE, bool(body.get("rewrite", False)),
+                  bool(body.get("shorten_lines", False)), bool(body.get("readings", False))]
         return start(request, LINES, session_id, "translate", handlers.translate_lines, values, reader(2),
                      session_id=session_id)
 
