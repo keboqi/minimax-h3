@@ -1182,7 +1182,8 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
             quiet = float(np.sqrt(np.mean(bed[int(0.4 * RATE):int(0.9 * RATE)] ** 2)))
             return float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2))) / quiet
 
-        self.assertLess(under_speech_ratio(loop=True), 1 / 3)  # a looped bed ducks
+        # A looped bed ducks: BED_DUCK_DB overall, deeper in the presence band.
+        self.assertLess(under_speech_ratio(loop=True), 0.5)
         self.assertAlmostEqual(under_speech_ratio(loop=False), 1.0, delta=0.1)  # a one-shot SFX stays in front
 
     def test_turn_gaps_follow_the_lines(self):

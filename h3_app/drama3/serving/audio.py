@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from h3_app.drama3.serving.rooms import SPEED_OF_SOUND
 from h3_app.errors import H3Error
 from h3_app.processes import run_media_process
 
@@ -320,6 +321,23 @@ def turn_gap(previous_text: str, next_text: str, same_speaker: bool, *,
     return TURN_GAP
 
 
+CUT_OFF_TAIL_DB = 9.0  # a barged-in-on line's tail sinks this far under the interruption
+
+
+def _yield_tail(samples: np.ndarray, overlap: int) -> None:
+    """Sink the last ``overlap`` frames of ``samples`` in place along a quarter-cosine curve.
+
+    The interrupted voice gives way under the one barging in instead of both playing at full
+    level, which is what made an overlap sound like two clips laid on top of each other.
+    """
+    overlap = min(overlap, len(samples))
+    if overlap <= 0:
+        return
+    floor = 10 ** (-CUT_OFF_TAIL_DB / 20)
+    curve = np.cos(np.linspace(0.0, np.pi / 2, overlap, dtype=np.float32))
+    samples[-overlap:] *= _along((floor + (1.0 - floor) * curve).astype(np.float32), samples)
+
+
 def join_takes(takes: list[tuple], rate: int,
                spans: list[tuple[int, int]] | None = None,
                lines: list[list[tuple[int, int]]] | None = None) -> np.ndarray:
@@ -327,7 +345,8 @@ def join_takes(takes: list[tuple], rate: int,
 
     With texts the gap follows the lines (see ``turn_gap``); without, it is the plain turn
     or same-speaker gap. An overlap never reaches past half of either take, nor, with each
-    take's ``lines`` (start, end) inside it, past half of the previous take's last line.
+    take's ``lines`` (start, end) inside it, past half of the previous take's last line,
+    and across it the earlier take's tail sinks ``CUT_OFF_TAIL_DB`` under the later one.
     ``spans``, when given, receives each take's (start, end) sample offsets in the result.
     """
     placed, previous, cursor = [], None, 0
@@ -342,6 +361,9 @@ def join_takes(takes: list[tuple], rate: int,
                    if text is not None and previous_text is not None
                    else SAME_SPEAKER_GAP if same else TURN_GAP)
             cursor += max(int(rate * gap), -min(previous_reach, len(samples) // 2))
+            overlap = placed[-1][0] + len(placed[-1][1]) - cursor
+            if overlap > 0:
+                _yield_tail(placed[-1][1], overlap)
         placed.append((cursor, samples))
         if spans is not None:
             spans.append((cursor, cursor + len(samples)))
@@ -448,11 +470,53 @@ def pan_gains(position) -> tuple:
     return np.cos(angle), np.sin(angle)
 
 
-def pan_mono(samples: np.ndarray, position: float) -> np.ndarray:
-    """A mono voice placed at ``position``; its loudness is the same anywhere."""
+HEAD_RADIUS = 0.0875  # metres
+
+
+def interaural_delay(position) -> np.ndarray:
+    """Seconds the far ear hears a source at ``position`` (-1 left .. 1 right) after the near one.
+
+    Woodworth's spherical-head estimate, with the position as an azimuth of up to 90°:
+    about 0.66 ms for a sound hard to one side, nothing at the centre.
+    """
+    azimuth = np.abs(np.clip(np.asarray(position, dtype=np.float64), -1.0, 1.0)) * np.pi / 2
+    return HEAD_RADIUS / SPEED_OF_SOUND * (azimuth + np.sin(azimuth))
+
+
+def delay_far_ear(stereo: np.ndarray, position, rate: int) -> np.ndarray:
+    """``stereo`` with the ear away from ``position`` (a number, or one per frame) heard later.
+
+    The time difference joins the level difference ``pan_gains`` makes, so a placed sound
+    sits more firmly where it is. A fixed position delays by whole samples, keeping the far
+    ear's highs; a moving one follows its path with a fractional delay. The length stays.
+    """
+    out = np.array(stereo, dtype=np.float32)
+    if out.ndim != 2 or not len(out) or rate <= 0:
+        return out
+    position = np.asarray(position, dtype=np.float64)
+    delay = interaural_delay(position) * rate
+    frames = None
+    for channel, far in ((0, position > 0), (1, position < 0)):  # the left ear is far from a right source
+        if position.ndim == 0:
+            shift = int(round(float(delay))) if far else 0
+            if 0 < shift < len(out):
+                out[:, channel] = np.concatenate([np.zeros(shift, np.float32), out[:-shift, channel]])
+        elif far.any():
+            frames = np.arange(len(out), dtype=np.float64) if frames is None else frames
+            lag = np.where(far, delay, 0.0)
+            out[:, channel] = np.interp(frames - lag, frames, out[:, channel], left=0.0)
+    return out
+
+
+def pan_mono(samples: np.ndarray, position: float, rate: int | None = None) -> np.ndarray:
+    """A mono voice placed at ``position``; its loudness is the same anywhere.
+
+    With ``rate`` the far ear also hears it a fraction of a millisecond later (``delay_far_ear``).
+    """
     samples = np.asarray(samples, dtype=np.float32).reshape(-1)
     left, right = pan_gains(float(position))
-    return np.stack([samples * left, samples * right], axis=1).astype(np.float32)
+    out = np.stack([samples * left, samples * right], axis=1).astype(np.float32)
+    return delay_far_ear(out, float(position), rate) if rate else out
 
 
 FAR_LOWPASS_HZ = 2500.0
@@ -472,7 +536,8 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
 
     A far sound loses its highs and gains a few room reflections; its quieter level is
     ``distance_gain``, applied with the sound's volume. A panned stereo sound narrows
-    toward mono as it moves to the side, so its image follows.
+    toward mono as it moves to the side, so its image follows, and its far ear hears it
+    a little later (``delay_far_ear``).
     """
     out = as_stereo(samples).copy()
     if distance == "far" and len(out):
@@ -495,6 +560,7 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
         left, right = pan_gains(positions)
         out = np.stack([out[:, 0] * width + mono * (1 - width) * left * np.sqrt(2),
                         out[:, 1] * width + mono * (1 - width) * right * np.sqrt(2)], axis=1)
+        out = delay_far_ear(out, start if start == end else positions, rate)
     return out.astype(np.float32, copy=False)
 
 
@@ -754,7 +820,12 @@ def _fade(samples: np.ndarray, fade_in: int, fade_out: int) -> np.ndarray:
 
 
 DUCK_LOW_HZ = 200.0  # sub-bass warmth below this dips gently under speech instead of dropping out
-DUCK_LOW_SHARE = 0.4
+DUCK_LOW_SHARE = 0.4  # of DUCK_DEPTH_DB: the lows dip about 5 dB
+# A bed dips this much across the board under speech, and its presence band (where consonants
+# live) dips further, to the full DUCK_DEPTH_DB, so music keeps its shimmer and air around the
+# voice without masking it.
+BED_DUCK_DB = 7.0
+PRESENCE_BAND_HZ = (1000.0, 4000.0)
 ONE_SHOT_FORMANT_HZ = (500.0, 3000.0)  # vocal formants carved slightly in a one-shot while speech is active
 ONE_SHOT_DUCK_DB = 3.5
 
@@ -774,21 +845,29 @@ def _speech_rms(samples: np.ndarray, rate: int) -> float:
 def _duck_sound(arr: np.ndarray, duck_env: np.ndarray, rate: int, *, bed: bool) -> np.ndarray:
     """Apply frequency-aware sidechain ducking to a looped bed or a one-shot sound track.
 
-    Beds dip across the speech range while retaining low-end warmth (< 200 Hz). One-shot
-    effects keep their full impact and transients, carving only the 500–3000 Hz vocal
-    formant band slightly while speech is active.
+    ``duck_env`` is ``speech_duck_gain``'s envelope at ``DUCK_DEPTH_DB``. Beds dip
+    ``BED_DUCK_DB`` overall and the full depth in the 1–4 kHz presence band, while low-end
+    warmth (< 200 Hz) dips only gently. One-shot effects keep their full impact and
+    transients, carving only the 500–3000 Hz vocal formant band slightly while speech is active.
     """
     from scipy import signal
 
     nyq = 0.5 * rate
     env = duck_env[: len(arr)]
     if bed:
-        scaled = arr * _along(env, arr)
+        broad = env ** (BED_DUCK_DB / DUCK_DEPTH_DB)
+        scaled = arr * _along(broad, arr)
         if nyq > DUCK_LOW_HZ and len(arr) > 8:
             sos = signal.butter(2, min(DUCK_LOW_HZ / nyq, 0.99), btype="lowpass", output="sos")
             low = signal.sosfilt(sos, arr, axis=0).astype(np.float32)
-            warmthlift = (env ** DUCK_LOW_SHARE - env).astype(np.float32)
+            warmthlift = (env ** DUCK_LOW_SHARE - broad).astype(np.float32)
             scaled = scaled + low * _along(warmthlift, arr)
+        if nyq > PRESENCE_BAND_HZ[1] and len(arr) > 8:
+            sos = signal.butter(2, [PRESENCE_BAND_HZ[0] / nyq, PRESENCE_BAND_HZ[1] / nyq],
+                                btype="bandpass", output="sos")
+            # Causal, so nothing rings out ahead of a bed's entry; in phase at the band's centre.
+            presence = signal.sosfilt(sos, arr, axis=0).astype(np.float32)
+            scaled = scaled - presence * _along((broad - env).astype(np.float32), arr)
         return scaled
     if nyq > ONE_SHOT_FORMANT_HZ[1] and len(arr) > 8:
         sos = signal.butter(

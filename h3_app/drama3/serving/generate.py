@@ -587,7 +587,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             # An effect with its own reverb already gives a far voice its space.
             spaced = room is not None or any(effect in SPACE_EFFECTS for effect in effects)
             tidied = audio.voice_distance(tidied, rate, distance, in_room=spaced)
-            rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position), chunk.text))
+            rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position, rate), chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets, line_offsets)

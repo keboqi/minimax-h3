@@ -138,18 +138,69 @@ class MixDetailTests(unittest.TestCase):
             float(np.sqrt(np.mean(mixed_direct[lead : lead + RATE] ** 2))),
             delta=0.03,
         )
-        # Spectral ducking on a looped bed keeps sub-200Hz warmth higher relative to the 500-3000Hz vocal band.
+        # Spectral ducking on a looped bed keeps sub-200Hz warmth and the highs above the 1-4 kHz presence band,
+        # which dips to the full depth so consonants stay clear.
         duck_gain = float(10.0 ** (-audio.DUCK_DEPTH_DB / 20.0))
         ducked_bed = audio._duck_sound(bed[:RATE], np.full(RATE, duck_gain, dtype=np.float32), RATE, bed=True)
-        low_sos = signal.butter(2, 180 / (0.5 * RATE), "lowpass", output="sos")
-        mid_sos = signal.butter(2, [500 / (0.5 * RATE), 3000 / (0.5 * RATE)], "bandpass", output="sos")
-        low_ratio = np.sqrt(np.mean(signal.sosfilt(low_sos, ducked_bed[:, 0]) ** 2)) / np.sqrt(
-            np.mean(signal.sosfilt(low_sos, bed[:RATE, 0]) ** 2)
-        )
-        mid_ratio = np.sqrt(np.mean(signal.sosfilt(mid_sos, ducked_bed[:, 0]) ** 2)) / np.sqrt(
-            np.mean(signal.sosfilt(mid_sos, bed[:RATE, 0]) ** 2)
-        )
-        self.assertGreater(low_ratio, 1.8 * mid_ratio)
+
+        def kept(sos):
+            return np.sqrt(np.mean(signal.sosfilt(sos, ducked_bed[:, 0]) ** 2)) / np.sqrt(
+                np.mean(signal.sosfilt(sos, bed[:RATE, 0]) ** 2))
+
+        low_ratio = kept(signal.butter(2, 180 / (0.5 * RATE), "lowpass", output="sos"))
+        presence_ratio = kept(signal.butter(4, [1500 / (0.5 * RATE), 3000 / (0.5 * RATE)], "bandpass", output="sos"))
+        high_ratio = kept(signal.butter(4, 6000 / (0.5 * RATE), "highpass", output="sos"))
+        self.assertGreater(low_ratio, 1.8 * presence_ratio)
+        self.assertGreater(high_ratio, 1.4 * presence_ratio)
+        self.assertAlmostEqual(presence_ratio, duck_gain, delta=0.05)  # the presence band dips the full depth
+        self.assertAlmostEqual(high_ratio, 10 ** (-audio.BED_DUCK_DB / 20), delta=0.05)  # the rest only BED_DUCK_DB
+
+
+    def test_a_barged_in_line_sinks_under_the_interruption(self):
+        mia, spans = noise(1.0, 0.2, seed=5), []
+        joined = audio.join_takes([("Mia", mia, "Wait —"), ("Leo", np.zeros(RATE, dtype=np.float32), "No.")],
+                                  RATE, spans)
+        overlap = spans[0][1] - spans[1][0]
+        self.assertEqual(overlap, int(-audio.CUT_OFF_GAP * RATE))
+        np.testing.assert_allclose(joined[:spans[1][0]], mia[:spans[1][0]])  # untouched before the barge-in
+        tail, original = joined[spans[1][0]:spans[0][1]], mia[-overlap:]
+        floor = 10 ** (-audio.CUT_OFF_TAIL_DB / 20)
+        np.testing.assert_allclose(tail[-3:], original[-3:] * floor, rtol=0.01, atol=1e-6)
+        self.assertAlmostEqual(float(tail[0]), float(original[0]), places=5)  # sinks smoothly, no step
+        # A plain turn gap leaves the earlier take alone.
+        spans = []
+        joined = audio.join_takes([("Mia", mia, "Hello."), ("Leo", noise(1.0, 0.2), "Hi.")], RATE, spans)
+        np.testing.assert_allclose(joined[:spans[0][1]], mia)
+
+    def test_placed_sounds_reach_the_far_ear_later(self):
+        self.assertEqual(float(audio.interaural_delay(0.0)), 0.0)
+        self.assertAlmostEqual(float(audio.interaural_delay(1.0)), 0.00066, delta=0.00002)
+        self.assertEqual(float(audio.interaural_delay(-0.5)), float(audio.interaural_delay(0.5)))
+
+        def lag(stereo):
+            # Where the right channel best matches the left, in samples (positive: the right ear hears it later).
+            corr = np.correlate(stereo[:, 1], stereo[:, 0], mode="full")
+            return int(np.argmax(corr)) - (len(stereo) - 1)
+
+        voice = noise(0.5, 0.2, seed=6)
+        expected = round(float(audio.interaural_delay(0.6)) * RATE)
+        self.assertGreater(expected, 0)
+        left = audio.pan_mono(voice, -0.6, RATE)
+        self.assertEqual(left.shape, (len(voice), 2))
+        self.assertEqual(lag(left), expected)  # a voice on the left reaches the right ear late
+        self.assertEqual(lag(audio.pan_mono(voice, 0.6, RATE)), -expected)
+        np.testing.assert_allclose(audio.pan_mono(voice, 0.0, RATE), audio.pan_mono(voice, 0.0))
+        # Without a rate a voice is only level-panned, as before.
+        np.testing.assert_allclose(audio.pan_mono(voice, -0.6)[:, 1], voice * audio.pan_gains(-0.6)[1], atol=1e-6)
+        # Energy is unchanged: the delay only moves the far ear's copy.
+        np.testing.assert_allclose(np.sum(left ** 2), np.sum(audio.pan_mono(voice, -0.6) ** 2), rtol=0.01)
+
+        hit = np.stack([noise(0.5, 0.2, seed=7)] * 2, axis=1)
+        self.assertEqual(lag(audio.place_sound(hit, RATE, (0.6, 0.6))), -expected)
+        # A moving sound's delay follows its path: late on the right ear at the start, late on the left at the end.
+        moving = audio.place_sound(np.stack([noise(2.0, 0.2, seed=8)] * 2, axis=1), RATE, (-1.0, 1.0))
+        self.assertGreater(lag(moving[: RATE // 4]), 0)
+        self.assertLess(lag(moving[-RATE // 4:]), 0)
 
 
 
