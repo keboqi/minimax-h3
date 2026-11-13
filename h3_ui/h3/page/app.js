@@ -56,12 +56,19 @@
     try { return await action(...args); } catch (error) { toast(error.message, true); return undefined; }
   };
 
+  const completedEnhancements = new Set();
   const take = (answer) => {
     if (!answer) return;
     if (answer.state) app.s = answer.state;
     if (answer.runs) app.runs = answer.runs;
     if (answer.progress) app.progress = answer.progress;
     if (answer.files) app.files = answer.files;
+    // Any response can report completion, including settings edits between polls.
+    const enhanced = answer.runs?.enhance;
+    if (enhanced && !enhanced.active && !completedEnhancements.has(enhanced.id)) {
+      completedEnhancements.add(enhanced.id);
+      enhanceFinished(enhanced);
+    }
     render();
     if (Object.values(app.runs).some((run) => run?.active)) poll();
   };
@@ -467,7 +474,7 @@
   // Prompt ------------------------------------------------------------------
   let promptTimer;
   let pendingSave = Promise.resolve();
-  const savePrompt = guard(async () => {
+  const savePrompt = async () => {
     clearTimeout(promptTimer);
     const sent = $("prompt").value;
     const save = pendingSave.then(async () => {
@@ -477,11 +484,11 @@
     });
     pendingSave = save.catch(() => {});
     await save;
-  });
+  };
   const promptEdited = () => {
     app.s.prompt = $("prompt").value;
     clearTimeout(promptTimer);
-    promptTimer = setTimeout(savePrompt, 500);
+    promptTimer = setTimeout(guard(savePrompt), 500);
     renderReadiness();
     if (v("mode") === "Reference media") renderReferences();
   };
@@ -516,9 +523,7 @@
         const before = app.runs;
         const answer = await request("GET", "/run");
         const settled = ["generate", "input-upscale"].some((kind) => before[kind]?.active && !answer.runs[kind]?.active);
-        const enhanced = before.enhance?.active && !answer.runs.enhance?.active;
         take(settled ? await request("GET", "/run?state=true") : answer);
-        if (enhanced) enhanceFinished(app.runs.enhance);
         if (settled && app.runs.generate && !app.runs.generate.error) app.take = 0;
         if (!Object.values(app.runs).some((run) => run?.active)) break;
       }
@@ -532,7 +537,6 @@
     if (app.enhanceContext === null) return;
     app.enhanceNote = "";
     if (run?.suggestion) app.suggestion = {text: run.suggestion, original: run.original, context: app.enhanceContext};
-    render();
   };
   const promptContext = () => {
     const mode = v("mode");
@@ -687,7 +691,7 @@
       $("file-input").value = "";
       take(answer);
     }));
-    $("prompt").addEventListener("blur", savePrompt);
+    $("prompt").addEventListener("blur", guard(savePrompt));
     $("duration").addEventListener("input", () => { $("duration-value").textContent = `${Number($("duration").value).toFixed(1)} s`; });
     $("duration").addEventListener("change", () => change("duration", {duration: Number($("duration").value)}));
     $("run").addEventListener("click", () => { app.progress = []; app.take = 0; startRun("/generate"); });
@@ -709,7 +713,6 @@
       await savePrompt();
       app.enhanceContext = promptContext();
       take(await post("/enhance"));
-      if (!app.runs.enhance?.active) enhanceFinished(app.runs.enhance);
     }));
     $("accept").addEventListener("click", guard(async () => {
       const proposal = app.suggestion;
@@ -725,13 +728,13 @@
       return savePrompt();
     }));
     $("keep").addEventListener("click", () => { app.suggestion = null; app.enhanceNote = "Original prompt kept."; render(); });
-    $("undo").addEventListener("click", () => {
+    $("undo").addEventListener("click", guard(async () => {
       $("prompt").value = app.previous;
       app.s.prompt = app.previous;
       app.previous = null;
       app.enhanceNote = "";
-      savePrompt();
-    });
+      await savePrompt();
+    }));
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.repeat) return;
       event.preventDefault();
