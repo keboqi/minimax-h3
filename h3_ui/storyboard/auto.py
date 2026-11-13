@@ -136,7 +136,8 @@ class AutoRenders:
             item.state, item.detail = FAILED, str(exc) or "This storyboard is gone."
             return
         item.name = board["name"]
-        if sb.pending_scenes(board):
+        # Only when a scene can be made: one that needs input would take a GPU turn for nothing.
+        if sb.runnable_scenes(board):
             item.state, item.detail = RENDERING, ""
             try:
                 run = self._wait(queue, self.start_generation(owner, storyboard_id, queue.session))

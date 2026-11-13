@@ -126,6 +126,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
             raise H3Error("The prompt writer isn't available here.")
         board = self.service.load(owner, storyboard_id)
         index = self.service.scene_index(board, scene_id)
+        # Checked before cast tags are added, which would otherwise pass for a prompt.
+        if not board["scenes"][index]["prompt"].strip():
+            raise H3Error("Write a prompt first, then improve it.")
         values = sb.scene_request_values(board, index, self.services.request_defaults(), seed=0)
         settings = dict(WRITER_DEFAULTS)
         # The MiniMax H3 tab's choices win; the page's fill what it left blank.
@@ -280,7 +283,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         started = monotonic()
         queue, skipped = [], []
         for index in indices:
-            own = [issue for issue in sb.scene_issues(board, index) if not issue.startswith("Generate scene")]
+            own = sb.own_issues(board, index)
             (skipped if own else queue).append(index if own else board["scenes"][index]["id"])
         if not queue:
             yield ("Nothing to generate. " + (f"Scene {', '.join(str(i + 1) for i in skipped)} still need input."
@@ -290,6 +293,12 @@ class StoryboardHandlers(StoryboardApiHandlers):
         self.service.set_queue(owner, storyboard_id, queue)
         while queue:
             board = self.service.load(owner, storyboard_id)
+            # Scenes stay editable during a run: drop queued ones since deleted, made current,
+            # or left needing input, instead of failing the rest of the run on them.
+            if self._prune_queue(board, queue, skipped):
+                self.service.set_queue(owner, storyboard_id, queue)
+                if not queue:
+                    break
             index = sb.next_runnable(board, queue)
             if index is None:
                 break
@@ -303,6 +312,23 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if skipped:
             waiting += f" Skipped scene {', '.join(str(i + 1) for i in skipped)}: still need input."
         yield f"Generated the remaining scenes. Total generation time {clock(monotonic() - started)}.{waiting}", None
+
+    @staticmethod
+    def _prune_queue(board, queue: list[str], skipped: list[int]) -> bool:
+        """Remove queued scenes a run can no longer make; True when the queue changed."""
+        states = sb.scene_states(board)
+        positions = {scene["id"]: index for index, scene in enumerate(board["scenes"])}
+        changed = False
+        for scene_id in list(queue):
+            index = positions.get(scene_id)
+            if index is None or states[index] == sb.DONE:
+                queue.remove(scene_id)
+                changed = True
+            elif sb.own_issues(board, index, states):
+                queue.remove(scene_id)
+                skipped.append(index)
+                changed = True
+        return changed
 
     def switch_and_regenerate(self, storyboard_id, scene_id, take_id, request=None):
         """Use the chosen take, then regenerate the scenes that continue from it."""

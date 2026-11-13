@@ -31,7 +31,7 @@ from h3_app.workspace_store import request_owner
 from ..job_admission import execute_accepted
 # Compatibility exports for existing callers.
 from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
-from .auto import AutoRenders
+from .auto import EXPORTING, RENDERING, WAITING, AutoRenders
 from .handlers import GENERATE_REMAINING, GENERATE_SCENE, SWITCH_AND_REGENERATE, StoryboardHandlers
 from .payload import board_payload, file_url, referenced_paths
 
@@ -68,7 +68,11 @@ def _image_thumbnail(path: Path, root: Path) -> Path | None:
 
 
 def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: bool, interrupt=None) -> None:
-    runs = Runs()
+    # One run per storyboard of any kind: the page shows one, and a join reads the takes a
+    # generation writes.
+    runs = Runs(blocked=lambda run: (
+        "Wait for this storyboard's current run to finish."
+        if runs.active(run.owner, run.storyboard_id) is not None else None))
     # The Jobs tab retries a storyboard job through this.
     JOBS.register_callback("storyboard", handlers.run_job)
     api = "/storyboard/api"
@@ -209,7 +213,15 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.delete(f"{api}/boards/{{storyboard_id}}", include_in_schema=False)
     @guarded
     def delete(storyboard_id: str, request: Request):
-        handlers.service.delete(owner_of(request), storyboard_id)
+        owner = owner_of(request)
+        if runs.active(owner, storyboard_id) is not None:
+            raise H3Error("Wait for this storyboard's run to finish before deleting it.")
+        queue = autos.latest(owner)
+        if queue is not None and queue.finished_at is None and any(
+                item.storyboard_id == storyboard_id and item.state in (WAITING, RENDERING, EXPORTING)
+                for item in queue.items):
+            raise H3Error("Auto render still has this storyboard queued. Stop auto render first.")
+        handlers.service.delete(owner, storyboard_id)
         return {"deleted": True}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/duplicate", include_in_schema=False)
@@ -395,9 +407,9 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def delete_take(storyboard_id: str, scene_id: str, take_id: str, request: Request):
         owner = owner_of(request)
-        # A running scene may be reading this take's latent, whichever take is in use by now.
-        if runs.active(owner, storyboard_id, "generate") is not None:
-            raise H3Error("Wait for generation to finish before deleting a take.")
+        # A running scene may be reading this take's latent, and a join its video.
+        if runs.active(owner, storyboard_id) is not None:
+            raise H3Error("Wait for the current run to finish before deleting a take.")
         handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
         return payload(owner, storyboard_id)
 
@@ -499,10 +511,10 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                 continue
             states = sb.scene_states(board)
             pending = sb.pending_scenes(board)
-            blocked = [index + 1 for index in pending
-                       if any(not issue.startswith("Generate scene") for issue in sb.scene_issues(board, index, states))]
+            blocked = [index + 1 for index in pending if sb.own_issues(board, index, states)]
             boards.append({"id": row["id"], "name": row["name"], "scenes": len(states),
-                           "pending": len(pending), "needs_input": blocked})
+                           "pending": len(pending), "runnable": len(sb.runnable_scenes(board)),
+                           "needs_input": blocked})
         return {"auto": auto_payload(owner), "boards": boards}
 
     @app.post(f"{api}/auto", include_in_schema=False)

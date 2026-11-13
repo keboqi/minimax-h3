@@ -301,6 +301,24 @@ def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = N
     return issues
 
 
+def own_issues(board: dict[str, Any], index: int, states: list[str] | None = None) -> list[str]:
+    """What the scene itself still needs, leaving out waiting for the scene it continues from."""
+    return [issue for issue in scene_issues(board, index, states) if not issue.startswith("Generate scene")]
+
+
+def runnable_scenes(board: dict[str, Any]) -> list[int]:
+    """Pending scenes a run can make: ready themselves, and not continuing from a scene that needs input."""
+    states = scene_states(board)
+    runnable: list[int] = []
+    for index, state in enumerate(states):
+        if state == DONE or own_issues(board, index, states):
+            continue
+        if flows_from_previous(board, index) and states[index - 1] != DONE and index - 1 not in runnable:
+            continue
+        runnable.append(index)
+    return runnable
+
+
 def check_scene(board: dict[str, Any], index: int) -> None:
     """Refuse a take whose scene isn't ready, before it reaches the GPU."""
     issues = scene_issues(board, index)

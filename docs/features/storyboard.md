@@ -25,7 +25,7 @@ first scene can start with one. Scenes without one use **Usual scene length**; a
 outside 5–15 stops Create and names the scene. *Continue one into the next* makes every later
 scene continue; *Every scene starts fresh* makes them separate shots joined by cuts.
 Either can be changed per scene. In Studio, the storyboard copies your current
-**MiniMax H3** settings, which the tab hands to the page's server side each time it opens,
+**MiniMax H3** settings, as last saved on the MiniMax H3 page,
 and keeps them, so every scene matches;
 **Settings › Use my current MiniMax H3 settings** replaces them later and
 marks every scene out of date.
@@ -101,7 +101,8 @@ saves a version. **Versions** keeps scene lists to come back to or branch.
 
 **Auto render** in the top bar (GPU endpoint only) renders several storyboards
 unattended. Tick the storyboards, each listed with how many scenes it has left and any
-scene that still needs input, then **Render and export**. They run in the order listed:
+scene that still needs input, then **Render and export**. **Select all with scenes left**
+ticks the storyboards with a scene it can make now. They run in the order listed:
 each storyboard generates its remaining scenes exactly as **Generate all remaining
 scenes** would, and once every scene is done its full video is exported to Media (with a
 saved version) before the next storyboard starts. A storyboard whose scenes are already

@@ -175,6 +175,8 @@
       for (const [id, {fields}] of edits) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
     }
     state.board = data;
+    const row = state.boot.boards.find((item) => item.id === data.id);
+    if (row && data.generated !== undefined && row.generated !== data.generated) row.generated = data.generated;
     if (!data.scenes.some((item) => item.id === state.sceneId)) {
       state.sceneId = data.scenes[0].id;
       keepInspector = false;
@@ -299,7 +301,8 @@
     if (shown && shown.id !== item.in_use) {
       row.push(button("Use this take", useTake, "btn quiet"));
       row.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
-        {disabled: busy, title: busy ? "Wait for generation to finish." : "Delete this take for good"}));
+        {disabled: Boolean(state.run?.active),
+          title: state.run?.active ? "Wait for the current run to finish." : "Delete this take for good"}));
     }
     clearTimeout(state.reviewTimer);
     const review = shown?.review;
@@ -975,7 +978,7 @@
         h("h3", {className: "small"}, "Choose storyboards"),
         h("div", {className: "chips"},
           button("Select all with scenes left", () => {
-            boards.filter((board) => board.pending).forEach((board) => state.autoSelected.add(board.id));
+            boards.filter((board) => board.runnable).forEach((board) => state.autoSelected.add(board.id));
             renderInspector();
           }, "btn sm"),
           button("Clear", () => { state.autoSelected.clear(); renderInspector(); }, "btn sm", {disabled: !chosen.length}))),
@@ -1128,9 +1131,10 @@
     if (!state.board) return;
     const sameQueue = before && auto && before.id === auto.id;
     if (sameQueue && before.active && !auto.active) announceAuto(auto);
-    // The page moves on with the queue while it shows the storyboard the queue just left.
+    // The page moves on with the queue while it shows the storyboard the queue just left,
+    // but not away from a new storyboard being written.
     if (sameQueue && auto.active && auto.current && before.current !== auto.current
-        && state.board.id === before.current) {
+        && state.board.id === before.current && !$("editor").hidden) {
       openBoard(auto.current);
     } else if (changed && auto && (auto.current === state.board.id || before?.current === state.board.id)
                && !state.run?.active) {
@@ -1342,7 +1346,8 @@
 
   // Boards ----------------------------------------------------------------
   const adoptBoard = (data) => {
-    state.boot.boards = [{id: data.id, name: data.name}, ...state.boot.boards.filter((row) => row.id !== data.id)];
+    state.boot.boards = [{id: data.id, name: data.name, generated: Boolean(data.generated)},
+      ...state.boot.boards.filter((row) => row.id !== data.id)];
     showBoard(data);
   };
   const showBoard = (data) => {

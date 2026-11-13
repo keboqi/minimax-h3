@@ -347,7 +347,14 @@ class StoryboardPageTests(unittest.TestCase):
         try:
             response = self.client.delete(self.scene_url(board, 0, f"/takes/{take}"))
             self.assertEqual(response.status_code, 400)
-            self.assertIn("Wait for generation", response.json()["error"])
+            self.assertIn("Wait for the current run", response.json()["error"])
+            # One run per storyboard of any kind, and it can't be deleted from under the run.
+            joined = self.client.post(f"{url}/join", json={"include_outdated": True})
+            self.assertEqual(joined.status_code, 400)
+            self.assertIn("current run", joined.json()["error"])
+            deleted = self.client.delete(url)
+            self.assertEqual(deleted.status_code, 400)
+            self.assertIn("run to finish", deleted.json()["error"])
         finally:
             release.set()
         self.wait_for_run(board)
@@ -418,6 +425,7 @@ class StoryboardPageTests(unittest.TestCase):
                                          publish=lambda path, metadata: published.append(metadata["storyboard"]["id"]))
         listed = {row["id"]: row for row in self.client.get(f"{API}/auto").json()["boards"]}
         self.assertEqual(listed[blocked["id"]]["needs_input"], [2])
+        self.assertEqual((listed[blocked["id"]]["runnable"], listed[ready["id"]]["runnable"]), (1, 1))
         with patch.object(self.service, "render", self.fake_render):
             self.client.post(f"{API}/auto", json={"ids": [blocked["id"], ready["id"]]})
             auto = self.wait_for_auto()

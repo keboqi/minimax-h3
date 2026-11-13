@@ -242,14 +242,22 @@ class StoryboardService:
         if field not in model.MEDIA_FIELDS:
             raise ValueError(f"Unknown scene media {field!r}.")
 
-        def edit(board):
-            stored = SceneFiles(self.media_dir(storyboard_id), board).value(field, value)
-            scene = board["scenes"][self.scene_index(board, scene_id)]
-            if model.scene_media(scene)[field] == stored:
-                return False
-            scene[field] = stored
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            files = SceneFiles(self.media_dir(storyboard_id), board)
+            before = self._scene_files(board)
+            try:
+                stored = files.value(field, value)
+                scene = board["scenes"][self.scene_index(board, scene_id)]
+                if model.scene_media(scene)[field] == stored:
+                    return False
+                scene[field] = stored
+                self.save(owner, storyboard_id, board)
+            except Exception:
+                files.discard()
+                raise
+            self._collect_media(before - self._scene_files(board))
             return True
-        return self.change(owner, storyboard_id, edit)[1]
 
     def toggle_link(self, owner, storyboard_id, scene_id):
         def edit(board):
@@ -274,11 +282,16 @@ class StoryboardService:
         return self.change(owner, storyboard_id, edit)[0]
 
     def delete_scene(self, owner, storyboard_id, scene_id):
-        def edit(board):
+        with self.lock:
+            board = self.load(owner, storyboard_id)
             if len(board["scenes"]) == 1:
                 raise H3Error("A storyboard keeps at least one scene.")
+            before = self._scene_files(board)
             board["scenes"].pop(self.scene_index(board, scene_id))
-        return self.change(owner, storyboard_id, edit)[0]
+            board["queue"] = [item for item in board["queue"] if item != scene_id]
+            self.save(owner, storyboard_id, board)
+            self._collect_media(before - self._scene_files(board))
+            return board
 
     def sync(self, owner, storyboard_id, scenes, *, name=None, profile=None, cast=None) -> dict[str, Any]:
         """Make the storyboard match planned ``scenes``, keeping the takes of scenes that stay.
@@ -297,12 +310,14 @@ class StoryboardService:
         with self.lock:
             board = self.load(owner, storyboard_id)
             files = SceneFiles(self.media_dir(storyboard_id), board)
+            before = self._scene_files(board)
             try:
                 changes = self._sync(board, storyboard_id, scenes, name, profile, cast, files)
                 self.save(owner, storyboard_id, board)
             except Exception:
                 files.discard()
                 raise
+            self._collect_media(before - self._scene_files(board))
         return changes
 
     def _sync(self, board, storyboard_id, scenes, name, profile, cast, files):
@@ -471,12 +486,32 @@ class StoryboardService:
                 Path(value).unlink(missing_ok=True)
             for take in board["takes"].values():
                 self._unlink_take_files(take, used)
+            # Media this storyboard dropped earlier but a branch still kept also lives here.
+            media = self.media_dir(storyboard_id)
+            if media.is_dir():
+                for path in media.iterdir():
+                    if path.is_file() and str(path) not in used:
+                        path.unlink(missing_ok=True)
             preview = self.preview_path(storyboard_id)
             preview.unlink(missing_ok=True)
-            try:
-                preview.parent.rmdir()  # Only when no branch still keeps takes there.
-            except OSError:
-                pass
+            for folder in (media, preview.parent):
+                try:
+                    folder.rmdir()  # Only when no branch still keeps takes or media there.
+                except OSError:
+                    pass
+
+    def _collect_media(self, dropped: set[str]) -> None:
+        """Remove scene media no storyboard, saved version or branch uses any more."""
+        if not dropped:
+            return
+        used = set()
+        for other_owner, other_id in self._all_ids():
+            used.update(self._scene_files(self.store.storyboard(other_owner, other_id)))
+        for value in dropped - used:
+            path = Path(value).resolve()
+            # Only files this feature stored; anything else was never ours to remove.
+            if path.parent.name == "media" and path.parent.parent.parent == self.output_path(TAKE_FOLDER):
+                path.unlink(missing_ok=True)
 
     def _used_take_files(self) -> set[str]:
         used = set()

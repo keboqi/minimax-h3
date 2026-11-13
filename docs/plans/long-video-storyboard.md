@@ -125,9 +125,9 @@ Where the build differs from the plan above:
 - **Storage**: one `storyboards` table; takes and versions live in the storyboard's JSON payload instead of their own tables. Schema 2 only adds that table.
 - **Jobs**: one job per run (a scene's takes, or the whole Generate remaining walk), not one per take. The run accepts each next scene only after the previous take is saved, so ordering is enforced inside the job.
 - **Trim**: takes keep their full clip, overlap included. Play all and Export drop each flow scene's overlap frames and the matching audio when joining; `H3SaveAVLatent` records the actual overlap as `h3_prefix_frames` in the latent file.
-- **Keyframes**: not dropped. Storyboard scenes use text-to-video or reference images only, so no first-frame keyframe can fall inside the protected head.
-- **Story to scenes**: splits the story by paragraph. Using the prompt writer for it is not built yet.
-- **Not built yet**: continue from a Media video, crossfade and dip-to-black joins, audio crossfade at cuts, SeedVR2 finish on export, the take-change confirmation dialog (the status line names the outdated scenes instead), storyboard size display.
+- **Keyframes**: not dropped. A continuing scene can't take a first frame (its frames mode is Last frame only), so no first-frame keyframe can fall inside the protected head.
+- **Story to scenes**: splits the story at `---` lines (`---N---` also sets a scene's length); **Rewrite / extend into scenes** uses the hosted prompt writer to write them.
+- **Not built yet**: continue from a Media video, crossfade and dip-to-black joins, audio crossfade at cuts, SeedVR2 finish on export, storyboard size display.
 - **Scene length**: any whole number of seconds from 5 to 15 (a slider), not only 5, 10 or 15.
 - **Post-processing and Regenerate**: storyboards force H3 post-processing off, and flow scenes refuse the H3 Regenerate refiner, so each take's video matches its saved latent.
 

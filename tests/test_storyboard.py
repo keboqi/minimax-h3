@@ -75,6 +75,15 @@ class StoryboardRuleTests(unittest.TestCase):
         document["scenes"][1]["link"] = "cut"
         self.assertEqual(sb.scene_states(document), ["done", "outdated", "outdated"])
 
+    def test_runnable_scenes_leave_out_scenes_that_need_input_and_their_continuations(self):
+        document = board("flow", "cut", "flow", takes=False)
+        self.assertEqual(sb.runnable_scenes(document), [0, 1, 2, 3])
+        document["scenes"][0]["prompt"] = ""
+        self.assertEqual(sb.runnable_scenes(document), [2, 3])
+        document["scenes"][2]["prompt"] = ""
+        self.assertEqual(sb.runnable_scenes(document), [])
+        self.assertEqual(len(sb.pending_scenes(document)), 4)
+
     def test_new_seconds_subtract_the_overlap_of_flow_scenes(self):
         document = board("flow", "cut", takes=False)
         for scene in document["scenes"]:
@@ -350,6 +359,7 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.service = sb.StoryboardService(self.store, lambda: self.runtime)
         self.graphs = []
         self.fail_on = None
+        self.on_take = None
         self.handlers = StoryboardHandlers(StoryboardServices(
             service=lambda: self.service, generate_take=self.fake_take,
             request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
@@ -367,6 +377,8 @@ class StoryboardRunnerTests(unittest.TestCase):
             yield GenerationUpdate(None, "Error: out of memory")
             return
         yield GenerationUpdate(None, "Queued")
+        if self.on_take is not None:
+            self.on_take(values["prompt"])
         video = self.runtime.output_dir / f"{graph.output_prefix}_00001_.mp4"
         video.parent.mkdir(parents=True, exist_ok=True)
         video.write_bytes(b"mp4")
@@ -455,6 +467,68 @@ class StoryboardRunnerTests(unittest.TestCase):
         self.assertEqual([prompt for prompt, _ in self.graphs], ["prompt 1"])
         self.assertIn("Skipped scene 2", statuses[-1])
         self.assertIn("wait for a scene that needs input", statuses[-1])
+
+    def test_scenes_edited_during_a_run_leave_its_queue_instead_of_failing_it(self):
+        storyboard_id = self.make("cut", "cut", "cut")
+        scenes = self.service.load("a", storyboard_id)["scenes"]
+
+        def edit(prompt):
+            if prompt == "prompt 1":
+                self.service.update_scene("a", storyboard_id, scenes[1]["id"], prompt="")
+                self.service.delete_scene("a", storyboard_id, scenes[2]["id"])
+
+        self.on_take = edit
+        statuses = [status for status, _ in self.handlers.generate_remaining(storyboard_id, SimpleNamespace())]
+        self.assertEqual([prompt for prompt, _ in self.graphs], ["prompt 1", "prompt 4"])
+        self.assertIn("Skipped scene 2", statuses[-1])
+        self.assertNotIn("wait for a scene", statuses[-1])
+        self.assertEqual(self.service.load("a", storyboard_id)["queue"], [])
+
+    def test_deleting_a_queued_scene_drops_it_from_the_queue(self):
+        storyboard_id = self.make("cut")
+        scenes = self.service.load("a", storyboard_id)["scenes"]
+        self.service.set_queue("a", storyboard_id, [scene["id"] for scene in scenes])
+        self.service.delete_scene("a", storyboard_id, scenes[1]["id"])
+        self.assertEqual(self.service.load("a", storyboard_id)["queue"], [scenes[0]["id"]])
+
+    def test_replaced_scene_media_is_removed_unless_something_still_uses_it(self):
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        first, second = self.root / "first.png", self.root / "second.png"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+        self.service.set_scene_media("a", storyboard_id, scene_id, "first_image", str(first))
+        kept = Path(self.service.load("a", storyboard_id)["scenes"][0]["first_image"])
+        self.service.save_version("a", storyboard_id)
+        self.service.set_scene_media("a", storyboard_id, scene_id, "first_image", str(second))
+        self.assertTrue(kept.is_file())  # The saved version still shows it.
+        stored = Path(self.service.load("a", storyboard_id)["scenes"][0]["first_image"])
+        self.service.set_scene_media("a", storyboard_id, scene_id, "first_image", None)
+        self.assertFalse(stored.exists())
+
+    def test_refused_scene_media_leaves_no_copied_files(self):
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        clips = []
+        for number in range(4):
+            path = self.root / f"clip{number}.mp4"
+            path.write_bytes(f"clip {number}".encode())
+            clips.append(str(path))
+        with self.assertRaisesRegex(ValueError, "at most 3 reference videos"):
+            self.service.set_scene_media("a", storyboard_id, scene_id, "ref_videos", clips)
+        media = self.service.media_dir(storyboard_id)
+        self.assertEqual(list(media.iterdir()) if media.is_dir() else [], [])
+
+    def test_deleting_a_storyboard_removes_its_media_folder(self):
+        storyboard_id = self.make()
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        picture = self.root / "frame.png"
+        picture.write_bytes(b"frame")
+        self.service.set_scene_media("a", storyboard_id, scene_id, "first_image", str(picture))
+        list(self.handlers.generate_remaining(storyboard_id, SimpleNamespace()))
+        folder = self.service.media_dir(storyboard_id).parent
+        self.service.delete("a", storyboard_id)
+        self.assertFalse(folder.exists())
 
     def test_switching_a_take_asks_first_when_later_scenes_continue_from_it(self):
         storyboard_id = self.make("flow", "cut")

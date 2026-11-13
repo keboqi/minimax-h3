@@ -146,7 +146,7 @@ def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": storyboard_id, "name": board["name"], "settings": sb.profile_summary(board["profile"]),
         "total": clock(sb.total_seconds(board)), "done": done, "pending": len(states) - done,
-        "queue": list(board["queue"]), "scenes": scenes,
+        "queue": list(board["queue"]), "scenes": scenes, "generated": bool(board["takes"]),
         "cast": [{**_media(storyboard_id, member["image"], picture=True), "name": member["name"]}
                  for member in board["cast"]],
         "versions": [{"id": version["id"], "label": version["label"]} for version in reversed(board["versions"])],
