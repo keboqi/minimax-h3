@@ -435,18 +435,23 @@ class WorkflowContractsTests(unittest.TestCase):
                 _catalog.LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora
             ),
         )
-        self.assertIn(
+        # LightX2V 8-step v1.2 uses 12/3 for both FL2V and Ref2VA.
+        self.assertNotIn(
             _catalog.H3_SIGMA_SHIFT_NODE,
             _h3_workflow.turbo_required_nodes(
                 _catalog.LIGHTX2V_8STEP_TURBO, fake.turbo_8step_lora
             ),
         )
-        # LightX2V's 6/3 shift is for FL2V only; 768p Ref2V keeps 12/3.
         self.assertNotIn(
             _catalog.H3_SIGMA_SHIFT_NODE,
             _h3_workflow.turbo_required_nodes(
                 _catalog.LIGHTX2V_8STEP_TURBO, fake.turbo_8step_ref_lora
             ),
+        )
+        self.assertIsNone(
+            _policy.turbo_sigma_shifts(
+                _catalog.LIGHTX2V_8STEP_TURBO, fake.turbo_8step_lora
+            )
         )
         self.assertIsNone(
             _policy.turbo_sigma_shifts(
@@ -553,7 +558,7 @@ class WorkflowContractsTests(unittest.TestCase):
                 self.assertIn(_catalog.LIGHTX2V_BYPASS_LORA_NODE, route_classes)
                 self.assertNotIn(_catalog.CORE_LORA_LOADER_NODE, route_classes)
                 self.assertIn(_catalog.FUSED_MODULATION_NODE, route_classes)
-                if lightx_variant == _catalog.LIGHTX2V_8STEP_TURBO:
+                if lightx_variant == _catalog.LIGHTX2V_4STEP_TURBO:
                     shift_node = next(
                         node
                         for node in lightx_route.nodes.values()
@@ -561,6 +566,8 @@ class WorkflowContractsTests(unittest.TestCase):
                     )
                     self.assertEqual(shift_node["inputs"]["shift_video"], 6.0)
                     self.assertEqual(shift_node["inputs"]["shift_audio"], 3.0)
+                else:
+                    self.assertNotIn(_catalog.H3_SIGMA_SHIFT_NODE, route_classes)
         self.assertIn(
             _catalog.LIGHTX2V_BYPASS_LORA_NODE,
             _h3_workflow.turbo_required_nodes(_catalog.LIGHTX2V_4STEP_TURBO),

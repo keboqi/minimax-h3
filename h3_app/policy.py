@@ -81,13 +81,13 @@ def is_lightx2v_turbo_lora(turbo_variant: str, lora_filename: str | None) -> boo
 
 
 def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -> bool:
-    """Official 768p FL2VA Turbo checkpoints use video/audio shifts 6/3.
+    """Older 768p FL2VA Turbo checkpoints (4-step, 8-step v1.0/v1.1) use shifts 6/3.
 
-    Ref2VA checkpoints, 768p included, keep the model's default 12/3.
+    8-step v1.2 (FL2VA and Ref2VA) and Ref2VA checkpoints keep the model's default 12/3.
     """
     name = Path(str(lora_filename)).name.lower()
     return is_lightx2v_turbo_lora(turbo_variant, lora_filename) and (
-        "768p" in name and "fl2v" in name
+        "768p" in name and "fl2v" in name and "8step_v1.2" not in name
     )
 
 

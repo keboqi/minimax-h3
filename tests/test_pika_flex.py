@@ -62,7 +62,7 @@ class PikaFlexTests(unittest.TestCase):
         legacy = resolve_settings(self.request(
             generation_mode="Turbo", turbo_variant="LightX2V v1.0 / 8-step 768p", steps=8,
         ))
-        self.assertEqual(legacy.effective.sampling.turbo_variant, "LightX2V v1.1 / 8-step 768p")
+        self.assertEqual(legacy.effective.sampling.turbo_variant, "LightX2V v1.2 / 8-step 768p")
         self.assertEqual(legacy.effective.sampling.steps, 8)
 
     def test_provenance_claims_upstream_identity_only_for_pinned_adapter(self):
