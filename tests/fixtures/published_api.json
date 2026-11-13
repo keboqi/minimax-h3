@@ -1218,6 +1218,7 @@
     "type_54": {
       "type": "string",
       "enum": [
+        "gemini-4-hydrogen",
         "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.6-flash",
