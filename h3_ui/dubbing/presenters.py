@@ -130,9 +130,22 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
     speakers = [{"k": number, "label": escape(speaker_label(speaker)), "tone": number % TONES,
                  "count": sum(line["speaker"] == speaker for line in lines)} for number, speaker in enumerate(order)]
     duration = float(session.data.get("duration") or 0.0)
-    return {"session": session.id, "lines": items, "speakers": speakers,
+    return {"session": session.id, "rev": lines_revision(lines), "lines": items, "speakers": speakers,
             "duration": max([duration] + [line["end"] for line in lines]), "summary": summary_html(session, long),
             "focus": focus, "picked": picked, "filter": previous.get("filter") or "all", "keepFocus": keep_focus}
+
+
+def lines_revision(lines: list[dict]) -> str:
+    """What line positions mean: changes when a line is added, removed, moved, re-timed or reworded.
+
+    Actions that name lines by position send the revision they were drawn from, so a save that
+    re-sorted the lines meanwhile cannot make them act on a different line.
+    """
+    import hashlib
+    import json
+
+    identity = [[line["start"], line["speaker"], line["source"]] for line in lines]
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
 def empty_board() -> dict:

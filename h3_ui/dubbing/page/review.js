@@ -370,13 +370,16 @@ function saveLine(app, fields) {
 // Returns whether the edit was saved; a refusal is reported and leaves the page as it was.
 async function edit(app, path, body) {
   try {
-    const data = await api.post(path, {session: app.session.id, ...body});
+    // The revision names the lines these positions were drawn from; the server refuses stale ones.
+    const data = await api.post(path, {session: app.session.id, rev: app.session.board.rev, ...body});
     app.setSession(data.session, {focus: data.focus});
     if (data.status) toast(data.status.replace(/\*\*/g, ""));
     app.render();
     return true;
   } catch (error) {
     toast(error.message, {error: true});
+    // Show the lines as saved now, so a refused action can be retried on what is really there.
+    await app.refresh();
     return false;
   }
 }

@@ -68,6 +68,13 @@ def _find_line(lines: list[dict], key) -> int | None:
     return key.get("index") if key.get("index") in found else found[0]
 
 
+def _require_revision(board, lines: list[dict]) -> None:
+    """Refuse a position-based action drawn from lines that have since changed (when it says which)."""
+    revision = board.get("rev") if isinstance(board, dict) else None
+    if revision and revision != presenters.lines_revision(lines):
+        raise H3Error("The lines changed since this view was drawn; check them and try again.")
+
+
 def _spaceless(char: str) -> bool:
     """CJK, kana, Thai and similar scripts that join words without spaces."""
     code = ord(char)
@@ -290,6 +297,7 @@ class DubbingHandlers:
         index = changed.get("line") if isinstance(changed, dict) else None
 
         def change(lines):
+            _require_revision(board, lines)
             if not isinstance(index, int) or not 0 <= index < len(lines):
                 raise H3Error("That line is no longer there.")
             lines[index]["dub"] = bool(changed.get("dub"))
@@ -302,6 +310,7 @@ class DubbingHandlers:
         focus = presenters.board_focus(board)
 
         def change(lines):
+            _require_revision(board, lines)
             after = lines[focus] if focus is not None and 0 <= focus < len(lines) else None
             start = round(after["end"] + 0.05, 3) if after else 0.0
             later = [line["start"] for line in lines if line["start"] > start]
@@ -318,6 +327,7 @@ class DubbingHandlers:
         focus = presenters.board_focus(board)
 
         def change(lines):
+            _require_revision(board, lines)
             if focus is None or not 0 <= focus < len(lines):
                 raise H3Error("Pick a line on the board first.")
             if len(lines) == 1:
@@ -332,6 +342,7 @@ class DubbingHandlers:
         numbers = sorted({int(n) for n in picked or [] if isinstance(n, int) and not isinstance(n, bool)})
 
         def change(lines):
+            _require_revision(board, lines)
             if len(numbers) < 2:
                 raise H3Error("Pick two or more lines in a row to combine.")
             if numbers[0] < 0 or numbers[-1] >= len(lines):
@@ -362,6 +373,7 @@ class DubbingHandlers:
                 runs.append(numbers)
 
         def change(lines):
+            _require_revision(board, lines)
             if not runs:
                 raise H3Error("Pick two or more lines in a row to combine.")
             seen = set()

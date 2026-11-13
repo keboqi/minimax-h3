@@ -839,6 +839,26 @@ class HandlerTests(Workspace):
             only = self.handlers.delete_line(created.id, {**only, "focus": 0})[0]
         self.assertIn("at least one line", self.handlers.delete_line(created.id, only)[2])
 
+    def test_position_actions_refuse_a_board_drawn_before_the_lines_changed(self):
+        created = self.board_session()
+        board = {**self.handlers.board_for(created.id), "focus": 0}
+        lines = sessions.load(self.runtime, created.id).segments
+        # Another save moves line 1 last: position 0 now names a different line.
+        sessions.update_segments(self.runtime, created.id, [*lines[1:], {**lines[0], "start": 9.0, "end": 9.5}])
+        status = self.handlers.delete_line(created.id, board)[2]
+        self.assertIn("lines changed", status)
+        status = self.handlers.toggle_dub(created.id, {**board, "changed": {"line": 0, "dub": False}})[2]
+        self.assertIn("lines changed", status)
+        status = self.handlers.merge_lines(created.id, board, [0, 1])[2]
+        self.assertIn("lines changed", status)
+        self.assertEqual(len(sessions.load(self.runtime, created.id).segments), 3)
+        saved = sessions.load(self.runtime, created.id).segments
+        self.assertEqual([(line["source"], line["dub"]) for line in saved],
+                         [("Two", True), ("Three", False), ("One <b>", True)])
+        # A board drawn from the lines as saved now acts as before.
+        fresh = {**self.handlers.board_for(created.id), "focus": 0}
+        self.assertEqual(self.handlers.delete_line(created.id, fresh)[2], "Line deleted.")
+
     def test_saving_redraws_the_table_when_numbering_changes(self):
         source = self.root / "a.wav"
         source.write_bytes(b"x")
@@ -2262,6 +2282,34 @@ class DubRenderTests(Workspace):
         self.assertTrue(saved.path("vocals").is_file())
         self.assertNotIn(pipeline.SEPARATE_LATER, saved.data)
         self.assertIsInstance(result, pipeline.Dub)
+
+    def test_dub_picks_its_lines_after_studio_separation_saves_edits(self):
+        session = self.analyze(self.make_video(), separate=True, pipeline=pipeline.PIPELINE_MANUAL,
+                               manual_reply=self.REPLY, cloud_only=True)
+        lines = session.segments
+        lines[1]["translation"] = "Deux."
+        sessions.update_segments(self.runtime, session.id, lines)
+        voiced = []
+
+        def fake_tools(op, payload, runtime, **_kwargs):
+            # The first line is deleted in the editor while separation runs: positions shift.
+            sessions.update_segments(self.runtime, session.id, [lines[1]])
+            out = Path(payload["output_dir"])
+            out.mkdir(parents=True, exist_ok=True)
+            for name in ("vocals", "backing"):
+                shutil.copyfile(payload["input"], out / f"{name}.wav")
+            return {name: str(out / f"{name}.wav") for name in ("vocals", "backing")}
+
+        def synthesize(planned, request, working, **kwargs):
+            voiced.extend(line.segment["translation"] for line in planned)
+            yield from self.fake_synthesize(planned, request, working, **kwargs)
+
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools), \
+                patch.object(pipeline, "_synthesize", side_effect=synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        self.assertIsInstance(result, pipeline.Dub)
+        self.assertEqual(voiced, ["Deux."])
 
     def test_prepared_audio_hands_its_stems_to_the_analysis(self):
         video = self.make_video()

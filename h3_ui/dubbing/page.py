@@ -455,7 +455,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def switch_dub(request: Request, body: dict = Body(...)):
         owner_of(request)
         session_id, line = body.get("session"), body.get("line")
-        board = {"session": session_id, "focus": line, "changed": {"line": line, "dub": bool(body.get("dub"))}}
+        board = {"session": session_id, "rev": body.get("rev"), "focus": line, "changed": {"line": line, "dub": bool(body.get("dub"))}}
         return edited(request, session_id, handlers.toggle_dub(session_id, board), status_index=2)
 
     @app.post(f"{API}/line/add", include_in_schema=False)
@@ -463,7 +463,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def add_line(request: Request, body: dict = Body(...)):
         owner_of(request)
         session_id = body.get("session")
-        board = {"session": session_id, "focus": body.get("focus")}
+        board = {"session": session_id, "rev": body.get("rev"), "focus": body.get("focus")}
         return edited(request, session_id, handlers.add_line(session_id, board), status_index=2)
 
     @app.post(f"{API}/line/delete", include_in_schema=False)
@@ -471,7 +471,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def delete_line(request: Request, body: dict = Body(...)):
         owner_of(request)
         session_id = body.get("session")
-        board = {"session": session_id, "focus": body.get("focus")}
+        board = {"session": session_id, "rev": body.get("rev"), "focus": body.get("focus")}
         return edited(request, session_id, handlers.delete_line(session_id, board), status_index=2)
 
     @app.post(f"{API}/line/merge", include_in_schema=False)
@@ -480,7 +480,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner_of(request)
         session_id = body.get("session")
         picked = body.get("picked") or []
-        board = {"session": session_id, "focus": min(picked) if picked and all(isinstance(n, int) for n in picked)
+        board = {"session": session_id, "rev": body.get("rev"), "focus": min(picked) if picked and all(isinstance(n, int) for n in picked)
                  else None}
         return edited(request, session_id, handlers.merge_lines(session_id, board, picked), status_index=2)
 
@@ -490,7 +490,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner_of(request)
         session_id = body.get("session")
         groups = body.get("groups") or []
-        board = {"session": session_id, "focus": None}
+        board = {"session": session_id, "rev": body.get("rev"), "focus": None}
         answer = handlers.merge_groups(session_id, board, groups, relabel=bool(body.get("relabel")))
         return edited(request, session_id, answer, status_index=2)
 

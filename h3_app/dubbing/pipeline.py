@@ -1979,7 +1979,12 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             raise H3Error("No line is edited: change a line's new text, or switch Dub on, to voice it.")
         raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
     yield from finish_separation(session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+    # Separation saves onto the latest manifest, which may hold lines edited while it ran:
+    # pick the lines again from what is saved now, so positions match.
     lines = session.segments
+    chosen = [i for i, segment in enumerate(lines) if segment.get("dub", True) and segment["translation"]]
+    if not chosen:
+        raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
     duration = float(session.data.get("duration") or 0.0) or max(s["end"] for s in lines) + 1.0
     planned = _plan(session, chosen, request.voice_mode, runtime)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
