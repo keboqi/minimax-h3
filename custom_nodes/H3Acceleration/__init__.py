@@ -2406,6 +2406,83 @@ class H3LoadAVLatent:
         return (latent,)
 
 
+H3_TAIL_FRAMES = 73  # 5 + 17 * 4: ends on a latent group, and covers every continuation overlap.
+
+
+def h3_tail_latent_steps(frames):
+    """Video latent steps a ``5 + 17k`` frame clip encodes to."""
+    frames = int(frames)
+    if frames < 5 or (frames - 5) % 17:
+        raise ValueError(f"A continuation tail is 5 + 17k frames, not {frames}")
+    return 2 + 5 * ((frames - 5) // 17)
+
+
+def h3_tail_pixels(images, frames, width, height):
+    """The clip's last ``frames`` frames on the ``width`` x ``height`` canvas."""
+    if images.shape[0] < frames:
+        raise ValueError(f"The clip has {images.shape[0]} frames; continuing needs its last {frames}")
+    pixels = images[-frames:, :, :, :3]
+    if tuple(pixels.shape[1:3]) != (height, width):
+        pixels = comfy.utils.common_upscale(
+            pixels.movedim(-1, 1), width, height, "lanczos", "center",
+        ).movedim(1, -1)
+    return pixels
+
+
+def h3_tail_wave(audio, total_frames, frames, ticks):
+    """The stereo 32 kHz soundtrack under the tail, padded to exactly ``ticks`` audio latents."""
+    rate, frame_samples = 32000, 800  # H3 audio: 40 latent frames/sec at 32 kHz.
+    length = ticks * frame_samples
+    wave = torch.zeros(2, length)
+    if audio is not None:
+        source_rate = int(audio["sample_rate"])
+        wave = audio["waveform"][0].float()
+        wave = wave.repeat(2, 1) if wave.shape[0] == 1 else wave[:2]
+        start = round((total_frames - frames) * source_rate / H3_VIDEO_FPS)
+        wave = wave[:, start:start + round(frames * source_rate / H3_VIDEO_FPS)]
+        if source_rate != rate:
+            import comfy.audio
+
+            wave = comfy.audio.resample(wave, source_rate, rate)
+    # Exact latent frames here: VAE.encode would centre-crop and shift the sound.
+    return F.pad(wave, (0, max(0, length - wave.shape[1])))[:, :length]
+
+
+class H3EncodeAVTail:
+    """Encode the end of a real clip as an H3 AV latent that a storyboard scene can continue."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "vae": ("VAE",),
+                "audio_vae": ("VAE",),
+                "width": ("INT", {"default": 832, "min": 32, "max": 4096, "step": 32}),
+                "height": ("INT", {"default": 480, "min": 32, "max": 4096, "step": 32}),
+                "frames": ("INT", {"default": H3_TAIL_FRAMES, "min": 22, "max": 192, "step": 17}),
+            },
+            "optional": {"audio": ("AUDIO",)},
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "encode"
+    CATEGORY = "H3/Storyboard"
+
+    def encode(self, images, vae, audio_vae, width, height, frames, audio=None):
+        steps = h3_tail_latent_steps(frames)
+        video = vae.encode(h3_tail_pixels(images, int(frames), int(width), int(height)))
+        if video.shape[2] != steps:
+            raise ValueError(f"Encoding {frames} frames gave {video.shape[2]} latent steps, not {steps}")
+        ticks = round(int(frames) * H3_AUDIO_HZ / H3_VIDEO_FPS)
+        wave = h3_tail_wave(audio, images.shape[0], int(frames), ticks)
+        encoded = audio_vae.encode(wave[None].movedim(1, -1))
+        encoded = F.pad(encoded, (0, max(0, ticks - encoded.shape[-1])))[..., :ticks].to(video)
+        latent = {"samples": comfy.nested_tensor.NestedTensor((video, encoded))}
+        h3_av_streams(latent, "Encode AV tail")
+        return (latent,)
+
+
 class H3SourceAudioLatent:
     """Hold a clip's own soundtrack clean, so H3 redraws video against the real speech."""
 
@@ -2453,6 +2530,7 @@ NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
     "H3LoadAVLatent": H3LoadAVLatent,
+    "H3EncodeAVTail": H3EncodeAVTail,
     "H3LatentUpscaleModelLoader": H3LatentUpscaleModelLoader,
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
@@ -2484,6 +2562,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3ContinuationPrefix": "MiniMax H3 Storyboard Continuation",
     "H3SaveAVLatent": "MiniMax H3 Save AV Latent",
     "H3LoadAVLatent": "MiniMax H3 Load AV Latent",
+    "H3EncodeAVTail": "MiniMax H3 Encode AV Tail",
     "H3LTXPadVideoFrames": "LTX Pad Video Frames",
     "H3Flux3EditPrompt": "FLUX 3 Image Edit Prompt Upsampler",
     "H3Flux3LayoutElements": "FLUX 3 Layout Elements",

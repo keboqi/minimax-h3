@@ -15,12 +15,18 @@ from h3_app.errors import H3Error
 from h3_app.media_review import review_path
 from h3_app.processes import run_media_process
 
-from . import model
+from . import clip, model
 
 TAKE_FOLDER = "h3/.storyboard"
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 # Scene fields a sync sets from the plan; the rest are the storyboard's own (takes, take in use).
 SYNC_FIELDS = ("title", "prompt", "seconds", "link", "mode", "cast", "overlap", "seed", "takes_per_run")
+
+
+def take_files(take: dict[str, Any]) -> set[str]:
+    """Every file a take owns: its video, saved latents, and for a scene from Media its tail clip."""
+    return {value for value in (take.get("video"), take.get("latent"), take.get("stage_latent"), take.get("tail"))
+            if value}
 
 
 def file_digest(path) -> str:
@@ -192,13 +198,19 @@ class StoryboardService:
         raise H3Error("That scene is no longer in this storyboard.")
 
     def update_scene(self, owner, storyboard_id, scene_id, **fields):
-        allowed = {"title", "prompt", "seconds", "link", "cast", "overlap", "seed", "takes_per_run"}
+        allowed = {"title", "prompt", "seconds", "link", "cast", "overlap", "seed", "takes_per_run",
+                   *model.VIDEO_FIELDS}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"Unknown scene fields: {sorted(unknown)}")
 
         def edit(board):
             scene = board["scenes"][self.scene_index(board, scene_id)]
+            if set(fields) & set(model.VIDEO_FIELDS) and not model.is_media(scene):
+                raise H3Error("Only a scene from Media has In, Out and Fit.")
+            for name in ("video_in", "video_out"):
+                if name in fields and fields[name] is not None:
+                    fields[name] = round(max(0.0, float(fields[name])), 3)
             scene.update(fields)
             names = {member["name"] for member in board["cast"]}
             scene["cast"] = [name for name in scene["cast"] if name in names]
@@ -218,6 +230,100 @@ class StoryboardService:
             board["scenes"].insert(position, scene)
             return scene["id"]
         return self.change(owner, storyboard_id, edit)
+
+    def add_media_scene(self, owner, storyboard_id, after=None):
+        """A scene that plays a video from Media, after ``after`` or at the end; returns (board, id)."""
+        def edit(board):
+            position = len(board["scenes"]) if after is None else self.scene_index(board, after) + 1
+            scene = model.new_media_scene()
+            board["scenes"].insert(position, scene)
+            return scene["id"]
+        return self.change(owner, storyboard_id, edit)
+
+    def set_scene_video(self, owner, storyboard_id, scene_id, source):
+        """Copy a video into the storyboard as a Media scene's clip; In and Out start at its ends."""
+        info = clip.probe(source)
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            scene = board["scenes"][self.scene_index(board, scene_id)]
+            if not model.is_media(scene):
+                raise H3Error("Only a scene from Media plays a video.")
+            files = SceneFiles(self.media_dir(storyboard_id), board)
+            before = self._scene_files(board)
+            try:
+                stored = files.keep(source)
+                if stored == scene.get("video"):
+                    return board
+                scene.update(video=stored, video_info=info, video_in=0.0, video_out=None,
+                             title=scene["title"] if scene["title"] != "Video from Media"
+                             else model.title_from(Path(str(source)).stem.replace("_", " "), 5) or scene["title"])
+                self.save(owner, storyboard_id, board)
+            except Exception:
+                files.discard()
+                raise
+            self._collect_media(before - self._scene_files(board))
+            return board
+
+    def match_video_shape(self, owner, storyboard_id, scene_id):
+        """Give the storyboard this Media scene's shape, so its video fits without stretching or cropping."""
+        def edit(board):
+            scene = board["scenes"][self.scene_index(board, scene_id)]
+            info = scene.get("video_info") if model.is_media(scene) else None
+            if not info:
+                raise H3Error("Choose a video first.")
+            if model.generated_takes(board):
+                raise H3Error("Scenes are already generated at the storyboard's size, so it stays as it is.")
+            width, height = model.shaped_like(board["profile"], info["width"], info["height"])
+            board["profile"] = {**board["profile"], "width": width, "height": height}
+        return self.change(owner, storyboard_id, edit)[0]
+
+    def prepare_media_scene(self, owner, storyboard_id, scene_id):
+        """Fit a Media scene's clip to the canvas and cut its tail; the result is the scene's take."""
+        board = self.load(owner, storyboard_id)
+        index = self.scene_index(board, scene_id)
+        scene = board["scenes"][index]
+        if not model.is_media(scene):
+            raise H3Error("Only a scene from Media is prepared.")
+        model.check_scene(board, index)
+        inputs = model.scene_inputs(board, index)
+        start, end = model.video_range(scene)
+        width, height = model.canvas(board["profile"])
+        frames = model.video_frames(scene)
+        take_id = model.new_id()
+        prefix = self.output_path(self.take_prefix(storyboard_id, scene["id"], take_id))
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        video = prefix.with_name(prefix.name + ".mp4")
+        tail = prefix.with_name(prefix.name + "_tail.mp4")
+        try:
+            clip.conform(scene["video"], video, start=start, end=end, fit=scene.get("fit", model.RESIZE),
+                         width=width, height=height, has_audio=bool((scene.get("video_info") or {}).get("audio")))
+            tail_path = str(clip.cut_tail(video, tail, frames=frames)) if frames >= model.TAIL_FRAMES else None
+        except Exception:
+            video.unlink(missing_ok=True)
+            tail.unlink(missing_ok=True)
+            raise
+
+        def edit(current):
+            target = current["scenes"][self.scene_index(current, scene_id)]
+            current["takes"][take_id] = {
+                "id": take_id, "scene": scene_id, "created": time.time(), "video": str(video),
+                "latent": None, "stage_latent": None, "tail": tail_path, "prefix_frames": 0, "seed": 0,
+                "job_id": None, "inputs": inputs,
+            }
+            # A Media scene keeps one take: the clip as it is prepared now.
+            replaced = [item for item in target["takes"] if item != take_id]
+            target["takes"] = [take_id]
+            target["in_use"] = take_id
+            kept = {item for version in current.get("versions", ()) for saved in version.get("scenes", ())
+                    for item in (*saved.get("takes", ()), saved.get("in_use")) if item}
+            return [current["takes"].pop(item) for item in replaced if item not in kept and item in current["takes"]]
+
+        with self.lock:
+            board, dropped = self.change(owner, storyboard_id, edit)
+            used = self._used_take_files()
+            for take in dropped:
+                self._unlink_take_files(take, used)
+        return board
 
     def set_mode(self, owner, storyboard_id, scene_id, mode):
         """Switch a scene's conditioning; References starts with the whole cast ticked."""
@@ -480,7 +586,7 @@ class StoryboardService:
             for other_owner, other_id in self._all_ids():
                 other = self.store.storyboard(other_owner, other_id)
                 for take in other["takes"].values():
-                    used |= {take["video"], take["latent"], take.get("stage_latent")}
+                    used |= take_files(take)
                 used.update(self._scene_files(other))
             for value in self._scene_files(board) - used:
                 Path(value).unlink(missing_ok=True)
@@ -518,12 +624,12 @@ class StoryboardService:
         for other_owner, other_id in self._all_ids():
             other = self.store.storyboard(other_owner, other_id)
             for take in other["takes"].values():
-                used |= {take["video"], take["latent"], take.get("stage_latent")}
+                used |= take_files(take)
         return used
 
     def _unlink_take_files(self, take: dict[str, Any], used: set[str]) -> None:
-        for value in (take["video"], take["latent"], take.get("stage_latent")):
-            if value and value not in used:
+        for value in take_files(take):
+            if value not in used:
                 path = Path(value) if Path(value).is_absolute() else self.output_path(value)
                 path.unlink(missing_ok=True)
                 Path(str(path) + ".settings.json").unlink(missing_ok=True)
@@ -553,13 +659,18 @@ class StoryboardService:
     def render(self, board, destination: Path, *, include_outdated=True, timeout=3600) -> Path:
         """Join the takes: flows drop their repeated overlap, cuts join hard."""
         clips = self.clips(board, include_outdated=include_outdated)
+        # A video from Media is fitted to the canvas, which a generated take's size may differ from.
+        width, height = model.canvas(board["profile"])
+        mixed = any(model.is_media(scene) for scene in board["scenes"])
+        fit = f",scale={width}:{height}:flags=lanczos,setsar=1" if mixed else ""
+        sound = f",aresample={clip.AUDIO_RATE},aformat=channel_layouts=stereo" if mixed else ""
         arguments, chains, labels = [], [], ""
-        for index, clip in enumerate(clips):
-            arguments += ["-i", clip["video"]]
-            frames = int(clip["trim_frames"])
+        for index, item in enumerate(clips):
+            arguments += ["-i", item["video"]]
+            frames = int(item["trim_frames"])
             chains.append(
-                f"[{index}:v]trim=start_frame={frames},setpts=PTS-STARTPTS[v{index}];"
-                f"[{index}:a]atrim=start={frames / model.FPS:.6f},asetpts=PTS-STARTPTS[a{index}]"
+                f"[{index}:v]trim=start_frame={frames},setpts=PTS-STARTPTS{fit}[v{index}];"
+                f"[{index}:a]atrim=start={frames / model.FPS:.6f},asetpts=PTS-STARTPTS{sound}[a{index}]"
             )
             labels += f"[v{index}][a{index}]"
         graph = ";".join(chains) + f";{labels}concat=n={len(clips)}:v=1:a=1[v][a]"

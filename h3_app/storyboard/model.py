@@ -32,6 +32,16 @@ MAX_REFERENCE_IMAGES, MAX_REFERENCE_VIDEOS, MAX_REFERENCE_AUDIOS = 9, 3, 3
 MEDIA_FIELDS = ("first_image", "last_image", "ref_images", "ref_videos", "ref_audios")
 DONE, OUTDATED, DRAFT = "done", "outdated", "draft"
 STATE_NAMES = {DONE: "Done", OUTDATED: "Out of date", DRAFT: "Not generated"}
+# A scene that is a video from Media rather than a generated clip. Scenes without ``kind`` are generated.
+MEDIA = "media"
+VIDEO_FROM_MEDIA = "Video from Media"
+RESIZE, CROP = "resize", "crop"
+FITS = (RESIZE, CROP)
+# The frames of a Media scene that the next scene's graph encodes and continues from (5 + 17 * 4).
+TAIL_FRAMES = 73
+VIDEO_FIELDS = ("video_in", "video_out", "fit")
+# What a scene waiting for the scene before it says; it is not the scene's own problem.
+WAITING_PREFIXES = ("Generate scene", "Prepare scene")
 
 # Each scene supplies these; everything else in an H3 request is the profile.
 SCENE_FIELDS = frozenset({
@@ -105,6 +115,51 @@ def new_scene(title="New scene", prompt="", seconds=5, link=FLOW, cast=(), mode=
     }
 
 
+def new_media_scene(title="Video from Media") -> dict[str, Any]:
+    """A scene that plays a video from Media; the scene after it can continue it."""
+    return {**new_scene(title, link=CUT), "kind": MEDIA, "video": None, "video_info": None,
+            "video_in": 0.0, "video_out": None, "fit": RESIZE}
+
+
+def is_media(scene: dict[str, Any]) -> bool:
+    return scene.get("kind") == MEDIA
+
+
+def video_range(scene: dict[str, Any]) -> tuple[float, float]:
+    """The In and Out points, in seconds of the video; Out defaults to its end."""
+    length = float((scene.get("video_info") or {}).get("seconds") or 0.0)
+    start = max(0.0, float(scene.get("video_in") or 0.0))
+    end = scene.get("video_out")
+    return start, length if end is None else min(float(end), length)
+
+
+def video_frames(scene: dict[str, Any]) -> int:
+    start, end = video_range(scene)
+    return max(0, int(round((end - start) * FPS)))
+
+
+def on_grid(value: float) -> int:
+    """The nearest H3 size step: a multiple of 32, at least 32."""
+    return max(32, int(round(float(value) / 32)) * 32)
+
+
+def canvas(profile: dict[str, Any]) -> tuple[int, int]:
+    """The storyboard's output size on the H3 grid, as ``(width, height)``."""
+    return on_grid(profile["width"]), on_grid(profile["height"])
+
+
+def shaped_like(profile: dict[str, Any], width: int, height: int) -> tuple[int, int]:
+    """The storyboard's size reshaped to ``width`` x ``height``, keeping about its pixel count."""
+    area = float(profile["width"]) * float(profile["height"])
+    new_width = (area * width / height) ** 0.5
+    return on_grid(new_width), on_grid(area / new_width)
+
+
+def generated_takes(board: dict[str, Any]) -> bool:
+    """Whether any generated scene has a take, which a new size would no longer match."""
+    return any(scene["takes"] for scene in board["scenes"] if not is_media(scene))
+
+
 def scene_media(scene: dict[str, Any]) -> dict[str, Any]:
     """The scene's mode and media; scenes saved before per-scene media read as text to video."""
     return {
@@ -137,6 +192,13 @@ def new_storyboard(name: str, profile: dict[str, Any], scenes=(), cast=()) -> di
 
 
 def validate_scene(scene: dict[str, Any]) -> None:
+    if is_media(scene):
+        if scene.get("fit", RESIZE) not in FITS:
+            raise ValueError("Fit is resize or crop.")
+        start, end = video_range(scene)
+        if scene.get("video_info") and end <= start:
+            raise ValueError("Out must come after In.")
+        return
     if scene["seconds"] not in SCENE_SECONDS:
         raise ValueError(f"A scene is {SCENE_SECONDS[0]} to {SCENE_SECONDS[-1]} whole seconds long.")
     if scene["link"] not in (FLOW, CUT):
@@ -155,12 +217,19 @@ def validate_scene(scene: dict[str, Any]) -> None:
 
 
 def flows_from_previous(board: dict[str, Any], index: int) -> bool:
-    return index > 0 and board["scenes"][index]["link"] == FLOW
+    """A video from Media is always its own shot; any other scene may continue the one before it."""
+    scene = board["scenes"][index]
+    return index > 0 and scene["link"] == FLOW and not is_media(scene)
 
 
 def scene_inputs(board: dict[str, Any], index: int) -> dict[str, Any]:
     """What a take of this scene must have been made from to be current."""
     scene = board["scenes"][index]
+    if is_media(scene):
+        start, end = video_range(scene)
+        return {"kind": MEDIA, "video": Path(scene["video"]).name if scene.get("video") else None,
+                "in": round(start, 3), "out": round(end, 3), "fit": scene.get("fit", RESIZE),
+                "size": list(canvas(board["profile"])), "flow": False, "source_take": None}
     flow = flows_from_previous(board, index)
     return {
         "prompt": scene["prompt"].strip(),
@@ -196,7 +265,7 @@ def affected_by(board: dict[str, Any], index: int) -> list[int]:
     """Later scenes that continue, through unbroken flows, from scene ``index``."""
     affected = []
     for later in range(index + 1, len(board["scenes"])):
-        if board["scenes"][later]["link"] != FLOW:
+        if not flows_from_previous(board, later):
             break
         affected.append(later)
     return affected
@@ -209,6 +278,9 @@ def overlap_seconds(frames: int) -> float:
 def new_seconds(board: dict[str, Any], index: int) -> float:
     """Footage this scene adds to the full video; a flow scene repeats its overlap."""
     scene = board["scenes"][index]
+    if is_media(scene):
+        start, end = video_range(scene)
+        return max(0.0, end - start)
     seconds = float(scene["seconds"])
     if flows_from_previous(board, index):
         seconds -= overlap_seconds(scene["overlap"])
@@ -253,6 +325,8 @@ def cast_prompt(board: dict[str, Any], scene: dict[str, Any]) -> tuple[str, list
 
 def runs_as(board: dict[str, Any], index: int) -> str:
     """The mode as the scene editor names it."""
+    if is_media(board["scenes"][index]):
+        return VIDEO_FROM_MEDIA
     mode = scene_media(board["scenes"][index])["mode"]
     if mode == FRAMES and flows_from_previous(board, index):
         return "Last frame"
@@ -280,6 +354,8 @@ def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = N
     used; its frames mode needs a last frame instead.
     """
     scene = board["scenes"][index]
+    if is_media(scene):
+        return video_issues(board, index)
     media = scene_media(scene)
     flow = flows_from_previous(board, index)
     issues = []
@@ -297,13 +373,33 @@ def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = N
         if not pictures and not media["ref_videos"] and not media["ref_audios"]:
             issues.append("Pick at least one reference")
     if flow and (states if states is not None else scene_states(board))[index - 1] != DONE:
-        issues.append(f"Generate scene {index} first: this scene continues from it")
+        if is_media(board["scenes"][index - 1]):
+            issues.append(f"Prepare scene {index} first: this scene continues its video")
+        else:
+            issues.append(f"Generate scene {index} first: this scene continues from it")
     return issues
+
+
+def video_issues(board: dict[str, Any], index: int) -> list[str]:
+    """What a scene from Media still needs: a video, and enough of it for a scene that continues it."""
+    scene = board["scenes"][index]
+    if not scene.get("video"):
+        return ["Choose a video from Media or upload one"]
+    issues = []
+    following = index + 1 < len(board["scenes"]) and flows_from_previous(board, index + 1)
+    if following and video_frames(scene) < TAIL_FRAMES:
+        issues.append(f"Use at least {TAIL_FRAMES / FPS:.1f} s of the video: scene {index + 2} continues "
+                      f"from its last {TAIL_FRAMES} frames")
+    return issues
+
+
+def is_waiting(issue: str) -> bool:
+    return issue.startswith(WAITING_PREFIXES)
 
 
 def own_issues(board: dict[str, Any], index: int, states: list[str] | None = None) -> list[str]:
     """What the scene itself still needs, leaving out waiting for the scene it continues from."""
-    return [issue for issue in scene_issues(board, index, states) if not issue.startswith("Generate scene")]
+    return [issue for issue in scene_issues(board, index, states) if not is_waiting(issue)]
 
 
 def runnable_scenes(board: dict[str, Any]) -> list[int]:
@@ -329,6 +425,8 @@ def check_scene(board: dict[str, Any], index: int) -> None:
 def scene_request_values(board: dict[str, Any], index: int, defaults: dict[str, Any], seed: int) -> dict[str, Any]:
     """Every H3 generate value for one take of this scene."""
     scene = board["scenes"][index]
+    if is_media(scene):
+        raise ValueError(f"Scene {index + 1} plays a video from Media; it isn't generated.")
     media = scene_media(scene)
     mode = media["mode"]
     flow = flows_from_previous(board, index)
@@ -365,7 +463,7 @@ def scene_request_values(board: dict[str, Any], index: int, defaults: dict[str, 
 def media_paths(scene: dict[str, Any]) -> list[str]:
     media = scene_media(scene)
     return [path for path in (media["first_image"], media["last_image"], *media["ref_images"],
-                              *media["ref_videos"], *media["ref_audios"]) if path]
+                              *media["ref_videos"], *media["ref_audios"], scene.get("video")) if path]
 
 
 def snapshot(board: dict[str, Any]) -> dict[str, Any]:

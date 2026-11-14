@@ -89,6 +89,40 @@ first and names them, and the first fresh start after them that stays as it is:
 **Switch and regenerate them**, **Switch, regenerate later**, or **Cancel**. Fresh
 starts stop changes from rippling further.
 
+## Starting from a video
+
+A scene can be a video you already have instead of a generated clip, so the scenes after
+it extend that video. **Add video from Media** at the end of the filmstrip, or **Insert
+video after** above a scene, adds one. Choose the video from the Media library or upload
+one, then set **In** and **Out** (type the seconds, or **Set from player**). By default it
+uses the whole video, and it isn't limited to 5–15 seconds.
+
+**Fit to the storyboard** decides how a video of another shape fills the storyboard's
+size. **Resize** (the default) scales the whole frame to it, stretching or squeezing a
+different shape. **Crop** keeps the proportions and cuts off what spills over, centered.
+Under it, the first and last frame of the range are drawn in a box of the storyboard's
+shape, exactly as the chosen Fit will make them; switching Fit redraws them at once. The
+last frame matters most, because it's where the next scene picks up. Padding with bars
+isn't offered: the bars would be carried into the next scene. Until a scene has been
+generated, **Match the storyboard to this video's shape** reshapes the storyboard to the
+video, keeping about its pixel count, so the video fits without either.
+
+**Prepare clip** fits the range to the storyboard at 24 fps, adds a silent track to a
+silent video, and cuts its last 73 frames (about 3 s) for the next scene. It runs on the
+CPU, so the Workshop can prepare too; **Generate all remaining scenes** also prepares any
+such scene that isn't ready. A video scene always starts fresh. The scene after it
+defaults to **Continue**, with every mode a continuing scene has: describe what happens
+next, end on a last-frame picture, or use references such as the edited pictures of a
+Remake to keep a look. Changing the video, In, Out, Fit or the storyboard's size makes the
+scene *Out of date* and the scenes continuing from it too. It keeps one prepared clip,
+replaced each time it's prepared.
+
+The video itself isn't generated, so it has no latent. Instead, the continuing scene's own
+run encodes those 73 frames and their sound with its video and audio VAEs, at each stage's
+size, through `H3EncodeAVTail`, and continues from that the way it would from a take. It
+needs no extra model and no separate GPU step. The full video plays the whole range, then
+the next scene without its repeated opening.
+
 ## The full video
 
 **Generate
@@ -173,4 +207,6 @@ page.
 
 Nothing here has run on a GPU. Seam quality, audio continuity, continuing toward a last
 frame, Spectrum with masked sampling, and texture drift across long chains of continuing
-scenes need a real run on Modal.
+scenes need a real run on Modal. So does continuing a video from Media: the join from a
+VAE-encoded real clip, rather than a latent the sampler made, may show a change in colour,
+sharpness or motion, and real recordings may not carry their sound on cleanly.

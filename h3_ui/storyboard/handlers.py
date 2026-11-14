@@ -18,6 +18,7 @@ from h3_app.errors import H3Error
 from h3_app import media_review
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB
+from h3_app.staging import stage_file
 from h3_app.storyboard.text import parse_scenes
 from h3_app.storyboard.writer import rewrite_story
 from h3_ui.job_admission import require_owner
@@ -45,6 +46,8 @@ WRITER_DEFAULTS = {
     "local_prompt_top_p": 0.9, "local_prompt_greedy": False, "local_prompt_seed": 0,
 }
 GENERATE_SCENE, GENERATE_REMAINING, SWITCH_AND_REGENERATE = "scene", "remaining", "switch"
+# Tail clips of scenes from Media, staged in ComfyUI's input for the scene that continues them.
+TAIL_CATEGORY = "storyboard_tails"
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,11 @@ class MediaLibrary:
     index: Any
     refresh_page: Callable[..., Any]
     validate_path: Callable[..., Any]
+
+
+def made(scene) -> str:
+    """What a run did to a scene: a video from Media is prepared, any other scene generated."""
+    return "prepared" if sb.is_media(scene) else "generated"
 
 
 def latent_prefix_frames(path: Path) -> int:
@@ -213,11 +221,18 @@ class StoryboardHandlers(StoryboardApiHandlers):
             source = board["takes"][board["scenes"][index - 1]["in_use"]]
         take_id = sb.new_id()
         prefix = service.take_prefix(storyboard_id, scene["id"], take_id)
+        tail = None
+        if source is not None and not source.get("latent"):
+            # A scene from Media: this take's graph encodes the clip's ending itself.
+            if not source.get("tail"):
+                raise H3Error(f"Scene {index} has no ending to continue from. Prepare it again.")
+            tail = stage_file(source["tail"], TAIL_CATEGORY, reuse=True, runtime=service.runtime())
         graph = StoryboardGraph(
             output_prefix=prefix,
             latent_output_prefix=prefix,
-            continuation_source=source["latent"] if source else None,
-            continuation_stage_source=source.get("stage_latent") if source else None,
+            continuation_source=source["latent"] if source and not tail else None,
+            continuation_stage_source=source.get("stage_latent") if source and not tail else None,
+            continuation_video=tail,
             continuation_frames=int(scene["overlap"]),
         )
         inputs = sb.scene_inputs(board, index)
@@ -241,11 +256,22 @@ class StoryboardHandlers(StoryboardApiHandlers):
                               api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
                               enabled=bool(captured.get("review", True)))
 
+    def prepare_scene(self, owner, storyboard_id, scene_id) -> Iterator[str]:
+        """Fit a scene from Media to the canvas and cut its ending; CPU only, so the Workshop can too."""
+        board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
+        yield f"Scene {index + 1} · Preparing the video"
+        self.service.prepare_media_scene(owner, storyboard_id, scene_id)
+        yield f"Scene {index + 1} prepared."
+
     def _run_scene(self, owner, storyboard_id, scene_id):
         board = self.service.load(owner, storyboard_id)
         index = self.service.scene_index(board, scene_id)
         scene = board["scenes"][index]
         self.running_scene[(owner, storyboard_id)] = scene["id"]
+        if sb.is_media(scene):
+            yield from self.prepare_scene(owner, storyboard_id, scene_id)
+            return
         count = int(scene["takes_per_run"])
         base = int(scene["seed"])
         seeds = [random.randrange(0, 2**63 - 1) if base < 0 else base + number for number in range(count)]
@@ -266,7 +292,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         board = self.service.load(owner, storyboard_id)
         index = self.service.scene_index(board, scene_id)
         take = board["takes"].get(board["scenes"][index]["in_use"])
-        yield f"Scene {index + 1} generated.", take["video"] if take else None
+        yield f"Scene {index + 1} {made(board['scenes'][index])}.", take["video"] if take else None
 
     def generate_remaining(self, storyboard_id, request=None):
         """Every scene without a current take, in order; scenes that still need input are skipped.
@@ -307,7 +333,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
                 yield f"{len(queue)} left · {status}", None
             queue.remove(scene_id)
             self.service.set_queue(owner, storyboard_id, queue)
-            yield f"Scene {index + 1} generated · {len(queue)} left.", sb.new_id()
+            yield f"Scene {index + 1} {made(board['scenes'][index])} · {len(queue)} left.", sb.new_id()
         waiting = f" {len(queue)} scene(s) wait for a scene that needs input." if queue else ""
         if skipped:
             waiting += f" Skipped scene {', '.join(str(i + 1) for i in skipped)}: still need input."

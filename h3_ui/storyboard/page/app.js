@@ -243,6 +243,8 @@
       h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
       h("div", {className: "stage-actions"},
         button("Insert scene after", () => addScene(item.id), "btn sm"),
+        button("Insert video after", () => addScene(item.id, "media"), "btn sm",
+          {title: "Add a scene that plays a video from Media; the scene after it can continue it"}),
         button("Duplicate scene", duplicateScene, "btn sm"),
         button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
         button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
@@ -251,8 +253,9 @@
     renderPreview();
     const notes = [];
     if (item.state === "outdated") {
-      notes.push(h("div", {className: "warning", role: "status"},
-        "This take is out of date: the scene, or the scene it continues from, changed since it was made. Generate it again to update it."));
+      notes.push(h("div", {className: "warning", role: "status"}, item.kind === "media"
+        ? "This clip is out of date: its video, In, Out, Fit or the storyboard's size changed since it was prepared. Prepare it again to update it."
+        : "This take is out of date: the scene, or the scene it continues from, changed since it was made. Generate it again to update it."));
     }
     if (item.takes.length) notes.push(h("div", {className: "small muted"}, state.board.take_note));
     if (state.board.queue.length && !activeGenerate()) {
@@ -281,8 +284,10 @@
         "aria-label": `Take ${take.number} of scene ${item.number}`}));
     } else {
       node.replaceChildren(h("div", {className: "empty"},
-        h("strong", {}, take ? "This take is missing from disk" : "No take yet"),
-        h("span", {className: "muted"}, state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
+        h("strong", {}, take ? "This take is missing from disk" : item.kind === "media" ? "Not prepared yet" : "No take yet"),
+        h("span", {className: "muted"}, item.kind === "media"
+          ? "Choose a video, set In, Out and Fit, then press Prepare clip."
+          : state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
     }
   };
 
@@ -290,6 +295,19 @@
 
   const renderTakes = () => {
     const item = scene();
+    if (item.kind === "media") {
+      const busy = Boolean(state.run?.active);
+      $("take-row").replaceChildren(
+        h("span", {className: "small muted"}, item.state === "done"
+          ? "Prepared: fitted to the storyboard, as it will play in the full video."
+          : item.takes.length ? "In, Out, Fit or the storyboard size changed since it was prepared." : ""),
+        h("div", {className: "grow"}),
+        button(item.takes.length ? "Prepare again" : "Prepare clip", startPrepare, "btn primary",
+          {disabled: item.issues.length > 0 || busy || (item.state === "done"), id: "prepare-scene",
+            title: busy ? "Wait for the current run to finish." : "Fit the clip to the storyboard and cut its ending for the next scene"}));
+      $("take-confirm").replaceChildren();
+      return;
+    }
     const shown = shownTake();
     const busy = Boolean(activeGenerate());
     const blocked = item.issues.length > 0;
@@ -426,7 +444,10 @@
     const running = activeGenerate()?.scene_id;
     const items = [];
     scenes().forEach((item, index) => {
-      if (index > 0) {
+      if (index > 0 && item.kind === "media") {
+        items.push(h("span", {className: "link-toggle cut", title: `Scene ${item.number} plays a video, so it always starts fresh.`,
+          "aria-label": `Transition to scene ${item.number}: fresh start, a video from Media.`}, "✂"));
+      } else if (index > 0) {
         items.push(h("button", {
           type: "button",
           className: `link-toggle ${item.flow ? "flow" : "cut"}`,
@@ -478,6 +499,8 @@
       items.push(card);
     });
     items.push(button("Add scene", () => addScene(), "add-frame"));
+    items.push(button("Add video from Media", () => addScene(null, "media"), "add-frame",
+      {title: "A scene that plays a video from Media; the next scene can continue it"}));
     $("strip").replaceChildren(...items);
   };
 
@@ -573,11 +596,13 @@
     if (check) check.replaceWith(checklist(item));
     const previews = $("tag-hint");
     if (previews) previews.replaceWith(tagHintNode(item));
+    const fit = $("fit-preview");
+    if (fit && item.video) fit.replaceWith(fitPreview(item));
   };
 
   const checklist = (item) => (item.issues.length
     ? h("div", {className: "needs", id: "checklist"}, h("ul", {}, item.issues.map((issue) => h("li", {}, issue))))
-    : h("div", {className: "ready", id: "checklist"}, "Ready to generate."));
+    : h("div", {className: "ready", id: "checklist"}, item.kind === "media" ? "Ready to prepare." : "Ready to generate."));
 
   const insertIntoPrompt = (snippet) => {
     const textarea = document.querySelector("#inspector textarea");
@@ -631,6 +656,7 @@
 
   const scenePanel = () => {
     const item = scene();
+    if (item.kind === "media") return mediaScenePanel(item);
     const [low, high] = state.boot.seconds;
     const previousPrompt = state.previousPrompts.get(item.id);
     const canUndoPrompt = previousPrompt !== undefined && previousPrompt !== item.prompt;
@@ -717,9 +743,145 @@
     })) : null;
   };
 
-  const addScene = async (afterId = null) => {
+  // A scene from Media ----------------------------------------------------
+  const FITS = [
+    ["resize", "Resize", "The whole frame, stretched or squeezed to the storyboard's shape."],
+    ["crop", "Crop", "Keeps proportions; the edges that don't fit are cut off, centred."],
+  ];
+  const seconds = (value) => `${Number(value).toFixed(2)} s`;
+
+  // The first and last frame drawn as the chosen Fit will make them: switching Fit only redraws.
+  const fitPreview = (item) => {
+    const video = item.video;
+    const [width, height] = video.canvas;
+    const clip = video.clip;
+    if (!clip) return h("div", {id: "fit-preview"});
+    const same = clip.width && clip.height && Math.abs(clip.width / clip.height - width / height) < 0.01;
+    const frame = (label, url) => h("figure", {className: "fit-frame"},
+      h("div", {className: "fit-box", style: `aspect-ratio:${width} / ${height}`},
+        h("img", {src: url, alt: `${label} frame, ${video.fit === "crop" ? "cropped" : "resized"} to ${width}×${height}`,
+          className: `fit-${video.fit}`})),
+      h("figcaption", {className: "small muted"}, label));
+    return h("div", {id: "fit-preview", className: "fit-preview"},
+      h("div", {className: "fit-frames"},
+        frame(`First · ${seconds(video.in)}`, video.stills.first),
+        frame(`Last · ${seconds(video.out)}`, video.stills.last)),
+      h("p", {className: "small muted"},
+        `Storyboard ${width}×${height} · video ${clip.width}×${clip.height}. `,
+        same ? "Same shape, so Fit changes nothing."
+          : video.fit === "crop" ? "Crop cuts off what's outside the box." : "Resize changes the proportions to fill the box."),
+      !same && video.can_reshape && button("Match the storyboard to this video's shape", matchShape, "btn sm",
+        {title: "Reshape the storyboard, keeping about its pixel count, so the video fits without stretching or cropping"}));
+  };
+  const matchShape = async () => {
+    const url = sceneUrl("/match-shape");
     await flush();
-    const body = afterId ? {after: afterId} : {};
+    await saves;
+    const data = await act(() => request("POST", url), "The storyboard now has this video's shape.");
+    if (data) applyBoard(data);
+  };
+
+  const setFit = (fit) => {
+    const item = scene();
+    item.video.fit = fit;
+    edit("fit", fit);
+    document.querySelectorAll("#fit-chips .chip").forEach((node) => node.setAttribute("aria-pressed", String(node.dataset.fit === fit)));
+    $("fit-preview").replaceWith(fitPreview(item));
+  };
+
+  const rangeField = (label, field, key) => {
+    const item = scene();
+    const clip = item.video.clip;
+    const input = h("input", {type: "number", min: 0, max: clip.seconds, step: 0.04, value: Number(item.video[key]).toFixed(2),
+      onchange: (event) => {
+        const value = Math.max(0, Math.min(clip.seconds, Number(event.target.value) || 0));
+        item.video[key] = value;
+        edit(field, field === "video_out" && value >= clip.seconds - 0.001 ? null : value);
+      }});
+    return h("label", {className: "field"}, label,
+      h("div", {className: "row"}, input,
+        button("Set from player", () => {
+          const player = $("clip-player");
+          if (!player) return;
+          input.value = player.currentTime.toFixed(2);
+          input.dispatchEvent(new Event("change"));
+        }, "btn sm", {title: `Use the player's position as ${label}`})));
+  };
+
+  const mediaScenePanel = (item) => {
+    const video = item.video;
+    const clip = video.clip;
+    const fromLibrary = state.boot.library && button("Media library", () => openLibrary((path) => libraryVideo(path), "video"), "btn sm");
+    const upload = button(clip ? "Replace" : "Upload", async () => {
+      const [file] = await pickFiles("video/*", false);
+      if (file) uploadVideo(file);
+    }, "btn sm");
+    const inputs = [
+      h("p", {className: "small muted"}, item.context),
+      textField("Scene title", "title", {maxLength: 120}),
+      h("div", {className: "slot"}, h("div", {className: "slot-head"}, h("span", {}, "Video")),
+        h("div", {className: "drop",
+          ondragover: (event) => { event.preventDefault(); event.currentTarget.classList.add("over"); },
+          ondragleave: (event) => event.currentTarget.classList.remove("over"),
+          ondrop: (event) => {
+            event.preventDefault();
+            event.currentTarget.classList.remove("over");
+            const [file] = event.dataTransfer.files;
+            if (file) uploadVideo(file);
+          }},
+        clip ? h("video", {id: "clip-player", src: clip.url, poster: clip.poster, preload: "metadata", controls: true,
+          className: "clip-player", "aria-label": clip.name}) : null,
+        clip ? h("p", {className: "small muted"},
+          `${clip.name} · ${clip.width}×${clip.height} · ${seconds(clip.seconds)}${clip.audio ? "" : " · no sound (plays silent)"}`) : null,
+        h("div", {className: "slot-actions"}, upload, fromLibrary))),
+      clip && h("div", {className: "split"}, rangeField("In (seconds)", "video_in", "in"), rangeField("Out (seconds)", "video_out", "out")),
+      clip && h("p", {className: "small muted", id: "added-seconds"}, item.added),
+    ];
+    const fitting = clip ? [
+      h("fieldset", {}, h("legend", {}, "Fit to the storyboard"),
+        h("div", {className: "chip-grid two", id: "fit-chips"}, FITS.map(([value, label, hint]) => {
+          const node = chip(label, video.fit === value, () => setFit(value));
+          node.dataset.fit = value;
+          node.title = hint;
+          return node;
+        }))),
+      fitPreview(item),
+      video.continued && h("p", {className: "small muted"},
+        `Scene ${item.number + 1} continues from the last ${video.tail_frames} frames (${seconds(video.min_seconds)}), as Fit shows them.`),
+    ] : [h("p", {className: "small muted"}, "Choose a video to set its range and how it fits the storyboard.")];
+    return [h("div", {className: "scene-columns"},
+      h("div", {className: "column"}, inputs),
+      h("div", {className: "column"}, fitting, checklist(item)))];
+  };
+
+  const uploadVideo = async (file) => {
+    const sceneId = state.sceneId;
+    const form = new FormData();
+    form.append("file", file);
+    toast("Uploading…");
+    const data = await act(() => request("POST", boardUrl(`/scenes/${sceneId}/video`), form, {form: true}), "Video added.");
+    if (data) applyBoard(data, {keepInspector: sceneId !== state.sceneId});
+  };
+  const libraryVideo = async (source) => {
+    const url = sceneUrl("/video");
+    await flush();
+    await saves;
+    const data = await act(() => request("PUT", url, {source}), "Video added.");
+    if (data) applyBoard(data);
+  };
+  const startPrepare = async () => {
+    const url = sceneUrl("/prepare");
+    await flush();
+    await saves;
+    const data = await act(() => request("POST", url));
+    if (data) followRun(data.run, {started: true});
+    renderTakes();
+    renderStripActions();
+  };
+
+  const addScene = async (afterId = null, kind = null) => {
+    await flush();
+    const body = {...(afterId ? {after: afterId} : {}), ...(kind ? {kind} : {})};
     const data = await act(() => request("POST", boardUrl("/scenes"), body));
     if (!data) return;
     state.sceneId = data.scene_id;
@@ -839,18 +1001,19 @@
     if (data) applyBoard(data);
   };
 
-  const openLibrary = (onPick) => {
+  const openLibrary = (onPick, kind = "image") => {
     const dialog = $("library");
     let limit = 24;
+    const noun = kind === "video" ? "videos" : "images";
     const grid = h("div", {className: "library-grid"});
     const status = h("p", {className: "small muted", role: "status"}, "Loading…");
-    const more = button("Show more images", () => { limit += 24; load(); }, "btn sm", {hidden: true});
+    const more = button(`Show more ${noun}`, () => { limit += 24; load(); }, "btn sm", {hidden: true});
     const query = h("input", {type: "search", placeholder: "Filename, tags or settings",
       onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); load(); } }});
     const load = async () => {
-      const data = await act(() => request("GET", `${API}/library?limit=${limit}&query=${encodeURIComponent(query.value)}`));
+      const data = await act(() => request("GET", `${API}/library?kind=${kind}&limit=${limit}&query=${encodeURIComponent(query.value)}`));
       if (!data) return;
-      status.textContent = `${data.total} matching images. Select a thumbnail to use it.`;
+      status.textContent = `${data.total} matching ${noun}. Select a thumbnail to use it.`;
       more.hidden = !data.more;
       grid.replaceChildren(...data.items.map((row) => h("button", {type: "button", "aria-label": row.caption,
         onclick: () => { dialog.close(); onPick(row.path); }}, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
@@ -860,7 +1023,7 @@
     dialog.style.maxHeight = `${area.bottom - area.top - 32}px`;
     dialog.replaceChildren(
       h("div", {className: "library-head"},
-        h("label", {className: "field grow"}, "Search library images", query),
+        h("label", {className: "field grow"}, `Search library ${noun}`, query),
         button("Search", load), button("Close", () => dialog.close())),
       status, grid, more);
     dialog.showModal();

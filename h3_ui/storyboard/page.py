@@ -25,6 +25,7 @@ from h3_app.catalog import (
 )
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_app.storyboard import clip
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
 from h3_app.workspace_store import request_owner
 
@@ -37,8 +38,11 @@ from .payload import board_payload, file_url, referenced_paths
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
-SCENE_FIELDS = ("title", "prompt", "seconds", "link", "overlap", "seed", "takes_per_run", "cast")
+SCENE_FIELDS = ("title", "prompt", "seconds", "link", "overlap", "seed", "takes_per_run", "cast",
+                "video_in", "video_out", "fit")
 INTEGER_FIELDS = ("seconds", "overlap", "seed", "takes_per_run")
+LIBRARY_KINDS = {"image": "Image", "video": "Video"}
+STILLS = ("first", "last")
 UPLOAD_TYPES = {"first_image": IMAGE_EXTENSIONS, "last_image": IMAGE_EXTENSIONS, "ref_images": IMAGE_EXTENSIONS,
                 "ref_videos": VIDEO_EXTENSIONS, "ref_audios": AUDIO_EXTENSIONS}
 SINGLE_FIELDS = ("first_image", "last_image")
@@ -65,6 +69,19 @@ def _image_thumbnail(path: Path, root: Path) -> Path | None:
         partial.unlink(missing_ok=True)
         return None
     return thumbnail
+
+
+def _still(video: Path, which: str, start: float, end: float, root: Path) -> Path:
+    """A cached JPEG of the first or last frame of a clip's range, for the Fit preview."""
+    stat = video.stat()
+    key = hashlib.sha256(f"{video}:{stat.st_mtime_ns}:{which}:{start:.3f}:{end:.3f}".encode()).hexdigest()[:24]
+    still = root / f"storyboard_still_{key}.jpg"
+    if not still.is_file():
+        root.mkdir(parents=True, exist_ok=True)
+        # The last frame starts a frame before Out; seeking to Out itself finds nothing.
+        seconds = start if which == "first" else max(start, end - 1.5 / sb.model.FPS)
+        clip.still(video, seconds, still)
+    return still
 
 
 def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: bool, interrupt=None) -> None:
@@ -152,6 +169,21 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             raise HTTPException(status_code=404)
         return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
 
+    def start_prepare(owner, storyboard_id, scene_id) -> Run:
+        """Fit a scene from Media and cut its ending: ffmpeg on the CPU, so the Workshop can too."""
+        def work(run):
+            run.status = "Preparing the video…"
+            handlers.running_scene[(owner, storyboard_id)] = scene_id
+            try:
+                for status in handlers.prepare_scene(owner, storyboard_id, scene_id):
+                    run.status = status
+                run.message = run.status
+            finally:
+                handlers.running_scene.pop((owner, storyboard_id), None)
+            run.status = "Done."
+
+        return runs.start(Run(owner, storyboard_id, "prepare"), work)
+
     @app.get(f"{api}/boot", include_in_schema=False)
     @guarded
     def boot(request: Request):
@@ -161,6 +193,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             "boards": [{"id": row["id"], "name": row["name"], "generated": bool(row["generated"])}
                        for row in handlers.service.list(owner)],
             "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],
+            "tail_frames": sb.TAIL_FRAMES,
             "overlaps": list(OVERLAP_FRAMES), "max_takes": MAX_TAKES_PER_RUN,
             "library": handlers.library is not None, "auto": auto_payload(owner),
             "enhance": handlers.services.enhance_prompt is not None,
@@ -244,6 +277,9 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         for name in INTEGER_FIELDS:
             if name in fields:
                 fields[name] = int(fields[name])
+        for name in ("video_in", "video_out"):
+            if fields.get(name) is not None:
+                fields[name] = float(fields[name])
         if "title" in fields:
             fields["title"] = str(fields["title"]).strip()[:120]
         if fields:
@@ -256,7 +292,10 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def add_scene(storyboard_id: str, request: Request, body: dict = Body(default={})):
         owner = owner_of(request)
-        _, scene_id = handlers.service.add_scene(owner, storyboard_id, after=body.get("after"))
+        if body.get("kind") == sb.MEDIA:
+            _, scene_id = handlers.service.add_media_scene(owner, storyboard_id, after=body.get("after"))
+        else:
+            _, scene_id = handlers.service.add_scene(owner, storyboard_id, after=body.get("after"))
         return {**payload(owner, storyboard_id), "scene_id": scene_id}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/duplicate", include_in_schema=False)
@@ -315,12 +354,12 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             paths.append(str(path))
         return paths
 
-    def library_source(path: str) -> str:
+    def library_source(path: str, kind: str = "Image") -> str:
         if handlers.library is None:
             raise H3Error("The media library isn't available here.")
-        handlers.library.validate_path(path, "Image")
+        handlers.library.validate_path(path, kind)
         if not Path(path).is_file():
-            raise H3Error("This image is unavailable. Refresh the library and choose another.")
+            raise H3Error(f"This {kind.lower()} is unavailable. Refresh the library and choose another.")
         return path
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/media/{{field_name}}", include_in_schema=False)
@@ -354,16 +393,73 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             handlers.service.set_scene_media(owner, storyboard_id, scene_id, field_name, value)
         return payload(owner, storyboard_id)
 
+    # A scene from Media ----------------------------------------------------
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/video", include_in_schema=False)
+    @guarded
+    def upload_video(storyboard_id: str, scene_id: str, request: Request, file: UploadFile = File(...)):
+        owner = owner_of(request)
+        with TemporaryDirectory(prefix="h3-storyboard-") as directory:
+            handlers.service.set_scene_video(owner, storyboard_id, scene_id,
+                                             spool([file], directory, VIDEO_EXTENSIONS)[0])
+        return payload(owner, storyboard_id)
+
+    @app.put(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/video", include_in_schema=False)
+    @guarded
+    def library_video(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        handlers.service.set_scene_video(owner, storyboard_id, scene_id,
+                                         library_source(body.get("source", ""), "Video"))
+        return payload(owner, storyboard_id)
+
+    @app.get(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/still", include_in_schema=False)
+    def scene_still(storyboard_id: str, scene_id: str, request: Request, which: str = "first",
+                    start: float = 0.0, end: float = 0.0):
+        """The Fit preview's frame; the page draws it stretched or cropped, so Fit needs no request."""
+        try:
+            board = handlers.service.load(owner_of(request), storyboard_id)
+            video = board["scenes"][handlers.service.scene_index(board, scene_id)].get("video")
+        except (H3Error, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="File not found") from exc
+        if which not in STILLS or not video or not Path(video).is_file() or not 0 <= start < end:
+            raise HTTPException(status_code=404, detail="File not found")
+        try:
+            still = _still(Path(video), which, start, end, handlers.service.runtime().gallery_thumbnails_dir)
+        except H3Error as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(still, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/match-shape", include_in_schema=False)
+    @guarded
+    def match_shape(storyboard_id: str, scene_id: str, request: Request):
+        owner = owner_of(request)
+        handlers.service.match_video_shape(owner, storyboard_id, scene_id)
+        return payload(owner, storyboard_id)
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/prepare", include_in_schema=False)
+    @guarded
+    def prepare(storyboard_id: str, scene_id: str, request: Request):
+        owner = owner_of(request)
+        board = handlers.service.load(owner, storyboard_id)
+        index = handlers.service.scene_index(board, scene_id)
+        if not sb.is_media(board["scenes"][index]):
+            raise H3Error("Only a scene from Media is prepared.")
+        sb.check_scene(board, index)
+        start_prepare(owner, storyboard_id, scene_id)
+        return {"run": run_payload(owner, storyboard_id)}
+
     @app.get(f"{api}/library", include_in_schema=False)
     @guarded
-    def library(request: Request, query: str = "", limit: int = 24):
+    def library(request: Request, query: str = "", limit: int = 24, kind: str = "image"):
         owner_of(request)
         if handlers.library is None:
             raise H3Error("The media library isn't available here.")
+        if kind not in LIBRARY_KINDS:
+            raise H3Error("The library lists images or videos.")
+        mode = LIBRARY_KINDS[kind]
         limit = max(1, min(limit, 240))
         index = handlers.library.index
-        page = handlers.library.refresh_page("Image", limit, paths=index.inventory("Image", query, limit=limit))
-        version = index.versions.get("Image", 0)
+        page = handlers.library.refresh_page(mode, limit, paths=index.inventory(mode, query, limit=limit))
+        version = index.versions.get(mode, 0)
         return {
             "total": page.total, "more": page.next_cursor is not None,
             "items": [{"path": str(path), "caption": caption, "thumb": f"/media-previews/{Path(thumb).name}?v={version}"}

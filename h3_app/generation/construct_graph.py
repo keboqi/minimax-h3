@@ -24,6 +24,8 @@ class StoryboardGraph:
     latent_output_prefix: str | None = None
     continuation_source: str | None = None
     continuation_stage_source: str | None = None
+    # A scene from Media: its tail clip, staged in ComfyUI's input, encoded in this take's graph.
+    continuation_video: str | None = None
     continuation_frames: int = 39
 
 

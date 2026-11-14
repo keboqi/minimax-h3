@@ -49,7 +49,17 @@ def _media(storyboard_id: str, path: str, *, picture=False) -> dict[str, Any]:
     return item
 
 
+def still_url(storyboard_id: str, scene: dict[str, Any], which: str) -> str:
+    """A first or last frame of a Media scene's In–Out range; the URL changes with the range."""
+    start, end = sb.video_range(scene)
+    return (f"/storyboard/api/boards/{storyboard_id}/scenes/{scene['id']}/still?"
+            + urlencode({"which": which, "start": f"{start:.3f}", "end": f"{end:.3f}",
+                         "video": Path(scene["video"]).name}))
+
+
 def scene_summary(board: dict, index: int) -> str:
+    if sb.is_media(board["scenes"][index]):
+        return ("Opening" if index == 0 else "Fresh start") + " · video from Media"
     start = "Opening" if index == 0 else f"Continues scene {index}" if sb.flows_from_previous(board, index) \
         else "Fresh start"
     mode = sb.scene_media(board["scenes"][index])["mode"]
@@ -58,6 +68,9 @@ def scene_summary(board: dict, index: int) -> str:
 
 
 def _context(board, index, flow) -> str:
+    if sb.is_media(board["scenes"][index]):
+        return ("Plays a video from Media as it is. "
+                + ("" if index + 1 == len(board["scenes"]) else f"Scene {index + 2} can continue from its last frames."))
     if index == 0:
         return "This is the opening scene."
     title = board["scenes"][index - 1]["title"]
@@ -77,6 +90,8 @@ def _prompt_hint(index, scene, media, flow) -> str:
 
 def _added(board, index, scene, flow) -> str:
     added = sb.new_seconds(board, index)
+    if sb.is_media(scene):
+        return f"Adds {seconds_label(added)} of the video."
     if flow:
         return (f"Adds about {seconds_label(added)} of new footage; the first "
                 f"{seconds_label(scene['seconds'] - added)} repeats scene {index}.")
@@ -88,6 +103,8 @@ def _thumb(storyboard_id, board, scene, media) -> str | None:
     take = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
     if take is not None:
         return poster_url(take["video"])
+    if scene.get("video"):
+        return poster_url(scene["video"])
     pictures = [media["first_image"], media["last_image"], *media["ref_images"]]
     picture = next((path for path in pictures if path), None)
     return thumb_url(storyboard_id, picture) if picture else None
@@ -105,7 +122,7 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
     flow = sb.flows_from_previous(board, index)
     state = states[index]
     issues = sb.scene_issues(board, index, states)
-    own = [issue for issue in issues if not issue.startswith("Generate scene")]
+    own = [issue for issue in issues if not sb.is_waiting(issue)]
     takes = [
         {"id": take_id, "number": number, "seed": board["takes"][take_id]["seed"],
          "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
@@ -122,7 +139,8 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
                     for path, tag in zip([*cast_images, *media["ref_images"]], sb.picture_tags(board, scene))]
     return {
         "id": scene["id"], "number": index + 1, "title": scene["title"], "prompt": scene["prompt"],
-        "seconds": scene["seconds"], "link": scene["link"], "flow": flow, "overlap": int(scene["overlap"]),
+        "seconds": round(sb.new_seconds(board, index), 1) if sb.is_media(scene) else scene["seconds"],
+        "link": scene["link"], "flow": flow, "overlap": int(scene["overlap"]),
         "seed": int(scene["seed"]), "takes_per_run": int(scene["takes_per_run"]), "cast": list(scene["cast"]),
         "mode": media["mode"], "runs_as": sb.runs_as(board, index), "state": state,
         "state_label": "Needs input" if state == sb.DRAFT and own else sb.STATE_NAMES[state],
@@ -136,7 +154,29 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
         "ref_videos": [{**_media(storyboard_id, path), "poster": poster_url(path)} for path in media["ref_videos"]],
         "ref_audios": [_media(storyboard_id, path) for path in media["ref_audios"]],
         "takes": takes, "in_use": scene["in_use"], "thumb": _thumb(storyboard_id, board, scene, media),
+        "kind": sb.MEDIA if sb.is_media(scene) else "generated", "video": _video(storyboard_id, board, index),
     }
+
+
+def _video(storyboard_id, board, index) -> dict[str, Any] | None:
+    """A scene from Media: its clip, range, fit, the canvas it fits and its Fit preview frames."""
+    scene = board["scenes"][index]
+    if not sb.is_media(scene):
+        return None
+    width, height = sb.canvas(board["profile"])
+    start, end = sb.video_range(scene)
+    info = scene.get("video_info") or {}
+    following = index + 1 < len(board["scenes"]) and sb.flows_from_previous(board, index + 1)
+    item = {"fit": scene.get("fit", sb.RESIZE), "canvas": [width, height], "in": start, "out": end,
+            "tail_frames": sb.TAIL_FRAMES, "min_seconds": round(sb.TAIL_FRAMES / sb.model.FPS, 3),
+            "continued": following, "clip": None, "can_reshape": not sb.model.generated_takes(board)}
+    if scene.get("video"):
+        item["clip"] = {**_media(storyboard_id, scene["video"]), "poster": poster_url(scene["video"]),
+                        "width": info.get("width"), "height": info.get("height"),
+                        "seconds": info.get("seconds"), "audio": bool(info.get("audio"))}
+        item["stills"] = {"first": still_url(storyboard_id, scene, "first"),
+                          "last": still_url(storyboard_id, scene, "last")}
+    return item
 
 
 def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:

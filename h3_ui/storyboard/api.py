@@ -174,7 +174,8 @@ class StoryboardApiHandlers:
         states = sb.scene_states(board)
         scenes = [{
             "id": scene["id"], "key": scene.get("key"), "number": index + 1, "title": scene["title"],
-            "seconds": int(scene["seconds"]), "link": scene["link"] if index else None, "runs_as": sb.runs_as(board, index),
+            "seconds": round(sb.new_seconds(board, index), 3) if sb.is_media(scene) else int(scene["seconds"]),
+            "kind": sb.MEDIA if sb.is_media(scene) else "generated", "link": scene["link"] if index else None, "runs_as": sb.runs_as(board, index),
             "cast": list(scene["cast"]), "state": states[index], "issues": sb.scene_issues(board, index),
             "takes": len(scene["takes"]),
         } for index, scene in enumerate(board["scenes"])]

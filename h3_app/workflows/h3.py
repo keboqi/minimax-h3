@@ -23,7 +23,9 @@ from h3_app.catalog import (
     FUSED_MODULATION_NODE,
     H3_COMBINE_AV_LATENT_NODE,
     H3_CONTINUATION_PREFIX_NODE,
+    H3_ENCODE_AV_TAIL_NODE,
     H3_LOAD_AV_LATENT_NODE,
+    H3_TAIL_FRAMES,
     H3_SAVE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
     H3_IMAGE_SLICES_NODE,
@@ -1055,6 +1057,9 @@ class H3GraphOptions:
     # and stage one when latent upscale is on), and where this take saves its own.
     continuation_source: str | None = None
     continuation_stage_source: str | None = None
+    # Instead of saved latents: an input-relative clip (a scene from Media) whose end is
+    # encoded here, at each stage's canvas, with this run's own VAEs.
+    continuation_video: str | None = None
     continuation_frames: int = 39
     latent_output_prefix: str | None = None
     output_prefix: str | None = None
@@ -1229,25 +1234,48 @@ def _build_h3_graph(
     target_latent = Graph.out(target_h3, 1)
     initial_latent = Graph.out(initial_h3, 1)
     continuation_ref = None
-    if o.continuation_source:
+    if o.continuation_source and o.continuation_video:
+        raise H3Error("A scene continues either a take's latent or a video, not both.")
+    if o.continuation_source or o.continuation_video:
         if result_format != "Video":
             raise H3Error("Storyboard continuation produces video results only.")
+        tail_video = tail_vae_ref = None
+        if o.continuation_video:
+            if H3_ENCODE_AV_TAIL_NODE not in o.available_nodes:
+                raise H3Error(f"Missing {H3_ENCODE_AV_TAIL_NODE} node. Update provisioning and restart ComfyUI.")
+            tail_video = graph.add("GetVideoComponents",
+                                   video=Graph.out(graph.add("LoadVideo", file=o.continuation_video)))
+            # A real encoder: without visual conditioning the run may only hold a decoder.
+            tail_vae_ref = conditioning_vae_ref if has_visual_conditioning else h3_conditioning_video_vae(
+                graph, o.models, video_vae_ref, use_trt_vae=o.use_trt_vae, video_encoder=o.video_encoder,
+                available_nodes=o.available_nodes, has_visual_conditioning=True,
+            )
+
+        def source_at(saved, width, height):
+            """The previous scene's AV latent: loaded from its take, or encoded from its clip."""
+            if tail_video is None:
+                return Graph.out(graph.add(H3_LOAD_AV_LATENT_NODE, path=saved))
+            return Graph.out(graph.add(
+                H3_ENCODE_AV_TAIL_NODE, images=Graph.out(tail_video, 0), audio=Graph.out(tail_video, 1),
+                vae=tail_vae_ref, audio_vae=audio_vae_ref, width=width, height=height, frames=H3_TAIL_FRAMES,
+            ))
 
         def continue_from(latent, source):
-            loaded = graph.add(H3_LOAD_AV_LATENT_NODE, path=source)
             return Graph.out(graph.add(
-                H3_CONTINUATION_PREFIX_NODE, latent=latent, source=Graph.out(loaded),
+                H3_CONTINUATION_PREFIX_NODE, latent=latent, source=source,
                 context_frames=int(o.continuation_frames),
             ))
 
         if o.latent_upscale_model_name is None:
-            target_latent = continue_from(target_latent, o.continuation_source)
+            target_latent = continue_from(
+                target_latent, source_at(o.continuation_source, target_width, target_height))
         else:
-            if not o.continuation_stage_source:
+            if not o.continuation_video and not o.continuation_stage_source:
                 raise H3Error("This take has no stage-one latent to continue a latent-upscale scene from.")
-            initial_latent = continue_from(initial_latent, o.continuation_stage_source)
+            initial_latent = continue_from(
+                initial_latent, source_at(o.continuation_stage_source, source_width, source_height))
             # finish_sampling pastes the full-resolution tail again before refinement.
-            continuation_ref = Graph.out(graph.add(H3_LOAD_AV_LATENT_NODE, path=o.continuation_source))
+            continuation_ref = source_at(o.continuation_source, target_width, target_height)
     if semantic_bridge and o.semantic_bridge and o.semantic_bridge_alpha != 0:
         if H3_SEMANTIC_BRIDGE_NODE not in o.available_nodes:
             raise H3Error(
