@@ -440,6 +440,22 @@
     if (data) applyBoard(data, {keepInspector: true});
   };
 
+  // A scene's thumb takes its picture's own shape, so portrait and wide scenes show whole, not cropped.
+  // Shapes are remembered by URL so redrawing the strip doesn't flicker back to the default.
+  const thumbRatios = new Map();
+  const sizeThumb = (node, url) => {
+    const known = thumbRatios.get(url);
+    if (known) { node.style.aspectRatio = known; return; }
+    const probe = new Image();
+    probe.onload = () => {
+      if (!probe.naturalWidth || !probe.naturalHeight) return;
+      const ratio = `${probe.naturalWidth} / ${probe.naturalHeight}`;
+      thumbRatios.set(url, ratio);
+      node.style.aspectRatio = ratio;
+    };
+    probe.src = url;
+  };
+
   const renderStrip = () => {
     const running = activeGenerate()?.scene_id;
     const items = [];
@@ -461,7 +477,10 @@
         }, item.flow ? "→" : "✂"));
       }
       const thumb = h("span", {className: "thumb"});
-      if (item.thumb) thumb.style.backgroundImage = `url("${item.thumb}")`;
+      if (item.thumb) {
+        thumb.style.backgroundImage = `url("${item.thumb}")`;
+        sizeThumb(thumb, item.thumb);
+      }
       const isRunning = item.id === running;
       const durationText = item.flow
         ? `${item.seconds}s (+${Number(item.added_seconds.toFixed(1))}s)`

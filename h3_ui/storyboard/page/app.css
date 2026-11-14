@@ -162,7 +162,8 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; }
 }
 .frame[aria-current="true"] { border-color: var(--accent); box-shadow: 0 2px 8px rgba(8, 127, 108, .15); }
 .frame.drag-over { border-color: var(--accent); background: var(--accent-soft); }
-.frame .thumb { display: block; height: 56px; border-radius: 4px; background: var(--empty-take) center / cover no-repeat; }
+.frame .thumb { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 132px; border-radius: 4px;
+  background: var(--empty-take) center / contain no-repeat; }
 .frame .title { display: block; padding-top: 4px; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .frame .meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .frame .bar { display: block; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
