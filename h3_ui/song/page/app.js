@@ -204,6 +204,7 @@
     const area = $("lyrics");
     const current = area.value.replace(/\s+$/, "");
     area.value = (current ? `${current}\n\n` : "") + text;
+    renderStructure();
     edited();
   };
 
@@ -298,11 +299,49 @@
   };
 
   // Draft --------------------------------------------------------------------
+  // The lyrics' [Section] tags as an outline; a click puts the caret on that tag.
+  const structureOf = (text) => {
+    const found = [];
+    let offset = 0;
+    text.split("\n").forEach((line, row) => {
+      const tag = line.match(/^\s*\[([^\]]+)\]/);
+      if (tag) found.push({name: tag[1].trim(), row, offset, lines: 0});
+      else if (line.trim() && found.length) found[found.length - 1].lines += 1;
+      offset += line.length + 1;
+    });
+    return found;
+  };
+  const jumpTo = (part) => {
+    const area = $("lyrics");
+    area.focus();
+    area.setSelectionRange(part.offset, part.offset);
+    const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 20;
+    area.scrollTop = Math.max(0, part.row * lineHeight - lineHeight);
+  };
+  const renderStructure = () => {
+    const parts = structureOf($("lyrics").value);
+    const list = $("structure");
+    const drawn = JSON.stringify(parts);
+    if (list.dataset.drawn === drawn) return;
+    list.dataset.drawn = drawn;
+    if (!parts.length) {
+      list.replaceChildren(h("p", {class: "structure-empty", text: "Sections appear here as you tag them."}));
+      return;
+    }
+    list.replaceChildren(...parts.map((part) => {
+      const kind = /chorus|hook/i.test(part.name) && !/pre/i.test(part.name) ? " chorus" : /bridge/i.test(part.name) ? " bridge" : "";
+      return h("button", {type: "button", title: `Go to [${part.name}]`, onclick: () => jumpTo(part)},
+        h("span", {class: `mark${kind}`, "aria-hidden": "true"}),
+        h("span", {class: "label", text: part.name}),
+        h("span", {class: "count mono", text: part.lines ? String(part.lines) : "—", "aria-label": `${part.lines} lines`}));
+    }));
+  };
   const renderDraft = () => {
     const {draft, brief} = app.s;
     const yue = app.s.engine === "yue2";
     if (!yue) app.tab = "lyrics";
     $("tab-score").hidden = !yue;
+    $("draft-tabs").hidden = !yue;
     $("tab-lyrics").setAttribute("aria-pressed", String(app.tab === "lyrics"));
     $("tab-score").setAttribute("aria-pressed", String(app.tab === "score"));
     $("lyrics-pane").hidden = app.tab !== "lyrics";
@@ -340,8 +379,9 @@
       app.writeSeen = run.id;
       $("draft").scrollIntoView({block: "nearest", behavior: "smooth"});
     }
+    renderStructure();
     const sections = $("sections");
-    if (sections.children.length === 1) {
+    if (!sections.children.length) {
       sections.append(...app.boot.sections.map((tag) => h("button", {type: "button", class: "pill mono", text: `+ ${tag}`, onclick: () => appendLyrics(`[${tag}]\n`)})),
         h("button", {type: "button", class: "pill", text: "Repeat chorus", title: "Repeats the last chorus block", onclick: () => {
           const text = $("lyrics").value.replace(/\s+$/, "");
@@ -394,7 +434,7 @@
     $("view-mode").hidden = items.length < 2;
     const run = app.runs.generate;
     $("stage-empty").hidden = items.length > 0;
-    $("stage-empty-line").textContent = run?.active ? run.status : "Describe your song on the right and press Write the song, or paste lyrics into the draft.";
+    $("stage-empty-line").textContent = run?.active ? run.status : "Describe your song in the brief and press Write the song, or paste lyrics into the draft.";
     $("players").hidden = !items.length;
     const takeA = a === null || a === undefined ? null : items[a];
     const takeB = compare && b !== null && b !== undefined ? items[b] : null;
@@ -409,12 +449,14 @@
     if ($("take-list").dataset.drawn !== drawn) {
       $("take-list").replaceChildren(...[...items].reverse().map((item) => {
         const isA = item.index === a, isB = compare && item.index === b;
-        const card = h("button", {type: "button", class: "take", "aria-pressed": String(isA || isB),
+        const meta = [item.time, item.seed !== null && item.seed !== undefined ? `seed ${item.seed}` : ""].filter(Boolean).join(" · ");
+        const card = h("button", {type: "button", class: `take${isB ? " is-b" : ""}`, "aria-pressed": String(isA || isB),
           title: compare ? "Click to set as A; Shift-click to set as B" : "Listen to this take",
           onclick: (event) => selectTakes(event.shiftKey ? {b: item.index} : {a: item.index})},
-          h("span", {class: `badge mono${isB ? " b" : ""}`, text: isA && compare ? "A" : isB ? "B" : String(item.number)}),
+          h("span", {class: `badge mono${isA ? " a" : isB ? " b" : ""}`, text: isA && compare ? "A" : isB ? "B" : String(item.number)}),
           h("span", {class: "text"},
-            h("strong", {}, `Take ${item.number} `, h("span", {class: "muted mono", text: [item.time, item.seed !== null && item.seed !== undefined ? `seed ${item.seed}` : ""].filter(Boolean).join(" · ")})),
+            h("strong", {text: `Take ${item.number}`}),
+            meta ? h("span", {class: "muted mono meta", text: meta}) : null,
             h("span", {class: "small muted", text: item.note || " "}),
             reviewText(item.review) ? h("span", {class: "small review", title: "How well the take fits its brief, scored by Gemini Decision; the tags are added in Media",
                                                  text: reviewText(item.review)}) : null));
@@ -453,7 +495,10 @@
     const steps = [["Brief", draft.description.trim() ? "done" : "now"],
                    ["Lyrics", draft.lyrics.trim() ? "done" : app.s.engine === "yue2" ? "now" : ""],
                    ["Take", run?.active ? "now" : app.s.takes.items.length ? "done" : ""]];
-    $("steps").replaceChildren(...steps.map(([label, state]) => h("span", {class: `step ${state}`}, h("span", {class: "dot", "aria-hidden": "true"}), label)));
+    const targets = {Brief: "#brief", Lyrics: "#draft", Take: "#takes"};
+    const said = {done: "done", now: "next", "": "not started"};
+    $("steps").replaceChildren(...steps.map(([label, state]) => h("a", {class: `step ${state}`, href: targets[label], "aria-label": `${label}: ${said[state]}`},
+      h("span", {class: "dot", "aria-hidden": "true", text: state === "done" ? "✓" : ""}), label)));
     const singer = app.boot.engines.find((item) => item.id === run?.engine)?.label || "";
     $("readiness").textContent = run?.active ? `A ${singer} take is being made. You can keep editing the next one.` : readiness.message;
     $("readiness").setAttribute("role", readiness.ready ? "status" : "alert");
@@ -579,6 +624,7 @@
   const bind = () => {
     for (const name of Object.keys(TEXT)) {
       $(name).addEventListener("input", edited);
+      if (name === "lyrics") $(name).addEventListener("input", renderStructure);
       // After the save, a box that was focused while the server rewrote its text catches up.
       $(name).addEventListener("blur", async () => { await autosave(); render(); });
     }
