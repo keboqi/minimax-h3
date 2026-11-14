@@ -85,11 +85,13 @@ def video_payload(name: str, data: dict, result, export) -> dict:
         stills = stills_payload(name, record)
         video = latest_export(audio)
         if video is not None:
-            made_from = ((read_snapshot(video) or {}).get("settings") or {}).get("stills")
+            made = (read_snapshot(video) or {}).get("settings") or {}
             latest = {"url": f"/soundstage/api/video?name={quote(name)}&v={video.stat().st_mtime_ns}",
                       "file": video.name,
-                      # Saved from the stills shown now, so saving again would make the same video.
-                      "current": bool(record) and made_from == record["revision"]}
+                      # Saved from the stills shown now, so saving again would make the same video,
+                      # unless the subtitles changed: the page compares ``subtitles`` (size, 0 for none).
+                      "current": bool(record) and made.get("stills") == record["revision"],
+                      "subtitles": int(made.get("subtitles") or 0)}
     return {**settings, "plan": plan, "stills": stills, "latest": latest}
 
 
@@ -220,17 +222,22 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @app.post(f"{api}/project/video/save", include_in_schema=False)
     @guarded
     def save(name: str, request: Request):
-        """Render the video from the mix's stills and add it to Media; it needs FFmpeg, not the GPU."""
+        """Render the video from the mix's stills and add it to Media; it needs FFmpeg, not the GPU.
+
+        The subtitles are burned in as the page shows them: on or off, at the chosen size.
+        """
         owner = owner_of(request)
-        _, result = project(name)
+        data, result = project(name)
         if not result:
             raise H3Error("Speak the project first: the video is drawn from its mix.")
         root = export.deps.runtime_config().output_dir
         if visuals.read_stills(result, root) is None:
             raise H3Error("Draw the images first: the video is rendered from them.")
+        settings = video_settings(data, export.engines)
+        subtitles = settings["subtitle_size"] if settings["subtitles"] else 0
 
         def work(run):
-            video = visuals.render_stills(result, root)
+            video = visuals.render_stills(result, root, subtitles=subtitles)
             run.status = f"Saved {video.name} to Media."
             run.revision += 1
 

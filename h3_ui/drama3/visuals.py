@@ -23,12 +23,15 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
+from h3_app.drama3.subtitles import Line, ass_subtitles
 from h3_app.drama3.visual_plan import compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
+from h3_ui.drama3.result_view import timeline_data
 from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
 from h3_ui.image_controller import reference_limit, reference_tag
+from h3_ui.subtitle_words import word_pieces
 
 
 # Images finished by an export that failed or was stopped, by export fingerprint:
@@ -391,8 +394,21 @@ def stills_shots(record):
                   item.get("beat") or "") for item in record["shots"]], [item["image"] for item in record["shots"]])
 
 
-def render_stills(audio, root):
-    """Render the video from the mix's stills, beside the mix, and record it so it shows in Media."""
+def burned_subtitles(audio, size) -> str | None:
+    """The mix's lines as an ASS script at ``size`` percent, as the page's video preview shows them,
+    each aligned word lighting up as it is spoken; None when the mix has no timed lines."""
+    entries, words, _tones, _sounds = timeline_data((read_snapshot(Path(audio)) or {}).get("settings") or {})
+    lines = [Line(speaker, text, start, end, word_pieces(text, line_words))
+             for (speaker, text, start, end), line_words in zip(entries, words)]
+    return ass_subtitles(lines, size=size) if lines else None
+
+
+def render_stills(audio, root, subtitles: int = 0):
+    """Render the video from the mix's stills, beside the mix, and record it so it shows in Media.
+
+    ``subtitles`` is the burned-in subtitles' size in percent, or 0 for none. The video's record
+    keeps it, so the page can tell a video made with other subtitles from the one asked for now.
+    """
     audio = Path(audio)
     record = read_stills(audio, root)
     if record is None:
@@ -401,9 +417,11 @@ def render_stills(audio, root):
         raise H3Error("Install FFmpeg to render an illustrated video.")
     shots, names = stills_shots(record)
     folder = stills_dir(audio, root)
-    video = render_video(audio, shots, [folder / name for name in names], audio.parent)
+    script = burned_subtitles(audio, subtitles) if subtitles else None
+    video = render_video(audio, shots, [folder / name for name in names], audio.parent, subtitles=script)
     write_snapshot(video, {"family": ILLUSTRATED_FAMILY, "settings": {
-        **(record.get("details") or {}), "source": audio.name, "stills": record["revision"]}})
+        **(record.get("details") or {}), "source": audio.name, "stills": record["revision"],
+        "subtitles": subtitles}})
     return video
 
 

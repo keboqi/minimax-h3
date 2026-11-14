@@ -25,16 +25,21 @@ class Shot:
     tagged: str = ""
 
 
-def _encode(arguments):
-    result = run_media_process(["ffmpeg", "-nostdin", "-y", "-v", "error", *arguments], timeout=7200)
+def _encode(arguments, cwd=None):
+    result = run_media_process(["ffmpeg", "-nostdin", "-y", "-v", "error", *arguments], timeout=7200, cwd=cwd)
     if result.returncode:
         raise H3Error(f"Illustrated video export failed: {result.stderr.strip()[-600:]}")
 
 
-def render_video(audio, shots, images, output_dir):
-    """Encode one bounded filter graph per shot, then mux the uninterrupted mix."""
-    output_dir = Path(output_dir)
+def render_video(audio, shots, images, output_dir, subtitles: str | None = None):
+    """Encode one bounded filter graph per shot, then mux the uninterrupted mix.
+
+    ``subtitles``, an ASS script (``h3_app.drama3.subtitles``), is burned in over the joined
+    shots, which then encode once more instead of being copied.
+    """
+    output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    audio = Path(audio).resolve()  # the final step runs in the work folder
     # Scale the still once, then repeat that frame until the shot ends.
     canvas = ("scale=1280:720:force_original_aspect_ratio=decrease,"
               "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop=-1")
@@ -59,8 +64,13 @@ def render_video(audio, shots, images, output_dir):
         playlist = folder / "shots.txt"
         playlist.write_text("\n".join(entries), encoding="ascii")
         partial = folder / "video.mp4"
+        video = ["-c:v", "copy"]
+        if subtitles:
+            # Named relative to the working folder: a Windows drive colon would break the filter's syntax.
+            (folder / "subtitles.ass").write_text(subtitles, encoding="utf-8")
+            video = ["-vf", "ass=subtitles.ass", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast"]
         _encode(["-f", "concat", "-i", str(playlist), "-i", str(audio), "-map", "0:v:0", "-map", "1:a:0",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(partial)])
-        output = output_dir / f"{Path(audio).stem}_illustrated_{uuid4().hex[:8]}.mp4"
+                 *video, "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(partial)], cwd=folder)
+        output = output_dir / f"{audio.stem}_illustrated_{uuid4().hex[:8]}.mp4"
         partial.replace(output)
     return output

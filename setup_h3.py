@@ -1200,6 +1200,28 @@ def ensure_root_entrypoints() -> None:
             print(f"[h3-setup] note: could not write gradio_app.py: {exc}", flush=True)
 
 
+def ensure_cjk_font() -> None:
+    """Install Noto CJK on Linux when no font has Chinese letters, for burned-in video subtitles.
+
+    Hosted VMs lose system packages between sessions, so this runs on every setup; it is skipped
+    where it cannot apply (not Linux, no apt-get, not root) and never fails setup.
+    """
+    if not sys.platform.startswith("linux") or not shutil.which("apt-get") or os.geteuid() != 0:
+        return
+    try:
+        if shutil.which("fc-list"):
+            found = subprocess.run(["fc-list", ":lang=zh", "family"], text=True, capture_output=True, timeout=30)
+            if found.stdout.strip():
+                return
+        print("[h3-setup] Installing Noto CJK fonts for video subtitles", flush=True)
+        quiet = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        subprocess.run(["apt-get", "update", "-qq"], env=quiet, check=True, timeout=300, capture_output=True)
+        subprocess.run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "fonts-noto-cjk", "fontconfig"],
+                       env=quiet, check=True, timeout=600, capture_output=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[h3-setup] Could not install CJK fonts ({exc}); Chinese video subtitles may show boxes", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-dir", default="h3")
@@ -1226,6 +1248,7 @@ def main() -> None:
         )
 
     ensure_root_entrypoints()
+    ensure_cjk_font()
     install_dir = Path(args.install_dir).expanduser().resolve()
     comfy = install_dir / "ComfyUI"
     install_dir.mkdir(parents=True, exist_ok=True)

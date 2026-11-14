@@ -17,8 +17,9 @@ def run_process(
     partial_outputs: Sequence[Path] = (),
     capture_output: bool = True,
     text: bool = True,
+    cwd: str | Path | None = None,
 ) -> subprocess.CompletedProcess:
-    """Reap every child and retain only the last 64 KiB of each output stream."""
+    """Reap every child and retain only the last 64 KiB of each output stream; ``cwd`` is its working folder."""
     check_cancelled()
     deadline = time.monotonic() + timeout
     process = subprocess.Popen(
@@ -26,6 +27,7 @@ def run_process(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        cwd=cwd,
     )
     buffers = [bytearray(), bytearray()]
 

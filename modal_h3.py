@@ -749,6 +749,9 @@ image = (
         "npm --version",
         "rm /tmp/h3-nodesource-setup.sh",
     )
+    # Soundstage burns subtitles into its videos; Noto CJK covers Chinese, Japanese and Korean
+    # (and Latin). After the expensive layers, so adding it reuses those builds.
+    .apt_install("fonts-noto-cjk", "fontconfig")
 )
 
 # Local bytecode is rewritten by every test run or import. Mounting it changes the

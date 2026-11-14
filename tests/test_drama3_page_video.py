@@ -215,23 +215,41 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.draw()
         rendered = []
 
-        def fake_render(audio, shots, images, output_dir):
-            rendered.append(([(shot.first, shot.frames, shot.dissolve) for shot in shots], images, output_dir))
-            video = Path(output_dir) / f"{Path(audio).stem}_illustrated_test.mp4"
+        def fake_render(audio, shots, images, output_dir, subtitles=None):
+            rendered.append(([(shot.first, shot.frames, shot.dissolve) for shot in shots], images, output_dir,
+                             subtitles))
+            video = Path(output_dir) / f"{Path(audio).stem}_illustrated_test_{len(rendered)}.mp4"
             video.write_bytes(b"MP4")
             return video
 
-        with patch.object(visuals, "render_video", fake_render), patch.object(visuals, "which", lambda name: name):
-            self.ok(self.client.post(f"{API}/project/video/save", params=NAME))
-            run = self.wait()
+        def save():
+            with patch.object(visuals, "render_video", fake_render), patch.object(visuals, "which", lambda name: name):
+                self.ok(self.client.post(f"{API}/project/video/save", params=NAME))
+                return self.wait()
+
+        run = save()
         self.assertIsNone(run["error"])
         self.assertIn("to Media", run["status"])
-        shots, images, output_dir = rendered[0]
+        shots, images, output_dir, subtitles = rendered[0]
         self.assertEqual(shots, [(0, 96, False), (96, 96, True)])
         self.assertTrue(all(Path(image).suffix == ".jpg" and Path(image).is_file() for image in images))
         self.assertEqual(Path(output_dir), self.mix.parent)
+        # The subtitles shown on the page are burned in: on by default, at 100%.
+        self.assertIn("{\\b1}Mia:{\\b0} Plums!", subtitles)
+        self.assertIn(",28,", subtitles)
         latest = self.project()["video"]["latest"]
         self.assertTrue(latest["current"])
+        self.assertEqual(latest["subtitles"], 100)  # the page asks for a new video when its own differ
+        # Larger subtitles, then none, are what the next videos get.
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_subtitle_size": 150}))
+        save()
+        self.assertIn(",42,", rendered[1][3])
+        self.assertEqual(self.project()["video"]["latest"]["subtitles"], 150)
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_subtitles": False}))
+        save()
+        self.assertIsNone(rendered[2][3])
+        latest = self.project()["video"]["latest"]
+        self.assertEqual((latest["subtitles"], latest["current"]), (0, True))
         self.assertEqual(self.client.get(latest["url"]).content, b"MP4")
         from h3_app.provenance import read_snapshot
 

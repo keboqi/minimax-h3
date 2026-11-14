@@ -6,8 +6,12 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     const box = $("subtitles-on");
     if (box) box.checked = on;
     for (const button of document.querySelectorAll("#subtitle-size button")) button.disabled = !on || sizeLimit(button);
+    refreshVideoFile();
     sync();
   }
+
+  // The saved video has its subtitles burned in, so changing them asks for a new one.
+  const refreshVideoFile = () => $("video-file")?.replaceWith(videoFileButton());
 
   function sizeLimit(button) {
     const [low, high] = state.boot.video.subtitle_sizes;
@@ -22,6 +26,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     $("video-stage")?.style.setProperty("--caption-scale", String(video.subtitle_size / 100));
     $("subtitle-size-value").textContent = `${video.subtitle_size}%`;
     for (const button of document.querySelectorAll("#subtitle-size button")) button.disabled = sizeLimit(button);
+    refreshVideoFile();
     saveVideo({video_subtitle_size: video.subtitle_size}, {later: true});
   }
 

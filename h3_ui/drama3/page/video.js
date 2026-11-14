@@ -31,16 +31,19 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     sync();
   }
 
-  /** The header's video file: download the saved one, or render it from the stills for Media. */
+  /** The header's video file: download the saved one, or render it from the stills for Media.
+   *  The saved one is current when it was made from these stills with the subtitles shown now. */
   function videoFileButton() {
     const video = state.project.video;
     const saving = videoRunning("save");
-    if (video.latest && (video.latest.current || !video.stills)) {
-      return h("a", {class: "btn btn-small", href: video.latest.url, download: video.latest.file,
+    const subtitles = video.subtitles ? video.subtitle_size : 0;
+    const current = video.latest?.current && (video.latest.subtitles ?? 0) === subtitles;
+    if (video.latest && (current || !video.stills)) {
+      return h("a", {class: "btn btn-small", id: "video-file", href: video.latest.url, download: video.latest.file,
                      title: "This video is in Media too."}, "Download video");
     }
-    return h("button", {type: "button", class: "btn btn-small", disabled: saving || videoRunning("draw"),
-                        title: "Render a 720p video with the mix from these images and add it to Media",
+    return h("button", {type: "button", class: "btn btn-small", id: "video-file", disabled: saving || videoRunning("draw"),
+                        title: "Render a 720p video with the mix from these images, with the subtitles as shown, and add it to Media",
                         onclick: saveVideoToMedia}, saving ? "Saving to Media…" : "Save to Media");
   }
 
