@@ -23,7 +23,7 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-from h3_app.drama3.subtitles import Line, ass_subtitles
+from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
 from h3_app.drama3.visual_plan import compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
@@ -31,7 +31,6 @@ from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.drama3.result_view import timeline_data
 from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
 from h3_ui.image_controller import reference_limit, reference_tag
-from h3_ui.subtitle_words import word_pieces
 
 
 # Images finished by an export that failed or was stopped, by export fingerprint:

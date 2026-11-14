@@ -34,7 +34,7 @@ def _encode(arguments, cwd=None):
 def render_video(audio, shots, images, output_dir, subtitles: str | None = None):
     """Encode one bounded filter graph per shot, then mux the uninterrupted mix.
 
-    ``subtitles``, an ASS script (``h3_app.drama3.subtitles``), is burned in over the joined
+    ``subtitles``, an ASS script (``h3_app.burned_subtitles``), is burned in over the joined
     shots, which then encode once more instead of being copied.
     """
     output_dir = Path(output_dir).resolve()

@@ -6,7 +6,7 @@ import unittest
 import wave
 from pathlib import Path
 
-from h3_app.drama3.subtitles import (LINGER_SECONDS, Line, ass_subtitles, font_size, subtitle_font)
+from h3_app.burned_subtitles import LINGER_SECONDS, Line, ass_subtitles, font_size, subtitle_font
 
 
 def events(script):
@@ -55,6 +55,40 @@ class AssSubtitleTests(unittest.TestCase):
         self.assertIn(",56,", ass_subtitles([], size=200))
         self.assertEqual(subtitle_font("win32"), "Microsoft YaHei")
         self.assertEqual(subtitle_font("linux"), "Noto Sans CJK SC")
+
+    def test_a_dub_burns_its_translation_original_or_both(self):
+        from h3_app.dubbing.pipeline import dub_subtitles
+        from h3_app.dubbing.results import Player
+
+        cue = {"start": 1.0, "end": 2.0, "shown_start": 1.2, "shown_end": 2.4, "speaker": 0,
+               "source": "Hello there.", "translation": "你好。",
+               "source_words": [{"text": "Hello", "start": 1.0, "end": 1.4}, {"text": "there", "start": 1.4, "end": 2.0}],
+               "translation_words": [{"text": "你", "start": 1.2, "end": 1.6}, {"text": "好", "start": 1.6, "end": 2.2}]}
+        player = Player(None, Path("dub.mp3"), Path("original.mp3"), None, 3.0, [cue, {**cue, "translation": ""}])
+
+        def script(mode):
+            text = dub_subtitles(player, mode, 1920, 1080)
+            return text, events(text)
+
+        text, (event,) = script("translation")
+        # The translation follows the dub's own timing, with no speaker name and no linger.
+        self.assertEqual(event[1:4], ["0:00:01.20", "0:00:02.40", "Caption"])
+        self.assertEqual(event[9], "{\\1c&H00CFE68E&\\k0}{\\k40}你{\\k60}好。")
+        self.assertIn("PlayResX: 1920", text)
+        self.assertNotIn("Style: Below", text)
+        _text, found = script("source")
+        self.assertEqual(len(found), 2)  # a line kept untranslated still shows what was said
+        self.assertEqual(found[0][1:3], ["0:00:01.00", "0:00:02.00"])
+        self.assertIn("Hello", found[0][9])
+        text, found = script("both")
+        self.assertEqual(sorted(event[3] for event in found), ["Below", "Below", "Caption"])
+        # The original sits at the bottom in its smaller, softer row; the translation just above it.
+        below = next(line for line in text.splitlines() if line.startswith("Style: Below")).split(",")
+        caption = next(line for line in text.splitlines() if line.startswith("Style: Caption")).split(",")
+        self.assertLess(int(below[2]), int(caption[2]))
+        self.assertEqual(below[4], "&H00DEE3D7")
+        self.assertGreater(int(caption[-2]), int(below[-2]))
+        self.assertIsNone(dub_subtitles(Player(None, Path("a"), Path("b"), None, 1.0, []), "both", 1280, 720))
 
 
 def _has_libass():

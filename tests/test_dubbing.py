@@ -1043,8 +1043,13 @@ class HandlerTests(Workspace):
         source = {"video": "finished.mp4", "subtitles": "finished.french.srt"}
         with patch.object(pipeline, "export_subtitled_video", return_value=Path("export.mp4")) as export:
             updates = list(self.handlers.export_subtitles(source))
-        export.assert_called_once_with("finished.mp4", "finished.french.srt", runtime=self.runtime)
+        export.assert_called_once_with("finished.mp4", "finished.french.srt", runtime=self.runtime,
+                                       mode="translation")
         self.assertEqual(updates[-1], ("export.mp4", "Export saved to Media."))
+        with patch.object(pipeline, "export_subtitled_video", return_value=Path("export.mp4")) as export:
+            updates = list(self.handlers.export_subtitles({**source, "mode": "both"}))
+        self.assertEqual(export.call_args.kwargs["mode"], "both")
+        self.assertIn("translated and original", updates[0][1])
         self.assertIn("Generate a video dub first", list(self.handlers.export_subtitles(None))[-1][1])
         cleared = self.handlers.clear_results()
         self.assertIsNone(cleared[9])
@@ -2461,8 +2466,17 @@ class DubRenderTests(Workspace):
         snapshot = pipeline.read_snapshot(exported)
         self.assertTrue(snapshot["settings"]["burned_subtitles"])
         self.assertEqual(snapshot["settings"]["source"], result.video.name)
+        self.assertEqual(snapshot["settings"]["subtitle_mode"], "translation")
         with self.assertRaises(pipeline.H3Error):
             pipeline.export_subtitled_video(str(result.video), str(result.subtitles[1]), runtime=self.runtime)
+        # Both rows, as the player's Both shows them; the drawn script is not left behind.
+        both = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime,
+                                               mode="both")
+        self.assertEqual(pipeline.read_snapshot(both)["settings"]["subtitle_mode"], "both")
+        self.assertEqual(list(both.parent.glob("*.ass")), [])
+        with self.assertRaisesRegex(pipeline.H3Error, "Unknown subtitles"):
+            pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime,
+                                            mode="off")
 
     def long_last_line(self, planned, request, session, **_kwargs):
         # Line 2 starts at 2.8 s in a 4 s source: 2.5 s at 1.35x still ends near 4.65 s.

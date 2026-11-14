@@ -34,6 +34,7 @@ import wave
 
 import numpy as np
 
+from h3_app.burned_subtitles import DUB_SOURCE, DUB_TRANSLATION, Line, ass_subtitles, word_pieces
 from h3_app.catalog import VIDEO_EXTENSIONS
 from h3_app.drama3.phonemes import strip_notes
 from h3_app.errors import H3Error
@@ -1913,8 +1914,56 @@ def _video_seconds(source: Path) -> float | None:
     return seconds if proc.returncode == 0 and seconds > 0 else None
 
 
-def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
-    """Burn a finished dub's subtitles into a new export, preserving its audio tracks."""
+def _video_size(source: Path) -> tuple[int, int] | None:
+    """The first video stream's (width, height), or None when it cannot be read."""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+           "-of", "csv=p=0:s=x", str(source)]
+    try:
+        proc = run_media_process(cmd, capture_output=True, text=True, timeout=30)
+        width, height = (int(value) for value in proc.stdout.split()[0].split("x")[:2])
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return (width, height) if proc.returncode == 0 and width > 0 and height > 0 else None
+
+
+# What a subtitled export can show, by the result player's Subtitles switch names, and how
+# its progress names them.
+SUBTITLE_MODES = {"translation": "translated", "source": "original", "both": "translated and original"}
+
+
+def dub_subtitles(player: Player, mode: str, width: int, height: int) -> str | None:
+    """A dub's subtitles as an ASS script for burning in, as its result player shows them: the
+    translation timed to the dub, the original words timed to the source, or both, the original
+    smaller under the translation. Aligned words light up as they are spoken. None with no lines."""
+    def rows(field: str) -> list[Line]:
+        shown = []
+        for cue in player.lines:
+            text = str(cue.get(field) or "")
+            if not text.strip():
+                continue
+            # The translation follows the dub, which Smart timing may start a little earlier or later.
+            start, end = ((cue.get("shown_start", cue["start"]), cue.get("shown_end", cue["end"]))
+                          if field == "translation" else (cue["start"], cue["end"]))
+            shown.append(Line(None, text, float(start), float(end), word_pieces(text, cue.get(f"{field}_words"))))
+        return shown
+
+    main = rows("source" if mode == "source" else "translation")
+    below = rows("source") if mode == "both" else None
+    if not main and not below:
+        return None
+    return ass_subtitles(main, width=width, height=height, row=DUB_TRANSLATION, below=below,
+                         below_row=DUB_SOURCE, linger=0.0)
+
+
+def export_subtitled_video(video: str, subtitles: str, *, runtime, mode: str = "translation") -> Path:
+    """Burn a finished dub's subtitles into a new export, preserving its audio tracks.
+
+    ``mode`` ("translation", "source" or "both") picks the rows as the result player shows them,
+    with word-by-word highlighting where words are aligned. A dub saved without its player burns
+    the plain translated ``subtitles`` file instead.
+    """
+    if mode not in SUBTITLE_MODES:
+        raise H3Error(f"Unknown subtitles choice: {mode}.")
     root = (runtime.outputs_dir / "dubbing").resolve()
     source, captions = Path(video).resolve(), Path(subtitles).resolve()
     if (source.parent != root or captions.parent != root or source.suffix != ".mp4"
@@ -1931,20 +1980,32 @@ def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
     # frame still shows the changing subtitles.
     picture = _video_seconds(source)
     overrun = duration - picture if picture else duration
-    filters = f"subtitles={_filter_path(captions)}"
+    player = load_player(source)
+    size = _video_size(source) or (1280, 720)
+    script = dub_subtitles(player, mode, *size) if player is not None and player.lines else None
+    drawn = target.with_name(f".{target.stem}.ass")
+    if script is not None:
+        drawn.write_text(script, encoding="utf-8")
+        filters = f"ass={_filter_path(drawn)}"
+    else:
+        mode = "translation"
+        filters = f"subtitles={_filter_path(captions)}"
     if overrun > 0.05:
         filters = f"tpad=stop_mode=clone:stop_duration={overrun:.3f}," + filters
     # The selectable subtitle tracks are kept alongside the burned-in ones.
-    result = _ffmpeg(["-i", str(source), "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
-                      "-vf", filters, "-t", f"{duration:.3f}", "-c:v", "libx264", "-crf", "18",
-                      "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy", "-c:s", "copy",
-                      "-movflags", "+faststart"], target, timeout=runtime.generation_timeout,
-                     action="Exporting video with burned-in subtitles")
+    try:
+        result = _ffmpeg(["-i", str(source), "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
+                          "-vf", filters, "-t", f"{duration:.3f}", "-c:v", "libx264", "-crf", "18",
+                          "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy", "-c:s", "copy",
+                          "-movflags", "+faststart"], target, timeout=runtime.generation_timeout,
+                         action="Exporting video with burned-in subtitles")
+    finally:
+        drawn.unlink(missing_ok=True)
     original = read_snapshot(source) or {}
     write_snapshot(result, {"family": DUB_FAMILY, "source_asset_ids": [original["asset_id"]]
                            if original.get("asset_id") else [], "settings": {
         **original.get("settings", {}), "source": source.name, "burned_subtitles": True,
-        "subtitle_file": captions.name}})
+        "subtitle_file": captions.name, "subtitle_mode": mode}})
     return result
 
 

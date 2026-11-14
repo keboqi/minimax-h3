@@ -795,8 +795,10 @@ class DubbingHandlers:
         try:
             if not source:
                 raise H3Error("Generate a video dub first.")
-            yield None, "Exporting video with burned-in translated subtitles…"
-            path = pipeline.export_subtitled_video(source["video"], source["subtitles"], runtime=self._runtime())
+            mode = source.get("mode") or "translation"
+            yield None, f"Exporting video with burned-in {pipeline.SUBTITLE_MODES.get(mode, mode)} subtitles…"
+            path = pipeline.export_subtitled_video(source["video"], source["subtitles"], runtime=self._runtime(),
+                                                   mode=mode)
             yield str(path), "Export saved to Media."
         except Exception as exc:
             yield gr.skip(), self._failed(exc)

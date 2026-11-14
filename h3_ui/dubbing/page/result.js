@@ -47,15 +47,37 @@ function downloads(result) {
     </section>`;
 }
 
+// Which subtitles the export burns in: chosen in its card, at first what the player shows.
+function exportChoice(app) {
+  const shown = app.playerView?.subtitles;
+  return app.exportSubtitles || (shown && shown !== "off" ? shown : "translation");
+}
+
+function showExportChoice(app) {
+  const choice = exportChoice(app);
+  for (const button of document.querySelectorAll("[data-export-subtitles]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.exportSubtitles === choice));
+  }
+}
+
 function exportCard(app, result) {
   const run = app.runs.export;
+  const same = app.session.same;
   const file = run && !run.active && run.file && !run.error
     ? `<a class="btn btn-small" href="${api.url("run-file", {id: run.id})}">${icon("download", 14)} ${esc(run.file)}</a>` : "";
+  const choice = exportChoice(app);
+  const option = (value, label) => `<button type="button" data-export-subtitles="${value}"
+    aria-pressed="${choice === value}">${label}</button>`;
   return `
     <section class="card card-pad stack-10" aria-labelledby="bi-h">
       <h2 id="bi-h">Video with subtitles</h2>
-      <p class="muted small">Re-encodes the picture with the ${app.session.same ? "new" : "translated"} subtitles burned in,
-        as a new MP4 in Media. Audio tracks are copied; voices are not generated again. The dub itself stays uncaptioned.</p>
+      <p class="muted small">Re-encodes the picture with the subtitles burned in as the player shows them, as a new MP4
+        in Media; aligned words light up as they are spoken. Audio tracks are copied; voices are not generated again.
+        The dub itself stays uncaptioned.</p>
+      <div class="control"><span class="field-label">Burn in</span><div class="seg" role="group" aria-label="Subtitles to burn in">
+        ${option("translation", same ? "New text" : esc(app.session.target_language || "Translation"))}
+        ${option("source", same ? "What was said" : esc(app.session.spoken || "Original"))}
+        ${option("both", "Both")}</div></div>
       <div class="run-status" data-run="export" hidden><span class="spinner" aria-hidden="true"></span><span data-run-status role="status"></span></div>
       <div class="row row-wrap">
         <button type="button" class="btn btn-small" data-action="export" data-busy="export" ${result.export ? "" : 'data-locked="true" disabled'}>Export video</button>
@@ -235,6 +257,13 @@ export function bindResult(app) {
         button.setAttribute("aria-pressed", String(button === control));
       }
       applyView(app);
+      showExportChoice(app);  // until one is picked there, the export follows the player
+      return;
+    }
+    const burn = event.target.closest("[data-export-subtitles]");
+    if (burn) {
+      app.exportSubtitles = burn.dataset.exportSubtitles;
+      showExportChoice(app);
       return;
     }
     const target = event.target.closest("[data-action]");
@@ -248,7 +277,7 @@ export function bindResult(app) {
       app.focus = Math.max(0, (session.result.failed[0] || 1) - 1);
       app.go("review");
     } else if (action === "jump-failed") jumpTo(session.result.failed[0]);
-    else if (action === "export") app.startRun("export", {session: session.id});
+    else if (action === "export") app.startRun("export", {session: session.id, subtitles: exportChoice(app)});
     else if (action === "align") app.startRun("align", {session: session.id});
     else if (action === "interrupt") {
       try {

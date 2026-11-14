@@ -15,13 +15,13 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from pydantic import ConfigDict, ValidationError, create_model
 
+from h3_app.burned_subtitles import word_pieces
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS, JobCancelled
 
 from ..job_admission import execute_accepted
 from ..page_runs import Run
-from ..subtitle_words import word_pieces
 from .result_view import timeline_data
 
 SKIP = object()

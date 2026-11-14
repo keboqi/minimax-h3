@@ -758,7 +758,10 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         result = load_result(session.data.get("last_output")) if session.data.get("last_output") else None
         if result is None or not result.video or not result.translated_subtitles:
             raise H3Error("Generate a video dub first.")
-        source = {"video": str(result.video), "subtitles": str(result.translated_subtitles)}
+        mode = str(body.get("subtitles") or "translation")
+        if mode not in pipeline.SUBTITLE_MODES:
+            raise H3Error("Choose which subtitles to burn in: translation, original or both.")
+        source = {"video": str(result.video), "subtitles": str(result.translated_subtitles), "mode": mode}
         return start(request, EXPORT, session_id, "export", handlers.export_subtitles, [source],
                      reader(1, file_index=0), job=False, session_id=session_id)
 
