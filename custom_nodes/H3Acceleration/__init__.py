@@ -30,13 +30,21 @@ import folder_paths
 
 
 LIGHTX_LORA_PATTERN = re.compile(
-    r"^(diffusion_model\.(?:blocks\.\d+|token_refiner\.blocks\.\d+)\."
-    r"(?:attn\.(?:qkv_proj|out_proj)|mlp\.fc[12]))\."
-    r"(lora_[AB]\.weight|alpha)$"
+    r"^(diffusion_model\.(?:"
+    r"(?:blocks\.\d+|token_refiner\.blocks\.\d+)\."
+    r"(?:attn\.(?:qkv_proj|out_proj)|mlp\.fc[12])"
+    r"|(?:blocks\.\d+|final_layer)\.adaln_proj\.linear"
+    r"))\.(lora_[AB]\.weight|alpha)$"
 )
 LIGHTX_BACKBONE_BLOCKS = 50
 LIGHTX_REFINER_BLOCKS = 2
 LIGHTX_TARGETS_PER_BLOCK = 4
+# v1.2 checkpoints add rank-16 adapters on every AdaLN projection.
+LIGHTX_ADALN_RANK = 16
+LIGHTX_ADALN_MODULES = frozenset(
+    f"diffusion_model.blocks.{block}.adaln_proj.linear"
+    for block in range(LIGHTX_BACKBONE_BLOCKS)
+) | {"diffusion_model.final_layer.adaln_proj.linear"}
 
 
 def _logical_weight_shape(weight) -> tuple[int, ...]:
@@ -102,6 +110,10 @@ def _lightx_key_map(model, lora):
     expected_modules = (
         LIGHTX_BACKBONE_BLOCKS + LIGHTX_REFINER_BLOCKS
     ) * LIGHTX_TARGETS_PER_BLOCK
+    # AdaLN adapters are all-or-none: older checkpoints have none, v1.2 has all.
+    if set(modules) & LIGHTX_ADALN_MODULES:
+        expected_module_names |= LIGHTX_ADALN_MODULES
+        expected_modules += len(LIGHTX_ADALN_MODULES)
     if set(modules) != expected_module_names:
         raise ValueError(
             f"LightX2V LoRA has {len(modules)} modules; expected "
@@ -121,7 +133,12 @@ def _lightx_key_map(model, lora):
         down = lora[module + ".lora_A.weight"]
         up = lora[module + ".lora_B.weight"]
         alpha = lora[module + ".alpha"]
-        expected_rank = 384 if module.endswith("attn.qkv_proj") else 128
+        if module in LIGHTX_ADALN_MODULES:
+            expected_rank = LIGHTX_ADALN_RANK
+        elif module.endswith("attn.qkv_proj"):
+            expected_rank = 384
+        else:
+            expected_rank = 128
         if (
             down.ndim != 2
             or up.ndim != 2

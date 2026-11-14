@@ -162,7 +162,8 @@ def add_turbo_model_patch(
 
     # The bundled node uses activation-space bypass for every base and the same
     # fused-INT8 fc2 exception as Larry. All bases retain the standard AdaLN
-    # shape, so fused modulation remains compatible.
+    # shape, and fused modulation still calls adaln_proj, so v1.2's AdaLN
+    # adapters keep running under it.
     fused_modulation = graph.add(
         FUSED_MODULATION_NODE,
         model=Graph.out(turbo),
