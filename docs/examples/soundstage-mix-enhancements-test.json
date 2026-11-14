@@ -1,0 +1,43 @@
+{
+  "title": "The Lantern Street Night Market",
+  "source_mode": "brief",
+  "script": "narrator: The Lantern Street Night Market.\n<#0.6#>\n<parallel room=\"outdoors\" stage=\"Ada=-0.6, Wren=0.15, Tomas=0.6, Vendor=0.85, Stranger=-0.75\">\n  <sound loop=\"true\" volume=\"0.3\" duration=\"30\" name=\"market_crowd\">Busy outdoor night market crowd, chatter, laughter, sizzling food stalls, distant clatter</sound>\n  <sound loop=\"true\" volume=\"0.35\" duration=\"40\" name=\"busker_guitar\">Bright jangling acoustic guitar busker tune, strummed steel strings, upbeat folk, no vocals</sound>\n  <sequential>\n    narrator: Under the paper lanterns, [warm, amused] three friends stood arguing about who had lost the van keys.\n    Ada: You had them last, [accusing] I watched you lock the —\n    Tomas: I did not lock anything, [defensive, fast] you drove, so you —\n    Ada: I drove there, [exasperated] you drove the —\n    Wren: Stop, both of you! [laughing, firm] Turn out your pockets, right now.\n    <parallel>\n      <sound name=\"pocket_items\" duration=\"3\" pan=\"0.6\">Coins and a crumpled paper wrapper dropped onto a wooden crate</sound>\n      narrator: Tomas emptied his jacket onto a crate: [dry] a bus ticket, two coins, a dumpling wrapper.\n    </parallel>\n    Tomas: See, nothing, [smug] so it has to be —\n    Ada: Don't you dare say it's me, [snapping] last time they were in your —\n    Tomas: In my shoe, once, [sheepish] that was <emphasis>once</emphasis>.\n    Vendor: <far> Last call for noodles, [shouting, cheerful] last call!\n    <parallel>\n      <sound name=\"passing_truck\" duration=\"6\" pan=\"-0.95,0.95\">Delivery truck rumbling slowly past, low diesel engine growl and a loose tailgate rattling, passing by close</sound>\n      narrator: A delivery truck rumbled slowly past [steady] from one end of the street to the other.\n    </parallel>\n    Wren: Wait, [hushed, alert] listen.\n    Stranger: <far> Did someone lose a set of keys? [calling out] Blue keychain, anyone?\n    Tomas: Blue keychain, [whispering] that's —\n    Ada: That's ours! [already running, calling] Hey, over here, those are —\n    Tomas: Mine, [grinning, giving in] I'm the one who lost them, fine, I admit it.\n  </sequential>\n</parallel>\n<#1.0#>\n<parallel room=\"large_hall\" stage=\"Ada=-0.5, Wren=0.15, Tomas=0.5\">\n  <sound loop=\"true\" volume=\"0.25\" duration=\"40\" name=\"church_organ\">Soft sustained church pipe organ chord drone, gentle and calm, no vocals</sound>\n  <sequential>\n    <parallel>\n      <sound name=\"church_door\" duration=\"4\" pan=\"-0.4\">Heavy wooden church door closing with a deep echo in a stone hall</sound>\n      narrator: They ducked into the old stone church, [quiet, reverent] where every footstep echoed off the high walls.\n    </parallel>\n    Wren: Okay, [quietly] nobody touches the keys again except —\n    Ada: Except me.\n    Tomas: Except you, [agreeing, then sly] although technically, if you think about who parked —\n    Ada: Tomas.\n    Tomas: Right, sorry, [meek] keys stay with Ada.\n  </sequential>\n</parallel>\n<#0.6#>\nnarrator: Outside, [fading, warm] the busker started a brand new song.",
+  "speakers": [
+    {
+      "speaker_id": 0,
+      "name": "narrator",
+      "description": "A female voice: mid forties, warm alto with an easy smile in it, clear articulation, relaxed storytelling pace. Clean dry studio recording.",
+      "preview_text": "The night market on Lantern Street was loud with music, and the smell of fried dumplings drifted between the stalls while the lanterns swayed overhead."
+    },
+    {
+      "speaker_id": 1,
+      "name": "Ada",
+      "description": "A female voice: late twenties, bright quick mezzo-soprano, sharp and confident, fast conversational pacing with crisp consonants. Clean dry studio recording.",
+      "preview_text": "I am telling you, I watched you put them in your pocket, and now you are standing there acting like you have never seen a set of keys in your life."
+    },
+    {
+      "speaker_id": 2,
+      "name": "Tomas",
+      "description": "A male voice: around thirty, easygoing light baritone, playful and a little defensive, quick rhythm with clear diction. Clean dry studio recording.",
+      "preview_text": "Look, I checked every pocket twice, my jacket, my jeans, even the little coin pocket nobody ever uses, and there is nothing in there but a bus ticket."
+    },
+    {
+      "speaker_id": 3,
+      "name": "Wren",
+      "description": "A female voice: early thirties, calm smooth soprano, amused and steady, measured pacing with soft warmth. Clean dry studio recording.",
+      "preview_text": "Both of you, take a breath, empty your pockets onto the crate, and we will sort this out before the noodle stall closes for the night."
+    },
+    {
+      "speaker_id": 4,
+      "name": "Vendor",
+      "description": "A male voice: fifties, loud cheerful street-vendor tenor, booming projection and a hearty sing-song call. Clean dry studio recording.",
+      "preview_text": "Fresh hand-pulled noodles, hot broth, extra chili, come and get them now before the pot runs dry for tonight, last bowls of the evening."
+    },
+    {
+      "speaker_id": 5,
+      "name": "Stranger",
+      "description": "A male voice: forties, friendly helpful baritone, raised calling voice, unhurried and kind. Clean dry studio recording.",
+      "preview_text": "Excuse me, I found these lying by the dumpling stall a minute ago, so if anyone around here is missing them, just come over and grab them."
+    }
+  ]
+}

@@ -593,6 +593,10 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         joined = audio.join_takes(rendered_turns, rate, offsets, line_offsets)
         ctx.dialogue[id(node)] = joined.copy()
         advance = len(joined)
+        # A barged-in-on take's room sound gives way with its voice (``join_takes``).
+        for (start, end), (barge_in, _next_end), wet in zip(offsets, offsets[1:], wets):
+            if wet is not None and barge_in < end:
+                audio.yield_tail(wet, barge_in - start, end - barge_in)
         tails = [(start, wet) for (start, _end), wet in zip(offsets, wets) if wet is not None]
         if tails:
             out = np.zeros((max(advance, *(start + len(wet) for start, wet in tails)), 2), dtype=np.float32)
@@ -629,6 +633,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         dry_placed = []
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
         floor = 0  # the earliest an overlap may start what follows
+        spoken = None  # the last child, when it is speech: (its index in placed, start, spoken length)
         for child in node.children:
             if isinstance(child, PauseNode) and child.seconds < 0:
                 # A written overlap: what follows starts this much before the previous child ends,
@@ -648,6 +653,13 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 gap = int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0],
                                                 narrator_turn=narrator))
                 cursor = max(cursor + gap, floor)
+            if edges is not None and spoken is not None and cursor < spoken[1] + spoken[2]:
+                # Barged in on: the interrupted lines and their room sound give way under this child.
+                index, start, length = spoken
+                interrupted = placed[index][1].copy()
+                audio.yield_tail(interrupted, cursor - start, start + length - cursor)
+                placed[index] = (start, interrupted)
+            spoken = (len(placed), cursor, advance) if isinstance(child, SpeechNode) else None
             placed.append((cursor, seg))
             if id(child) in ctx.dialogue:
                 dry_placed.append((cursor, ctx.dialogue[id(child)]))

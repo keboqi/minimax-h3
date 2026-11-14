@@ -172,6 +172,48 @@ class MixDetailTests(unittest.TestCase):
         joined = audio.join_takes([("Mia", mia, "Hello."), ("Leo", noise(1.0, 0.2), "Hi.")], RATE, spans)
         np.testing.assert_allclose(joined[:spans[0][1]], mia)
 
+    def test_a_written_barge_in_sinks_the_interrupted_block_and_its_room(self):
+        from h3_app.drama3.serving import generate
+        from h3_app.drama3.serving.planner import plan_turns_chunks
+        from h3_app.drama3.serving.tree import iter_speech_nodes, parse_drama3_tree
+
+        def render(script, levels):
+            tree = parse_drama3_tree(script, resolve={"Mia": "Mia", "Leo": "Leo"}.get)
+            node_chunks, takes = {}, {}
+            for speech in iter_speech_nodes(tree):
+                chunks = plan_turns_chunks(speech.turns, start_index=len(takes))
+                node_chunks[id(speech)] = chunks
+                takes.update((chunk.index, generate.Take(chunk, noise(1.0, levels[chunk.index], seed=chunk.index),
+                                                         RATE, 1, None)) for chunk in chunks)
+            spans = {}
+            out = generate._render_ast(tree, node_chunks, takes, {}, RATE, spans=spans)
+            return (out[0] if isinstance(out, tuple) else out), spans
+
+        def level(samples, start, end):
+            return float(np.sqrt(np.mean(np.asarray(samples[start:end], dtype=np.float64) ** 2)))
+
+        floor = 10 ** (-audio.CUT_OFF_TAIL_DB / 20)
+        for room in ("", ' room="large_hall"'):
+            with self.subTest(room=room or "dry"):
+                # The mix is linear in each take, so doubling Mia's take and subtracting leaves only
+                # what of her (and her room) plays, with Leo's part cancelled out.
+                script = (f"<parallel{room}>\n<sequential>\nMia: I was going to say.\n<#-0.3#>\n"
+                          "Leo: Yes.\n</sequential>\n</parallel>")
+                both, spans = render(script, (0.2, 0.2))
+                barge = render(script, (0.4, 0.2))[0] - both
+                alone, _ = render(f"<parallel{room}>\n<sequential>\nMia: I was going to say.\n"
+                                  "</sequential>\n</parallel>", (0.2,))
+                (mia_start, mia_end, _), (leo_start, _, _) = spans[0], spans[1]
+                self.assertLess(leo_start, mia_end)
+                np.testing.assert_allclose(barge[mia_start:leo_start], alone[mia_start:leo_start], atol=1e-5)
+                end = mia_end - RATE // 100
+                self.assertAlmostEqual(level(barge, end, mia_end) / level(alone, end, mia_end), floor, delta=0.05)
+                if room:  # the room rings on past her words, quietly
+                    after = slice(mia_end + RATE // 10, mia_end + RATE // 5)
+                    self.assertAlmostEqual(level(barge, after.start, after.stop) / level(alone, after.start, after.stop),
+                                           floor, delta=0.05)
+
+
     def test_placed_sounds_reach_the_far_ear_later(self):
         self.assertEqual(float(audio.interaural_delay(0.0)), 0.0)
         self.assertAlmostEqual(float(audio.interaural_delay(1.0)), 0.00066, delta=0.00002)

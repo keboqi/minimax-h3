@@ -324,18 +324,21 @@ def turn_gap(previous_text: str, next_text: str, same_speaker: bool, *,
 CUT_OFF_TAIL_DB = 9.0  # a barged-in-on line's tail sinks this far under the interruption
 
 
-def _yield_tail(samples: np.ndarray, overlap: int) -> None:
-    """Sink the last ``overlap`` frames of ``samples`` in place along a quarter-cosine curve.
+def yield_tail(samples: np.ndarray, start: int, fade: int) -> None:
+    """Sink ``samples`` in place from frame ``start``: a quarter-cosine over ``fade`` frames
+    down to ``CUT_OFF_TAIL_DB`` under, held there to the end (a reverb tail rings on quietly).
 
     The interrupted voice gives way under the one barging in instead of both playing at full
     level, which is what made an overlap sound like two clips laid on top of each other.
     """
-    overlap = min(overlap, len(samples))
-    if overlap <= 0:
+    start = max(0, start)
+    if start >= len(samples):
         return
     floor = 10 ** (-CUT_OFF_TAIL_DB / 20)
-    curve = np.cos(np.linspace(0.0, np.pi / 2, overlap, dtype=np.float32))
-    samples[-overlap:] *= _along((floor + (1.0 - floor) * curve).astype(np.float32), samples)
+    fade = max(0, min(fade, len(samples) - start))
+    curve = np.cos(np.linspace(0.0, np.pi / 2, fade, dtype=np.float32))
+    samples[start:start + fade] *= _along((floor + (1.0 - floor) * curve).astype(np.float32), samples)
+    samples[start + fade:] *= np.float32(floor)
 
 
 def join_takes(takes: list[tuple], rate: int,
@@ -363,7 +366,7 @@ def join_takes(takes: list[tuple], rate: int,
             cursor += max(int(rate * gap), -min(previous_reach, len(samples) // 2))
             overlap = placed[-1][0] + len(placed[-1][1]) - cursor
             if overlap > 0:
-                _yield_tail(placed[-1][1], overlap)
+                yield_tail(placed[-1][1], len(placed[-1][1]) - overlap, overlap)
         placed.append((cursor, samples))
         if spans is not None:
             spans.append((cursor, cursor + len(samples)))
