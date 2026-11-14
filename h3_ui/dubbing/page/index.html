@@ -24,6 +24,8 @@
     <span class="muted small" id="project-status" role="status">Unsaved draft</span>
     <span class="spacer"></span>
     <span class="mode" id="mode"></span>
+    <button type="button" class="btn btn-small" id="auto-dub">Auto-dub</button>
+    <button type="button" class="btn btn-small" id="batch-open">Batch generate</button>
     <button type="button" class="btn btn-small" id="project-save-as">Save as…</button>
     <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
   </header>
@@ -34,6 +36,10 @@
       Line edits save automatically.</span>
   </div>
   <nav class="steps" id="steps" aria-label="Steps"></nav>
+  <div class="card card-pad" id="auto-status" hidden>
+    <span id="auto-message" role="status"></span>
+    <button type="button" class="btn btn-small" id="auto-stop">Interrupt Auto</button>
+  </div>
   <main id="screen" class="screen"></main>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="name-dialog">
@@ -47,5 +53,15 @@
     </form>
   </dialog>
   <script type="module" src="app.js"></script>
+  <dialog id="batch-dialog">
+    <div class="dialog-form stack-16">
+      <div class="row"><h2>Batch generate</h2><button type="button" class="btn" id="batch-close">Close</button></div>
+      <p class="muted">Choose saved projects. Each runs Auto in turn using its saved settings. Prepared lines and speaker edits are kept. The queue continues when you close this page; a server restart ends it.</p>
+      <div id="batch-projects" class="stack-12"></div>
+      <div class="row"><button type="button" class="btn btn-primary" id="batch-start">Generate selected</button>
+        <button type="button" class="btn" id="batch-stop">Stop batch</button></div>
+      <div id="batch-progress" class="stack-12" role="status"></div>
+    </div>
+  </dialog>
 </body>
 </html>

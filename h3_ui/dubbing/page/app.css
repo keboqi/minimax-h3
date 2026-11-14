@@ -164,6 +164,8 @@ details.sub > summary { cursor: pointer; min-height: 28px; display: flex; align-
 .toast.error { background: var(--flag); color: #fff; }
 dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); padding: 20px; width: min(420px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgba(0, 0, 0, .35); }
+#batch-dialog { width: min(680px, calc(100vw - 32px)); max-height: 85vh; overflow-y: auto; }
+#auto-status { margin: 12px 24px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dialog-form { display: flex; flex-direction: column; gap: 14px; }
 
 /* Layout */

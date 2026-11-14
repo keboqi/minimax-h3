@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
+from threading import RLock
 import shutil
 import time
 from types import SimpleNamespace
@@ -34,6 +35,7 @@ from h3_app.workspace_store import request_owner
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
+from .page_batch import Batches
 from . import presenters
 from .handlers import DubbingHandlers
 from .player import PLAYER_JS, player_html
@@ -41,7 +43,7 @@ from .share import share_path
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript"
-                for name in ("app.js", "api.js", "source.js", "review.js", "dub.js", "result.js", "ui.js")}
+                for name in ("app.js", "api.js", "source.js", "review.js", "dub.js", "result.js", "ui.js", "batch.js")}
 STATIC_TYPES["app.css"] = "text/css"
 ROUTE = "/dubbing"
 API = f"{ROUTE}/api"
@@ -53,7 +55,7 @@ PROJECT_KEYS = ("source_language", "target_language", "style", "notes", "pipelin
                 "gemini_model", "separate", "separator_model", "reuse", "aligner", "merge_gap",
                 "refine_timestamps", "translation_context", "voice_mode", "preset", "timing", "max_speed",
                 "speech_volume", "background_volume", "keep_original", "regenerate", "parallel", "word_timing",
-                "rewrite", "rewrite_style")
+                "rewrite", "rewrite_style", "rewrite_by_hand", "shorten_lines", "readings")
 TRANSCRIPTIONS = (
     (pipeline.PIPELINE_LOCAL, "Qwen3-ASR", "One speaker, with word timing."),
     (pipeline.PIPELINE_MOSS, "MOSS", "Speakers take turns. Up to 90 minutes."),
@@ -66,11 +68,11 @@ TIMINGS = (
     (pipeline.TIMING_MATCH, "Match the original", "Starts and ends with each line. Best for lip-sync."),
     (pipeline.TIMING_NATURAL, "Natural pace", "Keeps each take's own pace; long takes may overlap."),
 )
-ANALYZE, LINES, DUB, WORDS, EXPORT = "analyze", "lines", "dub", "words", "export"
+ANALYZE, LINES, DUB, WORDS, EXPORT, AUTO = "analyze", "lines", "dub", "words", "export", "auto"
 FAMILIES = {ANALYZE: FAMILY_ANALYZE, LINES: FAMILY_LINES, DUB: FAMILY_DUB, WORDS: FAMILY_WORDS}
 BUSY = {ANALYZE: "An analysis is already running.", LINES: "A line action is already running.",
         DUB: "This session is already dubbing.", WORDS: "Words are already being aligned.",
-        EXPORT: "An export is already running."}
+        EXPORT: "An export is already running.", AUTO: "Auto mode is already running."}
 # Analysis has no session until it finishes: one runs per browser at a time.
 SOURCE_KEY = "source"
 STUDIO_ONLY = "Open this project in Studio to {} on the GPU."
@@ -85,10 +87,12 @@ class DubRun(PageRun):
     step: str | None = None
     audio: bytes | None = None
     file: str | None = None
+    batch: bool = False
 
     def public(self, scene_id=None) -> dict[str, Any]:
         return {**super().public(scene_id), "task": self.task, "session": self.session, "step": self.step,
-                "audio": self.audio is not None, "file": Path(self.file).name if self.file else None}
+                "audio": self.audio is not None, "file": Path(self.file).name if self.file else None,
+                "batch": self.batch}
 
 
 def _plain(text: str) -> str:
@@ -229,7 +233,22 @@ def _step(status: str) -> str | None:
 
 def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool = True, interrupt=None) -> None:
     """Serve the page at ``/dubbing/`` and its API under ``/dubbing/api``."""
-    runs = {kind: Runs(busy=message) for kind, message in BUSY.items()}
+    admission_lock = RLock()
+
+    def active_runs(owner):
+        return [item for collection in runs.values() for item in collection.items.values()
+                if item.owner == owner and item.finished_at is None]
+
+    def blocked(run):
+        if run.kind == AUTO:
+            if any(item.kind != AUTO for item in active_runs(run.owner)):
+                return "Wait for the current dubbing action before starting Auto mode."
+        elif runs[AUTO].active(run.owner, SOURCE_KEY):
+            return "Auto mode is running. Stop it before starting another action."
+        if not run.batch and batches.active(run.owner):
+            return "A batch is running. Stop it before starting another action."
+
+    runs = {kind: Runs(busy=message, lock=admission_lock, blocked=blocked) for kind, message in BUSY.items()}
 
     def runtime():
         return handlers._runtime()
@@ -633,6 +652,9 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         def read(run: DubRun, update: tuple) -> None:
             status = _status(update[status_index])
             if status:
+                if status.strip() in ("Interrupted.", "Auto interrupted."):
+                    run.stop_requested = True
+                    raise JobCancelled("Interrupted.")
                 problem = _error(status)
                 if problem:
                     run.error = problem
@@ -653,9 +675,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def picked(body: dict) -> dict:
         return {"picked": [int(index) for index in body.get("picked") or [] if isinstance(index, int)]}
 
-    @app.post(f"{API}/analyze", include_in_schema=False)
-    @guarded
-    def analyze(request: Request, body: dict = Body(...)):
+    def analysis_inputs(body: dict):
         project = body.get("project")
         if not isinstance(project, dict) or not project.get("name"):
             project = None
@@ -680,6 +700,12 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             if run.session and handlers.project_selection(project, run.session):
                 run.project = project["name"]
 
+        return values, read_analysis
+
+    @app.post(f"{API}/analyze", include_in_schema=False)
+    @guarded
+    def analyze(request: Request, body: dict = Body(...)):
+        values, read_analysis = analysis_inputs(body)
         return start(request, ANALYZE, SOURCE_KEY, "analyze", handlers.analyze_source, values, read_analysis)
 
     @app.post(f"{API}/prepare-audio", include_in_schema=False)
@@ -727,6 +753,11 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return start(request, LINES, session_id, "take" if body.get("fresh") else "preview", callback, values,
                      reader(1, audio_index=0), session_id=session_id)
 
+    def dub_inputs(session_id, body):
+        return [session_id, *dub_settings(body), float(body.get("speech_volume", 100)),
+                float(body.get("background_volume", 100)), bool(body.get("keep_original", True)),
+                str(body.get("regenerate") or ""), bool(body.get("word_timing", True))]
+
     @app.post(f"{API}/dub", include_in_schema=False)
     @guarded
     def dub(request: Request, body: dict = Body(...)):
@@ -734,9 +765,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             raise H3Error(STUDIO_ONLY.format("generate the dub"))
         session_id = str(body.get("session") or "")
         load(session_id)
-        values = [session_id, *dub_settings(body), float(body.get("speech_volume", 100)),
-                  float(body.get("background_volume", 100)), bool(body.get("keep_original", True)),
-                  str(body.get("regenerate") or ""), bool(body.get("word_timing", True))]
+        values = dub_inputs(session_id, body)
         return start(request, DUB, session_id, "dub", handlers.generate_dub, values, reader(4),
                      session_id=session_id)
 
@@ -749,6 +778,100 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         load(session_id)
         return start(request, WORDS, session_id, "words", handlers.align_words, [session_id], reader(1),
                      session_id=session_id)
+
+    def start_auto(owner, request_session, body, *, batch=False):
+        if not gpu:
+            raise H3Error(STUDIO_ONLY.format("run Auto mode"))
+        if not batch and batches.active(owner):
+            raise H3Error("A batch is running. Stop it before starting another Auto run.")
+        body = dict(body)
+        existing = load(body["session"]) if body.get("session") else None
+        prepared = bool(existing and existing.segments)
+        analysis = None
+        if not prepared:
+            same = body.get("target_language") == pipeline.SAME_LANGUAGE
+            if same and body.get("rewrite") and body.get("rewrite_by_hand"):
+                raise H3Error("Apply the rewrite by hand in Review lines before starting Auto mode.")
+            if same and body.get("rewrite"):
+                body["style"] = body.get("rewrite_style") or pipeline.DEFAULT_REWRITE_STYLE
+            body["source"] = body.get("source") or (str(existing.path("source")) if existing else None)
+            if body.get("pipeline") == pipeline.PIPELINE_MANUAL and not body.get("manual_reply"):
+                raise H3Error("Paste the transcription reply or analyze this project before starting Auto mode.")
+            analysis = analysis_inputs(body)
+        # Validate numeric settings before accepting a run.
+        dub_inputs("", body)
+        if prepared and body.get("target_language") and existing.data.get("target_language"):
+            if body["target_language"] != existing.data["target_language"]:
+                raise H3Error("The dub language changed. Use Translate again in Review lines before running Auto mode.")
+        run = DubRun(owner, SOURCE_KEY, AUTO, task=AUTO, session=existing.id if existing else None, batch=batch)
+        run.project = (body.get("project") or {}).get("name") if prepared else None
+
+        def work(run):
+            if analysis:
+                run.step = "analyze"
+                values, read = analysis
+                # A draft's source session is not a completed analysis.
+                run.session = None
+                for update in frames(run, owner, request_session, ANALYZE, handlers.analyze_source, values):
+                    read(run, update)
+                if run.error:
+                    return
+                if not run.session or not load(run.session).segments:
+                    raise H3Error("Analysis returned no lines to dub.")
+            if run.stop_requested:
+                raise JobCancelled("Interrupted.")
+            session = load(run.session)
+            if any(line.get("dub", True) and not line.get("translation") for line in session.segments):
+                raise H3Error("Some lines have no new text. Translate or edit them in Review lines, then run Auto again.")
+            settings = dict(body)
+            settings.setdefault("voice_mode", pipeline.default_voice_mode(session.data.get("pipeline")))
+            if pipeline.same_language(session) and not session.data.get("rewrite"):
+                settings.setdefault("timing", pipeline.TIMING_MATCH)
+            run.step, run.status = "dub", "Generating dub…"
+            read = reader(4, file_index=2)
+            for update in frames(run, owner, request_session, DUB, handlers.generate_dub,
+                                 dub_inputs(run.session, settings)):
+                read(run, update)
+            if not run.error and not run.file:
+                raise H3Error("Generation finished without a dub. Review the session and try again.")
+
+        return runs[AUTO].start(run, work)
+
+    @app.post(f"{API}/auto", include_in_schema=False)
+    @guarded
+    def auto(request: Request, body: dict = Body(...)):
+        return {"run": start_auto(owner_of(request), session_of(request), body).public()}
+
+    def auto_project(owner, name, request_session, api_key):
+        data, session = projects.load(runtime(), name)
+        return start_auto(owner, request_session, {**data["settings"], "session": session.id,
+                          "project": {"name": name, "session": session.id}, "api_key": api_key}, batch=True)
+
+    batches = Batches(auto_project, (lambda session, run: interrupt(
+        session, family=run.family, job_id=run.job_id)) if interrupt else None)
+
+    @app.get(f"{API}/batch", include_in_schema=False)
+    @guarded
+    def read_batch(request: Request):
+        return {"batch": batches.payload(owner_of(request)), "projects": projects.names(runtime())}
+
+    @app.post(f"{API}/batch", include_in_schema=False)
+    @guarded
+    def start_batch(request: Request, body: dict = Body(...)):
+        if not gpu:
+            raise H3Error(STUDIO_ONLY.format("batch generate dubs"))
+        owner = owner_of(request)
+        with admission_lock:
+            if active_runs(owner):
+                raise H3Error("Wait for the current dubbing action before starting a batch.")
+            batches.start(owner, body.get("names"), session_of(request), str(body.get("api_key") or ""))
+        return {"batch": batches.payload(owner)}
+
+    @app.post(f"{API}/batch/stop", include_in_schema=False)
+    @guarded
+    def stop_batch(request: Request):
+        owner = owner_of(request)
+        return {"message": batches.stop(owner, session_of(request)), "batch": batches.payload(owner)}
 
     @app.post(f"{API}/export", include_in_schema=False)
     @guarded
@@ -771,7 +894,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner = owner_of(request)
         found = {}
         for kind, items in runs.items():
-            key = SOURCE_KEY if kind == ANALYZE else session
+            key = SOURCE_KEY if kind in (ANALYZE, AUTO) else session
             run = items.latest(owner, key) if key else None
             found[kind] = run.public() if run is not None else None
         return {"runs": found}
@@ -807,7 +930,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         kind = body.get("kind")
         if kind not in runs:
             raise H3Error("Unknown step.")
-        run = runs[kind].active(owner, SOURCE_KEY if kind == ANALYZE else str(body.get("session") or ""))
+        run = runs[kind].active(owner, SOURCE_KEY if kind in (ANALYZE, AUTO) else str(body.get("session") or ""))
         if run is None:
             return {"message": "Nothing is running.", "run": None}
         run.stop_requested = True

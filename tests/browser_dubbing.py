@@ -3,6 +3,7 @@
 import json
 import os
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -12,6 +13,80 @@ from tests.test_dub_page import PageTests
 
 class DubbingBrowserTests(PageTests):
     gpu = True
+
+    def test_auto_controls_and_batch_generation(self):
+        session = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hello",
+                                 "translation": "Bonjour"}])
+        self.client.post("/dubbing/api/project/save", json={"name": "Interview", "session": session.id})
+
+        def generate(*values):
+            yield None, None, None, None, "**Error:** Test take failed."
+
+        with patch.object(self.handlers, "generate_dub", generate), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            page.goto("http://dubbing.test/dubbing/")
+            page.get_by_label("Auto mode", exact=False).check()
+            expect(page.get_by_role("button", name="Auto-dub source", exact=True)).to_be_visible()
+            page.reload()
+            expect(page.get_by_label("Auto mode", exact=False)).to_be_checked()
+            page.locator("#project-list").select_option("Interview")
+            page.locator("#project-load").click()
+            page.locator("#auto-dub").click()
+            expect(page.locator("#auto-message")).to_contain_text("Test take failed.")
+            page.locator("#batch-open").click()
+            page.get_by_label("Interview", exact=True).check()
+            page.locator("#batch-start").click()
+            expect(page.locator("#batch-progress")).to_contain_text("failed")
+            expect(page.locator("#batch-progress")).to_contain_text("Test take failed.")
+            browser.close()
+
+    def test_fast_auto_completion_restores_its_project_settings_and_source(self):
+        previous = self.session([])
+        completed = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hello",
+                                   "translation": "Bonjour"}], target_language="French")
+        saved = self.client.post("/dubbing/api/project/save", json={
+            "name": "Batch project", "session": completed.id,
+            "settings": {"preset": "Strict", "target_language": "French"},
+        }).json()
+        run = {"id": "fast-auto", "kind": "auto", "task": "auto", "active": False,
+               "session": completed.id, "project": "Batch project", "status": "Done."}
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            state = {"sessionId": previous.id, "source": {"path": str(previous.path("source"))},
+                     "settings": {"preset": "Expressive", "target_language": "English"}}
+            page.add_init_script("if (!localStorage.getItem('h3-dubbing-page')) "
+                                 f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.route("**/api/run?*", lambda route: route.fulfill(json={"runs": {"auto": run}}))
+            page.goto("http://dubbing.test/dubbing/")
+            expect(page.locator("#project-status")).to_have_text("Project: Batch project")
+            expect(page.locator("#screen")).to_have_attribute("data-screen", "result")
+            page.wait_for_function("JSON.parse(localStorage.getItem('h3-dubbing-page')).completedAuto === 'fast-auto'")
+            state = page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page'))")
+            self.assertEqual(state["settings"]["preset"], "Strict")
+            self.assertEqual(state["settings"]["target_language"], "French")
+            self.assertEqual(state["source"]["path"], saved["session"]["source"]["path"])
+            # A single Auto keeps current edits; a batch follows the saved settings it used.
+            for batch, expected in ((False, "Expressive"), (True, "Strict")):
+                run.update(id=f"next-auto-{batch}", batch=batch)
+                page.evaluate("""async () => {
+                    const {app} = await import('./app.js');
+                    app.settings.preset = 'Expressive';
+                    app.watchRuns();
+                }""")
+                page.wait_for_function("id => JSON.parse(localStorage.getItem('h3-dubbing-page')).completedAuto === id",
+                                       arg=run["id"])
+                state = page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page'))")
+                self.assertEqual(state["settings"]["preset"], expected)
+            page.reload()
+            expect(page.locator("#project-status")).to_have_text("Project: Batch project")
+            page.locator("#project-new").click()
+            expect(page.locator("#project-status")).to_contain_text("Unsaved draft")
+            expect(page.locator("#screen")).to_have_attribute("data-screen", "source")
+            browser.close()
 
     def serve(self, route):
         request = route.request

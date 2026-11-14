@@ -260,12 +260,13 @@ function analyzeCard(app) {
   return `
     <aside class="rail">
       <section class="card card-pad stack-16" aria-labelledby="an-h">
-        <div><h2 id="an-h">Analyze</h2><p class="muted">Review lines opens when it is done.</p></div>
+        <div><h2 id="an-h">${app.settings.auto_mode ? "Auto-dub" : "Analyze"}</h2><p class="muted">${app.settings.auto_mode ? "Analyze, translate and generate the dub without pausing for review. Uses your Dub settings." : "Review lines opens when it is done."}</p></div>
+        <label class="check"><input type="checkbox" data-setting="auto_mode" data-redraw ${app.settings.auto_mode ? "checked" : ""} ${app.boot.gpu ? "" : "disabled"}>Auto mode · analyze through to the finished dub</label>
         <ol class="plan" id="plan">${planItems(app.plan)}</ol>
         <div class="run-status" data-run="analyze" hidden><span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span></div>
         <div class="row">
-          <button type="button" class="btn btn-primary grow" data-action="analyze" data-busy="analyze">Analyze source</button>
+          <button type="button" class="btn btn-primary grow" data-action="analyze" data-busy="analyze">${app.settings.auto_mode ? "Auto-dub source" : "Analyze source"}</button>
           <button type="button" class="btn" data-stop="analyze" data-action="interrupt" data-kind="analyze" disabled>Interrupt</button>
         </div>
       </section>
@@ -342,13 +343,18 @@ async function upload(app, file) {
   }
 }
 
-function analyzeBody(app, extra = {}) {
+export function analyzeBody(app, extra = {}) {
   const s = app.settings;
   const same = s.target_language === app.boot.same;
   const style = same && s.rewrite ? s.rewrite_style : s.style;
   return {...s, style, source: app.source?.path || null, api_key: app.apiKey, manual_reply: app.manualReply,
+    rewrite_by_hand: same && s.rewrite && s.rewrite_by_hand,
     translator: same && s.rewrite_by_hand ? gemini(app) : s.translator,
     rewrite: same && s.rewrite && !s.rewrite_by_hand, project: app.project, ...extra};
+}
+
+export function autoBody(app) {
+  return analyzeBody(app, {rewrite: app.settings.target_language === app.boot.same && app.settings.rewrite});
 }
 
 export function bindSource(app) {
@@ -410,7 +416,7 @@ export function bindSource(app) {
         toast("Upload a video or audio file, or pick one from Media.", {error: true});
         return;
       }
-      app.startRun("analyze", analyzeBody(app));
+      app.startRun(s.auto_mode ? "auto" : "analyze", s.auto_mode ? autoBody(app) : analyzeBody(app));
     } else if (action === "interrupt") {
       try {
         const data = await api.post("interrupt", {kind: target.dataset.kind, session: app.sessionId});

@@ -4,14 +4,15 @@
 
 import {api} from "./api.js";
 import {esc, icon, plural, toast} from "./ui.js";
-import {renderSource, bindSource} from "./source.js";
+import {renderSource, bindSource, autoBody} from "./source.js";
+import {bindBatch} from "./batch.js";
 import {renderReview, bindReview} from "./review.js";
 import {renderDub, bindDub} from "./dub.js";
 import {renderResult, bindResult, afterResult} from "./result.js";
 
 const STORE = "h3-dubbing-page";
 const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["result", "Result"]];
-const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source", "pendingRuns"];
+const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source", "pendingRuns", "completedAuto"];
 
 export const app = {
   boot: null,
@@ -29,6 +30,7 @@ export const app = {
   screen: "source",
   runs: {},
   pendingRuns: {},
+  completedAuto: null,
   focus: 0,
   picks: new Set(),
   mergeGroups: [],
@@ -51,6 +53,8 @@ export const app = {
   startRun,
   saveSettings,
   setSession,
+  watchRuns: watch,
+  openProject: loadProject,
 };
 
 function defaults(boot) {
@@ -67,7 +71,7 @@ function defaults(boot) {
     speech_volume: 100, background_volume: 100, keep_original: true, regenerate: "", parallel: 16,
     word_timing: true, rewrite: false, rewrite_style: boot.default_rewrite_style, rewrite_by_hand: false,
     // Auto-detect combine confirms neighbouring lines by context with Gemini Decision.
-    combine_context: true,
+    combine_context: true, auto_mode: false,
   };
 }
 
@@ -120,6 +124,7 @@ function renderTop() {
   const mode = document.getElementById("mode");
   mode.innerHTML = `<span class="dot ${app.boot.gpu ? "ready" : "prepare"}"></span>${app.boot.gpu ? "GPU ready" : "Prepare only · voices run in Studio"}`;
   document.getElementById("banner").hidden = app.boot.gpu;
+  document.getElementById("auto-dub").disabled = !app.boot.gpu || !!app.runs.auto?.active;
 }
 
 export function render() {
@@ -189,34 +194,61 @@ export async function refresh() {
 
 const POLL_MS = 1000;
 let polling = null;
+let pollInFlight = false;
 
 async function poll() {
+  if (pollInFlight) return;
+  clearTimeout(polling);
   polling = null;
-  let data;
+  pollInFlight = true;
+  let retry = false;
   try {
-    data = await api.get("run", {session: app.sessionId || ""});
+    const data = await api.get("run", {session: app.sessionId || ""});
+    app.runs = data.runs;
+    // A batch can finish between polls, or while this page is closed.
+    const auto = app.runs.auto;
+    if (auto && auto.id !== app.completedAuto) app.pendingRuns.auto = auto.id;
+    saveSettings();
+    for (const [kind, run] of Object.entries(app.runs)) {
+      await handleCompletion(kind, run);
+    }
+    updateRunViews();
   } catch (_) {
-    polling = setTimeout(poll, POLL_MS * 3);
-    return;
+    retry = true;
+  } finally {
+    pollInFlight = false;
+    if (retry || Object.values(app.runs).some((run) => run?.active)) {
+      watch(retry ? POLL_MS * 3 : POLL_MS);
+    }
   }
-  app.runs = data.runs;
-  for (const [kind, run] of Object.entries(app.runs)) {
-    await handleCompletion(kind, run);
-  }
-  updateRunViews();
-  if (Object.values(app.runs).some((run) => run && run.active)) polling = setTimeout(poll, POLL_MS);
 }
 
-function watch() {
-  if (!polling) polling = setTimeout(poll, 150);
+function watch(delay = 150) {
+  if (!polling && !pollInFlight) polling = setTimeout(poll, delay);
 }
 
 // A pending ID survives reloads until its completion is consumed.
 async function handleCompletion(kind, run) {
   if (!run || run.active || app.pendingRuns[kind] !== run.id) return;
-  delete app.pendingRuns[kind];
-  saveSettings();
   await finished(kind, run);
+  delete app.pendingRuns[kind];
+  if (kind === "auto") app.completedAuto = run.id;
+  saveSettings();
+}
+
+async function restoreAutoSession(run) {
+  const keepSettings = !run.batch && run.project && app.project?.name === run.project;
+  app.sessionId = run.session;
+  app.project = null;
+  if (run.project) {
+    const data = await api.post("project/load", {name: run.project});
+    if (data.session.id === run.session) {
+      applyProject(data, {keepSettings});
+      return;
+    }
+  }
+  setSession((await api.get("session", {id: run.session})).session);
+  app.source = app.session.source;
 }
 
 async function finished(kind, run) {
@@ -230,8 +262,9 @@ async function finished(kind, run) {
     return;
   }
   if (kind === "lines" && (run.task === "preview" || run.task === "take") && run.audio) app.previewRun = run.id;
-  if (kind === "dub" && !run.error) {
-    await refresh();
+  if (kind === "auto" && run.session) await restoreAutoSession(run);
+  if (["dub", "auto"].includes(kind) && !run.error && !run.stop_requested && run.status !== "Interrupted.") {
+    if (kind !== "auto") await refresh();
     go("result");
     return;
   }
@@ -241,6 +274,11 @@ async function finished(kind, run) {
 
 // The run cards update their status in place, so typing elsewhere on the screen is never interrupted.
 function updateRunViews() {
+  const auto = app.runs.auto;
+  document.getElementById("auto-status").hidden = !auto?.active && !auto?.error;
+  document.getElementById("auto-message").textContent = auto ? `Auto · ${auto.error || auto.status}` : "";
+  document.getElementById("auto-stop").disabled = !auto?.active;
+  document.getElementById("auto-dub").disabled = !app.boot.gpu || !!auto?.active;
   for (const box of document.querySelectorAll("[data-run]")) {
     const run = app.runs[box.dataset.run];
     const task = box.dataset.task;
@@ -253,7 +291,7 @@ function updateRunViews() {
   }
   for (const button of document.querySelectorAll("[data-busy]")) {
     const run = app.runs[button.dataset.busy];
-    button.disabled = !!(run && run.active) || button.dataset.locked === "true";
+    button.disabled = !!auto?.active || !!(run && run.active) || button.dataset.locked === "true";
   }
   for (const button of document.querySelectorAll("[data-stop]")) {
     const run = app.runs[button.dataset.stop];
@@ -288,18 +326,21 @@ export async function startRun(path, body) {
   }
 }
 
-async function loadProject() {
-  const name = document.getElementById("project-list").value;
+function applyProject(data, {keepSettings = false} = {}) {
+  app.project = data.project;
+  if (!keepSettings) app.settings = {...defaults(app.boot), ...data.settings};
+  app.source = data.session.source;
+  setSession(data.session, {keepSettings: true});
+}
+
+async function loadProject(name = document.getElementById("project-list").value) {
   if (!name) {
     toast("Choose a saved project first.", {error: true});
     return;
   }
   try {
     const data = await api.post("project/load", {name});
-    app.project = data.project;
-    app.settings = {...defaults(app.boot), ...data.settings};
-    app.source = data.session.source;
-    setSession(data.session, {keepSettings: true});
+    applyProject(data);
     toast(`Opened ${name}.`);
     go(data.session.board.lines.length ? "review" : "source");
   } catch (error) {
@@ -332,16 +373,27 @@ function askName() {
 }
 
 function bindChrome() {
+  bindBatch(app);
+  document.getElementById("auto-dub").addEventListener("click", () => {
+    const body = autoBody(app);
+    if (app.screen !== "source" && app.sessionId) body.session = app.sessionId;
+    app.startRun("auto", body);
+  });
+  document.getElementById("auto-stop").addEventListener("click", async () => {
+    try { toast((await api.post("interrupt", {kind: "auto"})).message); }
+    catch (error) { toast(error.message, {error: true}); }
+  });
   document.getElementById("steps").addEventListener("click", (event) => {
     const step = event.target.closest("[data-screen]");
     if (step && !step.disabled) go(step.dataset.screen);
   });
-  document.getElementById("project-load").addEventListener("click", loadProject);
+  document.getElementById("project-load").addEventListener("click", () => loadProject());
   document.getElementById("project-new").addEventListener("click", () => {
     if (!app.project && (app.source || app.sessionId || app.manualReply)
         && !window.confirm("Leave this unsaved draft and start a new project?")) return;
     try {
       localStorage.removeItem(STORE);
+      localStorage.setItem(STORE, JSON.stringify({completedAuto: app.runs.auto?.id || app.completedAuto}));
     } catch (_) { /* Storage can be unavailable in private windows. */ }
     window.location.reload();
   });
@@ -402,6 +454,7 @@ async function start() {
   }
   app.projects = app.boot.projects;
   app.pendingRuns = saved.pendingRuns || {};
+  app.completedAuto = saved.completedAuto || null;
   app.project = saved.project || null;
   app.sourceTab = saved.sourceTab || "upload";
   app.source = saved.source || null;

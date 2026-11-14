@@ -15,6 +15,24 @@ server and the page picks it up again.
 
 ## Projects and Workshop
 
+In Studio, turn on **Auto mode** in Source and click **Auto-dub source** to analyze,
+translate and generate without pausing at Review lines. **Auto-dub** in the top bar
+also runs the flow; from Review lines, Dub or Result it uses the existing edited
+lines and speaker voices. It uses the current Dub settings. Missing translations,
+a changed dub language or a failed analysis stop Auto for review. Use **Translate
+again** to apply a changed language, and **Interrupt Auto** to stop a running Auto.
+By-hand transcription needs its pasted reply first; by-hand rewrites need to be
+applied in Review lines before running Auto.
+
+**Batch generate** in the top bar lets you select saved projects and run Auto on
+each in turn with its saved settings. Projects with reviewed lines keep those
+edits; projects with only a source are analyzed first. A failed project is marked
+and the next starts. **Stop batch** interrupts the current project and skips the
+remaining projects. Progress and results stay available after closing or reloading
+the page. The queue lives on this server: restarting it ends the queue, while
+completed analysis and dubs are kept. **Open** beside a queued project loads its
+lines and settings. API keys are used for the run only.
+
 **Dubbing** is also available in **Prism Workshop**. Click **New project** to open a
 blank Source step. Upload a file or pick one **From Media**, choose the languages
 and processing settings, then click **Save project** and enter a new name.
