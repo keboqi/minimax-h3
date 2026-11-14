@@ -1915,13 +1915,18 @@ def _video_seconds(source: Path) -> float | None:
 
 
 def _video_size(source: Path) -> tuple[int, int] | None:
-    """The first video stream's (width, height), or None when it cannot be read."""
-    cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-           "-of", "csv=p=0:s=x", str(source)]
+    """The first video's displayed size, matching FFmpeg's autorotation when burning subtitles."""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+           "stream=width,height:stream_side_data=rotation", "-of", "json", str(source)]
     try:
         proc = run_media_process(cmd, capture_output=True, text=True, timeout=30)
-        width, height = (int(value) for value in proc.stdout.split()[0].split("x")[:2])
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        stream = json.loads(proc.stdout)["streams"][0]
+        width, height = int(stream["width"]), int(stream["height"])
+        rotation = next((float(side["rotation"]) for side in stream.get("side_data_list", [])
+                         if "rotation" in side), 0.0)
+        if abs(rotation) % 180 == 90:
+            width, height = height, width
+    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError):
         return None
     return (width, height) if proc.returncode == 0 and width > 0 and height > 0 else None
 

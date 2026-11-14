@@ -55,6 +55,28 @@ class Workspace(unittest.TestCase):
         self._tmp.cleanup()
 
 
+class VideoSizeTests(unittest.TestCase):
+    def test_subtitle_canvas_matches_the_autorotated_picture(self):
+        for rotation in (None, 0, 90, -90, 180, 270):
+            with self.subTest(rotation=rotation):
+                stream = {"width": 1920, "height": 1080}
+                if rotation is not None:
+                    stream["side_data_list"] = [{"rotation": rotation}]
+                response = subprocess.CompletedProcess([], 0, json.dumps({"streams": [stream]}), "")
+                with patch.object(pipeline, "run_media_process", return_value=response):
+                    size = pipeline._video_size(Path("phone.mp4"))
+                expected = (1080, 1920) if rotation in (90, -90, 270) else (1920, 1080)
+                self.assertEqual(size, expected)
+
+    def test_unreadable_video_size_falls_back(self):
+        for output in ("invalid", "{}", '{"streams": []}',
+                       '{"streams": [{"width": 0, "height": 1080}]}'):
+            with self.subTest(output=output):
+                response = subprocess.CompletedProcess([], 0, output, "")
+                with patch.object(pipeline, "run_media_process", return_value=response):
+                    self.assertIsNone(pipeline._video_size(Path("broken.mp4")))
+
+
 class SegmentTests(unittest.TestCase):
     def test_times_parse_leniently_and_format_back(self):
         self.assertEqual(segments.parse_time("01:13.500"), 73.5)
