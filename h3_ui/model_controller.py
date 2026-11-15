@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable
 import gradio as gr
 from h3_models import DEFAULT_LTX25_MODEL, MODEL_SPECS, resolve_hf_token, stale_model_keys, sync_models
 from h3_app import model_service
-from h3_app.catalog import LTX25_UPSCALE
+from h3_app.catalog import LTX25_UPSCALE, LTX25_WORKFLOWS
 from h3_app.errors import H3Error
 from h3_app.model_types import (
     ModelConfig,
@@ -160,6 +160,27 @@ class ModelController:
             f"**Installed: {installed}/{len(keys)}**\n\n| Model | ComfyUI folder | Status | Source / license |\n|---|---|---|---|\n"
             + "\n".join(rows)
         )
+
+    def ltx25_workflow_status(self) -> list[dict[str, Any]]:
+        """Each official workflow with the model files it still needs, as the LTX page lists them."""
+        root = self.services._runtime_config().comfy_dir / "models"
+        ready = {}
+
+        def installed(key: str) -> bool:
+            if key not in ready:
+                spec = MODEL_SPECS[key]
+                ready[key] = model_file_is_ready(root / spec.folder / spec.local_name)
+            return ready[key]
+
+        rows = []
+        for label, entry in LTX25_WORKFLOWS.items():
+            keys = ltx25_workflow_model_keys(label)
+            rows.append({
+                "label": label, "id": entry["id"], "description": entry["description"], "inputs": entry["inputs"],
+                "total": len(keys), "missing": [MODEL_SPECS[key].local_name for key in keys if not installed(key)],
+                "json": f"/ltx25-workflows/{entry['id']}.json",
+            })
+        return rows
 
     def render_ltx25_workflow_details(self, workflow_label: str) -> str:
         entry = ltx25_workflow_entry(workflow_label)

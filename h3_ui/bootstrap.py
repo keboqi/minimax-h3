@@ -281,6 +281,24 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             library=lambda: engine_handlers["remake"].library,
         ))
         demo.h3_routes = (*demo.h3_routes, partial(install_song_page, pages=song_pages))
+        from .ltx.page import (
+            LtxPageServices, LtxPageState, fields_of as ltx_fields_of, install_ltx_page, media_targets as ltx_media_targets,
+            private_ltx_root,
+        )
+
+        # The LTX page takes its options, their defaults and their limits from its unseen Gradio view.
+        ltx_handlers = engine_handlers["ltx"]
+        ltx_pages = LtxPageState(LtxPageServices(
+            root=lambda: private_ltx_root(services.engine_deps.runtime_config(), JOBS.store.root),
+            fields=ltx_fields_of(engine_views["ltx"]),
+            enhance=ltx_handlers.enhance_ltx25_prompt,
+            workflows=ltx_handlers.ltx25_workflow_status,
+            prepare=ltx_handlers.prepare_ltx25_official_workflow,
+            prepare_all=ltx_handlers.prepare_all_ltx25_official_models,
+            interrupt=services.interrupt,
+            library=lambda: engine_handlers["remake"].library,
+        ))
+        demo.h3_routes = (*demo.h3_routes, partial(install_ltx_page, pages=ltx_pages))
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -344,14 +362,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         destinations = {}
         for feature in FEATURES:
             # Remake's pictures are delivered to its page directly, below.
-            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music", "remake"}:
+            if feature.id not in {"qwen", "flux3", "moss_image", "fibo2", "music", "remake", "ltx"}:
                 destinations.update(feature.destinations_of(engine_views[feature.id]))
         # The Image page has its own Media library picker, as MiniMax H3's does.
         set_as = build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
             page_targets={**remake_media_targets(engine_handlers["remake"]),
-                          "Song · Visual inspiration": song_pages.receive},
+                          "Song · Visual inspiration": song_pages.receive, **ltx_media_targets(ltx_pages)},
             apply_on=[app_views.create_tab.select] if app_views.create_tab is not None else [],
         )
         from .media.page import MediaPageServices, MediaPageState, install_media_page

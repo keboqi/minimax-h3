@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LTX 2.5</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="editor" class="editor" hidden>
+  <p id="workshop-note" class="notice" hidden>Prepare the prompt, keyframes and settings here, then open LTX 2.5 in Studio to generate on the GPU.</p>
+  <section class="bar" aria-label="LTX 2.5 run">
+    <div class="seg wrap" role="group" aria-label="Mode" id="mode"></div>
+    <span class="small muted grow" id="mode-help"></span>
+    <div class="action">
+      <div class="readiness">
+        <div class="steps" id="steps"></div>
+        <p class="small muted" role="status" id="readiness"></p>
+      </div>
+      <button type="button" class="btn quiet" id="refresh">Refresh status</button>
+      <button type="button" class="btn" id="stop" hidden>Interrupt</button>
+      <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter">Generate with LTX 2.5 <kbd aria-hidden="true">Ctrl ↵</kbd></button>
+    </div>
+  </section>
+  <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+
+  <div class="workarea">
+    <div class="main">
+      <section class="panel" aria-label="Viewer">
+        <div class="head">
+          <div class="seg wrap" role="group" aria-label="Generated video" id="takes"></div>
+          <span class="small muted mono" id="viewer-line"></span>
+        </div>
+        <div class="stage" id="stage">
+          <video id="result-video" controls playsinline preload="metadata" hidden></video>
+          <div class="stage-empty" id="stage-empty"><strong id="empty-title">Nothing generated yet</strong><span id="empty-line">Write a prompt on the right, then press Generate with LTX 2.5.</span></div>
+        </div>
+        <div class="row line">
+          <span class="small muted mono grow" id="result-name"></span>
+          <a class="btn" id="download" hidden download>Download</a>
+        </div>
+        <div class="review-line small" id="result-review" hidden></div>
+        <details class="line-details" id="settings-used-box">
+          <summary>Settings used for this result</summary>
+          <div class="settings-used" id="settings-used">Settings used will appear with the generated result.</div>
+        </details>
+      </section>
+
+      <section class="panel next-run" aria-label="Next run">
+        <div class="summary-line"><strong>Next run</strong><span class="small muted" id="summary"></span></div>
+        <div class="chips" id="summary-chips"></div>
+        <div class="row">
+          <button type="button" class="btn quiet" id="restore">Restore LTX defaults</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="fine-toggle" aria-expanded="false" aria-controls="fine">Fine-tune <span class="chip warn" id="fine-count" hidden></span></button>
+        </div>
+      </section>
+
+      <section class="panel fine" id="fine" aria-label="Fine-tune" hidden>
+        <div class="head line-below">
+          <h2>Fine-tune</h2>
+          <span class="small muted grow">Everything beyond the basics, grouped by what it changes. A group's badge counts the settings you changed there.</span>
+          <button type="button" class="btn quiet" id="fine-close">Close</button>
+        </div>
+        <div class="fine-body">
+          <nav class="fine-nav" aria-label="Fine-tune groups" id="fine-nav"></nav>
+          <div class="fine-content">
+            <div class="row between">
+              <h3 id="fine-title"></h3>
+              <div class="row tightrow" id="models-actions" hidden>
+                <button type="button" class="btn compact" id="models-refresh">Refresh</button>
+                <button type="button" class="btn compact primary" id="models-all">Download all missing</button>
+              </div>
+            </div>
+            <p class="small muted" id="fine-detail"></p>
+            <p class="status" id="models-status" role="status" hidden></p>
+            <div id="fine-rows"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel inspector" aria-label="Compose">
+      <section class="block" id="keyframes" aria-label="Keyframes" hidden>
+        <h3>Keyframes <span class="small muted">start required · middle and end optional</span></h3>
+        <div class="key-grid" id="key-list"></div>
+        <div class="timeline" aria-hidden="true">
+          <span class="track"></span>
+          <span class="mark on" style="left: 0"></span>
+          <span class="mark" id="middle-mark"></span>
+          <span class="mark" id="end-mark" style="left: 100%"></span>
+        </div>
+        <p class="small muted">Drop pictures on a slot, upload them, or pick them from the Media library.</p>
+      </section>
+
+      <section class="block" id="references" aria-label="Reference sheet" hidden>
+        <div class="row between">
+          <h3>Reference sheet <span class="small muted" id="reference-count"></span></h3>
+          <span class="chip warn">Locked to 768×448 · 5 s at 24 fps</span>
+        </div>
+        <div class="ref-grid" id="reference-list"></div>
+        <p class="small muted">Pictures of characters, props and settings become panels on one sheet. Write the prompt with <span class="mono">Reference sheet:</span> and <span class="mono">Generated video:</span> sections.</p>
+      </section>
+
+      <section class="block" aria-label="Prompt">
+        <div class="row between">
+          <label class="strong" for="prompt">Prompt</label>
+          <button type="button" class="btn quiet" id="empty" title="Clear prompt and all pictures">Empty</button>
+        </div>
+        <textarea id="prompt" class="field prompt" rows="8" placeholder="Describe the action chronologically, then the setting, camera movement, lighting, dialogue, sound effects and music."></textarea>
+        <div class="row">
+          <button type="button" class="btn" id="enhance">Generate / enhance prompt</button>
+          <span class="small muted grow" id="writer-line"></span>
+          <button type="button" class="link" id="open-writer">Writer service &amp; keys</button>
+        </div>
+        <p class="small muted" id="enhance-status" role="status"></p>
+        <div class="suggestion" id="suggestion-box" hidden>
+          <strong class="small">Suggested prompt</strong>
+          <pre id="suggestion"></pre>
+          <div class="row">
+            <button type="button" class="btn primary" id="accept">Accept suggested prompt</button>
+            <button type="button" class="btn" id="keep">Keep original</button>
+          </div>
+        </div>
+        <button type="button" class="btn quiet start" id="undo" hidden>Undo accepted prompt</button>
+        <details id="negative-box">
+          <summary>Negative prompt <span class="chip" id="negative-chip">optional</span></summary>
+          <textarea id="negative" class="field area" rows="3" aria-label="Negative prompt"></textarea>
+        </details>
+      </section>
+
+      <section class="block last" aria-label="Output">
+        <div class="row between">
+          <h3>Output</h3>
+          <button type="button" class="link" id="open-model">Model &amp; sampling</button>
+        </div>
+        <label class="row setting"><span class="small muted name">Seconds</span>
+          <input type="range" id="duration" class="grow">
+          <span class="mono small value" id="duration-value"></span></label>
+        <div class="row setting"><span class="small muted name">Aspect ratio</span>
+          <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div></div>
+        <div class="row setting"><span class="small muted name">Size</span>
+          <div class="seg wrap" role="group" aria-label="Size" id="tier"></div></div>
+        <div class="row between line-above">
+          <span class="small" id="resolution"></span>
+          <button type="button" class="link" id="open-size">Exact size &amp; frame rate</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="loading" class="loading" role="status">Opening LTX 2.5…</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="library" class="library" aria-label="Media library"></dialog>
+<input id="file-input" type="file" accept="image/*" hidden>
+<script src="app.js"></script>
+</body>
+</html>

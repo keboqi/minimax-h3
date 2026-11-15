@@ -795,9 +795,9 @@ class UiContractTests(unittest.TestCase):
                 if c.get("props", {}).get("label") == label
             ]
             self.assertEqual(len(keys), 8, label)  # Soundstage's are on its page.
-            # MiniMax H3's, Image's and Song's writers are on their pages; their Gradio views stay built, unseen.
+            # MiniMax H3's, Image's, Song's and LTX's writers are on their pages; their Gradio views stay built, unseen.
             hidden = [hidden_by_ancestor(key) for key in keys]
-            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 4, label)
+            self.assertEqual(sum(hidden), 8 if label.startswith("Temporary OpenAI") else 5, label)
 
         endpoints = {
             dependency.get("api_name"): dependency

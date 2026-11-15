@@ -17,6 +17,8 @@ H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
             'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 IMAGE_FRAME = ('<iframe class="h3-video-frame" src="/image/" title="Image" '
                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+LTX_FRAME = ('<iframe class="h3-video-frame" src="/ltx/" title="LTX 2.5" '
+             'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 SONG_FRAME = ('<iframe class="h3-video-frame" src="/song/" title="Song" '
               'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 MEDIA_FRAME = ('<iframe class="h3-video-frame" src="/media/" title="Media" '
@@ -145,7 +147,11 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
                     # The Gradio view stays built but unseen: its job callback runs the page's generations.
                     image = gr.Column(elem_classes=["h3-engine-view"], visible=False)
                 with gr.Tab("LTX 2.5", id="ltx"):
-                    ltx25 = gr.Group(elem_classes=["h3-engine-view"])
+                    # Everything people do happens on the page at /ltx/ (ltx/page.py), outside Gradio.
+                    gr.HTML(LTX_FRAME)
+                    # The Gradio view stays built but unseen: its job callback runs the page's videos, and it
+                    # keeps the published API endpoints.
+                    ltx25 = gr.Group(elem_classes=["h3-engine-view"], visible=False)
                 with gr.Tab("Qwen Image 2.1", id="qwen"):
                     qwen = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Song", id="song"):

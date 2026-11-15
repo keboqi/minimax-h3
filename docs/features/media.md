@@ -6,7 +6,7 @@ available from Media and as automatic H3 finishing.
 ## Result scores and automatic tags
 
 With **Score results and tag them** on (the default; it sits with the prompt
-writer on the MiniMax H3, Image and Song pages, and Storyboard follows MiniMax
+writer on the MiniMax H3, Image, Song and LTX 2.5 pages, and Storyboard follows MiniMax
 H3's), each saved video, image, Storyboard take and song is sent with its prompt
 to Gemini Decision (`h3_app/media_review.py`) in a background thread, so
 generation never waits for it. One request asks how well the result fits the

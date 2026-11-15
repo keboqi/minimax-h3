@@ -16,19 +16,23 @@ Hugging Face license and, before using LTX upscaling, the separate
 license. For standalone use, authenticate once with `hf auth login`; the server
 automatically uses the active CLI credential. `HF_TOKEN` remains supported and
 takes priority when set, including for Modal deployment secrets.
+The tab shows the LTX 2.5 page at `/ltx/` (`h3_ui/ltx/page.py`), outside Gradio,
+like the MiniMax H3, Image and Song pages: the mode, prompt, keyframes or
+reference sheet, output size and a Fine-tune panel, with each owner's draft
+saved on the server. The Gradio view stays built but unseen; its job callback
+runs the page's videos and it keeps the published API endpoints.
 Image-to-video accepts a required start keyframe plus optional middle and end
 keyframes. The middle position and each keyframe's conditioning strength are
-configurable; text-to-video does not load or apply image guides.
-The tab's **Official workflows and model downloads** section installs the upstream JSON
+configurable; text-to-video does not load or apply image guides. Reference
+images locks the size to 768×448, 5 seconds at 24 fps, as Ingredients requires.
+The page's **Fine-tune → Workflows & models** group installs the upstream JSON
 templates under **Workflows → Browse → LTX 2.5** in the proxied ComfyUI editor.
 Modal re-synchronizes these image-local templates from the pinned LTXVideo node
 on every cold start before launching ComfyUI. The LTXVideo HDR dependencies
 use NumPy 1.26-compatible Colour Science 0.4.6 and OpenImageIO 3.0.12;
 Kornia 0.8.3 works with the node's updated pyramid blending import.
-Its open **Official workflows and model downloads** panel shows live model
-availability and Hugging Face source/license links. It can download every model
-for the selected workflow or every missing model in the displayed inventory at
-once. The official LTX 2.5 templates intentionally reuse LTX 2.3 IC-LoRAs; this
+It lists each official workflow with the model files it still needs and its
+JSON, and can download one workflow's models or every missing model at once. The official LTX 2.5 templates intentionally reuse LTX 2.3 IC-LoRAs; this
 is not a version mismatch. Each IC-LoRA repository may require its own Hugging
 Face license acceptance; accepting the main LTX-2.5 license does not grant
 access to all of them.

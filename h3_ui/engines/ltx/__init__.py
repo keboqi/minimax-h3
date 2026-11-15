@@ -82,6 +82,9 @@ class LtxHandlers:
     def render_ltx25_workflow_details(self, workflow_label: str) -> str:
         return self.deps.models().render_ltx25_workflow_details(workflow_label)
 
+    def ltx25_workflow_status(self) -> list[dict]:
+        return self.deps.models().ltx25_workflow_status()
+
     def render_ltx25_official_model_inventory(self) -> str:
         return self.deps.models().render_ltx25_official_model_inventory()
 
