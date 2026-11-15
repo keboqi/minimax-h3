@@ -14,6 +14,36 @@ from tests.test_dub_page import PageTests
 class DubbingBrowserTests(PageTests):
     gpu = True
 
+    def test_timeline_scrolls_to_line_in_board_and_table(self):
+        session = self.session([
+            {"start": i * 2, "end": i * 2 + 1, "speaker": "speaker1",
+             "source": f"Line {i + 1}", "translation": f"Translation {i + 1}"}
+            for i in range(40)
+        ])
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page.route("http://dubbing.test/**", self.serve)
+            state = {"screen": "review", "sessionId": session.id}
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+            for table in (False, True):
+                if table:
+                    page.locator('[data-action="table-open"]').click()
+                else:
+                    # Timeline navigation must reveal a line hidden by the current filter.
+                    page.locator('[data-filter="untranslated"]').click()
+                    expect(page.locator(".line-list .line-row")).to_have_count(0)
+                page.locator('.timeline [data-line="35"]').click()
+                row = page.locator('.lines-table tr[data-row="35"]' if table else '.line-row.selected')
+                expect(row).to_be_in_viewport(ratio=1)
+                expect(page.locator(".inspector h2")).to_have_text("Line 36")
+                self.assertGreater(page.evaluate("window.scrollY"), 500)
+                if not table:
+                    expect(row).to_contain_text("Translation 36")
+                    expect(page.locator('[data-filter="all"]')).to_have_attribute("aria-pressed", "true")
+            browser.close()
+
     def test_auto_controls_and_batch_generation(self):
         session = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hello",
                                  "translation": "Bonjour"}])

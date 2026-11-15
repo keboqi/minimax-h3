@@ -438,7 +438,13 @@ export function bindReview(app) {
     const index = Number(target.dataset.line);
     if (action === "focus") {
       app.focus = index;
+      const fromTimeline = target.classList.contains("block");
+      if (fromTimeline && !visible(app, app.session.board.lines[index], index)) app.filter = "all";
       app.render();
+      if (fromTimeline) {
+        const row = screen.querySelector(app.table ? `.lines-table tr[data-row="${index}"]` : ".line-row.selected");
+        row?.scrollIntoView({block: "center", inline: "nearest"});
+      }
     } else if (action === "pick") {
       if (target.checked) app.picks.add(index); else app.picks.delete(index);
       app.render();
