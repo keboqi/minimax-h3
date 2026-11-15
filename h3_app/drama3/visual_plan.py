@@ -163,6 +163,46 @@ def compile_plan(plan, duration, art_direction, limit):
     return shots
 
 
+def edit_shot(plan, index, *, prompt=None, transition=None):
+    """A copy of ``plan`` with one shot's image prompt or incoming transition changed."""
+    rows = plan.get("shots") if isinstance(plan, dict) else None
+    if not isinstance(rows, list) or not isinstance(index, int) or not 0 <= index < len(rows):
+        raise H3Error("That shot is not in the current shot plan. Reload the page and try again.")
+    row = dict(rows[index])
+    if prompt is not None:
+        if not _text(prompt):
+            raise H3Error("A shot needs an image prompt.")
+        row["prompt"] = " ".join(prompt.split())
+    if transition is not None:
+        if transition not in ("cut", "dissolve"):
+            raise H3Error("A shot comes in with a cut or a dissolve.")
+        row["transition"] = transition
+    return {**plan, "shots": [*rows[:index], row, *rows[index + 1:]]}
+
+
+def edit_subject(plan, kind, key, anchor):
+    """A copy of ``plan`` with one character's, prop's or place's looks changed."""
+    if not _text(anchor):
+        raise H3Error("Describe how it looks.")
+    if kind == "characters" and all(plan.get(name) is None for name in KINDS) and "continuity" in plan:
+        kind = "continuity"  # a legacy plan keeps its characters there
+    group = plan.get(kind) if kind in (*KINDS, "continuity") else None
+    if not isinstance(group, dict) or key not in group:
+        raise H3Error("That character, prop or place is not in the current shot plan. Reload the page.")
+    return {**plan, kind: {**group, key: " ".join(anchor.split())}}
+
+
+def mentions(plan):
+    """The subject keys each shot of ``plan`` shows, in order of first mention."""
+    known = subjects(plan)
+    found = []
+    for row in plan.get("shots") or []:
+        _, keys = expand_prompt(str(row.get("prompt") or ""), known)
+        listed = [key for key in row.get("references") or [] if isinstance(key, str) and key in known]
+        found.append(tuple(dict.fromkeys([*keys, *listed])))
+    return found
+
+
 MAX_SHOTS = 200
 
 

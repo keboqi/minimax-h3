@@ -1,5 +1,9 @@
-// Video view and local controls for Soundstage.
-export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, interruptVideo, copyPlannerPrompt, applyPlannerReply, getPlayer, setPlayer}) {
+// The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
+// along the mix in the shared player. Save to Media renders them as a video from the player.
+export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
+  const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Prompt changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
+  const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
+
   function videoRunning(kind) {
     const run = state.videoRun;
     return Boolean(run?.active && (!kind || run.kind === kind));
@@ -47,9 +51,42 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
                         onclick: saveVideoToMedia}, saving ? "Saving to Media…" : "Save to Media");
   }
 
+  const rowsOf = () => state.project.video?.plan?.rows || [];
+  const needsDrawing = (rows) => rows.filter((row) => row.status !== "drawn").length;
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const shotAt = (rows, time) => {
+    let index = -1;
+    for (const row of rows) if (row.start <= time + 0.01) index = row.index;
+    return index;
+  };
+
+  /** Pick a shot: it opens in the panel, and the player jumps to it so its image shows there. */
+  function pickShot(index, {jump = true} = {}) {
+    const row = rowsOf()[index];
+    if (!row) return;
+    state.shotPick = index;
+    if (jump) seek(row.start);
+    if (state.screen === "illustrate") {
+      renderIllustrate();
+      // Bring the picked row into the list's view without moving the page.
+      const list = $("shot-list");
+      const item = list?.querySelector(`.shot-row[data-shot="${index}"]`);
+      if (item && (item.offsetTop < list.scrollTop || item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight)) {
+        list.scrollTo({top: item.offsetTop - list.offsetTop - 8, behavior: "smooth"});
+      }
+    }
+    for (const clip of document.querySelectorAll("#lanes .shot-clip")) {
+      clip.setAttribute("aria-pressed", String(Number(clip.dataset.shot) === index));
+    }
+  }
+
   // The stills on the mix's clock: the shot under the playhead, dissolving in over the one before it.
   const preloaded = new Set();
   function paintStills(time) {
+    const rows = rowsOf();
+    const current = shotAt(rows, time);
+    for (const clip of document.querySelectorAll("#lanes .shot-clip")) clip.classList.toggle("active", Number(clip.dataset.shot) === current);
+    for (const item of document.querySelectorAll("#shot-list .shot-row")) item.classList.toggle("playing", Number(item.dataset.shot) === current);
     const back = $("still-back"), front = $("still-front");
     const shots = state.project.video?.stills?.shots;
     if (!back || !front || !shots?.length) return;
@@ -67,88 +104,289 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     }
   }
 
+  /** The player's Shots lane: one block per planned shot, showing its image once drawn. */
+  function shotLane(place) {
+    const rows = rowsOf();
+    if (!rows.length || (state.screen !== "illustrate" && state.mediaMode !== "video")) return null;
+    const lane = h("div", {class: "lane shot-lane"}, rows.map((row) => h("button", {
+      type: "button", class: `shot-clip shot-${row.status}`, "data-shot": row.index,
+      "aria-pressed": String(row.index === state.shotPick),
+      "aria-label": `Shot ${row.index + 1}, ${clock(row.start)}: ${row.beat} (${STATUS[row.status][0]})`,
+      title: `Shot ${row.index + 1} · ${row.beat}`,
+      style: {...place(row.start, row.end), ...(row.image ? {backgroundImage: `url("${row.image}")`} : {})},
+      onclick: (event) => { event.stopPropagation(); pickShot(row.index); },
+    }, h("span", {"aria-hidden": "true"}, row.index + 1))));
+    return {name: h("span", {class: "lane-name shot-lane-name"}, "Images"), lane};
+  }
+
   function videoField(label, input, hint) {
     return h("label", {class: "field"}, h("span", {class: "label"}, label), input,
              hint ? h("span", {class: "muted small"}, hint) : null);
   }
 
-  function renderVideo() {
-    const box = $("video-panel");
-    const boot = state.boot.video;
-    const video = state.project.video;
-    box.hidden = !boot || !video;
-    if (box.hidden) return;
-    // Leave the panel alone while one of its fields is being typed in.
-    if (box.contains(document.activeElement) && document.activeElement.matches("input, textarea")) return;
-    const result = state.project.result;
-    const planning = videoRunning("plan");
-    const drawing = videoRunning("draw");
-    const shown = visualSource();
-    const save = (body) => saveVideo(body);
-    const presets = [...Object.keys(boot.styles), boot.custom_style];
-    const rows = video.plan.rows;
-    const run = state.videoRun;
-    const note = run && (run.active || run.error || run.status)
-      ? h("p", {class: `slot-note${run.error ? " error" : ""}`}, run.error || run.status) : null;
-    const limitCount = h("span", {class: "num small"}, video.limit);
-    box.replaceChildren(
-      h("div", {class: "card-head"},
-        h("h2", {}, "Illustrated video"),
-        h("span", {class: "muted small"}, "Images drawn shot by shot with an Image model slide along the mix here. "
-          + "Save to Media renders them as a 720p video."),
-        h("span", {class: "spacer"}),
-        shown ? h("button", {type: "button", class: "btn btn-small", onclick: () => { setMediaMode("video"); window.scrollTo({top: 0, behavior: "smooth"}); }},
-          shown === "stills" ? "Watch with the mix" : "Watch the latest video") : null),
-      !result ? h("p", {class: "video-empty muted"}, "Speak the project first: the video is drawn from its getPlayer().") : h("div", {class: "video-body"},
-        h("div", {class: "video-settings"},
-          videoField("Image model", h("select", {onchange: (event) => save({video_engine: event.target.value})},
-            boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
-            "Draws with the Image tab's settings for that model."),
-          videoField("Style preset", h("select", {onchange: (event) => {
-            const style = boot.styles[event.target.value];
-            if (style) save({video_style: style});
-          }}, presets.map((name) => h("option", {selected: name === video.preset, disabled: name === boot.custom_style && video.preset !== name}, name)))),
-          videoField("Art direction", h("textarea", {rows: 3, value: video.style, oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
-            "Controls the medium and rendering across all shots. Add a setting, era or visual constraint; "
-              + "each scene gets its own lighting. Editing makes the preset Custom. Plan again after changes."),
-          videoField("Minimum shots", h("span", {class: "range-row"},
-            h("input", {type: "range", min: boot.limits[0], max: boot.limits[1], step: 1, value: video.limit,
-                        oninput: (event) => { limitCount.textContent = event.target.value; },
-                        onchange: (event) => save({video_limit: Number(event.target.value)})}), limitCount),
-            "A floor: the planner adds images wherever the story needs them, up to one per 2 seconds."),
-          h("label", {class: "check"}, h("input", {type: "checkbox", checked: video.continuity,
-            onchange: (event) => save({video_continuity: event.target.checked})}), "Keep characters consistent"),
-          h("div", {class: "row-buttons"},
-            h("button", {type: "button", class: "btn", disabled: planning || drawing, onclick: planShots},
-              planning ? "Planning…" : rows.length ? "Plan again" : "Plan shots"),
-            drawing
-              ? h("button", {type: "button", class: "btn", onclick: interruptVideo}, "Interrupt")
-              : h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: !rows.length || planning || !state.boot.gpu,
-                             title: rows.length ? "" : "Plan shots first", onclick: drawImages},
-                  video.stills ? "Draw the images again" : "Draw the images")),
-          note,
-          h("details", {class: "more"},
-            h("summary", {}, "Use another chat model"),
-            h("div", {class: "more-body"},
-              h("p", {class: "muted small"}, "Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked like the built-in planner's."),
-              h("button", {type: "button", class: "btn btn-small", onclick: copyPlannerPrompt}, "Copy full planner prompt"),
-              h("label", {class: "field"}, h("span", {class: "label"}, "Pasted planner reply"),
-                h("textarea", {rows: 4, id: "plan-reply", placeholder: '{"art_style": "...", "shots": [...]}'})),
-              h("button", {type: "button", class: "btn btn-small", onclick: applyPlannerReply}, "Apply pasted plan")))),
-        h("div", {class: "video-plan"},
-          h("span", {class: "label"}, rows.length ? `Shot plan · ${rows.length} shots` : "Shot plan"),
-          rows.length ? h("div", {class: "table-wrap plan-wrap"}, h("table", {class: "plan-table"},
-            h("thead", {}, h("tr", {}, ["Time", "", "Story beat", "Image prompt"].map((label) => h("th", {scope: "col"}, label)))),
-            h("tbody", {}, rows.map((row) => h("tr", {},
-              h("td", {class: "num"}, h("button", {type: "button", class: "link", onclick: () => seek(row.start, false)},
-                `${clock(row.start)}–${clock(row.end)}`)),
-              h("td", {}, h("span", {class: `kind ${row.transition === "Cut" ? "kind-shot" : "kind-loop"}`}, row.transition)),
-              h("td", {}, row.beat),
-              h("td", {class: "muted"}, row.prompt))))))
-            : h("p", {class: "muted small"}, video.plan.stale
-              ? "The saved plan was made for a different Art direction or Minimum shots. Plan again, or set them back."
-              : "Plan shots to see each image's time, story beat and prompt here before drawing."))));
+  function statusChip(status) {
+    const [label, name] = STATUS[status];
+    return h("span", {class: `status ${name}`}, label);
   }
 
-  return {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo};
+  function thumb(row) {
+    return h("span", {class: "shot-thumb"},
+      row.image ? h("img", {src: row.image, alt: "", loading: "lazy"}) : h("span", {class: "shot-empty"}, "Not drawn"),
+      h("span", {class: "shot-number"}, row.index + 1));
+  }
+
+  // -- The Mix & review pointer ----------------------------------------------
+  function renderPointer() {
+    const box = $("video-panel");
+    const video = state.project.video;
+    box.hidden = !state.boot.video || !video || !state.project.result;
+    if (box.hidden) return;
+    const rows = rowsOf();
+    const needs = needsDrawing(rows);
+    box.replaceChildren(
+      h("div", {class: "video-pointer-text"},
+        h("h2", {}, "Illustrated video"),
+        h("span", {class: "muted small"}, !rows.length ? "Plan shots and draw them in the Illustrate step; they play in this player's Video view."
+          : needs ? `${plural(rows.length, "shot")} planned, ${needs} still to draw. Video shows the drawn ones here.`
+          : `${plural(rows.length, "shot")} drawn. Switch the player to Video to watch, or Save to Media.`)),
+      h("button", {type: "button", class: "btn btn-small", onclick: () => show("illustrate")}, "Open Illustrate"));
+  }
+
+  // -- The Illustrate step ---------------------------------------------------
+  function renderShotList(rows) {
+    const video = state.project.video;
+    const needs = needsDrawing(rows);
+    if (state.shotFilter === "needs" && !needs) state.shotFilter = "all";
+    const shown = state.shotFilter === "needs" ? rows.filter((row) => row.status !== "drawn") : rows;
+    const head = h("div", {class: "seg", role: "group", "aria-label": "Show shots"},
+      [["all", `All ${rows.length}`], ["needs", `Needs drawing ${needs}`]].map(([id, label]) => h("button", {
+        type: "button", "aria-pressed": String(state.shotFilter === id), disabled: id === "needs" && !needs,
+        onclick: () => { state.shotFilter = id; renderIllustrate(); }}, label)));
+    if (!rows.length) {
+      return [null, h("div", {class: "illustrate-empty"},
+        h("strong", {}, video.plan.stale ? "The saved plan was made for other settings" : "No shot plan yet"),
+        h("p", {class: "muted"}, video.plan.stale
+          ? "It was planned for a different Art direction or Minimum shots. Plan again, or set them back in How it's drawn."
+          : "Plan shots reads the timed mix, its Cast voices and the art direction, then picks one image per story beat."))];
+    }
+    const list = h("ol", {class: "shot-list", id: "shot-list"}, shown.map((row) => h("li", {},
+      h("button", {type: "button", class: "shot-row", "data-shot": row.index, "aria-pressed": String(row.index === state.shotPick),
+                   onclick: () => pickShot(row.index)},
+        thumb(row),
+        h("span", {class: "shot-body"},
+          h("span", {class: "shot-meta"},
+            h("span", {class: "num shot-time"}, `${clock(row.start)}–${clock(row.end)}`),
+            h("span", {class: `kind ${row.transition === "Cut" ? "kind-shot" : "kind-loop"}`}, row.transition),
+            statusChip(row.status)),
+          h("span", {class: "shot-beat"}, row.beat),
+          h("span", {class: "shot-prompt muted"}, row.prompt))))));
+    return [head, list];
+  }
+
+  function renderLooks() {
+    const plan = state.project.video.plan;
+    if (!plan.subjects.length) {
+      return h("div", {class: "illustrate-empty"}, h("strong", {}, plan.rows.length ? "No recurring characters, props or places" : "No shot plan yet"),
+        h("p", {class: "muted"}, plan.rows.length ? "The planner found nothing that recurs across shots." : "Plan shots first: the planner writes how each character, prop and place looks."));
+    }
+    const busy = videoRunning();
+    return h("div", {class: "looks"}, KINDS.map(([kind, title]) => {
+      const items = plan.subjects.filter((item) => item.kind === kind);
+      if (!items.length) return null;
+      return h("section", {class: "looks-group", "aria-label": title},
+        h("h3", {}, title),
+        h("div", {class: `looks-grid looks-${kind}`}, items.map((item) => {
+          const voice = kind === "characters" && item.voice ? h("div", {class: "look-voice"},
+            h("span", {class: "label"}, `Voice from Cast & sounds · ${item.speaker}`),
+            h("span", {class: "small"}, item.voice),
+            item.conflicts?.length ? h("p", {class: "look-conflict", role: "alert"},
+              h("strong", {}, "The looks disagree with the voice. "), item.conflicts.join(" "),
+              " Edit the looks below, or the voice in Cast & sounds.") : null) : null;
+          const art = kind === "characters"
+            ? h("span", {class: "look-portrait"}, item.portrait ? h("img", {src: item.portrait, alt: `Portrait of ${item.key}`}) : h("span", {class: "shot-empty"}, "Drawn with its first shot"))
+            : null;
+          return h("article", {class: `look-card${item.conflicts?.length ? " look-warn" : ""}`},
+            art,
+            h("div", {class: "look-body"},
+              h("div", {class: "look-head"},
+                h("strong", {style: kind === "characters" && item.speaker ? {color: toneColor(speakerTone(item.speaker))} : {}}, item.key),
+                h("span", {class: "muted small"}, `In ${plural(item.uses, "shot")}`),
+                item.portrait && item.portrait_current === false ? h("span", {class: "status status-changed"}, "Looks changed") : null),
+              voice,
+              h("label", {class: "field"}, h("span", {class: "label"}, "Looks in every shot"),
+                h("textarea", {rows: 3, value: item.anchor, disabled: busy,
+                               onchange: (event) => editSubject({kind, key: item.key, anchor: event.target.value})}))));
+        })));
+    }));
+  }
+
+  function renderInspector(rows) {
+    const box = $("shot-inspector");
+    box.hidden = !rows.length;
+    if (box.hidden) return;
+    if (!rows[state.shotPick]) state.shotPick = 0;
+    const row = rows[state.shotPick];
+    const busy = videoRunning();
+    const subjects = new Map(state.project.video.plan.subjects.map((item) => [item.key, item]));
+    const step = (by) => pickShot(Math.min(rows.length - 1, Math.max(0, row.index + by)));
+    const draw = {drawn: "Draw this shot again", changed: "Redraw with the new prompt", todo: "Draw this shot"}[row.status];
+    box.replaceChildren(
+      h("div", {class: "inspector-head shot-inspector-head"},
+        h("h2", {}, `Shot ${row.index + 1}`),
+        h("span", {class: "num"}, `${clock(row.start)}–${clock(row.end)}`),
+        statusChip(row.status),
+        h("span", {class: "spacer"}),
+        h("button", {type: "button", class: "btn btn-icon", "aria-label": "Previous shot", disabled: row.index === 0, onclick: () => step(-1)}, "‹"),
+        h("button", {type: "button", class: "btn btn-icon", "aria-label": "Next shot", disabled: row.index === rows.length - 1, onclick: () => step(1)}, "›")),
+      h("p", {class: "muted small"}, row.image ? "The player shows this shot while the playhead is on it." : "Not drawn yet: the player holds the image before it."),
+      h("div", {class: "field"}, h("span", {class: "label"}, "Story beat"), h("span", {class: "shot-inspector-beat"}, row.beat)),
+      h("label", {class: "field"}, h("span", {class: "label"}, "Image prompt"),
+        h("textarea", {rows: 6, value: row.prompt, disabled: busy, onchange: (event) => editShot({index: row.index, prompt: event.target.value})}),
+        h("span", {class: "muted small"}, "@name brings in a character, prop or place as Characters & places describes it.")),
+      row.subjects.length ? h("div", {class: "field"}, h("span", {class: "label"}, "Shows"),
+        h("div", {class: "shot-subjects"}, row.subjects.map((key) => h("button", {
+          type: "button", class: "chip chip-quiet", onclick: () => { state.illustrateView = "looks"; renderIllustrate(); },
+          title: subjects.get(key)?.anchor || ""}, key)))) : null,
+      h("div", {class: "field"}, h("span", {class: "label"}, "Comes in with"),
+        h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
+          type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
+          onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
+      h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy || !state.boot.gpu,
+                   onclick: () => drawImages([row.index])}, draw));
+  }
+
+  function renderSettings() {
+    const box = $("drawn-settings");
+    const boot = state.boot.video;
+    const video = state.project.video;
+    const busy = videoRunning();
+    const presets = [...Object.keys(boot.styles), boot.custom_style];
+    const limitCount = h("span", {class: "num small"}, video.limit);
+    box.replaceChildren(
+      h("div", {class: "drawn-settings-head"}, h("h2", {}, "How it's drawn"),
+        h("span", {class: "muted small"}, "Style and Minimum shots apply the next time you plan.")),
+      videoField("Image model", h("select", {onchange: (event) => saveVideo({video_engine: event.target.value})},
+        boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
+        "Draws with the Image tab's settings for that model."),
+      videoField("Style preset", h("select", {onchange: (event) => {
+        const style = boot.styles[event.target.value];
+        if (style) saveVideo({video_style: style});
+      }}, presets.map((name) => h("option", {selected: name === video.preset, disabled: name === boot.custom_style && video.preset !== name}, name)))),
+      videoField("Art direction", h("textarea", {rows: 4, value: video.style, oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
+        "The medium and rendering across all shots. Editing makes the preset Custom."),
+      videoField("Minimum shots", h("span", {class: "range-row"},
+        h("input", {type: "range", min: boot.limits[0], max: boot.limits[1], step: 1, value: video.limit,
+                    oninput: (event) => { limitCount.textContent = event.target.value; },
+                    onchange: (event) => saveVideo({video_limit: Number(event.target.value)})}), limitCount),
+        "A floor: the planner adds images wherever the story needs them, up to one per 2 seconds."),
+      h("label", {class: "check"}, h("input", {type: "checkbox", checked: video.continuity,
+        onchange: (event) => saveVideo({video_continuity: event.target.checked})}), "Keep characters consistent"),
+      rowsOf().length ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy || !state.boot.gpu,
+                                     title: "Draw every shot from scratch, with new portraits", onclick: () => drawImages("all")}, "Draw every shot again") : null,
+      h("details", {class: "more"},
+        h("summary", {}, "Use another chat model"),
+        h("div", {class: "more-body"},
+          h("p", {class: "muted small"}, "Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked like the built-in planner's."),
+          h("button", {type: "button", class: "btn btn-small", onclick: copyPlannerPrompt}, "Copy full planner prompt"),
+          h("label", {class: "field"}, h("span", {class: "label"}, "Pasted planner reply"),
+            h("textarea", {rows: 4, id: "plan-reply", placeholder: '{"art_style": "...", "shots": [...]}'})),
+          h("button", {type: "button", class: "btn btn-small", onclick: applyPlannerReply}, "Apply pasted plan"))));
+  }
+
+  function renderIllustrate() {
+    const screen = $("screen-illustrate");
+    if (state.screen !== "illustrate" || !state.project.video) return;
+    // Leave the step alone while one of its fields is being typed in.
+    if (screen.contains(document.activeElement) && document.activeElement.matches("input[type=text], textarea")) return;
+    const main = $("illustrate-main");
+    if (!state.project.result) {
+      main.replaceChildren(h("div", {class: "illustrate-empty"}, h("strong", {}, "Speak the project first"),
+        h("p", {class: "muted"}, "The pictures are planned from the timed mix: its lines, sounds and Cast voices.")));
+      $("shot-inspector").hidden = true;
+      renderSettings();
+      return;
+    }
+    const plan = state.project.video.plan;
+    const rows = plan.rows;
+    const warnings = plan.subjects.filter((item) => item.conflicts?.length).length;
+    const looks = state.illustrateView === "looks";
+    const views = h("div", {class: "seg", role: "group", "aria-label": "Illustrate view"},
+      h("button", {type: "button", "aria-pressed": String(!looks), onclick: () => { state.illustrateView = "shots"; renderIllustrate(); }},
+        rows.length ? `Shot plan · ${rows.length}` : "Shot plan"),
+      h("button", {type: "button", "aria-pressed": String(looks), onclick: () => { state.illustrateView = "looks"; renderIllustrate(); }},
+        "Characters & places", warnings ? h("span", {class: "count-badge", title: "Looks that disagree with a Cast voice"}, warnings) : null));
+    const [filter, body] = looks ? [null, renderLooks()] : renderShotList(rows);
+    main.setAttribute("aria-label", looks ? "Characters and places" : "Shot plan");
+    main.replaceChildren(h("div", {class: "card-head"}, views, filter, h("span", {class: "spacer"}),
+      looks ? h("span", {class: "muted small"}, "Drawn once as references; shots that mention one match it.") : null), body);
+    renderInspector(rows);
+    renderSettings();
+  }
+
+  /** The action bar on the Illustrate step: plan, draw what needs drawing, or interrupt. */
+  function renderIllustrateActions(NO_GPU) {
+    const video = state.project.video;
+    const title = $("action-title"), detail = $("action-detail");
+    const planButton = $("plan-shots"), drawButton = $("draw-shots"), stop = $("video-interrupt");
+    detail.classList.remove("error");
+    planButton.hidden = drawButton.hidden = stop.hidden = true;
+    if (!video) { title.textContent = "Illustrated video isn't available here"; detail.textContent = ""; return; }
+    if (!state.project.result) {
+      title.textContent = "Speak the project first";
+      detail.textContent = "Shots are planned from the timed mix.";
+      return;
+    }
+    const rows = rowsOf();
+    const needs = needsDrawing(rows);
+    const run = state.videoRun;
+    const busy = videoRunning();
+    planButton.hidden = false;
+    planButton.disabled = busy;
+    planButton.textContent = videoRunning("plan") ? "Planning…" : rows.length ? "Plan again" : "Plan shots";
+    planButton.className = rows.length ? "btn" : "btn btn-primary";
+    drawButton.hidden = !rows.length || !needs;
+    drawButton.disabled = busy || !state.boot.gpu;
+    drawButton.title = state.boot.gpu ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
+    drawButton.textContent = `Draw ${plural(needs, "shot")}`;
+    stop.hidden = !videoRunning("draw");
+    if (busy) {
+      title.textContent = {plan: "Planning shots…", draw: "Drawing…", save: "Saving to Media…"}[run.kind] || "Working…";
+      detail.textContent = run.status || "";
+    } else if (run?.error) {
+      title.textContent = run.kind === "plan" ? "Planning stopped" : run.kind === "save" ? "Saving stopped" : "Drawing stopped";
+      detail.textContent = run.error;
+      detail.classList.add("error");
+    } else if (!rows.length) {
+      title.textContent = video.plan.stale ? "The saved plan was made for other settings" : "No shot plan yet";
+      detail.textContent = "Plan shots uses the writer set on Script.";
+    } else if (needs) {
+      const counts = video.plan.counts;
+      title.textContent = `${plural(needs, "shot")} need${needs === 1 ? "s" : ""} drawing`;
+      detail.textContent = [counts.changed ? `${counts.changed} prompt${counts.changed === 1 ? "" : "s"} changed` : null,
+                            counts.todo ? `${counts.todo} not drawn` : null].filter(Boolean).join(", ")
+        + (counts.drawn ? `. The other ${counts.drawn} keep their images.` : ".");
+    } else {
+      title.textContent = `Every shot is drawn (${rows.length})`;
+      detail.textContent = "Watch them in the player's Video view, or Save to Media to render the video.";
+    }
+  }
+
+  function illustrateSummary() {
+    const video = state.project.video;
+    if (!video || !state.project.result) return {text: state.project.result ? "" : "Speak first", state: null};
+    const rows = rowsOf();
+    if (!rows.length) return {text: "No shot plan yet", state: null};
+    const needs = needsDrawing(rows);
+    return needs ? {text: `${plural(rows.length, "shot")} · ${needs} to draw`, state: "needs"}
+                 : {text: `${plural(rows.length, "shot")} drawn`, state: "done"};
+  }
+
+  function renderVideo() {
+    if (!state.project) return;
+    renderPointer();
+    renderIllustrate();
+  }
+
+  return {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo, renderIllustrate,
+          renderIllustrateActions, illustrateSummary, shotLane, pickShot};
 }

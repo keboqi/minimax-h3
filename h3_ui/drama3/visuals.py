@@ -14,7 +14,8 @@ import re
 from collections import OrderedDict
 from itertools import count
 from pathlib import Path
-from shutil import which
+from math import ceil
+from shutil import copyfile, which
 from threading import Lock
 from uuid import uuid4
 
@@ -233,7 +234,7 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
             saved = finished["portraits"].get(key)
             if saved and Path(saved).is_file():
                 drawn[key] = saved
-                yield gr.skip(), f"{label} · Reused from the interrupted export"
+                yield gr.skip(), f"{label} · Reused"
                 continue
             yield gr.skip(), label
             drawn[key] = yield from _stream(
@@ -320,17 +321,6 @@ def save_plan(audio, style, limit, plan, run):
         return True
 
 
-def plan_rows(saved, duration, shots=None):
-    """Shot plan table rows from compiled shots, or from a saved plan."""
-    if shots is None:
-        try:
-            shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
-        except (H3Error, KeyError, TypeError):
-            return []
-    return [[round(s.first / FPS, 3), round((s.first + s.frames) / FPS, 3),
-             "Dissolve" if s.dissolve else "Cut", s.beat, s.prompt] for s in shots]
-
-
 def load_mix(deps, result_name):
     """A Sound Stage mix by its file name, and its settings snapshot."""
     if not result_name:
@@ -351,33 +341,103 @@ def stills_dir(audio, root):
     return Path(root) / ".soundstage" / "stills" / Path(audio).stem
 
 
-def keep_stills(audio, root, shots, images, details):
+def prompt_key(prompt):
+    """A short fingerprint of a portrait prompt: a kept portrait is reused while its prompt is unchanged."""
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+
+
+def _write_stills_record(folder, record):
+    """Replace the stills record in one step, so a reader never sees half of it."""
+    temporary = folder / f".{record['revision']}.tmp"
+    temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(folder / STILLS_RECORD)
+    return folder / STILLS_RECORD
+
+
+def keep_stills(audio, root, shots, images, details, *, extras=None, total_frames=None, portraits=None):
     """Keep a web copy of each drawn image with its shot's time on the mix; returns the stills record.
 
-    A new drawing replaces the mix's earlier stills. ``details`` is what a video rendered from
-    them records in its settings snapshot.
+    The record replaces the mix's earlier stills, but an image already among them (a shot drawn
+    before and kept) is copied as it is. It may hold only some of the plan's shots: each image then
+    holds until the next. ``extras`` adds fields to each shot's entry, ``total_frames`` is the mix's
+    length in frames, and ``portraits`` maps character keys to ``(image, prompt fingerprint)`` so a
+    later drawing of some shots matches its characters to the same portraits. ``details`` is what a
+    video rendered from the stills records in its settings snapshot.
     """
     from PIL import Image
 
     folder = stills_dir(audio, root)
     folder.mkdir(parents=True, exist_ok=True)
     revision = uuid4().hex[:12]
+    extras = extras or [{} for _ in shots]
+    entries = sorted(zip(shots, images, extras, strict=True), key=lambda entry: entry[0].first)
     records = []
-    for index, (shot, image) in enumerate(zip(shots, images, strict=True)):
+    for index, (shot, image, extra) in enumerate(entries):
         name = f"{revision}-{index + 1:03d}.jpg"
-        with Image.open(image) as picture:
-            picture.convert("RGB").save(folder / name, "JPEG", quality=STILLS_QUALITY, optimize=True)
+        image = Path(image)
+        if image.parent.resolve() == folder.resolve():
+            copyfile(image, folder / name)  # already a web copy: no second JPEG pass
+        else:
+            with Image.open(image) as picture:
+                picture.convert("RGB").save(folder / name, "JPEG", quality=STILLS_QUALITY, optimize=True)
         records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
-                        "beat": shot.beat, "prompt": shot.prompt, "image": name})
-    record = folder / STILLS_RECORD
-    temporary = folder / f".{revision}.tmp"
-    temporary.write_text(json.dumps({"revision": revision, "source": Path(audio).name, "fps": FPS,
-                                     "shots": records, "details": details}, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(record)
-    for old in folder.glob("*.jpg"):
-        if not old.name.startswith(f"{revision}-"):
+                        "beat": shot.beat, "prompt": shot.prompt, "image": name, **extra})
+    kept = {}
+    for key, (image, fingerprint) in (portraits or {}).items():
+        name = f"portrait-{fingerprint}.png"
+        if Path(image).resolve() != (folder / name).resolve():
+            with Image.open(image) as picture:
+                picture.save(folder / name, "PNG")
+        kept[key] = {"image": name, "prompt": fingerprint}
+    record = _write_stills_record(folder, {"revision": revision, "source": Path(audio).name, "fps": FPS,
+                                           "total_frames": total_frames, "shots": records, "portraits": kept,
+                                           "details": details})
+    keep = {item["image"] for item in kept.values()}
+    for old in [*folder.glob("*.jpg"), *folder.glob("*.png")]:
+        if not old.name.startswith(f"{revision}-") and old.name not in keep:
             old.unlink(missing_ok=True)
     return record
+
+
+def kept_portraits(record, root, audio):
+    """The record's portraits as ``{key: (path, prompt fingerprint)}``, those whose file still exists."""
+    folder = stills_dir(audio, root)
+    found = {}
+    for key, item in ((record or {}).get("portraits") or {}).items():
+        path = folder / str(item.get("image") or "")
+        if item.get("image") and path.is_file():
+            found[key] = (path, item.get("prompt"))
+    return found
+
+
+def match_stills(shots, record):
+    """Each plan shot's still, drawn for the same time on the mix, or None."""
+    by_time = {(int(item["first_frame"]), int(item["frames"])): item for item in (record or {}).get("shots") or []}
+    return [by_time.get((shot.first, shot.frames)) for shot in shots]
+
+
+def retime_stills(audio, root, shots):
+    """Give each kept still its plan shot's cut or dissolve, which needs no redrawing.
+
+    A change gives the record a new revision, so a saved video made before it is no longer current.
+    """
+    record = read_stills(audio, root)
+    if record is None:
+        return
+    changed = False
+    for shot, still in zip(shots, match_stills(shots, record)):
+        if still is not None and bool(still.get("dissolve")) != shot.dissolve:
+            still["dissolve"] = shot.dissolve
+            changed = True
+    if changed:
+        _write_stills_record(stills_dir(audio, root), {**record, "revision": uuid4().hex[:12]})
+
+
+def shot_status(shot, still):
+    """``drawn``, ``changed`` (drawn from another prompt) or ``todo`` (nothing drawn for its time)."""
+    if still is None:
+        return "todo"
+    return "drawn" if still.get("prompt") == shot.prompt else "changed"
 
 
 def read_stills(audio, root):
@@ -395,9 +455,19 @@ def read_stills(audio, root):
 
 
 def stills_shots(record):
-    """A stills record as the shots and image file names the renderer takes."""
-    return ([Shot(int(item["first_frame"]), int(item["frames"]), bool(item["dissolve"]), item.get("prompt") or "",
-                  item.get("beat") or "") for item in record["shots"]], [item["image"] for item in record["shots"]])
+    """A stills record as the shots and image file names the renderer takes.
+
+    A record may hold only some of the plan's shots: each image holds until the next one, the first
+    from the start of the mix and the last to its end.
+    """
+    items = sorted(record["shots"], key=lambda item: int(item["first_frame"]))
+    starts = [0, *(int(item["first_frame"]) for item in items[1:])]
+    last = int(items[-1]["first_frame"]) + int(items[-1]["frames"])
+    ends = [*starts[1:], max(last, int(record.get("total_frames") or 0))]
+    shots = [Shot(start, end - start, bool(item["dissolve"]) and index > 0, item.get("prompt") or "",
+                  item.get("beat") or "")
+             for index, (item, start, end) in enumerate(zip(items, starts, ends))]
+    return shots, [item["image"] for item in items]
 
 
 def burned_subtitles(audio, size) -> str | None:
@@ -431,31 +501,93 @@ def render_stills(audio, root, subtitles: int = 0):
     return video
 
 
-def draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values):
-    """Draw a mix's saved shot plan and keep the images as its stills; yields (record or skip, status)."""
+def plan_shots_for(saved, duration):
+    """The saved plan's shots, compiled as drawing uses them."""
+    return compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
+
+
+def portrait_prompts(saved):
+    """Each character's portrait prompt, from the saved plan."""
+    art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
+    return {name: sheet_prompt(kind, name, anchor, art_style, saved["style"])
+            for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
+
+
+def chosen_shots(shots, stills, only):
+    """The shot indexes a drawing draws: ``all``, ``missing`` (not drawn, or drawn from another
+    prompt), or a list of indexes."""
+    if only in (None, "all"):
+        return list(range(len(shots)))
+    if only == "missing":
+        return [i for i, (shot, still) in enumerate(zip(shots, stills)) if shot_status(shot, still) != "drawn"]
+    if not isinstance(only, list) or not only or not all(type(i) is int and 0 <= i < len(shots) for i in only):
+        raise H3Error("Those shots are not in the current shot plan. Reload the page and try again.")
+    return sorted(set(only))
+
+
+def draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values, only=None):
+    """Draw a mix's saved shot plan and keep the images as its stills; yields (record or skip, status).
+
+    ``only`` limits the drawing to some shots (see ``chosen_shots``). The others keep the image
+    already drawn for their time on the mix, and kept portraits drawn from the same prompt are
+    reused, so a redrawn shot's characters match the rest.
+    """
     audio, settings = load_mix(deps, result_name)
     saved = read_plan(audio, style, limit)
     if saved is None:
         raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
                       "Click Plan shots, or paste a plan from another chat model, then draw.")
     duration = settings["duration"]
-    shots = compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
+    root = deps.runtime_config().output_dir
+    shots = plan_shots_for(saved, duration)
+    record = read_stills(audio, root)
+    stills = match_stills(shots, record)
+    picked = chosen_shots(shots, stills, only)
+    if not picked:
+        raise H3Error("Every shot is already drawn from its current prompt.")
     captured = dict(zip(controller.fields, values, strict=True))
-    key = export_key(result_name, saved["plan"], engine, use_references, captured)
-    art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
-    portraits = {name: sheet_prompt(kind, name, anchor, art_style, saved["style"])
-                 for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
+    key = export_key(result_name, saved["plan"], engine, use_references, captured) + ":" + ",".join(map(str, picked))
+    prompts = portrait_prompts(saved)
+    finished = finished_images(key)
+    # Drawing some shots matches their characters to the kept portraits (drawn from the same looks);
+    # drawing them all starts afresh, portraits too.
+    kept = {} if only in (None, "all") else {name: item for name, item in kept_portraits(record, root, audio).items()
+                                  if name in prompts and item[1] == prompt_key(prompts[name])}
+    for name, (path, _fingerprint) in kept.items():
+        finished["portraits"].setdefault(name, str(path))
     images, shot_records, portrait_records = yield from illustrate_shots(
-        controller, engine, shots, captured, use_references, finished_images(key), portraits)
+        controller, engine, [shots[i] for i in picked], captured, use_references, finished, prompts)
     yield gr.skip(), "Keeping the images with the mix…"
-    record = keep_stills(audio, deps.runtime_config().output_dir, shots, images, {
+    folder = stills_dir(audio, root)
+    drawn = dict(zip(picked, zip(images, shot_records)))
+    kept_shots, kept_images, extras = [], [], []
+    for index, (shot, still) in enumerate(zip(shots, stills)):
+        if index in drawn:
+            image, details = drawn[index]
+            extra = {"draft": details["draft"], "characters": details["characters"]}
+        elif still is not None:
+            # Not redrawn: the image already drawn for this time stays, with the prompt it was drawn from.
+            image = folder / still["image"]
+            extra = {name: still[name] for name in ("draft", "characters") if name in still}
+            shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat)
+        else:
+            continue
+        kept_shots.append(shot)
+        kept_images.append(image)
+        extras.append(extra)
+    for name, path in finished["portraits"].items():
+        if name in prompts and Path(path).is_file():
+            kept[name] = (path, prompt_key(prompts[name]))
+    stills_record = keep_stills(audio, root, kept_shots, kept_images, {
         "model": engine, "art_direction": style, "visual_plan": saved["plan"],
-        "keep_characters_consistent": use_references, "portraits": portrait_records, "shots": shot_records})
+        "keep_characters_consistent": use_references, "portraits": portrait_records},
+        extras=extras, total_frames=ceil(duration * FPS), portraits=kept)
     _FINISHED.pop(key, None)  # A fresh drawing of the same settings draws new illustrations.
-    yield str(record), f"Drew {len(shots)} images. They play with the mix here; Save to Media renders the video."
+    drew = f"{len(picked)} image{'s' if len(picked) != 1 else ''}"
+    yield str(stills_record), f"Drew {drew}. They play with the mix here; Save to Media renders the video."
 
 
-VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references")
+VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references", "only_shots")
 
 
 @dataclass
@@ -484,9 +616,10 @@ def video_export(controller, deps, triggers=()):
     ``triggers`` are the studio events (opening it, switching task) on which each owner's Image
     tab values are handed to the export, as Remake and Storyboard take the MiniMax H3 settings.
     """
-    def generate(result_name, engine, style, limit, use_references, *values):
+    def generate(result_name, engine, style, limit, use_references, only, *values):
         try:
-            yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values)
+            yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values,
+                                   only=json.loads(only) if only else None)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 

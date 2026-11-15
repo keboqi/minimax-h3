@@ -27,8 +27,10 @@ export function startWorkspace() {
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, busy: false,
                  screen: "script", saving: null, writing: false, writerResult: null,
                  estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
-                 videoRun: null, mediaMode: "audio"};
-  const SCREENS = ["script", "cast", "mix"];
+                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all"};
+  const SCREENS = ["script", "cast", "mix", "illustrate"];
+  // The steps that show the mix player; it moves to whichever of them is open.
+  const PLAYER_SCREENS = ["mix", "illustrate"];
   const shortMode = (mode) => (mode === state.boot.advanced ? "Advanced" : "Basic");
 
   // -- Helpers ---------------------------------------------------------------
@@ -179,6 +181,13 @@ export function startWorkspace() {
     $("step-cast").dataset.state = missing || !project.cast.length ? "needs" : "done";
     const result = project.result;
     $("mix-summary").textContent = result ? `${clock(result.duration)} · ${result.takes.length} takes` : "Not spoken yet";
+    // Illustrate is there only where images can be drawn or played.
+    $("step-illustrate").hidden = !state.boot.video;
+    $("step-illustrate").previousElementSibling.hidden = !state.boot.video;
+    const pictures = state.boot.video ? illustrateSummary() : {text: "", state: null};
+    $("illustrate-summary").textContent = pictures.text;
+    if (pictures.state) $("step-illustrate").dataset.state = pictures.state;
+    else delete $("step-illustrate").dataset.state;
   }
 
   // -- Subtitles on the video: shown or hidden (C), and their size ------------
@@ -195,6 +204,8 @@ export function startWorkspace() {
       if (data.video) state.project.video = data.video;
       if (data.message) toast(data.message);
       renderVideo();
+      renderSteps();
+      renderActions();
       if (state.videoRun?.active) pollVideo();
       return data;
     } catch (error) {
@@ -204,7 +215,29 @@ export function startWorkspace() {
   }
 
   const planShots = () => videoCall("/project/video/plan", {writer: writerService()});
-  const drawImages = () => videoCall("/project/video/draw");
+  /** Draw ``only`` the shots it names: "missing", "all" or a list of shot indexes. */
+  const drawImages = (only = "missing") => videoCall("/project/video/draw", {only});
+
+  /** Change the plan (a shot's prompt or transition, or how a subject looks); drawn shots it touches show as changed. */
+  async function editPlan(path, body) {
+    try {
+      await flushVideo();
+      const data = await api(named(path), {method: "PATCH", body});
+      if (data.video) state.project.video = data.video;
+      // Let the step redraw now, even though the field that changed still has focus.
+      document.activeElement?.blur();
+      renderVideo();
+      renderSteps();
+      renderActions();
+      renderPlayer();
+      sync();
+    } catch (error) {
+      toast(error.message);
+      renderVideo();
+    }
+  }
+  const editShot = (body) => editPlan("/project/video/shot", body);
+  const editSubject = (body) => editPlan("/project/video/subject", body);
   async function saveVideoToMedia() {
     await videoCall("/project/video/save");
     renderPlayer();
@@ -236,7 +269,7 @@ export function startWorkspace() {
     const hadStills = state.project.video?.stills?.revision;
     state.videoRun = project.video_run;
     reconcile(project);
-    if (project.video_run?.active) { renderVideo(); again(); return; }
+    if (project.video_run?.active) { renderVideo(); renderActions(); again(); return; }
     if (before?.active) {
       toastEnded(project.video_run);
       if (before.kind === "draw" && !project.video_run?.error && project.video?.stills?.revision !== hadStills) {
@@ -246,6 +279,8 @@ export function startWorkspace() {
     }
     loadVideoSource();
     renderVideo();
+    renderSteps();
+    renderActions();
     renderPlayer();
     sync();
   });
@@ -349,7 +384,9 @@ export function startWorkspace() {
     $("action-text").hidden = onScript;
     for (const id of ["speak", "remix", "interrupt"]) if (state.screen !== "mix") $(id).hidden = true;
     for (const id of ["to-script", "cast-interrupt", "make-missing"]) $(id).hidden = !onCast;
-    $("to-mix").hidden = state.screen === "mix";
+    for (const id of ["plan-shots", "draw-shots", "video-interrupt"]) $(id).hidden = true;
+    $("to-mix").hidden = PLAYER_SCREENS.includes(state.screen);
+    if (state.screen === "illustrate") { renderIllustrateActions(NO_GPU); return; }
     $("to-cast").hidden = !onScript;
     if (onScript) {
       $("to-mix").className = "btn";
@@ -409,7 +446,13 @@ export function startWorkspace() {
     $("screen-script").hidden = state.screen !== "script";
     $("screen-mix").hidden = state.screen !== "mix";
     $("screen-cast").hidden = state.screen !== "cast";
+    $("screen-illustrate").hidden = state.screen !== "illustrate";
     $("layout").hidden = state.screen !== "script";
+    // One player for the mix: it sits at the top of whichever step shows it.
+    if (PLAYER_SCREENS.includes(state.screen)) {
+      const host = $(`screen-${state.screen}`);
+      if ($("player").parentElement !== host) host.prepend($("player"));
+    }
     renderHeader();
     renderSteps();
     renderScript();
@@ -596,7 +639,14 @@ export function startWorkspace() {
     }
     try { localStorage.setItem(LAST_PROJECT, name); } catch { /* Storage may be blocked. */ }
     state.videoRun = project.video_run;
-    if (switched) { state.mediaMode = "audio"; mix = mixAudio; }
+    if (switched) {
+      // Illustrate is about the pictures: a project opened there shows them when it has any.
+      state.mediaMode = state.screen === "illustrate" && project.video?.stills?.shots?.length ? "video" : "audio";
+      mix = mixAudio;
+      state.shotPick = 0;
+      state.illustrateView = "shots";
+      state.shotFilter = "all";
+    }
     if (changed) {
       mixAudio.pause();
       mixVideo.pause();
@@ -626,8 +676,11 @@ export function startWorkspace() {
     if (screen !== state.screen) window.scrollTo({top: 0});
     state.screen = screen;
     if (location.hash !== `#${screen}`) history.replaceState(null, "", `#${screen}`);
-    if (screen !== "mix") { mixAudio.pause(); mixVideo.pause(); takeAudio.pause(); }
+    if (!PLAYER_SCREENS.includes(screen)) { mixAudio.pause(); mixVideo.pause(); takeAudio.pause(); }
     if (screen !== "cast") flushSlots();
+    // Illustrate is about the pictures: show them when there are any.
+    if (screen === "illustrate" && visualSource()) state.mediaMode = "video";
+    loadVideoSource();
     renderAll();
     if (screen === "script") queueEstimate(0);
   }
@@ -1098,6 +1151,9 @@ export function startWorkspace() {
     });
     for (const screen of SCREENS) $(`step-${screen}`).addEventListener("click", () => show(screen));
     $("to-mix").addEventListener("click", () => show("mix"));
+    $("plan-shots").addEventListener("click", planShots);
+    $("draw-shots").addEventListener("click", () => drawImages("missing"));
+    $("video-interrupt").addEventListener("click", interruptVideo);
     $("to-cast").addEventListener("click", () => show("cast"));
     $("auto").addEventListener("click", startAuto);
     $("auto-interrupt").addEventListener("click", interruptRun);
@@ -1133,7 +1189,7 @@ export function startWorkspace() {
     });
     document.addEventListener("visibilitychange", () => { if (document.hidden) { flushScript(); flushSlots(); } });
     document.addEventListener("keydown", (event) => {
-      if (state.screen !== "mix" || event.target.closest("input, select, textarea, button") || !state.project?.result) return;
+      if (!PLAYER_SCREENS.includes(state.screen) || event.target.closest("input, select, textarea, button") || !state.project?.result) return;
       if (event.key === " ") { event.preventDefault(); if (mix.paused) mix.play(); else mix.pause(); }
       if ((event.key === "c" || event.key === "C") && !event.ctrlKey && !event.metaKey && !event.altKey
           && state.mediaMode === "video" && state.project.video) {
@@ -1234,9 +1290,11 @@ export function startWorkspace() {
     toneColor,
     videoFileButton: (...args) => videoFileButton(...args),
     visualSource: (...args) => visualSource(...args),
+    shotLane: (...args) => shotLane(...args),
     getPlayer: () => mix
   });
-  const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo} = createVideo({
+  const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo,
+         renderIllustrateActions, illustrateSummary, shotLane} = createVideo({
     state,
     $: (...args) => $(...args),
     h,
@@ -1253,6 +1311,11 @@ export function startWorkspace() {
     interruptVideo,
     copyPlannerPrompt,
     applyPlannerReply,
+    editShot,
+    editSubject,
+    show: (...args) => show(...args),
+    toneColor: (...args) => toneColor(...args),
+    speakerTone: (...args) => speakerTone(...args),
     getPlayer: () => mix,
     setPlayer: (player) => { mix = player; }
   });

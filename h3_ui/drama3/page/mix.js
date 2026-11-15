@@ -1,5 +1,5 @@
 // Mix view and local controls for Soundstage.
-export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, getPlayer}) {
+export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLane, getPlayer}) {
   function setSubtitles(on) {
     state.project.video.subtitles = on;
     saveVideo({video_subtitles: on});
@@ -101,8 +101,16 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     const laneHeight = (count) => ({height: `${count * 24 + 6}px`});
     const names = [...new Set([...result.speakers.map((speaker) => speaker.name), ...result.lines.map((line) => line.speaker)])]
       .filter((name) => result.lines.some((line) => line.speaker === name));
-    const lanes = [h("span", {class: "lane-group"}, "Voices")];
-    const tracks = [h("span", {class: "lane-gap", "aria-hidden": "true"})];
+    const lanes = [];
+    const tracks = [];
+    // The planned shots ride above the voices, on Illustrate and whenever the player shows Video.
+    const shots = shotLane(place);
+    if (shots) {
+      lanes.push(h("span", {class: "lane-group lane-group-shots"}, "Shots"), shots.name);
+      tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}), shots.lane);
+    }
+    lanes.push(h("span", {class: "lane-group"}, "Voices"));
+    tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}));
     for (const name of names) {
       const indexes = result.lines.flatMap((line, index) => (line.speaker === name ? [index] : []));
       const placed = rows(indexes.map((index) => result.lines[index]));

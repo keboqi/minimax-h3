@@ -71,11 +71,12 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.store.save_soundstage_project("Night Market", {"text": "Mia: Plums!", "shown_slots": 1, "video_limit": 2})
         self.store.mark_soundstage_generated("Night Market", str(self.mix))
 
-    def fake_export(self, result_name, engine, style, limit, use_references, *values):
+    def fake_export(self, result_name, engine, style, limit, use_references, only, *values):
         """Draw two images (the second dissolving in at 4 s) and keep them as the mix's stills."""
         from PIL import Image
 
         self.renders.append((result_name, engine, style, limit, use_references, values))
+        self.drawn_only = json.loads(only)
         yield gr.skip(), "Shot 1 of 2"
         images = []
         for index, color in enumerate(("red", "blue")):
@@ -110,7 +111,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         video = self.project()["video"]
         self.assertEqual((video["engine"], video["preset"], video["limit"], video["continuity"]),
                          ("qwen", DEFAULT_STYLE, 2, True))
-        self.assertEqual(video["plan"], {"rows": [], "stale": False, "saved": False})
+        self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False})
         self.assertIsNone(video["latest"])
 
     def test_settings_are_saved_and_kept_in_range(self):
@@ -276,6 +277,34 @@ class Drama3PageVideoTests(unittest.TestCase):
         refused = self.client.post(f"{API}/project/video/plan", params={"name": "Draft"}, json={})
         self.assertIn("Speak the project first", refused.json()["error"])
         self.assertEqual(self.client.get(f"{API}/video", params={"name": "Draft"}).status_code, 404)
+
+    def test_plan_rows_carry_status_and_edits_mark_shots_changed(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        plan = self.project()["video"]["plan"]
+        self.assertEqual([(row["index"], row["status"], row["image"], row["subjects"]) for row in plan["rows"]],
+                         [(0, "todo", None, ["Mia"]), (1, "todo", None, [])])
+        self.assertEqual(plan["counts"], {"drawn": 0, "changed": 0, "todo": 2})
+        self.assertEqual([(item["kind"], item["key"], item["anchor"], item["uses"]) for item in plan["subjects"]],
+                         [("characters", "Mia", "yellow raincoat", 1)])
+
+        edited = self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                           json={"index": 1, "prompt": " A radio  glowing. ", "transition": "Cut"}))
+        row = edited["video"]["plan"]["rows"][1]
+        self.assertEqual((row["prompt"], row["transition"]), ("A radio glowing.", "Cut"))
+        looks = self.ok(self.client.patch(f"{API}/project/video/subject", params=NAME,
+                                          json={"kind": "characters", "key": "Mia", "anchor": "green coat"}))
+        self.assertEqual(looks["video"]["plan"]["subjects"][0]["anchor"], "green coat")
+        refused = self.client.patch(f"{API}/project/video/shot", params=NAME, json={"index": 5, "prompt": "x"})
+        self.assertIn("not in the current shot plan", refused.json()["error"])
+
+    def test_drawing_some_shots_passes_which_ones(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": [1]}))
+        self.wait()
+        self.assertEqual(self.drawn_only, [1])
+        for only in ("some", []):
+            refused = self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": only})
+            self.assertIn("missing ones", refused.json()["error"])
 
 
 if __name__ == "__main__":

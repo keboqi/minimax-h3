@@ -73,6 +73,11 @@
       <span class="step-dot" aria-hidden="true">3</span>
       <span class="step-text"><strong>Mix &amp; review</strong><span id="mix-summary"></span></span>
     </button>
+    <span class="step-arrow" aria-hidden="true"></span>
+    <button type="button" class="step" id="step-illustrate" data-screen="illustrate">
+      <span class="step-dot" aria-hidden="true">4</span>
+      <span class="step-text"><strong>Illustrate</strong><span id="illustrate-summary"></span></span>
+    </button>
   </nav>
 
   <!-- Script: outline, script and writer; either side column can be hidden from the top bar -->
@@ -227,7 +232,18 @@
         </section>
       </aside>
     </div>
-    <section class="card video-panel" id="video-panel" aria-label="Illustrated video" hidden></section>
+    <section class="card video-pointer" id="video-panel" aria-label="Illustrated video" hidden></section>
+  </main>
+
+  <!-- Illustrate: the shot plan, or its characters and places, drawn into stills that play in the shared player -->
+  <main class="main" id="screen-illustrate" hidden>
+    <div class="columns">
+      <section class="card illustrate-main" id="illustrate-main" aria-label="Shot plan"></section>
+      <aside class="side">
+        <section class="card shot-inspector" id="shot-inspector" aria-live="polite"></section>
+        <section class="card drawn-settings" id="drawn-settings" aria-label="How it's drawn"></section>
+      </aside>
+    </div>
   </main>
 
   <footer class="actionbar">
@@ -244,6 +260,9 @@
       <button type="button" class="btn" id="cast-interrupt" hidden>Interrupt</button>
       <button type="button" class="btn btn-primary" id="make-missing" hidden>Make the missing</button>
       <button type="button" class="btn" id="to-mix" hidden>Mix &amp; review</button>
+      <button type="button" class="btn" id="video-interrupt" hidden>Interrupt</button>
+      <button type="button" class="btn" id="plan-shots" hidden>Plan shots</button>
+      <button type="button" class="btn btn-primary" id="draw-shots" hidden>Draw the images</button>
       <button type="button" class="btn btn-primary" id="to-cast" hidden>Next: cast &amp; sounds</button>
     </div>
   </footer>

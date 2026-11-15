@@ -142,10 +142,13 @@ The bar at the bottom holds the next move: **Speak** (or **Speak again**), **Rem
 checks on the run, so it carries on if the page is closed. Playing, seeking and picking lines ask
 the server for nothing. The page reads each project's mix and only that mix's takes.
 
-**Illustrated video**, under the lines, draws one image per shot and slides them along the mix on
-the page; a 720p MP4 is rendered only when you save it to Media. Pick an **Image model**, a **Style
-preset** (which fills **Art direction**; editing it makes the preset Custom) and **Minimum shots**,
-then **Plan shots**. New projects default to Digital painting. The full-color presets are Digital
+**Illustrate**, the fourth step after Mix & review, plans the pictures and draws one image per shot;
+they slide along the mix in the same player Mix & review uses, which moves to the top of whichever of
+the two steps is open, and a 720p MP4 is rendered only when you save it to Media. Mix & review keeps
+a short Illustrated video card that opens the step. Its **How it's drawn** panel holds the **Image
+model**, a **Style preset** (which fills **Art direction**; editing it makes the preset Custom),
+**Minimum shots** and **Keep characters consistent**; the action bar's **Plan shots** plans. New
+projects default to Digital painting. The full-color presets are Digital
 painting, Realistic photo, Anime, 3D animation, 2D cartoon, American comic, Japanese comic,
 Watercolor, Oil painting, Children's book and Pixel art. Business slide options are Flat illustration,
 Isometric illustration, Minimal vector and Editorial illustration; these leave space for text to be
@@ -157,14 +160,29 @@ preset text appears as Custom. Replan after changing art direction. The plan use
 service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
 then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
-like the planner's. The **Shot plan** lists each image's time (click it to jump there), cut or
-dissolve, story beat and prompt; it only lists the plan drawing would use, and says so when the
-saved plan was made for another Art direction or Minimum shots. **Draw the images** draws that plan
-with the Image tab's settings for the model, which the studio hands to the page each time it opens
-or switches task, keeping characters consistent unless that is unticked; it runs on the usual job
-path and can be interrupted. It renders no video: it keeps a JPEG copy of each image (the *stills*)
-with its shot's time under `.soundstage/stills/` in the outputs, out of Media, replacing the mix's
-earlier stills. When it finishes, the player switches to Video.
+like the planner's.
+
+The step has two views. **Shot plan** lists each shot with its image, time, cut or dissolve, story
+beat and prompt, and a status: **Drawn**, **Prompt changed** (drawn from an earlier prompt) or **Not
+drawn**; **Needs drawing** filters to the last two. It only lists the plan drawing would use, and
+says so when the saved plan was made for another Art direction or Minimum shots. Picking a shot, in
+the list or on the player's **Shots** lane above the voices, jumps the player to it and opens it in
+the side panel, where its prompt can be edited (`@name` brings in a character, prop or place) and
+its cut or dissolve changed; a new transition applies to the drawn image at once, a new prompt marks
+the shot changed. **Characters & places** shows each character's kept portrait, their voice from
+Cast & sounds and the looks written into every shot that mentions them, and each place and prop;
+editing a look marks those shots changed. A look that states a gender or age the Cast voice
+contradicts (a boy of sixteen voiced as an elderly man) is flagged, with a count on the view's tab.
+
+The action bar's **Draw N shots** draws only the shots not drawn from their current prompt, with the
+Image tab's settings for the model, which the studio hands to the page each time it opens or switches
+task; **Draw this shot** in the side panel draws one, and **Draw every shot again** in How it's drawn
+redraws them all with new portraits. The other shots keep their images, and characters are matched to
+the portraits kept from earlier drawings while their looks are unchanged, so a redrawn shot matches the
+rest. Drawing runs on the usual job path and can be interrupted. It renders no video: it keeps a JPEG
+copy of each image (the *stills*) with its shot's time, and the portraits, under `.soundstage/stills/`
+in the outputs, out of Media; a shot not drawn yet holds the image before it. When it finishes, the
+player switches to Video.
 
 Every scene is drawn from its text first, with the character, prop and location descriptions
 written into the prompt, at a 16:9 size whatever the Image tab is set to. With **Keep characters
@@ -181,14 +199,14 @@ on the plan's frames as the rendered video would, and fetches the next images be
 nothing is encoded, so it starts at once and each image stays sharp. A mix drawn before stills
 existed plays its newest rendered video instead. The line being spoken shows over the picture,
 word by word when the mix has word timings. **Subtitles** shows or hides those lines (C does the
-same on Mix & review), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width;
+same on Mix & review and Illustrate), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width;
 both are saved with the project. The timeline and lines follow Video as they follow Audio.
 
 **Save to Media** renders the stills with the finished soundtrack into a 720p MP4 beside the mix
 (it needs FFmpeg, not the GPU, so it works in the CPU Workshop too) and adds it to Media, where a
 selected mix with an illustrated video offers the same Audio/Video switch. Once saved, the button
-becomes **Download video** until the images are drawn again. The subtitles are drawn over the
-player only; the video is saved without them.
+becomes **Download video** until the images are drawn again. The subtitles are burned in as the
+player shows them, on or off and at their size; changing them asks for a new video.
 
 ## Scripts, takes and timings
 

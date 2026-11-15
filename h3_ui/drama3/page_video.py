@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
+import json
 from pathlib import Path
 import time
 from typing import Callable
@@ -17,7 +18,9 @@ from urllib.parse import quote
 
 from fastapi import Body, FastAPI, Request
 
-from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt, plan_shots
+from h3_app.drama3 import voice_looks
+from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject, full_plan_prompt, mentions,
+                                       plan_shots, subjects)
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot
 
@@ -64,25 +67,81 @@ def stills_payload(name: str, record: dict | None) -> dict | None:
         fade = min(12, frames - 1) / fps if item.get("dissolve") and frames > 1 else 0.0
         shots.append({"start": round(first / fps, 3), "end": round((first + frames) / fps, 3),
                       "fade": round(fade, 3), "beat": item.get("beat") or "",
-                      "url": f"/soundstage/api/video/still?name={quote(name)}&file={quote(item['image'])}"})
+                      "url": still_url(name, item["image"])})
     return {"revision": record["revision"], "shots": shots}
+
+
+def still_url(name: str, file: str) -> str:
+    return f"/soundstage/api/video/still?name={quote(name)}&file={quote(file)}"
+
+
+def _voice_for(key: str, anchor: str, voices: dict[str, str]) -> tuple[str, str] | None:
+    """The Cast speaker a character is: by key ("old_tom" for "Old Tom") or the name its looks start with."""
+    named = anchor.split(",", 1)[0].strip().casefold()
+    for speaker, voice in voices.items():
+        folded = speaker.casefold()
+        if key.casefold() in (folded, folded.replace(" ", "_")) or named == folded:
+            return speaker, voice
+    return None
+
+
+def plan_payload(name: str, current: dict | None, duration: float, record: dict | None, voices: dict[str, str],
+                 root, audio) -> dict:
+    """The plan drawing would use: each shot with its status and image, and the characters, props
+    and places it mentions with their looks (and, for a character, their Cast voice)."""
+    if not current or not duration:
+        return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
+    try:
+        shots = visuals.plan_shots_for(current, duration)
+    except H3Error:
+        return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
+    plan = current["plan"]
+    keys = mentions(plan)
+    rows = []
+    for index, (shot, still, row, mentioned) in enumerate(zip(shots, visuals.match_stills(shots, record),
+                                                              plan["shots"], keys)):
+        status = visuals.shot_status(shot, still)
+        rows.append({"index": index, "start": round(shot.first / visuals.FPS, 3),
+                     "end": round((shot.first + shot.frames) / visuals.FPS, 3),
+                     "transition": "Dissolve" if shot.dissolve else "Cut", "beat": shot.beat,
+                     "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
+                     "image": still_url(name, still["image"]) if still else None})
+    portraits = visuals.kept_portraits(record, root, audio)
+    prompts = visuals.portrait_prompts(current)
+    found = []
+    for key, (kind, anchor) in subjects(plan).items():
+        entry = {"kind": kind, "key": key, "anchor": anchor,
+                 "uses": sum(key in mentioned for mentioned in keys), "portrait": None}
+        if kind == "characters":
+            voice = _voice_for(key, anchor, voices)
+            if voice:
+                entry.update(speaker=voice[0], voice=voice[1], conflicts=voice_looks.conflicts(anchor, voice[1]))
+            kept = portraits.get(key)
+            if kept:
+                entry.update(portrait=still_url(name, Path(kept[0]).name),
+                             portrait_current=kept[1] == visuals.prompt_key(prompts.get(key, "")))
+        found.append(entry)
+    counts = {status: sum(row["status"] == status for row in rows) for status in ("drawn", "changed", "todo")}
+    return {"rows": rows, "subjects": found, "counts": counts,
+            "art_style": str(plan.get("art_style") or plan.get("style") or "")}
 
 
 def video_payload(name: str, data: dict, result, export) -> dict:
     """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
     settings = video_settings(data, export.engines)
-    plan = {"rows": [], "stale": False, "saved": False}
+    plan = {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False}
     latest = None
     stills = None
     if result:
         audio = Path(result)
+        root = export.deps.runtime_config().output_dir
         saved = visuals.read_plan(audio)
         current = visuals.read_plan(audio, settings["style"], settings["limit"])
         duration = float((visuals.read_snapshot(audio) or {}).get("settings", {}).get("duration") or 0)
-        plan = {"rows": [{"start": row[0], "end": row[1], "transition": row[2], "beat": row[3], "prompt": row[4]}
-                         for row in (visuals.plan_rows(current, duration) if current and duration else [])],
+        record = visuals.read_stills(audio, root)
+        voices = cast_voices(data, export.deps.runtime_config) if current else {}
+        plan = {**plan_payload(name, current, duration, record, voices, root, audio),
                 "stale": saved is not None and current is None, "saved": saved is not None}
-        record = visuals.read_stills(audio, export.deps.runtime_config().output_dir)
         stills = stills_payload(name, record)
         video = latest_export(audio)
         if video is not None:
@@ -126,6 +185,41 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES,
                          choices={"video_engine": [key for _, key in export.engines]})
         return payload(owner_of(request), name)
+
+    def edit_plan(name: str, change):
+        """Change the plan drawing would use, unless the mix is being planned, drawn or saved."""
+        def apply(request: Request):
+            owner = owner_of(request)
+            if runs.active(owner, name):
+                raise H3Error("Wait for the planning, drawing or saving to finish, then edit the plan.")
+            _, audio, mix_settings, settings = mix_of(name)
+            saved = visuals.read_plan(audio, settings["style"], settings["limit"])
+            if saved is None:
+                raise H3Error("Plan shots first: there is no shot plan for the current Art direction and "
+                              "Minimum shots.")
+            plan = change(saved["plan"])
+            shots = visuals.plan_shots_for({**saved, "plan": plan}, float(mix_settings["duration"]))  # still valid
+            visuals.write_plan(audio, saved["style"], saved["limit"], plan)
+            # A cut or dissolve applies to the drawn images straight away; a prompt waits for a redraw.
+            visuals.retime_stills(audio, export.deps.runtime_config().output_dir, shots)
+            return payload(owner, name)
+        return apply
+
+    @app.patch(f"{api}/project/video/shot", include_in_schema=False)
+    @guarded
+    def edit_plan_shot(name: str, request: Request, body: dict = Body(...)):
+        """Change one shot's image prompt or how it comes in; it shows as changed until drawn again."""
+        transition = body.get("transition")
+        return edit_plan(name, lambda plan: edit_shot(
+            plan, body.get("index"), prompt=body.get("prompt"),
+            transition=str(transition).lower() if transition is not None else None))(request)
+
+    @app.patch(f"{api}/project/video/subject", include_in_schema=False)
+    @guarded
+    def edit_plan_subject(name: str, request: Request, body: dict = Body(...)):
+        """Change how a character, prop or place looks in every shot that mentions it."""
+        return edit_plan(name, lambda plan: edit_subject(plan, str(body.get("kind") or ""), str(body.get("key") or ""),
+                                                         body.get("anchor")))(request)
 
     @app.post(f"{api}/project/video/plan", include_in_schema=False)
     @guarded
@@ -192,8 +286,12 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
 
     @app.post(f"{api}/project/video/draw", include_in_schema=False)
     @guarded
-    def draw(name: str, request: Request):
-        """Draw the plan for the current settings and keep the images as the mix's stills, on the usual job path."""
+    def draw(name: str, request: Request, body: dict = Body(default={})):
+        """Draw the plan for the current settings and keep the images as the mix's stills, on the usual job path.
+
+        ``only`` is ``all`` (the default), ``missing`` (shots not drawn from their current prompt) or
+        a list of shot indexes; the other shots keep their images.
+        """
         if not gpu:
             raise H3Error("Open Soundstage in Studio to draw the images on the GPU.")
         owner = owner_of(request)
@@ -203,8 +301,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                           "Plan shots, or paste a plan from another chat model, then draw.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
+        only = body.get("only", "all")
+        if not (only in ("all", "missing") or (isinstance(only, list) and only and all(type(i) is int for i in only))):
+            raise H3Error("Draw all shots, the missing ones, or a list of shots.")
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
-                  *export.values(owner)]
+                  json.dumps(only), *export.values(owner)]
         session = session_of(request)
         callback = owned_generation(export.generate, "drama3_visuals",
                                     input_names=(*visuals.VIDEO_INPUT_NAMES, *export.controller.fields))
@@ -257,10 +358,13 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             _, result = project(name)
         root = export.deps.runtime_config().output_dir
         record = visuals.read_stills(result, root) if result else None
-        if record is None or file not in {item["image"] for item in record["shots"]}:
+        names = {item["image"] for item in record["shots"]} | {
+            item.get("image") for item in (record.get("portraits") or {}).values()} if record else set()
+        if file not in names:
             raise not_found()
         # Each drawing names its images afresh, so a still never changes under its name.
-        return file_response(visuals.stills_dir(result, root) / file, media_type="image/jpeg",
+        media = "image/png" if file.endswith(".png") else "image/jpeg"
+        return file_response(visuals.stills_dir(result, root) / file, media_type=media,
                              cache="private, max-age=31536000, immutable")
 
     @app.post(f"{api}/project/video/interrupt", include_in_schema=False)

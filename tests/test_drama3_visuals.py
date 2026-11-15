@@ -195,7 +195,7 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertNotIn("grey background", sheet_prompt("locations", "alley", "narrow", "ink", ""))
 
     def test_plan_is_saved_beside_the_mix_for_its_art_direction(self):
-        from h3_ui.drama3.visuals import plan_rows, read_plan, write_plan
+        from h3_ui.drama3.visuals import plan_shots_for, read_plan, write_plan
 
         plan = {"style": "ink", "continuity": {}, "shots": [
             {"start": 0, "transition": "cut", "beat": "Open", "references": [], "prompt": "A door"},
@@ -207,8 +207,9 @@ class IllustratedMixTests(unittest.TestCase):
             self.assertEqual(read_plan(mix, "Comic panels", 16)["plan"], plan)
             self.assertIsNone(read_plan(mix, "Oil paint", 16))
             self.assertIsNone(read_plan(mix, "Comic panels", 8))
-            rows = plan_rows(read_plan(mix), 3.0)
-            self.assertEqual([row[:3] for row in rows], [[0.0, 1.5, "Cut"], [1.5, 3.0, "Dissolve"]])
+            shots = plan_shots_for(read_plan(mix), 3.0)
+            self.assertEqual([(shot.first, shot.frames, shot.dissolve) for shot in shots],
+                             [(0, round(1.5 * FPS), False), (round(1.5 * FPS), round(1.5 * FPS), True)])
             # The plan file is hidden, so it never shows up as a result beside the mix.
             self.assertEqual([p.name for p in Path(tmp).iterdir() if not p.name.startswith(".")], [])
 
