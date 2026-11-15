@@ -159,14 +159,29 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     return words ? words[0].toUpperCase() + words.slice(1) : "";
   }
 
-  function stageText(stage) {
+  /** A scene's ``stage="Mia=-0.4, Leo=0.4"`` as named entries; ``given`` is false when no position was written. */
+  function stageEntries(stage) {
     return stage.split(",").map((part) => {
       const [name, value] = part.split("=").map((bit) => bit.trim());
-      if (!name) return "";
-      const position = Number(value);
+      return {name, position: Number(value), given: value !== undefined && value !== ""};
+    }).filter((entry) => entry.name);
+  }
+
+  function stageText(stage) {
+    return stageEntries(stage).map(({name, position}) => {
       const side = !Number.isFinite(position) ? "" : position < -0.15 ? "left" : position > 0.15 ? "right" : "centre";
       return side ? `${name} ${side}` : name;
-    }).filter(Boolean).join(" · ");
+    }).join(" · ");
+  }
+
+  /** A small left-to-right strip with a dot where each speaker stands; null when no position is a number. */
+  function stageStrip(stage, tones) {
+    const dots = stageEntries(stage).filter(({position, given}) => given && Number.isFinite(position)).map(({name, position}) => {
+      const tone = tones.get(name);
+      const left = (Math.max(-1, Math.min(1, position)) + 1) / 2 * 100;
+      return h("i", {title: name, style: {left: `${left}%`, background: tone !== undefined ? toneColor(tone) : "var(--muted)"}});
+    });
+    return dots.length ? h("span", {class: "vstage", "aria-hidden": "true"}, dots) : null;
   }
 
   function cueChip(sound) {
@@ -301,6 +316,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
           h("strong", {}, `Scene ${sceneNumber}`),
           group.attrs.room ? h("span", {class: "chip"}, humanize(group.attrs.room)) : null,
           group.attrs.stage ? h("span", {class: "muted small"}, stageText(group.attrs.stage)) : null,
+          group.attrs.stage ? stageStrip(group.attrs.stage, tones) : null,
           h("span", {class: "spacer"}),
           range ? h("span", {class: "muted small num"}, range) : null),
         // The scene's beds run under all of it, so they sit across its top.

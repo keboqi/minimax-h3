@@ -97,27 +97,41 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     const duration = result.duration || Math.max(0, ...result.lines.map((line) => line.end));
     const place = (start, end) => ({left: `${Math.min(start / duration, 1) * 100}%`,
                                     width: `${Math.max(end - start, 0) / duration * 100}%`});
-    const voiceRows = rows(result.lines);
-    const voices = h("div", {class: "lane", style: {"--rows": voiceRows.count}},
-      result.lines.map((line, index) => h("button", {
-        type: "button", class: "clip", "data-line": index,
-        title: `${line.speaker}: ${line.text}`, "aria-label": `Play from ${line.speaker}: ${line.text}`,
-        style: {...place(line.start, line.end), "--row": voiceRows.placed[index], background: toneColor(speakerTone(line.speaker))},
-        onclick: (event) => { event.stopPropagation(); pick(index, {seek: true}); },
+    // One lane per speaker, in the cast's order, under a "Voices" heading; each clip keeps its line's index.
+    const laneHeight = (count) => ({height: `${count * 24 + 6}px`});
+    const names = [...new Set([...result.speakers.map((speaker) => speaker.name), ...result.lines.map((line) => line.speaker)])]
+      .filter((name) => result.lines.some((line) => line.speaker === name));
+    const lanes = [h("span", {class: "lane-group"}, "Voices")];
+    const tracks = [h("span", {class: "lane-gap", "aria-hidden": "true"})];
+    for (const name of names) {
+      const indexes = result.lines.flatMap((line, index) => (line.speaker === name ? [index] : []));
+      const placed = rows(indexes.map((index) => result.lines[index]));
+      const color = toneColor(speakerTone(name));
+      lanes.push(h("span", {class: "lane-name", style: {...laneHeight(placed.count), color}, title: name},
+        h("i", {style: {background: color}}), name));
+      tracks.push(h("div", {class: "lane", style: {"--rows": placed.count}}, indexes.map((index, at) => {
+        const line = result.lines[index];
+        return h("button", {
+          type: "button", class: "clip", "data-line": index,
+          title: `${line.speaker}: ${line.text}`, "aria-label": `Play from ${line.speaker}: ${line.text}`,
+          style: {...place(line.start, line.end), "--row": placed.placed[at], background: color},
+          onclick: (event) => { event.stopPropagation(); pick(index, {seek: true}); },
+        });
       })));
-    const laneHeight = (count) => ({height: `${count * 18 + 6}px`});
-    const lanes = [h("span", {class: "lane-name", style: laneHeight(voiceRows.count)}, "Voices")];
-    const tracks = [voices];
+    }
     if (result.sounds.length) {
       const soundRows = rows(result.sounds);
-      lanes.push(h("span", {class: "lane-name", style: laneHeight(soundRows.count)}, "Sounds"));
+      lanes.push(h("span", {class: "lane-group"}, "Sounds"));
+      tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}));
+      // The sounds lane has no name of its own; an empty one keeps the names column level with it.
+      lanes.push(h("span", {class: "lane-name", style: laneHeight(soundRows.count)}));
       tracks.push(h("div", {class: "lane", style: {"--rows": soundRows.count}},
         result.sounds.map((sound, index) => h("button", {
           type: "button", class: `clip ${sound.loop ? "bed" : "cue"}`,
           title: `${sound.name} (${sound.loop ? "looped" : "one-shot"})`, "aria-label": `Play from sound: ${sound.name}`,
           style: {...place(sound.start, sound.end), "--row": soundRows.placed[index]},
           onclick: (event) => { event.stopPropagation(); seek(sound.start); },
-        }))));
+        }, h("span", {"aria-hidden": "true"}, sound.name)))));
     }
     const ticks = Math.min(6, Math.max(3, Math.floor(duration / 10)));
     const ruler = h("div", {class: "ruler num", "aria-hidden": "true"},
@@ -135,8 +149,8 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       h("span"), ruler, h("div", {class: "lane-names"}, lanes), lanesBox);
     const legend = h("div", {class: "legend"},
       result.speakers.map((speaker) => h("span", {}, h("i", {style: {background: toneColor(speaker.tone)}}), speaker.name)),
-      result.sounds.length ? [h("span", {}, h("i", {style: {background: "var(--bed)"}}), "Looped bed"),
-                              h("span", {}, h("i", {style: {background: "var(--cue)"}}), "One-shot effect")] : null,
+      result.sounds.length ? [h("span", {}, h("i", {style: {background: "var(--bed-line)"}}), "Looped bed"),
+                              h("span", {}, h("i", {style: {background: "var(--cue-line)"}}), "One-shot effect")] : null,
       h("span", {class: "spacer"}),
       h("span", {}, "Click a clip or a line to jump there"));
     box.replaceChildren(...[head, stage, timeline, legend].filter(Boolean));

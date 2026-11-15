@@ -84,12 +84,15 @@ export function createCast({state, $, h, toneColor, svg, NO_GPU, AUTO_STAGES, au
         : speaker.source === "clip" ? (speaker.transcript ? "Own clip · transcript ready" : "Own clip · needs a transcript")
         : speaker.description ? "Has a description" : "Needs a description";
       return h("button", {
-        type: "button", class: `cast-card${working ? " working" : ""}`,
+        type: "button", class: `cast-card${working ? " working" : ""}${speaker.ready ? " has-voice" : ""}`,
+        style: {"--tone": toneColor(tone)},
         "aria-pressed": String(pick?.kind === "voice" && pick.slot === speaker.slot),
         onclick: () => pickSlot("voice", speaker.slot),
       },
-      h("span", {class: "cast-card-head"}, h("i", {style: {background: toneColor(tone)}}), h("strong", {}, speaker.name),
+      h("span", {class: "cast-card-head"}, h("span", {class: "cast-avatar", "aria-hidden": "true"}, [...speaker.name.trim()][0] || "?"),
+        h("strong", {}, speaker.name),
         h("span", {}, count ? `${count} line${count > 1 ? "s" : ""}` : "no lines")),
+      h("span", {class: "cast-wave", "aria-hidden": "true"}),
       h("span", {class: speaker.ready ? "ready" : "missing"}, working ? "Working…" : speaker.ready ? "Voice ready" : "No voice yet"),
       h("span", {class: "note"}, working ? (slotNote("voice", speaker.slot) || "Waiting for the GPU…") : source));
     });
@@ -225,7 +228,7 @@ export function createCast({state, $, h, toneColor, svg, NO_GPU, AUTO_STAGES, au
     }
     parts.push(noteBox("voice", slot));
     const spoken = lines.get(key) ?? [];
-    parts.push(h("div", {class: "slot-lines"},
+    parts.push(h("div", {class: "slot-lines", style: {"--slot-tone": toneColor(tone)}},
       h("span", {class: "label"}, spoken.length ? `${speaker.name}'s lines` : `${speaker.name} has no lines in the script`),
       spoken.slice(0, 3).map((line) => h("p", {}, line)),
       spoken.length > 3 ? h("span", {class: "muted small"}, `and ${spoken.length - 3} more`) : null));
