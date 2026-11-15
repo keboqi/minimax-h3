@@ -66,6 +66,14 @@ class VoiceLooksTests(unittest.TestCase):
         self.assertEqual(voice_looks.age("16岁的少年"), (16, 16))
         self.assertEqual(voice_looks.gender("其他人都走了"), None)
 
+    def test_aged_and_number_words_need_an_age_beside_them(self):
+        self.assertEqual(voice_looks.age("Mara, a woman aged about 30, red coat"), (30, 30))
+        self.assertEqual(voice_looks.age("Mara, young woman, aged brass locket"), (18, 30))
+        self.assertEqual(voice_looks.age("Li, a man in a ten-gallon hat"), None)
+        self.assertEqual(voice_looks.age("a girl, twelve years old"), (12, 12))
+        self.assertEqual(voice_looks.age("a middle-aged man"), (40, 60))
+        self.assertEqual(voice_looks.conflicts("Mara, a woman aged about 30", "a woman in her thirties"), [])
+
 
 class StillsTests(unittest.TestCase):
     def setUp(self):

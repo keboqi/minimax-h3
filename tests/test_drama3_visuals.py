@@ -301,6 +301,16 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertEqual(preset_for(STYLE_PRESETS[DEFAULT_STYLE] + " Set in 1940s Shanghai."), CUSTOM_STYLE)
         self.assertEqual(preset_for(""), CUSTOM_STYLE)
 
+    def test_preset_texts_saved_before_setting_detail_still_match(self):
+        from h3_ui.drama3.visuals import SETTING_DETAIL, STYLE_PRESETS, preset_for
+
+        for name, text in STYLE_PRESETS.items():
+            self.assertEqual(preset_for(text.removesuffix(SETTING_DETAIL)), name)
+        old = STYLE_PRESETS["Digital painting"].removesuffix(SETTING_DETAIL).replace(
+            "clear detail on faces and hands", "sharper detail around faces and hands")
+        self.assertIn("sharper detail around faces and hands", old)
+        self.assertEqual(preset_for(old), "Digital painting")
+
     def test_copied_prompt_and_pasted_reply_follow_the_built_in_planner(self):
         from h3_app.drama3.visual_plan import check_plan_reply, full_plan_prompt
 

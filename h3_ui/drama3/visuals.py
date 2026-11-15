@@ -127,6 +127,11 @@ STYLE_PRESETS = {
 SETTING_DETAIL = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
                   "objects and landscape, never a blurred, smeared or sketchy backdrop.")
 SLIDE_STYLES = ("Flat illustration", "Isometric illustration", "Minimal vector", "Editorial illustration")
+# Projects saved before SETTING_DETAIL keep the earlier preset text as their Art direction (and their
+# shot plan is keyed by it), so those texts still count as the preset rather than as Custom.
+_LEGACY_PRESETS = {text: name for name, text in STYLE_PRESETS.items()}
+_LEGACY_PRESETS[STYLE_PRESETS["Digital painting"].replace(
+    "clear detail on faces and hands", "sharper detail around faces and hands")] = "Digital painting"
 STYLE_PRESETS = {name: text if name in SLIDE_STYLES else text + SETTING_DETAIL
                  for name, text in STYLE_PRESETS.items()}
 DEFAULT_STYLE = "Digital painting"
@@ -136,7 +141,8 @@ CUSTOM_STYLE = "Custom"
 def preset_for(text):
     """The preset an Art direction text matches, or Custom once it's been edited."""
     text = (text or "").strip()
-    return next((name for name, value in STYLE_PRESETS.items() if value == text), CUSTOM_STYLE)
+    return next((name for name, value in STYLE_PRESETS.items() if value == text), None) \
+        or _LEGACY_PRESETS.get(text, CUSTOM_STYLE)
 
 
 PORTRAIT_SIZE = 1024

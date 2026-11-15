@@ -20,7 +20,7 @@ _DECADES = {"teens": 13, "twenties": 20, "thirties": 30, "forties": 40, "fifties
             "seventies": 70, "eighties": 80, "nineties": 90}
 # Age words, most specific first; each gives a range of years.
 _AGE_WORDS = [
-    (r"\bmiddle[- ]aged\b", (40, 60)), (r"\b(elderly|aged|senior|old (?:man|woman|lady)|grand(?:father|mother)|"
+    (r"\bmiddle[- ]aged\b", (40, 60)), (r"\b(elderly|senior|old (?:man|woman|lady)|grand(?:father|mother)|"
                                        r"grandpa|grandma)\b", (60, 100)),
     (r"\b(teen|teenage|teenager|adolescent)\b", (13, 19)), (r"\b(toddler|baby|infant)\b", (0, 3)),
     (r"\b(child|kid|little (?:boy|girl))\b", (3, 12)), (r"\b(boy|girl)\b", (5, 17)),
@@ -45,15 +45,18 @@ def age(text):
     if match:
         decade = int(next(group for group in match.groups() if group)) * 10
         return decade, decade + 9
-    match = re.search(r"\b(\d{1,2})[- ]?(?:years?[- ]old|yo\b)|(\d{1,2})\s*岁", lower)
+    # "aged" alone is no age: it describes things too ("an aged brass locket"); "aged 30" is.
+    match = re.search(r"\b(\d{1,2})[- ]?(?:years?[- ]old|yo\b)|\baged (?:about |around )?(\d{1,2})\b|(\d{1,2})\s*岁",
+                      lower)
     if match:
         years = int(next(group for group in match.groups() if group))
         return years, years
     for word, decade in _DECADES.items():
         if re.search(rf"\b{word}\b", lower):
             return decade, decade + 9
+    # A number word is an age only beside "years" or "aged"/"about" ("ten-gallon hat" is not).
     for word, years in _NUMBERS.items():
-        if re.search(rf"\b{word}\b", lower):
+        if re.search(rf"\b(?:aged|age|about|around) {word}\b|\b{word}[- ]years?\b", lower):
             return years, years
     for pattern, years in _AGE_WORDS:
         if re.search(pattern, lower if pattern.startswith("\\b") else text):
