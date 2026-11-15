@@ -85,7 +85,7 @@ SMART_DELAY = 0.5
 SMART_SPEED = 1.25
 SMART_PAUSE = (0.25, 0.15)
 # Matched takes changed more than this are reported: their translation is much longer or shorter.
-TEMPO_WARNING = (0.75, 1.6)
+TEMPO_WARNING = (0.75, 2.0)
 # Drama 3 sampling (temperature, top_p, top_k); Soundstage offers the same three.
 VOICE_PRESETS = {"Strict": (0.7, 0.7, 30), "Balance": (1.0, 0.9, 0), "Expressive": (2.0, 1.0, 30)}
 # A line's own clip shorter than this is a weak reference; its speaker's best clip is used instead.

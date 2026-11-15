@@ -67,8 +67,8 @@ function speedOf(line) {
 
 // pipeline.TEMPO_WARNING's upper bound, where a take starts to sound rushed, and the speed that
 // fills a meter; .meter-mark sits at RUSHED / METER_MAX.
-const RUSHED = 1.6;
-const METER_MAX = 2.56;
+const RUSHED = 2.0;
+const METER_MAX = 3.2;
 
 const meter = (speed) => `<span class="meter-fill ${speed > RUSHED ? "over" : ""}" style="width:${Math.min(speed / METER_MAX, 1) * 100}%"></span><span class="meter-mark"></span>`;
 

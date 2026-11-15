@@ -233,7 +233,7 @@ real language again later translates and voices every line.
 The board lists every line with its time, speaker, original and translation.
 Its summary counts the lines ready to dub, the speakers, the lines still
 untranslated and those that may be too long to say in their time (Drama 3's
-estimate of their spoken length needs more than 1.6x speed). Lines are flagged
+estimate of their spoken length needs more than 2.0x speed). Lines are flagged
 *Not translated*, *May be too long* or *Original voice*; the filters show all
 lines, those that need attention, the untranslated ones or one speaker's. Above
 the lines, a timeline has a row per speaker: striped lines need attention and
@@ -350,7 +350,7 @@ original, or change its volume. Changes save at once.
   - *Match the original* stretches every take with FFmpeg's
     `atempo`, pitch preserved, so it starts and ends exactly where the original
     line does, as index-tts-vllm's FFmpeg duration control does. Lines sped up
-    more than 1.6x or slowed below 0.75x are listed under **Check**; a shorter or
+    more than 2.0x or slowed below 0.75x are listed under **Check**; a shorter or
     longer translation sounds more natural there.
   - *Natural pace* keeps each take's own pace. A take longer than its slot (until
     the next line starts) is sped up by at most **Maximum speed-up**. Takes that

@@ -480,7 +480,8 @@ class TimingTests(unittest.TestCase):
         with patch.object(pipeline, "_stretch", side_effect=lambda s, r, t, cache=None: s[: int(len(s) / t)]):
             _timed, tempo, note = pipeline.match(take, 24000, 2.0)
             self.assertEqual(tempo, 2.0)
-            self.assertIn("shorter translation", note)
+            self.assertEqual(note, "")
+            self.assertIn("shorter translation", pipeline.match(take, 24000, 1.9)[2])
             self.assertIn("longer translation", pipeline.match(take, 24000, 8.0)[2])
             self.assertEqual(pipeline.match(take, 24000, 3.5)[2], "")
 
