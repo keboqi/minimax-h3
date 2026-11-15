@@ -59,21 +59,24 @@ def load_key_map():
             isinstance(t, ast.Name) and t.id.startswith("LIGHTX_") for t in node.targets
         ):
             wanted.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in {"_logical_weight_shape", "_lightx_key_map"}:
+        elif isinstance(node, ast.FunctionDef) and node.name in {
+            "_logical_weight_shape", "_lightx_key_map", "_lightx_curve_adaln",
+        }:
             wanted.append(node)
     namespace = {"re": re}
     exec(compile(ast.Module(body=wanted, type_ignores=[]), str(path), "exec"), namespace)
     return namespace
 
 
-def fake_model(modules):
+def fake_model(modules, *, curves=False):
     weights = {module: FakeTensor(out, inp) for module, (out, inp, _rank) in modules.items()}
     native = {module: module + ".weight" for module in modules}
     comfy = SimpleNamespace(
         lora=SimpleNamespace(model_lora_keys_unet=lambda model, _: dict(native)),
         utils=SimpleNamespace(get_attr=lambda model, key: weights[key[: -len(".weight")]]),
     )
-    return SimpleNamespace(model=object()), comfy
+    return SimpleNamespace(model=SimpleNamespace(
+        diffusion_model=SimpleNamespace(use_adaln_curves=curves))), comfy
 
 
 class LightXLoRALayoutTests(unittest.TestCase):
@@ -94,6 +97,29 @@ class LightXLoRALayoutTests(unittest.TestCase):
         partial = {**core_modules(), "diffusion_model.blocks.0.adaln_proj.linear": ADALN["diffusion_model.blocks.0.adaln_proj.linear"]}
         with self.assertRaisesRegex(ValueError, "259-module"):
             self.run_map(partial)
+
+    def test_v12_adaln_layout_loads_on_pruned_curve_models(self):
+        modules = {**core_modules(), **ADALN}
+        pruned = {**core_modules(), **{name: (out, 8, rank) for name, (out, _, rank) in ADALN.items()}}
+        ns = load_key_map()
+        model, ns["comfy"] = fake_model(pruned, curves=True)
+        self.assertEqual(len(ns["_lightx_key_map"](model, lora_for(modules))), 259)
+
+    def test_mismatched_dense_adaln_is_still_rejected(self):
+        modules = {**core_modules(), **ADALN}
+        for width in (8, 64):
+            with self.subTest(width=width), self.assertRaisesRegex(ValueError, "base=.*down=.*up="):
+                self.run_map(modules, {**core_modules(), **{
+                    name: (out, width, rank) for name, (out, _, rank) in ADALN.items()
+                }})
+
+    def test_curve_support_does_not_accept_wrong_output_shapes(self):
+        modules = {**core_modules(), **ADALN}
+        pruned = {**core_modules(), **{name: (out + 1, 8, rank) for name, (out, _, rank) in ADALN.items()}}
+        ns = load_key_map()
+        model, ns["comfy"] = fake_model(pruned, curves=True)
+        with self.assertRaisesRegex(ValueError, "tensor shapes do not match"):
+            ns["_lightx_key_map"](model, lora_for(modules))
 
     def test_unknown_key_is_rejected(self):
         ns = load_key_map()

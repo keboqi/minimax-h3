@@ -675,7 +675,7 @@ class RemakeHandlers:
             status = str(update.status).split("\n\n")[0]
             if status.startswith("Error:"):
                 raise H3Error(status.removeprefix("Error:").strip())
-            output = update.output[0] if isinstance(update.output, list) else update.output
+            output = next(iter(update.output), None) if isinstance(update.output, list) else update.output
             result = output or result
             yield None, status
         if result is None:

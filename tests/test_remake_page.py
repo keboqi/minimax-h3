@@ -82,6 +82,9 @@ class RemakePageTests(unittest.TestCase):
 
     def qwen_take(self, request, progress):
         self.edits.append(request)
+        yield GenerationUpdate(None, "Validating Qwen Image 2.1 request")
+        yield GenerationUpdate([], "Queued Qwen Image 2.1 image 1/1")
+        yield GenerationUpdate([], "Sampling")
         if "fail" in request.prompt:
             yield GenerationUpdate([], "Error: no memory\n\ntimings")
             return
@@ -89,6 +92,7 @@ class RemakePageTests(unittest.TestCase):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.input_dir / request.reference_images[0], target)
         yield GenerationUpdate([str(target)], "Qwen Image 2.1 image 1/1 completed")
+        yield GenerationUpdate([], "Finishing")
 
     def take(self, values, remake, progress):
         target = self.output_dir / f"{remake.output_prefix or 'h3/single'}.mp4"
@@ -324,6 +328,15 @@ class RemakePageTests(unittest.TestCase):
         self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "fail"}))
         run = self.finished_edit()
         self.assertEqual(run["error"], "no memory")
+        self.assertIsNone(run["result_url"])
+
+    def test_a_quick_edit_without_an_image_reports_why(self):
+        self.handlers.deps = replace(self.handlers.deps, qwen_take=lambda *_: iter([
+            GenerationUpdate([], "Queued"), GenerationUpdate(None, "Finished"),
+        ]))
+        self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "make it blue"}))
+        run = self.finished_edit()
+        self.assertEqual(run["error"], "The edit finished without an image.")
         self.assertIsNone(run["result_url"])
 
     def test_a_quick_edit_needs_a_prompt_and_the_owners_picture(self):

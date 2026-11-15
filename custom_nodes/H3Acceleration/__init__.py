@@ -72,9 +72,13 @@ class H3InplaceLoRAAdapter(comfy.weight_adapter.LoRAAdapter):
             float(alpha) / rank if alpha is not None else 1.0
         )
 
+    def lora_input(self, x):
+        return x
+
     def bypass_forward(self, original_forward, x, *args, **kwargs):
         up, down, _alpha, _mid, _dora_scale, _reshape = self.weights
         base_output = original_forward(x, *args, **kwargs)
+        x = self.lora_input(x)
         if up.dtype != x.dtype or up.device != x.device:
             up = up.to(device=x.device, dtype=x.dtype)
         if down.dtype != x.dtype or down.device != x.device:
@@ -82,6 +86,70 @@ class H3InplaceLoRAAdapter(comfy.weight_adapter.LoRAAdapter):
         scale = self.intrinsic_scale * float(getattr(self, "multiplier", 1.0))
         update = F.linear(F.linear(x, down), up)
         return base_output.add_(update, alpha=scale)
+
+
+class H3CurveInplaceLoRAAdapter(H3InplaceLoRAAdapter):
+    """Keep the base's curve input, but apply the LoRA to dense timestep rows."""
+
+    def lora_input(self, x):
+        rows = self.curve_context.get()
+        if rows is None or rows.get("dense") is None:
+            raise RuntimeError("LightX2V curve AdaLN ran without dense timestep rows")
+        dense = rows["dense"]
+        if dense.shape[0] != x.shape[0]:
+            raise RuntimeError("LightX2V curve AdaLN timestep rows do not match")
+        return dense.to(device=x.device, dtype=x.dtype)
+
+
+def _lightx_curve_adaln(model, module, base_shape, down):
+    backbone = getattr(model.model, "diffusion_model", None)
+    return (
+        module in LIGHTX_ADALN_MODULES
+        and getattr(backbone, "use_adaln_curves", False)
+        and len(base_shape) == 2
+        and base_shape[1] == 8
+        and int(down.shape[1]) == 2688
+    )
+
+
+def _lightx_curve_time_embedding(original, grid, context):
+    """Use the model's exact timestep rows, including visual/audio reference rows."""
+    def time_embedding(unique_t, device, dtype):
+        state = context.get()
+        if state is None:
+            raise RuntimeError("LightX2V curve AdaLN ran outside the diffusion wrapper")
+        table = grid.to(device=device, dtype=torch.float32)
+        times = torch.tensor(unique_t, device=device, dtype=torch.float32)
+        positions = times.clamp(0.0, 1.0) * (table.shape[0] - 1)
+        lower = positions.floor().long().clamp(max=table.shape[0] - 2)
+        state["dense"] = torch.lerp(
+            table[lower], table[lower + 1], (positions - lower).unsqueeze(1),
+        )
+        return original(unique_t, device, dtype)
+    return time_embedding
+
+
+def _lightx_curve_wrapper(context):
+    def wrapper(executor, *args, **kwargs):
+        token = context.set({})
+        try:
+            return executor(*args, **kwargs)
+        finally:
+            context.reset(token)
+    return wrapper
+
+
+def _lightx_curve_grid():
+    # Setup already installs this pinned node and its dense SiLU timestep grid.
+    from pathlib import Path
+    for root in folder_paths.get_folder_paths("custom_nodes"):
+        path = Path(root) / "ComfyUI-MiniMax-H3-Turbo" / "h3_silu_temb_grid.safetensors"
+        if path.is_file():
+            grid = comfy.utils.load_torch_file(str(path), safe_load=True)["silu_t_emb_grid"]
+            if grid.ndim != 2 or grid.shape[0] < 2 or grid.shape[1] != 2688:
+                raise ValueError("Invalid LightX2V dense timestep grid")
+            return grid
+    raise FileNotFoundError("LightX2V curve AdaLN needs the Larry Turbo timestep grid; re-run setup_h3.py")
 
 
 def _lightx_key_map(model, lora):
@@ -163,10 +231,14 @@ def _lightx_key_map(model, lora):
         base_shape = _logical_weight_shape(base_weight)
         if (
             len(base_shape) != 2
-            or int(down.shape[1]) != int(base_shape[1])
+            or (int(down.shape[1]) != int(base_shape[1])
+                and not _lightx_curve_adaln(model, module, base_shape, down))
             or int(up.shape[0]) != int(base_shape[0])
         ):
-            raise ValueError(f"LightX2V tensor shapes do not match {module}")
+            raise ValueError(
+                f"LightX2V tensor shapes do not match {module}: "
+                f"base={base_shape}, down={tuple(down.shape)}, up={tuple(up.shape)}"
+            )
     return {module: native_map[module] for module in modules}
 
 
@@ -232,6 +304,26 @@ class H3LightX2VBypassLoRA:
             )
 
         patched = model.clone()
+        curve_keys = {
+            key for module, key in key_map.items()
+            if _lightx_curve_adaln(
+                model, module, _logical_weight_shape(comfy.utils.get_attr(model.model, key)),
+                lora[module + ".lora_A.weight"],
+            )
+        }
+        curve_context = None
+        if curve_keys:
+            grid = _lightx_curve_grid()
+            curve_context = ContextVar(f"h3_lightx2v_curve_{id(patched)}", default=None)
+            original = model.get_model_object("diffusion_model._time_embedding")
+            patched.add_object_patch(
+                "diffusion_model._time_embedding",
+                _lightx_curve_time_embedding(original, grid, curve_context),
+            )
+            patched.add_wrapper_with_key(
+                comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL,
+                "h3_lightx2v_curve", _lightx_curve_wrapper(curve_context),
+            )
         fused_fc2_keys = _lightx_int8_fused_fc2_keys(model, key_map)
         fused_fc2 = {
             key: adapter for key, adapter in loaded.items() if key in fused_fc2_keys
@@ -254,7 +346,10 @@ class H3LightX2VBypassLoRA:
                 raise TypeError(f"Unsupported LightX2V adapter for {key}")
             if len(adapter.weights) != 6:
                 raise ValueError(f"Unexpected LightX2V adapter layout for {key}")
-            adapter = H3InplaceLoRAAdapter(adapter.loaded_keys, adapter.weights)
+            adapter_class = H3CurveInplaceLoRAAdapter if key in curve_keys else H3InplaceLoRAAdapter
+            adapter = adapter_class(adapter.loaded_keys, adapter.weights)
+            if key in curve_keys:
+                adapter.curve_context = curve_context
             manager.add_adapter(key, adapter, strength=float(strength))
 
         injections = manager.create_injections(patched.model)

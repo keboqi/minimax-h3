@@ -242,13 +242,14 @@ details summary:hover { color: var(--text); }
 .pic { display: flex; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); transition: border-color .15s, background .15s; }
 .pic.on { border-color: var(--accent); }
 .pic.over, .empty-slot.over { border-color: var(--accent); background: var(--soft); }
-.pic .thumb-wrap { position: relative; flex: none; width: 112px; height: 65px; border-radius: 6px; overflow: hidden; cursor: pointer; }
+.pic .thumb-wrap { position: relative; flex: none; align-self: flex-start; width: 112px; border-radius: 6px; overflow: hidden; cursor: pointer; }
 .pic .thumb-wrap .peek-badge {
   position: absolute; left: 4px; bottom: 4px; padding: 1px 5px; border-radius: 4px;
   background: rgba(11, 18, 16, .78); color: #e9f1ed; font-size: 10px; pointer-events: none;
 }
-.pic img, .pic .wait { width: 112px; height: 65px; flex: none; object-fit: cover; border-radius: 6px; display: block; }
-.pic .wait { border: 1px dashed var(--dash); }
+.pic img, .pic .wait { width: 112px; flex: none; border-radius: 6px; display: block; }
+.pic img { height: auto; }
+.pic .wait { height: 65px; border: 1px dashed var(--dash); }
 .pic .body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .pic .field.tight { width: 64px; }
 .pic .quick { display: flex; gap: 6px; }
