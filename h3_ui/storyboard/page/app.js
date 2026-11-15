@@ -349,10 +349,10 @@
     const generate = state.boot.gpu ? button(item.takes.length ? "Generate another take" : "Generate this scene",
       () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
       {disabled: blocked || busy, id: "generate-scene"}) : null;
-    $("take-row").replaceChildren(
+    $("take-row").replaceChildren(...[
       chips.length ? h("div", {className: "take-chips"}, chips) : null,
       row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
-      generate ? h("div", {className: "take-foot"}, generate) : null);
+      generate ? h("div", {className: "take-foot"}, generate) : null].filter(Boolean));
     const doomed = shown?.id === state.deletingTake && shown.id !== item.in_use ? shown : null;
     $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
       h("p", {}, state.question),
