@@ -20,7 +20,8 @@ clip that fits in one window. Reopen the project from Remake's Projects list in 
 Workshop and Studio must use the same data folders and workspace identity. On Modal, stop the GPU
 endpoint before preparing projects in Workshop and restart it afterwards to see the saved files.
 
-The tab opens on a drop area and your **Projects**. Once a source is in, a viewer sits above a timeline, and the panel
+The tab opens on a drop area, a choice of **Swap** or **Edit**, and your **Projects** as cards, each with a bar
+coloured by its windows' states. Once a source is in, a viewer sits above a timeline, and the panel
 on the right always shows the selection or the window under the playhead.
 
 1. Pick **Swap** to replace a character or subject, or **Edit** to change objects, background, weather or light. Each
@@ -43,11 +44,13 @@ on the right always shows the selection or the window under the playhead.
    comparison in the viewer, and **Align to source** corrects a whole-frame shift or zoom from unchanged areas. It
    cannot fix a changed pose.
 7. Write an **Edit request**, press **Rewrite / enhance**, and accept the suggestion. Gemini reads the clip and the
-   frames. OpenAI-compatible services only see the frames.
-8. Press the action at the top right, which says what it will do. The Source, Frames and Prompt steps beside it show
-   what is still missing.
+   frames. OpenAI-compatible services only see the frames. The outline above the prompt lists the six sections as
+   written, empty or missing; click one to select it in the prompt, or a missing one to add its header in order.
+8. Press the action at the top right, which says what it will do and how many seconds it renders. The Source, Frames
+   and Prompt steps beside it show what is still missing, with counts; click one to go there.
 
-The viewer has **Source**, **Result** and **Compare**, where you drag a divider across the two.
+The viewer has **Source**, **Result** and **Compare**, where you drag a divider across the two. Keys 1, 2 and 3 switch
+between them.
 
 **Size** starts on **Auto, match source**: the video keeps the source's shape and size, up to 1080p, whatever the
 MiniMax H3 settings say. Sources up to 736 pixels on their short edge are sampled directly. Larger ones are sampled at
@@ -62,7 +65,9 @@ guides mouth movement. A silent source stays silent.
 
 One render holds a limited length, set by **Longest window** (9.4 s by default; lower it if long clips run out of
 memory). A selection that fits stays a single run. A longer one renders in windows, which appear as blocks on the
-timeline, coloured and labelled by state:
+timeline, coloured and labelled by state, under a seconds ruler. A legend names the states, and a marker at each join
+says whether the window starts on a cut or continues the shot. While a run works, a bar under the status shows each
+window as done, rendering or queued.
 
 - Windows end on the source's cuts where they can. A shot too long for one window continues into the next: its first
   17 frames are the last 17 frames kept from the render before it, held unchanged through sampling, so the two meet in
@@ -75,7 +80,7 @@ timeline, coloured and labelled by state:
 - **Prompt per window** is on by default. Turn it off to reuse window 1's prompt, which often works for a single scene.
   A prompt you typed for a window stays; prompts written earlier are replaced when that window renders. A chip above the
   prompt says which it is.
-- Click a window, or scrub into it, to change it. Leaving a window saves it, and pins count from the start of that
+- Click a window, scrub into it, or use the arrows beside its name in the panel, to change it. Leaving a window saves it, and pins count from the start of that
   window. **Copy to a slot** turns the carried frame into one you can edit.
 - **Regenerate this window** renders only that window and any others you changed. The window after it shows
   *Earlier window changed*: its take still joins, and you decide whether to regenerate it. If it continues the same

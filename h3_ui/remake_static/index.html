@@ -13,9 +13,15 @@
     <p class="muted">Its performance, camera and soundtrack carry over. A frame you repaint decides the new look.</p>
     <button type="button" class="btn primary big" id="choose-video">Choose video</button>
     <p class="small muted" id="upload-status" role="status"></p>
+    <p class="small muted">One render holds 3.75 to 14.4 s. Longer selections split into windows on the source's cuts.</p>
   </section>
-  <section class="panel projects" aria-label="Projects">
-    <h2>Projects</h2>
+  <section class="start-mode" aria-label="What will change">
+    <h2>What will change?</h2>
+    <div class="mode-cards" id="start-mode"></div>
+    <p class="small muted">You can switch later. Each has its own LoRA and six-step schedule.</p>
+  </section>
+  <section class="projects" aria-label="Projects">
+    <div class="row between"><h2>Projects</h2><span class="small muted">Each keeps its own copy of the source, frames, prompts and takes</span></div>
     <p class="small muted" id="no-projects">A selection long enough for windows saves itself here, with its own copy of the source.</p>
     <div id="start-projects"></div>
   </section>
@@ -38,10 +44,14 @@
       <span class="small muted" id="save-state" role="status" hidden></span>
       <button type="button" class="btn" id="save-project">Save project</button>
       <button type="button" class="btn" id="stop" hidden>Interrupt</button>
-      <button type="button" class="btn primary big" id="primary"></button>
+      <div class="primary-wrap">
+        <button type="button" class="btn primary big" id="primary"></button>
+        <span class="small muted" id="primary-detail"></span>
+      </div>
     </div>
   </section>
   <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
+  <div class="run-bar" id="run-bar" aria-hidden="true" hidden></div>
 
   <div class="workarea">
     <div class="main">
@@ -109,14 +119,24 @@
         <p class="small muted" id="summary"></p>
         <div class="tracks-scroll">
           <div class="tracks" id="tracks">
+            <div class="ruler" id="ruler" aria-hidden="true"></div>
             <div class="strip" id="strip">
               <div id="cuts"></div>
               <input class="overlay" id="scrub" type="range" min="0" value="0" aria-label="Playhead, frame in selection">
             </div>
+            <div class="joins" id="joins"></div>
             <div class="wins" id="wins"></div>
             <div class="marks" id="marks"></div>
             <div class="playhead" id="playhead"></div>
           </div>
+        </div>
+        <div class="legend small muted" id="legend" hidden>
+          <span><i class="key done"></i>Done</span>
+          <span><i class="key changed"></i>Changed</span>
+          <span><i class="key outdated"></i>Earlier window changed</span>
+          <span><i class="key pending"></i>Not generated</span>
+          <span><i class="key failed"></i>Failed</span>
+          <span><i class="key held"></i>Held from the render before</span>
         </div>
         <div class="row line" id="final" hidden>
           <strong class="small">Final video</strong>
@@ -129,8 +149,14 @@
 
     <aside class="panel inspector" id="inspector">
       <div class="block">
-        <div class="row">
+        <div class="row scope">
+          <button type="button" class="btn icon" id="prev-window" aria-label="Previous window" title="Previous window" hidden>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 2.5L4.5 7 9 11.5"/></svg>
+          </button>
           <h2 id="scope-title"></h2>
+          <button type="button" class="btn icon" id="next-window" aria-label="Next window" title="Next window" hidden>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 2.5L9.5 7 5 11.5"/></svg>
+          </button>
           <span class="small muted mono grow" id="scope-time"></span>
           <button type="button" class="btn" id="regenerate" hidden>Regenerate this window</button>
         </div>
@@ -169,6 +195,7 @@
             <button type="button" class="btn" id="keep">Keep original</button>
           </div>
         </div>
+        <ol class="outline" id="outline" aria-label="Prompt sections"></ol>
         <label class="stack">
           <span class="row tightrow"><span class="small muted grow" id="prompt-label">Remake prompt</span><span class="chip" id="origin"></span><span class="chip" id="sections"></span></span>
           <textarea id="prompt" class="field mono prompt" rows="9" aria-label="Remake prompt" placeholder="subject_definitions:&#10;…&#10;&#10;summary:&#10;…"></textarea>
@@ -184,7 +211,7 @@
   <section class="panel next-run" aria-label="Next run">
     <div class="row">
       <strong class="small">Next run</strong>
-      <span class="small" id="next-output"></span>
+      <span class="chips" id="next-output"></span>
       <span class="small muted" id="next-context"></span>
     </div>
     <div id="next-notes"></div>

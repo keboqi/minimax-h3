@@ -566,6 +566,7 @@
       status.className = run.error ? "status error" : "status";
     }
     renderAction();
+    renderRunBar();
     if (run && run.revision !== state.runSeen) {
       state.runSeen = run.revision;
       syncProject().then(() => {
@@ -606,12 +607,22 @@
   const bold = (text) => String(text).split("**").map((part, index) => (index % 2 ? h("strong", {}, part) : part));
 
   const projectRow = (row, onclick) => h("button", {type: "button", className: "project-row", onclick},
-    row.thumb ? h("img", {src: fileUrl(row.thumb), alt: ""}) : h("img", {alt: ""}),
-    h("span", {}, h("strong", {}, row.name), h("span", {className: "small muted"}, row.meta)));
+    h("span", {className: "thumb"}, row.thumb ? h("img", {src: fileUrl(row.thumb), alt: ""}) : null),
+    h("span", {className: "about"},
+      h("strong", {}, row.name),
+      row.states?.length ? h("span", {className: "states", "aria-hidden": "true"},
+        row.states.map((value) => h("i", {className: value}))) : null,
+      h("span", {className: "small muted"}, row.meta)));
 
+  const MODES = [["Swap", "Replace a character or subject. Their moves and lip sync stay."],
+                 ["Edit", "Change objects, background, weather or light around the action."]];
   const renderStart = () => {
     $("no-projects").hidden = state.boot.projects.length > 0;
     $("start-projects").replaceChildren(...state.boot.projects.map((row) => projectRow(row, () => openProject(row.key))));
+    $("start-mode").replaceChildren(...MODES.map(([mode, line]) => h("button", {
+      type: "button", className: "mode-card", "aria-pressed": String(state.mode === mode),
+      onclick: () => { state.mode = mode; savePrefs(); renderStart(); },
+    }, h("strong", {}, mode), h("span", {className: "small muted"}, line))));
   };
 
   const renderMenu = () => {
@@ -669,17 +680,27 @@
       renderAction();
       changed();
     }));
-    $("mode").children[0].title = "Replaces a character or subject";
-    $("mode").children[1].title = "Changes objects, background, weather or light";
+    MODES.forEach(([, line], index) => { $("mode").children[index].title = line; });
 
     const check = state.check;
     const step = check?.step;
     const order = ["source", "frames", "prompt"];
     const reached = step ? order.indexOf(step) : order.length;
-    $("steps").replaceChildren(...["Source", "Frames", "Prompt"].map((label, index) => {
+    const filled = state.slots.filter(Boolean);
+    const edited = filled.filter((slot) => !slot.untouched).length;
+    const sections = presentSections($("prompt").value).length;
+    const names = ["Source", "Frames", "Prompt"];
+    const labels = [names[0],
+                    filled.length ? `${names[1]} · ${edited} of ${filled.length} edited` : names[1],
+                    `${names[2]} · ${sections} of 6`];
+    $("steps").replaceChildren(...order.map((key, index) => {
       const done = index < reached;
-      return h("span", {className: done ? "step done" : index === reached ? "step now" : "step"},
-        done ? svg(CHECK) : h("span", {className: "dot"}), label);
+      const now = index === reached;
+      return h("button", {type: "button", className: done ? "step done" : now ? "step now" : "step",
+                          title: now && check?.message ? `${check.message} Click to go there.` : `Go to ${names[index]}`,
+                          "aria-label": `${labels[index]} step, ${done ? "done" : now ? "needed next" : "to do"}`,
+                          onclick: () => jumpTo(key)},
+        done ? svg(CHECK) : h("span", {className: "dot"}), labels[index]);
     }));
     $("readiness").textContent = check?.message ?? "";
     setSaveLabel(state.saveLabel);
@@ -697,12 +718,57 @@
     action.disabled = !gpu() || blocked || running();
     if (!gpu()) action.textContent = "Render in Studio";
     $("stop").hidden = !running();
+    $("primary-detail").textContent = primaryDetail(waiting);
+  };
+
+  // What the primary button will render, in seconds of video.
+  const primaryDetail = (waiting) => {
+    if (running() || !state.source || !gpu()) return "";
+    const seconds = (frames) => `${(frames / fps()).toFixed(1)} s`;
+    if (state.project) {
+      if (!waiting) return "";
+      const frames = queue().reduce((sum, window) => sum + window.own[1] - window.own[0], 0);
+      return `${seconds(frames)} of video`;
+    }
+    if (state.long) return `${seconds(selectionFrames())} · a run splits it into windows`;
+    return `${seconds(total())} · one render`;
+  };
+
+  // Where each section's header and body sit in the prompt, keyed by name. Each body runs to the next header.
+  const sectionSpans = (text) => {
+    const found = state.boot.sections.map((name) => {
+      const match = new RegExp(`^[ \\t]*${name}[ \\t]*:[ \\t]*`, "m").exec(text);
+      return match ? {name, header: match.index, body: match.index + match[0].length} : null;
+    }).filter(Boolean).sort((a, b) => a.header - b.header);
+    return Object.fromEntries(found.map((span, index) => [span.name, {...span, end: found[index + 1]?.header ?? text.length}]));
+  };
+  const presentSections = (text) => {
+    const spans = sectionSpans(text);
+    return state.boot.sections.filter((name) => spans[name]);
+  };
+
+  // The readiness steps take you to what's missing.
+  const jumpTo = (key) => {
+    const go = (node, focus = node) => {
+      if (!node) return;
+      node.scrollIntoView({block: "center", behavior: "smooth"});
+      focus?.focus({preventScroll: true});
+    };
+    if (key === "source") go($("stage"), null);
+    else if (key === "frames") {
+      const unedited = state.slots.findIndex((slot) => slot?.untouched);
+      if (!state.slots.some(Boolean)) go($("extract"));
+      else if (unedited >= 0) go(document.querySelector(`[aria-label="Quick edit for picture ${unedited + 1}"]`) ?? $("pictures"));
+      else go($("pictures"), null);
+    } else if (!$("request").value.trim() && !$("prompt").value.trim()) go($("request"));
+    else go($("prompt"));
   };
 
   const renderNextRun = () => {
     const details = state.check?.next_run;
     if (!details) return;
-    $("next-output").textContent = `Remake ${state.mode} · ${details.profile} · ${details.output} · ${details.sampling}`;
+    $("next-output").replaceChildren(...[`Remake ${state.mode}`, details.profile, details.output, details.sampling]
+      .map((part) => h("span", {className: "chip"}, part)));
     $("next-context").textContent = details.context.slice(1).join(" · ");
     $("next-notes").replaceChildren(...details.notes.map((note) => h("p", {className: "small muted"}, note)));
   };
@@ -746,6 +812,8 @@
     const tabs = [["source", "Source"], ["result", "Result"], ["compare", "Compare"]];
     if (state.alignSlot !== null) tabs.push(["align", "Alignment"]);
     $("tabs").replaceChildren(...pressed(tabs, view, (value) => { state.view = value; renderViewer(); }));
+    // Keys 1–3 switch the first three views.
+    [...$("tabs").children].slice(0, 3).forEach((tab, index) => { tab.title = `${tabs[index][1]} (${index + 1})`; });
     const take = resultSource();
     const wantsResult = view === "result" || view === "compare";
     const result = $("result-video");
@@ -838,6 +906,20 @@
     const line = state.project ? state.project.summary : state.text;
     $("summary").replaceChildren(...bold(`${line}${state.project ? " · hatched frames are held from the window before" : ""}`));
 
+    renderRuler(frames, last, start);
+    $("legend").hidden = !state.project;
+    $("joins").hidden = !state.project;
+    $("joins").replaceChildren(...(state.project ? windows().slice(1) : []).map((window, offset) => {
+      const continues = window.kind === "continues";
+      const node = h("span", {
+        className: continues ? "join warn" : "join",
+        title: continues
+          ? `Window ${offset + 2} continues the shot: its first ${window.hold} frames are held from window ${offset + 1}, so they meet in a plain cut.`
+          : `Window ${offset + 2} starts on the source's cut at ${clock(window.own[0])}.`,
+      }, continues ? `Shot continues · ${window.hold} held` : "On a cut");
+      node.style.left = `${window.own[0] / last * 100}%`;
+      return node;
+    }));
     $("cuts").replaceChildren(...windows().slice(1).filter((window) => window.kind === "new shot")
       .map((window) => h("div", {className: "cut", title: `Scene cut at frame ${window.own[0]} (${clock(window.own[0])})`,
                                  style: `left:${window.own[0] / last * 100}%`})));
@@ -920,7 +1002,39 @@
       : state.project.output ? "Joined with the source's soundtrack and saved to Media."
       : allTaken() ? "Every window has a take. A run joins them itself, or combine now."
       : `Joins when every window has a take: ${state.project.windows.filter((window) => window.take).length} of ${windows().length} so far.`;
+    renderRunBar();
     renderPlayhead();
+  };
+
+  // Seconds of the source above the strip, about a dozen ticks whatever the length.
+  const renderRuler = (frames, last, start) => {
+    const seconds = frames / fps();
+    const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120].find((value) => seconds / value <= 12) ?? 300;
+    const ticks = [];
+    for (let at = Math.ceil(start / step) * step; at <= start + seconds + 1e-6; at += step) {
+      const node = h("span", {}, `${at.toFixed(step < 1 ? 1 : 0)}s`);
+      const ratio = Math.min(1, (at - start) * fps() / last);
+      node.style.left = `${ratio * 100}%`;
+      if (ratio < 0.02) node.classList.add("first");
+      else if (ratio > 0.98) node.classList.add("last");
+      ticks.push(node);
+    }
+    $("ruler").replaceChildren(...ticks);
+  };
+
+  // While a project renders: one segment per window, sized by its length.
+  const renderRunBar = () => {
+    const bar = $("run-bar");
+    bar.hidden = !(running() && state.project);
+    if (bar.hidden) return;
+    const active = activeRenderingWindow();
+    bar.replaceChildren(...windows().map((window, index) => {
+      const kind = index === active ? "rendering" : QUEUED.includes(window.state) ? "queued" : "done";
+      const node = h("span", {className: kind, title: `Window ${index + 1} · ${index === active ? "Rendering" : window.state_name}`},
+        kind === "rendering" ? h("i") : null);
+      node.style.flexGrow = String(window.own[1] - window.own[0]);
+      return node;
+    }));
   };
 
   const bindSlotDrop = (node, slotIndex) => {
@@ -1099,8 +1213,9 @@
   const renderPromptMeta = () => {
     const text = $("prompt").value;
     const open = openWindow();
-    const present = state.boot.sections.filter((name) => new RegExp(`^\\s*${name}\\s*:`, "m").test(text));
+    const present = presentSections(text);
     const missing = state.boot.sections.filter((name) => !present.includes(name));
+    renderOutline(text);
     const count = present.length;
     const written = open.prompt_auto && text === open.prompt;
     $("origin").textContent = !text.trim() ? "Not written yet" : written ? "Written, replaced on render" : "Typed by you, stays";
@@ -1119,8 +1234,62 @@
     $("writer-url-row").hidden = !openai;
   };
 
+  const focusPrompt = (from, to) => {
+    const area = $("prompt");
+    area.focus({preventScroll: true});
+    area.setSelectionRange(from, to);
+    const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 18;
+    area.scrollTop = Math.max(0, (area.value.slice(0, from).split("\n").length - 2) * lineHeight);
+    area.scrollIntoView({block: "nearest", behavior: "smooth"});
+  };
+
+  // Adds a missing section where it belongs, before the next one that's there.
+  const addSection = (name) => {
+    const text = $("prompt").value;
+    const spans = sectionSpans(text);
+    const after = state.boot.sections.slice(state.boot.sections.indexOf(name) + 1).find((other) => spans[other]);
+    const block = `${name}:\n`;
+    let updated;
+    let cursor;
+    if (after) {
+      const at = spans[after].header;
+      updated = `${text.slice(0, at)}${block}\n${text.slice(at)}`;
+      cursor = at + block.length;
+    } else {
+      const head = text.trim() ? `${text.trimEnd()}\n\n` : "";
+      updated = `${head}${block}`;
+      cursor = updated.length;
+    }
+    $("prompt").value = updated;
+    renderPromptMeta();
+    queueCheck();
+    autosave();
+    focusPrompt(cursor, cursor);
+  };
+
+  const renderOutline = (text) => {
+    const spans = sectionSpans(text);
+    $("outline").replaceChildren(...state.boot.sections.map((name) => {
+      const span = spans[name];
+      const body = span ? text.slice(span.body, span.end).trim().replace(/\s+/g, " ") : "";
+      const status = !span ? "missing" : body ? "written" : "empty";
+      return h("li", {className: status},
+        h("button", {type: "button",
+                     title: span ? `Select ${name} in the prompt` : `Add ${name} to the prompt`,
+                     onclick: () => (span ? focusPrompt(span.body, span.end) : addSection(name))},
+          h("span", {className: "dot", "aria-hidden": "true"}),
+          h("span", {className: "mono name"}, name),
+          h("span", {className: "excerpt"}, span ? body || "Empty" : "Missing · click to add, or Rewrite fills it")));
+    }));
+  };
+
   const renderInspector = () => {
     const open = openWindow();
+    const count = windows().length;
+    for (const [id, step] of [["prev-window", -1], ["next-window", 1]]) {
+      $(id).hidden = !state.project;
+      $(id).disabled = state.index + step < 0 || state.index + step >= count;
+    }
     $("scope-title").textContent = state.project ? `Window ${state.index + 1}` : "Selection";
     $("scope-time").textContent = `${clock(open.own[0])}–${clock(open.own[1])}${state.project ? ` · ${open.kind} · ${open.state_name}` : ""}`;
     $("regenerate").hidden = !gpu() || !state.project;
@@ -1383,6 +1552,10 @@
       } finally { control.disabled = false; }
     }));
     $("primary").addEventListener("click", primary);
+    // Moving the playhead into a window opens it, as clicking the window does.
+    const stepWindow = (delta) => windows()[state.index + delta] && setFrame(windows()[state.index + delta].own[0]);
+    $("prev-window").addEventListener("click", () => stepWindow(-1));
+    $("next-window").addEventListener("click", () => stepWindow(1));
     $("regenerate").addEventListener("click", regenerate);
     $("combine").addEventListener("click", combine);
     $("split").addEventListener("click", safely(async () => {
@@ -1448,7 +1621,8 @@
     });
     $("insert-template").addEventListener("click", () => {
       const current = $("prompt").value;
-      const missing = state.boot.sections.filter((name) => !new RegExp(`^\\s*${name}\\s*:`, "m").test(current));
+      const present = presentSections(current);
+      const missing = state.boot.sections.filter((name) => !present.includes(name));
       if (!missing.length) return;
       state.previous = current;
       const block = missing.map((name) => `${name}:\n`).join("\n");

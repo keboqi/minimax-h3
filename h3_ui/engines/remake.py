@@ -465,6 +465,7 @@ class RemakeHandlers:
                 "meta": f"{project['frames'] / FPS:.1f} s · {done} of {len(windows)} windows · "
                         + time.strftime("%Y-%m-%d %H:%M", time.localtime(project["updated"])),
                 "thumb": next((window["pictures"][0] for window in windows if window["pictures"]), None),
+                "states": [window["state"] for window in windows],
             })
         return rows
 
