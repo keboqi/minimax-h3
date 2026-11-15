@@ -44,6 +44,7 @@ const PATHS = {
   warn: '<path d="M12 3l9 16H3zM12 10v4M12 17v.5"></path>',
   link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"></path>',
   chevron: '<path d="M9 6l6 6-6 6"></path>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"></path>',
 };
 
 export const icon = (name, px = 16) => `<svg width="${px}" height="${px}" viewBox="0 0 24 24" fill="none"

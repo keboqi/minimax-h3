@@ -18,15 +18,16 @@
     <div class="project-picker">
       <label for="project-list">Project</label>
       <select id="project-list"></select>
-      <button type="button" class="btn btn-small" id="project-load">Load</button>
-      <button type="button" class="btn btn-small" id="project-new">New project</button>
+      <button type="button" class="btn btn-small btn-ink" id="project-load">Load</button>
+      <button type="button" class="btn btn-small btn-ink" id="project-new">New project</button>
     </div>
-    <span class="muted small" id="project-status" role="status">Unsaved draft</span>
+    <span class="small project-status" id="project-status" role="status">Unsaved draft</span>
+    <nav class="steps" id="steps" aria-label="Steps"></nav>
     <span class="spacer"></span>
     <span class="mode" id="mode"></span>
-    <button type="button" class="btn btn-small" id="auto-dub">Auto-dub</button>
-    <button type="button" class="btn btn-small" id="batch-open">Batch generate</button>
-    <button type="button" class="btn btn-small" id="project-save-as">Save as…</button>
+    <button type="button" class="btn btn-small btn-ink" id="auto-dub">Auto-dub</button>
+    <button type="button" class="btn btn-small btn-ink" id="batch-open">Batch generate</button>
+    <button type="button" class="btn btn-small btn-ink" id="project-save-as">Save as…</button>
     <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
   </header>
   <div class="banner" id="banner" hidden>
@@ -35,9 +36,9 @@
       separate vocals (when not already cached), transcribe locally, preview voices, dub and align words.
       Line edits save automatically.</span>
   </div>
-  <nav class="steps" id="steps" aria-label="Steps"></nav>
   <div class="card card-pad" id="auto-status" hidden>
-    <span id="auto-message" role="status"></span>
+    <span class="spinner" aria-hidden="true"></span>
+    <span id="auto-message" role="status" class="grow"></span>
     <button type="button" class="btn btn-small" id="auto-stop">Interrupt Auto</button>
   </div>
   <main id="screen" class="screen"></main>

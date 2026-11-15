@@ -10,10 +10,10 @@ function latest(app) {
   if (!result) return "";
   return `
     <button type="button" class="card latest" data-action="to-result">
-      <span class="latest-thumb" aria-hidden="true">${icon("play", 20)}</span>
+      <span class="latest-thumb" aria-hidden="true">${icon("play", 18)}</span>
       <span class="grow"><strong>Latest dub · ${esc(result.when)}</strong>
         <span class="muted small">${esc(result.label)}${result.failed.length ? ` · ${plural(result.failed.length, "line")} kept the original voice` : ""}</span></span>
-      <span class="btn btn-small btn-primary">Watch result →</span>
+      <span class="latest-go">Watch result ${icon("arrow", 15)}</span>
     </button>`;
 }
 
@@ -21,10 +21,10 @@ function speakers(app) {
   const panel = app.session.speakers;
   if (!panel) return "";
   return `
-    <div class="sec">
-      <h3>Speakers</h3>
-      <p class="muted small">Cloned from the original audio with Drama 3. Give a speaker a saved voice instead, or make
-        it louder or quieter. Changes save at once.</p>
+    <section class="card card-pad stack-14" aria-labelledby="cast-h">
+      <div class="card-title"><h2 id="cast-h">Speakers</h2>
+        <span class="muted small">Cloned from the original audio with Drama 3. Give a speaker a saved voice instead, or make
+        it louder or quieter. Changes save at once.</span></div>
       <div class="speaker-grid">${panel.cards.map((card, index) => `
         <div class="speaker-card">
           <div class="row align-center">
@@ -41,7 +41,7 @@ function speakers(app) {
             <output class="mono" data-volume-out="${index}">${Math.round(card.volume)}%</output></label>
         </div>`).join("")}
       </div>
-    </div>`;
+    </section>`;
 }
 
 function slider(key, label, min, max, step, value, format, hint = "") {
@@ -53,14 +53,24 @@ function slider(key, label, min, max, step, value, format, hint = "") {
     ${hint ? `<span class="muted small slider-hint">${hint}</span>` : ""}`;
 }
 
+// The timings in the order page.py lists them: Smart, Match the original, Natural.
+const matchKey = (app) => app.boot.timings[1].key;
+
+// Slot, take, next slot: how each timing fits a take that runs long.
+const TIMING_PICTURES = ["take-smart", "take-match", "take-natural"];
+
+function timingPicture(index) {
+  return `<span class="timing-pic ${TIMING_PICTURES[index] || ""}" aria-hidden="true"><span class="slot"></span><span class="take"></span><span class="slot next"></span></span>`;
+}
+
 function settings(app) {
   const s = app.settings;
-  const match = app.boot.timings[1].key;
+  const match = matchKey(app);
   return `
+    ${speakers(app)}
     <section class="card" aria-labelledby="set-h">
-      <div class="card-pad"><h2 id="set-h">Dub settings</h2>
-        <p class="muted small">Changes apply to the next dub. Unchanged lines keep their takes.</p></div>
-      ${speakers(app)}
+      <div class="card-pad card-title"><h2 id="set-h">Voices and timing</h2>
+        <span class="muted small">Changes apply to the next dub. Unchanged lines keep their takes.</span></div>
       <div class="sec">
         <h3>Voices</h3>
         <div class="row row-wrap gap-32">
@@ -77,16 +87,18 @@ function settings(app) {
       </div>
       <div class="sec">
         <h3>Timing</h3>
-        <div class="pick-grid three" role="radiogroup" aria-label="Timing">${app.boot.timings.map((t) => `
-          <button type="button" role="radio" class="pick" aria-checked="${t.key === s.timing}" data-action="timing" data-key="${esc(t.key)}">
-            <span class="dot"></span><span><strong>${esc(t.label)}</strong><span class="muted small">${esc(t.desc)}</span></span>
+        <div class="pick-grid three" role="radiogroup" aria-label="Timing">${app.boot.timings.map((t, index) => `
+          <button type="button" role="radio" class="pick pick-timing" aria-checked="${t.key === s.timing}" data-action="timing" data-key="${esc(t.key)}">
+            <span class="dot"></span><span><strong>${esc(t.label)}</strong>${timingPicture(index)}<span class="muted small">${esc(t.desc)}</span></span>
           </button>`).join("")}
         </div>
         ${s.timing !== match ? slider("max_speed", "Maximum speed-up", 1, 2, 0.05, s.max_speed, "x",
           "Takes still too long at this speed overlap the next line.") : ""}
       </div>
-      <div class="sec">
-        <h3>Mix and output</h3>
+    </section>
+    <section class="card" aria-labelledby="mix-h">
+      <div class="sec first">
+        <h2 id="mix-h">Mix and output</h2>
         ${slider("speech_volume", "Dub volume", 0, 200, 5, s.speech_volume, "%")}
         ${slider("background_volume", "Music and effects", 0, 200, 5, s.background_volume, "%")}
         <div class="row row-wrap gap-28">
@@ -112,6 +124,8 @@ function settings(app) {
 function readiness(app) {
   const r = app.session.readiness;
   const same = app.session.same;
+  const s = app.settings;
+  const timing = app.boot.timings.find((t) => t.key === s.timing);
   const warnings = [];
   const rushed = [...new Set([...r.long, ...r.rushed])].sort((a, b) => a - b);
   if (rushed.length) warnings.push(["warn", `${rushed.length === 1 ? "Line" : "Lines"} <b>${ranges(rushed)}</b> may sound rushed`, true]);
@@ -129,9 +143,14 @@ function readiness(app) {
           <div class="stat"><b>${r.kept}</b><span>${same ? "original audio" : "original voice"}</span></div>
           <div class="stat"><b>${r.speakers}</b><span>${r.speakers === 1 ? "speaker" : "speakers"}</span></div>
         </div>
-        ${warnings.length ? `<ul class="warnings">${warnings.map(([kind, text, fix]) => `
+        ${warnings.length ? `<span class="rail-label">Before you dub</span><ul class="warnings">${warnings.map(([kind, text, fix]) => `
           <li class="${kind}">${icon("warn", 18)}<span class="grow">${text}</span>
             ${fix ? '<button type="button" class="linkish" data-action="to-review">Fix</button>' : ""}</li>`).join("")}</ul>` : ""}
+        <div class="recap small">
+          <span><strong>${esc(s.voice_mode)}</strong> · ${esc(s.preset)} delivery</span>
+          <span>${esc(timing?.label || "")}${s.timing !== matchKey(app) ? ` · up to ${Number(s.max_speed).toFixed(2)}×` : ""} · mix ${s.speech_volume}% / ${s.background_volume}%</span>
+          <span>${s.keep_original ? "Original audio kept as a second track" : "No original track"} · word subtitles ${s.word_timing ? "on" : "off"}</span>
+        </div>
         ${app.boot.gpu ? `
           <div class="run-status" data-run="dub" hidden><span class="spinner" aria-hidden="true"></span><span data-run-status role="status"></span></div>
           <div class="row">
@@ -142,18 +161,18 @@ function readiness(app) {
           <p class="muted small">Only changed lines are voiced; every other line reuses its saved take. Every dub is also saved to Media.</p>`
         : '<p class="alert alert-info">Voices are generated in Studio. Save the project, then load it in Studio to dub.</p>'}
       </section>
+      ${latest(app)}
     </aside>`;
 }
 
 export function renderDub(app) {
   if (!app.session) return "";
   // A fix in the same language lands exactly where the old line was, unless the viewer chose otherwise.
-  if (app.session.same && !app.session.rewrite && !app.timingTouched) app.settings.timing = app.boot.timings[1].key;
+  if (app.session.same && !app.session.rewrite && !app.timingTouched) app.settings.timing = matchKey(app);
   return `
     <div class="stack-24 wide">
-      ${latest(app)}
       <div class="layout">
-        <div class="main-col">${settings(app)}</div>
+        <div class="main-col stack-16">${settings(app)}</div>
         ${readiness(app)}
       </div>
     </div>`;

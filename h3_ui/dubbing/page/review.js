@@ -48,33 +48,105 @@ function visible(app, line, index) {
   return true;
 }
 
-function summary(app) {
-  const lines = app.session.board.lines;
+// Where each line stands, for the readiness bar: one kind per line. A same-language line that was
+// not edited keeps its original audio.
+function kindOf(line, same) {
+  if (line.flags.includes("failed")) return "fail";
+  if (needsAttention(line)) return "warn";
+  if (!line.dub || !line.translation || (same && !line.edited)) return "off";
+  return "ready";
+}
+
+// The take's speed against its slot, from the fit note ("about 1.4× speed" or "only about 60%").
+function speedOf(line) {
+  const fast = /about ([\d.]+)×/.exec(line.fit || "");
+  if (fast) return Number(fast[1]);
+  const slow = /about (\d+)%/.exec(line.fit || "");
+  return slow ? Number(slow[1]) / 100 : null;
+}
+
+// pipeline.TEMPO_WARNING's upper bound, where a take starts to sound rushed, and the speed that
+// fills a meter; .meter-mark sits at RUSHED / METER_MAX.
+const RUSHED = 1.6;
+const METER_MAX = 2.56;
+
+const meter = (speed) => `<span class="meter-fill ${speed > RUSHED ? "over" : ""}" style="width:${Math.min(speed / METER_MAX, 1) * 100}%"></span><span class="meter-mark"></span>`;
+
+function legend(app, ready) {
   const r = app.session.readiness;
+  const lines = app.session.board.lines;
+  const speakers = app.session.board.speakers.length;
+  const item = (tone, count, label) => `<span class="legend-item"><span class="legend-swatch ${tone}"></span><b>${count}</b> ${label}</span>`;
   if (app.session.same) {
-    return `
-      <span><b class="big ok">${r.voiced}</b> edited · will be voiced</span>
-      <span><b class="big">${r.kept}</b> unchanged · original audio</span>
-      ${r.failed.length ? `<span><b class="big fail">${r.failed.length}</b> take failed</span>` : ""}
-      ${r.long.length ? `<span><b class="big warn">${r.long.length}</b> may be too long</span>` : ""}
-      ${r.issues.length ? `<span><b class="big warn">${r.issues.length}</b> to check</span>` : ""}`;
+    return [
+      item("ready", r.voiced, "edited · will be voiced"),
+      item("off", r.kept, "unchanged · original audio"),
+      r.failed.length ? item("fail", r.failed.length, "take failed") : "",
+      r.long.length ? item("warn", r.long.length, "may be too long") : "",
+      r.issues.length ? item("warn", r.issues.length, "to check") : "",
+    ].join("");
   }
+  return [
+    item("ready", ready, "ready"),
+    r.untranslated ? item("warn", r.untranslated, "untranslated") : "",
+    r.long.length ? item("warn", r.long.length, "may be too long") : "",
+    r.issues.length ? item("warn", r.issues.length, "to check") : "",
+    r.failed.length ? item("fail", r.failed.length, "take failed") : "",
+    `<span class="legend-item">${plural(speakers, "speaker")} · ${plural(lines.length, "line")}</span>`,
+  ].join("");
+}
+
+function readiness(app) {
+  const session = app.session;
+  const lines = session.board.lines;
+  const same = session.same;
+  const counts = {ready: 0, warn: 0, fail: 0, off: 0};
+  for (const line of lines) counts[kindOf(line, same)]++;
+  const total = Math.max(1, lines.length);
+  const headline = same
+    ? `${plural(session.readiness.voiced, "edited line")} will be voiced`
+    : `${counts.ready} of ${plural(lines.length, "line")} ready to dub`;
+  const languages = same
+    ? `Keeping ${esc(session.spoken || "the spoken language")}`
+    : `${esc(session.spoken || session.source_language || "Original")} → ${esc(session.target_language || "the target language")}`;
+  const fillable = !same && session.readiness.untranslated;
   return `
-    <span><b class="big">${r.voiced}</b> ready</span>
-    <span><b class="big">${app.session.board.speakers.length}</b> ${app.session.board.speakers.length === 1 ? "speaker" : "speakers"}</span>
-    ${r.untranslated ? `<span><b class="big warn">${r.untranslated}</b> untranslated</span>` : ""}
-    ${r.long.length ? `<span><b class="big warn">${r.long.length}</b> may be too long</span>` : ""}
-    ${r.issues.length ? `<span><b class="big warn">${r.issues.length}</b> to check</span>` : ""}
-    ${r.failed.length ? `<span><b class="big fail">${r.failed.length}</b> take failed</span>` : ""}
-    <span class="muted">${plural(lines.length, "line")}</span>`;
+    <section class="card readiness" aria-label="Readiness">
+      <div class="readiness-main">
+        <div class="readiness-title"><h1>${headline}</h1>
+          <span class="muted small">${languages} · ${clock(session.board.duration, false)}</span></div>
+        <div class="readiness-bar" role="img" aria-label="${counts.ready} ready, ${counts.warn} need attention, ${counts.fail} take failed, ${counts.off} keep the original ${same ? "audio" : "voice"}">
+          ${["ready", "warn", "fail", "off"].map((kind) => counts[kind] ? `<span class="${kind}" style="width:${counts[kind] / total * 100}%"></span>` : "").join("")}
+        </div>
+        <div class="legend">${legend(app, counts.ready)}</div>
+      </div>
+      <div class="readiness-actions">
+        ${fillable ? `<button type="button" class="btn btn-small" data-action="fill" data-busy="lines">Fill untranslated (${session.readiness.untranslated})</button>` : ""}
+        ${lines.some((line) => line.translation && line.dub) ? `<button type="button" class="btn btn-small" data-action="check-translations" ${app.checking ? "disabled" : ""}
+          title="Ask Gemini Decision whether each ${same ? "rewritten" : "translated"} line keeps its meaning and sounds natural. Uses the picked lines, or every line.">${app.checking ? "Checking…" : same ? "Check rewrites" : "Check translations"}</button>` : ""}
+        <span class="combine-tools">
+          <button type="button" class="btn btn-small" data-action="detect-combine" ${app.detecting ? "disabled" : ""}
+            title="Pick neighbouring lines that read as one sentence, to review and combine">${app.detecting ? "Detecting…" : "Auto-detect combine"}</button>
+          <label class="check small" title="Confirm each pair with Gemini Decision from the lines around it, so missing or wrong speaker labels don't decide. Off, or without a Gemini key, fixed rules decide and trust the speaker labels.">
+            <input type="checkbox" data-action="combine-context" ${app.settings.combine_context ? "checked" : ""}> By context</label>
+        </span>
+        <button type="button" class="btn btn-small" data-action="table-open">Edit as a table</button>
+        <button type="button" class="btn btn-small btn-primary" data-action="to-dub">Next: dub ${icon("arrow", 15)}</button>
+      </div>
+    </section>`;
 }
 
 function timeline(app) {
   const board = app.session.board;
   const duration = Math.max(1, board.duration);
   const ticks = 5;
+  const focused = board.lines[app.focus];
   return `
     <section class="card timeline" aria-label="Speaker timeline">
+      <div class="timeline-head"><h2>Speakers</h2>
+        <span class="muted small">Click a block to open its line. Striped blocks need attention; faded ones keep the original ${app.session.same ? "audio" : "voice"}.</span>
+        <span class="spacer"></span>
+        ${focused ? `<span class="mono muted">Line ${app.focus + 1} · ${clock(focused.s)} – ${clock(focused.e)}</span>` : ""}</div>
       <div class="lane-grid">
         <span></span>
         <div class="ticks mono">${Array.from({length: ticks}, (_, i) => `<span>${clock(duration * i / (ticks - 1), false)}</span>`).join("")}</div>
@@ -85,6 +157,7 @@ function timeline(app) {
               style="left:${line.s / duration * 100}%;width:${Math.max(0.3, (line.e - line.s) / duration * 100)}%;background-color:${TONES[speaker.tone]}"
               data-action="focus" data-line="${index}" aria-label="Line ${index + 1}"></button>`).join("")}
           </div>`).join("")}
+        ${focused ? `<span></span><div class="playhead-track" aria-hidden="true"><span class="playhead" style="left:${focused.s / duration * 100}%"></span></div>` : ""}
       </div>
     </section>`;
 }
@@ -121,6 +194,14 @@ function mergeable(app) {
   return picks.every((n) => lines[n] && lines[n].speakerId === lines[picks[0]].speakerId);
 }
 
+function fitCell(line) {
+  const speed = speedOf(line);
+  if (!speed) return '<span class="fit-mini"><span class="mono muted small">—</span></span>';
+  return `<span class="fit-mini" title="${esc((line.fit || "").replace(/\*\*/g, ""))}">
+    <span class="meter small-meter" aria-hidden="true">${meter(speed)}</span>
+    <span class="mono muted small">${speed.toFixed(1)}×</span></span>`;
+}
+
 function board(app) {
   const lines = app.session.board.lines;
   const same = app.session.same;
@@ -128,6 +209,10 @@ function board(app) {
   const shown = lines.map((line, index) => [line, index]).filter(([line, index]) => visible(app, line, index));
   return `
     <section class="card board" aria-label="Lines">
+      <div class="board-head">
+        <div class="seg" role="group" aria-label="Show">${filters(app).map(([key, label]) => `
+          <button type="button" data-action="filter" data-filter="${esc(key)}" aria-pressed="${app.filter === key}">${esc(label)}</button>`).join("")}</div>
+      </div>
       ${picks.length ? `
         <div class="picks-bar">
           <strong>${picks.length} picked</strong>
@@ -142,23 +227,25 @@ function board(app) {
         </div>` : ""}
       <div class="line-row head">
         <span><input type="checkbox" data-action="pick-all" aria-label="Pick every shown line" ${shown.length && shown.every(([, i]) => app.picks.has(i)) ? "checked" : ""}></span>
-        <span>#</span><span>Time</span><span>${same ? "What was said → new text" : "Line"}</span><span></span><span>Dub</span>
+        <span>#</span><span>Time</span><span>${same ? "What was said → new text" : `Original → ${esc(app.session.target_language || "translation")}`}</span><span>Fit</span><span>Status</span><span>Dub</span>
       </div>
       <div class="line-list">${shown.length ? shown.map(([line, index]) => {
         const flag = flagOf(line, same);
+        const group = groupOf(app, index);
         return `
-        <div class="line-row ${index === app.focus ? "selected" : ""} ${groupOf(app, index) !== null ? `combine-group combine-${groupOf(app, index) % 2}` : ""}">
+        <div class="line-row ${index === app.focus ? "selected" : ""} ${app.picks.has(index) ? "picked" : ""} ${group !== null ? `combine-group combine-${group % 2}` : ""}">
           <span><input type="checkbox" data-action="pick" data-line="${index}" ${app.picks.has(index) ? "checked" : ""} aria-label="Pick line ${index + 1}"></span>
           <span class="mono muted">${index + 1}</span>
           <span class="mono muted small">${clock(line.s)}<br>${(line.e - line.s).toFixed(1)} s</span>
           <button type="button" class="line-text" data-action="focus" data-line="${index}" aria-label="Edit line ${index + 1}">
             <span class="line-meta"><span class="speaker" style="color:${TONES[line.tone]}">${esc(line.label)}</span>
               <span class="muted small ellipsis">${esc(line.source)}</span></span>
-            <span class="${line.translation ? (line.dub ? "" : "muted") : "missing"}">${esc(line.translation || (same ? "No new text" : "Not translated yet"))}</span>
+            <span class="line-new ${line.translation ? (line.dub ? "" : "muted") : "missing"}">${esc(line.translation || (same ? "No new text" : "Not translated yet"))}</span>
             ${line.problem ? `<span class="small fail-text">${esc(line.problem)}</span>` : ""}
             ${line.check ? `<span class="small warn-text">${esc(line.check)}</span>` : ""}
           </button>
-          <span>${flag ? `<span class="flag ${flag[1]}">${flag[0]}</span>` : ""}</span>
+          ${fitCell(line)}
+          <span class="status-cell">${flag ? `<span class="flag ${flag[1]}">${flag[0]}</span>` : ""}${group !== null ? '<span class="flag flag-info">To combine</span>' : ""}</span>
           <button type="button" class="switch" role="switch" aria-checked="${line.dub}" aria-label="Dub line ${index + 1}"
             data-action="dub" data-line="${index}"></button>
         </div>`;
@@ -204,16 +291,22 @@ function table(app) {
 
 const againLabel = (app) => (app.session.same ? (app.settings.rewrite ? "Rewrite again" : "Copy again") : "Translate again");
 
-function fit(line, same) {
-  const match = /about ([\d.]+)×/.exec(line.fit || "");
-  const speed = match ? Number(match[1]) : null;
-  const pct = speed ? Math.min(speed / 2.56, 1) * 100 : 0;
+// The original slot against the take it needs: a take longer than its slot runs past the mark.
+function fit(line) {
+  const speed = speedOf(line);
+  const scale = Math.max(1, speed || 1);
+  const over = speed > RUSHED;
   return `
     <div class="fit">
+      <div class="fit-head"><strong class="small">Fit in the slot</strong>
+        ${speed ? `<span class="mono small ${over ? "warn-text" : "ok-text"}">about ${speed.toFixed(1)}×</span>` : ""}</div>
+      ${speed ? `
+      <div class="fit-bars" aria-hidden="true">
+        <span class="small muted">Original</span><span class="fit-track"><span class="fit-slot" style="width:${100 / scale}%"></span></span>
+        <span class="small muted">Dub take</span><span class="fit-track"><span class="fit-take ${over ? "over" : ""}" style="width:${speed / scale * 100}%"></span><span class="fit-edge" style="left:${100 / scale}%"></span></span>
+      </div>` : ""}
       <p class="small">${rich(line.fit || "")}</p>
-      ${speed ? `<div class="meter" aria-hidden="true"><div class="meter-fill ${speed > 1.6 ? "over" : ""}" style="width:${pct}%"></div>
-        <div class="meter-mark" title="1.6×"></div></div>
-        <span class="muted small">Mark = 1.6×, where lines start to sound rushed${same ? "" : ""}</span>` : ""}
+      ${speed ? `<span class="muted small">The mark is the end of the original slot. Past ${RUSHED}× a take starts to sound rushed.</span>` : ""}
     </div>`;
 }
 
@@ -251,7 +344,7 @@ function inspector(app) {
         <label class="field">${same ? "New text" : "Translation"}<textarea data-line-field="translation" rows="3"
           placeholder="${same ? "Same as what was said" : "Not translated yet"}">${esc(line.translation)}</textarea></label>
         ${same && line.edited && line.translation ? '<button type="button" class="linkish small" data-action="revert">Revert to what was said</button>' : ""}
-        ${fit(line, same)}
+        ${fit(line)}
         <div class="grid-2">
           <button type="button" class="btn" data-action="listen">${icon("speaker")} Original</button>
           ${app.boot.gpu ? `<button type="button" class="btn btn-primary" data-action="preview" data-busy="lines">${icon("play", 14)} Preview dub</button>
@@ -293,28 +386,9 @@ function inspector(app) {
 
 export function renderReview(app) {
   if (!app.session) return "";
-  const session = app.session;
-  const same = session.same;
-  const fillable = !same && session.readiness.untranslated;
   return `
     <div class="stack-16 wide">
-      <div class="summary-row">
-        <div class="counts">${summary(app)}</div>
-        <span class="spacer"></span>
-        <div class="seg" role="group" aria-label="Show">${filters(app).map(([key, label]) => `
-          <button type="button" data-action="filter" data-filter="${esc(key)}" aria-pressed="${app.filter === key}">${esc(label)}</button>`).join("")}</div>
-        ${fillable ? `<button type="button" class="btn btn-small" data-action="fill" data-busy="lines">Fill untranslated (${session.readiness.untranslated})</button>` : ""}
-        ${session.board.lines.some((line) => line.translation && line.dub) ? `<button type="button" class="btn btn-small" data-action="check-translations" ${app.checking ? "disabled" : ""}
-          title="Ask Gemini Decision whether each ${same ? "rewritten" : "translated"} line keeps its meaning and sounds natural. Uses the picked lines, or every line.">${app.checking ? "Checking…" : same ? "Check rewrites" : "Check translations"}</button>` : ""}
-        <span class="combine-tools">
-          <button type="button" class="btn btn-small" data-action="detect-combine" ${app.detecting ? "disabled" : ""}
-            title="Pick neighbouring lines that read as one sentence, to review and combine">${app.detecting ? "Detecting…" : "Auto-detect combine"}</button>
-          <label class="check small" title="Confirm each pair with Gemini Decision from the lines around it, so missing or wrong speaker labels don't decide. Off, or without a Gemini key, fixed rules decide and trust the speaker labels.">
-            <input type="checkbox" data-action="combine-context" ${app.settings.combine_context ? "checked" : ""}> By context</label>
-        </span>
-        <button type="button" class="btn btn-small" data-action="table-open">Edit as a table</button>
-        <button type="button" class="btn btn-small btn-primary" data-action="to-dub">Next: dub →</button>
-      </div>
+      ${readiness(app)}
       ${timeline(app)}
       <div class="layout">
         <div class="main-col">${app.table ? table(app) : board(app)}</div>

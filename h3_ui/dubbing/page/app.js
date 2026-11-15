@@ -112,7 +112,7 @@ function renderSteps() {
       ${!session && key !== "source" ? "disabled" : ""}>
       <span class="step-mark ${done[key] && app.screen !== key ? "done" : ""}">${done[key] && app.screen !== key ? icon("check", 13) : index + 1}</span>
       ${title}${key === "source" && notes.source ? `<span class="muted small step-note">${esc(notes.source)}</span>` : ""}${notes[key] && key !== "source" ? notes[key] : ""}
-    </button>${index < SCREENS.length - 1 ? '<span class="step-sep" aria-hidden="true">›</span>' : ""}`).join("");
+    </button>`).join("");
 }
 
 function renderTop() {
@@ -275,7 +275,9 @@ async function finished(kind, run) {
 // The run cards update their status in place, so typing elsewhere on the screen is never interrupted.
 function updateRunViews() {
   const auto = app.runs.auto;
-  document.getElementById("auto-status").hidden = !auto?.active && !auto?.error;
+  const status = document.getElementById("auto-status");
+  status.hidden = !auto?.active && !auto?.error;
+  status.classList.toggle("active", !!auto?.active);
   document.getElementById("auto-message").textContent = auto ? `Auto · ${auto.error || auto.status}` : "";
   document.getElementById("auto-stop").disabled = !auto?.active;
   document.getElementById("auto-dub").disabled = !app.boot.gpu || !!auto?.active;
