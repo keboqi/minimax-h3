@@ -23,6 +23,7 @@ from h3_app.provenance import read_snapshot
 
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
+from .page_cast import cast_voices
 from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, value, writer_service
 from .page_store import editing
 from .stage_video import latest_export
@@ -114,6 +115,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         if not result:
             raise H3Error("Speak the project first: the video is drawn from its mix.")
         audio, settings = visuals.load_mix(export.deps, Path(result).name)
+        # The planner draws each speaker as the Cast's voice describes them: gender, age and manner.
+        settings = {**settings, "voices": cast_voices(data, export.deps.runtime_config)}
         return data, audio, settings, video_settings(data, export.engines)
 
     @app.patch(f"{api}/project/video", include_in_schema=False)

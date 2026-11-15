@@ -178,12 +178,22 @@ def _duration(settings):
     return duration
 
 
+def _speakers(settings, cues):
+    """The voice description of each speaker with a line in the mix, from the Cast (``voices``)."""
+    voices = {name.casefold(): text.strip() for name, text in (settings.get("voices") or {}).items() if _text(text)}
+    names = dict.fromkeys(cue["speaker"] for cue in cues if _text(cue.get("speaker")))
+    return [dict(name=name, voice=voices[name.casefold()]) for name in names if name.casefold() in voices]
+
+
 def plan_request(settings, style, minimum):
-    """The JSON request the planner answers: the timed mix, the art direction and the shot range."""
+    """The JSON request the planner answers: the timed mix, its speakers' voices, the art direction
+    and the shot range."""
     duration = _duration(settings)
+    cues = _timeline(settings, duration)
+    speakers = _speakers(settings, cues)
     return json.dumps(dict(title=settings.get("title"), duration=duration, art_direction=style,
                            min_shots=int(minimum), max_shots=shot_cap(duration, minimum),
-                           cues=_timeline(settings, duration)), ensure_ascii=False)
+                           **({"speakers": speakers} if speakers else {}), cues=cues), ensure_ascii=False)
 
 
 def full_plan_prompt(settings, style, minimum, *, runtime):

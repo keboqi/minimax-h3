@@ -46,8 +46,8 @@ _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
 # Describe rendering, not story content: these apply to portraits and every scene.
 STYLE_PRESETS = {
     "Digital painting": "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
-                        "expressions. Solid forms and materials, restrained visible brushwork, sharper "
-                        "detail around faces and hands, and coherent local colors. Keep gestures readable.",
+                        "expressions. Solid forms and materials, restrained visible brushwork, clear "
+                        "detail on faces and hands, and coherent local colors. Keep gestures readable.",
     "Realistic photo": "Full-color live-action film still with natural human proportions, individual facial "
                        "features, subtle skin texture and believable fabric and surfaces. Physically "
                        "plausible light, restrained color grading and fine film grain. Avoid fashion-ad "
@@ -121,6 +121,13 @@ STYLE_PRESETS = {
                                "Avoid unrelated symbols, stock handshake imagery, lettering, logos "
                                "and invented data.",
 }
+# Detail asked only of faces and hands left settings rough and blurry, so each story preset also asks
+# for a finished background. The slide presets keep their deliberately plain backgrounds.
+SETTING_DETAIL = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
+                  "objects and landscape, never a blurred, smeared or sketchy backdrop.")
+SLIDE_STYLES = ("Flat illustration", "Isometric illustration", "Minimal vector", "Editorial illustration")
+STYLE_PRESETS = {name: text if name in SLIDE_STYLES else text + SETTING_DETAIL
+                 for name, text in STYLE_PRESETS.items()}
 DEFAULT_STYLE = "Digital painting"
 CUSTOM_STYLE = "Custom"
 

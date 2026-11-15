@@ -134,6 +134,14 @@ def speakers_payload(name: str, data: dict, clip: Callable[[Any], str | None], r
     return speakers
 
 
+def cast_voices(data: dict, runtime) -> dict[str, str]:
+    """Each described speaker's voice (gender, age, manner) under the label the mix's lines carry."""
+    from h3_app.workflows.drama3 import speaker_label
+
+    return {speaker_label(entry["slot"], {entry["slot"]: entry["name"]}): " ".join(entry["description"].split())
+            for entry in speakers_payload("", data, lambda _audio: None, runtime) if entry["description"].strip()}
+
+
 def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None]) -> list[dict]:
     """Every shown sound slot, with whether the script loops it and whether it has a clip."""
     from h3_app.drama3.serving.tree import extract_script_sounds

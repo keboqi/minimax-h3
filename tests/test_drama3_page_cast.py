@@ -649,3 +649,19 @@ class Drama3PageLibraryTests(CastFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CastVoicesTests(unittest.TestCase):
+    def test_voices_carry_the_labels_the_mix_lines_use(self):
+        from h3_ui.drama3.page_cast import cast_voices
+
+        saved = SimpleNamespace(name="Old Tom", description="An elderly man, gravelly.", transcript="")
+        data = {"shown_slots": 4, "voice_0_save_name": "Ana", "voice_0_description": " A girl\nof ten. ",
+                "voice_1_preset": "Old Tom", "voice_1_description": "stale",
+                "voice_2_save_name": "Dr: Who", "voice_2_description": "A woman in her forties.",
+                "voice_3_save_name": "Quiet"}
+        with patch("h3_app.drama3.speakers.load_speaker", return_value=saved):
+            voices = cast_voices(data, lambda: None)
+        # A name lines cannot carry (a colon) keeps the generic label; a speaker without a description is left out.
+        self.assertEqual(voices, {"Ana": "A girl of ten.", "Old Tom": "An elderly man, gravelly.",
+                                  "Speaker 2": "A woman in her forties."})

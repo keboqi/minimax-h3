@@ -226,6 +226,25 @@ class IllustratedMixTests(unittest.TestCase):
             other = Path(tmp) / f"mix_{'d' * 32}.mp3"
             self.assertTrue(save_plan(other, "ink", 16, {"shots": "own"}, claim_plan(other)))
 
+    def test_request_carries_the_voice_of_each_speaker_in_the_mix(self):
+        from h3_app.drama3.visual_plan import plan_request
+
+        settings = {"duration": 6, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2},
+                                              {"name": "Old Tom", "text": "Hm", "start": 3, "end": 4}],
+                    "voices": {"old tom": "An elderly man, gravelly and slow.", "Ana": " A girl of about ten. ",
+                               "Nobody": "A woman in her forties.", "Speaker 2": ""}}
+        request = json.loads(plan_request(settings, "ink", 3))
+        self.assertEqual(request["speakers"], [{"name": "Ana", "voice": "A girl of about ten."},
+                                               {"name": "Old Tom", "voice": "An elderly man, gravelly and slow."}])
+        self.assertNotIn("speakers", json.loads(plan_request({**settings, "voices": {}}, "ink", 3)))
+
+    def test_story_presets_ask_for_finished_settings(self):
+        from h3_ui.drama3.visuals import SETTING_DETAIL, SLIDE_STYLES, STYLE_PRESETS
+
+        for name, text in STYLE_PRESETS.items():
+            self.assertEqual(text.endswith(SETTING_DETAIL), name not in SLIDE_STYLES)
+            self.assertNotIn("sharper detail around faces", text)
+
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})

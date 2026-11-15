@@ -22,7 +22,9 @@ It is appended to every scene AND character portrait, alongside the user's art_d
 complement that direction instead of repeating it. Keep story facts, individual locations, weather,
 time of day, camera framing and lighting setups out of art_style. Put those in the relevant shot.
 The style must work for both a quiet conversation and an action scene, indoors and outdoors,
-in daylight and darkness. Preserve readable faces, hands, gestures and important objects.
+in daylight and darkness. Preserve readable faces, hands, gestures and important objects, and
+render settings with the same finish and focus as the figures: never ask for a blurred, washed-out,
+sketchy or unfinished background, bokeh or soft-focus backdrop unless art_direction asks for one.
 Do not infer an era, culture, costume, scenery or mood from a medium's name. Derive those from
 the story or explicit user direction. Keep the same rendering language throughout, while allowing
 each shot's light and emotional tone to change with the story. Explicit user requests take priority.
@@ -34,9 +36,13 @@ locations. Keys are short lowercase ASCII words without spaces, such as "mara", 
 every shot that mentions the key, and each character is also drawn as a portrait that later
 scenes are matched to, so be concrete and visual:
 - characters: start with the name, then gender, age range, face, hair, build, default outfit and
-  one signature detail.
+  one signature detail. When the request's speakers list describes a character's voice, take the
+  gender and age from it and never contradict it: a voice described as an elderly man is drawn as
+  an elderly man, a young girl's voice as a young girl. Let the voice's manner (gruff, gentle,
+  nervous) inform the face and posture. Use the speaker's name for the key, lowercased.
 - props: shape, material, colors and distinctive markings.
-- locations: architecture, layout, landmarks and the usual time of day and weather.
+- locations: architecture, layout, landmarks, materials and the usual time of day and weather,
+  concrete enough to be painted as sharply as the characters.
 A voice with no body on screen (a narrator, a radio announcer) is not a character unless shown.
 
 SHOT PROMPTS
@@ -50,6 +56,11 @@ Never restate what the bible already says. Mention the focal subject first. Ment
 visible in this image, because each character mentioned is matched to their portrait. Mention the
 location with its @key too. Follow the story through time: a wet coat, a lamp going out, a broken
 window stays broken.
+
+Give every shot a finished setting, not a vague backdrop: name at least two or three specific
+background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
+their material, color and light, and keep them in focus. Prefer deep focus; use a shallow depth of
+field only for a deliberate isolating close-up, and even then keep the setting recognizable.
 
 Describe a single frame, never panels, a grid or a before-and-after. Show what is said through
 action, expression and staging: no text, captions, speech bubbles or lettering.

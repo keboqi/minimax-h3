@@ -150,7 +150,9 @@ painting, Realistic photo, Anime, 3D animation, 2D cartoon, American comic, Japa
 Watercolor, Oil painting, Children's book and Pixel art. Business slide options are Flat illustration,
 Isometric illustration, Minimal vector and Editorial illustration; these leave space for text to be
 added later and do not generate labels or data. Presets describe rendering and materials, while the planner adapts
-lighting and atmosphere to each story beat. Saved art direction is preserved as written; older
+lighting and atmosphere to each story beat. The story presets ask for settings painted with the same
+finish and focus as the characters, and the planner names concrete background elements in every shot.
+The planner also gets each speaker's Cast voice description and keeps their gender and age. Saved art direction is preserved as written; older
 preset text appears as Custom. Replan after changing art direction. The plan uses the writer
 service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
