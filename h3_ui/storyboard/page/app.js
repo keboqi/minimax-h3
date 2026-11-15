@@ -214,17 +214,18 @@
     const select = h("select", {"aria-label": "Storyboard", onchange: (event) => openBoard(event.target.value)},
       state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
         row.name + (row.generated ? " · Generated" : ""))));
-    $("topbar").replaceChildren(
+    $("topbar").replaceChildren(...[
       h("label", {className: "board-picker"}, "Storyboard", select),
       button("New storyboard", showStart),
-      h("div", {className: "mono small muted"},
+      h("div", {className: "stat-pill mono small"},
         `${scenes().length} scenes · ${state.board.total} · ${state.board.done} done`),
       h("div", {className: "small muted", id: "save-state", role: "status"}, state.saveLabel),
       h("div", {className: "grow"}),
       state.auto?.active ? h("div", {className: "small muted", id: "auto-state", role: "status"}, autoSummary()) : null,
-      state.boot.gpu ? panelButton("auto", "Auto render") : null,
-      panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings"),
-    );
+      h("div", {className: "chips", role: "group", "aria-label": "Panels"},
+        state.boot.gpu ? panelButton("auto", "Auto render") : null,
+        panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings")),
+    ].filter(Boolean));
   };
 
   const shownTake = () => {
@@ -240,14 +241,17 @@
       button(icon("M9 6l6 6-6 6"), () => step(1), "btn icon",
         {"aria-label": "Next scene", disabled: index === scenes().length - 1}),
       h("h1", {id: "scene-heading"}, `Scene ${item.number} · ${item.title || "Untitled scene"}`),
+      stateBadge(item, false, "scene-state"),
       h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
-      h("div", {className: "stage-actions"},
+      h("div", {className: "stage-actions", role: "group", "aria-label": "Scene actions"},
         button("Insert scene after", () => addScene(item.id), "btn sm"),
         button("Insert video after", () => addScene(item.id, "media"), "btn sm",
           {title: "Add a scene that plays a video from Media; the scene after it can continue it"}),
         button("Duplicate scene", duplicateScene, "btn sm"),
+        h("span", {className: "divider", "aria-hidden": "true"}),
         button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
         button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
+        h("div", {className: "grow"}),
         button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})),
     );
     renderPreview();
@@ -306,19 +310,22 @@
           {disabled: item.issues.length > 0 || busy || (item.state === "done"), id: "prepare-scene",
             title: busy ? "Wait for the current run to finish." : "Fit the clip to the storyboard and cut its ending for the next scene"}));
       $("take-confirm").replaceChildren();
+      $("takes-panel").hidden = false;
       return;
     }
     const shown = shownTake();
     const busy = Boolean(activeGenerate());
     const blocked = item.issues.length > 0;
-    const row = item.takes.map((take) => chip(
+    const chips = item.takes.map((take) => chip(
       `Take ${take.number}${take.id === item.in_use ? " · in use" : ""}`,
       shown?.id === take.id,
       () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
     ));
+    const row = [];
+    const choices = [];
     if (shown && shown.id !== item.in_use) {
-      row.push(button("Use this take", useTake, "btn quiet"));
-      row.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
+      choices.push(button("Use this take", useTake, "btn quiet"));
+      choices.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
         {disabled: Boolean(state.run?.active),
           title: state.run?.active ? "Wait for the current run to finish." : "Delete this take for good"}));
     }
@@ -339,13 +346,13 @@
         button("Use seed", () => useSeed(shown.seed), "btn sm",
           {title: "Set this scene's seed to this take's seed"})));
     }
-    row.push(h("div", {className: "grow"}));
-    if (state.boot.gpu) {
-      row.push(button(item.takes.length ? "Generate another take" : "Generate this scene",
-        () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
-        {disabled: blocked || busy, id: "generate-scene"}));
-    }
-    $("take-row").replaceChildren(...row);
+    const generate = state.boot.gpu ? button(item.takes.length ? "Generate another take" : "Generate this scene",
+      () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
+      {disabled: blocked || busy, id: "generate-scene"}) : null;
+    $("take-row").replaceChildren(
+      chips.length ? h("div", {className: "take-chips"}, chips) : null,
+      row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
+      generate ? h("div", {className: "take-foot"}, generate) : null);
     const doomed = shown?.id === state.deletingTake && shown.id !== item.in_use ? shown : null;
     $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
       h("p", {}, state.question),
@@ -357,6 +364,7 @@
       button("Delete permanently", () => deleteTake(doomed), "btn danger"),
       button("Cancel", () => { state.deletingTake = null; renderTakes(); }),
     )] : []));
+    $("takes-panel").hidden = !$("take-row").children.length && !$("take-confirm").children.length;
   };
 
   const deleteQuestion = (take) => {
@@ -416,6 +424,8 @@
     if (item.state_label === "Needs input") return "! ";
     return "○ ";
   };
+  const stateBadge = (item, isRunning, extraClass = "") => h("span", {className: `${stateClass(item)} ${extraClass}`.trim()},
+    `${statePrefix(item, isRunning)}${isRunning ? "Generating" : item.state_label}`);
 
   const toggleSceneLink = async (item) => {
     const url = `${API}/boards/${state.board.id}/scenes/${item.id}`;
@@ -456,13 +466,17 @@
     probe.src = url;
   };
 
+  const FLOW_ICON = "M5 12h14M13 6l6 6-6 6";
+  const CUT_ICON = "M8.1 8.1L20 20M8.1 15.9L20 4M9 6a3 3 0 1 1-6 0a3 3 0 1 1 6 0M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0";
+  const VIDEO_ICON = "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM10 9l5 3-5 3z";
+
   const renderStrip = () => {
     const running = activeGenerate()?.scene_id;
     const items = [];
     scenes().forEach((item, index) => {
       if (index > 0 && item.kind === "media") {
         items.push(h("span", {className: "link-toggle cut", title: `Scene ${item.number} plays a video, so it always starts fresh.`,
-          "aria-label": `Transition to scene ${item.number}: fresh start, a video from Media.`}, "✂"));
+          "aria-label": `Transition to scene ${item.number}: fresh start, a video from Media.`}, icon(CUT_ICON)));
       } else if (index > 0) {
         items.push(h("button", {
           type: "button",
@@ -474,7 +488,7 @@
             ? `Transition to scene ${item.number}: continues scene ${item.number - 1}. Click to switch to fresh start.`
             : `Transition to scene ${item.number}: fresh start. Click to switch to continue scene ${item.number - 1}.`,
           onclick: () => toggleSceneLink(item),
-        }, item.flow ? "→" : "✂"));
+        }, icon(item.flow ? FLOW_ICON : CUT_ICON)));
       }
       const thumb = h("span", {className: "thumb"});
       if (item.thumb) {
@@ -513,12 +527,12 @@
       isRunning ? h("span", {className: "bar"}, h("i")) : null,
       h("span", {className: "title"}, `${item.number} · ${item.title || "Untitled scene"}`),
       h("span", {className: "meta"},
-        h("span", {className: stateClass(item)}, `${statePrefix(item, isRunning)}${isRunning ? "Generating" : item.state_label}`),
+        stateBadge(item, isRunning),
         h("span", {className: "mono"}, durationText)));
       items.push(card);
     });
-    items.push(button("Add scene", () => addScene(), "add-frame"));
-    items.push(button("Add video from Media", () => addScene(null, "media"), "add-frame",
+    items.push(button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "add-frame"));
+    items.push(button([icon(VIDEO_ICON), "Add video from Media"], () => addScene(null, "media"), "add-frame",
       {title: "A scene that plays a video from Media; the next scene can continue it"}));
     $("strip").replaceChildren(...items);
   };
@@ -600,6 +614,7 @@
   const renderInspector = () => {
     const panels = {cast: castPanel, versions: versionsPanel, settings: settingsPanel, auto: autoPanel};
     const nodes = (panels[state.panel] || scenePanel)();
+    $("inspector").classList.toggle("scene-mode", !panels[state.panel]);
     $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
   };
 
