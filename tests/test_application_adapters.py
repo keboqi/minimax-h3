@@ -286,6 +286,9 @@ class ApplicationAdaptersTests(unittest.TestCase):
             {entry["filename"] for entry in app.LTX25_WORKFLOWS.values()} | {
                 "LTX-2.5_V2V_TiledFusion_Native_4K_8K.json",
                 "LTX-2.5_V2V_TiledFusion_Upscale.json",
+                # Installed as an official template only: it needs the dev
+                # transformer and alpha-gen IC-LoRA, which are not provisioned.
+                "LTX-2.5_ICLoRA_AlphaGen_Chunked_Full.json",
             },
             set(_requirements.LTX25_WORKFLOW_FILENAMES),
         )

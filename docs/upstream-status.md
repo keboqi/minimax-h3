@@ -1,5 +1,56 @@
 # Upstream status
 
+## ComfyUI, LTXVideo and SGLang-Omni upgrades implemented — 2026-11-15
+
+- **ComfyUI** now pins the **v0.45.0** release (`989d93d0`): the previous pin
+  plus workflow templates 0.11.105. Frontend 1.58.5 and Kitchen 0.2.41 stay paired.
+- **LTXVideo** pins `ced6bad9`. The SDR→HDR graph follows upstream's own example,
+  using only core nodes: `ImageColorSpace` sRGB → HDR ACEScct on ingest,
+  `VAEComputeDtype(fp32)`, then ACEScct → linear ACEScg → HDR (Rec.2020 HLG),
+  `CreateVideo(color_space=HDR, bit_depth=10)` and `SaveVideo` (H.264 MP4).
+  `LTXVSDRToHDRWorkingSpace`, `LTXVVAEForceFloat32`, `LTXVHDRDecodePostprocess`
+  and `LTXVSaveHLG` are gone. The output was HEVC 10-bit HLG and is now
+  H.264 High 10 HLG. Core's HLG conversion uses a 1000-nit reference display.
+  The new AlphaGen example is installed as a template only, because it needs the dev
+  transformer and the alpha-gen IC-LoRA, which we don't provision. Every other
+  LTX node we use still exists, and `iclora.py`/`tiled_fusion_sampler.py` are unchanged.
+- **SGLang-Omni** pins main `e560005f` (no release after v0.2.0). It includes
+  Drama 3 kernel fusion and chunk decode (#3630), CUDA-graph reference encodes
+  (#3647) and tensor parallelism (#3717), on SGLang 0.5.23 and FlashInfer
+  0.7.2. Python 3.12, Torch 2.14.1 and the protobuf override are unchanged.
+  Upstream now defaults the vocoder to incremental stream decoding, which holds
+  about 6.4 GiB of stream state and does not fit our 0.08 codec share. We now
+  pass `--vocoder.factory.stream_decode overlap`, which keeps v0.2.0's
+  complete-WAV path. Reference sampling stays off. Reference audio is now
+  padded to its graph length (to a multiple of 1.02 s, up to 20 s), which
+  changes 4.6% of BF16 reference code elements. Upstream reports Seed-TTS WER
+  as unchanged or slightly better.
+
+Re-run local setup (the changed SGLang fingerprint reinstalls the Drama venv),
+or rebuild/redeploy Modal. GPU inference, HDR output colour/levels, and Drama 3
+memory, speed, sleep/checkpoint and listening quality remain unverified.
+
+## Component and LoRA audit — 2026-11-15
+
+Refreshed the 19 pinned Git sources, 25 PyPI packages and 27 LoRA source
+repositories against the November 12 snapshot. All **38 configured LoRA files
+exist** and every configured SHA-256 matches. The only LoRA repository change
+is LightX2V's 8-step v1.2 768p upload, which the project already configures
+with a matching checksum. Evidence is in `.cache/upstream-audit-2026-11-15/`.
+Source review only; no runtime pins, weights or deployments changed.
+
+| Priority | Finding | Recommendation |
+| --- | --- | --- |
+| **Adapt now: LTXVideo HDR graph** | Head `ced6bad9` adds `node_replacements.py` mapping `LTXVSDRToHDRWorkingSpace` → core `ImageColorSpace` (sRGB → HDR ACEScct) and `LTXVVAEForceFloat32` → `VAEComputeDtype(fp32)`. Upstream's SDR→HDR example now decodes, converts ACEScct → linear ACEScg → HDR with two `ImageColorSpace` nodes, then `CreateVideo(color_space=HDR)` + `SaveVideo`. `LTXVSaveHLG` is gone. Our ComfyUI pin `ede4e5fe` already has all of those core nodes. | Migrate `build_ltx25_hdr_graph` (and `required_ltx25_hdr_nodes`) to the core chain, then bump the LTXVideo pin. Check 10-bit, BT.2020/HLG tags, FPS and audio passthrough against a current output. This clears the blocker held since November 4. |
+| **Easy: ComfyUI release tag** | v0.45.0 (Nov 10) is our pin plus a templates bump 0.11.103 → 0.11.105; frontend 1.58.5 and Kitchen 0.2.41 unchanged. Main is 29 commits ahead: Video Deflicker node, APG-at-CFG-1 fix (unused here), Qwen3.5 embedded-tokenizer/video-token fixes (MOSS encoder only), DirectML removal. | Move `COMFY_REF` to the v0.45.0 tag per release-tag policy. No graph changes needed. Main's extras are optional. |
+| **Prior art: PlagueKind H3 Video Upsampler `ic`** | v1.6.4 (`cc944b50`, MIT) adds a ComfyUI-native Open-H3-Regenerate-2K-IC path: HyperFlow 8-step with its two-time embedder, LMS Sharp 1.0, Kijai rank-21 IC (measured within noise of r384), Diffusers → core fused qkv/fc1 key mapping, draft-in-context per chunk and the clip's soundtrack instead of silence rows. | Use as the reference implementation for `docs/plans/h3-regenerate-ic-integration.md` before writing our own. The soundtrack-rows choice differs from the official silence contract; compare both. |
+| **Watch: SGLang-Omni Drama 3 perf** | Main (278 ahead of v0.2.0) merged Drama 3 tensor parallelism (#3717), kernel fusion + chunk decode (#3630) and CUDA-graph reference encodes (#3647) on Nov 14. No new `v0.x` release; only Voxt beta tags. | Hold for a release; these are the most relevant changes for the primary Drama backend. |
+| **Hold** | Drama3 node pack (5 ahead) adds 10-29 weight support, Speed Options, voice guidance and `pin_experts`, but we only use its Qwen3-ASR nodes, which did not change. KJNodes adds MiniMax H3 prompt weight/blending (feature candidate). ControlNet Aux fixes hub 1.0 download args. NeMo, T8 Audio unchanged in substance. | No action. |
+
+Packages: Transformers 5.23.0 and Diffusers 0.43.0 remain outside current
+policy; Gradio 6.32.0, kernels 0.18.3, OpenAI 3.51.0, Playwright 1.65.2 and
+Modal 1.6.4 are routine and do not justify changing the validated stack alone.
+
 ## Spectrum upgrades implemented — 2026-11-12
 
 The shared source catalog now pins H3 Spectrum **v0.2.30**

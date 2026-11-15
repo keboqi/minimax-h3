@@ -206,14 +206,14 @@ class EnvironmentTests(unittest.TestCase):
         with patch.object(worker_env.shutil, "which", return_value=None), \
                 patch("importlib.util.find_spec", return_value=None):
             self.assertIsNone(environment.uv_command())
-    def test_sglang_install_pins_the_release_with_fishaudio_extras(self):
+    def test_sglang_install_pins_the_revision_with_fishaudio_extras(self):
         commands = drama3_sglang_install_commands(PurePosixPath("/opt/h3/drama3-sglang-venv"))
         self.assertIn("protobuf>=6.31.1,<7.0.0", commands[1][-1])
         self.assertEqual(commands[2][commands[2].index("--overrides") + 1], "/opt/h3/drama3-sglang-venv/h3-overrides.txt")
         self.assertIn("--prerelease=allow", commands[2])
         self.assertIn("--compile-bytecode", commands[2])
         self.assertIn("--torch-backend=cu130", commands[2])
-        self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@e8c635e"))
+        self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@e560005f"))
         self.assertEqual(environment.default_venv(Path("/app")), Path("/app/h3/drama3-sglang-venv"))
     def test_readiness_requires_the_current_fingerprint(self):
         with tempfile.TemporaryDirectory() as root:
@@ -437,6 +437,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "breakable")
         self.assertEqual(command[command.index("--tts_engine.factory.first_frame_cuda_graph_max_requests") + 1], "16")
         self.assertEqual(command[command.index("--vocoder.factory.window_cuda_graphs") + 1], "false")
+        self.assertEqual(command[command.index("--vocoder.factory.stream_decode") + 1], "overlap")
         self.assertEqual(command[command.index("--vocoder.factory.codec_path") + 1],
                          str(settings.model_dir / "codec.pth"))  # offline: no S2-Pro Hub download
         self.assertEqual(settings.runtime_dir, settings.data_dir)

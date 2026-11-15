@@ -695,6 +695,9 @@ class SglangOmniServer:
             "--tts_engine.factory.first_frame_cuda_graph_max_requests", "16",
             # This route requests complete WAVs, not streaming codec windows.
             "--vocoder.factory.window_cuda_graphs", "false",
+            # Upstream now defaults to incremental stream decoding, whose ~6.4 GiB of
+            # stream state would not fit our codec share and only serves streams.
+            "--vocoder.factory.stream_decode", "overlap",
             # SGLang-Omni defaults to fishaudio/s2-pro's codec.pth from the Hub; the
             # checkpoint ships the byte-identical file (sha256 74fc41c5...), so use it
             # and keep startup offline.

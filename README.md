@@ -456,9 +456,9 @@ and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.44.0 plus native RelayVSR and adaptive SeedVR2
-VAE slicing at immutable revision `2f8943324e1eae89a5ee6c7db93602299246b5f1`
-([Comfy-Org/ComfyUI#17508](https://github.com/Comfy-Org/ComfyUI/pull/17508)), including native Sol H3 VAE decoding,
+The deployment pins the ComfyUI v0.45.0 release at immutable revision
+`989d93d0d968e704c589ce0146bb18c77f6b50cc`, with native RelayVSR, adaptive SeedVR2
+VAE slicing ([Comfy-Org/ComfyUI#17508](https://github.com/Comfy-Org/ComfyUI/pull/17508)), including native Sol H3 VAE decoding,
 H3 latent upscaling, official H3 Image conditioning/PDD sampling, and Pruna LoRA bypass support.
 Refinement and H3 Regenerate use Core's optimized
 upscaler with a bundled loader that preserves FP32/BF16/FP16 precision choices.
@@ -472,7 +472,7 @@ structured Fibo 2.0 negatives as written instead of cleaning them like captions
 ([Comfy-Org/ComfyUI#17285](https://github.com/Comfy-Org/ComfyUI/pull/17285)), so our
 text-to-image negative applies as intended, and adds aimdo 0.6.0 dynamic-VRAM KV caches for
 Qwen Image 2.1. Its requirements: frontend package 1.58.5, Comfy Kitchen 0.2.41, upstream
-aimdo 0.6.0, workflow templates 0.11.102 and embedded docs 0.5.16.
+aimdo 0.6.0, workflow templates 0.11.105 and embedded docs 0.5.16.
 Media offers native RelayVSR 2x and 4x enhancement for videos and images, with
 matching models downloaded on first use and no additional resizing.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,

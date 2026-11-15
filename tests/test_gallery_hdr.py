@@ -46,23 +46,35 @@ class GalleryHdrTests(unittest.TestCase):
                 return next((key, n["inputs"]) for key, n in graph.items() if n["class_type"] == kind)
             self.assertEqual(steps, 8)
             self.assertEqual({n["class_type"] for n in graph.values()}, required_upscale_nodes(LTX25_SDR_TO_HDR))
-            working, _ = node("LTXVSDRToHDRWorkingSpace")
-            self.assertEqual(node("ImageScale")[1]["image"], [working, 0])
+            def nodes(kind):
+                return [(key, n["inputs"]) for key, n in graph.items() if n["class_type"] == kind]
+            spaces = {(i["source"], i["destination"]): (key, i) for key, i in nodes("ImageColorSpace")}
+            self.assertEqual(set(spaces), {("sRGB", "HDR ACEScct"), ("HDR ACEScct", "linear ACEScg"),
+                                           ("linear ACEScg", "HDR")})
+            working, ingest = spaces[("sRGB", "HDR ACEScct")]
+            self.assertEqual(ingest["image"], [node("GetVideoComponents")[0], 0])
+            self.assertEqual(nodes("ImageScale")[0][1]["image"], [working, 0])
             self.assertEqual(node("VAELoader")[1]["vae_name"], MODEL_SPECS["ltx25_video_vae_full"].local_name)
-            forced, _ = node("LTXVVAEForceFloat32")
+            forced, dtype = node("VAEComputeDtype")
+            self.assertEqual(dtype["dtype"], "fp32")
             self.assertEqual(node("LTXAddVideoICLoRAGuide")[1]["vae"], [forced, 0])
             self.assertEqual(node("VAEDecodeTiled")[1]["vae"], [forced, 0])
             self.assertEqual(node("LTXAddVideoICLoRAGuide")[1]["latent_downscale_factor"], 1)
             self.assertEqual(node("KSamplerSelect")[1]["sampler_name"], "euler")
-            hdr, decoded = node("LTXVHDRDecodePostprocess")
-            self.assertEqual(decoded["transfer"], "acescct")
+            linear, decoded = spaces[("HDR ACEScct", "linear ACEScg")]
             scale = graph[decoded["image"][0]]["inputs"]
             self.assertEqual((scale["width"], scale["height"]), (1920, 1080))
-            output = node("LTXVSaveHLG")[1]
-            self.assertEqual(output["hdr_linear"], [hdr, 1])
-            self.assertEqual(output["linear_primaries"], "acescg")
-            self.assertEqual(output["frame_rate"], 23.976)
-            self.assertEqual(output["audio"], [node("GetVideoComponents")[0], 1])
+            hlg, delivered = spaces[("linear ACEScg", "HDR")]
+            self.assertEqual(delivered["image"], [linear, 0])
+            video, created = node("CreateVideo")
+            self.assertEqual(created["images"], [hlg, 0])
+            self.assertEqual((created["bit_depth"], created["color_space"]), (10, "HDR"))
+            self.assertEqual(created["fps"], 23.976)
+            self.assertEqual(created["audio"], [node("GetVideoComponents")[0], 1])
+            saved = node("SaveVideo")[1]
+            self.assertEqual(saved["video"], [video, 0])
+            self.assertEqual(saved["codec"], "h264")
+            self.assertTrue(saved["filename_prefix"].startswith("ltx25/sdr_to_hdr_fixture_nonce"))
 
     def test_hdr_download_has_no_text_encoder_or_audio_vae(self):
         runtime = SimpleNamespace(models_config=Path("models/config.json"), comfy_dir=Path("comfy"))

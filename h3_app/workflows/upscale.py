@@ -696,13 +696,13 @@ def required_upscale_nodes(option: str, models: ModelConfig | None = None, refin
 
 def required_ltx25_hdr_nodes() -> set[str]:
     return {
-        "LoadVideo", "GetVideoComponents", "LTXVSDRToHDRWorkingSpace",
+        "LoadVideo", "GetVideoComponents", "ImageColorSpace",
         "ImageScale", "GetImageSize", "UNETLoader", "LTXICLoRALoaderModelOnly",
-        "VAELoader", "LTXVVAEForceFloat32", "H3LTXHDRConditioning",
+        "VAELoader", "VAEComputeDtype", "H3LTXHDRConditioning",
         "LTXVConditioning", "EmptyLTXVLatentVideo", "LTXAddVideoICLoRAGuide",
         "RandomNoise", "CFGGuider", "KSamplerSelect", "ManualSigmas",
         "SamplerCustomAdvanced", "LTXVCropGuides", "VAEDecodeTiled",
-        "LTXVHDRDecodePostprocess", "LTXVSaveHLG",
+        "CreateVideo", "SaveVideo",
     }
 
 
@@ -711,14 +711,19 @@ def build_ltx25_hdr_graph(
     width: int, height: int, fps: float,
     output_stamp: str, output_nonce: str,
 ) -> dict[str, Any]:
-    """Plain video-only HDR IC-LoRA: ACEScct ingest and 10-bit HLG delivery."""
+    """Plain video-only HDR IC-LoRA: ACEScct ingest and 10-bit HLG delivery.
+
+    Follows LTXVideo's own SDR-to-HDR example, which replaced its HDR nodes with
+    core color conversion: sRGB -> HDR ACEScct in, ACEScct -> linear ACEScg ->
+    HDR (Rec.2020 HLG) out, then a 10-bit BT.2020/HLG Create/Save Video.
+    """
     names = ltx25_model_names(model_choice)
     graph = Graph()
     loaded = graph.add("LoadVideo", file=source_video)
     components = graph.add("GetVideoComponents", video=Graph.out(loaded))
     working = graph.add(
-        "LTXVSDRToHDRWorkingSpace", image=Graph.out(components, 0),
-        color_space="srgb_gamma",
+        "ImageColorSpace", image=Graph.out(components, 0),
+        source="sRGB", destination="HDR ACEScct",
     )
     # Apply the source EOTF before spatial filtering, as upstream requires.
     guide = graph.add(
@@ -732,7 +737,7 @@ def build_ltx25_hdr_graph(
         lora_name=MODEL_SPECS["ltx25_sdr_to_hdr"].local_name, strength_model=1.0,
     )
     vae = graph.add("VAELoader", vae_name=MODEL_SPECS["ltx25_video_vae_full"].local_name)
-    vae = graph.add("LTXVVAEForceFloat32", vae=Graph.out(vae))
+    vae = graph.add("VAEComputeDtype", vae=Graph.out(vae), dtype="fp32")
     context = graph.add(
         "H3LTXHDRConditioning",
         file_name=MODEL_SPECS["ltx25_sdr_to_hdr_conditioning"].local_name,
@@ -776,14 +781,22 @@ def build_ltx25_hdr_graph(
             "ImageScale", image=Graph.out(images), upscale_method="lanczos",
             width=width, height=height, crop="disabled",
         )
-    hdr = graph.add(
-        "LTXVHDRDecodePostprocess", image=Graph.out(images), transfer="acescct",
-        exposure=0.0, save_exr=False,
+    linear = graph.add(
+        "ImageColorSpace", image=Graph.out(images),
+        source="HDR ACEScct", destination="linear ACEScg",
+    )
+    hlg = graph.add(
+        "ImageColorSpace", image=Graph.out(linear),
+        source="linear ACEScg", destination="HDR",
+    )
+    video = graph.add(
+        "CreateVideo", images=Graph.out(hlg), fps=float(fps),
+        audio=Graph.out(components, 1), bit_depth=10, color_space="HDR",
     )
     graph.add(
-        "LTXVSaveHLG", hdr_linear=Graph.out(hdr, 1), frame_rate=float(fps),
-        linear_primaries="acescg", audio=Graph.out(components, 1),
+        "SaveVideo", video=Graph.out(video),
         filename_prefix=f"ltx25/sdr_to_hdr_{output_stamp}_{output_nonce}",
+        format="auto", codec="h264",
     )
     return graph.nodes
 

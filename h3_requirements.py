@@ -45,9 +45,10 @@ VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "3a23f333537d9a715aad7ce79af8d9ec891d9ad8"  # v1.104.0 + native Core compatibility
 
-# Official MiniMax H3 Image support (#17655), retaining the video frame-buffer
-# fix, native RelayVSR and adaptive SeedVR2 VAE slices. Kitchen remains 0.2.41.
-COMFY_REF = "ede4e5fe8d15445c6fcd6828d70b202c22f9502c"
+# ComfyUI v0.45.0: official MiniMax H3 Image support (#17655), the video
+# frame-buffer fix, native RelayVSR and adaptive SeedVR2 VAE slices.
+# Frontend 1.58.5 and Kitchen 0.2.41 stay paired; workflow templates 0.11.105.
+COMFY_REF = "989d93d0d968e704c589ce0146bb18c77f6b50cc"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -55,10 +56,11 @@ DRAMA3_REF = "67a733a96890637dc27b1914974ad00c569405fb"
 # Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"
-# SGLang-Omni v0.2.0 includes Drama 3's fused vocoder activation/padding.
-# Keep later experimental reference sampling separate from this release.
+# SGLang-Omni main after v0.2.0 (2026-11-14, no newer release): Drama 3 kernel
+# fusion + chunk decode (#3630), CUDA-graph reference encodes (#3647) and tensor
+# parallelism (#3717) on SGLang 0.5.23. Reference sampling stays off (its default).
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
-DRAMA3_SGLANG_OMNI_REF = "e8c635ecb9c68bcf2fbc32ceb3c40f85f3590657"  # v0.2.0
+DRAMA3_SGLANG_OMNI_REF = "e560005fc7e2f3d7152651fe81704377962118dd"
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 # October 29 FP8 repack; revision-specific directories invalidate older caches.
 DRAMA3_HF_REVISION = "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
@@ -81,6 +83,8 @@ LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_A2V_Two_Stage_Distilled.json",
     "LTX-2.5_T2A_Single_Stage_Distilled.json",
     "LTX-2.5_ICLoRA_Ingredients_Single_Stage_Distilled.json",
+    # Template only: needs the dev transformer and alpha-gen IC-LoRA (not provisioned).
+    "LTX-2.5_ICLoRA_AlphaGen_Chunked_Full.json",
     "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json",
     "LTX-2.5_ICLoRA_Motion_Track_Distilled.json",
     "LTX-2.5_ICLoRA_Inpaint_Two_Stage_Distilled.json",
@@ -566,12 +570,12 @@ def selftest() -> None:
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
-    assert COMFY_REF == "ede4e5fe8d15445c6fcd6828d70b202c22f9502c"
+    assert COMFY_REF == "989d93d0d968e704c589ce0146bb18c77f6b50cc"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.41"
     assert COMFY_FRONTEND_VERSION == "1.58.5"
     assert WSPROTO_VERSION == "1.2.0"
-    assert len(LTX25_WORKFLOW_FILENAMES) == 12
+    assert len(LTX25_WORKFLOW_FILENAMES) == 13
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         source = root / "source"
