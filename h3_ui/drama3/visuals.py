@@ -25,7 +25,8 @@ from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
-from h3_app.drama3.visual_plan import SHOT_LINE, compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
+from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, fill_tags, plan_art_style, sheet_prompt,
+                                      shot_cap, subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
@@ -266,11 +267,21 @@ def _size(engine, captured, width, height):
             captured[f"{engine}__edit_size"] = QWEN_EDIT_SIZE_MANUAL
 
 
-def widescreen(engine, captured):
-    """One image per request at a 16:9 size, whatever the Image tab is set to."""
+def widescreen(engine, captured, orientation="landscape"):
+    """One image per request at a 16:9 size (9:16 for ``portrait``), whatever the Image tab is set to."""
     captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False, moss_image__layout="", flux3__layout="",
                     qwen__output_resolution_1k=None, qwen__output_resolution_2k=None)
-    _size(engine, captured, *_WIDESCREEN.get(engine, (1344, 768)))
+    width, height = _WIDESCREEN.get(engine, (1344, 768))
+    _size(engine, captured, *((height, width) if orientation == "portrait" else (width, height)))
+
+
+# The rendered video's size in each frame, so its stills fill it without bars.
+VIDEO_SIZES = {"landscape": (1280, 720), "portrait": (720, 1280)}
+
+
+def orientation_of(value):
+    """A known frame (``landscape`` or ``portrait``); anything else is the original landscape."""
+    return value if value in ORIENTATIONS else "landscape"
 
 
 def match_characters(controller, engine, scene, portraits, shot, captured):
@@ -309,7 +320,8 @@ def _stream(updates, label):
     return path
 
 
-def illustrate_shots(controller, engine, shots, captured, use_references, finished=None, portraits=None):
+def illustrate_shots(controller, engine, shots, captured, use_references, finished=None, portraits=None,
+                     orientation="landscape"):
     """Draw every scene from its text, then match its characters to their portraits.
 
     ``portraits`` maps character keys to portrait prompts; only characters some shot shows are drawn,
@@ -320,7 +332,7 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
     """
     finished = {"portraits": {}, "shots": []} if finished is None else finished
     finished.setdefault("portraits", {})
-    widescreen(engine, captured)
+    widescreen(engine, captured, orientation)
     limit = reference_limit(engine, captured.get("qwen__turbo_variant", "Off")) if use_references else 0
     slots = max(0, limit - 1)  # The scene itself takes the first input.
     portraits = portraits or {}
@@ -375,6 +387,8 @@ def plan_path(audio):
 
 
 def write_plan(audio, style, limit, plan):
+    """Save the plan with the art direction chosen when it was made, which only an older plan's own
+    planner-written style depends on, and the Minimum shots it was made for."""
     path = plan_path(audio)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps({"style": style, "limit": int(limit), "plan": plan}, ensure_ascii=False),
@@ -382,15 +396,14 @@ def write_plan(audio, style, limit, plan):
     temporary.replace(path)
 
 
-def read_plan(audio, style=None, limit=None):
-    """The plan saved with this mix, or None; with ``style`` and ``limit``, only a plan made for them."""
+def read_plan(audio, limit=None):
+    """The plan saved with this mix, or None; with ``limit``, only a plan made for that Minimum shots.
+    The art direction and frame are added when drawing, so any of them use the same plan."""
     try:
         saved = json.loads(plan_path(audio).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(saved, dict) or not isinstance(saved.get("plan"), dict):
-        return None
-    if style is not None and (saved.get("style") or "").strip() != (style or "").strip():
         return None
     if limit is not None and saved.get("limit") != int(limit):
         return None
@@ -454,7 +467,8 @@ def _write_stills_record(folder, record):
     return folder / STILLS_RECORD
 
 
-def keep_stills(audio, root, shots, images, details, *, extras=None, total_frames=None, portraits=None):
+def keep_stills(audio, root, shots, images, details, *, extras=None, total_frames=None, portraits=None,
+                orientation="landscape"):
     """Keep a web copy of each drawn image with its shot's time on the mix; returns the stills record.
 
     The record replaces the mix's earlier stills, but an image already among them (a shot drawn
@@ -491,7 +505,7 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
         kept[key] = {"image": name, "prompt": fingerprint}
     record = _write_stills_record(folder, {"revision": revision, "source": Path(audio).name, "fps": FPS,
                                            "total_frames": total_frames, "shots": records, "portraits": kept,
-                                           "details": details})
+                                           "orientation": orientation_of(orientation), "details": details})
     keep = {item["image"] for item in kept.values()}
     for old in [*folder.glob("*.jpg"), *folder.glob("*.png")]:
         if not old.name.startswith(f"{revision}-") and old.name not in keep:
@@ -570,13 +584,14 @@ def stills_shots(record):
     return shots, [item["image"] for item in items]
 
 
-def burned_subtitles(audio, size) -> str | None:
+def burned_subtitles(audio, size, orientation="landscape") -> str | None:
     """The mix's lines as an ASS script at ``size`` percent, as the page's video preview shows them,
     each aligned word lighting up as it is spoken; None when the mix has no timed lines."""
     entries, words, _tones, _sounds = timeline_data((read_snapshot(Path(audio)) or {}).get("settings") or {})
     lines = [Line(speaker, text, start, end, word_pieces(text, line_words))
              for (speaker, text, start, end), line_words in zip(entries, words)]
-    return ass_subtitles(lines, size=size) if lines else None
+    width, height = VIDEO_SIZES[orientation_of(orientation)]
+    return ass_subtitles(lines, width=width, height=height, size=size) if lines else None
 
 
 def render_stills(audio, root, subtitles: int = 0):
@@ -593,17 +608,27 @@ def render_stills(audio, root, subtitles: int = 0):
         raise H3Error("Install FFmpeg to render an illustrated video.")
     shots, names = stills_shots(record)
     folder = stills_dir(audio, root)
-    script = burned_subtitles(audio, subtitles) if subtitles else None
-    video = render_video(audio, shots, [folder / name for name in names], audio.parent, subtitles=script)
+    orientation = orientation_of(record.get("orientation"))
+    script = burned_subtitles(audio, subtitles, orientation) if subtitles else None
+    video = render_video(audio, shots, [folder / name for name in names], audio.parent, subtitles=script,
+                         size=VIDEO_SIZES[orientation])
     write_snapshot(video, {"family": ILLUSTRATED_FAMILY, "settings": {
         **(record.get("details") or {}), "source": audio.name, "stills": record["revision"],
         "subtitles": subtitles}})
     return video
 
 
-def plan_shots_for(saved, duration):
-    """The saved plan's shots, compiled as drawing uses them."""
-    return compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
+def legacy_art_style(saved, style):
+    """An older plan's planner-written style, while the art direction it was written for is chosen;
+    with another style it would fight it, and new plans have none."""
+    same = (saved.get("style") or "").strip() == (style or "").strip()
+    return plan_art_style(saved["plan"]) if same else None
+
+
+def plan_shots_for(saved, duration, style, orientation="landscape"):
+    """The saved plan's shots as drawing uses them: in the chosen frame and art direction."""
+    return compile_plan(saved["plan"], duration, style, shot_cap(duration, saved["limit"]),
+                        orientation=orientation_of(orientation), art_style=legacy_art_style(saved, style))
 
 
 def reference_direction(style):
@@ -615,21 +640,21 @@ def reference_direction(style):
     return re.sub(r"[ \t]{2,}", " ", style).strip()
 
 
-def portrait_prompts(saved, *, with_setting=False):
-    """Each character's portrait prompt, from the saved plan. ``with_setting`` gives the prompt
-    portraits were drawn from before SETTING_DETAIL was left out of them."""
-    art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
-    direction = saved["style"] if with_setting else reference_direction(saved["style"])
+def portrait_prompts(saved, style, *, with_setting=False):
+    """Each character's portrait prompt, from the saved plan's looks in the chosen art direction.
+    ``with_setting`` gives the prompt portraits were drawn from before SETTING_DETAIL was left out."""
+    art_style = legacy_art_style(saved, style)
+    direction = style if with_setting else reference_direction(style)
     return {name: sheet_prompt(kind, name, anchor, art_style, direction)
             for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
 
 
-def portrait_keys(saved):
+def portrait_keys(saved, style):
     """The prompt fingerprints a kept portrait may carry and still be current, by character.
     Portraits drawn while the prompt still had SETTING_DETAIL stay current, so redrawing one shot
     of an older project keeps matching the faces already drawn."""
-    old = portrait_prompts(saved, with_setting=True)
-    return {name: {prompt_key(prompt), prompt_key(old[name])} for name, prompt in portrait_prompts(saved).items()}
+    old = portrait_prompts(saved, style, with_setting=True)
+    return {name: {prompt_key(prompt), prompt_key(old[name])} for name, prompt in portrait_prompts(saved, style).items()}
 
 
 def chosen_shots(shots, stills, only):
@@ -644,30 +669,34 @@ def chosen_shots(shots, stills, only):
     return sorted(set(only))
 
 
-def draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values, only=None):
-    """Draw a mix's saved shot plan and keep the images as its stills; yields (record or skip, status).
+def draw_stills(controller, deps, result_name, engine, style, limit, use_references, orientation, *values,
+                only=None):
+    """Draw a mix's saved shot plan in ``style`` and ``orientation`` and keep the images as its stills;
+    yields (record or skip, status).
 
     ``only`` limits the drawing to some shots (see ``chosen_shots``). The others keep the image
     already drawn for their time on the mix, and kept portraits drawn from the same prompt are
     reused, so a redrawn shot's characters match the rest.
     """
     audio, settings = load_mix(deps, result_name)
-    saved = read_plan(audio, style, limit)
+    saved = read_plan(audio, limit)
     if saved is None:
-        raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
+        raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
                       "Click Plan shots, or paste a plan from another chat model, then draw.")
+    orientation = orientation_of(orientation)
     duration = settings["duration"]
     root = deps.runtime_config().output_dir
-    shots = plan_shots_for(saved, duration)
+    shots = plan_shots_for(saved, duration, style, orientation)
     record = read_stills(audio, root)
     stills = match_stills(shots, record)
     picked = chosen_shots(shots, stills, only)
     if not picked:
         raise H3Error("Every shot is already drawn from its current prompt.")
     captured = dict(zip(controller.fields, values, strict=True))
-    key = export_key(result_name, saved["plan"], engine, use_references, captured) + ":" + ",".join(map(str, picked))
-    prompts = portrait_prompts(saved)
-    current = portrait_keys(saved)
+    key = export_key(result_name, [saved["plan"], style, orientation], engine, use_references, captured) + ":" \
+        + ",".join(map(str, picked))
+    prompts = portrait_prompts(saved, style)
+    current = portrait_keys(saved, style)
     finished = finished_images(key)
     # Drawing some shots matches their characters to the kept portraits (drawn from the same looks);
     # drawing them all starts afresh, portraits too.
@@ -676,7 +705,7 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
     for name, (path, _fingerprint) in kept.items():
         finished["portraits"].setdefault(name, str(path))
     images, shot_records, portrait_records = yield from illustrate_shots(
-        controller, engine, [shots[i] for i in picked], captured, use_references, finished, prompts)
+        controller, engine, [shots[i] for i in picked], captured, use_references, finished, prompts, orientation)
     yield gr.skip(), "Keeping the images with the mix…"
     folder = stills_dir(audio, root)
     drawn = dict(zip(picked, zip(images, shot_records)))
@@ -699,15 +728,18 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
         if name in prompts and Path(path).is_file():
             kept[name] = (path, prompt_key(prompts[name]))
     stills_record = keep_stills(audio, root, kept_shots, kept_images, {
-        "model": engine, "art_direction": style, "visual_plan": saved["plan"],
+        "model": engine, "art_direction": style, "orientation": orientation, "visual_plan": saved["plan"],
         "keep_characters_consistent": use_references, "portraits": portrait_records},
-        extras=extras, total_frames=ceil(duration * FPS), portraits=kept)
+        extras=extras, total_frames=ceil(duration * FPS), portraits=kept, orientation=orientation)
     _FINISHED.pop(key, None)  # A fresh drawing of the same settings draws new illustrations.
     drew = f"{len(picked)} image{'s' if len(picked) != 1 else ''}"
     yield str(stills_record), f"Drew {drew}. They play with the mix here; Save to Media renders the video."
 
 
-VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references", "only_shots")
+VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references", "orientation",
+                     "only_shots")
+# Previews keep the frame they were first drawn in, so changing a shot's frame line never redraws them.
+PREVIEW_LINE = "Single widescreen 16:9 illustration of one moment. No text, captions, speech bubbles or lettering."
 PREVIEW_INPUT_NAMES = ("engine", "presets")
 PREVIEWS_RECORD = "previews.json"
 _PREVIEWS_LOCK = Lock()
@@ -715,7 +747,7 @@ _PREVIEWS_LOCK = Lock()
 
 def preview_prompt(name):
     """What a style preview draws: the preset's own scene in the preset's rendering."""
-    return "\n".join([SHOT_LINE, STYLE_PREVIEWS[name], STYLE_PRESETS[name]])
+    return "\n".join([PREVIEW_LINE, STYLE_PREVIEWS[name], STYLE_PRESETS[name]])
 
 
 def previews_dir(root, engine):
@@ -826,10 +858,10 @@ def video_export(controller, deps, triggers=()):
     ``triggers`` are the studio events (opening it, switching task) on which each owner's Image
     tab values are handed to the export, as Remake and Storyboard take the MiniMax H3 settings.
     """
-    def generate(result_name, engine, style, limit, use_references, only, *values):
+    def generate(result_name, engine, style, limit, use_references, orientation, only, *values):
         try:
-            yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, *values,
-                                   only=json.loads(only) if only else None)
+            yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, orientation,
+                                   *values, only=json.loads(only) if only else None)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 

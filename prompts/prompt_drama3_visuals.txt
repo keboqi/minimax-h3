@@ -13,21 +13,18 @@ image every 3 to 8 seconds of story, and hold longer only on a deliberate pause.
 min_shots images and add more wherever the story needs them, never more than max_shots. Pick "cut" or "dissolve" for each incoming shot from how the two
 moments relate: dissolve for passing time or drifting thought, cut for action and reveals.
 
-ART STYLE
-Design one specific rendering style for the whole production that honors art_direction: medium,
-edge treatment, shading, texture, level of stylization, and a coherent color and value approach.
-Use 40 to 80 concrete words. Treat the user's chosen medium as a constraint; do not blend in an
-unrequested medium or substitute generic 'cinematic, masterpiece, highly detailed' language.
-It is appended to every scene AND character portrait, alongside the user's art_direction, so
-complement that direction instead of repeating it. Keep story facts, individual locations, weather,
-time of day, camera framing and lighting setups out of art_style. Put those in the relevant shot.
-The style must work for both a quiet conversation and an action scene, indoors and outdoors,
-in daylight and darkness. Preserve readable faces, hands, gestures and important objects, and
-render settings with the same finish and focus as the figures: never ask for a blurred, washed-out,
-sketchy or unfinished background, bokeh or soft-focus backdrop unless art_direction asks for one.
-Do not infer an era, culture, costume, scenery or mood from a medium's name. Derive those from
-the story or explicit user direction. Keep the same rendering language throughout, while allowing
-each shot's light and emotional tone to change with the story. Explicit user requests take priority.
+STYLE AND FRAME STAY OUT
+The rendering style (painting, photo, anime, pixel art...) and the frame (a wide 16:9 or a tall 9:16
+image) are added to every prompt when it is drawn, and the user can change both after planning
+without planning again. So describe only what is seen: subjects, action, expression, setting,
+camera and light. Never name a medium, rendering technique, art style, artist, film stock, lens
+brand or aspect ratio, and avoid words that only fit one medium (brushstrokes, cel shading, pixels).
+Compose every shot so it reads in both a wide and a tall frame: keep the focal subject and the
+action near the center, give framing as shot size and angle (close-up, medium shot, wide shot,
+low angle) rather than placing things at the far left or right edge, and let the setting surround
+the subject above, below and to the sides.
+Preserve readable faces, hands, gestures and important objects in every shot. Keep each shot's
+light and emotional tone true to the story moment.
 
 CONTINUITY BIBLE
 List the recurring or important visible subjects in three dictionaries: characters, props and
@@ -42,14 +39,14 @@ scenes are matched to, so be concrete and visual:
   nervous) inform the face and posture. Use the speaker's name for the key, lowercased.
 - props: shape, material, colors and distinctive markings.
 - locations: architecture, layout, landmarks, materials and the usual time of day and weather,
-  concrete enough to be painted as sharply as the characters.
+  concrete enough to be drawn as sharply as the characters.
 A voice with no body on screen (a narrator, a radio announcer) is not a character unless shown.
 
 SHOT PROMPTS
 Each prompt describes one image in 60 to 150 words, written in the language of the dialogue.
 Open with the camera and light, bound to the emotion: shot size, angle, composition, light quality,
-and what they make the viewer feel. For example: "A low-angle wide shot, the sky filling two thirds
-of the frame and dwarfing her; a cold rim light hints she is not alone."
+and what they make the viewer feel. For example: "A low-angle wide shot, a vast sky above her
+dwarfing her small figure; a cold rim light hints she is not alone."
 Mention subjects with @key and put only their current, changing state in parentheses:
 @mara(soaked coat, eyes wide with recognition) lifts @old_radio(dial glowing red).
 Never restate what the bible already says. Mention the focal subject first. Mention only subjects
@@ -61,16 +58,15 @@ Give every shot a finished setting, not a vague backdrop: name at least two or t
 background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
 their material, color and light, and keep them in focus. Prefer deep focus; use a shallow depth of
 field only for a deliberate isolating close-up, and even then keep the setting recognizable.
-Exception: when art_direction asks for a plain or simple background (for example to leave room for
-slide text), keep that background plain and uncluttered in every shot, show only the objects the
-idea needs, and leave the space it asks for.
+Exception: when the mix is an explainer, lesson, presentation or business talk rather than a story,
+show one idea per shot through a few recognizable people and objects on a simple, uncluttered
+setting, with room left around them for text added later.
 
 Describe a single frame, never panels, a grid or a before-and-after. Show what is said through
 action, expression and staging: no text, captions, speech bubbles or lettering.
 
 Return a single JSON object in this shape:
-{"art_style":"shared visual direction",
- "characters":{"mara":"Mara, woman in her thirties, cropped black hair, sharp cheekbones, ochre coat"},
+{"characters":{"mara":"Mara, woman in her thirties, cropped black hair, sharp cheekbones, ochre coat"},
  "props":{"old_radio":"bakelite radio, cracked cream casing, round brass dial"},
  "locations":{"station":"shuttered train station, iron canopy, a dark clock above the doors"},
  "shots":[{"start":0,"transition":"cut","beat":"Mara waits outside the locked station.",

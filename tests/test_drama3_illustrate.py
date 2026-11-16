@@ -150,7 +150,7 @@ class StillsTests(unittest.TestCase):
         controller = Mock(fields={})
         controller.generate.side_effect = lambda *args: [([str(self.png(f"g{next(made)}"))], "Complete")]
 
-        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True))
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape"))
         first = visuals.read_stills(self.audio, self.root)
         modes = [call.args[1] for call in controller.generate.call_args_list]
         # A portrait, then each shot; the two showing Mia are matched to it.
@@ -160,7 +160,8 @@ class StillsTests(unittest.TestCase):
 
         visuals.write_plan(self.audio, "comic", 3, edit_shot(PLAN, 1, prompt="@mia drops @radio."))
         controller.generate.reset_mock()
-        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, only="missing"))
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape",
+                                  only="missing"))
         second = visuals.read_stills(self.audio, self.root)
         # Only shot 2 is drawn again, matched to the kept portrait instead of a new one.
         self.assertEqual([call.args[1] for call in controller.generate.call_args_list], ["Text to image", "Image edit"])
@@ -171,10 +172,12 @@ class StillsTests(unittest.TestCase):
         self.assertEqual(second["shots"][0]["prompt"], first["shots"][0]["prompt"])
         self.assertTrue((folder / second["shots"][0]["image"]).is_file())
         with self.assertRaisesRegex(H3Error, "already drawn"):
-            drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, only="missing"))
+            drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape",
+                                      only="missing"))
         # Drawing every shot again starts afresh: a new portrait, then every scene.
         controller.generate.reset_mock()
-        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, only="all"))
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape",
+                                  only="all"))
         self.assertEqual([call.args[1] for call in controller.generate.call_args_list], modes)
         json.dumps(second)  # the record stays plain JSON
 

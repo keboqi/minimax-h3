@@ -86,7 +86,9 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       mixVideo.hidden = stills;
       if (stills) document.body.append(mixVideo);
       else mixVideo.onclick = playing;
-      stage = h("div", {class: "video-stage", id: "video-stage",
+      // Drawn stills keep the frame they were drawn in; a tall one gets a tall stage.
+      const tall = (stills ? state.project.video.stills.orientation : state.project.video.orientation) === "portrait";
+      stage = h("div", {class: tall ? "video-stage portrait" : "video-stage", id: "video-stage",
                         style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
                 picture, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
     } else {

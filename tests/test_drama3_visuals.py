@@ -179,10 +179,16 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertIn("mara_kid (young Mara, pigtails; soaked) hands radio (bakelite radio) "
                       "to mara (Mara, cropped black hair; smiling) in alley (narrow rain alley)", text)
         self.assertIn("nobody watches", text)
-        shot, = compile_plan(plan, 4, "watercolor", 8)
+        shot, = compile_plan(plan, 4, "watercolor", 8, art_style="ink wash, sepia")
         self.assertEqual(shot.references, ("mara_kid", "radio", "mara", "alley"))
-        self.assertTrue(shot.prompt.startswith("Single widescreen 16:9 illustration of one moment."))
+        self.assertTrue(shot.prompt.startswith("Single widescreen 16:9 illustration of one moment"))
         self.assertIn("Art style: ink wash, sepia\nwatercolor", shot.prompt)
+        # A plan carries no style of its own: the art direction and frame are added when drawing.
+        tall, = compile_plan(plan, 4, "watercolor", 8, orientation="portrait")
+        self.assertTrue(tall.prompt.startswith("Single vertical 9:16 illustration of one moment"))
+        self.assertNotIn("Art style:", tall.prompt)
+        self.assertTrue(tall.prompt.endswith("\nwatercolor"))
+        self.assertEqual(tall.prompt.split("\n")[1], shot.prompt.split("\n")[1])
         portrait = sheet_prompt("characters", "mara", "Mara, cropped black hair", "ink", "")
         self.assertIn("Portrait of mara: Mara, cropped black hair", portrait)
         self.assertIn("Only this one view", portrait)
@@ -194,7 +200,7 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertEqual(keys, ("mara", "radio"))
         self.assertNotIn("grey background", sheet_prompt("locations", "alley", "narrow", "ink", ""))
 
-    def test_plan_is_saved_beside_the_mix_for_its_art_direction(self):
+    def test_plan_is_saved_beside_the_mix_for_its_minimum_shots_in_any_style_and_frame(self):
         from h3_ui.drama3.visuals import plan_shots_for, read_plan, write_plan
 
         plan = {"style": "ink", "continuity": {}, "shots": [
@@ -204,12 +210,17 @@ class IllustratedMixTests(unittest.TestCase):
             mix = Path(tmp) / f"mix_{'b' * 32}.mp3"
             self.assertIsNone(read_plan(mix))
             write_plan(mix, "Comic panels ", 16.0, plan)
-            self.assertEqual(read_plan(mix, "Comic panels", 16)["plan"], plan)
-            self.assertIsNone(read_plan(mix, "Oil paint", 16))
-            self.assertIsNone(read_plan(mix, "Comic panels", 8))
-            shots = plan_shots_for(read_plan(mix), 3.0)
+            self.assertEqual(read_plan(mix, 16)["plan"], plan)
+            self.assertIsNone(read_plan(mix, 8))
+            shots = plan_shots_for(read_plan(mix), 3.0, "Comic panels")
             self.assertEqual([(shot.first, shot.frames, shot.dissolve) for shot in shots],
                              [(0, round(1.5 * FPS), False), (round(1.5 * FPS), round(1.5 * FPS), True)])
+            # An older plan's own style ("ink") goes with the art direction it was planned for only.
+            self.assertIn("Art style: ink", shots[0].prompt)
+            other = plan_shots_for(read_plan(mix), 3.0, "Oil paint", "portrait")
+            self.assertNotIn("Art style: ink", other[0].prompt)
+            self.assertTrue(other[0].prompt.startswith("Single vertical 9:16"))
+            self.assertTrue(other[0].prompt.endswith("Oil paint"))
             # The plan file is hidden, so it never shows up as a result beside the mix.
             self.assertEqual([p.name for p in Path(tmp).iterdir() if not p.name.startswith(".")], [])
 
@@ -234,10 +245,10 @@ class IllustratedMixTests(unittest.TestCase):
                                               {"name": "Old Tom", "text": "Hm", "start": 3, "end": 4}],
                     "voices": {"old tom": "An elderly man, gravelly and slow.", "Ana": " A girl of about ten. ",
                                "Nobody": "A woman in her forties.", "Speaker 2": ""}}
-        request = json.loads(plan_request(settings, "ink", 3))
+        request = json.loads(plan_request(settings, 3))
         self.assertEqual(request["speakers"], [{"name": "Ana", "voice": "A girl of about ten."},
                                                {"name": "Old Tom", "voice": "An elderly man, gravelly and slow."}])
-        self.assertNotIn("speakers", json.loads(plan_request({**settings, "voices": {}}, "ink", 3)))
+        self.assertNotIn("speakers", json.loads(plan_request({**settings, "voices": {}}, 3)))
 
     def test_story_presets_ask_for_finished_settings(self):
         from h3_ui.drama3.visuals import SETTING_DETAIL, SLIDE_STYLES, STYLE_PRESETS
@@ -252,15 +263,19 @@ class IllustratedMixTests(unittest.TestCase):
 
         style = STYLE_PRESETS["Watercolor"] + " Set in 1940s Shanghai."
         saved = {"style": style, "plan": {"art_style": "ink", "characters": {"mara": "Mara, cropped hair"}}}
-        prompt = portrait_prompts(saved)["mara"]
+        prompt = portrait_prompts(saved, style)["mara"]
         self.assertNotIn(SETTING_DETAIL.strip(), prompt)
         self.assertIn("Plain light grey background", prompt)
         self.assertIn("transparent layered washes", prompt)
         self.assertIn("Set in 1940s Shanghai.", prompt)
         self.assertNotIn("  ", prompt)
-        old = portrait_prompts(saved, with_setting=True)["mara"]
+        old = portrait_prompts(saved, style, with_setting=True)["mara"]
         self.assertIn(SETTING_DETAIL.strip(), old)
-        self.assertEqual(portrait_keys(saved)["mara"], {prompt_key(prompt), prompt_key(old)})
+        self.assertEqual(portrait_keys(saved, style)["mara"], {prompt_key(prompt), prompt_key(old)})
+        # Portraits follow the chosen style, without an older plan's style written for another one.
+        anime = portrait_prompts(saved, STYLE_PRESETS["Anime"])["mara"]
+        self.assertIn("cel shading", anime)
+        self.assertNotIn("Art style: ink", anime)
 
     def test_presets_are_grouped_by_use_with_a_preview_scene(self):
         from h3_ui.drama3.visuals import (SLIDE_STYLES, STYLE_GROUPS, STYLE_PRESETS, STYLE_PREVIEWS, STYLE_USES,
@@ -315,16 +330,48 @@ class IllustratedMixTests(unittest.TestCase):
             with self.assertRaises(H3Error):
                 visuals.previews_dir(tmp, "../x")
 
-    def test_planner_keeps_plain_backgrounds_when_asked(self):
+    def test_portrait_frame_draws_tall_and_renders_a_tall_video(self):
+        from h3_ui.drama3 import visuals
+
+        captured = {}
+        visuals.widescreen("qwen", captured, "portrait")
+        self.assertEqual((captured["qwen__width"], captured["qwen__height"]), (928, 1664))
+        visuals.widescreen("flux3", captured)
+        self.assertEqual((captured["flux3__width"], captured["flux3__height"]), (1344, 768))
+        self.assertEqual(visuals.orientation_of("square"), "landscape")
+        with tempfile.TemporaryDirectory() as tmp:
+            mix = Path(tmp) / f"mix_{'e' * 32}.mp3"
+            mix.write_bytes(b"ID3")
+            visuals.write_snapshot(mix, {"family": "drama3", "settings": {
+                "duration": 2.0, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 1}]}})
+            visuals.keep_stills(mix, tmp, [Shot(0, 48, False, "p", "Hi")], [png(tmp, "tall")], {}, orientation="portrait")
+            self.assertEqual(visuals.read_stills(mix, tmp)["orientation"], "portrait")
+            rendered = {}
+
+            def fake_render(audio, shots, images, output_dir, subtitles=None, size=None):
+                rendered.update(size=size, subtitles=subtitles)
+                return Path(output_dir) / "video.mp4"
+
+            with patch.object(visuals, "render_video", fake_render), patch.object(visuals, "which", lambda name: name), \
+                    patch.object(visuals, "write_snapshot"):
+                visuals.render_stills(mix, tmp, subtitles=100)
+            self.assertEqual(rendered["size"], (720, 1280))
+            self.assertIn("PlayResX: 720\nPlayResY: 1280", rendered["subtitles"])
+
+    def test_planner_writes_style_and_frame_neutral_shots(self):
         text = Path("prompts/prompt_drama3_visuals.txt").read_text(encoding="utf-8")
-        self.assertIn("asks for a plain or simple background", text)
+        self.assertIn("STYLE AND FRAME STAY OUT", text)
+        self.assertIn("reads in both a wide and a tall frame", text)
+        self.assertIn("rather than a story", text)  # explainers keep simple settings
+        self.assertNotIn("art_style", text)
+        self.assertNotIn("art_direction", text)
 
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
         with patch("h3_app.drama3.visual_plan.write_prompt", return_value=('{"style": "ink", "shots": [', "ok")):
             with self.assertRaisesRegex(H3Error, "cut off"):
-                plan_shots(settings, "comic", 16, "model", "", "Gemini", "", "", "", runtime=runtime)
+                plan_shots(settings, 16, "model", "", "Gemini", "", "", "", runtime=runtime)
 
     def test_overlaps_boundaries_and_legacy_chunks(self):
         settings = {"duration": 12.2, "chunks": [
@@ -343,7 +390,7 @@ class IllustratedMixTests(unittest.TestCase):
         for backend in ("Gemini", "OpenAI-compatible"):
             with self.subTest(backend=backend), patch("h3_app.drama3.visual_plan.write_prompt",
                     return_value=(json.dumps(plan), "Enhanced")) as writer:
-                _, shots = plan_shots(settings, "comic", 3, "model", "", backend, "", "oai", "",
+                _, shots = plan_shots(settings, 3, "model", "", backend, "", "oai", "",
                                      runtime=runtime)
                 args = writer.call_args.kwargs
                 self.assertEqual(args["backend"], backend)
@@ -360,7 +407,8 @@ class IllustratedMixTests(unittest.TestCase):
                 self.assertEqual(sum(s.frames for s in shots), 293)
                 self.assertEqual(shots[1].references, ("Ana", "bell"))
                 self.assertEqual(shots[1].beat, "Recognition")
-                self.assertTrue(all("ink wash" in s.prompt for s in shots))
+                # Checked without a style: that is added when drawing.
+                self.assertTrue(all(s.prompt.startswith("Single widescreen 16:9") and "ink wash" not in s.prompt for s in shots))
                 self.assertTrue(all("yellow coat" in s.prompt for s in shots[:2]))
                 self.assertNotIn("yellow coat", shots[-1].prompt)
 
@@ -390,11 +438,12 @@ class IllustratedMixTests(unittest.TestCase):
         settings = {"duration": 10, "title": "Rain", "chunks": [{"name": "Ana", "lines": [
             {"text": "Hi", "start": 0, "end": 2, "words": [{"text": "Hi", "start": 0.1, "end": 0.4}]}]}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
-        prompt = full_plan_prompt(settings, "ink wash", 2, runtime=runtime)
+        prompt = full_plan_prompt(settings, 2, runtime=runtime)
         system, request = prompt.split("\n\n----- USER REQUEST -----\n\n")
         self.assertTrue(system.startswith("You are the visual director"))
         request = json.loads(request)
-        self.assertEqual((request["art_direction"], request["min_shots"], request["max_shots"]), ("ink wash", 2, 5))
+        self.assertEqual((request["min_shots"], request["max_shots"]), (2, 5))
+        self.assertNotIn("art_direction", request)
         # Line times only: word timings would bloat the request without helping the planner.
         self.assertEqual(request["cues"], [{"start": 0, "end": 2, "speaker": "Ana", "text": "Hi"}])
         plan = {"art_style": "ink", "characters": {"ana": "Ana, red scarf"},
@@ -404,13 +453,13 @@ class IllustratedMixTests(unittest.TestCase):
         for reply in (json.dumps(plan), f"Here is the plan:\n```json\n{json.dumps(plan)}\n```",
                       f"Sure! {json.dumps(plan)} Enjoy."):
             with self.subTest(reply=reply[:20]):
-                parsed, shots = check_plan_reply(reply, settings, "ink wash", 2)
+                parsed, shots = check_plan_reply(reply, settings, 2)
                 self.assertEqual(parsed, plan)
                 self.assertEqual([s.references for s in shots], [("ana",), ()])
         for reply, error in (("not json", "isn't valid JSON"), (json.dumps({**plan, "shots": plan["shots"][:1]}),
                                                                   "fewer than the minimum of 2")):
             with self.subTest(error=error), self.assertRaisesRegex(H3Error, error):
-                check_plan_reply(reply, settings, "ink wash", 2)
+                check_plan_reply(reply, settings, 2)
 
     def test_plan_below_the_minimum_asks_to_plan_again(self):
         settings = {"duration": 30, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
@@ -418,8 +467,8 @@ class IllustratedMixTests(unittest.TestCase):
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
         with patch("h3_app.drama3.visual_plan.write_prompt", return_value=(json.dumps(plan), "ok")):
             with self.assertRaisesRegex(H3Error, "has 1 shots, fewer than the minimum of 4"):
-                plan_shots(settings, "ink", 4, "model", "", "Gemini", "", "", "", runtime=runtime)
-            _, shots = plan_shots(settings, "ink", 1, "model", "", "Gemini", "", "", "", runtime=runtime)
+                plan_shots(settings, 4, "model", "", "Gemini", "", "", "", runtime=runtime)
+            _, shots = plan_shots(settings, 1, "model", "", "Gemini", "", "", "", runtime=runtime)
         self.assertEqual(len(shots), 1)
 
     def test_invalid_plans_stop_before_render(self):

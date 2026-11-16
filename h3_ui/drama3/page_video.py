@@ -33,7 +33,7 @@ from .stage_video import latest_export
 from . import visuals
 
 VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
-                "video_subtitles": bool, "video_subtitle_size": int}
+                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int}
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
@@ -51,6 +51,7 @@ def video_settings(data: dict, engines: list) -> dict:
         engine = engine_ids[0] if engine_ids else None
     limit = int(data.get("video_limit") or 16)
     return {"engine": engine, "style": style, "preset": visuals.preset_for(style), "limit": limit,
+            "orientation": visuals.orientation_of(data.get("video_orientation")),
             "continuity": data.get("video_continuity") is not False,
             "subtitles": data.get("video_subtitles") is not False,
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
@@ -68,7 +69,8 @@ def stills_payload(name: str, record: dict | None) -> dict | None:
         shots.append({"start": round(first / fps, 3), "end": round((first + frames) / fps, 3),
                       "fade": round(fade, 3), "beat": item.get("beat") or "",
                       "url": still_url(name, item["image"])})
-    return {"revision": record["revision"], "shots": shots}
+    return {"revision": record["revision"], "shots": shots,
+            "orientation": visuals.orientation_of(record.get("orientation"))}
 
 
 def still_url(name: str, file: str) -> str:
@@ -86,13 +88,14 @@ def _voice_for(key: str, anchor: str, voices: dict[str, str]) -> tuple[str, str]
 
 
 def plan_payload(name: str, current: dict | None, duration: float, record: dict | None, voices: dict[str, str],
-                 root, audio) -> dict:
-    """The plan drawing would use: each shot with its status and image, and the characters, props
-    and places it mentions with their looks (and, for a character, their Cast voice)."""
+                 root, audio, settings: dict) -> dict:
+    """The plan drawing would use, in the chosen style and frame: each shot with its status and image,
+    and the characters, props and places it mentions with their looks (and, for a character, their
+    Cast voice). A shot drawn in another style or frame shows as changed."""
     if not current or not duration:
         return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
     try:
-        shots = visuals.plan_shots_for(current, duration)
+        shots = visuals.plan_shots_for(current, duration, settings["style"], settings["orientation"])
     except H3Error:
         return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
     plan = current["plan"]
@@ -107,7 +110,7 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
                      "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
                      "image": still_url(name, still["image"]) if still else None})
     portraits = visuals.kept_portraits(record, root, audio)
-    current_keys = visuals.portrait_keys(current)
+    current_keys = visuals.portrait_keys(current, settings["style"])
     found = []
     for key, (kind, anchor) in subjects(plan).items():
         entry = {"kind": kind, "key": key, "anchor": anchor,
@@ -130,18 +133,21 @@ def video_payload(name: str, data: dict, result, export) -> dict:
     """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
     settings = video_settings(data, export.engines)
     root = export.deps.runtime_config().output_dir
-    plan = {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False}
+    plan = {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None}
     latest = None
     stills = None
     if result:
         audio = Path(result)
         saved = visuals.read_plan(audio)
-        current = visuals.read_plan(audio, settings["style"], settings["limit"])
+        current = visuals.read_plan(audio, settings["limit"])
         duration = float((visuals.read_snapshot(audio) or {}).get("settings", {}).get("duration") or 0)
         record = visuals.read_stills(audio, root)
         voices = cast_voices(data, export.deps.runtime_config) if current else {}
-        plan = {**plan_payload(name, current, duration, record, voices, root, audio),
-                "stale": saved is not None and current is None, "saved": saved is not None}
+        stale = saved is not None and current is None
+        plan = {**plan_payload(name, current, duration, record, voices, root, audio, settings),
+                "stale": stale, "saved": saved is not None,
+                # The Minimum shots the saved plan was made for, so the page can set it back and show it again.
+                "saved_settings": {"limit": saved.get("limit")} if stale else None}
         stills = stills_payload(name, record)
         video = latest_export(audio)
         if video is not None:
@@ -190,7 +196,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     def save_video_settings(name: str, request: Request, body: dict = Body(...)):
         with editing(store, name) as data:
             apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES,
-                         choices={"video_engine": [key for _, key in export.engines]})
+                         choices={"video_engine": [key for _, key in export.engines],
+                                  "video_orientation": list(visuals.ORIENTATIONS)})
         return payload(owner_of(request), name)
 
     def start_drawing(request: Request, owner: str, name: str, kind: str, generate, input_names, values):
@@ -218,12 +225,12 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             if runs.active(owner, name):
                 raise H3Error("Wait for the planning, drawing or saving to finish, then edit the plan.")
             _, audio, mix_settings, settings = mix_of(name)
-            saved = visuals.read_plan(audio, settings["style"], settings["limit"])
+            saved = visuals.read_plan(audio, settings["limit"])
             if saved is None:
-                raise H3Error("Plan shots first: there is no shot plan for the current Art direction and "
-                              "Minimum shots.")
+                raise H3Error("Plan shots first: there is no shot plan for the current Minimum shots.")
             plan = change(saved["plan"])
-            shots = visuals.plan_shots_for({**saved, "plan": plan}, float(mix_settings["duration"]))  # still valid
+            shots = visuals.plan_shots_for({**saved, "plan": plan}, float(mix_settings["duration"]),  # still valid
+                                           settings["style"], settings["orientation"])
             visuals.write_plan(audio, saved["style"], saved["limit"], plan)
             # A cut or dissolve applies to the drawn images straight away; a prompt waits for a redraw.
             visuals.retime_stills(audio, export.deps.runtime_config().output_dir, shots)
@@ -260,7 +267,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             started = time.monotonic()
             # No ``with``: leaving it would wait for a writer that never answers.
             pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-shot-plan")
-            future = pool.submit(plan_shots, mix_settings, settings["style"], settings["limit"], *writer,
+            future = pool.submit(plan_shots, mix_settings, settings["limit"], *writer,
                                  runtime=export.deps.runtime_config())
             pool.shutdown(wait=False)
             while True:
@@ -293,8 +300,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     def planner_prompt(name: str, request: Request):
         owner_of(request)
         _, _audio, mix_settings, settings = mix_of(name)
-        return {"prompt": full_plan_prompt(mix_settings, settings["style"], settings["limit"],
-                                                   runtime=export.deps.runtime_config())}
+        return {"prompt": full_plan_prompt(mix_settings, settings["limit"], runtime=export.deps.runtime_config())}
 
     @app.post(f"{api}/project/video/reply", include_in_schema=False)
     @guarded
@@ -304,7 +310,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         if not reply.strip():
             raise H3Error("Paste the chat model's JSON reply first.")
         _, audio, mix_settings, settings = mix_of(name)
-        plan_data, shots = check_plan_reply(reply, mix_settings, settings["style"], settings["limit"])
+        plan_data, shots = check_plan_reply(reply, mix_settings, settings["limit"])
         # Claiming a run drops the reply of any planning still running for this mix.
         visuals.save_plan(audio, settings["style"], settings["limit"], plan_data, visuals.claim_plan(audio))
         return {**payload(owner_of(request), name), "message": f"Applied the pasted {len(shots)}-shot plan."}
@@ -321,8 +327,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             raise H3Error("Open Soundstage in Studio to draw the images on the GPU.")
         owner = owner_of(request)
         _, audio, _mix_settings, settings = mix_of(name)
-        if visuals.read_plan(audio, settings["style"], settings["limit"]) is None:
-            raise H3Error("This mix has no shot plan for the current Art direction and Minimum shots yet. "
+        if visuals.read_plan(audio, settings["limit"]) is None:
+            raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
                           "Plan shots, or paste a plan from another chat model, then draw.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
@@ -330,7 +336,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         if not (only in ("all", "missing") or (isinstance(only, list) and only and all(type(i) is int for i in only))):
             raise H3Error("Draw all shots, the missing ones, or a list of shots.")
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
-                  json.dumps(only), *export.values(owner)]
+                  settings["orientation"], json.dumps(only), *export.values(owner)]
         return start_drawing(request, owner, name, DRAW, export.generate, visuals.VIDEO_INPUT_NAMES, values)
 
     @app.post(f"{api}/project/video/preview", include_in_schema=False)

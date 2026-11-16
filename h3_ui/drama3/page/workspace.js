@@ -27,7 +27,7 @@ export function startWorkspace() {
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, busy: false,
                  screen: "script", saving: null, writing: false, writerResult: null,
                  estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
-                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all"};
+                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all", planReply: ""};
   const SCREENS = ["script", "cast", "mix", "illustrate"];
   // The steps that show the mix player; it moves to whichever of them is open.
   const PLAYER_SCREENS = ["mix", "illustrate"];
@@ -260,7 +260,10 @@ export function startWorkspace() {
 
   async function applyPlannerReply() {
     const data = await videoCall("/project/video/reply", {reply: $("plan-reply")?.value || ""});
-    if (data && $("plan-reply")) $("plan-reply").value = "";
+    if (data) {
+      state.planReply = "";
+      if ($("plan-reply")) $("plan-reply").value = "";
+    }
   }
 
   const pollVideo = poller(async (again) => {
@@ -386,7 +389,7 @@ export function startWorkspace() {
     $("action-text").hidden = onScript;
     for (const id of ["speak", "remix", "interrupt"]) if (state.screen !== "mix") $(id).hidden = true;
     for (const id of ["to-script", "cast-interrupt", "make-missing"]) $(id).hidden = !onCast;
-    for (const id of ["plan-shots", "draw-shots", "video-interrupt"]) $(id).hidden = true;
+    for (const id of ["plan-shots", "draw-shots", "video-interrupt", "drawn-chip"]) $(id).hidden = true;
     $("to-mix").hidden = PLAYER_SCREENS.includes(state.screen);
     if (state.screen === "illustrate") { renderIllustrateActions(NO_GPU); return; }
     $("to-cast").hidden = !onScript;
@@ -1356,7 +1359,7 @@ export function startWorkspace() {
   });
 
   const {saves, reconcile, saveSettings, flushEdits} = createProjects({
-    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, castAnswered, toast
+    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, castAnswered, toast
   });
 
   return start();

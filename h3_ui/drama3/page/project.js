@@ -2,7 +2,7 @@ import {createSaves} from "./saves.js";
 import {StaleResponse} from "./transport.js";
 
 // Reconcile server snapshots with edits still owned by this browser.
-export function createProjects({state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, castAnswered, toast}) {
+export function createProjects({state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, castAnswered, toast}) {
   // All saves share project ownership and a real completion barrier.
   const saves = createSaves({
     send: (name, key, body) => {
@@ -20,7 +20,8 @@ export function createProjects({state, api, named, scope, renderSaveState, rende
       reconcile(project);
       renderHeader(); renderSteps(); renderSettings();
       if (key === "script") { renderScript(); queueEstimate(); }
-      if (key === "video") renderVideo();
+      // The video settings choose the plan shown, so the action bar follows them too.
+      if (key === "video") { renderVideo(); renderActions(); }
       if (key.startsWith("slot:")) castAnswered(project);
     },
     failed: (name, error) => { if (state.project?.name === name) toast(`Not saved: ${error.message}`); },
@@ -37,7 +38,7 @@ export function createProjects({state, api, named, scope, renderSaveState, rende
         }
       } else if (key === "settings") Object.assign(state.project.settings, body);
       else if (key === "video" && state.project.video) {
-        const names = {video_engine: "engine", video_style: "style", video_limit: "limit",
+        const names = {video_engine: "engine", video_style: "style", video_limit: "limit", video_orientation: "orientation",
           video_continuity: "continuity", video_subtitles: "subtitles", video_subtitle_size: "subtitle_size"};
         for (const [field, value] of Object.entries(body)) state.project.video[names[field]] = value;
       } else if (key.startsWith("slot:")) {

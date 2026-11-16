@@ -71,11 +71,12 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.store.save_soundstage_project("Night Market", {"text": "Mia: Plums!", "shown_slots": 1, "video_limit": 2})
         self.store.mark_soundstage_generated("Night Market", str(self.mix))
 
-    def fake_export(self, result_name, engine, style, limit, use_references, only, *values):
+    def fake_export(self, result_name, engine, style, limit, use_references, orientation, only, *values):
         """Draw two images (the second dissolving in at 4 s) and keep them as the mix's stills."""
         from PIL import Image
 
         self.renders.append((result_name, engine, style, limit, use_references, values))
+        self.drawn_orientation = orientation
         self.drawn_only = json.loads(only)
         yield gr.skip(), "Shot 1 of 2"
         images = []
@@ -111,7 +112,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         video = self.project()["video"]
         self.assertEqual((video["engine"], video["preset"], video["limit"], video["continuity"]),
                          ("qwen", DEFAULT_STYLE, 2, True))
-        self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False})
+        self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None})
         self.assertIsNone(video["latest"])
 
     def test_style_previews_are_drawn_with_the_projects_model_and_served(self):
@@ -176,9 +177,21 @@ class Drama3PageVideoTests(unittest.TestCase):
         writer.assert_called_once()
         rows = self.project()["video"]["plan"]["rows"]
         self.assertEqual([(row["beat"], row["transition"]) for row in rows], [("The stall", "Cut"), ("The radio", "Dissolve")])
-        # Another Art direction has no plan yet: the table empties and says why.
-        plan = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_style": "Pixel art"}))["video"]["plan"]
-        self.assertEqual((plan["rows"], plan["stale"]), ([], True))
+        self.assertTrue(rows[0]["prompt"])
+        # Another style and frame use the same plan: only the drawing prompt changes.
+        video = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={
+            "video_style": STYLE_PRESETS["Pixel art"], "video_orientation": "portrait"}))["video"]
+        self.assertEqual((video["preset"], video["orientation"]), ("Pixel art", "portrait"))
+        self.assertEqual([(row["beat"], row["prompt"]) for row in video["plan"]["rows"]],
+                         [(row["beat"], row["prompt"]) for row in rows])
+        self.assertFalse(video["plan"]["stale"])
+        refused = self.client.patch(f"{API}/project/video", params=NAME, json={"video_orientation": "square"})
+        self.assertIn("Unknown video_orientation", refused.text)
+        # Another Minimum shots has no plan yet: the table empties and names the saved plan's.
+        plan = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_limit": 3}))["video"]["plan"]
+        self.assertEqual((plan["rows"], plan["stale"], plan["saved_settings"]), ([], True, {"limit": 2}))
+        plan = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_limit": 2}))["video"]["plan"]
+        self.assertEqual((len(plan["rows"]), plan["stale"], plan["saved_settings"]), (2, False, None))
 
     def test_drawing_waits_for_planning_on_the_same_mix(self):
         """Drawing uses the plan and saving the stills, so a mix runs one of them at a time."""
@@ -248,7 +261,8 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.draw()
         rendered = []
 
-        def fake_render(audio, shots, images, output_dir, subtitles=None):
+        def fake_render(audio, shots, images, output_dir, subtitles=None, size=None):
+            self.assertEqual(size, (1280, 720))  # drawn in the default landscape frame
             rendered.append(([(shot.first, shot.frames, shot.dissolve) for shot in shots], images, output_dir,
                              subtitles))
             video = Path(output_dir) / f"{Path(audio).stem}_illustrated_test_{len(rendered)}.mp4"
@@ -303,6 +317,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
         self.wait()
         self.assertEqual(self.renders[-1][5], (20, 7))
+        self.assertEqual(self.drawn_orientation, "landscape")
 
     def test_without_a_mix_there_is_nothing_to_draw(self):
         self.store.save_soundstage_project("Draft", {"text": "Mia: Hi.", "shown_slots": 1})

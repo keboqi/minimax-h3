@@ -31,18 +31,20 @@ def _encode(arguments, cwd=None):
         raise H3Error(f"Illustrated video export failed: {result.stderr.strip()[-600:]}")
 
 
-def render_video(audio, shots, images, output_dir, subtitles: str | None = None):
+def render_video(audio, shots, images, output_dir, subtitles: str | None = None, size=(1280, 720)):
     """Encode one bounded filter graph per shot, then mux the uninterrupted mix.
 
     ``subtitles``, an ASS script (``h3_app.burned_subtitles``), is burned in over the joined
-    shots, which then encode once more instead of being copied.
+    shots, which then encode once more instead of being copied. ``size`` is the video's width and
+    height: 720x1280 for a portrait video.
     """
+    width, height = (int(side) for side in size)
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     audio = Path(audio).resolve()  # the final step runs in the work folder
     # Scale the still once, then repeat that frame until the shot ends.
-    canvas = ("scale=1280:720:force_original_aspect_ratio=decrease,"
-              "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop=-1")
+    canvas = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop=-1")
     with TemporaryDirectory(dir=output_dir, prefix=".illustrated-") as temp:
         folder = Path(temp)
         entries = []

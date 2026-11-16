@@ -49,8 +49,26 @@ def _frame_boundaries(rows, duration):
     return [*starts, total]
 
 
-SHOT_LINE = ("Single widescreen 16:9 illustration of one moment. "
-             "No text, captions, speech bubbles or lettering.")
+# The frame each shot is drawn in. The plan itself is written for either, so it can change later.
+ORIENTATIONS = ("landscape", "portrait")
+FRAME_LINES = {
+    "landscape": "Single widescreen 16:9 illustration of one moment, composed for a wide frame. ",
+    "portrait": "Single vertical 9:16 illustration of one moment, composed for a tall frame. ",
+}
+NO_TEXT = "No text, captions, speech bubbles or lettering."
+SHOT_LINE = FRAME_LINES["landscape"] + NO_TEXT
+
+
+def frame_line(orientation="landscape"):
+    """The line every shot prompt opens with: one moment in a wide or tall frame, without text."""
+    return FRAME_LINES.get(orientation, FRAME_LINES["landscape"]) + NO_TEXT
+
+
+def plan_art_style(plan):
+    """An older plan's production style, which the planner wrote for one art direction; new plans
+    leave style out so it can change after planning."""
+    value = plan.get("art_style") or plan.get("style") if isinstance(plan, dict) else None
+    return value.strip() if _text(value) else None
 # The kinds of recurring subjects, each drawn as a reference sheet before any scene.
 KINDS = ("characters", "props", "locations")
 
@@ -126,15 +144,18 @@ def sheet_prompt(kind, key, anchor, art_style, art_direction):
     }[kind]
     backdrop = "" if kind == "locations" else " Plain light grey background, even soft lighting."
     return "\n".join(filter(None, [
-        f"{body}{backdrop} No text, labels or captions.", f"Art style: {art_style}", art_direction]))
+        f"{body}{backdrop} No text, labels or captions.", f"Art style: {art_style}" if art_style else None,
+        art_direction]))
 
 
-def compile_plan(plan, duration, art_direction, limit):
+def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape", art_style=None):
+    """The plan's shots on the mix clock, each prompt in the given frame and style.
+
+    The plan holds only what each shot shows; ``art_direction`` (and an older plan's ``art_style``,
+    passed only while its art direction is still the one chosen) and the frame are added here.
+    """
     if not isinstance(plan, dict):
         raise H3Error("The visual planner did not return a JSON object.")
-    art_style = plan.get("art_style") or plan.get("style")
-    if not _text(art_style):
-        raise H3Error("The visual planner omitted the production style.")
     known = subjects(plan)
     rows = plan.get("shots")
     if not isinstance(rows, list) or not 1 <= len(rows) <= limit:
@@ -156,7 +177,8 @@ def compile_plan(plan, duration, art_direction, limit):
         if not mentioned:
             scene = "\n".join([scene, *(f"{key} ({known[key][1]})" for key in references)])
             tagged = "\n".join([tagged, *(f"{key}⟦{key}⟧ ({known[key][1]})" for key in references)])
-        prompt = "\n".join(filter(None, [SHOT_LINE, scene, f"Art style: {art_style.strip()}", art_direction]))
+        prompt = "\n".join(filter(None, [frame_line(orientation), scene,
+                                          f"Art style: {art_style}" if art_style else None, art_direction]))
         frames = end - first
         dissolve = first > 0 and frames > 1 and row["transition"] == "dissolve"
         shots.append(Shot(first, frames, dissolve, prompt, row["beat"], references, tagged))
@@ -225,22 +247,22 @@ def _speakers(settings, cues):
     return [dict(name=name, voice=voices[name.casefold()]) for name in names if name.casefold() in voices]
 
 
-def plan_request(settings, style, minimum):
-    """The JSON request the planner answers: the timed mix, its speakers' voices, the art direction
-    and the shot range."""
+def plan_request(settings, minimum):
+    """The JSON request the planner answers: the timed mix, its speakers' voices and the shot range.
+    The art direction and frame stay out, so they can change without planning again."""
     duration = _duration(settings)
     cues = _timeline(settings, duration)
     speakers = _speakers(settings, cues)
-    return json.dumps(dict(title=settings.get("title"), duration=duration, art_direction=style,
+    return json.dumps(dict(title=settings.get("title"), duration=duration,
                            min_shots=int(minimum), max_shots=shot_cap(duration, minimum),
                            **({"speakers": speakers} if speakers else {}), cues=cues), ensure_ascii=False)
 
 
-def full_plan_prompt(settings, style, minimum, *, runtime):
+def full_plan_prompt(settings, minimum, *, runtime):
     """The exact system prompt and request the built-in planner sends, for use in another chat model."""
     system_path = runtime.prompt_systems["Drama 3 visuals"]
     system_prompt = read_system_prompt(system_path, "Sound Stage shot plan")
-    return f"{system_prompt}\n\n----- USER REQUEST -----\n\n{plan_request(settings, style, minimum)}\n"
+    return f"{system_prompt}\n\n----- USER REQUEST -----\n\n{plan_request(settings, minimum)}\n"
 
 
 def _reply_json(reply):
@@ -261,14 +283,14 @@ def _reply_json(reply):
     return repair_json(text)
 
 
-def check_plan_reply(reply, settings, style, minimum):
+def check_plan_reply(reply, settings, minimum):
     """Validate a planner reply, from the built-in writer or pasted from another chat model."""
     duration = _duration(settings)
     plan = _reply_json(reply)
     if plan is None:
         raise H3Error("The shot plan was cut off or isn't valid JSON. "
                       "Plan again, or lower Minimum shots for a long mix.")
-    shots = compile_plan(plan, duration, style, shot_cap(duration, minimum))
+    shots = compile_plan(plan, duration, "", shot_cap(duration, minimum))
     # A mix shorter than the minimum at one frame per shot can't hold that many.
     if len(shots) < min(int(minimum), ceil(duration * FPS)):
         raise H3Error(f"The plan has {len(shots)} shots, fewer than the minimum of {int(minimum)}. "
@@ -276,10 +298,10 @@ def check_plan_reply(reply, settings, style, minimum):
     return plan, shots
 
 
-def plan_shots(settings, style, minimum, model, temporary_api_key, backend, openai_api_key, openai_model,
+def plan_shots(settings, minimum, model, temporary_api_key, backend, openai_api_key, openai_model,
                openai_base_url, *, runtime):
     """Plan at least ``minimum`` shots; the writer adds more wherever the story needs them."""
-    request = plan_request(settings, style, minimum)
+    request = plan_request(settings, minimum)
     reply, status = write_prompt(prompt=request, request_text=request, model=model,
                                  temporary_api_key=temporary_api_key, backend=backend,
                                  openai_api_key=openai_api_key, openai_model=openai_model,
@@ -287,4 +309,4 @@ def plan_shots(settings, style, minimum, model, temporary_api_key, backend, open
                                  system_path=runtime.prompt_systems["Drama 3 visuals"], media_values=[], context="")
     if status.startswith("Prompt enhancement failed"):
         raise H3Error(status)
-    return check_plan_reply(reply, settings, style, minimum)
+    return check_plan_reply(reply, settings, minimum)

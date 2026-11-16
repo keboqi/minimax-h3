@@ -190,6 +190,17 @@ a.step:hover { background: var(--raised); }
 .actionbar-text { flex: 999 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .actionbar-text .error { color: var(--flag); }
 .actionbar-buttons { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; flex: 1 1 auto; }
+/* How it's drawn on Illustrate: the style's preview and settings, opening the window with every control. */
+.drawn-chip { flex: 0 1 auto; display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 460px; padding: 6px 12px 6px 6px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+.drawn-chip:hover { border-color: var(--accent); background: var(--raised); }
+.drawn-chip .style-thumb { flex: 0 0 76px; border-radius: 6px; }
+.drawn-chip .style-thumb-empty > span { display: none; }
+.drawn-chip-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.drawn-chip-text .label { font-size: 11px; }
+.drawn-chip-text strong { font-size: 14px; }
+.drawn-chip-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawn-chip-edit { flex: none; font-size: 13px; font-weight: 650; color: var(--accent); }
 
 .loading, .empty { max-width: 560px; margin: 18vh auto; padding: 0 24px; text-align: center; color: var(--muted); }
 .empty h1 { font-size: 22px; color: var(--text); margin: 0 0 8px; }
@@ -529,7 +540,7 @@ button.step:hover { background: var(--raised); }
 .shot-row[aria-pressed="true"] { background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .shot-row.playing .shot-time { color: var(--accent); font-weight: 700; }
 .shot-thumb { position: relative; flex: 0 0 144px; height: 81px; border-radius: 7px; overflow: hidden; background: var(--lane); }
-.shot-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .shot-empty { position: absolute; inset: 5px; display: grid; place-items: center; padding: 4px; border: 1.5px dashed var(--line); border-radius: 5px;
   color: var(--muted); font-size: 12px; text-align: center; }
 .shot-number { position: absolute; left: 5px; top: 5px; padding: 0 5px; border-radius: 4px; background: rgba(23, 33, 30, .8); color: #fff;
@@ -561,30 +572,18 @@ button.step:hover { background: var(--raised); }
 .shot-inspector textarea { font-family: var(--sans); font-size: 14px; line-height: 1.5; }
 .shot-subjects { display: flex; flex-wrap: wrap; gap: 6px; }
 .shot-subjects .chip { border: 0; cursor: pointer; font-family: var(--mono); }
-.drawn-settings { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-.drawn-settings-head { display: flex; flex-direction: column; gap: 2px; }
-.drawn-settings-head h2 { margin: 0; font-size: 16px; }
-.drawn-settings .btn-small { align-self: flex-start; }
-.style-current { display: flex; gap: 12px; align-items: center; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
-.style-current:hover:not(:disabled) { background: var(--raised); border-color: var(--accent); }
-.style-current:disabled { cursor: default; opacity: .7; }
-.style-current .style-thumb { flex: 0 0 120px; }
-.style-current-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.style-change { margin-top: 2px; font-size: 13px; font-weight: 650; color: var(--accent); }
 .style-thumb { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 7px; overflow: hidden; background: var(--lane); }
 .style-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .style-thumb-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 6px; box-sizing: border-box;
   border: 1.5px dashed var(--line); background: transparent; color: var(--muted); font-size: 12px; text-align: center; }
 .style-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; }
-.style-dialog { width: min(1180px, calc(100% - 32px)); max-height: calc(100vh - 48px); padding: 0; display: none; }
+.style-dialog { width: min(1180px, calc(100% - 32px)); height: calc(100vh - 48px); max-height: calc(100vh - 48px); padding: 0; display: none; }
 .style-dialog[open] { display: flex; flex-direction: column; }
 .style-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 280px; }
 .style-head-text h2 { margin: 0; font-size: 17px; }
-.style-head-text + .spacer { display: none; }
 .style-body { display: flex; flex-direction: column; gap: 20px; padding: 16px 18px 22px; overflow: auto; }
 .style-group { display: flex; flex-direction: column; gap: 10px; }
-.style-group h3 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.style-group h4 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 14px; }
 .style-card { position: relative; display: flex; flex-direction: column-reverse; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
 .style-card:hover { border-color: var(--accent); }
@@ -597,6 +596,13 @@ button.step:hover { background: var(--raised); }
 .style-card:has(.style-pick:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .style-card .style-thumb .btn { position: relative; z-index: 1; }
 .style-pick .small { font-size: 12.5px; line-height: 1.4; }
+.drawn-basics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px 20px; align-items: start;
+  padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
+.style-section { display: flex; flex-direction: column; gap: 16px; }
+.style-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.style-section-head h3 { margin: 0; font-size: 16px; }
+.drawn-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.illustrate-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .looks { display: flex; flex-direction: column; gap: 22px; padding: 18px; }
 .looks-group { display: flex; flex-direction: column; gap: 10px; }
 .looks-group h3 { margin: 0; font-size: 15px; }
@@ -615,6 +621,7 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
 .video-stage { position: relative; overflow: hidden; border-radius: 10px; background: #000; aspect-ratio: 16 / 9;
   /* Short enough that the timeline stays in view beneath it. */
   width: min(100%, calc(56vh * 16 / 9)); margin: 0 auto; container-type: inline-size; }
+.video-stage.portrait { aspect-ratio: 9 / 16; width: min(100%, calc(64vh * 9 / 16)); }
 .video-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 /* The stills: the current shot behind, the next dissolving in over it. */
 .stills { position: absolute; inset: 0; cursor: pointer; }

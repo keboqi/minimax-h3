@@ -145,9 +145,14 @@ the server for nothing. The page reads each project's mix and only that mix's ta
 **Illustrate**, the fourth step after Mix & review, plans the pictures and draws one image per shot;
 they slide along the mix in the same player Mix & review uses, which moves to the top of whichever of
 the two steps is open, and a 720p MP4 is rendered only when you save it to Media. Mix & review keeps
-a short Illustrated video card that opens the step. Its **How it's drawn** panel holds the **Image
-model**, a **Style** (a preset that fills **Art direction**; editing it makes the style Custom),
-**Minimum shots** and **Keep characters consistent**; the action bar's **Plan shots** plans. New
+a short Illustrated video card that opens the step. On Illustrate the bottom bar starts with **How
+it's drawn**, always in view: the style with its preview, then the frame, minimum shots and image
+model. Clicking it opens the **How it's drawn** window, which holds
+every control: the **Image model**, the **Frame** (**Landscape 16:9** or **Portrait 9:16**), **Minimum
+shots** and **Keep characters consistent**, the
+**Style** (a preset that fills **Art direction**; editing that makes the style Custom), **Plan with
+another chat model**, and **Done** or **Plan shots** at its foot; the action bar's **Plan shots**
+plans too. **Draw every shot again** sits in the shot list's head. New
 projects default to Digital painting. The 16 presets are grouped by use: **Drama & fiction**
 (Digital painting for any genre, Realistic photo for grounded drama and crime, American comic for
 action and thrillers, Oil painting for period stories, Chinese ink painting for wuxia, xianxia and
@@ -155,19 +160,27 @@ Chinese myth, Watercolor for gentle slice of life), **Anime, manga & games** (An
 Pixel art), **Kids & family** (Children's book, 2D cartoon, 3D animation) and **Explainers & slides**
 (Flat illustration for training, Isometric illustration for systems and processes, Minimal vector
 for keynotes, Editorial illustration for commentary); the slide presets leave space for text to be
-added later and do not generate labels or data. The Style field shows the current preset with
-its preview for the selected Image model and what it is for; clicking it opens **Choose a style**, a
-window listing every preset by use with a large preview. A card picks that preset; one without a
-preview has **Draw preview**, which draws the preset's own sample scene (with faces, hands and a
-finished setting typical of its use), and **Draw missing previews** draws every one still missing in
-one run, which **Interrupt** there stops. Previews
+added later and do not generate labels or data. In the window every preset is listed by use
+with a large preview for the selected Image model and what it is for; a card picks that preset and
+keeps the window open. One without a preview has **Draw preview**, which draws the preset's own sample
+scene (with faces, hands and a finished setting typical of its use), and **Draw missing previews**
+draws every one still missing in one run, which **Interrupt** there stops. Previews
 run on the usual GPU job path with the Image tab's settings, are kept per image model under
 `.soundstage/style_previews/` for every project, and are drawn again only when a preset's prompt
-changes. Presets describe rendering and materials, while the planner adapts
-lighting and atmosphere to each story beat. The story presets ask for settings rendered with the same
-finish and focus as the characters, and the planner names concrete background elements in every shot.
-The planner also gets each speaker's Cast voice description and keeps their gender and age. Saved art direction is preserved as written; a preset's
-earlier wording still shows as that preset. Replan after changing art direction. The plan uses the writer
+changes. The shot plan keeps style and frame apart from what each shot shows: the planner never
+sees the art direction and writes the looks and image descriptions without a medium or aspect ratio,
+composed to read in a wide or a tall frame. When shots are drawn, each prompt opens with the frame
+(a widescreen 16:9 or a vertical 9:16 image) and ends with the Art direction, so changing the style
+or the frame keeps the same plan: the shots drawn in another style or frame show as **Changed** until
+drawn again, and portraits follow the chosen style. Plans made before this keep the style their
+planner wrote, used only while the art direction they were planned with is chosen. The story presets
+ask for settings rendered with the same finish and focus as the characters, and the planner names
+concrete background elements in every shot (an explainer, lesson or business talk gets simple,
+uncluttered settings instead). The planner also gets each speaker's Cast voice description and keeps
+their gender and age. Saved art direction is preserved as written; a preset's earlier wording still
+shows as that preset. A mix keeps its latest plan with the Minimum shots it was made for: with
+another Minimum shots chosen, the step says what that plan used and **Restore that plan** sets it
+back to show its shots again, in any style or frame. The plan uses the writer
 service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
 then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
@@ -214,6 +227,8 @@ same on Mix & review and Illustrate), and **A−**/**A+** size them from 50% to 
 both are saved with the project. The timeline and lines follow Video as they follow Audio.
 
 **Save to Media** renders the stills with the finished soundtrack into a 720p MP4 beside the mix
+(1280x720, or 720x1280 when the stills were drawn in Portrait 9:16, which the player then shows in a
+tall frame)
 (it needs FFmpeg, not the GPU, so it works in the CPU Workshop too) and adds it to Media, where a
 selected mix with an illustrated video offers the same Audio/Video switch. Once saved, the button
 becomes **Download video** until the images are drawn again. The subtitles are burned in as the
