@@ -246,6 +246,79 @@ class IllustratedMixTests(unittest.TestCase):
             self.assertEqual(text.endswith(SETTING_DETAIL), name not in SLIDE_STYLES)
             self.assertNotIn("sharper detail around faces", text)
 
+    def test_portraits_leave_out_the_setting_but_keep_older_portraits_current(self):
+        from h3_ui.drama3.visuals import (SETTING_DETAIL, STYLE_PRESETS, portrait_keys, portrait_prompts,
+                                          prompt_key)
+
+        style = STYLE_PRESETS["Watercolor"] + " Set in 1940s Shanghai."
+        saved = {"style": style, "plan": {"art_style": "ink", "characters": {"mara": "Mara, cropped hair"}}}
+        prompt = portrait_prompts(saved)["mara"]
+        self.assertNotIn(SETTING_DETAIL.strip(), prompt)
+        self.assertIn("Plain light grey background", prompt)
+        self.assertIn("transparent layered washes", prompt)
+        self.assertIn("Set in 1940s Shanghai.", prompt)
+        self.assertNotIn("  ", prompt)
+        old = portrait_prompts(saved, with_setting=True)["mara"]
+        self.assertIn(SETTING_DETAIL.strip(), old)
+        self.assertEqual(portrait_keys(saved)["mara"], {prompt_key(prompt), prompt_key(old)})
+
+    def test_presets_are_grouped_by_use_with_a_preview_scene(self):
+        from h3_ui.drama3.visuals import (SLIDE_STYLES, STYLE_GROUPS, STYLE_PRESETS, STYLE_PREVIEWS, STYLE_USES,
+                                          preview_prompt)
+
+        grouped = [name for group in STYLE_GROUPS for name in group["presets"]]
+        self.assertEqual(grouped, list(STYLE_PRESETS))
+        self.assertEqual(set(STYLE_USES), set(STYLE_PRESETS))
+        self.assertEqual(set(STYLE_PREVIEWS), set(STYLE_PRESETS))
+        self.assertEqual([group["presets"] for group in STYLE_GROUPS if group["name"] == "Explainers & slides"],
+                         [list(SLIDE_STYLES)])
+        self.assertIn("Chinese ink painting", STYLE_PRESETS)
+        for name in STYLE_PRESETS:
+            prompt = preview_prompt(name)
+            self.assertTrue(prompt.startswith("Single widescreen 16:9 illustration of one moment."))
+            self.assertTrue(prompt.endswith(STYLE_PRESETS[name]))
+
+    def test_earlier_preset_wording_still_counts_as_the_preset(self):
+        from h3_ui.drama3.visuals import SETTING_DETAIL, STYLE_PRESETS, preset_for, reference_direction
+
+        earlier = " Paint the setting" + SETTING_DETAIL.removeprefix(" Render the setting")
+        self.assertEqual(preset_for(STYLE_PRESETS["Anime"].replace(SETTING_DETAIL, earlier)), "Anime")
+        manga = STYLE_PRESETS["Japanese comic"].replace(SETTING_DETAIL, earlier).replace(
+            "gestures. One", "gestures. Full color throughout. One")
+        self.assertEqual(preset_for(manga), "Japanese comic")
+        self.assertNotIn("setting with the same finish", reference_direction(manga))
+
+    def test_style_previews_are_kept_per_model_until_their_prompt_changes(self):
+        from h3_ui.drama3 import visuals
+
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = Mock(fields={"seed": None})
+            controller.generate.side_effect = lambda *args: iter([([png(tmp, "drawn")], "Complete")])
+            deps = SimpleNamespace(runtime_config=lambda: SimpleNamespace(output_dir=Path(tmp)))
+            self.assertEqual(visuals.chosen_previews(tmp, "qwen", "missing"), list(visuals.STYLE_PRESETS))
+            updates = list(visuals.draw_previews(controller, deps, "qwen", ["Anime", "Pixel art"], 7))
+            self.assertEqual(updates[-1][1], "Drew 2 style previews.")
+            self.assertEqual(controller.generate.call_args.args[2], visuals.preview_prompt("Pixel art"))
+            self.assertEqual(controller.generate.call_args.args[1], "Text to image")
+            kept = visuals.preview_images(tmp, "qwen")
+            self.assertEqual(set(kept), {"Anime", "Pixel art"})
+            self.assertEqual(visuals.preview_images(tmp, "flux3"), {})
+            self.assertNotIn("Anime", visuals.chosen_previews(tmp, "qwen", "missing"))
+            # Drawing again replaces the file; a preview from an older prompt no longer shows.
+            old = kept["Anime"]
+            list(visuals.draw_previews(controller, deps, "qwen", ["Anime"], 7))
+            self.assertFalse((visuals.previews_dir(tmp, "qwen") / old).exists())
+            with patch.dict(visuals.STYLE_PREVIEWS, {"Anime": "Another scene."}):
+                self.assertNotIn("Anime", visuals.preview_images(tmp, "qwen"))
+            with self.assertRaises(H3Error):
+                visuals.chosen_previews(tmp, "qwen", ["Nope"])
+            with self.assertRaises(H3Error):
+                visuals.previews_dir(tmp, "../x")
+
+    def test_planner_keeps_plain_backgrounds_when_asked(self):
+        text = Path("prompts/prompt_drama3_visuals.txt").read_text(encoding="utf-8")
+        self.assertIn("asks for a plain or simple background", text)
+
     def test_cut_off_writer_reply_explains_itself(self):
         settings = {"duration": 5, "chunks": [{"name": "Ana", "text": "Hi", "start": 0, "end": 2}]}
         runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})

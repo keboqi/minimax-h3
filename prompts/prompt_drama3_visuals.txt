@@ -61,6 +61,9 @@ Give every shot a finished setting, not a vague backdrop: name at least two or t
 background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
 their material, color and light, and keep them in focus. Prefer deep focus; use a shallow depth of
 field only for a deliberate isolating close-up, and even then keep the setting recognizable.
+Exception: when art_direction asks for a plain or simple background (for example to leave room for
+slide text), keep that background plain and uncluttered in every shot, show only the objects the
+idea needs, and leave the space it asks for.
 
 Describe a single frame, never panels, a grid or a before-and-after. Show what is said through
 action, expression and staging: no text, captions, speech bubbles or lettering.

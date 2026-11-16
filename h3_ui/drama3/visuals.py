@@ -25,7 +25,7 @@ from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
-from h3_app.drama3.visual_plan import compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
+from h3_app.drama3.visual_plan import SHOT_LINE, compile_plan, fill_tags, sheet_prompt, shot_cap, subjects
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
@@ -44,96 +44,190 @@ PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
                "moss_image": (1344, 768), "fibo2": (1344, 768)}
-# Describe rendering, not story content: these apply to portraits and every scene.
-STYLE_PRESETS = {
-    "Digital painting": "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
-                        "expressions. Solid forms and materials, restrained visible brushwork, clear "
-                        "detail on faces and hands, and coherent local colors. Keep gestures readable.",
-    "Realistic photo": "Full-color live-action film still with natural human proportions, individual facial "
-                       "features, subtle skin texture and believable fabric and surfaces. Physically "
-                       "plausible light, restrained color grading and fine film grain. Avoid fashion-ad "
-                       "posing and beauty retouching.",
-    "Anime": "Full-color 2D dramatic animation still with controlled fine outlines, consistent character proportions "
-             "and clean two- or three-tone cel shading. Individually designed faces with restrained, "
-             "readable expressions. Avoid chibi proportions, exaggerated reaction symbols and decorative bloom.",
-    "3D animation": "Full-color stylized 3D animated feature still with appealing, consistent character proportions "
-                    "and expressive but restrained faces. Rounded modeled forms, tactile cloth, "
-                    "convincing material differences and clear silhouettes. Keep eyes and skin natural "
-                    "within the stylization, without a glossy plastic finish.",
-    "2D cartoon": "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes, "
-                  "bold flat colors and minimal cel shading. Consistent character proportions, distinct "
-                  "silhouettes and expressive faces, serious when the story is. One continuous image "
-                  "without speech bubbles, lettering or comic panels.",
-    "American comic": "American comic-book illustration with bold brush-ink contours, varied line "
-                      "weight, sculpted spot blacks and selective cross-hatching. Clearly modeled "
-                      "anatomy, distinct faces and expressive gestures; rich flat colors with crisp "
-                      "shadow shapes and restrained halftone texture. Keep the story's clothing and "
-                      "physique without adding superhero costumes or exaggerated muscles. One continuous "
-                      "image, no panel borders, speech balloons, captions or lettering.",
-    "Japanese comic": "Full-color Japanese manga illustration with precise pen lines, delicate "
-                      "facial detail and controlled variation in line weight. Rich local colors, "
-                      "clean cel-shaded shadows and selective color gradients. Consistent stylized "
-                      "proportions, distinct character designs and expressive but believable acting, "
-                      "with legible eyes and gestures. Full color throughout. One continuous image, "
-                      "no panels, speech balloons, lettering or decorative reaction symbols.",
-    "Watercolor": "Full-color watercolor illustration with transparent layered washes, soft pigment "
-                  "edges and selective fine pencil contours. Preserve facial features, hands and "
-                  "important objects with controlled edges. Subtle paper grain, believable proportions "
-                  "and consistent pigment density; avoid splatter or unfinished white gaps across "
-                  "focal subjects.",
-    "Oil painting": "Full-color oil painting with visible bristle strokes, layered opaque pigments "
-                    "and subtle canvas texture. Model faces, hands and objects with believable "
-                    "proportions and clear light and shadow, and natural material colors. Show the "
-                    "painting itself, without a picture frame, gallery wall or added antique costumes.",
-    "Children's book": "Full-color hand-painted gouache and colored-pencil storybook illustration. Matte opaque "
-                       "color shapes, subtle pencil edges and gentle paper texture; simplified but "
-                       "consistent anatomy, distinct character silhouettes and legible expressions. "
-                       "Keep tension or sadness when the story has it instead of making everything cheerful.",
-    "Pixel art": "Full-color narrative pixel art with a consistent coarse pixel grid, deliberate pixel clusters "
-                 "and a limited shared palette. Crisp stepped edges without smoothing or mixed pixel "
-                 "sizes; selective dithering for shading. Simplify forms into readable silhouettes "
-                 "while preserving each character's hair, outfit and key facial cues; no game "
-                 "interface or decorative border.",
-    "Flat illustration": "Full-color flat business illustration with clean geometric shapes, solid "
-                         "color fills and minimal shading. Use simplified people and recognizable "
-                         "objects to explain one idea at a time, with consistent proportions and a "
-                         "small coordinated color palette. Clear visual hierarchy, generous spacing "
-                         "and a plain light background; leave an uncluttered area for slide text "
-                         "to be added later. Avoid decorative clutter, lettering, logos and invented data.",
-    "Isometric illustration": "Full-color isometric business illustration with parallel projection, "
-                              "consistent object scale and clean geometric volumes. Use restrained "
-                              "shading and coordinated colors to distinguish components. Show the "
-                              "requested system, process or workspace through clearly arranged objects "
-                              "and meaningful spatial relationships. Keep one coherent scene on a "
-                              "simple light background, with generous margins for slide text added "
-                              "later. No labels, logos, invented metrics or decorative dashboards.",
-    "Minimal vector": "Full-color minimal vector-style illustration with crisp edges, simple shapes "
-                      "and consistent stroke widths. Reduce the requested idea to a few recognizable "
-                      "elements with strong visual hierarchy, using a small coordinated palette "
-                      "on a plain light background. Keep ample negative space for slide text added "
-                      "later and maintain clarity at presentation size. No texture, ornamental "
-                      "detail, lettering, logos or invented charts and numbers.",
-    "Editorial illustration": "Full-color editorial business illustration built around one clear "
-                               "visual metaphor for the requested idea. Use simplified recognizable "
-                               "forms, confident silhouettes, restrained texture and a coordinated "
-                               "palette. Make the relationship between subjects easy to understand "
-                               "without labels; keep the focal concept distinct from a simple "
-                               "background and leave breathing room for slide text added later. "
-                               "Avoid unrelated symbols, stock handshake imagery, lettering, logos "
-                               "and invented data.",
-}
+# Each preset: (use-case group, name, what it's for, preview scene, rendering text). The text describes
+# rendering, not story content: it applies to portraits and every scene. The preview scene shows the
+# style on a subject typical of its use, with faces, hands and a finished setting to judge it by.
+_PRESETS = (
+    ("Drama & fiction", "Digital painting",
+     "Any genre for teens and adults; the all-round default",
+     "A medium-wide shot at dusk: a weathered sea captain in a wool coat grips the wheel of a fishing "
+     "boat while a young deckhand points past him at a lighthouse beam cutting through the storm; rain "
+     "streaks the wheelhouse windows and waves break over the bow.",
+     "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
+     "expressions. Solid forms and materials, restrained visible brushwork, clear "
+     "detail on faces and hands, and coherent local colors. Keep gestures readable."),
+    ("Drama & fiction", "Realistic photo",
+     "Grounded contemporary drama, crime and documentary reenactment",
+     "A medium shot in a small-town diner at night: a tired detective in her forties sits in a red vinyl "
+     "booth, coffee in both hands, studying a spread of photographs; neon from the window falls across "
+     "the chrome counter where a waitress refills a coffee pot.",
+     "Full-color live-action film still with natural human proportions, individual facial "
+     "features, subtle skin texture and believable fabric and surfaces. Physically "
+     "plausible light, restrained color grading and fine film grain. Avoid fashion-ad "
+     "posing and beauty retouching."),
+    ("Drama & fiction", "American comic",
+     "Action, thriller and mystery with bold, punchy staging",
+     "A dynamic low-angle shot on a rain-soaked rooftop: a courier in a torn jacket leaps the gap between "
+     "two brick buildings, a satchel clutched to her chest, water towers and fire escapes behind her and "
+     "a searchlight sweeping the alley below.",
+     "American comic-book illustration with bold brush-ink contours, varied line "
+     "weight, sculpted spot blacks and selective cross-hatching. Clearly modeled "
+     "anatomy, distinct faces and expressive gestures; rich flat colors with crisp "
+     "shadow shapes and restrained halftone texture. Keep the story's clothing and "
+     "physique without adding superhero costumes or exaggerated muscles. One continuous "
+     "image, no panel borders, speech balloons, captions or lettering."),
+    ("Drama & fiction", "Oil painting",
+     "Historical, period and literary stories",
+     "A candlelit study: an elderly scholar reads a letter at a heavy oak desk crowded with books, a quill "
+     "and an hourglass, while his granddaughter waits in the doorway holding a lantern; tall windows show "
+     "a snowy courtyard.",
+     "Full-color oil painting with visible bristle strokes, layered opaque pigments "
+     "and subtle canvas texture. Model faces, hands and objects with believable "
+     "proportions and clear light and shadow, and natural material colors. Show the "
+     "painting itself, without a picture frame, gallery wall or added antique costumes."),
+    ("Drama & fiction", "Chinese ink painting",
+     "Wuxia, xianxia, Chinese myth and history",
+     "A wide shot of a mountain pass at dawn: a lone swordswoman in layered robes stands on a stone bridge "
+     "above a waterfall, her sleeves lifted by the wind, pines clinging to the cliffs and a temple roof "
+     "rising from the valley below.",
+     "Full-color traditional Chinese ink-and-color painting on fine rice paper. Confident brush contours "
+     "with varied pressure, finely drawn faces and hands, layered mineral colors in transparent washes and "
+     "ink gradations that model rock, water, foliage and fabric. Distinct figures with believable "
+     "proportions and readable expressions. Keep the story's own era and clothing; no seals, calligraphy, "
+     "scroll borders or blank paper standing in for the setting."),
+    ("Drama & fiction", "Watercolor",
+     "Gentle slice of life, memoir and poetry",
+     "A quiet morning kitchen: a grandmother and a boy share breakfast at a table by an open window, steam "
+     "rising from their bowls, potted herbs on the sill and a bicycle leaning against the garden fence "
+     "outside.",
+     "Full-color watercolor illustration with transparent layered washes, soft pigment "
+     "edges and selective fine pencil contours. Preserve facial features, hands and "
+     "important objects with controlled edges. Subtle paper grain, believable proportions "
+     "and consistent pigment density; avoid splatter or unfinished white gaps across "
+     "focal subjects."),
+    ("Anime, manga & games", "Anime",
+     "Youth, romance, fantasy and light-novel stories",
+     "A medium shot on a train platform at sunset: one classmate holds out a folded letter while the "
+     "other hesitates, school bags over their shoulders, a commuter train pulling in and power lines "
+     "against an orange sky.",
+     "Full-color 2D dramatic animation still with controlled fine outlines, consistent character proportions "
+     "and clean two- or three-tone cel shading. Individually designed faces with restrained, "
+     "readable expressions. Avoid chibi proportions, exaggerated reaction symbols and decorative bloom."),
+    ("Anime, manga & games", "Japanese comic",
+     "Dramatic manga-style action and character stories",
+     "A festival night: a young swordsman kneels to mend a girl's broken sandal strap on a crowded shrine "
+     "path, paper lanterns glowing overhead, food stalls on both sides and fireworks opening above the "
+     "torii gate.",
+     "Full-color Japanese manga illustration with precise pen lines, delicate "
+     "facial detail and controlled variation in line weight. Rich local colors, "
+     "clean cel-shaded shadows and selective color gradients. Consistent stylized "
+     "proportions, distinct character designs and expressive but believable acting, "
+     "with legible eyes and gestures. One continuous image, "
+     "no panels, speech balloons, lettering or decorative reaction symbols."),
+    ("Anime, manga & games", "Pixel art",
+     "Game lore, retro sci-fi and gaming podcasts",
+     "A side view of a torchlit dungeon: an adventurer with a backpack and lantern faces a small dragon "
+     "curled on a pile of gold, stone pillars, a locked iron gate and glowing mushrooms around them.",
+     "Full-color narrative pixel art with a consistent coarse pixel grid, deliberate pixel clusters "
+     "and a limited shared palette. Crisp stepped edges without smoothing or mixed pixel "
+     "sizes; selective dithering for shading. Simplify forms into readable silhouettes "
+     "while preserving each character's hair, outfit and key facial cues; no game "
+     "interface or decorative border."),
+    ("Kids & family", "Children's book",
+     "Bedtime and picture-book stories for young children",
+     "A cozy bedtime scene: a little girl in pajamas reads a picture book to her stuffed rabbit and a "
+     "sleepy cat inside a blanket fort, fairy lights strung across the bedroom wall and a full moon in "
+     "the window.",
+     "Full-color hand-painted gouache and colored-pencil storybook illustration. Matte opaque "
+     "color shapes, subtle pencil edges and gentle paper texture; simplified but "
+     "consistent anatomy, distinct character silhouettes and legible expressions. "
+     "Keep tension or sadness when the story has it instead of making everything cheerful."),
+    ("Kids & family", "2D cartoon",
+     "Comedy and lively stories for kids",
+     "A backyard mishap: a boy and his overexcited dog are tangled in a garden hose spraying water "
+     "everywhere while his older sister holds a soaked birthday cake with a deadpan look; a picket fence "
+     "and a treehouse behind them.",
+     "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes, "
+     "bold flat colors and minimal cel shading. Consistent character proportions, distinct "
+     "silhouettes and expressive faces, serious when the story is. One continuous image "
+     "without speech bubbles, lettering or comic panels."),
+    ("Kids & family", "3D animation",
+     "Family adventure with feature-animation appeal",
+     "A wide adventure shot: a young inventor and her small round robot ride a homemade glider over a "
+     "seaside village of colorful rooftops, laundry lines and a windmill, the inventor laughing while "
+     "the robot holds on tight.",
+     "Full-color stylized 3D animated feature still with appealing, consistent character proportions "
+     "and expressive but restrained faces. Rounded modeled forms, tactile cloth, "
+     "convincing material differences and clear silhouettes. Keep eyes and skin natural "
+     "within the stylization, without a glossy plastic finish."),
+    ("Explainers & slides", "Flat illustration",
+     "Training, onboarding and how-to explainers",
+     "A team onboarding moment: a mentor points at simple icons on a laptop screen while three new "
+     "colleagues lean in around a desk with a plant, coffee mugs and a blank whiteboard.",
+     "Full-color flat business illustration with clean geometric shapes, solid "
+     "color fills and minimal shading. Use simplified people and recognizable "
+     "objects to explain one idea at a time, with consistent proportions and a "
+     "small coordinated color palette. Clear visual hierarchy, generous spacing "
+     "and a plain light background; leave an uncluttered area for slide text "
+     "to be added later. Avoid decorative clutter, lettering, logos and invented data."),
+    ("Explainers & slides", "Isometric illustration",
+     "Systems, processes and product walkthroughs",
+     "How an online order travels: a stocked warehouse shelf, a packing table with boxes, a delivery van "
+     "and a doorstep with a parcel, linked by a clear path on one compact platform.",
+     "Full-color isometric business illustration with parallel projection, "
+     "consistent object scale and clean geometric volumes. Use restrained "
+     "shading and coordinated colors to distinguish components. Show the "
+     "requested system, process or workspace through clearly arranged objects "
+     "and meaningful spatial relationships. Keep one coherent scene on a "
+     "simple light background, with generous margins for slide text added "
+     "later. No labels, logos, invented metrics or decorative dashboards."),
+    ("Explainers & slides", "Minimal vector",
+     "Keynotes and one-idea concept slides",
+     "A product launch as one idea: a single rocket lifting off from an open laptop, a few small stars "
+     "around it.",
+     "Full-color minimal vector-style illustration with crisp edges, simple shapes "
+     "and consistent stroke widths. Reduce the requested idea to a few recognizable "
+     "elements with strong visual hierarchy, using a small coordinated palette "
+     "on a plain light background. Keep ample negative space for slide text added "
+     "later and maintain clarity at presentation size. No texture, ornamental "
+     "detail, lettering, logos or invented charts and numbers."),
+    ("Explainers & slides", "Editorial illustration",
+     "Commentary, news analysis and idea podcasts",
+     "Information overload as a metaphor: a person reads calmly at a small desk while a towering wave of "
+     "envelopes and notification bubbles curls above them.",
+     "Full-color editorial business illustration built around one clear "
+     "visual metaphor for the requested idea. Use simplified recognizable "
+     "forms, confident silhouettes, restrained texture and a coordinated "
+     "palette. Make the relationship between subjects easy to understand "
+     "without labels; keep the focal concept distinct from a simple "
+     "background and leave breathing room for slide text added later. "
+     "Avoid unrelated symbols, stock handshake imagery, lettering, logos "
+     "and invented data."),
+)
+_BARE_PRESETS = {name: text for _group, name, _use, _preview, text in _PRESETS}
 # Detail asked only of faces and hands left settings rough and blurry, so each story preset also asks
 # for a finished background. The slide presets keep their deliberately plain backgrounds.
-SETTING_DETAIL = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
+SETTING_DETAIL = (" Render the setting with the same finish and focus as the figures: legible architecture, "
                   "objects and landscape, never a blurred, smeared or sketchy backdrop.")
-SLIDE_STYLES = ("Flat illustration", "Isometric illustration", "Minimal vector", "Editorial illustration")
-# Projects saved before SETTING_DETAIL keep the earlier preset text as their Art direction (and their
-# shot plan is keyed by it), so those texts still count as the preset rather than as Custom.
-_LEGACY_PRESETS = {text: name for name, text in STYLE_PRESETS.items()}
-_LEGACY_PRESETS[STYLE_PRESETS["Digital painting"].replace(
+SLIDE_STYLES = tuple(name for group, name, *_ in _PRESETS if group == "Explainers & slides")
+# Projects saved with earlier preset text keep it as their Art direction (and their shot plan is keyed
+# by it), so those texts still count as the preset rather than as Custom.
+_EARLIER_DETAIL = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
+                   "objects and landscape, never a blurred, smeared or sketchy backdrop.")
+_LEGACY_PRESETS = {text: name for name, text in _BARE_PRESETS.items()}
+_LEGACY_PRESETS[_BARE_PRESETS["Digital painting"].replace(
     "clear detail on faces and hands", "sharper detail around faces and hands")] = "Digital painting"
+_LEGACY_PRESETS[_BARE_PRESETS["Japanese comic"].replace(
+    "with legible eyes and gestures. One", "with legible eyes and gestures. Full color throughout. One")] = \
+    "Japanese comic"
+_LEGACY_PRESETS.update({text + _EARLIER_DETAIL: name for text, name in list(_LEGACY_PRESETS.items())
+                        if name not in SLIDE_STYLES})
 STYLE_PRESETS = {name: text if name in SLIDE_STYLES else text + SETTING_DETAIL
-                 for name, text in STYLE_PRESETS.items()}
+                 for name, text in _BARE_PRESETS.items()}
+STYLE_GROUPS = [{"name": group, "presets": [name for g, name, *_ in _PRESETS if g == group]}
+                for group in dict.fromkeys(group for group, *_ in _PRESETS)]
+STYLE_USES = {name: use for _group, name, use, _preview, _text in _PRESETS}
+STYLE_PREVIEWS = {name: preview for _group, name, _use, preview, _text in _PRESETS}
 DEFAULT_STYLE = "Digital painting"
 CUSTOM_STYLE = "Custom"
 
@@ -512,11 +606,30 @@ def plan_shots_for(saved, duration):
     return compile_plan(saved["plan"], duration, saved["style"], shot_cap(duration, saved["limit"]))
 
 
-def portrait_prompts(saved):
-    """Each character's portrait prompt, from the saved plan."""
+def reference_direction(style):
+    """The Art direction for portraits: without SETTING_DETAIL, which asks for scenery behind a
+    portrait meant to stand on a plain background."""
+    style = style or ""
+    for detail in (SETTING_DETAIL, _EARLIER_DETAIL):
+        style = style.replace(detail.strip(), "")
+    return re.sub(r"[ \t]{2,}", " ", style).strip()
+
+
+def portrait_prompts(saved, *, with_setting=False):
+    """Each character's portrait prompt, from the saved plan. ``with_setting`` gives the prompt
+    portraits were drawn from before SETTING_DETAIL was left out of them."""
     art_style = saved["plan"].get("art_style") or saved["plan"].get("style")
-    return {name: sheet_prompt(kind, name, anchor, art_style, saved["style"])
+    direction = saved["style"] if with_setting else reference_direction(saved["style"])
+    return {name: sheet_prompt(kind, name, anchor, art_style, direction)
             for name, (kind, anchor) in subjects(saved["plan"]).items() if kind == "characters"}
+
+
+def portrait_keys(saved):
+    """The prompt fingerprints a kept portrait may carry and still be current, by character.
+    Portraits drawn while the prompt still had SETTING_DETAIL stay current, so redrawing one shot
+    of an older project keeps matching the faces already drawn."""
+    old = portrait_prompts(saved, with_setting=True)
+    return {name: {prompt_key(prompt), prompt_key(old[name])} for name, prompt in portrait_prompts(saved).items()}
 
 
 def chosen_shots(shots, stills, only):
@@ -554,11 +667,12 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
     captured = dict(zip(controller.fields, values, strict=True))
     key = export_key(result_name, saved["plan"], engine, use_references, captured) + ":" + ",".join(map(str, picked))
     prompts = portrait_prompts(saved)
+    current = portrait_keys(saved)
     finished = finished_images(key)
     # Drawing some shots matches their characters to the kept portraits (drawn from the same looks);
     # drawing them all starts afresh, portraits too.
     kept = {} if only in (None, "all") else {name: item for name, item in kept_portraits(record, root, audio).items()
-                                  if name in prompts and item[1] == prompt_key(prompts[name])}
+                                  if item[1] in current.get(name, ())}
     for name, (path, _fingerprint) in kept.items():
         finished["portraits"].setdefault(name, str(path))
     images, shot_records, portrait_records = yield from illustrate_shots(
@@ -594,6 +708,95 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
 
 
 VIDEO_INPUT_NAMES = ("result_name", "engine", "style", "max_shots", "use_visual_references", "only_shots")
+PREVIEW_INPUT_NAMES = ("engine", "presets")
+PREVIEWS_RECORD = "previews.json"
+_PREVIEWS_LOCK = Lock()
+
+
+def preview_prompt(name):
+    """What a style preview draws: the preset's own scene in the preset's rendering."""
+    return "\n".join([SHOT_LINE, STYLE_PREVIEWS[name], STYLE_PRESETS[name]])
+
+
+def previews_dir(root, engine):
+    """Where an image model's style previews are kept, shared by every project."""
+    if not re.fullmatch(r"[A-Za-z0-9_]+", str(engine or "")):
+        raise H3Error("Unknown image model.")
+    return Path(root) / ".soundstage" / "style_previews" / engine
+
+
+def _read_previews(folder):
+    try:
+        record = json.loads((folder / PREVIEWS_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def preview_images(root, engine):
+    """The image model's preview file for each preset, while drawn from the preset's current prompt."""
+    try:
+        folder = previews_dir(root, engine)
+    except H3Error:
+        return {}
+    found = {}
+    for name, item in _read_previews(folder).items():
+        if (name in STYLE_PRESETS and isinstance(item, dict) and item.get("prompt") == prompt_key(preview_prompt(name))
+                and (folder / str(item.get("image") or "")).is_file()):
+            found[name] = item["image"]
+    return found
+
+
+def keep_preview(root, engine, name, image):
+    """Keep a web copy of a drawn preview for the model, replacing the preset's earlier one."""
+    from PIL import Image
+
+    folder = previews_dir(root, engine)
+    folder.mkdir(parents=True, exist_ok=True)
+    file = f"{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}-{uuid4().hex[:8]}.jpg"
+    with Image.open(image) as picture:
+        picture.convert("RGB").save(folder / file, "JPEG", quality=STILLS_QUALITY, optimize=True)
+    with _PREVIEWS_LOCK:  # Previews for one model can be drawn from several projects.
+        record = _read_previews(folder)
+        old = record.get(name)
+        record[name] = {"image": file, "prompt": prompt_key(preview_prompt(name))}
+        temporary = folder / f".{uuid4().hex[:8]}.tmp"
+        temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(folder / PREVIEWS_RECORD)
+    if isinstance(old, dict) and old.get("image"):
+        (folder / str(old["image"])).unlink(missing_ok=True)
+    return file
+
+
+def chosen_previews(root, engine, presets):
+    """The presets a preview drawing draws: ``missing`` (no current preview for the model) or a list of names."""
+    if presets == "missing":
+        drawn = preview_images(root, engine)
+        return [name for name in STYLE_PRESETS if name not in drawn]
+    if not isinstance(presets, list) or not presets or not all(name in STYLE_PRESETS for name in presets):
+        raise H3Error("Pick style presets to preview.")
+    return list(dict.fromkeys(presets))
+
+
+def draw_previews(controller, deps, engine, presets, *values):
+    """Draw a preview of each chosen preset with the model and keep it for later; yields (file or skip, status).
+
+    Each preview is kept as soon as it is drawn, so an interrupted run keeps the ones it finished.
+    """
+    root = deps.runtime_config().output_dir
+    names = chosen_previews(root, engine, presets)
+    if not names:
+        raise H3Error("Every style preset already has a preview for this image model.")
+    captured = dict(zip(controller.fields, values, strict=True))
+    widescreen(engine, captured)
+    file = None
+    for number, name in enumerate(names, 1):
+        label = f"Preview {number} of {len(names)} · {name}"
+        yield gr.skip(), label
+        path = yield from _stream(controller.generate(engine, "Text to image", preview_prompt(name), [], captured), label)
+        file = keep_preview(root, engine, name, path)
+        yield file, f"{label} · Kept"
+    yield file, f"Drew {len(names)} style preview{'s' if len(names) != 1 else ''}."
 
 
 @dataclass
@@ -609,6 +812,7 @@ class VideoExport:
     generate: Callable
     engines: list
     settings: dict = field(default_factory=dict)
+    preview: Callable | None = None  # Draws style previews: (engine, presets JSON, *Image tab values).
 
     def values(self, owner):
         captured = self.settings.get(owner) or {}
@@ -629,7 +833,14 @@ def video_export(controller, deps, triggers=()):
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 
-    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")])
+    def preview(engine, presets, *values):
+        try:
+            yield from draw_previews(controller, deps, engine, json.loads(presets) if presets else "missing", *values)
+        except H3Error as exc:
+            raise gr.Error(str(exc)) from exc
+
+    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")],
+                         preview=preview)
     if triggers:
         names = list(controller.fields)
 

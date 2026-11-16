@@ -114,6 +114,38 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False})
         self.assertIsNone(video["latest"])
 
+    def test_style_previews_are_drawn_with_the_projects_model_and_served(self):
+        from PIL import Image
+
+        boot = self.ok(self.client.get(f"{API}/boot"))["video"]
+        self.assertEqual([name for group in boot["style_groups"] for name in group["presets"]], list(boot["styles"]))
+        self.assertEqual(set(boot["style_uses"]), set(boot["styles"]))
+        drawn = []
+
+        def fake_preview(engine, presets, *values):
+            drawn.append((engine, json.loads(presets), values))
+            image = self.root / "preview.png"
+            Image.new("RGB", (64, 36), "green").save(image)
+            file = visuals.keep_preview(self.runtime.output_dir, engine, "Anime", image)
+            yield file, "Drew 1 style preview."
+
+        self.export.preview = fake_preview
+        self.assertEqual(self.project()["video"]["previews"], {})
+        run = self.ok(self.client.post(f"{API}/project/video/preview", params=NAME, json={"presets": ["Anime"]}))["video_run"]
+        self.assertEqual(run["kind"], "preview")
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual(drawn, [("qwen", ["Anime"], (8, -1))])
+        previews = self.project()["video"]["previews"]
+        self.assertEqual(list(previews), ["Anime"])
+        response = self.client.get(previews["Anime"])
+        self.assertEqual((response.status_code, response.headers["content-type"]), (200, "image/jpeg"))
+        self.assertEqual(self.client.get(f"{API}/video/preview", params={"engine": "qwen", "file": "x.jpg"}).status_code, 404)
+        # Another model has its own previews.
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_engine": "flux3"}))
+        self.assertEqual(self.project()["video"]["previews"], {})
+        refused = self.client.post(f"{API}/project/video/preview", params=NAME, json={"presets": ["Nope"]})
+        self.assertIn("Pick style presets", refused.text)
+
     def test_settings_are_saved_and_kept_in_range(self):
         video = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={
             "video_style": "Oil paint, thick impasto", "video_limit": 500, "video_engine": "flux3",

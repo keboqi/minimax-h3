@@ -38,7 +38,7 @@ LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
 VIDEO_RANGES = {"video_limit": LIMITS, "video_subtitle_size": SUBTITLE_SIZES}
-PLAN, DRAW, SAVE = "plan", "draw", "save"
+PLAN, DRAW, SAVE, PREVIEW = "plan", "draw", "save", "preview"
 VideoRun = PageRun
 
 
@@ -107,7 +107,7 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
                      "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
                      "image": still_url(name, still["image"]) if still else None})
     portraits = visuals.kept_portraits(record, root, audio)
-    prompts = visuals.portrait_prompts(current)
+    current_keys = visuals.portrait_keys(current)
     found = []
     for key, (kind, anchor) in subjects(plan).items():
         entry = {"kind": kind, "key": key, "anchor": anchor,
@@ -119,7 +119,7 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
             kept = portraits.get(key)
             if kept:
                 entry.update(portrait=still_url(name, Path(kept[0]).name),
-                             portrait_current=kept[1] == visuals.prompt_key(prompts.get(key, "")))
+                             portrait_current=kept[1] in current_keys.get(key, ()))
         found.append(entry)
     counts = {status: sum(row["status"] == status for row in rows) for status in ("drawn", "changed", "todo")}
     return {"rows": rows, "subjects": found, "counts": counts,
@@ -129,12 +129,12 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
 def video_payload(name: str, data: dict, result, export) -> dict:
     """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
     settings = video_settings(data, export.engines)
+    root = export.deps.runtime_config().output_dir
     plan = {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False}
     latest = None
     stills = None
     if result:
         audio = Path(result)
-        root = export.deps.runtime_config().output_dir
         saved = visuals.read_plan(audio)
         current = visuals.read_plan(audio, settings["style"], settings["limit"])
         duration = float((visuals.read_snapshot(audio) or {}).get("settings", {}).get("duration") or 0)
@@ -152,12 +152,19 @@ def video_payload(name: str, data: dict, result, export) -> dict:
                       # unless the subtitles changed: the page compares ``subtitles`` (size, 0 for none).
                       "current": bool(record) and made.get("stills") == record["revision"],
                       "subtitles": int(made.get("subtitles") or 0)}
-    return {**settings, "plan": plan, "stills": stills, "latest": latest}
+    previews = {preset: preview_url(settings["engine"], file)
+                for preset, file in visuals.preview_images(root, settings["engine"]).items()}
+    return {**settings, "plan": plan, "stills": stills, "latest": latest, "previews": previews}
+
+
+def preview_url(engine: str, file: str) -> str:
+    return f"/soundstage/api/video/preview?engine={quote(engine)}&file={quote(file)}"
 
 
 def boot_payload(engines: list) -> dict:
     return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
-            "styles": visuals.STYLE_PRESETS, "default_style": visuals.DEFAULT_STYLE,
+            "styles": visuals.STYLE_PRESETS, "style_groups": visuals.STYLE_GROUPS,
+            "style_uses": visuals.STYLE_USES, "default_style": visuals.DEFAULT_STYLE,
             "custom_style": visuals.CUSTOM_STYLE, "limits": list(LIMITS),
             "subtitle_sizes": list(SUBTITLE_SIZES), "plan_timeout": visuals.PLAN_TIMEOUT}
 
@@ -185,6 +192,24 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES,
                          choices={"video_engine": [key for _, key in export.engines]})
         return payload(owner_of(request), name)
+
+    def start_drawing(request: Request, owner: str, name: str, kind: str, generate, input_names, values):
+        """Run ``generate`` on the GPU job path as the mix's ``kind`` run, following its status."""
+        session = session_of(request)
+        callback = owned_generation(generate, "drama3_visuals", input_names=(*input_names, *export.controller.fields))
+
+        def work(run):
+            for update in run_job(run, owner, session, "drama3_visuals", values, callback):
+                status = value(update[1]) if len(update) > 1 else None
+                if isinstance(status, str) and status:
+                    run.status = status
+                if isinstance(value(update[0]), str):
+                    run.revision += 1
+
+        run = VideoRun(owner, name, kind)
+        run.status = "Waiting for the GPU…"
+        runs.start(run, work)
+        return {"video_run": run.public(None)}
 
     def edit_plan(name: str, change):
         """Change the plan drawing would use, unless the mix is being planned, drawn or saved."""
@@ -306,22 +331,42 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             raise H3Error("Draw all shots, the missing ones, or a list of shots.")
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
                   json.dumps(only), *export.values(owner)]
-        session = session_of(request)
-        callback = owned_generation(export.generate, "drama3_visuals",
-                                    input_names=(*visuals.VIDEO_INPUT_NAMES, *export.controller.fields))
+        return start_drawing(request, owner, name, DRAW, export.generate, visuals.VIDEO_INPUT_NAMES, values)
 
-        def work(run):
-            for update in run_job(run, owner, session, "drama3_visuals", values, callback):
-                status = value(update[1]) if len(update) > 1 else None
-                if isinstance(status, str) and status:
-                    run.status = status
-                if isinstance(value(update[0]), str):
-                    run.revision += 1
+    @app.post(f"{api}/project/video/preview", include_in_schema=False)
+    @guarded
+    def draw_previews(name: str, request: Request, body: dict = Body(default={})):
+        """Draw style previews with the project's image model and keep them for every project.
 
-        run = VideoRun(owner, name, DRAW)
-        run.status = "Waiting for the GPU…"
-        runs.start(run, work)
-        return {"video_run": run.public(None)}
+        ``presets`` is ``missing`` (the default: presets with no current preview for the model) or a
+        list of preset names.
+        """
+        if not gpu:
+            raise H3Error("Open Soundstage in Studio to draw style previews on the GPU.")
+        if export.preview is None:
+            raise H3Error("Style previews aren't available here.")
+        owner = owner_of(request)
+        data, _result = project(name)
+        settings = video_settings(data, export.engines)
+        if not settings["engine"]:
+            raise H3Error("No image model is available here.")
+        presets = body.get("presets", "missing")
+        # Checked now, so a bad request or nothing to draw says so before waiting for the GPU.
+        if not visuals.chosen_previews(export.deps.runtime_config().output_dir, settings["engine"], presets):
+            raise H3Error("Every style preset already has a preview for this image model.")
+        values = [settings["engine"], json.dumps(presets), *export.values(owner)]
+        return start_drawing(request, owner, name, PREVIEW, export.preview, visuals.PREVIEW_INPUT_NAMES, values)
+
+    @app.get(f"{api}/video/preview", include_in_schema=False)
+    def preview_file(engine: str, file: str, request: Request):
+        """A kept style preview; only files the model's previews record names."""
+        owner_of(request)
+        root = export.deps.runtime_config().output_dir
+        if file not in visuals.preview_images(root, engine).values():
+            raise not_found()
+        # Each preview gets a new name when drawn again, so a file never changes under its name.
+        return file_response(visuals.previews_dir(root, engine) / file, media_type="image/jpeg",
+                             cache="private, max-age=31536000, immutable")
 
     @app.post(f"{api}/project/video/save", include_in_schema=False)
     @guarded

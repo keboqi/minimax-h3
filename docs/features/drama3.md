@@ -148,15 +148,24 @@ the two steps is open, and a 720p MP4 is rendered only when you save it to Media
 a short Illustrated video card that opens the step. Its **How it's drawn** panel holds the **Image
 model**, a **Style preset** (which fills **Art direction**; editing it makes the preset Custom),
 **Minimum shots** and **Keep characters consistent**; the action bar's **Plan shots** plans. New
-projects default to Digital painting. The full-color presets are Digital
-painting, Realistic photo, Anime, 3D animation, 2D cartoon, American comic, Japanese comic,
-Watercolor, Oil painting, Children's book and Pixel art. Business slide options are Flat illustration,
-Isometric illustration, Minimal vector and Editorial illustration; these leave space for text to be
-added later and do not generate labels or data. Presets describe rendering and materials, while the planner adapts
-lighting and atmosphere to each story beat. The story presets ask for settings painted with the same
+projects default to Digital painting. The 16 presets are grouped by use: **Drama & fiction**
+(Digital painting for any genre, Realistic photo for grounded drama and crime, American comic for
+action and thrillers, Oil painting for period stories, Chinese ink painting for wuxia, xianxia and
+Chinese myth, Watercolor for gentle slice of life), **Anime, manga & games** (Anime, Japanese comic,
+Pixel art), **Kids & family** (Children's book, 2D cartoon, 3D animation) and **Explainers & slides**
+(Flat illustration for training, Isometric illustration for systems and processes, Minimal vector
+for keynotes, Editorial illustration for commentary); the slide presets leave space for text to be
+added later and do not generate labels or data. The panel shows what the selected preset is for and
+its preview with the selected Image model. **Draw preview** draws the preset's own sample scene (with
+faces, hands and a finished setting typical of its use), and **Compare styles** lists every preset
+with its preview, where a card picks the preset and **Draw missing previews** draws the rest. Previews
+run on the usual GPU job path with the Image tab's settings, are kept per image model under
+`.soundstage/style_previews/` for every project, and are drawn again only when a preset's prompt
+changes. Presets describe rendering and materials, while the planner adapts
+lighting and atmosphere to each story beat. The story presets ask for settings rendered with the same
 finish and focus as the characters, and the planner names concrete background elements in every shot.
-The planner also gets each speaker's Cast voice description and keeps their gender and age. Saved art direction is preserved as written; older
-preset text appears as Custom. Replan after changing art direction. The plan uses the writer
+The planner also gets each speaker's Cast voice description and keeps their gender and age. Saved art direction is preserved as written; a preset's
+earlier wording still shows as that preset. Replan after changing art direction. The plan uses the writer
 service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
 then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked

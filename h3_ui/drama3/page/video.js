@@ -1,6 +1,6 @@
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
-export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
+export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
   const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Prompt changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
   const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
 
@@ -255,12 +255,58 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
                    onclick: () => drawImages([row.index])}, draw));
   }
 
+  function pickStyle(name) {
+    const style = state.boot.video.styles[name];
+    // By text, so a project on a preset's earlier wording moves to the current one.
+    if (style && style !== state.project.video.style) saveVideo({video_style: style});
+  }
+
+  const engineLabel = (video) => state.boot.video.engines.find((engine) => engine.id === video.engine)?.label || "this model";
+
+  /** The selected preset's preview with this image model, or a button to draw one. */
+  function stylePreview(video, busy) {
+    const boot = state.boot.video;
+    const name = video.preset;
+    if (!boot.styles[name]) return h("p", {class: "muted small style-use"}, "Custom art direction has no preview.");
+    const url = video.previews?.[name];
+    return h("figure", {class: "style-preview"},
+      url ? h("img", {src: url, alt: `${name} preview drawn with ${engineLabel(video)}`, loading: "lazy"})
+          : h("div", {class: "style-preview-empty"},
+              h("span", {}, `No ${name} preview with ${engineLabel(video)} yet`),
+              h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy || !state.boot.gpu,
+                           title: "Draw this preset's sample scene with the selected image model",
+                           onclick: () => drawPreviews([name])}, "Draw preview")),
+      h("figcaption", {class: "muted small style-use"}, boot.style_uses[name]));
+  }
+
+  /** Every preset by use, with its preview for this image model; picking one fills Art direction. */
+  function styleGallery(video, busy) {
+    const boot = state.boot.video;
+    const previews = video.previews || {};
+    const missing = Object.keys(boot.styles).filter((name) => !previews[name]).length;
+    return h("details", {class: "more style-gallery", open: state.styleGalleryOpen || null,
+                                  ontoggle: (event) => { state.styleGalleryOpen = event.target.open; }},
+      h("summary", {}, `Compare styles · ${Object.keys(previews).length} of ${Object.keys(boot.styles).length} previewed`),
+      h("div", {class: "more-body"},
+        h("p", {class: "muted small"}, `Each preset draws its own sample scene with ${engineLabel(video)}. Previews are kept per image model for every project.`),
+        missing ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy || !state.boot.gpu,
+                               onclick: () => drawPreviews("missing")}, `Draw ${plural(missing, "missing preview")}`) : null,
+        ...boot.style_groups.map((group) => h("section", {class: "style-group"},
+          h("h3", {}, group.name),
+          h("div", {class: "style-grid"}, group.presets.map((name) => h("button", {
+            type: "button", class: "style-card", "aria-pressed": String(name === video.preset), disabled: busy,
+            title: boot.style_uses[name], onclick: () => pickStyle(name)},
+            h("span", {class: "style-thumb"}, previews[name] ? h("img", {src: previews[name], alt: "", loading: "lazy"})
+                                                             : h("span", {class: "shot-empty"}, "No preview")),
+            h("span", {class: "style-name"}, name),
+            h("span", {class: "muted small"}, boot.style_uses[name]))))))));
+  }
+
   function renderSettings() {
     const box = $("drawn-settings");
     const boot = state.boot.video;
     const video = state.project.video;
     const busy = videoRunning();
-    const presets = [...Object.keys(boot.styles), boot.custom_style];
     const limitCount = h("span", {class: "num small"}, video.limit);
     box.replaceChildren(
       h("div", {class: "drawn-settings-head"}, h("h2", {}, "How it's drawn"),
@@ -268,10 +314,12 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       videoField("Image model", h("select", {onchange: (event) => saveVideo({video_engine: event.target.value})},
         boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
         "Draws with the Image tab's settings for that model."),
-      videoField("Style preset", h("select", {onchange: (event) => {
-        const style = boot.styles[event.target.value];
-        if (style) saveVideo({video_style: style});
-      }}, presets.map((name) => h("option", {selected: name === video.preset, disabled: name === boot.custom_style && video.preset !== name}, name)))),
+      videoField("Style preset", h("select", {onchange: (event) => pickStyle(event.target.value)},
+        ...boot.style_groups.map((group) => h("optgroup", {label: group.name},
+          group.presets.map((name) => h("option", {value: name, selected: name === video.preset}, name)))),
+        h("option", {value: boot.custom_style, selected: video.preset === boot.custom_style, disabled: video.preset !== boot.custom_style}, boot.custom_style))),
+      stylePreview(video, busy),
+      styleGallery(video, busy),
       videoField("Art direction", h("textarea", {rows: 4, value: video.style, oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
         "The medium and rendering across all shots. Editing makes the preset Custom."),
       videoField("Minimum shots", h("span", {class: "range-row"},
@@ -348,12 +396,12 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     drawButton.disabled = busy || !state.boot.gpu;
     drawButton.title = state.boot.gpu ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
-    stop.hidden = !videoRunning("draw");
+    stop.hidden = !videoRunning("draw") && !videoRunning("preview");
     if (busy) {
-      title.textContent = {plan: "Planning shots…", draw: "Drawing…", save: "Saving to Media…"}[run.kind] || "Working…";
+      title.textContent = {plan: "Planning shots…", draw: "Drawing…", preview: "Drawing style previews…", save: "Saving to Media…"}[run.kind] || "Working…";
       detail.textContent = run.status || "";
     } else if (run?.error) {
-      title.textContent = run.kind === "plan" ? "Planning stopped" : run.kind === "save" ? "Saving stopped" : "Drawing stopped";
+      title.textContent = {plan: "Planning stopped", save: "Saving stopped", preview: "Style previews stopped"}[run.kind] || "Drawing stopped";
       detail.textContent = run.error;
       detail.classList.add("error");
     } else if (!rows.length) {

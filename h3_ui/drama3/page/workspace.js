@@ -27,7 +27,7 @@ export function startWorkspace() {
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, busy: false,
                  screen: "script", saving: null, writing: false, writerResult: null,
                  estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
-                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all"};
+                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all", styleGalleryOpen: false};
   const SCREENS = ["script", "cast", "mix", "illustrate"];
   // The steps that show the mix player; it moves to whichever of them is open.
   const PLAYER_SCREENS = ["mix", "illustrate"];
@@ -217,6 +217,8 @@ export function startWorkspace() {
   const planShots = () => videoCall("/project/video/plan", {writer: writerService()});
   /** Draw ``only`` the shots it names: "missing", "all" or a list of shot indexes. */
   const drawImages = (only = "missing") => videoCall("/project/video/draw", {only});
+  /** Draw style previews with the project's image model: "missing" or a list of preset names. */
+  const drawPreviews = (presets = "missing") => videoCall("/project/video/preview", {presets});
 
   /** Change the plan (a shot's prompt or transition, or how a subject looks); drawn shots it touches show as changed. */
   async function editPlan(path, body) {
@@ -1308,6 +1310,7 @@ export function startWorkspace() {
     saveVideoToMedia,
     planShots,
     drawImages,
+    drawPreviews,
     interruptVideo,
     copyPlannerPrompt,
     applyPlannerReply,
