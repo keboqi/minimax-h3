@@ -308,6 +308,43 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       h("span", {class: "drawn-chip-edit"}, "Edit"));
   }
 
+  function transientAction(idleLabel, pendingLabel, doneLabel, action, disabledWhen = () => false) {
+    let phase = "idle";
+    let timer = null;
+    const label = () => phase === "pending" ? pendingLabel : phase === "done" ? doneLabel : idleLabel;
+    return (dialog, className) => h("button", {
+      type: "button",
+      class: `btn btn-small ${className}`,
+      disabled: disabledWhen() || phase === "pending",
+      onclick: async (event) => {
+        const button = event.currentTarget;
+        phase = "pending";
+        button.disabled = true;
+        button.textContent = pendingLabel;
+        const ok = await action();
+        clearTimeout(timer);
+        phase = ok ? "done" : "idle";
+        const live = dialog.querySelector(`.${className}`) || button;
+        live.disabled = disabledWhen();
+        live.textContent = label();
+        if (ok) {
+          timer = setTimeout(() => {
+            phase = "idle";
+            const current = dialog.querySelector(`.${className}`);
+            if (current) current.textContent = idleLabel;
+          }, 2000);
+        }
+      },
+    }, label());
+  }
+
+  const copyPromptButton = transientAction(
+    "Copy full planner prompt", "Copying…", "Copied ✓", copyPlannerPrompt,
+  );
+  const applyPlanButton = transientAction(
+    "Apply pasted plan", "Applying…", "Applied ✓", applyPlannerReply, () => videoRunning(),
+  );
+
   function openDrawing() {
     renderDrawing(true);
     $("style-dialog").showModal();
@@ -334,6 +371,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const limitCount = h("span", {class: "num small"}, video.limit);
     const body = dialog.querySelector(".style-body");
     const scroll = body?.scrollTop || 0;
+    const planDetailsOpen = Boolean(dialog.querySelector(".plan-more")?.open);
     dialog.replaceChildren(
       h("div", {class: "library-head"},
         h("div", {class: "style-head-text"}, h("h2", {id: "style-title"}, "How it's drawn"),
@@ -380,16 +418,16 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
               h("textarea", {rows: 4, value: video.style, "aria-label": "Art direction", disabled: busy, onblur: later,
                              oninput: (event) => saveVideo({video_style: event.target.value}, {later: true})}),
               h("span", {class: "muted small"}, "The medium and rendering across all shots. A style fills it in; editing it makes the style Custom.")))),
-        h("details", {class: "more"},
+        h("details", {class: "more plan-more", open: planDetailsOpen || null},
           h("summary", {}, "Plan with another chat model"),
           h("div", {class: "more-body"},
             h("p", {class: "muted small"}, "Copy the full planner prompt into any chat model, then paste its JSON reply. It is checked like the built-in planner's."),
-            h("button", {type: "button", class: "btn btn-small", onclick: copyPlannerPrompt}, "Copy full planner prompt"),
+            copyPromptButton(dialog, "copy-prompt-btn"),
             h("label", {class: "field"}, h("span", {class: "label"}, "Pasted planner reply"),
               h("textarea", {rows: 4, id: "plan-reply", value: state.planReply || "", onblur: later,
                              oninput: (event) => { state.planReply = event.target.value; },
-                             placeholder: '{"art_style": "...", "shots": [...]}'})),
-            h("button", {type: "button", class: "btn btn-small", disabled: busy, onclick: applyPlannerReply}, "Apply pasted plan")))),
+                             placeholder: '{"characters": {...}, "shots": [...]}'})),
+            applyPlanButton(dialog, "apply-plan-btn")))),
       h("div", {class: "drawn-foot"},
         h("span", {class: "muted small"}, rows.length ? `The current plan has ${plural(rows.length, "shot")}.` : "No shot plan for these settings yet."),
         h("span", {class: "spacer"}),

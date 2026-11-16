@@ -109,9 +109,11 @@ export function startWorkspace() {
   function toast(message) {
     const box = $("toast");
     box.textContent = message;
-    box.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { box.hidden = true; }, 5000);
+    // Shown again each time, so it lands above a window opened since the last message.
+    if (box.matches(":popover-open")) box.hidePopover();
+    box.showPopover();
+    toastTimer = setTimeout(() => { if (box.matches(":popover-open")) box.hidePopover(); }, 5000);
   }
 
   const toneColor = (tone) => `var(--tone-${tone})`;
@@ -247,14 +249,37 @@ export function startWorkspace() {
   }
   const interruptVideo = () => videoCall("/project/video/interrupt");
 
+  /** Put ``text`` on the clipboard. The clipboard API is missing on a plain-HTTP page served from
+   *  another machine and can be refused, so a selected hidden text box copies it instead; that box
+   *  goes in the open window, if any, since the page behind a modal window can't be selected. */
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (error) {
+      const box = h("textarea", {value: text, readonly: true, "aria-hidden": "true",
+                                 style: {position: "fixed", top: "0", left: "0", width: "1px", height: "1px", opacity: "0"}});
+      (document.querySelector("dialog[open]") || document.body).append(box);
+      box.focus({preventScroll: true});
+      box.select();
+      box.setSelectionRange(0, text.length);
+      const copied = document.execCommand("copy");
+      box.remove();
+      if (!copied) throw error;
+    }
+  }
+
+  /** Copy the full planner prompt; true once it's on the clipboard. */
   async function copyPlannerPrompt() {
     try {
       await flushVideo();
       const {prompt} = await api(named("/project/video/prompt"), {method: "POST"});
-      await navigator.clipboard.writeText(prompt);
+      await copyText(prompt);
       toast("Planner prompt copied. Paste it into any chat model.");
+      return true;
     } catch (error) {
       toast(`Could not copy the prompt: ${error.message}`);
+      return false;
     }
   }
 
@@ -264,6 +289,7 @@ export function startWorkspace() {
       state.planReply = "";
       if ($("plan-reply")) $("plan-reply").value = "";
     }
+    return Boolean(data);
   }
 
   const pollVideo = poller(async (again) => {

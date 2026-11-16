@@ -204,7 +204,8 @@ a.step:hover { background: var(--raised); }
 
 .loading, .empty { max-width: 560px; margin: 18vh auto; padding: 0 24px; text-align: center; color: var(--muted); }
 .empty h1 { font-size: 22px; color: var(--text); margin: 0 0 8px; }
-.toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 10; max-width: min(560px, calc(100% - 32px));
+/* A manual popover, so it shows in the top layer, above an open window too. */
+.toast { position: fixed; inset: auto auto 96px 50%; margin: 0; border: 0; transform: translateX(-50%); z-index: 10; max-width: min(560px, calc(100% - 32px));
   padding: 10px 16px; border-radius: 8px; background: var(--text); color: var(--surface); font-size: 14px; }
 
 @media (max-width: 720px) {
