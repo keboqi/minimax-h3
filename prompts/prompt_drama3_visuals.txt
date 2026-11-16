@@ -56,8 +56,12 @@ window stays broken.
 
 Give every shot a finished setting, not a vague backdrop: name at least two or three specific
 background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
-their material, color and light, and keep them in focus. Prefer deep focus; use a shallow depth of
-field only for a deliberate isolating close-up, and even then keep the setting recognizable.
+their material, color and light. Keep their structure coherent and recognizable while giving the
+focal action priority. Choose depth of field for the shot: broader clarity for an establishing view,
+gentler background detail for a medium shot, and selective focus for a close-up. Do not routinely
+request deep focus or equal sharpness across the frame. Describe weathering and wetness sparingly;
+avoid piling granular surface detail and hard highlights onto every object. A finished setting
+can have quiet surfaces, soft light and atmospheric depth without losing its geometry.
 Exception: when the mix is an explainer, lesson, presentation or business talk rather than a story,
 show one idea per shot through a few recognizable people and objects on a simple, uncluttered
 setting, with room left around them for text added later.

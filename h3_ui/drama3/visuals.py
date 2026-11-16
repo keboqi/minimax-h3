@@ -23,16 +23,19 @@ import gradio as gr
 
 from h3_app.capabilities import engines_for_task
 from h3_app.drama3.results import DRAMA3_FAMILY
-from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
-from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, fill_tags, plan_art_style, sheet_prompt,
+from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, plan_art_style, sheet_prompt,
                                       shot_cap, subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.drama3.result_view import timeline_data
 from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
-from h3_ui.image_controller import reference_limit, reference_tag
+from h3_ui.drama3.visual_styles import (CUSTOM_STYLE, DEFAULT_STYLE, SETTING_DETAIL, SLIDE_STYLES,
+                                       STYLE_GROUPS, STYLE_PRESETS, STYLE_PREVIEWS, STYLE_USES, _PRESETS,
+                                       preset_for, reference_direction)
+from h3_ui.image_controller import GENERATION_OPTIONS, reference_limit, reference_tag
 
 
 # Images finished by an export that failed or was stopped, by export fingerprint:
@@ -45,199 +48,6 @@ PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
                "moss_image": (1344, 768), "fibo2": (1344, 768)}
-# Each preset: (use-case group, name, what it's for, preview scene, rendering text). The text describes
-# rendering, not story content: it applies to portraits and every scene. The preview scene shows the
-# style on a subject typical of its use, with faces, hands and a finished setting to judge it by.
-_PRESETS = (
-    ("Drama & fiction", "Digital painting",
-     "Any genre for teens and adults; the all-round default",
-     "A medium-wide shot at dusk: a weathered sea captain in a wool coat grips the wheel of a fishing "
-     "boat while a young deckhand points past him at a lighthouse beam cutting through the storm; rain "
-     "streaks the wheelhouse windows and waves break over the bow.",
-     "Full-color narrative digital painting with believable anatomy, distinct faces and natural "
-     "expressions. Solid forms and materials, restrained visible brushwork, clear "
-     "detail on faces and hands, and coherent local colors. Keep gestures readable."),
-    ("Drama & fiction", "Realistic photo",
-     "Grounded contemporary drama, crime and documentary reenactment",
-     "A medium shot in a small-town diner at night: a tired detective in her forties sits in a red vinyl "
-     "booth, coffee in both hands, studying a spread of photographs; neon from the window falls across "
-     "the chrome counter where a waitress refills a coffee pot.",
-     "Full-color live-action film still with natural human proportions, individual facial "
-     "features, subtle skin texture and believable fabric and surfaces. Physically "
-     "plausible light, restrained color grading and fine film grain. Avoid fashion-ad "
-     "posing and beauty retouching."),
-    ("Drama & fiction", "American comic",
-     "Action, thriller and mystery with bold, punchy staging",
-     "A dynamic low-angle shot on a rain-soaked rooftop: a courier in a torn jacket leaps the gap between "
-     "two brick buildings, a satchel clutched to her chest, water towers and fire escapes behind her and "
-     "a searchlight sweeping the alley below.",
-     "American comic-book illustration with bold brush-ink contours, varied line "
-     "weight, sculpted spot blacks and selective cross-hatching. Clearly modeled "
-     "anatomy, distinct faces and expressive gestures; rich flat colors with crisp "
-     "shadow shapes and restrained halftone texture. Keep the story's clothing and "
-     "physique without adding superhero costumes or exaggerated muscles. One continuous "
-     "image, no panel borders, speech balloons, captions or lettering."),
-    ("Drama & fiction", "Oil painting",
-     "Historical, period and literary stories",
-     "A candlelit study: an elderly scholar reads a letter at a heavy oak desk crowded with books, a quill "
-     "and an hourglass, while his granddaughter waits in the doorway holding a lantern; tall windows show "
-     "a snowy courtyard.",
-     "Full-color oil painting with visible bristle strokes, layered opaque pigments "
-     "and subtle canvas texture. Model faces, hands and objects with believable "
-     "proportions and clear light and shadow, and natural material colors. Show the "
-     "painting itself, without a picture frame, gallery wall or added antique costumes."),
-    ("Drama & fiction", "Chinese ink painting",
-     "Wuxia, xianxia, Chinese myth and history",
-     "A wide shot of a mountain pass at dawn: a lone swordswoman in layered robes stands on a stone bridge "
-     "above a waterfall, her sleeves lifted by the wind, pines clinging to the cliffs and a temple roof "
-     "rising from the valley below.",
-     "Full-color traditional Chinese ink-and-color painting on fine rice paper. Confident brush contours "
-     "with varied pressure, finely drawn faces and hands, layered mineral colors in transparent washes and "
-     "ink gradations that model rock, water, foliage and fabric. Distinct figures with believable "
-     "proportions and readable expressions. Keep the story's own era and clothing; no seals, calligraphy, "
-     "scroll borders or blank paper standing in for the setting."),
-    ("Drama & fiction", "Watercolor",
-     "Gentle slice of life, memoir and poetry",
-     "A quiet morning kitchen: a grandmother and a boy share breakfast at a table by an open window, steam "
-     "rising from their bowls, potted herbs on the sill and a bicycle leaning against the garden fence "
-     "outside.",
-     "Full-color watercolor illustration with transparent layered washes, soft pigment "
-     "edges and selective fine pencil contours. Preserve facial features, hands and "
-     "important objects with controlled edges. Subtle paper grain, believable proportions "
-     "and consistent pigment density; avoid splatter or unfinished white gaps across "
-     "focal subjects."),
-    ("Anime, manga & games", "Anime",
-     "Youth, romance, fantasy and light-novel stories",
-     "A medium shot on a train platform at sunset: one classmate holds out a folded letter while the "
-     "other hesitates, school bags over their shoulders, a commuter train pulling in and power lines "
-     "against an orange sky.",
-     "Full-color 2D dramatic animation still with controlled fine outlines, consistent character proportions "
-     "and clean two- or three-tone cel shading. Individually designed faces with restrained, "
-     "readable expressions. Avoid chibi proportions, exaggerated reaction symbols and decorative bloom."),
-    ("Anime, manga & games", "Japanese comic",
-     "Dramatic manga-style action and character stories",
-     "A festival night: a young swordsman kneels to mend a girl's broken sandal strap on a crowded shrine "
-     "path, paper lanterns glowing overhead, food stalls on both sides and fireworks opening above the "
-     "torii gate.",
-     "Full-color Japanese manga illustration with precise pen lines, delicate "
-     "facial detail and controlled variation in line weight. Rich local colors, "
-     "clean cel-shaded shadows and selective color gradients. Consistent stylized "
-     "proportions, distinct character designs and expressive but believable acting, "
-     "with legible eyes and gestures. One continuous image, "
-     "no panels, speech balloons, lettering or decorative reaction symbols."),
-    ("Anime, manga & games", "Pixel art",
-     "Game lore, retro sci-fi and gaming podcasts",
-     "A side view of a torchlit dungeon: an adventurer with a backpack and lantern faces a small dragon "
-     "curled on a pile of gold, stone pillars, a locked iron gate and glowing mushrooms around them.",
-     "Full-color narrative pixel art with a consistent coarse pixel grid, deliberate pixel clusters "
-     "and a limited shared palette. Crisp stepped edges without smoothing or mixed pixel "
-     "sizes; selective dithering for shading. Simplify forms into readable silhouettes "
-     "while preserving each character's hair, outfit and key facial cues; no game "
-     "interface or decorative border."),
-    ("Kids & family", "Children's book",
-     "Bedtime and picture-book stories for young children",
-     "A cozy bedtime scene: a little girl in pajamas reads a picture book to her stuffed rabbit and a "
-     "sleepy cat inside a blanket fort, fairy lights strung across the bedroom wall and a full moon in "
-     "the window.",
-     "Full-color hand-painted gouache and colored-pencil storybook illustration. Matte opaque "
-     "color shapes, subtle pencil edges and gentle paper texture; simplified but "
-     "consistent anatomy, distinct character silhouettes and legible expressions. "
-     "Keep tension or sadness when the story has it instead of making everything cheerful."),
-    ("Kids & family", "2D cartoon",
-     "Comedy and lively stories for kids",
-     "A backyard mishap: a boy and his overexcited dog are tangled in a garden hose spraying water "
-     "everywhere while his older sister holds a soaked birthday cake with a deadpan look; a picket fence "
-     "and a treehouse behind them.",
-     "Full-color 2D cartoon illustration with clean outlines, simple rounded shapes, "
-     "bold flat colors and minimal cel shading. Consistent character proportions, distinct "
-     "silhouettes and expressive faces, serious when the story is. One continuous image "
-     "without speech bubbles, lettering or comic panels."),
-    ("Kids & family", "3D animation",
-     "Family adventure with feature-animation appeal",
-     "A wide adventure shot: a young inventor and her small round robot ride a homemade glider over a "
-     "seaside village of colorful rooftops, laundry lines and a windmill, the inventor laughing while "
-     "the robot holds on tight.",
-     "Full-color stylized 3D animated feature still with appealing, consistent character proportions "
-     "and expressive but restrained faces. Rounded modeled forms, tactile cloth, "
-     "convincing material differences and clear silhouettes. Keep eyes and skin natural "
-     "within the stylization, without a glossy plastic finish."),
-    ("Explainers & slides", "Flat illustration",
-     "Training, onboarding and how-to explainers",
-     "A team onboarding moment: a mentor points at simple icons on a laptop screen while three new "
-     "colleagues lean in around a desk with a plant, coffee mugs and a blank whiteboard.",
-     "Full-color flat business illustration with clean geometric shapes, solid "
-     "color fills and minimal shading. Use simplified people and recognizable "
-     "objects to explain one idea at a time, with consistent proportions and a "
-     "small coordinated color palette. Clear visual hierarchy, generous spacing "
-     "and a plain light background; leave an uncluttered area for slide text "
-     "to be added later. Avoid decorative clutter, lettering, logos and invented data."),
-    ("Explainers & slides", "Isometric illustration",
-     "Systems, processes and product walkthroughs",
-     "How an online order travels: a stocked warehouse shelf, a packing table with boxes, a delivery van "
-     "and a doorstep with a parcel, linked by a clear path on one compact platform.",
-     "Full-color isometric business illustration with parallel projection, "
-     "consistent object scale and clean geometric volumes. Use restrained "
-     "shading and coordinated colors to distinguish components. Show the "
-     "requested system, process or workspace through clearly arranged objects "
-     "and meaningful spatial relationships. Keep one coherent scene on a "
-     "simple light background, with generous margins for slide text added "
-     "later. No labels, logos, invented metrics or decorative dashboards."),
-    ("Explainers & slides", "Minimal vector",
-     "Keynotes and one-idea concept slides",
-     "A product launch as one idea: a single rocket lifting off from an open laptop, a few small stars "
-     "around it.",
-     "Full-color minimal vector-style illustration with crisp edges, simple shapes "
-     "and consistent stroke widths. Reduce the requested idea to a few recognizable "
-     "elements with strong visual hierarchy, using a small coordinated palette "
-     "on a plain light background. Keep ample negative space for slide text added "
-     "later and maintain clarity at presentation size. No texture, ornamental "
-     "detail, lettering, logos or invented charts and numbers."),
-    ("Explainers & slides", "Editorial illustration",
-     "Commentary, news analysis and idea podcasts",
-     "Information overload as a metaphor: a person reads calmly at a small desk while a towering wave of "
-     "envelopes and notification bubbles curls above them.",
-     "Full-color editorial business illustration built around one clear "
-     "visual metaphor for the requested idea. Use simplified recognizable "
-     "forms, confident silhouettes, restrained texture and a coordinated "
-     "palette. Make the relationship between subjects easy to understand "
-     "without labels; keep the focal concept distinct from a simple "
-     "background and leave breathing room for slide text added later. "
-     "Avoid unrelated symbols, stock handshake imagery, lettering, logos "
-     "and invented data."),
-)
-_BARE_PRESETS = {name: text for _group, name, _use, _preview, text in _PRESETS}
-# Detail asked only of faces and hands left settings rough and blurry, so each story preset also asks
-# for a finished background. The slide presets keep their deliberately plain backgrounds.
-SETTING_DETAIL = (" Render the setting with the same finish and focus as the figures: legible architecture, "
-                  "objects and landscape, never a blurred, smeared or sketchy backdrop.")
-SLIDE_STYLES = tuple(name for group, name, *_ in _PRESETS if group == "Explainers & slides")
-# Projects saved with earlier preset text keep it as their Art direction (and their shot plan is keyed
-# by it), so those texts still count as the preset rather than as Custom.
-_EARLIER_DETAIL = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
-                   "objects and landscape, never a blurred, smeared or sketchy backdrop.")
-_LEGACY_PRESETS = {text: name for name, text in _BARE_PRESETS.items()}
-_LEGACY_PRESETS[_BARE_PRESETS["Digital painting"].replace(
-    "clear detail on faces and hands", "sharper detail around faces and hands")] = "Digital painting"
-_LEGACY_PRESETS[_BARE_PRESETS["Japanese comic"].replace(
-    "with legible eyes and gestures. One", "with legible eyes and gestures. Full color throughout. One")] = \
-    "Japanese comic"
-_LEGACY_PRESETS.update({text + _EARLIER_DETAIL: name for text, name in list(_LEGACY_PRESETS.items())
-                        if name not in SLIDE_STYLES})
-STYLE_PRESETS = {name: text if name in SLIDE_STYLES else text + SETTING_DETAIL
-                 for name, text in _BARE_PRESETS.items()}
-STYLE_GROUPS = [{"name": group, "presets": [name for g, name, *_ in _PRESETS if g == group]}
-                for group in dict.fromkeys(group for group, *_ in _PRESETS)]
-STYLE_USES = {name: use for _group, name, use, _preview, _text in _PRESETS}
-STYLE_PREVIEWS = {name: preview for _group, name, _use, preview, _text in _PRESETS}
-DEFAULT_STYLE = "Digital painting"
-CUSTOM_STYLE = "Custom"
-
-
-def preset_for(text):
-    """The preset an Art direction text matches, or Custom once it's been edited."""
-    text = (text or "").strip()
-    return next((name for name, value in STYLE_PRESETS.items() if value == text), None) \
-        or _LEGACY_PRESETS.get(text, CUSTOM_STYLE)
 
 
 PORTRAIT_SIZE = 1024
@@ -284,26 +94,51 @@ def orientation_of(value):
     return value if value in ORIENTATIONS else "landscape"
 
 
-def match_characters(controller, engine, scene, portraits, shot, captured):
+def character_match_request(engine, scene, portraits, shot, captured):
+    """A bounded identity edit, without re-captioning the scene or asking for a style render.
+
+    Qwen's matching canvas must track the first reference, including its latent dimensions.
+    A native enhancer is useful for an open-ended draft, but must not expand this local edit.
+    Other sampling settings remain exactly those selected on the Image page.
+    """
+    count = len(portraits) + 1
+    scene_tag = reference_tag(engine, 1, count) or "the first image"
+    lines = [f"In {scene_tag}, change only the depicted characters' facial identity, hairstyle and outfit "
+             "design to match the following portrait references. Keep each person's current pose, "
+             "expression, gaze and position."]
+    for position, key in enumerate(portraits, 2):
+        tag = reference_tag(engine, position, count) or f"(reference image {position})"
+        # Use only this person's anchor to identify the edit target. Full shot text also describes
+        # walls, rain, light and materials, turning preservation into a second scene-generation brief.
+        anchor = re.search(rf"{re.escape(key)}⟦{re.escape(key)}⟧\s*\(([^;)]+)", shot.tagged or "")
+        target = anchor.group(1).strip() if anchor else key
+        lines.append(f"For {target}, use {tag} for facial identity, hairstyle and outfit design only.")
+    lines += [f"Preserve {scene_tag}'s background, objects, composition, lighting, colors, rendering style "
+              "and level of surface detail unchanged. Render the adjusted characters in that same style "
+              "and lighting; do not copy the portraits' background or shading.",
+              "Keep the existing number of people. No added figures, panels or insets."]
+    options = dict(captured)
+    if engine == "qwen":
+        options.update(qwen__edit_size=QWEN_EDIT_SIZE_MATCH, qwen__reference_resolution=0,
+                       qwen__output_resolution_1k=None, qwen__output_resolution_2k=None,
+                       qwen__prompt_enhancer="Off")
+    return "\n".join(lines), [scene, *portraits.values()], options
+
+
+def match_characters(controller, engine, scene, portraits, shot, captured, *, record=None):
     """Repaint a finished scene's characters from their portraits, keeping everything else.
 
     The scene is the first input, so an edit model that leans toward its input keeps the scene's
     composition; the portraits only steer faces, hair and outfits. Each portrait's tag (<image2>,
-    <Picture 2>...) also sits right after that character's name in the scene text, the way the
-    Image tab's clickable reference names do, so the model knows which input is which person.
+    <Picture 2>...) is bound to its character's anchor, without re-describing the rest of the scene.
     """
-    count = len(portraits) + 1
-    scene_tag = reference_tag(engine, 1, count) or "the first image"
-    tags = {key: reference_tag(engine, position, count) or f"(reference image {position})"
-            for position, key in enumerate(portraits, 2)}
-    lines = [f"{scene_tag} is the finished scene. Keep its composition, camera, poses, setting, lighting and "
-             "art style.", "Repaint only these people so each matches their reference:"]
-    lines += [f"{key} {tag}: the same face, hairstyle and outfit." for key, tag in tags.items()]
-    lines.append("Change nothing else. Never add the references as extra figures, panels or insets.")
-    scene_text = re.sub(r"[ \t]+", " ", fill_tags(shot.tagged, tags)).strip() if shot.tagged else shot.beat
-    if scene_text:
-        lines.append(f"Scene: {scene_text}")
-    return controller.generate(engine, "Image edit", "\n".join(lines), [scene, *portraits.values()], captured)
+    prompt, references, options = character_match_request(engine, scene, portraits, shot, captured)
+    if record is not None:
+        record.update(prompt=prompt, references=[Path(path).name for path in references],
+                      settings={name: options[f"{engine}__{name}"]
+                                for name, _ in GENERATION_OPTIONS.get(engine, ())
+                                if f"{engine}__{name}" in options})
+    return controller.generate(engine, "Image edit", prompt, references, options)
 
 
 def _stream(updates, label):
@@ -321,7 +156,7 @@ def _stream(updates, label):
 
 
 def illustrate_shots(controller, engine, shots, captured, use_references, finished=None, portraits=None,
-                     orientation="landscape"):
+                     orientation="landscape", *, on_shot=None):
     """Draw every scene from its text, then match its characters to their portraits.
 
     ``portraits`` maps character keys to portrait prompts; only characters some shot shows are drawn,
@@ -329,9 +164,11 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
     or a multi-view sheet as a starting point copies it instead of composing a new scene.
     ``finished`` holds images from an earlier attempt at the same export; existing files are reused,
     and each new image is recorded so a later retry can resume after it.
+    ``on_shot`` publishes each completed shot before drawing the next, returning its record path.
     """
     finished = {"portraits": {}, "shots": []} if finished is None else finished
     finished.setdefault("portraits", {})
+    shot_details = finished.setdefault("shot_details", {})
     widescreen(engine, captured, orientation)
     limit = reference_limit(engine, captured.get("qwen__turbo_variant", "Off")) if use_references else 0
     slots = max(0, limit - 1)  # The scene itself takes the first input.
@@ -359,23 +196,36 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
         who = {key: drawn[key] for key in shot.references if key in drawn}
         who = dict(list(who.items())[:slots])
         label = f"Shot {index + 1} of {len(shots)}"
-        draft = None
+        details = {}
         if index < len(done) and Path(done[index]).is_file():
             path = done[index]
+            details = shot_details.get(index, {})
             yield gr.skip(), f"{label} · Reused from the interrupted export"
         else:
             del done[index:]
+            for old in [i for i in shot_details if i >= index]:
+                del shot_details[old]
             yield gr.skip(), label
             path = yield from _stream(controller.generate(engine, "Text to image", shot.prompt, [], captured), label)
             if who:
                 draft, label = path, f"{label} · Matching " + ", ".join(who)
+                details = {"draft": str(draft), "matching": {}}
                 path = yield from _stream(
-                    match_characters(controller, engine, draft, who, shot, captured), label)
+                    match_characters(controller, engine, draft, who, shot, captured,
+                                     record=details["matching"]), label)
+                details["matching"]["output"] = Path(path).name
+                snapshot = read_snapshot(path) if engine == "qwen" else None
+                if snapshot:
+                    details["matching"].update(job_id=snapshot.get("job_id"),
+                                               effective_settings=snapshot.get("settings", {}))
             done.append(path)
+            shot_details[index] = details
         images.append(path)
         shot_records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
-                             "image": Path(path).name, "draft": Path(draft).name if draft else None,
-                             "characters": list(who)})
+                             "image": Path(path).name, "draft": None, "characters": list(who), **details})
+        if on_shot is not None:
+            record = on_shot(index, path, shot_records[-1])
+            yield str(record), f"Shot {index + 1} of {len(shots)} · Ready"
     portrait_records = {key: Path(path).name for key, path in drawn.items()}
     return images, shot_records, portrait_records
 
@@ -490,10 +340,25 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
         name = f"{revision}-{index + 1:03d}.jpg"
         image = Path(image)
         if image.parent.resolve() == folder.resolve():
-            copyfile(image, folder / name)  # already a web copy: no second JPEG pass
+            name = image.name  # Reuse immutable web copies while publishing subsequent shots.
         else:
             with Image.open(image) as picture:
                 picture.convert("RGB").save(folder / name, "JPEG", quality=STILLS_QUALITY, optimize=True)
+        extra = dict(extra)
+        if extra.get("draft"):
+            draft = Path(extra["draft"])
+            if not draft.is_absolute():
+                draft = folder / draft
+            if draft.is_file():
+                draft_name = f"{revision}-{index + 1:03d}-draft.png"
+                if draft.parent.resolve() == folder.resolve():
+                    draft_name = draft.name
+                elif draft.suffix.lower() == ".png":
+                    copyfile(draft, folder / draft_name)
+                else:
+                    with Image.open(draft) as picture:
+                        picture.save(folder / draft_name, "PNG")
+                extra["draft"] = draft_name
         records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
                         "beat": shot.beat, "prompt": shot.prompt, "image": name, **extra})
     kept = {}
@@ -507,6 +372,8 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
                                            "total_frames": total_frames, "shots": records, "portraits": kept,
                                            "orientation": orientation_of(orientation), "details": details})
     keep = {item["image"] for item in kept.values()}
+    keep.update(item["image"] for item in records)
+    keep.update(item["draft"] for item in records if item.get("draft"))
     for old in [*folder.glob("*.jpg"), *folder.glob("*.png")]:
         if not old.name.startswith(f"{revision}-") and old.name not in keep:
             old.unlink(missing_ok=True)
@@ -631,15 +498,6 @@ def plan_shots_for(saved, duration, style, orientation="landscape"):
                         orientation=orientation_of(orientation), art_style=legacy_art_style(saved, style))
 
 
-def reference_direction(style):
-    """The Art direction for portraits: without SETTING_DETAIL, which asks for scenery behind a
-    portrait meant to stand on a plain background."""
-    style = style or ""
-    for detail in (SETTING_DETAIL, _EARLIER_DETAIL):
-        style = style.replace(detail.strip(), "")
-    return re.sub(r"[ \t]{2,}", " ", style).strip()
-
-
 def portrait_prompts(saved, style, *, with_setting=False):
     """Each character's portrait prompt, from the saved plan's looks in the chosen art direction.
     ``with_setting`` gives the prompt portraits were drawn from before SETTING_DETAIL was left out."""
@@ -704,33 +562,39 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
                                   if item[1] in current.get(name, ())}
     for name, (path, _fingerprint) in kept.items():
         finished["portraits"].setdefault(name, str(path))
-    images, shot_records, portrait_records = yield from illustrate_shots(
-        controller, engine, [shots[i] for i in picked], captured, use_references, finished, prompts, orientation)
-    yield gr.skip(), "Keeping the images with the mix…"
     folder = stills_dir(audio, root)
-    drawn = dict(zip(picked, zip(images, shot_records)))
-    kept_shots, kept_images, extras = [], [], []
-    for index, (shot, still) in enumerate(zip(shots, stills)):
-        if index in drawn:
-            image, details = drawn[index]
-            extra = {"draft": details["draft"], "characters": details["characters"]}
-        elif still is not None:
-            # Not redrawn: the image already drawn for this time stays, with the prompt it was drawn from.
-            image = folder / still["image"]
-            extra = {name: still[name] for name in ("draft", "characters") if name in still}
-            shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat)
-        else:
-            continue
-        kept_shots.append(shot)
-        kept_images.append(image)
-        extras.append(extra)
-    for name, path in finished["portraits"].items():
-        if name in prompts and Path(path).is_file():
-            kept[name] = (path, prompt_key(prompts[name]))
-    stills_record = keep_stills(audio, root, kept_shots, kept_images, {
-        "model": engine, "art_direction": style, "orientation": orientation, "visual_plan": saved["plan"],
-        "keep_characters_consistent": use_references, "portraits": portrait_records},
-        extras=extras, total_frames=ceil(duration * FPS), portraits=kept, orientation=orientation)
+
+    def publish(index, image, details):
+        # Read the latest checkpoint: earlier publishes can replace the images' record, and
+        # untouched shots must retain both their original prompt and their immutable files.
+        current = match_stills(shots, read_stills(audio, root))
+        selected = picked[index]
+        kept_shots, kept_images, extras = [], [], []
+        for position, (shot, still) in enumerate(zip(shots, current)):
+            if position == selected:
+                path = image
+                extra = {name: details[name] for name in ("draft", "characters", "matching") if name in details}
+            elif still is not None:
+                path = folder / still["image"]
+                extra = {name: still[name] for name in ("draft", "characters", "matching") if name in still}
+                shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat)
+            else:
+                continue
+            kept_shots.append(shot)
+            kept_images.append(path)
+            extras.append(extra)
+        for name, path in finished["portraits"].items():
+            if name in prompts and Path(path).is_file():
+                kept[name] = (path, prompt_key(prompts[name]))
+        return keep_stills(audio, root, kept_shots, kept_images, {
+            "model": engine, "art_direction": style, "orientation": orientation, "visual_plan": saved["plan"],
+            "keep_characters_consistent": use_references,
+            "portraits": {name: Path(path).name for name, path in finished["portraits"].items()}},
+            extras=extras, total_frames=ceil(duration * FPS), portraits=kept, orientation=orientation)
+
+    yield from illustrate_shots(controller, engine, [shots[i] for i in picked], captured, use_references,
+                                finished, prompts, orientation, on_shot=publish)
+    stills_record = folder / STILLS_RECORD
     _FINISHED.pop(key, None)  # A fresh drawing of the same settings draws new illustrations.
     drew = f"{len(picked)} image{'s' if len(picked) != 1 else ''}"
     yield str(stills_record), f"Drew {drew}. They play with the mix here; Save to Media renders the video."
@@ -747,7 +611,7 @@ _PREVIEWS_LOCK = Lock()
 
 def preview_prompt(name):
     """What a style preview draws: the preset's own scene in the preset's rendering."""
-    return "\n".join([PREVIEW_LINE, STYLE_PREVIEWS[name], STYLE_PRESETS[name]])
+    return "\n".join([PREVIEW_LINE, STYLE_PRESETS[name], STYLE_PREVIEWS[name]])
 
 
 def previews_dir(root, engine):

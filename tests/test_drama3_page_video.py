@@ -7,6 +7,7 @@ stills, and saving to Media renders with FFmpeg replaced.
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
@@ -111,7 +112,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(boot["default_style"], DEFAULT_STYLE)
         video = self.project()["video"]
         self.assertEqual((video["engine"], video["preset"], video["limit"], video["continuity"]),
-                         ("qwen", DEFAULT_STYLE, 2, True))
+                         ("qwen", DEFAULT_STYLE, 2, False))
         self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None})
         self.assertIsNone(video["latest"])
 
@@ -153,6 +154,8 @@ class Drama3PageVideoTests(unittest.TestCase):
             "video_continuity": False}))["video"]
         self.assertEqual((video["style"], video["preset"], video["limit"], video["engine"], video["continuity"]),
                          ("Oil paint, thick impasto", "Custom", 64, "flux3", False))
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_continuity": True}))
+        self.assertTrue(self.project()["video"]["continuity"])
 
     def test_subtitles_are_shown_by_default_and_their_size_is_kept_in_range(self):
         self.assertEqual(self.ok(self.client.get(f"{API}/boot"))["video"]["subtitle_sizes"], [50, 200, 10])
@@ -232,7 +235,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertIsNone(run["error"])
         self.assertEqual(run["status"], "Drew 2 images.")
         name, engine, style, limit, continuity, values = self.renders[-1]
-        self.assertEqual((name, engine, style, limit, continuity), (self.mix.name, "qwen", STYLE_PRESETS[DEFAULT_STYLE], 2, True))
+        self.assertEqual((name, engine, style, limit, continuity), (self.mix.name, "qwen", STYLE_PRESETS[DEFAULT_STYLE], 2, False))
         self.assertEqual(values, (8, -1))  # The Image tab's defaults until the studio hands its settings over.
         video = self.project()["video"]
         self.assertIsNone(video["latest"])  # Nothing is rendered until it is saved to Media.
@@ -244,6 +247,44 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual((still.status_code, still.headers["content-type"]), (200, "image/jpeg"))
         self.assertIn("immutable", still.headers["cache-control"])
         self.assertEqual(self.client.get(f"{API}/video/still", params={**NAME, "file": "../secret.jpg"}).status_code, 404)
+
+    def test_completed_images_are_served_while_the_next_shot_is_generating(self):
+        from PIL import Image
+
+        next_started, release = Event(), Event()
+        calls = []
+
+        def generate(*args):
+            index = len(calls)
+            calls.append(args)
+            if index:
+                next_started.set()
+                if not release.wait(5):
+                    raise RuntimeError("Timed out waiting for the intermediate-state check.")
+            path = self.root / f"progressive-{index}.png"
+            Image.new("RGB", (64, 36), "blue").save(path)
+            yield [str(path)], "Complete"
+
+        self.export.controller.generate = generate
+
+        def progressive(result_name, engine, style, limit, continuity, orientation, only, *values):
+            yield from visuals.draw_stills(self.export.controller, self.export.deps, result_name, engine,
+                                          style, limit, continuity, orientation, *values, only=json.loads(only))
+
+        self.export.generate = progressive
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        try:
+            self.assertTrue(next_started.wait(5))
+            project = self.project()
+            self.assertTrue(project["video_run"]["active"])
+            shots = project["video"]["stills"]["shots"]
+            self.assertEqual(len(shots), 1)
+            self.assertEqual(self.client.get(shots[0]["url"]).status_code, 200)
+        finally:
+            release.set()
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual(len(self.project()["video"]["stills"]["shots"]), 2)
 
     def test_drawing_again_replaces_the_stills(self):
         first = self.draw() and self.project()["video"]["stills"]

@@ -14,6 +14,7 @@ from h3_app.drama3.visual_plan import (compile_plan, expand_prompt, fill_tags, p
                                       subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
+from h3_app.provenance import write_snapshot
 from h3_ui.drama3.stage_video import latest_export
 from h3_ui.drama3.visuals import illustrate_shots, match_characters
 
@@ -40,6 +41,8 @@ class IllustratedMixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             names = ("p_mara", "p_jo", "d1", "f1", "d2", "d3", "f3")
             out = dict(zip(names, (png(tmp, n) for n in names)))
+            write_snapshot(out["f1"], {"family": "Qwen Image 2.1", "job_id": "match-1",
+                                       "settings": {"seed": 42, "effective_match_input_size": True}})
             controller = Mock()
             controller.generate.side_effect = [[([out[n]], "Complete")] for n in names]
             # Locations and props never become image inputs; only characters do.
@@ -61,9 +64,15 @@ class IllustratedMixTests(unittest.TestCase):
             # The drawn scene is the first input, so the edit keeps its composition.
             self.assertEqual(calls[3][3], [out["d1"], out["p_mara"], out["p_jo"]])
             self.assertEqual(calls[6][3], [out["d3"], out["p_mara"]])
+            self.assertIn("facial identity", calls[3][2])
+            self.assertEqual(records[0]["matching"]["prompt"], calls[3][2])
+            self.assertEqual(records[0]["matching"]["references"], ["d1.png", "p_mara.png", "p_jo.png"])
+            self.assertEqual(records[0]["matching"]["job_id"], "match-1")
+            self.assertEqual(records[0]["matching"]["effective_settings"]["seed"], 42)
             self.assertEqual(images, [out["f1"], out["d2"], out["f3"]])
             self.assertEqual([r["characters"] for r in records], [["mara", "jo"], [], ["mara"]])
-            self.assertEqual([r["draft"] for r in records], ["d1.png", None, "d3.png"])
+            self.assertEqual([Path(r["draft"]).name if r["draft"] else None for r in records],
+                             ["d1.png", None, "d3.png"])
             self.assertEqual(portraits, {"mara": "p_mara.png", "jo": "p_jo.png"})
 
     def test_match_prompt_keeps_the_scene_and_names_each_portrait(self):
@@ -78,13 +87,42 @@ class IllustratedMixTests(unittest.TestCase):
                 match_characters(controller, engine, "scene.png", {"mara": "m.png", "jo": "j.png"}, shot, {})
                 _, mode, prompt, paths, _ = controller.generate.call_args.args
                 self.assertEqual((mode, paths), ("Image edit", ["scene.png", "m.png", "j.png"]))
-                self.assertIn(f"{tags[0]} is the finished scene. Keep its composition", prompt)
-                self.assertIn(f"mara {tags[1]}: the same face, hairstyle and outfit.", prompt)
-                self.assertIn(f"jo {tags[2]}: the same face", prompt)
-                self.assertIn("Never add the references as extra figures", prompt)
-                # Tags sit inline after each matched name; a location gets no tag.
-                self.assertTrue(prompt.endswith(f"Scene: mara {tags[1]} (Mara, ochre coat) hugs jo {tags[2]} (Jo) "
-                                                "at station (old station)."))
+                self.assertTrue(prompt.startswith(f"In {tags[0]}, change only"))
+                self.assertIn(f"For Mara, ochre coat, use {tags[1]}", prompt)
+                self.assertIn(f"For Jo, use {tags[2]}", prompt)
+                self.assertIn("No added figures", prompt)
+                self.assertIn("level of surface detail unchanged", prompt)
+                # No unchanged scene narrative or style brief to trigger a full-frame repaint.
+                self.assertNotIn("old station", prompt)
+                self.assertNotIn("hugs", prompt)
+                self.assertNotIn("Scene:", prompt)
+
+    def test_qwen_identity_edit_preserves_source_size_without_changing_sampling(self):
+        from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
+        from h3_app.generation.qwen import resolve_qwen_output_dimensions
+        from h3_ui.drama3.visuals import character_match_request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            scene = str(Path(tmp) / "scene.png")
+            Image.new("RGB", (1664, 928)).save(scene)
+            captured = {"qwen__width": 1024, "qwen__height": 1024,
+                        "qwen__reference_resolution": 1024, "qwen__edit_size": QWEN_EDIT_SIZE_MANUAL,
+                        "qwen__output_resolution_1k": "a saved preset", "qwen__prompt_enhancer": "3B",
+                        "qwen__steps": 8, "qwen__cfg": 1.0, "qwen__cache_dtype": "default"}
+            before = dict(captured)
+            _, references, options = character_match_request("qwen", scene, {"mara": "m.png"},
+                                                             Shot(0, FPS, False, "Full scene"), captured)
+            self.assertEqual(captured, before)
+            self.assertEqual(references, [scene, "m.png"])
+            self.assertEqual(options["qwen__edit_size"], QWEN_EDIT_SIZE_MATCH)
+            self.assertEqual(options["qwen__reference_resolution"], 0)
+            self.assertEqual(options["qwen__prompt_enhancer"], "Off")
+            self.assertIsNone(options["qwen__output_resolution_1k"])
+            for name in ("steps", "cfg", "cache_dtype"):
+                self.assertEqual(options[f"qwen__{name}"], before[f"qwen__{name}"])
+            request = SimpleNamespace(width=1024, height=1024, max_resolution=False,
+                                      match_input_size=options["qwen__edit_size"] == QWEN_EDIT_SIZE_MATCH)
+            self.assertTrue(resolve_qwen_output_dimensions(request, (scene,), True)[2])
 
     def test_text_only_models_and_disabled_matching_draw_scenes_from_text(self):
         shot = Shot(0, FPS, False, "Street", references=("mara",))
@@ -131,11 +169,16 @@ class IllustratedMixTests(unittest.TestCase):
                                                [([out["f1"]], "Complete")], [(None, "Error: out of memory")]]
             with self.assertRaisesRegex(H3Error, "Shot 2 of 2"):
                 list(illustrate_shots(controller, "qwen", shots, {}, True, finished, PORTRAITS))
-            self.assertEqual(finished, {"portraits": {"mara": out["p_mara"]}, "shots": [out["f1"]]})
+            self.assertEqual(finished["portraits"], {"mara": out["p_mara"]})
+            self.assertEqual(finished["shots"], [out["f1"]])
+            first_details = finished["shot_details"][0]
+            self.assertEqual(first_details["draft"], out["d1"])
             controller = Mock()
             controller.generate.side_effect = [[([out["d2"]], "Complete")], [([out["f2"]], "Complete")]]
-            images, _, _ = drain(illustrate_shots(controller, "qwen", shots, {}, True, finished, PORTRAITS))
+            images, records, _ = drain(illustrate_shots(controller, "qwen", shots, {}, True, finished, PORTRAITS))
             self.assertEqual(images, [out["f1"], out["f2"]])
+            self.assertEqual(records[0]["draft"], out["d1"])
+            self.assertEqual(records[0]["matching"], first_details["matching"])
             # The resumed shot is still matched to the saved portrait.
             self.assertEqual(controller.generate.call_args.args[3], [out["d2"], out["p_mara"]])
 
@@ -187,8 +230,9 @@ class IllustratedMixTests(unittest.TestCase):
         tall, = compile_plan(plan, 4, "watercolor", 8, orientation="portrait")
         self.assertTrue(tall.prompt.startswith("Single vertical 9:16 illustration of one moment"))
         self.assertNotIn("Art style:", tall.prompt)
-        self.assertTrue(tall.prompt.endswith("\nwatercolor"))
-        self.assertEqual(tall.prompt.split("\n")[1], shot.prompt.split("\n")[1])
+        self.assertEqual(tall.prompt.split("\n")[1], "watercolor")
+        self.assertTrue(shot.prompt.index("watercolor") < shot.prompt.index("Low angle."))
+        self.assertEqual(tall.prompt.split("\n")[-1], shot.prompt.split("\n")[-1])
         portrait = sheet_prompt("characters", "mara", "Mara, cropped black hair", "ink", "")
         self.assertIn("Portrait of mara: Mara, cropped black hair", portrait)
         self.assertIn("Only this one view", portrait)
@@ -220,7 +264,7 @@ class IllustratedMixTests(unittest.TestCase):
             other = plan_shots_for(read_plan(mix), 3.0, "Oil paint", "portrait")
             self.assertNotIn("Art style: ink", other[0].prompt)
             self.assertTrue(other[0].prompt.startswith("Single vertical 9:16"))
-            self.assertTrue(other[0].prompt.endswith("Oil paint"))
+            self.assertTrue(other[0].prompt.index("Oil paint") < other[0].prompt.index("A door"))
             # The plan file is hidden, so it never shows up as a result beside the mix.
             self.assertEqual([p.name for p in Path(tmp).iterdir() if not p.name.startswith(".")], [])
 
@@ -291,13 +335,26 @@ class IllustratedMixTests(unittest.TestCase):
         for name in STYLE_PRESETS:
             prompt = preview_prompt(name)
             self.assertTrue(prompt.startswith("Single widescreen 16:9 illustration of one moment."))
-            self.assertTrue(prompt.endswith(STYLE_PRESETS[name]))
+            self.assertTrue(prompt.index(STYLE_PRESETS[name]) < prompt.index(STYLE_PREVIEWS[name]))
 
     def test_earlier_preset_wording_still_counts_as_the_preset(self):
-        from h3_ui.drama3.visuals import SETTING_DETAIL, STYLE_PRESETS, preset_for, reference_direction
+        from h3_ui.drama3.visuals import (SETTING_DETAIL, SLIDE_STYLES, STYLE_PRESETS, _PRESETS,
+                                          preset_for, reference_direction)
 
-        earlier = " Paint the setting" + SETTING_DETAIL.removeprefix(" Render the setting")
+        earlier = (" Paint the setting with the same finish and focus as the figures: legible architecture, "
+                   "objects and landscape, never a blurred, smeared or sketchy backdrop.")
         self.assertEqual(preset_for(STYLE_PRESETS["Anime"].replace(SETTING_DETAIL, earlier)), "Anime")
+        previous = earlier.replace(" Paint", " Render", 1)
+        # Refining a preset must not turn saved projects into Custom, including projects saved
+        # before either of the shared setting instructions changed. User additions stay Custom.
+        for _group, name, _use, _preview, original in _PRESETS:
+            suffixes = ("",) if name in SLIDE_STYLES else ("", earlier, previous, SETTING_DETAIL)
+            for suffix in suffixes:
+                with self.subTest(preset=name, setting=suffix):
+                    self.assertEqual(preset_for(original + suffix), name)
+            self.assertEqual(preset_for(original + " Use a muted autumn palette."), "Custom")
+        self.assertEqual(preset_for(STYLE_PRESETS["Anime"].replace(SETTING_DETAIL, previous)), "Anime")
+        self.assertNotIn(previous.strip(), reference_direction(STYLE_PRESETS["Anime"].replace(SETTING_DETAIL, previous)))
         manga = STYLE_PRESETS["Japanese comic"].replace(SETTING_DETAIL, earlier).replace(
             "gestures. One", "gestures. Full color throughout. One")
         self.assertEqual(preset_for(manga), "Japanese comic")

@@ -1,0 +1,225 @@
+{
+  "characters": {
+    "elena": "Elena, woman in her early thirties, sharp observant brown eyes and defined cheekbones, dark chestnut hair pulled into a neat low ponytail, lean athletic build, navy waterproof storm parka over a charcoal rib-knit sweater, tarnished brass marine compass clipped to her lapel",
+    "marcus": "Marcus, man in his mid-sixties, craggy weathered face with deep-set grey eyes and a thick salt-and-pepper beard, broad heavy-shouldered build, dark olive oilskin coat over a coarse cream fisherman sweater and heavy black rubber boots, faded rope scar across his right knuckles"
+  },
+  "props": {
+    "hand_lantern": "cylindrical storm lantern, heavy tarnished brass frame caging a thick clear glass globe around a warm amber flame, curved wire bail handle",
+    "console": "vintage maritime power console, sloped dark green steel cabinet, tarnished brass bezel housing a round glass gauge with a needle and tick marks without lettering, exposed copper induction coils",
+    "transceiver": "compact rugged marine radio unit, matte black cast-aluminum housing, perforated speaker grille, glowing amber indicator diode and coiled black handset cord",
+    "beacon_core": "towering lighthouse optical and acoustic assembly, concentric rings of clear faceted glass prisms set in a circular brass cage around a dark metallic sphere with sliding brass aperture blades"
+  },
+  "locations": {
+    "blackthorn_reef": "tall tapered grey granite lighthouse standing atop jagged black volcanic sea stacks, circular stone gallery and glass-enclosed crown, surrounded by churning white-capped dark ocean under torrential night storm clouds",
+    "watchroom": "circular lower lighthouse watchroom, curved rough-cut grey granite walls, heavy rusted iron entrance door, dark wide-plank timber floor, salt-streaked round porthole windows and mounted wooden equipment shelf, stormy night",
+    "gallery": "high exterior stone walkway wrapping the upper lighthouse shaft, slick wet granite parapet, black wrought-iron safety railing, narrow iron hatchway, lashed by torrential night rain and windblown sea spray",
+    "lantern_chamber": "vaulted circular upper lantern room at the lighthouse summit, tall diamond-paned storm glass walls framed in dark cast iron, wet grey flagstone floor, iron spiral stair landing, night storm raging outside",
+    "flooded_vault": "submerged stone cavern deep beneath the ocean reef, ancient barnacle-encrusted granite arches, massive sealed grey lead bulkhead doors, dark abyssal seawater filled with rising silver bubbles and soft teal bioluminescence"
+  },
+  "shots": [
+    {
+      "start": 0.0,
+      "transition": "cut",
+      "beat": "The dark lighthouse on Blackthorn Reef stands isolated against a ferocious night storm.",
+      "prompt": "A low-angle wide establishing shot gives the solitary tower a clear silhouette against a cold slate-blue storm, conveying isolation and dread. @blackthorn_reef(beacon crown dark and unlit) rises near the center above heavy ocean swells and pale breaking foam. A few diagonal rain bands cross the foreground. The tower and rock formations remain readable, while distant clouds and water merge into broader, lower-contrast shapes through the sea mist."
+    },
+    {
+      "start": 4.8,
+      "transition": "dissolve",
+      "beat": "Torrential rain hammers the dark glass crown of the lighthouse.",
+      "prompt": "An upward medium-wide shot frames the unlit crown against cold storm light, tightening the sense of exposure. At the summit of @blackthorn_reef(rain running down the glass crown, spray drifting past the upper walkway), dark window mullions divide broad reflective panes. Water gathers along the granite ledges in a few clear streams. The upper tower holds attention while clouds behind it recede into soft layers of mist and darkness."
+    },
+    {
+      "start": 8.5,
+      "transition": "cut",
+      "beat": "Elena forces the heavy iron watchroom door shut against the howling gale.",
+      "prompt": "An eye-level medium shot concentrates on Elena's effort at the doorway, cool light entering from outside and fading into interior shadow. @elena(wet hair against her cheek, both palms braced against the door, shoulder leaning forward) pushes the entrance of @watchroom(rain crossing the threshold) nearly shut. Her hands and expression are clear. Broad stone blocks, a single porthole and dark floorboards establish the room with restrained surface detail and gentle background separation."
+    },
+    {
+      "start": 11.6,
+      "transition": "cut",
+      "beat": "Marcus crosses the wet timber floor carrying his lit storm lantern.",
+      "prompt": "A low-angle medium shot centers Marcus approaching through the dim room, his lantern creating a small warm refuge within the cold storm light. @marcus(dripping coat, deliberate stride, solemn expression) crosses @watchroom(wooden floor damp beneath his boots), carrying @hand_lantern(steady amber flame) before his chest. A wooden shelf and a round window remain recognizable behind him. Broad reflections on the floor lead toward his figure without competing with his face or hands."
+    },
+    {
+      "start": 15.0,
+      "transition": "cut",
+      "beat": "Marcus sets his brass lantern down beside the vintage control console.",
+      "prompt": "A close medium shot focuses on Marcus's hand lowering the lantern beside the console, warm light creating a pause of quiet discovery. @marcus(scarred hand steady at the wire handle) sets @hand_lantern(amber flame illuminating the cabinet edge) beside @console(damp green housing) in @watchroom. The hand, handle and contact with the timber surface are clearly separated. Granite blocks and the wall shelf fall into subdued shadow, with small highlights reserved for the brass fittings."
+    },
+    {
+      "start": 18.04,
+      "transition": "cut",
+      "beat": "Elena leans toward the console, quietly amazed by the active voltmeter.",
+      "prompt": "An intimate medium close-up uses selective focus on Elena's gaze, warm side light balanced by the faint console glow. @elena(leaning forward, eyes widening, lips slightly parted) studies @console(round gauge faintly lit) beside @hand_lantern(steady warm flame) in @watchroom. Her cheek and hand carry the clearest detail. The curved stone wall and porthole remain recognizable as quiet shapes behind her, while a broad reflection softly describes her damp jacket shoulder."
+    },
+    {
+      "start": 20.84,
+      "transition": "cut",
+      "beat": "Despite decommissioning, the console gauge shows the main bus fully charged.",
+      "prompt": "A high-angle close-up makes the active gauge the unmistakable focal point, pale green dial light meeting a restrained amber reflection. @console(needle pinned at the upper end of its unlettered scale, exposed copper coils beside the dial) stands beside @hand_lantern(lit) in @watchroom. The bezel, needle and coil shapes are distinct. The cabinet edge leads into a subdued timber floor and stone wall, with peripheral switches and cables simplified into orderly shadow shapes."
+    },
+    {
+      "start": 27.6,
+      "transition": "cut",
+      "beat": "Marcus warns that the diesel generators were shut down thirty years ago.",
+      "prompt": "A low-angle medium shot gives Marcus's warning a heavy stillness, warm lantern light rising gently across his face with cool fill from the window. @marcus(brow furrowed, uneasy gaze directed toward Elena) stands beside @console(gauge lit) and @hand_lantern(steady flame) in @watchroom. @elena(listening in partial profile) occupies the edge of the same focal plane. The shelf and porthole sit behind them in quieter contrast, preserving the room's shape without distracting texture."
+    },
+    {
+      "start": 31.82,
+      "transition": "cut",
+      "beat": "Elena suddenly gasps and freezes as she senses movement beneath the floor.",
+      "prompt": "An eye-level close-up isolates Elena's sudden alarm, a cool glint in her eyes and a narrow warm rim along her cheek. @elena(breath caught, gaze dropping toward the floor, one hand halted mid-gesture) freezes beside @console(gauge glowing faintly) in @watchroom. The nearby @hand_lantern(lit) supplies the warm edge light. Her eyes and raised hand are clear; the porthole, shelf and curved masonry remain softly recognizable behind her rather than equally sharp."
+    },
+    {
+      "start": 37.42,
+      "transition": "cut",
+      "beat": "Elena kneels and feels the console casing breathing beneath the floorboards.",
+      "prompt": "A medium shot from near floor level centers Elena's listening posture, low amber light following the floorboards toward her hand. @elena(kneeling, bare palm pressed against the lower console casing, intent expression) feels @console(a small ring of droplets trembling on its base) in @watchroom. @marcus(standing just behind her, tense and still) watches beside @hand_lantern(lit). The casing, hand and nearest planks are distinct; the curved wall recedes into broad cool shadow."
+    },
+    {
+      "start": 43.0,
+      "transition": "cut",
+      "beat": "On the wall shelf, the marine transceiver suddenly crackles to life.",
+      "prompt": "A tight close-up draws attention to a single amber indicator on the radio, its small light interrupting the room's cool stillness. @transceiver(indicator suddenly bright, a few droplets resting on its grille) sits on the wooden shelf in @watchroom. The grille, housing and coiled cable remain cleanly separated. Behind them, the granite courses and a sliver of porthole provide location cues at reduced contrast, with moisture shown by sparse reflections rather than dense sparkle."
+    },
+    {
+      "start": 47.0,
+      "transition": "cut",
+      "beat": "Vance calls urgently over the radio as the storm front closes the channel.",
+      "prompt": "An eye-level medium shot captures both investigators turning toward the shelf, warm lantern light revealing their alert expressions against cool window light. @elena(rising, hand extended toward the radio) reaches for @transceiver(amber indicator lit) in @watchroom. @marcus(turning sharply beside her) looks toward the same point. @console(gauge lit) and @hand_lantern(resting nearby) remain secondary. Floorboards and curved masonry define a simple spatial path between the figures and the shelf, with background detail restrained."
+    },
+    {
+      "start": 53.02,
+      "transition": "cut",
+      "beat": "Elena answers Vance on the handset, reporting the active signal array.",
+      "prompt": "A medium close-up holds Elena and the handset in clear focus, a soft cool window light balanced by amber light from below. @elena(holding the coiled handset near her mouth, thumb on the talk switch, gaze intent) answers through @transceiver(indicator lit on the wall shelf) inside @watchroom. The cord makes one readable curve toward the unit. Behind her, a porthole and stone courses are gently softened, while @console(gauge dimly visible) sits lower in the room."
+    },
+    {
+      "start": 58.62,
+      "transition": "cut",
+      "beat": "Vance warns over static of a massive sonar spike directly under the reef.",
+      "prompt": "An eye-level medium two-shot holds their exchanged look of shock, warm light touching their faces within the cool watchroom. @elena(handset gripped tightly, eyes wide) faces @marcus(jaw clenched, stance braced) beside @transceiver(indicator lit) in @watchroom. A few concentric ripples disturb a shallow floor puddle. @hand_lantern(flame wavering) and @console(gauge lit) sit behind them. Keep both expressions readable while the shelf, stone wall and peripheral cables form a quieter surrounding space."
+    },
+    {
+      "start": 64.2,
+      "transition": "cut",
+      "beat": "Marcus snatches up his lantern as both rush to leave the watchroom.",
+      "prompt": "A low-angle medium shot captures the instant their hurried departure begins, the lantern making a broad warm pool across their path. @marcus(gripping the lantern handle, stepping urgently toward the stairwell) carries @hand_lantern(flame tilted) beside @elena(turning from the released handset toward the stairs) in @watchroom. @console(gauge lit) and @transceiver(handset cord hanging loose) remain behind them. The doorway is clearly framed by stone blocks; floor reflections are broad, with the figures' silhouettes separated from the shadows."
+    },
+    {
+      "start": 68.02,
+      "transition": "cut",
+      "beat": "They burst onto the outer stone gallery into gale-force spray and rain.",
+      "prompt": "A low-angle wide shot shows the pair emerging into the storm, their small warm lantern contrasting with cold blue-grey light and windblown spray. @elena(leaning into the gale, shielding her eyes) and @marcus(bracing the hatchway, coat lifted by the wind) step onto @gallery(walkway wet beneath them). @hand_lantern(dim amber flame) hangs from his hand. The railing and parapet define clear foreground shapes; the tower rises behind them while the distant sea fades into rain and mist."
+    },
+    {
+      "start": 75.36,
+      "transition": "cut",
+      "beat": "Marcus shouts over the wind, holding Elena fast at the iron railing.",
+      "prompt": "An eye-level medium two-shot stays close to their struggle, soft storm light revealing faces and hands through a passing band of spray. @marcus(one hand on the railing, the other holding Elena's arm, mouth open in a shout) steadies @elena(both hands gripping the rail, body leaning against the gusts) on @gallery. @hand_lantern(hooked over his wrist) casts a faint amber accent. The coping and iron bars remain solid and legible; the ocean below is a lower-contrast field of broad waves."
+    },
+    {
+      "start": 80.76,
+      "transition": "cut",
+      "beat": "Far below the gallery, the storm waves stand unnaturally still in a vast circle.",
+      "prompt": "A steep high-angle wide shot looks past the gallery edge toward an uncanny circle of still water, cold steel-blue light emphasizing the sudden geometric calm. At the base of @blackthorn_reef(tower surrounded by a broad ring of mirror-flat black sea), breaking waves stop at the ring's clean circular boundary. The wet coping and railing of @gallery occupy the near edge. Distinct rocks anchor the composition, while distant surf and rain simplify into larger bands of light and darkness."
+    },
+    {
+      "start": 86.5,
+      "transition": "dissolve",
+      "beat": "Beyond the white foam, a submerged bell tolls slowly through the darkness.",
+      "prompt": "A low wide shot near the water surface centers the unnatural calm beneath the reef, faint teal light hinting at something below. @blackthorn_reef(dark lighthouse and sea stacks receding through mist) stands beyond slow concentric ripples inside a surrounding band of breaking foam. A small submerged bronze glint lies beneath the black water. Keep the ripple pattern and boundary readable; the far tower, storm clouds and outer swells diminish in contrast, creating an eerie sense of depth."
+    },
+    {
+      "start": 93.0,
+      "transition": "cut",
+      "beat": "Elena and Marcus whip their heads upward as the lantern chamber comes alive.",
+      "prompt": "A steep low-angle medium two-shot catches their faces turned upward, unexpected cyan light spilling from above into the storm. @elena(pointing toward the crown, eyes wide) and @marcus(staring overhead, beard damp) stand on @gallery beside @hand_lantern(weak warm flame). Their faces and raised hand hold attention. The tower wall and iron railing remain clear nearby forms, while a few rain streaks cross the cyan light and the higher crown recedes into luminous mist."
+    },
+    {
+      "start": 96.9,
+      "transition": "cut",
+      "beat": "They enter the vaulted lantern chamber beneath the vibrating crystal prisms.",
+      "prompt": "A low-angle medium-wide shot reveals the towering core as they enter, cyan light creating broad geometric pools across the chamber. @beacon_core(one visibly cracked prism loose in its brass frame) rises centrally in @lantern_chamber. @elena(stepping off the stair landing, wary) and @marcus(entering behind her) carry @hand_lantern(faint amber flame) below it. The prism rings and figures remain clearly separated; iron window ribs structure the background while rain and the night sky form quiet, cool layers beyond the glass."
+    },
+    {
+      "start": 99.84,
+      "transition": "cut",
+      "beat": "The cracked crystal prism falls and shatters sharply across the stone floor.",
+      "prompt": "A low close-up freezes the instant a fallen prism breaks on the floor, a few cyan highlights marking the sharpest edges. Inside @lantern_chamber, the main crystal fragments spread across the nearest flagstones beneath @beacon_core(one empty prism slot). Only the lower legs of @elena(flinching back) and @marcus(boots stepping away) enter the frame. Focus rests on the impact and principal shards; the window base and farther stones soften gently, leaving clear gaps between reflections and fragments."
+    },
+    {
+      "start": 105.0,
+      "transition": "cut",
+      "beat": "The Aegis core confirms acoustic lock and recognizes the former keeper.",
+      "prompt": "A symmetrical eye-level medium shot centers the awakened assembly, steady cyan light replacing the earlier instability. @beacon_core(one empty prism slot, central dark sphere marked by a continuous cyan seam) stands in @lantern_chamber. Clear brass rings and glass prisms surround the sphere without obscuring it. A small grouping of broken crystal rests on the floor below. Iron uprights and tall windows establish the chamber's geometry, with the storm outside kept subdued and the cyan highlights carefully separated."
+    },
+    {
+      "start": 109.62,
+      "transition": "cut",
+      "beat": "Shaken, Marcus recognizes the voice of the sealed Aegis core.",
+      "prompt": "A medium close-up isolates Marcus's haunted disbelief, soft cyan light across his face and a weak amber edge below. @marcus(lips parted, eyes fixed ahead, shoulders lowered) stands in @lantern_chamber holding @hand_lantern(low flame) out of the main focal area. His expression and damp beard are readable without emphasizing every hair. The iron window mullions remain recognizable behind him through selective focus; a few floor shards catch muted light near the lower edge."
+    },
+    {
+      "start": 116.12,
+      "transition": "cut",
+      "beat": "Elena spins on Marcus, accusing him of knowing what was hidden below.",
+      "prompt": "An eye-level medium two-shot captures Elena confronting Marcus, cyan side light separating their profiles without making every surface glitter. @elena(turned squarely toward him, accusing gaze, shoulders tense) faces @marcus(recoiling slightly, guilt in his expression) beside @beacon_core(one empty prism slot, cyan seam lit) inside @lantern_chamber. Both faces share a clear focal plane. Broken crystal rests in a few visible groups on the floor, while the tall window ribs and rain beyond fall into quieter contrast."
+    },
+    {
+      "start": 119.54,
+      "transition": "cut",
+      "beat": "Heavy with regret, Marcus admits the beacon was not built to guide ships.",
+      "prompt": "A close medium two-shot favors Marcus's bowed face, muted cyan light balanced by the low warmth of his lantern. @marcus(eyes lowered, shoulders heavy, hand gripping the wire handle) holds @hand_lantern(small amber flame) beside @elena(listening in partial profile, anger easing) within @lantern_chamber. Their expressions and the handle remain distinct. A few broken shards are visible below; the window mullions and storm glass recede softly, keeping the moment intimate and sorrowful."
+    },
+    {
+      "start": 127.26,
+      "transition": "cut",
+      "beat": "Aegis opens the deep trench receiver to relay hydrophone channel zero.",
+      "prompt": "A low-angle close-up centers the opened mechanism, controlled cyan and teal light describing its circular layers. @beacon_core(one empty outer prism slot, brass aperture blades retracted around a luminous teal membrane) fills most of the frame inside @lantern_chamber. The aperture rim, blade overlaps and membrane are clearly separated, with reflections limited to a few broad arcs. Beyond the mechanism, ceiling ribs and rain-washed panes are gently out of focus, maintaining the chamber's structure without competing detail."
+    },
+    {
+      "start": 135.18,
+      "transition": "dissolve",
+      "beat": "The sound of the flooded vault far below the reef fills the chamber.",
+      "prompt": "A wide establishing shot opens into the submerged vault, broad teal light fading gradually into the dark water with solemn stillness. @flooded_vault(bulkhead doors firmly sealed, silver bubbles rising between the arches) stretches beyond a simple foreground of stone and seabed silt. A few anemones cling to the doorway and corroded hydrophone stanchions stand nearby. Keep the nearest arch and door structure readable; successive arches lose contrast through the water, with encrustation shown selectively rather than on every surface."
+    },
+    {
+      "start": 142.86,
+      "transition": "dissolve",
+      "beat": "A timeless voice from the deep speaks of keepers returning after three decades.",
+      "prompt": "A medium shot centers a submerged hydrophone mast before the bulkhead seam, delicate golden and teal light lending the dark vault an uncanny warmth. Within @flooded_vault(door seam now slightly parted), a few luminous ribbons curl around the mast as silver bubbles rise above it. Kelp fronds frame the lower edges without crossing the focal object. The mast and opening are clear, while stone courses and the far arch dissolve gradually into lower-contrast blue-green water."
+    },
+    {
+      "start": 150.44,
+      "transition": "dissolve",
+      "beat": "Elena whispers in awe, realizing the voice rises from beneath the rock.",
+      "prompt": "A high-angle medium close-up studies Elena's awed downward gaze, broad watery teal reflections moving gently across her face. @elena(eyes wide, lips parted in a whisper, shoulders still) looks toward the floor beside @beacon_core(open teal aperture, one empty prism slot) in @lantern_chamber. A few crystal fragments lie near her feet. Her expression and nearby floor shapes remain clear; the iron ribs and rain-streaked windows recede softly behind her, with reflections kept spacious and restrained."
+    },
+    {
+      "start": 155.16,
+      "transition": "dissolve",
+      "beat": "The voice reassures them it only held the memory Siobhan left in the deep.",
+      "prompt": "An eye-level medium two-shot holds Elena and Marcus together before the open core, warm gold and teal light softening their expressions. @elena(shoulders relaxed, quiet wonder) stands beside @marcus(eyes glistening, posture easing) with @hand_lantern(soft amber flame), facing @beacon_core(open aperture, one empty prism slot) in @lantern_chamber. The figures are clearly separated from the assembly. Window ribs and scattered floor fragments remain legible at lower contrast, with warm light spreading in broad, gentle transitions."
+    },
+    {
+      "start": 162.6,
+      "transition": "cut",
+      "beat": "Aegis completes the ignition sequence and brings the main beacon online.",
+      "prompt": "A low-angle medium-wide shot captures the ignition, white-gold light expanding from the core into the chamber with triumphant force. @beacon_core(central sphere blazing, one empty prism slot still visible) towers inside @lantern_chamber. @elena(shielding her brow) and @marcus(standing tall beside her) form clear silhouettes below it. Brass rings and the nearest prism edges retain their shape around the bright center. Roof struts, windows and a few floor shards receive broad reflected light, with peripheral detail subdued."
+    },
+    {
+      "start": 167.84,
+      "transition": "cut",
+      "beat": "A blinding white beam sweeps out across the storm, parting the dark sea.",
+      "prompt": "An elevated wide shot reveals the awakened lighthouse above the reef, a single white beam reaching across the dark sea with renewed purpose. @blackthorn_reef(crown brightly lit, surf beginning to settle) stands centrally among the sea stacks. The beam opens a clear path through thinning rain toward the distant horizon. Keep the tower, beam and nearby wave shapes distinct; farther swells and clouds fade through layers of silver-blue atmosphere, with brilliance concentrated at the crown."
+    },
+    {
+      "start": 175.5,
+      "transition": "dissolve",
+      "beat": "Marcus gazes out at the lit horizon in quiet wonder and relief.",
+      "prompt": "A medium two-shot closes on their quiet relief, gentle white-gold light wrapping their faces as they look toward the horizon. @marcus(smiling faintly, eyes softened) holds @hand_lantern(small amber flame) beside @elena(serene, gaze directed out to sea) within @lantern_chamber. @beacon_core(steady white-gold light) glows behind them, subdued at the frame's edge. Through the windows, a pale path crosses the calmer water. Window ribs and a few floor shards remain recognizable, while the distant horizon softens into luminous air."
+    }
+  ]
+}

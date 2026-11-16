@@ -300,6 +300,13 @@ export function startWorkspace() {
     const hadStills = state.project.video?.stills?.revision;
     state.videoRun = project.video_run;
     reconcile(project);
+    if (project.video?.stills?.revision !== hadStills && project.video?.stills?.shots?.length) {
+      loadVideoSource();
+      if (before?.kind === "draw") setMediaMode("video");
+      renderSteps();
+      renderPlayer();
+      sync();
+    }
     if (project.video_run?.active) { renderVideo(); renderActions(); again(); return; }
     if (before?.active) {
       toastEnded(project.video_run);

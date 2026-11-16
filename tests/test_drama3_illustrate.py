@@ -116,6 +116,27 @@ class StillsTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in folder.glob("*.*") if path.suffix != ".json"),
                          sorted([second["shots"][0]["image"], "portrait-abc.png"]))
 
+    def test_matching_draft_and_request_survive_partial_redraw_without_recompression(self):
+        shot = Shot(0, FPS, False, "one")
+        draft, final = self.png("draft", "blue"), self.png("final")
+        matching = {"prompt": "Change only the face.", "references": [draft.name, "portrait.png"],
+                    "settings": {"reference_resolution": 0, "steps": 8}}
+        visuals.keep_stills(self.audio, self.root, [shot], [final], {},
+                            extras=[{"draft": str(draft), "characters": ["mia"], "matching": matching}])
+        folder = visuals.stills_dir(self.audio, self.root)
+        first = visuals.read_stills(self.audio, self.root)["shots"][0]
+        old_draft = folder / first["draft"]
+        self.assertEqual(old_draft.read_bytes(), draft.read_bytes())
+        self.assertEqual(first["matching"], matching)
+        # Keeping this shot while another is drawn must retain both its before-image and request.
+        extras = {key: first[key] for key in ("draft", "characters", "matching")}
+        visuals.keep_stills(self.audio, self.root, [shot], [folder / first["image"]], {}, extras=[extras])
+        second = visuals.read_stills(self.audio, self.root)["shots"][0]
+        self.assertEqual((folder / second["draft"]).read_bytes(), draft.read_bytes())
+        self.assertEqual(second["matching"], matching)
+        self.assertEqual(second["draft"], first["draft"])
+        self.assertTrue(old_draft.exists())
+
     def test_a_new_transition_applies_to_kept_stills_without_redrawing(self):
         shots = [Shot(0, FPS, False, "one"), Shot(FPS, FPS, True, "two")]
         visuals.keep_stills(self.audio, self.root, shots, [self.png("a"), self.png("b")], {})
@@ -180,6 +201,54 @@ class StillsTests(unittest.TestCase):
                                   only="all"))
         self.assertEqual([call.args[1] for call in controller.generate.call_args_list], modes)
         json.dumps(second)  # the record stays plain JSON
+
+    def test_each_completed_shot_is_published_before_the_next_generation(self):
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        deps = SimpleNamespace(resolve_result=lambda name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        controller = Mock(fields={})
+        made = []
+
+        def generate(*args):
+            if made:
+                record = visuals.read_stills(self.audio, self.root)
+                self.assertEqual(len(record["shots"]), len(made))
+                folder = visuals.stills_dir(self.audio, self.root)
+                self.assertTrue(all((folder / row["image"]).is_file() for row in record["shots"]))
+            path = self.png(f"progress-{len(made)}")
+            made.append(path)
+            return [([str(path)], "Complete")]
+
+        controller.generate.side_effect = generate
+        updates = list(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3,
+                                          False, "landscape"))
+        ready = [value for value, status in updates if status.endswith(" · Ready")]
+        self.assertEqual(len(ready), 3)
+        self.assertEqual(len(visuals.read_stills(self.audio, self.root)["shots"]), 3)
+
+    def test_failed_redraw_keeps_completed_shot_and_previous_undrawn_images(self):
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        shots = visuals.plan_shots_for(visuals.read_plan(self.audio), 4.0, "comic")
+        old_images = [self.png(f"old-{i}", "blue") for i in range(3)]
+        visuals.keep_stills(self.audio, self.root, shots, old_images, {})
+        before = visuals.read_stills(self.audio, self.root)
+        deps = SimpleNamespace(resolve_result=lambda name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        controller = Mock(fields={})
+        controller.generate.side_effect = [[([str(self.png("new"))], "Complete")],
+                                           [(None, "Error: interrupted")]]
+        with self.assertRaisesRegex(H3Error, "interrupted"):
+            drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3,
+                                     False, "landscape"))
+        after = visuals.read_stills(self.audio, self.root)
+        self.assertNotEqual(after["revision"], before["revision"])
+        self.assertNotEqual(after["shots"][0]["image"], before["shots"][0]["image"])
+        self.assertEqual([row["image"] for row in after["shots"][1:]],
+                         [row["image"] for row in before["shots"][1:]])
+        folder = visuals.stills_dir(self.audio, self.root)
+        self.assertTrue(all((folder / row["image"]).is_file() for row in after["shots"]))
 
 
 if __name__ == "__main__":

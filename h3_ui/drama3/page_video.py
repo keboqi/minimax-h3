@@ -52,7 +52,7 @@ def video_settings(data: dict, engines: list) -> dict:
     limit = int(data.get("video_limit") or 16)
     return {"engine": engine, "style": style, "preset": visuals.preset_for(style), "limit": limit,
             "orientation": visuals.orientation_of(data.get("video_orientation")),
-            "continuity": data.get("video_continuity") is not False,
+            "continuity": data.get("video_continuity") is True,
             "subtitles": data.get("video_subtitles") is not False,
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 

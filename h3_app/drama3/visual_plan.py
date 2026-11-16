@@ -144,8 +144,8 @@ def sheet_prompt(kind, key, anchor, art_style, art_direction):
     }[kind]
     backdrop = "" if kind == "locations" else " Plain light grey background, even soft lighting."
     return "\n".join(filter(None, [
-        f"{body}{backdrop} No text, labels or captions.", f"Art style: {art_style}" if art_style else None,
-        art_direction]))
+        f"Art style: {art_style}" if art_style else None, art_direction,
+        f"{body}{backdrop} No text, labels or captions."]))
 
 
 def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape", art_style=None):
@@ -177,8 +177,11 @@ def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape
         if not mentioned:
             scene = "\n".join([scene, *(f"{key} ({known[key][1]})" for key in references)])
             tagged = "\n".join([tagged, *(f"{key}⟦{key}⟧ ({known[key][1]})" for key in references)])
-        prompt = "\n".join(filter(None, [frame_line(orientation), scene,
-                                          f"Art style: {art_style}" if art_style else None, art_direction]))
+        # Establish the depiction before material-rich scene text, and use the same rendering
+        # direction for the whole frame rather than treating style as a trailing qualifier.
+        prompt = "\n".join(filter(None, [frame_line(orientation),
+                                          f"Art style: {art_style}" if art_style else None, art_direction,
+                                          scene]))
         frames = end - first
         dissolve = first > 0 and frames > 1 and row["transition"] == "dissolve"
         shots.append(Shot(first, frames, dissolve, prompt, row["beat"], references, tagged))
