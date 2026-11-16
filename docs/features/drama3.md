@@ -146,7 +146,7 @@ the server for nothing. The page reads each project's mix and only that mix's ta
 they slide along the mix in the same player Mix & review uses, which moves to the top of whichever of
 the two steps is open, and a 720p MP4 is rendered only when you save it to Media. Mix & review keeps
 a short Illustrated video card that opens the step. Its **How it's drawn** panel holds the **Image
-model**, a **Style preset** (which fills **Art direction**; editing it makes the preset Custom),
+model**, a **Style** (a preset that fills **Art direction**; editing it makes the style Custom),
 **Minimum shots** and **Keep characters consistent**; the action bar's **Plan shots** plans. New
 projects default to Digital painting. The 16 presets are grouped by use: **Drama & fiction**
 (Digital painting for any genre, Realistic photo for grounded drama and crime, American comic for
@@ -155,10 +155,12 @@ Chinese myth, Watercolor for gentle slice of life), **Anime, manga & games** (An
 Pixel art), **Kids & family** (Children's book, 2D cartoon, 3D animation) and **Explainers & slides**
 (Flat illustration for training, Isometric illustration for systems and processes, Minimal vector
 for keynotes, Editorial illustration for commentary); the slide presets leave space for text to be
-added later and do not generate labels or data. The panel shows what the selected preset is for and
-its preview with the selected Image model. **Draw preview** draws the preset's own sample scene (with
-faces, hands and a finished setting typical of its use), and **Compare styles** lists every preset
-with its preview, where a card picks the preset and **Draw missing previews** draws the rest. Previews
+added later and do not generate labels or data. The Style field shows the current preset with
+its preview for the selected Image model and what it is for; clicking it opens **Choose a style**, a
+window listing every preset by use with a large preview. A card picks that preset; one without a
+preview has **Draw preview**, which draws the preset's own sample scene (with faces, hands and a
+finished setting typical of its use), and **Draw missing previews** draws every one still missing in
+one run, which **Interrupt** there stops. Previews
 run on the usual GPU job path with the Image tab's settings, are kept per image model under
 `.soundstage/style_previews/` for every project, and are drawn again only when a preset's prompt
 changes. Presets describe rendering and materials, while the planner adapts

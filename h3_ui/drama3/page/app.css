@@ -565,24 +565,38 @@ button.step:hover { background: var(--raised); }
 .drawn-settings-head { display: flex; flex-direction: column; gap: 2px; }
 .drawn-settings-head h2 { margin: 0; font-size: 16px; }
 .drawn-settings .btn-small { align-self: flex-start; }
-.style-preview { margin: -6px 0 0; display: flex; flex-direction: column; gap: 6px; }
-.style-preview img, .style-preview-empty { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 9px; background: var(--lane); object-fit: cover; }
-.style-preview-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 12px;
-  box-sizing: border-box; border: 1.5px dashed var(--line); background: transparent; color: var(--muted); font-size: 13px; text-align: center; }
-.drawn-settings .style-preview-empty .btn-small { align-self: center; }
-.style-use { margin: 0; }
-.style-group { display: flex; flex-direction: column; gap: 8px; }
-.style-group h3 { margin: 4px 0 0; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 8px; }
-.style-card { display: flex; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--line); border-radius: 10px;
+.style-current { display: flex; gap: 12px; align-items: center; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
-.style-card:hover:not(:disabled) { background: var(--raised); }
-.style-card[aria-pressed="true"] { background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); }
-.style-card:disabled { cursor: default; opacity: .7; }
-.style-thumb { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--lane); }
+.style-current:hover:not(:disabled) { background: var(--raised); border-color: var(--accent); }
+.style-current:disabled { cursor: default; opacity: .7; }
+.style-current .style-thumb { flex: 0 0 120px; }
+.style-current-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.style-change { margin-top: 2px; font-size: 13px; font-weight: 650; color: var(--accent); }
+.style-thumb { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 7px; overflow: hidden; background: var(--lane); }
 .style-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.style-name { font-size: 13px; font-weight: 650; }
-.style-card .small { font-size: 12px; line-height: 1.35; }
+.style-thumb-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 6px; box-sizing: border-box;
+  border: 1.5px dashed var(--line); background: transparent; color: var(--muted); font-size: 12px; text-align: center; }
+.style-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 650; }
+.style-dialog { width: min(1180px, calc(100% - 32px)); max-height: calc(100vh - 48px); padding: 0; display: none; }
+.style-dialog[open] { display: flex; flex-direction: column; }
+.style-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 280px; }
+.style-head-text h2 { margin: 0; font-size: 17px; }
+.style-head-text + .spacer { display: none; }
+.style-body { display: flex; flex-direction: column; gap: 20px; padding: 16px 18px 22px; overflow: auto; }
+.style-group { display: flex; flex-direction: column; gap: 10px; }
+.style-group h3 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 14px; }
+.style-card { position: relative; display: flex; flex-direction: column-reverse; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.style-card:hover { border-color: var(--accent); }
+.style-card[aria-current="true"] { background: var(--selected); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.style-pick { display: flex; flex-direction: column; gap: 3px; padding: 0 2px 2px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+/* The whole card picks the style; the thumbnail's own Draw preview button sits above that. */
+.style-pick::after { content: ""; position: absolute; inset: 0; border-radius: 12px; }
+.style-pick:disabled { cursor: default; }
+.style-pick:focus-visible { outline: none; }
+.style-card:has(.style-pick:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.style-card .style-thumb .btn { position: relative; z-index: 1; }
+.style-pick .small { font-size: 12.5px; line-height: 1.4; }
 .looks { display: flex; flex-direction: column; gap: 22px; padding: 18px; }
 .looks-group { display: flex; flex-direction: column; gap: 10px; }
 .looks-group h3 { margin: 0; font-size: 15px; }

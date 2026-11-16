@@ -106,6 +106,17 @@ class ImageLibraryTests(unittest.TestCase):
                 # Each queued image lands once.
                 self.assertTrue(all(value == skip for value in apply("alice").values()))
 
+    def test_pending_set_as_with_only_a_status_output_returns_one_value(self):
+        with gr.Blocks() as demo:
+            create = gr.Tab("Create")
+            view = SimpleNamespace(actions=gr.Column(), mode=gr.Radio(["Image", "Video"]), selected=gr.State(None))
+            build_media_image_destinations(view, {}, validate_path=Mock(),
+                                           page_targets={"Song": lambda owner, path: "Added."}, apply_on=[create.select])
+        block = next(fn for fn in demo.fns.values() if fn.fn.__name__ == "apply_pending")
+        self.assertEqual(len(block.outputs), 1)
+        with patch("h3_ui.job_admission.require_owner", side_effect=lambda request: request):
+            self.assertEqual(block.fn("bob"), gr.skip())
+
     def test_select_original_and_append_without_replacing_uploads(self):
         with TemporaryDirectory() as directory:
             source = str(Path(directory) / "original.png")

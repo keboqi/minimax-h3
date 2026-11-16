@@ -27,7 +27,7 @@ export function startWorkspace() {
   const state = {boot: null, project: null, picked: 0, filter: "all", run: null, busy: false,
                  screen: "script", saving: null, writing: false, writerResult: null,
                  estimate: null, estimateTimer: null, castRun: null, castPick: null, castSource: null,
-                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all", styleGalleryOpen: false};
+                 videoRun: null, mediaMode: "audio", shotPick: 0, illustrateView: "shots", shotFilter: "all"};
   const SCREENS = ["script", "cast", "mix", "illustrate"];
   // The steps that show the mix player; it moves to whichever of them is open.
   const PLAYER_SCREENS = ["mix", "illustrate"];

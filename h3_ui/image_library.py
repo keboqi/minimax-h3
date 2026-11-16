@@ -316,8 +316,10 @@ def build_media_image_destinations(view, destinations, *, validate_path, page_ta
                     values[targets.index(component)] = update["value"]
                 elif shown is not None and component is shown:
                     values[-1] = update
-        # One value per output: Gradio reads an empty dict as a single value, not as "nothing changed".
-        return [updates.get(component, gr.skip()) for component in outputs]
+        # One value per output: Gradio reads an empty dict as a single value, not as "nothing changed",
+        # and a single output takes the value itself, never a one-item list.
+        answer = [updates.get(component, gr.skip()) for component in outputs]
+        return answer[0] if len(answer) == 1 else answer
 
     for trigger in apply_on:
         trigger(apply_pending, inputs=target_inputs, outputs=outputs, queue=True, concurrency_id="h3-settings",
