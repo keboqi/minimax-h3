@@ -21,13 +21,13 @@
       "start": 0.0,
       "transition": "cut",
       "beat": "The dark lighthouse on Blackthorn Reef stands isolated against a ferocious night storm.",
-      "prompt": "A low-angle wide establishing shot gives the solitary tower a clear silhouette against a cold slate-blue storm, conveying isolation and dread. @blackthorn_reef(beacon crown dark and unlit) rises near the center above heavy ocean swells and pale breaking foam. A few diagonal rain bands cross the foreground. The tower and rock formations remain readable, while distant clouds and water merge into broader, lower-contrast shapes through the sea mist."
+      "prompt": "A low-angle wide establishing shot gives the solitary tower a clear silhouette against a cold slate-blue storm, conveying isolation and dread. @blackthorn_reef(beacon crown dark and unlit) rises near the center above heavy ocean swells and pale breaking foam. A few diagonal rain bands cross the foreground. The tower and rock formations remain readable, while distant clouds and water merge into broader, lower-contrast shapes through the sea mist. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 4.8,
       "transition": "dissolve",
       "beat": "Torrential rain hammers the dark glass crown of the lighthouse.",
-      "prompt": "An upward medium-wide shot frames the unlit crown against cold storm light, tightening the sense of exposure. At the summit of @blackthorn_reef(rain running down the glass crown, spray drifting past the upper walkway), dark window mullions divide broad reflective panes. Water gathers along the granite ledges in a few clear streams. The upper tower holds attention while clouds behind it recede into soft layers of mist and darkness."
+      "prompt": "An upward medium-wide shot frames the unlit crown against cold storm light, tightening the sense of exposure. At the summit of @blackthorn_reef(rain running down the glass crown, spray drifting past the upper walkway), dark window mullions divide broad reflective panes. Water gathers along the granite ledges in a few clear streams. The upper tower holds attention while clouds behind it recede into soft layers of mist and darkness. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 8.5,
@@ -57,7 +57,7 @@
       "start": 20.84,
       "transition": "cut",
       "beat": "Despite decommissioning, the console gauge shows the main bus fully charged.",
-      "prompt": "A high-angle close-up makes the active gauge the unmistakable focal point, pale green dial light meeting a restrained amber reflection. @console(needle pinned at the upper end of its unlettered scale, exposed copper coils beside the dial) stands beside @hand_lantern(lit) in @watchroom. The bezel, needle and coil shapes are distinct. The cabinet edge leads into a subdued timber floor and stone wall, with peripheral switches and cables simplified into orderly shadow shapes."
+      "prompt": "A high-angle close-up makes the active gauge the unmistakable focal point, pale green dial light meeting a restrained amber reflection. @console(needle pinned at the upper end of its unlettered scale, exposed copper coils beside the dial) stands beside @hand_lantern(lit) in @watchroom. The bezel, needle and coil shapes are distinct. The cabinet edge leads into a subdued timber floor and stone wall, with peripheral switches and cables simplified into orderly shadow shapes. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 27.6,
@@ -81,7 +81,7 @@
       "start": 43.0,
       "transition": "cut",
       "beat": "On the wall shelf, the marine transceiver suddenly crackles to life.",
-      "prompt": "A tight close-up draws attention to a single amber indicator on the radio, its small light interrupting the room's cool stillness. @transceiver(indicator suddenly bright, a few droplets resting on its grille) sits on the wooden shelf in @watchroom. The grille, housing and coiled cable remain cleanly separated. Behind them, the granite courses and a sliver of porthole provide location cues at reduced contrast, with moisture shown by sparse reflections rather than dense sparkle."
+      "prompt": "A tight close-up draws attention to a single amber indicator on the radio, its small light interrupting the room's cool stillness. @transceiver(indicator suddenly bright, a few droplets resting on its grille) sits on the wooden shelf in @watchroom. The grille, housing and coiled cable remain cleanly separated. Behind them, the granite courses and a sliver of porthole provide location cues at reduced contrast, with moisture shown by sparse reflections rather than dense sparkle. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 47.0,
@@ -123,13 +123,13 @@
       "start": 80.76,
       "transition": "cut",
       "beat": "Far below the gallery, the storm waves stand unnaturally still in a vast circle.",
-      "prompt": "A steep high-angle wide shot looks past the gallery edge toward an uncanny circle of still water, cold steel-blue light emphasizing the sudden geometric calm. At the base of @blackthorn_reef(tower surrounded by a broad ring of mirror-flat black sea), breaking waves stop at the ring's clean circular boundary. The wet coping and railing of @gallery occupy the near edge. Distinct rocks anchor the composition, while distant surf and rain simplify into larger bands of light and darkness."
+      "prompt": "A steep high-angle wide shot looks past the gallery edge toward an uncanny circle of still water, cold steel-blue light emphasizing the sudden geometric calm. At the base of @blackthorn_reef(tower surrounded by a broad ring of mirror-flat black sea), breaking waves stop at the ring's clean circular boundary. The wet coping and railing of @gallery occupy the near edge. Distinct rocks anchor the composition, while distant surf and rain simplify into larger bands of light and darkness. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 86.5,
       "transition": "dissolve",
       "beat": "Beyond the white foam, a submerged bell tolls slowly through the darkness.",
-      "prompt": "A low wide shot near the water surface centers the unnatural calm beneath the reef, faint teal light hinting at something below. @blackthorn_reef(dark lighthouse and sea stacks receding through mist) stands beyond slow concentric ripples inside a surrounding band of breaking foam. A small submerged bronze glint lies beneath the black water. Keep the ripple pattern and boundary readable; the far tower, storm clouds and outer swells diminish in contrast, creating an eerie sense of depth."
+      "prompt": "A low wide shot near the water surface centers the unnatural calm beneath the reef, faint teal light hinting at something below. @blackthorn_reef(dark lighthouse and sea stacks receding through mist) stands beyond slow concentric ripples inside a surrounding band of breaking foam. A small submerged bronze glint lies beneath the black water. Keep the ripple pattern and boundary readable; the far tower, storm clouds and outer swells diminish in contrast, creating an eerie sense of depth. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 93.0,
@@ -153,7 +153,7 @@
       "start": 105.0,
       "transition": "cut",
       "beat": "The Aegis core confirms acoustic lock and recognizes the former keeper.",
-      "prompt": "A symmetrical eye-level medium shot centers the awakened assembly, steady cyan light replacing the earlier instability. @beacon_core(one empty prism slot, central dark sphere marked by a continuous cyan seam) stands in @lantern_chamber. Clear brass rings and glass prisms surround the sphere without obscuring it. A small grouping of broken crystal rests on the floor below. Iron uprights and tall windows establish the chamber's geometry, with the storm outside kept subdued and the cyan highlights carefully separated."
+      "prompt": "A symmetrical eye-level medium shot centers the awakened assembly, steady cyan light replacing the earlier instability. @beacon_core(one empty prism slot, central dark sphere marked by a continuous cyan seam) stands in @lantern_chamber. Clear brass rings and glass prisms surround the sphere without obscuring it. A small grouping of broken crystal rests on the floor below. Iron uprights and tall windows establish the chamber's geometry, with the storm outside kept subdued and the cyan highlights carefully separated. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 109.62,
@@ -177,19 +177,19 @@
       "start": 127.26,
       "transition": "cut",
       "beat": "Aegis opens the deep trench receiver to relay hydrophone channel zero.",
-      "prompt": "A low-angle close-up centers the opened mechanism, controlled cyan and teal light describing its circular layers. @beacon_core(one empty outer prism slot, brass aperture blades retracted around a luminous teal membrane) fills most of the frame inside @lantern_chamber. The aperture rim, blade overlaps and membrane are clearly separated, with reflections limited to a few broad arcs. Beyond the mechanism, ceiling ribs and rain-washed panes are gently out of focus, maintaining the chamber's structure without competing detail."
+      "prompt": "A low-angle close-up centers the opened mechanism, controlled cyan and teal light describing its circular layers. @beacon_core(one empty outer prism slot, brass aperture blades retracted around a luminous teal membrane) fills most of the frame inside @lantern_chamber. The aperture rim, blade overlaps and membrane are clearly separated, with reflections limited to a few broad arcs. Beyond the mechanism, ceiling ribs and rain-washed panes are gently out of focus, maintaining the chamber's structure without competing detail. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 135.18,
       "transition": "dissolve",
       "beat": "The sound of the flooded vault far below the reef fills the chamber.",
-      "prompt": "A wide establishing shot opens into the submerged vault, broad teal light fading gradually into the dark water with solemn stillness. @flooded_vault(bulkhead doors firmly sealed, silver bubbles rising between the arches) stretches beyond a simple foreground of stone and seabed silt. A few anemones cling to the doorway and corroded hydrophone stanchions stand nearby. Keep the nearest arch and door structure readable; successive arches lose contrast through the water, with encrustation shown selectively rather than on every surface."
+      "prompt": "A wide establishing shot opens into the submerged vault, broad teal light fading gradually into the dark water with solemn stillness. @flooded_vault(bulkhead doors firmly sealed, silver bubbles rising between the arches) stretches beyond a simple foreground of stone and seabed silt. A few anemones cling to the doorway and corroded hydrophone stanchions stand nearby. Keep the nearest arch and door structure readable; successive arches lose contrast through the water, with encrustation shown selectively rather than on every surface. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 142.86,
       "transition": "dissolve",
       "beat": "A timeless voice from the deep speaks of keepers returning after three decades.",
-      "prompt": "A medium shot centers a submerged hydrophone mast before the bulkhead seam, delicate golden and teal light lending the dark vault an uncanny warmth. Within @flooded_vault(door seam now slightly parted), a few luminous ribbons curl around the mast as silver bubbles rise above it. Kelp fronds frame the lower edges without crossing the focal object. The mast and opening are clear, while stone courses and the far arch dissolve gradually into lower-contrast blue-green water."
+      "prompt": "A medium shot centers a submerged hydrophone mast before the bulkhead seam, delicate golden and teal light lending the dark vault an uncanny warmth. Within @flooded_vault(door seam now slightly parted), a few luminous ribbons curl around the mast as silver bubbles rise above it. Kelp fronds frame the lower edges without crossing the focal object. The mast and opening are clear, while stone courses and the far arch dissolve gradually into lower-contrast blue-green water. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 150.44,
@@ -213,7 +213,7 @@
       "start": 167.84,
       "transition": "cut",
       "beat": "A blinding white beam sweeps out across the storm, parting the dark sea.",
-      "prompt": "An elevated wide shot reveals the awakened lighthouse above the reef, a single white beam reaching across the dark sea with renewed purpose. @blackthorn_reef(crown brightly lit, surf beginning to settle) stands centrally among the sea stacks. The beam opens a clear path through thinning rain toward the distant horizon. Keep the tower, beam and nearby wave shapes distinct; farther swells and clouds fade through layers of silver-blue atmosphere, with brilliance concentrated at the crown."
+      "prompt": "An elevated wide shot reveals the awakened lighthouse above the reef, a single white beam reaching across the dark sea with renewed purpose. @blackthorn_reef(crown brightly lit, surf beginning to settle) stands centrally among the sea stacks. The beam opens a clear path through thinning rain toward the distant horizon. Keep the tower, beam and nearby wave shapes distinct; farther swells and clouds fade through layers of silver-blue atmosphere, with brilliance concentrated at the crown. The frame contains only the described objects and setting; no people, faces, hands, human silhouettes or human reflections are visible."
     },
     {
       "start": 175.5,

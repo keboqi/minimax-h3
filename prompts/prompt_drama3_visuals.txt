@@ -54,6 +54,13 @@ visible in this image, because each character mentioned is matched to their port
 location with its @key too. Follow the story through time: a wet coat, a lamp going out, a broken
 window stays broken.
 
+Make the intended presence of people explicit. For an object-only insert, an instrument close-up,
+an empty interior or an unoccupied landscape, say that the frame contains only the described
+objects or setting, with no people, faces, hands, human silhouettes or human reflections visible.
+Do not invent someone operating or watching an object to make it feel dramatic. If a hand, body
+part, unnamed person or crowd is intentionally visible, describe that presence instead; an absent
+character tag by itself is not an instruction to exclude people.
+
 Give every shot a finished setting, not a vague backdrop: name at least two or three specific
 background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
 their material, color and light. Keep their structure coherent and recognizable while giving the
