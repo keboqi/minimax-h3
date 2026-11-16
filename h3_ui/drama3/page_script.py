@@ -43,7 +43,11 @@ WORKFLOW_NOTES = {
     writer.DRAMA3_WORKFLOWS[1]: "Short steps, so small, fast models can manage.",
     writer.DRAMA3_WORKFLOWS[2]: "Plans the story, then writes scene by scene.",
 }
-EXAMPLES = (("en", "Example story"), ("zh", "Chinese example (中文)"), ("zh-latest", "示例三：雨巷里的末班广播"))
+EXAMPLES = (
+    ("en", "Example 1: The Beacon of Blackthorn Reef"),
+    ("zh", "示例二：昆仑墟底的回响"),
+    ("zh-latest", "示例三：雨巷里的末班广播"),
+)
 
 def writer_source(data: dict) -> dict:
     """Inputs owned by the writer; unrelated generated clips/settings may merge."""

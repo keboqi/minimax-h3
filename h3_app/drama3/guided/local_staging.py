@@ -273,7 +273,12 @@ def localize_existing_cues(script: str) -> str:
                 a -= 1
             while b + 1 < len(leaves) and passage_key(leaves[b + 1]) == passage_key(leaves[b]):
                 b += 1
-            if a == 0 and b == len(leaves) - 1:
+            first_child = next(i for i, child in enumerate(sequence.children) if _path(child, leaves[a].uid))
+            last_child = next(i for i, child in enumerate(sequence.children) if _path(child, leaves[b].uid))
+            if (a == 0 and b == len(leaves) - 1) or (
+                first_child == 0 and last_child == len(sequence.children) - 1
+                and (first_child != last_child or sequence.children[0].opening.casefold().startswith('<parallel'))
+            ):
                 continue  # already the smallest useful speech span; remain idempotent
 
             def format_sound(number, end_number, raw=child.raw, has_end=bool(sound.end_anchor)):

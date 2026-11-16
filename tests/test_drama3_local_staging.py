@@ -238,6 +238,34 @@ class LocalStagingTests(unittest.TestCase):
         self.assertEqual([turn.text for turn in turns(scope)], ['Open the door.'])
         self.assertLess(script.index('<|speaker:1|> Wait here.'), script.index('name="hit"'))
 
+    def test_localize_is_idempotent_when_music_span_ends_on_a_reaction_block(self):
+        from pathlib import Path
+        from h3_app.drama3.guided.local_staging import localize_existing_cues
+
+        script = (
+            '<parallel>\n'
+            '<sound name="score" loop="true" anchor="Look here" edge="start" '
+            'end_anchor="mainland grid">Quiet cello pulse, no vocals</sound>\n'
+            '<sequential>\n'
+            'Elena: Look here, Marcus.\n'
+            '<parallel>\n'
+            'Marcus: It is not coming from the mainland grid.\n'
+            '<parallel reaction="true">\n'
+            '<sequential>\n'
+            'Elena: Wait.\n'
+            '</sequential>\n'
+            '</parallel>\n'
+            '</parallel>\n'
+            '</sequential>\n'
+            '</parallel>'
+        )
+        self.assertEqual(localize_existing_cues(script), script)
+
+        prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
+        example = prompt.split("Advanced dramatic progression (from a brief):", 1)[1]
+        excerpt = example[example.index("\n<parallel"):].split("\nThe discovery", 1)[0].strip()
+        self.assertEqual(localize_existing_cues(excerpt), excerpt)
+
 
 if __name__ == '__main__':
     unittest.main()

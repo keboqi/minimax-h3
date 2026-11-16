@@ -218,13 +218,24 @@ not in the cast is an error, so a typo is not read aloud. Older scripts with `<|
 still work. **Basic** is dialogue; **Advanced** (the default) adds sound effects, music and vocal
 effects. Basic keeps those tags in the script but ignores them.
 
-Of the three examples, **示例三：雨巷里的末班广播** is an original Chinese story with five voices and
-three scenes: a playful street market, a quiet confession, and a reunion over the neighborhood
-broadcast. It uses the production controls shared by Single-pass and Guided: social ambience,
-phrase-anchored effects, a restrained comic accent, held beats, a short listener reaction, and a
-score that withdraws and resumes. The confession plays over rain alone; music returns with the
-reunion, then withdraws for the repaired clock's ticking. Dialogue stays mostly dry; the broadcast
-uses device filtering and the arriving character moves from far to near.
+The Script step offers three refined example presets, each using local cue scoping, explicit sound
+roles and perspectives, scene transitions (`lead_in`/`tail` bridges and cuts), and calm multi-sentence
+voice references:
+
+- **Example 1: The Beacon of Blackthorn Reef** (English, six voices) showcases multi-room staging
+  (`small_room`, `outdoors`, `large_hall`, `underwater`), stage positions, a resuming storm bed, an
+  anchored and enveloped score span with a measured listener reaction, held beats, panned and moving
+  one-shots, character/device/place vocal effects, `<near>`/`<far>` distance, barge-in overlaps and
+  cut-off dashes, all seven scoped delivery tags, and Arpabet pronunciation notes.
+- **示例二：昆仑墟底的回响** (Chinese, six voices) mirrors those multi-room, local-staging, and
+  barge-in controls in an expedition story with Pinyin pronunciation notes.
+- **示例三：雨巷里的末班广播** (Chinese, five voices) moves through three mostly dry scenes — a
+  playful street market, a quiet confession, and a reunion over the neighborhood broadcast — using
+  the shared Single-pass and Guided controls: social ambience, locally scoped phrase-anchored effects,
+  a restrained comic accent, held beats, a short listener reaction, a bridge transition, a score that
+  withdraws and resumes, device filtering, far-to-near movement, and Pinyin notes. The confession
+  plays over rain alone; music returns with the reunion, then withdraws for the repaired clock's
+  ticking.
 
 In a mix, consecutive lines of one speaker are spoken as one take, so each line's time inside the
 take is placed at the pauses between them, or estimated from its length when the take has too few
