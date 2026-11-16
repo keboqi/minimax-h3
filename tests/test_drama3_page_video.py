@@ -211,8 +211,10 @@ class Drama3PageVideoTests(unittest.TestCase):
             self.ok(self.client.post(f"{API}/project/video/plan", params=NAME, json={}))
             refused = self.client.post(f"{API}/project/video/draw", params=NAME)
             self.assertIn("already being planned", refused.json()["error"])
+            refused = self.client.post(f"{API}/project/video/plan", params=NAME, json={})
+            self.assertIn("already being planned", refused.json()["error"])
             release.set()
-            self.wait()
+            self.assertIsNone(self.wait()["error"])  # A refused request cannot invalidate the active planner.
 
     def test_a_pasted_plan_is_checked_then_saved(self):
         refused = self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": "not json"})
@@ -362,9 +364,168 @@ class Drama3PageVideoTests(unittest.TestCase):
 
     def test_without_a_mix_there_is_nothing_to_draw(self):
         self.store.save_soundstage_project("Draft", {"text": "Mia: Hi.", "shown_slots": 1})
-        refused = self.client.post(f"{API}/project/video/plan", params={"name": "Draft"}, json={})
-        self.assertIn("Speak the project first", refused.json()["error"])
+        refused = self.client.post(f"{API}/project/video/draw", params={"name": "Draft"}, json={})
+        self.assertIn("Speak the project", refused.json()["error"])
         self.assertEqual(self.client.get(f"{API}/video", params={"name": "Draft"}).status_code, 404)
+
+    def test_workshop_plan_is_shared_edited_and_adapted_after_speech(self):
+        from h3_ui.drama3.project_visuals import planning_export
+
+        self.store.save_soundstage_project("Draft", {"text": "Mia: Plums!", "shown_slots": 1, "video_limit": 2})
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        handlers = Drama3Handlers(Drama3Services(lambda: self.runtime, None, None, None))
+        install_soundstage_page(app, Drama3Actions.of(handlers, interrupt=None), store=self.store,
+                                output_dir=self.runtime.output_dir, takes_dir=lambda: self.root / "takes",
+                                runtime_config=lambda: self.runtime, gpu=False,
+                                video_export=planning_export(self.runtime))
+        client = TestClient(app)
+        self.assertIsNotNone(client.get(f"{API}/boot").json()["video"])
+        plan = {"shots": [{"cue": 0, "offset": offset, "transition": "cut", "beat": "Plums", "prompt": "Plums on a stall."}
+                          for offset in (0, 0.5)]}
+        args = {"name": "Draft"}
+        applied = self.ok(client.post(f"{API}/project/video/reply", params=args, json={"reply": json.dumps(plan)}))
+        self.assertTrue(applied["video"]["timing_pending"])
+        self.assertEqual(len(applied["video"]["plan"]["rows"]), 2)
+        self.ok(client.patch(f"{API}/project/video/shot", params=args, json={"index": 1, "prompt": "A bright plum."}))
+        saved = self.store.soundstage_project("Draft")[0]["visual_plan"]
+        self.assertEqual(saved["plan"]["shots"][1]["prompt"], "A bright plum.")
+        # A newer Workshop project plan replaces an older local Studio sidecar too.
+        visuals.write_plan(self.mix, "old style", 2, PLAN)
+        self.store.mark_soundstage_generated("Draft", str(self.mix))
+        project = self.ok(self.client.get(f"{API}/project", params=args))
+        self.assertEqual(project["video"]["plan"]["rows"][1]["start"], 1)
+        self.assertEqual(visuals.read_plan(self.mix)["plan"]["shots"][1]["prompt"], "A bright plum.")
+
+    def auto_client(self):
+        from dataclasses import replace
+        from h3_app.generation.results import GenerationUpdate
+        from h3_ui.drama3.controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
+
+        def speak(*values):
+            self.store.mark_soundstage_generated(values[-1], str(self.mix))
+            yield GenerationUpdate(str(self.mix), "Done.")
+
+        def prepare(*values):
+            yield (*[gr.skip()] * (3 * DRAMA3_VOICE_SLOTS), "Ready.",
+                   *[gr.skip()] * (2 * DRAMA3_SOUND_SLOTS), "Ready.", "Ready.")
+
+        handlers = Drama3Handlers(Drama3Services(lambda: self.runtime, None, None, None))
+        actions = replace(Drama3Actions.of(handlers, interrupt=None), generate_drama3=speak,
+                          prepare_drama3_cast=prepare)
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        install_soundstage_page(app, actions, store=self.store, output_dir=self.runtime.output_dir,
+                                takes_dir=lambda: self.root / "takes", runtime_config=lambda: self.runtime,
+                                video_export=self.export)
+        return TestClient(app)
+
+    def wait_auto(self, client, batch=False):
+        for _ in range(300):
+            data = client.get(f"{API}/batch" if batch else f"{API}/run", params=NAME).json()
+            run = data.get("batch" if batch else "run")
+            if run and not run["active"]:
+                return run
+            time.sleep(0.02)
+        self.fail("Auto did not finish.")
+
+    def test_auto_illustrations_reuse_existing_plan_even_with_another_minimum(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(prepared=True, auto_illustrate=True, video_limit=64)
+        client = self.auto_client()
+        with patch("h3_ui.drama3.page_video.plan_shots") as planner:
+            self.ok(client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_auto(client)
+        self.assertIsNone(run["error"])
+        planner.assert_not_called()
+        self.assertEqual(len(self.renders), 1)
+        self.assertEqual(self.drawn_only, "missing")
+        self.assertEqual(self.store.soundstage_project("Night Market")[0]["video_limit"], 2)
+
+    def test_batch_option_plans_and_draws_after_speech(self):
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(prepared=True, auto_illustrate=False)
+        client = self.auto_client()
+        with patch("h3_ui.drama3.page_video.plan_shots", return_value=(PLAN, [None, None])) as planner:
+            self.ok(client.post(f"{API}/batch", json={"names": ["Night Market"], "illustrate": True}))
+            batch = self.wait_auto(client, batch=True)
+        self.assertEqual(batch["items"][0]["state"], "done", batch)
+        planner.assert_called_once()
+        self.assertEqual(len(self.renders), 1)
+
+    def test_auto_preserves_the_script_of_an_untimed_workshop_plan(self):
+        self.store.mark_soundstage_generated("Night Market", "")
+        self.store.save_soundstage_project("Night Market", {"text": "Mia: Plums!", "video_limit": 2,
+                                                            "auto_illustrate": True, "prepared": False})
+        plan = {"shots": [dict(cue=0, offset=offset, transition="cut", beat="Plums", prompt="A plum stall.")
+                          for offset in (0, 0.5)]}
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(plan)}))
+        client = self.auto_client()
+        with patch("h3_ui.drama3.page_video.plan_shots") as planner, \
+                patch("h3_app.prompt_writers.drama3.enhance_drama3_text") as writer:
+            self.ok(client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_auto(client)
+        self.assertIsNone(run["error"])
+        planner.assert_not_called()
+        writer.assert_not_called()
+        self.assertEqual(len(self.renders), 1)
+
+    def test_changed_or_cleared_workshop_script_stays_editable_and_rejects_stale_plan_edits(self):
+        self.store.mark_soundstage_generated("Night Market", "")
+        plan = {"shots": [dict(cue=0, offset=offset, transition="cut", beat="Plums", prompt="A plum stall.")
+                          for offset in (0, 0.5)]}
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(plan)}))
+        for text in ("Mia: A different story.", ""):
+            with self.subTest(text=text):
+                with self.store.edit_soundstage_project("Night Market") as data:
+                    data["text"] = text
+                project = self.project()
+                self.assertEqual(project["video"]["plan"]["rows"], [])
+                self.assertTrue(project["video"]["plan"]["error"])
+                reply = self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                          json={"index": 0, "prompt": "Changed image."})
+                self.assertEqual(reply.status_code, 400)
+                saved = self.store.soundstage_project("Night Market")[0]["visual_plan"]
+                self.assertEqual(saved["plan"]["shots"][0]["prompt"], "A plum stall.")
+
+    def test_auto_blocks_manual_planning_pasting_and_edits_until_drawing_finishes(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(prepared=True, auto_illustrate=True)
+        started, release = Event(), Event()
+        generate = self.export.generate
+
+        def slow_draw(*args):
+            started.set()
+            release.wait(10)
+            yield from generate(*args)
+
+        self.export.generate = slow_draw
+        client = self.auto_client()
+        try:
+            self.ok(client.post(f"{API}/auto", params=NAME, json={}))
+            self.assertTrue(started.wait(5))
+            for route, body in (("plan", {}), ("reply", {"reply": json.dumps(PLAN)})):
+                reply = client.post(f"{API}/project/video/{route}", params=NAME, json=body)
+                self.assertEqual(reply.status_code, 400, reply.text)
+                self.assertIn("Wait for speech or Auto", reply.json()["error"])
+            reply = client.patch(f"{API}/project/video/shot", params=NAME,
+                                 json={"index": 0, "prompt": "An unrelated image."})
+            self.assertEqual(reply.status_code, 400)
+        finally:
+            release.set()
+        self.assertIsNone(self.wait_auto(client)["error"])
+
+    def test_refresh_with_an_old_snapshot_cannot_restore_a_superseded_plan(self):
+        from h3_ui.drama3.project_visuals import planning_mix, save_project_plan
+
+        save_project_plan(self.store, "Night Market", self.mix, "comic", 2, PLAN)
+        old_data = self.store.soundstage_project("Night Market")[0]
+        updated = {**PLAN, "shots": [{**row, "prompt": "A newly chosen image."} for row in PLAN["shots"]]}
+        save_project_plan(self.store, "Night Market", self.mix, "comic", 2, updated)
+        planning_mix("Night Market", old_data, str(self.mix), self.export, store=self.store)
+        self.assertEqual(visuals.read_plan(self.mix)["plan"], updated)
 
     def test_plan_rows_carry_status_and_edits_mark_shots_changed(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))

@@ -158,6 +158,8 @@ def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape
         raise H3Error("The visual planner did not return a JSON object.")
     known = subjects(plan)
     rows = plan.get("shots")
+    if plan.get("script_cues") and isinstance(rows, list):
+        limit = max(limit, min(MAX_SHOTS, len(rows)))
     if not isinstance(rows, list) or not 1 <= len(rows) <= limit:
         raise H3Error(f"The visual planner must return between 1 and {limit} shots.")
     intervals = pairwise(_frame_boundaries(rows, duration))
@@ -254,10 +256,13 @@ def plan_request(settings, minimum):
     """The JSON request the planner answers: the timed mix, its speakers' voices and the shot range.
     The art direction and frame stay out, so they can change without planning again."""
     duration = _duration(settings)
-    cues = _timeline(settings, duration)
+    cues = settings.get("script_cues") if settings.get("untimed") else _timeline(settings, duration)
     speakers = _speakers(settings, cues)
-    return json.dumps(dict(title=settings.get("title"), duration=duration,
-                           min_shots=int(minimum), max_shots=shot_cap(duration, minimum),
+    return json.dumps(dict(title=settings.get("title"), duration=None if settings.get("untimed") else duration,
+                           **({"timing": "untimed", "script": settings.get("script", ""),
+                               "anchor_format": "cue (zero-based index), offset (fraction 0 <= offset < 1)"}
+                              if settings.get("untimed") else {}),
+                           min_shots=int(minimum), max_shots=MAX_SHOTS if settings.get("untimed") else shot_cap(duration, minimum),
                            **({"speakers": speakers} if speakers else {}), cues=cues), ensure_ascii=False)
 
 
@@ -293,7 +298,18 @@ def check_plan_reply(reply, settings, minimum):
     if plan is None:
         raise H3Error("The shot plan was cut off or isn't valid JSON. "
                       "Plan again, or lower Minimum shots for a long mix.")
-    shots = compile_plan(plan, duration, "", shot_cap(duration, minimum))
+    if settings.get("untimed"):
+        from .visual_timing import bind_plan
+        if not isinstance(plan, dict):
+            raise H3Error("The visual planner did not return a JSON object.")
+        plan = {**plan, "script_cues": settings["script_cues"]}
+        if not isinstance(plan.get("shots"), list) or not all(
+                isinstance(row, dict) and "cue" in row for row in plan["shots"]):
+            raise H3Error("Untimed plans need cue and offset anchors instead of start times.")
+        compiled = bind_plan(plan, settings)
+    else:
+        compiled = plan
+    shots = compile_plan(compiled, duration, "", shot_cap(duration, minimum))
     # A mix shorter than the minimum at one frame per shot can't hold that many.
     if len(shots) < min(int(minimum), ceil(duration * FPS)):
         raise H3Error(f"The plan has {len(shots)} shots, fewer than the minimum of {int(minimum)}. "

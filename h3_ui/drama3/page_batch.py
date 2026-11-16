@@ -29,7 +29,7 @@ MESSAGES = QueueMessages(
 
 
 class Batches(RunQueues):
-    """One batch per owner. ``start_auto(owner, name, session, writer)`` starts a project's Auto run
+    """One batch per owner. ``start_auto(owner, name, session, body)`` starts a project's Auto run
     (or refuses it), with ``writer`` the writer service unprepared scripts are rewritten with."""
 
     working = (PRODUCING,)
@@ -40,11 +40,12 @@ class Batches(RunQueues):
         super().__init__(MESSAGES, interrupt)
         self.start_auto = start_auto
 
-    def start(self, owner, names: list[str], session, writer: dict | None = None) -> RunQueue:
+    def start(self, owner, names: list[str], session, writer: dict | None = None, *, illustrate=None) -> RunQueue:
         names = list(dict.fromkeys(str(value) for value in names or [] if value))
         if not names:
             raise H3Error("Select at least one project to produce.")
-        return super().start(owner, [QueueItem(name, name) for name in names], session, writer=dict(writer or {}))
+        body = {"writer": dict(writer or {}), "illustrate": illustrate}
+        return super().start(owner, [QueueItem(name, name) for name in names], session, body=body)
 
     def stopping(self, run: Run) -> None:
         # Auto checks this between its steps, so a stop during the rewrite ends it before the GPU.
@@ -53,7 +54,7 @@ class Batches(RunQueues):
     def process(self, queue: RunQueue, item: QueueItem):
         item.state = PRODUCING
         try:
-            run = self.wait(queue, self.start_auto(queue.owner, item.key, queue.session, queue.options["writer"]))
+            run = self.wait(queue, self.start_auto(queue.owner, item.key, queue.session, queue.options["body"]))
         except (H3Error, ValueError, KeyError) as exc:
             item.state, item.detail = FAILED, str(exc) or "This project can't be produced."
             return

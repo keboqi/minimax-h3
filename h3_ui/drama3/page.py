@@ -36,6 +36,7 @@ from .page_video import boot_payload as video_boot_payload, install_video_routes
 from .result_view import clean_line
 from .page_adapter import generation_values as generation_values, SpeechProgress
 from .page_batch import Batches
+from .project_visuals import has_script_plan
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
@@ -43,7 +44,7 @@ STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace
 STATIC_TYPES["app.css"] = "text/css"
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,
-                  "retries": int, "max_frames": int, "auto_save_speakers": bool}
+                  "retries": int, "max_frames": int, "auto_save_speakers": bool, "auto_illustrate": bool}
 # The Speak step's slider ranges, which the page draws and saved values are kept inside.
 SETTING_RANGES = {"temperature": (0.0, 2.0, 0.05), "top_p": (0.05, 1.0, 0.05), "top_k": (0, 4096, 1),
                   "parallel": (1, 32, 1), "retries": (0, 4, 1), "max_frames": (1, 8192, 1)}
@@ -156,6 +157,8 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     admission_lock = RLock()
 
     def speak_blocked(run):
+        if video_runs is not None and video_runs.active(run.owner, run.storyboard_id):
+            return "Wait for illustration planning, drawing or saving to finish."
         if run.auto and cast_jobs is not None and cast_jobs.runs.active(run.owner, run.storyboard_id, "cast"):
             return "Wait for the voices and sounds being made, then run Auto."
         return None
@@ -195,7 +198,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         data, result = project(name)
         return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
                 "cast_run": latest(cast_jobs.runs if cast_jobs is not None else None, owner, name),
-                "video": video_payload(name, data, result, video_export) if video_export else None,
+                "video": video_payload(name, data, result, video_export, store=store) if video_export else None,
                 "video_run": latest(video_runs, owner, name)}
 
     def voice_settings(data: dict) -> list:
@@ -248,7 +251,9 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     if video_export is not None:
         video_runs = install_video_routes(app, video_export, api=api, store=store, owner_of=owner_of,
                                           session_of=session_of, payload=payload, project=project, gpu=gpu,
-                                          interrupt=interrupt)
+                                          interrupt=interrupt, admission_lock=admission_lock,
+                                          blocked=lambda owner, name: "Wait for speech or Auto to finish."
+                                          if runs.active(owner, name) else None)
 
     # Projects --------------------------------------------------------------
     @app.get(f"{api}/project", include_in_schema=False)
@@ -343,6 +348,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if not (data.get("text") or "").strip():
             raise H3Error("Write or paste some text on Script first.")
         body = dict(body or {})
+        illustrate = body.get("illustrate")
+        illustrate = data.get("auto_illustrate", False) if illustrate is None else bool(illustrate)
+        if illustrate and (video_export is None or not video_export.engines):
+            raise H3Error("No image model is available for automatic illustrations.")
 
         def stopped(run) -> bool:
             if run.stop_requested:
@@ -350,8 +359,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             return run.stop_requested
 
         def work(run):
-            if project(name)[0].get("prepared"):
-                run.status = "Using the prepared script."
+            data = project(name)[0]
+            planned = illustrate and has_script_plan(data)
+            if data.get("prepared") or planned:
+                run.status = "Using the prepared script and its saved plan." if planned else "Using the prepared script."
             else:
                 run.status = "Rewriting the script…"
                 _, status, refused = rewrite_project(actions, store, name, body, clip)
@@ -375,6 +386,14 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 return
             run.stage, run.status, run.job_id = "speak", "Speaking…", None
             speak_job(run, owner, session, name, GENERATE)
+            if run.error or stopped(run):
+                return
+            if illustrate:
+                video_runs.produce(run, owner, name, session, body)
+                if run.error or stopped(run):
+                    return
+                run.message = " ".join(filter(None, [run.message, "Illustrations ready."]))
+            run.status = "Done."
 
         return runs.start(SpeakRun(owner, name, RUN_KIND, auto=True, stage="script"), work)
 
@@ -387,7 +406,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     # Batch produce ---------------------------------------------------------
     batches = Batches(
-        lambda owner, name, session, writer: start_auto(owner, name, session, {"writer": writer}),
+        start_auto,
         interrupt=(None if interrupt is None else
                    lambda session, run: interrupt(session, family=run.family or "drama3", job_id=run.job_id)))
     batch_payload = batches.payload
@@ -421,7 +440,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if not isinstance(names, list):
             raise H3Error("Select at least one project to produce.")
         writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
-        batches.start(owner, names, session_of(request), writer)
+        batches.start(owner, names, session_of(request), writer, illustrate=body.get("illustrate"))
         return {"batch": batch_payload(owner)}
 
     @app.post(f"{api}/batch/stop", include_in_schema=False)

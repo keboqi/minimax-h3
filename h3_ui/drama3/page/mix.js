@@ -256,6 +256,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     if (!settings.preset) buttons.push(h("button", {type: "button", "aria-pressed": "true", disabled: true}, "Custom"));
     $("presets").replaceChildren(...buttons);
     $("word-timing").checked = settings.word_timing;
+    $("auto-illustrate").checked = settings.auto_illustrate;
     $("auto-save").checked = settings.auto_save_speakers;
     // Leave the sliders alone while one is being dragged or typed in.
     if ($("speech-settings").contains(document.activeElement)) return;

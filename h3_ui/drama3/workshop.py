@@ -16,6 +16,7 @@ def build_soundstage_workshop(tab, ui, runtime, store):
     from h3_app.drama3.serving.takes import takes_root
 
     from .page import install_soundstage_page
+    from .project_visuals import planning_export
 
     handlers = Drama3Handlers(Drama3Services(lambda: runtime, None, None, None))
     actions = Drama3Actions.of(handlers, interrupt=None)
@@ -24,5 +25,6 @@ def build_soundstage_workshop(tab, ui, runtime, store):
     build_soundstage_tab(root, actions, gpu=False)
     ui.h3_routes = (*getattr(ui, "h3_routes", ()), partial(
         install_soundstage_page, actions=actions, store=store, output_dir=runtime.output_dir,
-        takes_dir=lambda: takes_root(runtime), runtime_config=lambda: runtime, gpu=False))
+        takes_dir=lambda: takes_root(runtime), runtime_config=lambda: runtime, gpu=False,
+        video_export=planning_export(runtime)))
     return actions

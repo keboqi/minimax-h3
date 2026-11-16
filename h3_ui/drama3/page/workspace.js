@@ -381,7 +381,7 @@ export function startWorkspace() {
 
   // -- Voice library ---------------------------------------------------------
   // -- Auto ------------------------------------------------------------------
-  const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking"};
+  const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking", plan: "Planning shots", illustrate: "Illustrating"};
   function autoRunning() { return Boolean(state.run?.active && state.run.auto); }
 
   function renderAuto() {
@@ -1195,6 +1195,7 @@ export function startWorkspace() {
     $("to-cast").addEventListener("click", () => show("cast"));
     $("auto").addEventListener("click", startAuto);
     $("auto-interrupt").addEventListener("click", interruptRun);
+    $("auto-illustrate").addEventListener("change", (event) => saveSettings({auto_illustrate: event.target.checked}));
     $("auto-save").addEventListener("change", (event) => saveSettings({auto_save_speakers: event.target.checked}));
     $("to-script").addEventListener("click", () => show("script"));
     $("make-missing").addEventListener("click", () => make("prepare"));

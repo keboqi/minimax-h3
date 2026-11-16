@@ -6,7 +6,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
 
   function videoRunning(kind) {
     const run = state.videoRun;
-    return Boolean(run?.active && (!kind || run.kind === kind));
+    return Boolean((!kind && state.run?.active) || (run?.active && (!kind || run.kind === kind)));
   }
 
   /** What Video shows: the drawn stills, an older mix's rendered video, or nothing yet. */
@@ -65,7 +65,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const row = rowsOf()[index];
     if (!row) return;
     state.shotPick = index;
-    if (jump) seek(row.start);
+    if (jump && state.project.result) seek(row.start);
     if (state.screen === "illustrate") {
       renderIllustrate();
       // Bring the picked row into the list's view without moving the page.
@@ -177,7 +177,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       }
       return [null, h("div", {class: "illustrate-empty"},
         h("strong", {}, "No shot plan yet"),
-        h("p", {class: "muted"}, "Plan shots reads the timed mix and its Cast voices, then describes one image per story beat. "
+        h("p", {class: "muted"}, "Plan shots reads the script or timed mix and its Cast voices, then describes one image per story beat. "
           + "The style and frame are added when drawing, so you can change them later without planning again."),
         h("div", {class: "illustrate-empty-actions"},
           h("button", {type: "button", class: "btn", onclick: openDrawing}, "Choose style & settings")))];
@@ -188,7 +188,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         thumb(row),
         h("span", {class: "shot-body"},
           h("span", {class: "shot-meta"},
-            h("span", {class: "num shot-time"}, `${clock(row.start)}–${clock(row.end)}`),
+            h("span", {class: "num shot-time"}, video.timing_pending ? "Timing after speech" : `${clock(row.start)}–${clock(row.end)}`),
             h("span", {class: `kind ${row.transition === "Cut" ? "kind-shot" : "kind-loop"}`}, row.transition),
             statusChip(row.status)),
           h("span", {class: "shot-beat"}, row.beat),
@@ -234,6 +234,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
   }
 
   function renderInspector(rows) {
+    const video = state.project.video;
     const box = $("shot-inspector");
     box.hidden = !rows.length;
     if (box.hidden) return;
@@ -246,7 +247,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     box.replaceChildren(
       h("div", {class: "inspector-head shot-inspector-head"},
         h("h2", {}, `Shot ${row.index + 1}`),
-        h("span", {class: "num"}, `${clock(row.start)}–${clock(row.end)}`),
+        h("span", {class: "num"}, video.timing_pending ? "Timing after speech" : `${clock(row.start)}–${clock(row.end)}`),
         statusChip(row.status),
         h("span", {class: "spacer"}),
         h("button", {type: "button", class: "btn btn-icon", "aria-label": "Previous shot", disabled: row.index === 0, onclick: () => step(-1)}, "‹"),
@@ -264,7 +265,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
           type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
           onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
-      h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy || !state.boot.gpu,
+      h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy || !state.boot.gpu || (video.timing_pending && !state.project.result),
                    onclick: () => drawImages([row.index])}, draw));
   }
 
@@ -432,8 +433,8 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("span", {class: "muted small"}, rows.length ? `The current plan has ${plural(rows.length, "shot")}.` : "No shot plan for these settings yet."),
         h("span", {class: "spacer"}),
         h("button", {type: "button", class: "btn", onclick: () => dialog.close()}, "Done"),
-        h("button", {type: "button", class: rows.length ? "btn" : "btn btn-primary", disabled: busy || !state.project.result,
-                     title: state.project.result ? "Plan the shots with the writer set on Script" : "Speak the project first",
+        h("button", {type: "button", class: rows.length ? "btn" : "btn btn-primary", disabled: busy,
+                     title: "Plan the shots with the writer set on Script",
                      onclick: () => { dialog.close(); planShots(); }}, rows.length ? "Plan again" : "Plan shots")));
     dialog.querySelector(".style-body").scrollTop = scroll;
   }
@@ -444,13 +445,6 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     // Leave the step alone while one of its fields is being typed in.
     if (screen.contains(document.activeElement) && document.activeElement.matches("input[type=text], textarea")) return;
     const main = $("illustrate-main");
-    if (!state.project.result) {
-      main.replaceChildren(h("div", {class: "illustrate-empty"}, h("strong", {}, "Speak the project first"),
-        h("p", {class: "muted"}, "The pictures are planned from the timed mix: its lines, sounds and Cast voices.")));
-      $("shot-inspector").hidden = true;
-      renderSettings();
-      return;
-    }
     const plan = state.project.video.plan;
     const rows = plan.rows;
     const warnings = plan.subjects.filter((item) => item.conflicts?.length).length;
@@ -464,7 +458,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     main.setAttribute("aria-label", looks ? "Characters and places" : "Shot plan");
     main.replaceChildren(h("div", {class: "card-head"}, views, filter, h("span", {class: "spacer"}),
       looks ? h("span", {class: "muted small"}, "Drawn once as references; shots that mention one match it.")
-        : rows.length ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: videoRunning() || !state.boot.gpu,
+        : rows.length ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: videoRunning() || !state.boot.gpu || !state.project.result,
                                      title: "Draw every shot from scratch, with new portraits", onclick: () => drawImages("all")}, "Draw every shot again") : null), body);
     renderInspector(rows);
     renderSettings();
@@ -479,20 +473,15 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     planButton.hidden = drawButton.hidden = stop.hidden = true;
     $("drawn-chip").hidden = !video;
     if (!video) { title.textContent = "Illustrated video isn't available here"; detail.textContent = ""; return; }
-    if (!state.project.result) {
-      title.textContent = "Speak the project first";
-      detail.textContent = "Shots are planned from the timed mix.";
-      return;
-    }
     const rows = rowsOf();
     const needs = needsDrawing(rows);
-    const run = state.videoRun;
+    const run = state.run?.active ? {kind: state.run.stage, status: state.run.status} : state.videoRun;
     const busy = videoRunning();
     planButton.hidden = false;
     planButton.disabled = busy;
     planButton.textContent = videoRunning("plan") ? "Planning…" : rows.length ? "Plan again" : "Plan shots";
     planButton.className = rows.length ? "btn" : "btn btn-primary";
-    drawButton.hidden = !rows.length || !needs;
+    drawButton.hidden = !rows.length || !needs || !state.project.result;
     drawButton.disabled = busy || !state.boot.gpu;
     drawButton.title = state.boot.gpu ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
@@ -506,11 +495,11 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       detail.classList.add("error");
     } else if (!rows.length) {
       title.textContent = video.plan.stale ? "The saved plan was made for other settings" : "No shot plan yet";
-      detail.textContent = "Plan shots uses the writer set on Script.";
+      detail.textContent = video.plan.error || "Plan shots uses the writer set on Script. Untimed plans adapt when speech is generated.";
     } else if (needs) {
       const counts = video.plan.counts;
       title.textContent = `${plural(needs, "shot")} need${needs === 1 ? "s" : ""} drawing`;
-      detail.textContent = [counts.changed ? `${counts.changed} changed since drawn (prompt, style or frame)` : null,
+      detail.textContent = video.timing_pending ? "The plan is saved with the project. Timing adapts after speech; draw images in Studio." : [counts.changed ? `${counts.changed} changed since drawn (prompt, style or frame)` : null,
                             counts.todo ? `${counts.todo} not drawn` : null].filter(Boolean).join(", ")
         + (counts.drawn ? `. The other ${counts.drawn} keep their images.` : ".");
     } else {
@@ -521,7 +510,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
 
   function illustrateSummary() {
     const video = state.project.video;
-    if (!video || !state.project.result) return {text: state.project.result ? "" : "Speak first", state: null};
+    if (!video) return {text: "", state: null};
     const rows = rowsOf();
     if (!rows.length) return {text: "No shot plan yet", state: null};
     const needs = needsDrawing(rows);

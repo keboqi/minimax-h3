@@ -3,9 +3,9 @@
 export function createBatch({state, $, h, api, toast, NO_GPU, flushEdits, isRunning, writerService, openProject, refreshProjects}) {
   const POLL_MS = 3000;
   const LABELS = {waiting: "Waiting", producing: "Producing", done: "Done", failed: "Failed", stopped: "Stopped"};
-  const STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking"};
+  const STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking", plan: "Planning shots", illustrate: "Illustrating"};
   // ``followed`` is the batch and project the page last followed, so it follows each once.
-  const batchState = {batch: null, projects: null, selected: new Set(), timer: null, followed: null};
+  const batchState = {batch: null, projects: null, selected: new Set(), timer: null, followed: null, illustrate: false};
 
   const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -92,6 +92,9 @@ export function createBatch({state, $, h, api, toast, NO_GPU, flushEdits, isRunn
             h("div", {class: note.warn ? "batch-note warn" : "batch-note"}, note.text)));
       })) : h("p", {class: "muted"}, "No projects yet."),
       h("p", {class: "small muted"}, "Projects are produced in the order listed, by name, so Chapter 2 comes before Chapter 10. A speaker the group already has a voice for uses it, including voices an earlier project in the batch saved. A project the writer hasn't prepared is rewritten with the writer service set on Script in this tab."),
+      h("label", {class: "check"}, h("input", {type: "checkbox", checked: batchState.illustrate,
+        onchange: (event) => { batchState.illustrate = event.target.checked; }}),
+        "Generate illustrations after speech for every selected project (reuse existing plans)"),
       gpu ? null : h("p", {class: "small batch-note warn"}, "Prepare only here: open Soundstage in Studio to start the batch."),
       h("div", {class: "batch-tools"},
         h("span", {class: "spacer"}),
@@ -178,7 +181,7 @@ export function createBatch({state, $, h, api, toast, NO_GPU, flushEdits, isRunn
     if (!names.length) return;
     try {
       await flushEdits();
-      const data = await api("/batch", {method: "POST", body: {names, writer: writerService()}, unscoped: true});
+      const data = await api("/batch", {method: "POST", body: {names, writer: writerService(), illustrate: batchState.illustrate}, unscoped: true});
       batchState.selected.clear();
       toast(`Batch started: ${plural(names.length, "project")}.`);
       follow(data.batch);

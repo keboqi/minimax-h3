@@ -379,7 +379,8 @@ class ModelManagerTests(unittest.TestCase):
         self.assertEqual(client.get("/soundstage/").status_code, 200)
         boot = client.get(f"{api}/boot").json()
         self.assertFalse(boot["gpu"])
-        self.assertIsNone(boot["video"])  # Drawing a video needs the GPU endpoint.
+        self.assertIsNotNone(boot["video"])  # Plans and art direction can be prepared without a GPU.
+        self.assertEqual(boot["video"]["engines"], [])
         # Writing and casting work here; the project is the same one Studio opens.
         self.assertEqual(client.post(f"{api}/projects", json={"name": "Chapter one"}).status_code, 200)
         name = {"name": "Chapter one"}
