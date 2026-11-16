@@ -128,7 +128,9 @@ the next scene without its repeated opening.
 **Generate
 all remaining scenes** makes every scene without a current take, in order, and skips
 scenes that still need input. **Play full video** and **Export to Media** join the takes
-in use: continuing scenes drop their repeated opening, fresh starts join as cuts. Export
+in use: continuing scenes drop their repeated opening, fresh starts join as cuts. A scene
+continuing a video from Media instead eases across that opening from the real frames into its
+own VAE-redrawn copy of them, so fine detail such as eyes does not jump at the join. Export
 saves a version. **Versions** keeps scene lists to come back to or branch.
 
 ## Auto render

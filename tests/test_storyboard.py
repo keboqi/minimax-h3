@@ -344,9 +344,40 @@ class StoryboardServiceTests(unittest.TestCase):
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         self.assertEqual(int(frames), 3 * 48 - 39)
+        self.assertFalse(any(item["blend"] for item in self.service.clips(document)))
         document["scenes"][1]["prompt"] = "changed"
         with self.assertRaisesRegex(H3Error, "outdated"):
             self.service.clips(document, include_outdated=False)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "needs ffmpeg")
+    def test_join_eases_a_media_clip_into_the_take_that_continues_it(self):
+        document = board("flow")
+        document["scenes"][0]["kind"] = sb.MEDIA
+        for index, (scene, color) in enumerate(zip(document["scenes"], ("red", "blue"))):
+            path = self.root / f"{color}.mp4"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color={color}:size=64x64:rate=24",
+                            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2",
+                            "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+            document["takes"][scene["in_use"]]["video"] = str(path)
+        self.assertEqual([item["blend"] for item in self.service.clips(document)], [False, True])
+        target = self.service.render(document, self.root / "joined.mp4")
+
+        def red_at(frame):
+            pixel = subprocess.run(
+                ["ffmpeg", "-loglevel", "error", "-i", str(target), "-vf", f"select=eq(n\\,{frame}),scale=1:1",
+                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                capture_output=True, check=True,
+            ).stdout
+            return pixel[0]
+
+        # Same length as a cut; red until the overlap, about half way through it, blue after it.
+        self.assertEqual(int(subprocess.run(
+            ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+             "stream=nb_read_frames", "-of", "csv=p=0", str(target)], capture_output=True, text=True, check=True,
+        ).stdout.strip()), 2 * 48 - 39)
+        self.assertGreater(red_at(5), 200)
+        self.assertTrue(80 < red_at(9 + 19) < 180)
+        self.assertLess(red_at(48 + 2), 40)
 
 
 class StoryboardRunnerTests(unittest.TestCase):

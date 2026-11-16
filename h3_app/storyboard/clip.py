@@ -108,6 +108,19 @@ def cut_tail(conformed: str | Path, output: Path, *, frames: int) -> Path:
     )
 
 
+def video_frame_total(path: str | Path) -> int:
+    """The exact number of video frames in a file (packets, so no decoding)."""
+    process = run_media_process(
+        ["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    try:
+        return int((process.stdout or "").strip().split(",")[0])
+    except ValueError as exc:
+        raise H3Error(f"Couldn't count the frames of {Path(path).name}.") from exc
+
+
 def still(source: str | Path, seconds: float, output: Path, *, width: int = 640) -> Path:
     """One frame as a small JPEG, for the Fit preview."""
     return _ffmpeg(

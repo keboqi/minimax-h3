@@ -652,8 +652,13 @@ class StoryboardService:
                 raise H3Error(f"Scene {index + 1} is outdated. Regenerate it or include outdated scenes.")
             if not Path(take["video"]).is_file():
                 raise H3Error(f"Scene {index + 1}'s take is missing from disk.")
-            trim = take["prefix_frames"] if model.flows_from_previous(board, index) else 0
-            clips.append({"video": take["video"], "trim_frames": trim})
+            flows = model.flows_from_previous(board, index)
+            trim = take["prefix_frames"] if flows else 0
+            # A take continuing a video from Media redraws the clip's ending through the VAE, so its
+            # overlap is blended in from the real frames rather than cut to: fine detail such as eyes
+            # would otherwise jump at the join.
+            blend = bool(flows and trim and model.is_media(board["scenes"][index - 1]))
+            clips.append({"video": take["video"], "trim_frames": trim, "blend": blend})
         return clips
 
     def render(self, board, destination: Path, *, include_outdated=True, timeout=3600) -> Path:
@@ -664,16 +669,41 @@ class StoryboardService:
         mixed = any(model.is_media(scene) for scene in board["scenes"])
         fit = f",scale={width}:{height}:flags=lanczos,setsar=1" if mixed else ""
         sound = f",aresample={clip.AUDIO_RATE},aformat=channel_layouts=stereo" if mixed else ""
-        arguments, chains, labels = [], [], ""
+        arguments, chains, videos, sounds = [], [], "", ""
+
+        def cut(label, output, start, end=None):
+            until = f":end_frame={end}" if end is not None else ""
+            return f"{label}trim=start_frame={start}{until},setpts=PTS-STARTPTS{fit},format=yuv420p[{output}]"
+
         for index, item in enumerate(clips):
             arguments += ["-i", item["video"]]
-            frames = int(item["trim_frames"])
-            chains.append(
-                f"[{index}:v]trim=start_frame={frames},setpts=PTS-STARTPTS{fit}[v{index}];"
-                f"[{index}:a]atrim=start={frames / model.FPS:.6f},asetpts=PTS-STARTPTS{sound}[a{index}]"
-            )
-            labels += f"[v{index}][a{index}]"
-        graph = ";".join(chains) + f";{labels}concat=n={len(clips)}:v=1:a=1[v][a]"
+            start = int(item["trim_frames"])
+            following = clips[index + 1] if index + 1 < len(clips) else None
+            hand_off = int(following["trim_frames"]) if following and following.get("blend") else 0
+            parts = [f"b{index}"] + ([f"h{index}"] if item.get("blend") else []) + ([f"t{index}"] if hand_off else [])
+            source = f"[{index}:v]"
+            if len(parts) > 1:
+                chains.append(source + f"split={len(parts)}" + "".join(f"[s{part}]" for part in parts))
+                source = None
+            total = clip.video_frame_total(item["video"]) if hand_off else None
+            if hand_off and total <= hand_off:
+                raise H3Error(f"Scene {index + 1}'s clip is shorter than the overlap the next scene continues.")
+            chains.append(cut(source or f"[sb{index}]", f"b{index}", start, total - hand_off if hand_off else None))
+            if item.get("blend"):
+                chains.append(cut(f"[sh{index}]", f"h{index}", 0, start))
+                # Ease from the real frames (A) into the redrawn overlap (B); the frame after it is all new.
+                d = start + 1
+                chains.append(f"[t{index - 1}][h{index}]blend=all_expr=A+(B-A)*(N+1)*(N+1)*({3 * d}-2*(N+1))/{d ** 3}"
+                              f"[x{index}]")
+                videos += f"[x{index}]"
+            if hand_off:
+                chains.append(cut(f"[st{index}]", f"t{index}", total - hand_off))
+            videos += f"[b{index}]"
+            chains.append(f"[{index}:a]atrim=start={start / model.FPS:.6f},asetpts=PTS-STARTPTS{sound}[a{index}]")
+            sounds += f"[a{index}]"
+        count = videos.count("[")
+        graph = (";".join(chains) + f";{videos}concat=n={count}:v=1:a=0[v]"
+                 f";{sounds}concat=n={len(clips)}:v=0:a=1[a]")
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_name(f"{destination.stem}.{model.new_id()[:8]}.partial{destination.suffix}")
         process = run_media_process(
