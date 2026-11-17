@@ -26,6 +26,10 @@ from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
+from h3_app.gpt_image import (
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, gpt_image_available, gpt_image_credentials,
+    gpt_image_max_concurrency,
+)
 from h3_app import catalog, media_review
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
@@ -70,7 +74,8 @@ GROUPS = (
 )
 # Where Fine-tune shows a model's option, by the name its generation takes it under.
 GROUP_OF = {
-    "backend": 0, "model_choice": 0, "precision": 0, "turbo_variant": 0, "lightning_strength": 0, "text_encoder_choice": 0,
+    "backend": 0, "model_choice": 0, "quality": 0,
+    "precision": 0, "turbo_variant": 0, "lightning_strength": 0, "text_encoder_choice": 0,
     "vae_choice": 0, "steps": 0, "cfg": 0, "negative_prompt": 0, "sampler_name": 0, "scheduler": 0,
     "width": 1, "height": 1, "seed": 1,
     "reference_resolution": 2, "cache_device": 2, "cache_dtype": 2,
@@ -79,8 +84,20 @@ GROUP_OF = {
 }
 # Options Compose shows itself; a change to one is not a change to the preset's settings.
 COMPOSE = ("preset", "batch_count", "batch_edit_inputs", "edit_size", "layout",
-           "output_resolution_1k", "output_resolution_2k")
+           "output_resolution_1k", "output_resolution_2k", "models", "use_failback")
 EDIT_ONLY = ("reference_resolution", "cache_device", "cache_dtype")
+
+
+def _clamp_gpt_image_options(options: dict[str, Any]) -> None:
+    if "gpt_image__models" not in options or "gpt_image__batch_count" not in options:
+        return
+    if options.get("gpt_image__width") == options.get("gpt_image__height"):
+        options["gpt_image__height"] = 1088 if options["gpt_image__width"] == 1920 else 1920
+    max_concurrency = gpt_image_max_concurrency(
+        options["gpt_image__models"], bool(options.get("gpt_image__use_failback"))
+    )
+    if options["gpt_image__batch_count"] > max_concurrency:
+        options["gpt_image__batch_count"] = max_concurrency
 
 
 @dataclass(frozen=True)
@@ -215,6 +232,7 @@ class ImagePageState:
                     options[name] = coerce(self.services.fields[name], value)
                 except H3Error:
                     continue
+        _clamp_gpt_image_options(options)
         writer = writer_defaults()
         writer.update({name: value for name, value in (saved.get("writer") or {}).items()
                        if name in writer and name not in SECRET_FIELDS})
@@ -311,6 +329,13 @@ class ImagePageState:
         elif engine == "fibo2" and parameter == "model_choice":
             turbo = options[name] == "Edit Turbo"
             options[at("steps")], options[at("cfg")] = (4, 1) if turbo else (30, 5)
+        elif engine == "gpt_image":
+            if parameter == "width":
+                options[at("height")] = 1088 if options[name] == 1920 else 1920
+            elif parameter == "height":
+                options[at("width")] = 1088 if options[name] == 1920 else 1920
+            elif parameter in ("models", "use_failback"):
+                _clamp_gpt_image_options(options)
         if parameter in ("width", "height") and engine == "qwen":
             options[at("output_resolution_1k")] = options[at("output_resolution_2k")] = None
 
@@ -330,10 +355,23 @@ class ImagePageState:
         elif action == "restore":
             self.restore(engine, options)
         else:
-            for changed, value in changes.items():
+            ordered_changes = sorted(
+                changes.items(),
+                key=lambda item: 1 if item[0] == "gpt_image__batch_count" else 0,
+            )
+            for changed, value in ordered_changes:
                 if changed not in self.services.fields:
                     raise H3Error(f"Unknown setting: {changed}")
                 options[changed] = coerce(self.services.fields[changed], value)
+                if changed == "gpt_image__batch_count":
+                    max_concurrency = gpt_image_max_concurrency(
+                        options["gpt_image__models"], bool(options["gpt_image__use_failback"])
+                    )
+                    if options[changed] > max_concurrency:
+                        raise H3Error(
+                            f"GPT Image concurrency must be between 1 and {max_concurrency} "
+                            "for the selected models and failback setting."
+                        )
                 self.cascade(options, changed)
 
     def choose_size(self, engine: str, options: dict[str, Any], name: str) -> None:
@@ -366,6 +404,10 @@ class ImagePageState:
         for name in self.fine_names(engine):
             if GROUP_OF[name.partition("__")[2]] != 1:
                 options[name] = clean[name]
+        if engine == "gpt_image":
+            options["gpt_image__models"] = clean["gpt_image__models"]
+            options["gpt_image__use_failback"] = clean["gpt_image__use_failback"]
+            _clamp_gpt_image_options(options)
 
     def fine_names(self, engine: str) -> list[str]:
         prefix = key_of(engine, "")
@@ -389,7 +431,11 @@ class ImagePageState:
                 hidden.add("lightning_strength")
         if engine == "flux3" and not str(value("model_choice")).startswith("Base "):
             hidden.add("cfg")
-        locked = {"steps", "cfg"} if engine == "fibo2" and value("model_choice") == "Edit Turbo" else set()
+        locked = (
+            {"steps", "cfg"} if engine == "fibo2" and value("model_choice") == "Edit Turbo"
+            else {"quality"} if engine == "gpt_image"
+            else set()
+        )
         rows = []
         for name in self.fine_names(engine):
             parameter = name.partition("__")[2]
@@ -405,10 +451,18 @@ class ImagePageState:
 
     def issue(self, state: Mapping[str, Any]) -> str:
         engine, options = state["engine"], state["options"]
-        return draft_issue(engine, image_mode(engine, state["mode"]), state["prompt"], state["references"],
-                           options.get("qwen__turbo_variant", "Off"), options.get("fibo2__model_choice", "Dev"),
-                           bool(options.get("qwen__batch_edit_inputs")),
-                           options.get("image__backend", H3_IMAGE_OFFICIAL))
+        return draft_issue(
+            engine, image_mode(engine, state["mode"]), state["prompt"], state["references"],
+            options.get("qwen__turbo_variant", "Off"), options.get("fibo2__model_choice", "Dev"),
+            bool(options.get("qwen__batch_edit_inputs")),
+            options.get("image__backend", H3_IMAGE_OFFICIAL),
+            gpt_models=options.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)),
+            gpt_use_failback=bool(options.get("gpt_image__use_failback", False)),
+            gpt_quality=options.get("gpt_image__quality", GPT_IMAGE_QUALITY),
+            gpt_width=options.get("gpt_image__width", 1920),
+            gpt_height=options.get("gpt_image__height", 1088),
+            gpt_batch_count=options.get("gpt_image__batch_count", 1),
+        )
 
     def guidance(self, state: Mapping[str, Any], editing: bool) -> str:
         engine, count = state["engine"], len(state["references"])
@@ -421,6 +475,8 @@ class ImagePageState:
             note += " The first image is the target; name several as <image1>, <image2>, …"
         if engine == "fibo2":
             note += " Plain text or VGL JSON" + ("; refer to images as <image_1>, <image_2>, …" if editing else ".")
+        if editing and engine == "gpt_image":
+            note += " Refer to images as <image_1>, <image_2>, …"
         if editing and engine == "h3":
             note += " Refer to images as <Picture 1>, <Picture 2>, …"
         if editing and engine == "flux3":
@@ -453,16 +509,31 @@ class ImagePageState:
                 counts[str(row["group"])] = counts.get(str(row["group"]), 0) + 1
         compose = lambda parameter, shown=True: (
             self.option(key_of(engine, parameter), options) if shown and self.has(engine, parameter) else None)
+        creds = gpt_image_credentials()
+        batch = compose("batch_count")
+        if engine == "gpt_image" and batch is not None:
+            batch = {
+                **batch,
+                "maximum": gpt_image_max_concurrency(
+                    options["gpt_image__models"],
+                    bool(options["gpt_image__use_failback"]),
+                    credentials=creds,
+                ),
+            }
         paths = [self.grant(owner, path) for path in state["results"]]
         return {
             "engine": engine, "mode": mode, "editing": editing, "generate_only": engine == "moss_image",
+            "available": creds.primary_available if engine == "gpt_image" else True,
+            "gpt_image_available": creds.primary_available,
+            "failback_available": creds.failback_available,
             "prompt": state["prompt"], "ui": state["ui"], "options": options,
             "references": [{"path": path, "url": f"{API}/file?path={_quote(path)}",
                             "detail": re.sub(r"^[0-9a-f]{12}-", "", describe_reference(path, "Picture")),
                             "tag": reference_tag(engine, index, count, separate)}
                            for index, path in enumerate(state["references"], 1)],
             "fields": rows, "changed": counts,
-            "preset": compose("preset"), "batch": compose("batch_count"),
+            "preset": compose("preset"), "batch": batch,
+            "gpt_models": compose("models"), "failback": compose("use_failback"),
             "edit_size": compose("edit_size", editing), "separate": compose("batch_edit_inputs", editing),
             "layout": compose("layout"),
             "width": options[key_of(engine, "width")], "height": options[key_of(engine, "height")],
@@ -539,8 +610,15 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
                              for names in services.presets.get(engine, ()) if names]
         return {
             **described, "gpu": gpu and "image" in JOBS.callbacks,
-            "engines": [{"id": engine.id, "label": engine.label, "description": engine.description}
-                        for engine in sorted(engines_for_task("Image"), key=lambda item: IMAGE_MODELS.index(item.id))],
+            "engines": [
+                {
+                    "id": engine.id,
+                    "label": engine.label,
+                    "description": engine.description,
+                    "available": gpt_image_available() if engine.id == "gpt_image" else True,
+                }
+                for engine in sorted(engines_for_task("Image"), key=lambda item: IMAGE_MODELS.index(item.id))
+            ],
             "groups": [list(group) for group in GROUPS], "sizes": sizes,
             "modes": [["Generate", GENERATE_MODE], ["Edit", EDIT_MODE]],
         }

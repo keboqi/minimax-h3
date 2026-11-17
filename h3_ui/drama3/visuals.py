@@ -47,7 +47,7 @@ PLAN_TICK = 3  # Seconds between planning status updates.
 PLAN_TIMEOUT = 300  # Seconds before planning gives up on the writer.
 # Widescreen sizes on each model's grid, so stills fill the 1280x720 video without bars.
 _WIDESCREEN = {"qwen": (1664, 928), "h3": (1664, 928), "flux3": (1344, 768),
-               "moss_image": (1344, 768), "fibo2": (1344, 768)}
+               "moss_image": (1344, 768), "fibo2": (1344, 768), "gpt_image": (1920, 1088)}
 
 
 PORTRAIT_SIZE = 1024
@@ -71,6 +71,9 @@ def _size(engine, captured, width, height):
     """Draw at exactly this size; edits too, instead of following a reference's shape."""
     if engine == "h3":
         captured.update(image__width=width, image__height=height, image__edit_size=QWEN_EDIT_SIZE_MANUAL)
+    elif engine == "gpt_image":
+        gpt_width, gpt_height = (1088, 1920) if height > width else (1920, 1088)
+        captured.update(gpt_image__width=gpt_width, gpt_image__height=gpt_height)
     else:
         captured.update({f"{engine}__width": width, f"{engine}__height": height})
         if engine in ("qwen", "flux3"):
@@ -80,7 +83,7 @@ def _size(engine, captured, width, height):
 def widescreen(engine, captured, orientation="landscape"):
     """One image per request at a 16:9 size (9:16 for ``portrait``), whatever the Image tab is set to."""
     captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False, moss_image__layout="", flux3__layout="",
-                    qwen__output_resolution_1k=None, qwen__output_resolution_2k=None)
+                    qwen__output_resolution_1k=None, qwen__output_resolution_2k=None, gpt_image__batch_count=1)
     width, height = _WIDESCREEN.get(engine, (1344, 768))
     _size(engine, captured, *((height, width) if orientation == "portrait" else (width, height)))
 
@@ -134,10 +137,16 @@ def match_characters(controller, engine, scene, portraits, shot, captured, *, re
     """
     prompt, references, options = character_match_request(engine, scene, portraits, shot, captured)
     if record is not None:
-        record.update(prompt=prompt, references=[Path(path).name for path in references],
-                      settings={name: options[f"{engine}__{name}"]
-                                for name, _ in GENERATION_OPTIONS.get(engine, ())
-                                if f"{engine}__{name}" in options})
+        option_names = (
+            ("models", "use_failback", "quality", "width", "height", "seed")
+            if engine == "gpt_image"
+            else tuple(name for name, _ in GENERATION_OPTIONS.get(engine, ()))
+        )
+        record.update(
+            prompt=prompt,
+            references=[Path(path).name for path in references],
+            settings={name: options[f"{engine}__{name}"] for name in option_names if f"{engine}__{name}" in options},
+        )
     return controller.generate(engine, "Image edit", prompt, references, options)
 
 

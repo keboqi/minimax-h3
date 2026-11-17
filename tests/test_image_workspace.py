@@ -53,6 +53,101 @@ class ImageWorkspaceTests(unittest.TestCase):
                 self.assertEqual(draft_issue("qwen", "Image edit", "fox", ["a"] * 12, variant,
                                              separate=True), "")
 
+    def test_gpt_image_mode_and_draft_validation(self):
+        import os
+        from unittest.mock import patch
+        from h3_app.gpt_image import GPT_IMAGE_ENV_NAMES
+
+        self.assertEqual(image_mode("gpt_image", "Image edit"), "Image edit")
+        self.assertEqual(image_mode("gpt_image", "Text to image"), "Text to image")
+        self.assertEqual(reference_limit("gpt_image"), 16)
+
+        blank = {name: "" for name in GPT_IMAGE_ENV_NAMES}
+        with patch.dict(os.environ, blank):
+            self.assertIn("not available", draft_issue("gpt_image", "Text to image", "fox", []).lower())
+
+        primary = {
+            **blank,
+            "GPT_IMAGE_API_URL": "https://primary.example/v1",
+            "GPT_IMAGE_API_KEY": "pk-test",
+        }
+        with patch.dict(os.environ, primary):
+            self.assertEqual(
+                draft_issue(
+                    "gpt_image",
+                    "Text to image",
+                    "fox",
+                    [],
+                    gpt_models=["gpt-image-2.5-flare"],
+                    gpt_use_failback=False,
+                    gpt_quality="low",
+                    gpt_width=1920,
+                    gpt_height=1088,
+                    gpt_batch_count=2,
+                ),
+                "",
+            )
+            self.assertIn(
+                "failback",
+                draft_issue(
+                    "gpt_image",
+                    "Text to image",
+                    "fox",
+                    [],
+                    gpt_models=["gpt-image-2.5-flare"],
+                    gpt_use_failback=True,
+                    gpt_quality="low",
+                    gpt_width=1920,
+                    gpt_height=1088,
+                    gpt_batch_count=2,
+                ).lower(),
+            )
+            self.assertNotEqual(
+                draft_issue(
+                    "gpt_image",
+                    "Text to image",
+                    "fox",
+                    [],
+                    gpt_models=["gpt-image-2.5-flare"],
+                    gpt_use_failback=False,
+                    gpt_quality="high",
+                    gpt_width=1920,
+                    gpt_height=1088,
+                    gpt_batch_count=1,
+                ),
+                "",
+            )
+            self.assertNotEqual(
+                draft_issue(
+                    "gpt_image",
+                    "Text to image",
+                    "fox",
+                    [],
+                    gpt_models=["gpt-image-2.5-flare"],
+                    gpt_use_failback=False,
+                    gpt_quality="low",
+                    gpt_width=1024,
+                    gpt_height=1024,
+                    gpt_batch_count=1,
+                ),
+                "",
+            )
+            self.assertNotEqual(
+                draft_issue(
+                    "gpt_image",
+                    "Text to image",
+                    "fox",
+                    [],
+                    gpt_models=["gpt-image-2.5-flare"],
+                    gpt_use_failback=False,
+                    gpt_quality="low",
+                    gpt_width=1920,
+                    gpt_height=1088,
+                    gpt_batch_count=3,
+                ),
+                "",
+            )
+
     def test_reordering_preserves_all_inputs_and_moves_the_target(self):
         paths = ["a", "b", "c"]
         self.assertEqual(move_reference(paths, 3, 1), ["c", "a", "b"])
@@ -123,7 +218,8 @@ class ImageWorkspaceTests(unittest.TestCase):
 class ReferenceTagTests(unittest.TestCase):
     def test_each_model_names_a_reference_its_own_way(self):
         for engine, tags in (("h3", ("<Picture 1>", "<Picture 2>")), ("qwen", ("<image1>", "<image2>")),
-                             ("fibo2", ("<image_1>", "<image_2>")), ("flux3", ("<ref_image_0>", "<ref_image_1>"))):
+                             ("fibo2", ("<image_1>", "<image_2>")), ("flux3", ("<ref_image_0>", "<ref_image_1>")),
+                             ("gpt_image", ("<image_1>", "<image_2>"))):
             with self.subTest(engine=engine):
                 self.assertEqual(tuple(reference_tag(engine, i, 2) for i in (1, 2)), tags)
 
@@ -162,6 +258,49 @@ class ImageGenerationControllerTests(unittest.TestCase):
         self.controller = ImageGenerationController(self.views, self.handlers, h3, image, Mock())
         self.values = {**self.controller.fields, "image__backend": "Pruna P-H3-Image", "qwen__turbo_variant": "Off", "qwen__batch_edit_inputs": False,
                        "fibo2__model_choice": "Dev"}
+
+    def test_gpt_image_dispatch(self):
+        import os
+        from unittest.mock import patch
+
+        sentinel_runtime = object()
+        self.controller.deps.runtime_config.return_value = sentinel_runtime
+        captured_requests = []
+
+        def fake_generate(request, runtime):
+            captured_requests.append((request, runtime))
+            return iter(())
+
+        env = {
+            "GPT_IMAGE_API_URL": "https://primary.example/v1",
+            "GPT_IMAGE_API_KEY": "pk-test",
+            "GPT_IMAGE_API_FAILBACK_URL": "https://backup.example/v1",
+            "GPT_IMAGE_API_FAILBACK_KEY": "fk-test",
+        }
+        values = {
+            **self.values,
+            "gpt_image__models": ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
+            "gpt_image__use_failback": True,
+            "gpt_image__quality": "low",
+            "gpt_image__width": 1088,
+            "gpt_image__height": 1920,
+            "gpt_image__batch_count": 4,
+            "gpt_image__seed": 9,
+        }
+        with patch.dict(os.environ, env):
+            with patch("h3_app.generation.gpt_image.generate_gpt_image", side_effect=fake_generate):
+                list(self.controller.generate("gpt_image", "Image edit", "harbor sunrise <image_1>", ["ref.png"], values))
+
+        self.assertEqual(len(captured_requests), 1)
+        request, runtime = captured_requests[0]
+        self.assertIs(runtime, sentinel_runtime)
+        self.assertEqual(request.models, ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare"))
+        self.assertTrue(request.use_failback)
+        self.assertEqual(request.quality, "low")
+        self.assertEqual((request.width, request.height), (1088, 1920))
+        self.assertEqual(request.batch_count, 4)
+        self.assertEqual(request.seed, 9)
+        self.assertEqual(request.reference_images, ("ref.png",))
 
     def test_variations_accumulate_outputs_with_distinct_seeds_and_edit_inputs(self):
         for engine in ("flux3", "fibo2", "moss_image"):

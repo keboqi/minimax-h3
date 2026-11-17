@@ -11,6 +11,10 @@ from h3_app.h3_image import (
     H3_IMAGE_OFFICIAL, H3_IMAGE_BACKENDS, H3_IMAGE_EDIT_SIZE_MAX as OFFICIAL_EDIT_MAX,
     H3_IMAGE_16M_PRESETS,
 )
+from h3_app.gpt_image import (
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_CONCURRENCY, GPT_IMAGE_MODELS, GPT_IMAGE_QUALITIES,
+    GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
+)
 from .engines.controls import QUIET, generation_actions, prompt_writer, resolution_presets
 from .image_controller import IMAGE_MODELS, reference_tag
 from .image_library import build_image_file_input
@@ -47,6 +51,13 @@ class ImageWorkspace:
     h3_edit_size: gr.Radio
     h3_resolution_small: gr.Dropdown
     h3_resolution_large: gr.Dropdown
+    gpt_image_resolution: gr.Dropdown
+    gpt_image_width: gr.Slider
+    gpt_image_height: gr.Slider
+    gpt_image_seed: gr.Number
+    gpt_image_models: gr.CheckboxGroup
+    gpt_image_use_failback: gr.Checkbox
+    gpt_image_quality: gr.Dropdown
     batch_counts: dict[str, gr.Slider]
 
     reference_panel: gr.Column
@@ -99,12 +110,24 @@ def _build_size_settings(engine_views):
                         info="Keep the first image aspect ratio, scale toward 16 MP (official) or 8 MP (Pruna), "
                              "or use the width and height above. Applies only to edits.")
                     h3_seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
+                elif engine == "gpt_image":
+                    gpt_image_resolution = gr.Dropdown(
+                        list(GPT_IMAGE_RESOLUTION_PRESETS), value=GPT_IMAGE_RESOLUTION_PRESETS[0],
+                        label="Resolution preset", info="GPT Image supports only 1920×1088 and 1088×1920.",
+                    )
+                    with gr.Row():
+                        gpt_image_width = gr.Slider(1088, 1920, value=1920, step=832, label="Width")
+                        gpt_image_height = gr.Slider(1088, 1920, value=1088, step=832, label="Height")
+                    gpt_image_seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 else:
                     for name in SIZE_FIELDS:
                         component = getattr(engine_views[engine], name, None)
                         if component is not None:
                             _move(component)
-    return size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large
+    return (
+        size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
+        gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed,
+    )
 
 
 def _build_model_settings(engine_views, h3, labels):
@@ -115,7 +138,10 @@ def _build_model_settings(engine_views, h3, labels):
             with gr.Group(visible=engine == "qwen") as option_groups[engine]:
                 gr.Markdown(f"### {labels[engine]}")
                 if engine != "qwen":
-                    batch_counts[engine] = gr.Slider(1, 4, value=1, step=1, label="Variations")
+                    batch_counts[engine] = gr.Slider(
+                        1, GPT_IMAGE_MAX_CONCURRENCY if engine == "gpt_image" else 4, value=1, step=1,
+                        label="Variations",
+                    )
                 if engine == "h3":
                     backend = gr.Dropdown(H3_IMAGE_BACKENDS, value=H3_IMAGE_OFFICIAL, label="H3 image backend")
                     expand_prompt = gr.Checkbox(value=True, label="Expand official image prompts locally",
@@ -125,10 +151,27 @@ def _build_model_settings(engine_views, h3, labels):
                     settings = gr.Button("Open Video → MiniMax H3 settings")
                     from .engines.remake import open_engine_js
                     settings.click(None, js=open_engine_js("Video", "MiniMax H3"), **QUIET)
+                elif engine == "gpt_image":
+                    gpt_image_models = gr.CheckboxGroup(
+                        list(GPT_IMAGE_MODELS), value=[DEFAULT_GPT_IMAGE_MODEL],
+                        label="GPT Image models",
+                        info="Select one or more models; 2 reqs/min per model per endpoint.",
+                    )
+                    gpt_image_use_failback = gr.Checkbox(
+                        value=False, label="Use failback endpoint",
+                        info="Use GPT_IMAGE_API_FAILBACK_URL and GPT_IMAGE_API_FAILBACK_KEY for failover and extra concurrency.",
+                    )
+                    gpt_image_quality = gr.Dropdown(
+                        list(GPT_IMAGE_QUALITIES), value=GPT_IMAGE_QUALITY, label="Image quality",
+                        interactive=False, info="GPT Image supports only IMAGE_QUALITY=low.",
+                    )
                 else:
                     for name in OPTION_FIELDS[engine]:
                         _move(getattr(engine_views[engine], name))
-    return option_groups, base, backend, expand_prompt, batch_counts
+    return (
+        option_groups, base, backend, expand_prompt, batch_counts,
+        gpt_image_models, gpt_image_use_failback, gpt_image_quality,
+    )
 
 
 def build_image_view(root, engine, engine_views, h3):
@@ -168,17 +211,27 @@ def build_image_view(root, engine, engine_views, h3):
         # Results precede optional settings in the mobile stack.
         with gr.Row(equal_height=False):
             with gr.Column(scale=3, min_width=320):
-                size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large = (
-                    _build_size_settings(engine_views))
+                (
+                    size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
+                    gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed,
+                ) = _build_size_settings(engine_views)
             with gr.Column(scale=2, min_width=320):
-                option_groups, base, backend, expand_prompt, batch_counts = _build_model_settings(engine_views, h3, labels)
+                (
+                    option_groups, base, backend, expand_prompt, batch_counts,
+                    gpt_image_models, gpt_image_use_failback, gpt_image_quality,
+                ) = _build_model_settings(engine_views, h3, labels)
                 with gr.Accordion("Prompt assistance", open=False):
                     writer, enhance, enhance_status = prompt_writer("Suggest a prompt")
                     enhance.h3_review = build_prompt_review(compact=True)
     return ImageWorkspace(
         prompt=prompt, mode=mode, reference_images=refs, output=output, run=run, stop=stop, status=status,
         h3_backend=backend, h3_expand_prompt=expand_prompt, h3_width=h3_width, h3_height=h3_height, h3_seed=h3_seed, h3_edit_size=h3_edit_size,
-        h3_resolution_small=h3_small, h3_resolution_large=h3_large, reference_panel=reference_panel,
+        h3_resolution_small=h3_small, h3_resolution_large=h3_large,
+        gpt_image_resolution=gpt_image_resolution, gpt_image_width=gpt_image_width,
+        gpt_image_height=gpt_image_height, gpt_image_seed=gpt_image_seed,
+        gpt_image_models=gpt_image_models, gpt_image_use_failback=gpt_image_use_failback,
+        gpt_image_quality=gpt_image_quality,
+        reference_panel=reference_panel,
         batch_counts=batch_counts,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,
         base_summary=base, writer=writer, enhance=enhance, enhance_status=enhance_status,

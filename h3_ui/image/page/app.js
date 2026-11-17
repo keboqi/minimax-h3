@@ -101,12 +101,31 @@
     });
     return node;
   };
+  const multiSeg = (node, options, current, pick, {disabled = false} = {}) => {
+    const items = options.map((option) => Array.isArray(option) ? option : [String(option), option]);
+    const selected = Array.isArray(current) ? current : [];
+    const kept = node.children.length === items.length && items.every(([label], index) => node.children[index].textContent === label);
+    if (!kept) node.replaceChildren(...items.map(([label]) => h("button", {type: "button", text: label})));
+    items.forEach(([, value], index) => {
+      const button = node.children[index];
+      const pressed = selected.includes(value);
+      button.setAttribute("aria-pressed", String(pressed));
+      button.disabled = disabled;
+      button.onclick = () => {
+        const next = pressed ? selected.filter((item) => item !== value) : [...selected, value];
+        if (!next.length) return toast("Keep at least one model selected.", true);
+        pick(next);
+      };
+    });
+    return node;
+  };
   const commitOf = (field) => (value) => field.store === "writer" ? changeWriter({[field.name]: value}) : change("edit", {[field.name]: value});
   const rangeOf = (field) => field.minimum === null || field.minimum === undefined ? "" : `${field.minimum} – ${field.maximum}`;
   const control = (field) => {
     const commit = commitOf(field);
     const {kind, label, value, disabled} = field;
     if (kind === "bool") return [seg(h("div", {class: "seg", role: "group", "aria-label": label}), [["Off", false], ["On", true]], Boolean(value), commit, {disabled})];
+    if (kind === "choices") return [multiSeg(h("div", {class: "seg wrap", role: "group", "aria-label": label}), field.choices, value, commit, {disabled})];
     if (kind === "choice") {
       const long = field.choices.length > 4 || field.choices.reduce((sum, [name]) => sum + name.length, 0) > 44;
       if (!long) return [seg(h("div", {class: "seg", role: "group", "aria-label": label}), field.choices, value, commit, {disabled})];
@@ -135,6 +154,7 @@
                         disabled, "aria-label": label, onchange: (event) => commit(event.target.value)})];
   };
   const presetText = (field) => {
+    if (Array.isArray(field.preset)) return field.preset.join(", ");
     const found = field.choices?.find(([, choice]) => choice === field.preset);
     return found ? found[0] : field.preset === true ? "On" : field.preset === false ? "Off" : String(field.preset ?? "blank");
   };
@@ -266,6 +286,7 @@
     h3: "MiniMax H3 Image (Official): 6 steps, CFG 1, native 16 MP and up to 16 reference images.",
     flux3: "Distilled models run 16 steps at CFG 1; Base models run 50 steps at CFG 4.",
     fibo2: "Dev runs 30 steps at CFG 5. Edit Turbo edits in 4 steps and needs Edit.",
+    gpt_image: "GPT Image runs at IMAGE_QUALITY=low (1920×1088 or 1088×1920); 2 reqs/min per model per endpoint.",
   };
   const sizeChoice = () => {
     const tiers = app.boot.sizes[app.s.engine] || [];
@@ -283,7 +304,7 @@
     return change("resolution", {}, size.name);
   };
   const renderOutput = () => {
-    const {preset, batch, edit_size: editSize} = app.s;
+    const {preset, batch, edit_size: editSize, gpt_models: gptModels, failback} = app.s;
     $("preset-box").hidden = !preset;
     $("no-preset").hidden = Boolean(preset);
     if (preset) {
@@ -293,8 +314,24 @@
       $("no-preset-line").textContent = (app.s.engine === "h3" && app.s.options.image__backend === "Pruna P-H3-Image"
         ? "Pruna P-H3-Image runs 8 steps on your Video FL2VA profile." : SAMPLING[app.s.engine]) || "";
     }
+    $("gpt-models-row").hidden = !gptModels;
+    if (gptModels) {
+      multiSeg($("gpt-models"), gptModels.choices, gptModels.value, (value) => change("edit", {[gptModels.name]: value}));
+    }
+    $("failback-row").hidden = !failback;
+    if (failback) {
+      seg($("failback"), [["Off", false], ["On", true]], Boolean(failback.value), (value) => change("edit", {[failback.name]: value}));
+      $("failback-note").textContent = app.s.failback_available
+        ? "Failback endpoint ready"
+        : "Set GPT_IMAGE_API_FAILBACK_URL and GPT_IMAGE_API_FAILBACK_KEY";
+    }
     $("batch-row").hidden = !batch;
-    if (batch) seg($("batch"), Array.from({length: batch.maximum - batch.minimum + 1}, (_, index) => batch.minimum + index), batch.value, (value) => change("edit", {[batch.name]: value}));
+    if (batch) {
+      seg($("batch"), Array.from({length: batch.maximum - batch.minimum + 1}, (_, index) => batch.minimum + index), batch.value, (value) => change("edit", {[batch.name]: value}));
+      $("batch-note").textContent = app.s.engine === "gpt_image"
+        ? `up to ${batch.maximum} concurrent · 2 req/min per model`
+        : "same inputs, a different seed each";
+    }
     $("edit-size-row").hidden = !editSize;
     if (editSize) {
       seg($("edit-size"), editSize.choices, editSize.value, (value) => change("edit", {[editSize.name]: value}));
@@ -303,8 +340,9 @@
     const tiers = app.boot.sizes[app.s.engine] || [];
     const chosen = sizeChoice();
     const ratios = [...new Set(tiers.flatMap((tier) => tier.sizes.map((size) => size.ratio)))];
-    seg($("aspect"), [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
-    seg($("tier"), [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
+    const restricted = app.s.engine === "gpt_image";
+    seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
+    seg($("tier"), restricted ? tiers.map((tier, index) => [tier.label, index]) : [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
       (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value));
     const follows = editSize && editSize.value !== editSize.choices[editSize.choices.length - 1][1];
     $("resolution").replaceChildren(h("span", {class: "mono", text: `${app.s.width} × ${app.s.height}`}),
@@ -391,6 +429,7 @@
     const run = app.runs.generate;
     const ready = app.s.readiness.ready && hasPrompt;
     $("readiness").textContent = run?.active ? "Working. You can keep editing the next run."
+      : app.s.available === false ? app.s.readiness.message
       : !hasPrompt ? "Write an image prompt or edit instruction." : app.s.readiness.message;
     $("run-label").textContent = app.s.editing ? "Edit image" : "Generate image";
     $("run").disabled = !app.boot.gpu || !ready || Boolean(run?.active);
@@ -454,13 +493,20 @@
   };
 
   const renderSummary = () => {
-    const {preset, batch, edit_size: editSize, editing} = app.s;
+    const {preset, batch, edit_size: editSize, editing, gpt_models: gptModels, failback} = app.s;
     const follows = editSize && editSize.value !== editSize.choices[editSize.choices.length - 1][1];
     const count = batch ? batch.value : 1;
-    $("summary").textContent = [engine().label, preset?.value, follows ? editSize.value : `${app.s.width} × ${app.s.height}`,
+    const modelsText = gptModels ? (gptModels.value || []).join(", ") : "";
+    $("summary").textContent = [engine().label, preset?.value, modelsText, follows ? editSize.value : `${app.s.width} × ${app.s.height}`,
       `${count} ${count === 1 ? "image" : "images"}`].filter(Boolean).join(" · ");
-    const chips = [editing ? `Edit · ${app.s.references.length} ${app.s.references.length === 1 ? "image" : "images"}` : "Generate",
-      app.s.seed === -1 ? "Random seed" : `Seed ${app.s.seed}`];
+    const chips = [editing ? `Edit · ${app.s.references.length} ${app.s.references.length === 1 ? "image" : "images"}` : "Generate"];
+    if (app.s.engine === "gpt_image") {
+      chips.push("Quality low");
+      if (failback?.value) chips.push("Failback on");
+      chips.push(`Max ${batch ? batch.maximum : 2} concurrent`);
+    } else {
+      chips.push(app.s.seed === -1 ? "Random seed" : `Seed ${app.s.seed}`);
+    }
     if (app.s.separate?.value) chips.push("Each image separately");
     if (app.s.layout?.value?.trim()) chips.push("Layout boxes");
     $("summary-chips").replaceChildren(...chips.map((text) => h("span", {class: "chip", text})));
@@ -471,8 +517,24 @@
     seg($("mode"), app.boot.modes, app.s.mode, (value) => change("mode", {mode: value}), {disabled: app.s.generate_only});
     $("mode-help").textContent = app.s.generate_only ? "MOSS-Image generates from text only."
       : app.s.editing ? "Change the images you add. The first one is the edit target." : "Create an image from the prompt alone. Adding an image switches to Edit.";
-    seg($("models"), app.boot.engines.map((item) => [item.label, item.id]), app.s.engine, (value) => change("engine", {engine: value}));
-    $("about").textContent = engine().description;
+    const isAvailable = (item) => item.id === "gpt_image" && app.s.gpt_image_available !== undefined
+      ? app.s.gpt_image_available
+      : item.available !== false;
+    seg($("models"), app.boot.engines.map((item) => [
+      isAvailable(item) ? item.label : `${item.label} (not available)`,
+      item.id,
+    ]), app.s.engine, (value) => change("engine", {engine: value}));
+    for (const [index, item] of app.boot.engines.entries()) {
+      const button = $("models").children[index];
+      if (button) {
+        button.title = isAvailable(item)
+          ? ""
+          : `${item.label} is not available: configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY.`;
+      }
+    }
+    $("about").textContent = (app.s.engine === "gpt_image" && app.s.available === false)
+      ? `${engine().description} Not available: configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY in .env or runtime secrets.`
+      : engine().description;
     $("references").hidden = !app.s.editing;
     // Typing in a Fine-tune box must not lose the box to a redraw from another answer.
     const typing = $("fine-rows").contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);

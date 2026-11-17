@@ -535,6 +535,8 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
             return "MOSS-Image"
         if resolved.name.lower().startswith("fibo2_"):
             return "Fibo 2.0"
+        if resolved.name.lower().startswith("gpt_image_"):
+            return "GPT Image"
         if "/input_upscale/" in f"/{lowered}/":
             # CQ and SeedVR2 share this directory. Prefer provenance so older
             # CQ outputs also receive their actual processing family.

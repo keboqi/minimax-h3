@@ -45,6 +45,10 @@ def spec_of(component) -> FieldSpec:
     if isinstance(component, (gr.Dropdown, gr.Radio)):
         choices = tuple((str(name), value) for name, value in component.choices)
         return FieldSpec("choice", label, component.value, choices, hint=hint)
+    if isinstance(component, gr.CheckboxGroup):
+        choices = tuple((str(name), value) for name, value in component.choices)
+        default = list(component.value) if component.value is not None else []
+        return FieldSpec("choices", label, default, choices, hint=hint)
     if isinstance(component, gr.Checkbox):
         return FieldSpec("bool", label, bool(component.value), hint=hint)
     if isinstance(component, gr.Slider):
@@ -68,6 +72,18 @@ def coerce(spec: FieldSpec, value: Any) -> Any:
         if value in allowed or (value is None and spec.default is None):
             return value
         raise H3Error(f"{spec.label}: choose one of the listed options.")
+    if spec.kind == "choices":
+        allowed = [choice for _name, choice in spec.choices]
+        if isinstance(value, str):
+            raw = [part.strip() for part in value.split(",") if part.strip()]
+        elif isinstance(value, (list, tuple, set)):
+            raw = list(value)
+        else:
+            raise H3Error(f"{spec.label}: choose one or more of the listed options.")
+        if not raw or any(item not in allowed for item in raw):
+            raise H3Error(f"{spec.label}: choose one or more of the listed options.")
+        selected = set(raw)
+        return [choice for choice in allowed if choice in selected]
     if spec.kind in ("int", "num"):
         try:
             number = float(value)

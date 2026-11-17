@@ -12,7 +12,16 @@ from unittest.mock import Mock, patch
 
 
 class ColabSecretsTests(unittest.TestCase):
-    names = ("HF_TOKEN", "GEMINI_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL")
+    names = (
+        "HF_TOKEN",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "GPT_IMAGE_API_URL",
+        "GPT_IMAGE_API_FAILBACK_URL",
+        "GPT_IMAGE_API_KEY",
+        "GPT_IMAGE_API_FAILBACK_KEY",
+    )
 
     def setUp(self):
         notebook = json.loads((Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb").read_text(encoding="utf-8"))
@@ -57,12 +66,13 @@ class ColabSecretsTests(unittest.TestCase):
                 self.assertNotIn("stale-private-value", output)
 
     def test_optional_missing_secrets_do_not_block_available_token(self):
-        self.get.side_effect = ["hf-private-value", None, "", "  "]
+        self.get.side_effect = ["hf-private-value", None, "", "  ", "", None, "  ", ""]
         with patch.dict(os.environ, {}, clear=True):
             output = self.run_cell()
             self.assertEqual(dict(os.environ), {"HF_TOKEN": "hf-private-value"})
         self.assertIn("Hugging Face token configured", output)
         self.assertIn("official OpenAI API is used", output)
+        self.assertIn("GPT Image primary endpoint not configured", output)
 
     def test_no_credential_form_fields_or_saved_output(self):
         self.assertNotIn("@param", self.source)

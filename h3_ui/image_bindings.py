@@ -7,8 +7,11 @@ import gradio as gr
 from h3_app.capabilities import engines_for_task
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
+from h3_app.gpt_image import (
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_RESOLUTION_PRESETS, gpt_image_max_concurrency, normalize_gpt_image_models,
+)
 from h3_app.h3_image import H3_IMAGE_OFFICIAL
-from .engines.controls import QUIET, bind_resolution_presets
+from .engines.controls import QUIET, bind_resolution_presets, resolution_preset_values
 from .image_controller import (
     IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
 )
@@ -59,13 +62,45 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
           inputs=[view.h3_backend, h3.model_profile], outputs=view.base_summary, **QUIET)
 
     state_inputs = [app_views.engine, mode, prompt, refs, engine_views["qwen"].turbo_variant,
-                    engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs, view.h3_backend]
+                    engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs, view.h3_backend,
+                    view.gpt_image_models, view.gpt_image_use_failback, view.gpt_image_width,
+                    view.gpt_image_height, view.gpt_image_quality, view.batch_counts["gpt_image"]]
 
     # As in the other engines, a chosen preset takes priority over the first image's size.
     bind_resolution_presets(
         SimpleNamespace(width=view.h3_width, height=view.h3_height, resolution_small=view.h3_resolution_small,
                         resolution_large=view.h3_resolution_large),
         extra_outputs=(view.h3_edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
+    view.gpt_image_resolution.input(
+        lambda name: resolution_preset_values(name) if name else (gr.skip(), gr.skip()),
+        inputs=view.gpt_image_resolution, outputs=[view.gpt_image_width, view.gpt_image_height], **QUIET,
+    )
+    view.gpt_image_width.input(
+        lambda w: (1088, GPT_IMAGE_RESOLUTION_PRESETS[0]) if int(w) == 1920 else (1920, GPT_IMAGE_RESOLUTION_PRESETS[1]),
+        inputs=view.gpt_image_width, outputs=[view.gpt_image_height, view.gpt_image_resolution], **QUIET,
+    )
+    view.gpt_image_height.input(
+        lambda h: (1088, GPT_IMAGE_RESOLUTION_PRESETS[1]) if int(h) == 1920 else (1920, GPT_IMAGE_RESOLUTION_PRESETS[0]),
+        inputs=view.gpt_image_height, outputs=[view.gpt_image_width, view.gpt_image_resolution], **QUIET,
+    )
+
+    def gpt_batch_limit(models, use_failback, count):
+        try:
+            normalized = normalize_gpt_image_models(models or (DEFAULT_GPT_IMAGE_MODEL,))
+        except H3Error:
+            normalized = (DEFAULT_GPT_IMAGE_MODEL,)
+        limit = gpt_image_max_concurrency(normalized, bool(use_failback))
+        current = int(count) if isinstance(count, (int, float)) and not isinstance(count, bool) else 1
+        return gr.update(maximum=limit, value=max(1, min(current, limit)))
+
+    gr.on(
+        triggers=[view.gpt_image_models.change, view.gpt_image_use_failback.change, demo.load],
+        fn=gpt_batch_limit,
+        inputs=[view.gpt_image_models, view.gpt_image_use_failback, view.batch_counts["gpt_image"]],
+        outputs=view.batch_counts["gpt_image"],
+        trigger_mode="always_last",
+        **QUIET,
+    )
 
     edit_controls = [engine_views[engine].edit_size for engine in ("qwen", "flux3", "fibo2")]
     edit_controls.extend([view.h3_edit_size, engine_views["qwen"].batch_edit_inputs, engine_views["qwen"].reference_resolution])
@@ -99,12 +134,18 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     gr.on(triggers=[app_views.engine.change, mode.change, demo.load], fn=layout,
           inputs=[app_views.engine, mode], outputs=layout_outputs, trigger_mode="always_last", **QUIET)
 
-    def readiness_state(engine, intent, text, paths, variant, fibo_model, separate, backend):
+    def readiness_state(engine, intent, text, paths, variant, fibo_model, separate, backend,
+                        gpt_models, gpt_use_failback, gpt_width, gpt_height, gpt_quality, gpt_batch_count):
         if engine not in IMAGE_MODELS:
             return (gr.skip(),) * 4
         intent = image_mode(engine, intent)
         editing = intent == "Image edit"
-        issue = draft_issue(engine, intent, text, paths, variant, fibo_model, separate, backend)
+        issue = draft_issue(
+            engine, intent, text, paths, variant, fibo_model, separate, backend,
+            gpt_models=gpt_models, gpt_use_failback=gpt_use_failback,
+            gpt_quality=gpt_quality, gpt_width=gpt_width, gpt_height=gpt_height,
+            gpt_batch_count=gpt_batch_count,
+        )
         limit = reference_limit(engine, variant, backend)
         note = ("MOSS-Image generates from text only." if engine == "moss_image" else
                 f"Up to {limit} references per edit. Upload order is preserved.")
@@ -112,6 +153,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             note += " First image is the target; use `<image1>`, `<image2>`, … for multiple references."
         if engine == "fibo2":
             note += " Plain text or VGL JSON supported; refer to images as `<image_1>`, `<image_2>`, …"
+        if editing and engine == "gpt_image":
+            note += " Refer to images as `<image_1>`, `<image_2>`, …"
         if editing and engine == "h3":
             note += " Refer to images as `<Picture 1>`, `<Picture 2>`, …"
         if editing and engine == "flux3":

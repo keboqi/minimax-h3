@@ -8,9 +8,13 @@ from h3_app.generation.results import GenerationUpdate
 from h3_app.generation.requests import H3Request
 from h3_models import qwen_image21_reference_limit
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA, H3_IMAGE_EDIT_SIZE_MAX, H3_IMAGE_MAX_REFERENCES, official_edit_dimensions
+from h3_app.gpt_image import (
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_REFERENCES, GPT_IMAGE_QUALITY,
+    normalize_gpt_image_models, validate_gpt_image_settings,
+)
 from .h3.layout import start_frame_generation_resolution
 
-IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2")
+IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2", "gpt_image")
 
 
 def image_mode(engine, intent):
@@ -21,7 +25,7 @@ def image_mode(engine, intent):
 def reference_limit(engine, variant="Off", h3_backend=H3_IMAGE_OFFICIAL):
     if engine == "qwen":
         return qwen_image21_reference_limit(variant)
-    return {"h3": 8 if h3_backend == H3_IMAGE_PRUNA else H3_IMAGE_MAX_REFERENCES, "flux3": 10, "moss_image": 0, "fibo2": 4}[engine]
+    return {"h3": 8 if h3_backend == H3_IMAGE_PRUNA else H3_IMAGE_MAX_REFERENCES, "flux3": 10, "moss_image": 0, "fibo2": 4, "gpt_image": GPT_IMAGE_MAX_REFERENCES}[engine]
 
 
 def reference_tag(engine, index, count, separate=False):
@@ -33,10 +37,12 @@ def reference_tag(engine, index, count, separate=False):
     if engine == "qwen":
         return None if separate and count > 1 else f"<image{index}>"
     return {"h3": f"<Picture {index}>", "flux3": f"<ref_image_{index - 1}>",
-            "fibo2": f"<image_{index}>"}.get(engine)
+            "fibo2": f"<image_{index}>", "gpt_image": f"<image_{index}>"}.get(engine)
 
 
-def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False, h3_backend=H3_IMAGE_OFFICIAL):
+def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False, h3_backend=H3_IMAGE_OFFICIAL,
+                *, gpt_models=(DEFAULT_GPT_IMAGE_MODEL,), gpt_use_failback=False, gpt_quality=GPT_IMAGE_QUALITY,
+                gpt_width=1920, gpt_height=1088, gpt_batch_count=1):
     if engine not in IMAGE_MODELS:
         return "Choose an image model."
     if mode not in {"Text to image", "Image edit"}:
@@ -46,6 +52,18 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
         return "MOSS-Image supports generation only. Choose Generate or another model."
     if not editing and engine == "fibo2" and fibo_model == "Edit Turbo":
         return "Fibo Edit Turbo requires Edit mode. Choose Dev to generate from text."
+    if engine == "gpt_image":
+        try:
+            validate_gpt_image_settings(
+                models=gpt_models,
+                use_failback=bool(gpt_use_failback),
+                quality=gpt_quality,
+                width=gpt_width,
+                height=gpt_height,
+                batch_count=gpt_batch_count,
+            )
+        except H3Error as exc:
+            return str(exc)
     if not (prompt or "").strip():
         return "Write an image prompt or edit instruction."
     if editing:
@@ -150,10 +168,14 @@ class ImageGenerationController:
             component = getattr(view, f"h3_{name}", None)
             if component is not None:
                 self.fields[f"image__{name}"] = component
+        for name in ("width", "height", "seed", "models", "use_failback", "quality"):
+            component = getattr(view, f"gpt_image_{name}", None)
+            if component is not None:
+                self.fields[f"gpt_image__{name}"] = component
 
     def generate(self, engine, mode, prompt, references, captured):
-        # Qwen already handles variations (and separate edit inputs) in its native job.
-        if engine != "qwen":
+        # Qwen and GPT Image already handle concurrency / variations in their native jobs.
+        if engine not in ("qwen", "gpt_image"):
             prefix = "image" if engine == "h3" else engine
             count = captured.get(f"{prefix}__batch_count", 1)
             if isinstance(count, bool) or not isinstance(count, (int, float)) or count not in (1, 2, 3, 4):
@@ -184,12 +206,35 @@ class ImageGenerationController:
     def _generate_one(self, engine, mode, prompt, references, captured):
         options = {name: captured[f"{engine}__{name}"] for name, _ in GENERATION_OPTIONS.get(engine, ())}
         backend = captured.get("image__backend", H3_IMAGE_OFFICIAL)
-        issue = draft_issue(engine, mode, prompt, references, variant=options.get("turbo_variant", "Off"),
-                            fibo_model=options.get("model_choice", "Dev"),
-                            separate=options.get("batch_edit_inputs", False), h3_backend=backend)
+        issue = draft_issue(
+            engine, mode, prompt, references, variant=options.get("turbo_variant", "Off"),
+            fibo_model=options.get("model_choice", "Dev"),
+            separate=options.get("batch_edit_inputs", False), h3_backend=backend,
+            gpt_models=captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)),
+            gpt_use_failback=bool(captured.get("gpt_image__use_failback", False)),
+            gpt_quality=captured.get("gpt_image__quality", GPT_IMAGE_QUALITY),
+            gpt_width=captured.get("gpt_image__width", 1920),
+            gpt_height=captured.get("gpt_image__height", 1088),
+            gpt_batch_count=captured.get("gpt_image__batch_count", 1),
+        )
         if issue:
             raise H3Error(issue)
         active_references = list(references or []) if mode == "Image edit" else []
+        if engine == "gpt_image":
+            from h3_app.generation.gpt_image import GptImageRequest, generate_gpt_image
+
+            request = GptImageRequest(
+                prompt=prompt,
+                models=normalize_gpt_image_models(captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,))),
+                use_failback=bool(captured.get("gpt_image__use_failback", False)),
+                quality=str(captured.get("gpt_image__quality", GPT_IMAGE_QUALITY)),
+                width=int(captured.get("gpt_image__width", 1920)),
+                height=int(captured.get("gpt_image__height", 1088)),
+                batch_count=int(captured.get("gpt_image__batch_count", 1)),
+                seed=int(captured.get("gpt_image__seed", -1)),
+                reference_images=tuple(active_references),
+            )
+            return generate_gpt_image(request, self.deps.runtime_config())
         if engine == "h3":
             from h3_app.generation.ph3_image import generate_ph3_image
 

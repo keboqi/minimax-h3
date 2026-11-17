@@ -94,6 +94,12 @@ SCALEDOWN_WINDOW = int(
 )
 PROXY_AUTH = os.getenv("H3_MODAL_PROXY_AUTH", "0") != "0"
 HF_SECRET_NAME = os.getenv("H3_MODAL_HF_SECRET", "custom-secret")
+GPT_IMAGE_SECRET_ENVS = (
+    "GPT_IMAGE_API_URL",
+    "GPT_IMAGE_API_FAILBACK_URL",
+    "GPT_IMAGE_API_KEY",
+    "GPT_IMAGE_API_FAILBACK_KEY",
+)
 
 
 def _shared_import_path() -> Path:
@@ -890,6 +896,12 @@ def service_env() -> dict[str, str]:
             "XDG_CACHE_HOME": "/tmp/cache",
         }
     )
+    for name in GPT_IMAGE_SECRET_ENVS:
+        value = os.getenv(name, "").strip()
+        if value:
+            env[name] = value
+        else:
+            env.pop(name, None)
     return env
 
 

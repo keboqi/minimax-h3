@@ -449,7 +449,10 @@ services and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `OPENAI_API_KEY` (plus `OPENAI_BASE_URL` for a
-non-OpenAI endpoint) in that Modal Secret.
+non-OpenAI endpoint) in that Modal Secret. To enable **GPT Image** on the
+Image page, add `GPT_IMAGE_API_URL` and `GPT_IMAGE_API_KEY` (and optionally
+`GPT_IMAGE_API_FAILBACK_URL` and `GPT_IMAGE_API_FAILBACK_KEY` for failback
+and higher concurrency) to that Modal Secret, Colab Secrets, or local `.env`.
 The same Gemini key also gives the writers optional free Gemma checks (song style detection,
 pronunciation note fixes and the strict source check), which stay inside the free per-minute quota
 and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.

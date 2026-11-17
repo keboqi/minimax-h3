@@ -1,6 +1,7 @@
 """The Image page's JSON API: the shared draft, each model's options, images to edit and runs."""
 
 from pathlib import Path
+import os
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
@@ -157,10 +158,10 @@ class ImagePageTests(unittest.TestCase):
         for name in own:
             self.assertIn(name.partition("__")[2], {*GROUP_OF, *COMPOSE}, name)
         self.assertEqual([engine["id"] for engine in self.boot["engines"]],
-                         ["h3", "qwen", "flux3", "moss_image", "fibo2"])
+                         ["h3", "qwen", "flux3", "moss_image", "fibo2", "gpt_image"])
         self.assertEqual({engine: [tier["label"] for tier in tiers] for engine, tiers in self.boot["sizes"].items()},
                          {"qwen": ["1K", "2K"], "h3": ["4M", "8M", "16M"], "flux3": ["1K", "2K"],
-                          "moss_image": ["1M", "2M"], "fibo2": ["1M", "2M"]})
+                          "moss_image": ["1M", "2M"], "fibo2": ["1M", "2M"], "gpt_image": ["2M"]})
 
     def test_a_qwen_preset_sets_its_sampling_and_a_change_is_counted(self):
         state = self.change(qwen__preset="Quality")
@@ -406,6 +407,87 @@ class ImagePageTests(unittest.TestCase):
         followed = self.export.settings.get(owner)
         self.assertEqual(set(followed), set(self.services.job_fields))
         self.assertEqual((followed["qwen__steps"], followed["h3__model_profile"]), (13, "Quality"))
+
+    def test_gpt_image_availability_models_concurrency_and_sizes(self):
+        from h3_app.gpt_image import GPT_IMAGE_ENV_NAMES
+
+        blank_env = {name: "" for name in GPT_IMAGE_ENV_NAMES}
+        with patch.dict(os.environ, blank_env):
+            boot = self.ok(self.client.get(f"{API}/boot"))
+            gpt_entry = next(item for item in boot["engines"] if item["id"] == "gpt_image")
+            self.assertFalse(gpt_entry["available"])
+            state = self.change("engine", engine="gpt_image")
+            self.assertFalse(state["available"])
+            self.assertFalse(state["readiness"]["ready"])
+            self.assertIn("not available", state["readiness"]["message"])
+            self.post("/prompt", prompt="A lighthouse")
+            self.assertEqual(self.client.post(f"{API}/generate").status_code, 400)
+
+        primary_env = {
+            "GPT_IMAGE_API_URL": "https://primary.example.test/v1",
+            "GPT_IMAGE_API_KEY": "primary-key",
+            "GPT_IMAGE_API_FAILBACK_URL": "",
+            "GPT_IMAGE_API_FAILBACK_KEY": "",
+        }
+        with patch.dict(os.environ, primary_env):
+            boot = self.ok(self.client.get(f"{API}/boot"))
+            gpt_entry = next(item for item in boot["engines"] if item["id"] == "gpt_image")
+            self.assertTrue(gpt_entry["available"])
+            state = self.change("engine", engine="gpt_image")
+            self.assertTrue(state["available"])
+            self.assertFalse(state["failback_available"])
+            self.assertEqual(state["options"]["gpt_image__models"], ["gpt-image-2.5-flare"])
+            self.assertEqual(state["options"]["gpt_image__quality"], "low")
+            self.assertEqual((state["width"], state["height"]), (1920, 1088))
+            self.assertEqual((state["batch"]["minimum"], state["batch"]["maximum"]), (1, 2))
+
+            state = self.change(gpt_image__models=["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+            self.assertEqual(state["batch"]["maximum"], 4)
+            self.assertEqual(state["changed"], {})
+            state = self.change(gpt_image__batch_count=4)
+            self.assertEqual(state["batch"]["value"], 4)
+            self.assertEqual(self.client.post(f"{API}/settings", json={"changes": {"gpt_image__batch_count": 5}}).status_code, 400)
+
+            state = self.change(gpt_image__models=["gpt-image-2.5-flare"])
+            self.assertEqual((state["batch"]["maximum"], state["batch"]["value"]), (2, 2))
+
+            self.assertEqual(self.client.post(f"{API}/settings", json={"changes": {"gpt_image__quality": "high"}}).status_code, 400)
+            self.assertEqual(self.client.post(f"{API}/settings", json={"changes": {"gpt_image__width": 1024}}).status_code, 400)
+            state = self.change(gpt_image__width=1088)
+            self.assertEqual((state["width"], state["height"]), (1088, 1920))
+
+        both_env = {
+            **primary_env,
+            "GPT_IMAGE_API_FAILBACK_URL": "https://failback.example.test/v1",
+            "GPT_IMAGE_API_FAILBACK_KEY": "failback-key",
+        }
+        with patch.dict(os.environ, both_env):
+            state = self.change(
+                gpt_image__models=["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
+                gpt_image__use_failback=True,
+            )
+            self.assertTrue(state["failback_available"])
+            self.assertEqual(state["changed"], {})
+            self.assertEqual(state["batch"]["maximum"], 12)
+            state = self.change(gpt_image__batch_count=12)
+            self.assertEqual(state["batch"]["value"], 12)
+            restored = self.change("restore")
+            self.assertEqual(restored["options"]["gpt_image__models"], ["gpt-image-2.5-flare"])
+            self.assertFalse(restored["options"]["gpt_image__use_failback"])
+            self.assertEqual((restored["batch"]["maximum"], restored["batch"]["value"]), (2, 2))
+            state = self.change(
+                gpt_image__models=["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
+                gpt_image__use_failback=True,
+            )
+            state = self.change(gpt_image__batch_count=12)
+            state = self.change(gpt_image__use_failback=False)
+            self.assertEqual((state["batch"]["maximum"], state["batch"]["value"]), (6, 6))
+            self.post("/prompt", prompt="A mountain cabin")
+            self.post("/generate")
+            self.finished("generate")
+            sent = self.generated[-1]
+            self.assertEqual(sent["engine"], "gpt_image")
+            self.assertEqual(sent["gpt_image__batch_count"], 6)
 
     def page_state(self):
         return self.export.settings.load.__self__

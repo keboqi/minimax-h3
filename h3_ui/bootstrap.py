@@ -234,6 +234,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         from .page_fields import spec_of
         from .image_controller import suggest_prompt
         from h3_app.h3_image import H3_IMAGE_16M_PRESETS
+        from h3_app.gpt_image import GPT_IMAGE_RESOLUTION_PRESETS
         from h3_app.catalog import H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS
 
         # Reads what the MiniMax H3 page saved: P-H3-Image runs on that page's settings.
@@ -258,6 +259,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                           for engine in ("flux3", "moss_image", "fibo2")},
                    }.items()},
                 "h3": (H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_16M_PRESETS),
+                "gpt_image": (GPT_IMAGE_RESOLUTION_PRESETS,),
             },
             suggest=partial(suggest_prompt, engine_handlers, runtime=services.engine_deps.runtime_config()),
             h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
