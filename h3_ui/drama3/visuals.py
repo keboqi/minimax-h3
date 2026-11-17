@@ -920,6 +920,7 @@ def draw_previews(controller, deps, engine, presets, *values):
     widescreen(engine, captured)
     file = None
     if engine == "gpt_image":
+        completed = 0
         def task(name):
             def draw(options):
                 return (yield from _stream(controller.generate(
@@ -928,10 +929,11 @@ def draw_previews(controller, deps, engine, presets, *values):
 
         for index, complete, value in _parallel_images([task(name) for name in names], captured):
             if complete:
+                completed += 1
                 file = keep_preview(root, engine, names[index], value)
-                yield file, f"Preview · {names[index]} · Kept"
+                yield file, f"Previews {completed}/{len(names)} · {names[index]} · Kept"
             else:
-                yield value
+                yield value[0], f"Previews {completed}/{len(names)} · {value[1]}"
         yield file, f"Drew {len(names)} style previews."
         return
     for number, name in enumerate(names, 1):

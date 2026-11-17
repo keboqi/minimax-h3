@@ -8,8 +8,12 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from dataclasses import dataclass
 import io
-import hashlib
+import math
+import re
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from queue import SimpleQueue, Empty
 from threading import Lock
 import time
 from typing import Any, Callable, Iterator
@@ -57,7 +61,7 @@ class GptImageRequest:
 
 
 class GptImageRateLimiter:
-    """Thread-safe sliding window limiter: 2 requests/min per model per endpoint."""
+    """Thread-safe model quota shared by primary, failback, edits and generation."""
 
     def __init__(
         self,
@@ -72,7 +76,8 @@ class GptImageRateLimiter:
         self.clock = clock
         self.sleeper = sleeper
         self._lock = Lock()
-        self._buckets: dict[tuple[str, str, bytes], deque[float]] = {}
+        self._buckets: dict[str, deque[float]] = {}
+        self._cooldowns: dict[str, float] = {}
 
     def _prune(self, bucket: deque[float], now: float) -> None:
         cutoff = now - self.window_seconds
@@ -80,8 +85,10 @@ class GptImageRateLimiter:
             bucket.popleft()
 
     def available_slots(self, endpoint_url: str, model: str, *, api_key: str = "") -> int:
-        key = (str(endpoint_url), str(model), hashlib.sha256(api_key.encode()).digest())
+        key = str(model)
         with self._lock:
+            if self._cooldowns.get(key, 0) > self.clock():
+                return 0
             bucket = self._buckets.get(key)
             if not bucket:
                 return self.limit
@@ -95,26 +102,39 @@ class GptImageRateLimiter:
         *,
         api_key: str = "",
         check_cancel: Callable[[], None] = check_cancelled,
+        on_wait: Callable[[float], None] | None = None,
     ) -> float:
-        key = (str(endpoint_url), str(model), hashlib.sha256(api_key.encode()).digest())
+        key = str(model)
         waited = 0.0
+        announced = False
         while True:
             check_cancel()
             with self._lock:
                 now = self.clock()
                 bucket = self._buckets.setdefault(key, deque())
                 self._prune(bucket, now)
-                if len(bucket) < self.limit:
+                cooldown = self._cooldowns.get(key, 0) - now
+                if len(bucket) < self.limit and cooldown <= 0:
                     bucket.append(now)
                     return waited
-                delay = max(0.01, bucket[0] + self.window_seconds - now)
+                delay = max(0.01, cooldown,
+                            bucket[0] + self.window_seconds - now if len(bucket) >= self.limit else 0)
+            if on_wait is not None and not announced:
+                on_wait(delay)
+                announced = True
             step = min(delay, 0.25)
             self.sleeper(step)
             waited += step
 
+    def defer(self, model: str, seconds: float) -> None:
+        """Honor a provider's retry delay across all jobs using this model."""
+        with self._lock:
+            self._cooldowns[model] = max(self._cooldowns.get(model, 0), self.clock() + seconds)
+
     def reset(self) -> None:
         with self._lock:
             self._buckets.clear()
+            self._cooldowns.clear()
 
 
 RATE_LIMITER = GptImageRateLimiter()
@@ -152,31 +172,13 @@ def plan_gpt_image_slots(
     *,
     limiter: GptImageRateLimiter = RATE_LIMITER,
 ) -> list[tuple[GptImageEndpoint, str]]:
-    """Assign each concurrent task an (endpoint, model) pair within 2 req/min per pair."""
+    """Round-robin models on primary; failback is reserved for failed attempts."""
     if not endpoints:
         raise H3Error("No GPT Image endpoint is configured.")
-    max_slots = len(models) * len({(ep.url, ep.api_key) for ep in endpoints}) * GPT_IMAGE_RATE_LIMIT
+    max_slots = len(models) * GPT_IMAGE_RATE_LIMIT
     if batch_count < 1 or batch_count > max_slots:
         raise H3Error(f"GPT Image supports at most {max_slots} concurrent generations for this selection.")
-    assigned: dict[tuple[str, str, str], int] = {}
-    slots: list[tuple[GptImageEndpoint, str]] = []
-    for index in range(batch_count):
-        model = models[index % len(models)]
-        candidates = [
-            ep for ep in endpoints
-            if assigned.get((ep.url, ep.api_key, model), 0) < GPT_IMAGE_RATE_LIMIT
-        ]
-        endpoint = min(
-            candidates,
-            key=lambda ep: (
-                0 if limiter.available_slots(ep.url, model, api_key=ep.api_key) - assigned.get((ep.url, ep.api_key, model), 0) > 0 else 1,
-                endpoints.index(ep),
-                assigned.get((ep.url, ep.api_key, model), 0),
-            ),
-        )
-        assigned[(endpoint.url, endpoint.api_key, model)] = assigned.get((endpoint.url, endpoint.api_key, model), 0) + 1
-        slots.append((endpoint, model))
-    return slots
+    return [(endpoints[0], models[index % len(models)]) for index in range(batch_count)]
 
 
 def _encode_reference_file(path_str: str) -> tuple[str, bytes, str]:
@@ -252,6 +254,30 @@ def _call_endpoint(
     return _extract_image_bytes(response)
 
 
+def _rate_limit_delay(error: Exception) -> float | None:
+    """Read retry hints without letting SDK retries bypass our shared quota."""
+    if getattr(error, "status_code", None) != 429:
+        return None
+    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
+    for name, scale in (("retry-after-ms", 0.001), ("x-ms-retry-after-ms", 0.001), ("retry-after", 1)):
+        value = headers.get(name)
+        if value is None:
+            continue
+        try:
+            seconds = float(value) * scale
+            if math.isfinite(seconds):
+                return max(1.0, seconds)
+        except (TypeError, ValueError):
+            if name == "retry-after":
+                try:
+                    date = parsedate_to_datetime(value)
+                    return max(1.0, (date - datetime.now(timezone.utc)).total_seconds())
+                except (TypeError, ValueError, OverflowError):
+                    pass
+    match = re.search(r"retry after (\d+(?:\.\d+)?) seconds?", str(error), re.IGNORECASE)
+    return max(1.0, float(match[1])) if match else GPT_IMAGE_RATE_WINDOW_SECONDS
+
+
 def generate_gpt_image(
     request: GptImageRequest,
     runtime: RuntimeConfig,
@@ -279,19 +305,38 @@ def generate_gpt_image(
         check_cancel = job.check if job is not None else check_cancelled
         outputs_by_index: dict[int, str] = {}
         errors: list[tuple[int, Exception]] = []
+        notices: SimpleQueue[str] = SimpleQueue()
 
         yield GenerationUpdate(
             None,
-            f"Starting {batch_count} concurrent GPT Image request(s) across {', '.join(models)} ({size_str}, quality={quality})…",
+            f"Preparing {batch_count} image request(s) across {', '.join(models)} "
+            f"({size_str}, quality={quality}) · 2 requests/min per model shared by primary and failback…",
         )
         timings.transition("Calling GPT Image API")
 
+        def call_endpoint(endpoint: GptImageEndpoint, model: str) -> bytes:
+            for attempt in range(3):
+                limiter.acquire(endpoint.url, model, api_key=endpoint.api_key, check_cancel=check_cancel,
+                    on_wait=lambda delay: notices.put(f"{model} · Waiting {delay:.0f}s for the shared model quota"))
+                check_cancel()
+                try:
+                    return _call_endpoint(endpoint, model, prompt, size_str, quality, encoded_references)
+                except JobCancelled:
+                    raise
+                except Exception as exc:
+                    delay = _rate_limit_delay(exc)
+                    if delay is None:
+                        raise
+                    limiter.defer(model, delay)
+                    if attempt == 2:
+                        raise
+                    notices.put(f"{model} ({endpoint.name}) · Rate limited; retry {attempt + 1}/2 "
+                                f"after at least {delay:.0f}s and the next model quota slot")
+
         def run_slot(index: int, endpoint: GptImageEndpoint, model: str) -> tuple[int, Path, GptImageEndpoint]:
-            limiter.acquire(endpoint.url, model, api_key=endpoint.api_key, check_cancel=check_cancel)
-            check_cancel()
             used_endpoint = endpoint
             try:
-                raw = _call_endpoint(endpoint, model, prompt, size_str, quality, encoded_references)
+                raw = call_endpoint(endpoint, model)
             except JobCancelled:
                 raise
             except Exception as primary_exc:
@@ -301,13 +346,9 @@ def generate_gpt_image(
                 )
                 if alt_endpoint is not None:
                     check_cancel()
-                    limiter.acquire(alt_endpoint.url, model, api_key=alt_endpoint.api_key, check_cancel=check_cancel)
-                    check_cancel()
                     used_endpoint = alt_endpoint
                     try:
-                        raw = _call_endpoint(
-                            alt_endpoint, model, prompt, size_str, quality, encoded_references
-                        )
+                        raw = call_endpoint(alt_endpoint, model)
                     except JobCancelled:
                         raise
                     except Exception as failback_exc:
@@ -335,6 +376,13 @@ def generate_gpt_image(
             while pending:
                 check_cancel()
                 finished, pending = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+                while True:
+                    try:
+                        notice = notices.get_nowait()
+                    except Empty:
+                        break
+                    ordered = [outputs_by_index[i] for i in sorted(outputs_by_index)]
+                    yield GenerationUpdate(ordered or None, notice)
                 for future in finished:
                     index, planned_endpoint, model = future_to_slot[future]
                     done_count += 1

@@ -155,11 +155,11 @@ def _build_model_settings(engine_views, h3, labels):
                     gpt_image_models = gr.CheckboxGroup(
                         list(GPT_IMAGE_MODELS), value=[DEFAULT_GPT_IMAGE_MODEL],
                         label="GPT Image models",
-                        info="Select one or more models; 2 reqs/min per model per endpoint.",
+                        info="Select one or more models; 2 requests/min per model shared by primary and failback.",
                     )
                     gpt_image_use_failback = gr.Checkbox(
                         value=False, label="Use failback endpoint",
-                        info="Use GPT_IMAGE_API_FAILBACK_URL and GPT_IMAGE_API_FAILBACK_KEY for failover and extra concurrency.",
+                        info="Use the backup endpoint on failure. It shares the selected model's rate limit.",
                     )
                     gpt_image_quality = gr.Dropdown(
                         list(GPT_IMAGE_QUALITIES), value=GPT_IMAGE_QUALITY, label="Image quality",

@@ -286,7 +286,7 @@
     h3: "MiniMax H3 Image (Official): 6 steps, CFG 1, native 16 MP and up to 16 reference images.",
     flux3: "Distilled models run 16 steps at CFG 1; Base models run 50 steps at CFG 4.",
     fibo2: "Dev runs 30 steps at CFG 5. Edit Turbo edits in 4 steps and needs Edit.",
-    gpt_image: "GPT Image runs at IMAGE_QUALITY=low (1920×1088 or 1088×1920); 2 reqs/min per model per endpoint.",
+    gpt_image: "GPT Image runs at IMAGE_QUALITY=low (1920×1088 or 1088×1920); primary and failback share 2 requests/min per model.",
   };
   const sizeChoice = () => {
     const tiers = app.boot.sizes[app.s.engine] || [];

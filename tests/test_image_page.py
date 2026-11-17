@@ -468,9 +468,9 @@ class ImagePageTests(unittest.TestCase):
             )
             self.assertTrue(state["failback_available"])
             self.assertEqual(state["changed"], {})
-            self.assertEqual(state["batch"]["maximum"], 12)
-            state = self.change(gpt_image__batch_count=12)
-            self.assertEqual(state["batch"]["value"], 12)
+            self.assertEqual(state["batch"]["maximum"], 6)
+            state = self.change(gpt_image__batch_count=6)
+            self.assertEqual(state["batch"]["value"], 6)
             restored = self.change("restore")
             self.assertEqual(restored["options"]["gpt_image__models"], ["gpt-image-2.5-flare"])
             self.assertFalse(restored["options"]["gpt_image__use_failback"])
@@ -479,7 +479,7 @@ class ImagePageTests(unittest.TestCase):
                 gpt_image__models=["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
                 gpt_image__use_failback=True,
             )
-            state = self.change(gpt_image__batch_count=12)
+            state = self.change(gpt_image__batch_count=6)
             state = self.change(gpt_image__use_failback=False)
             self.assertEqual((state["batch"]["maximum"], state["batch"]["value"]), (6, 6))
             self.post("/prompt", prompt="A mountain cabin")

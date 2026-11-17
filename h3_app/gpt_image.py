@@ -20,7 +20,7 @@ GPT_IMAGE_SIZES = ((1920, 1088), (1088, 1920))
 GPT_IMAGE_RESOLUTION_PRESETS = ("2M · 16:9 · 1920×1088", "2M · 9:16 · 1088×1920")
 GPT_IMAGE_RATE_LIMIT = 2
 GPT_IMAGE_RATE_WINDOW_SECONDS = 60.0
-GPT_IMAGE_MAX_CONCURRENCY = 12
+GPT_IMAGE_MAX_CONCURRENCY = len(GPT_IMAGE_MODELS) * GPT_IMAGE_RATE_LIMIT
 GPT_IMAGE_MAX_REFERENCES = 16
 GPT_IMAGE_ENV_NAMES = (
     "GPT_IMAGE_API_URL",
@@ -214,16 +214,8 @@ def gpt_image_max_concurrency(
     *,
     credentials: GptImageCredentials | None = None,
 ) -> int:
-    """Calculate max concurrent generations: 2 reqs/min per selected model per distinct active endpoint."""
-    selected = normalize_gpt_image_models(models)
-    duplicate_failback = (
-        credentials is not None
-        and credentials.primary_available
-        and credentials.failback_available
-        and not credentials.distinct_failback
-    )
-    endpoint_count = 2 if (use_failback and not duplicate_failback) else 1
-    return len(selected) * endpoint_count * GPT_IMAGE_RATE_LIMIT
+    """Two requests per model; failback shares the budget rather than adding capacity."""
+    return len(normalize_gpt_image_models(models)) * GPT_IMAGE_RATE_LIMIT
 
 
 def validate_gpt_image_canvas(width: Any, height: Any) -> tuple[int, int]:
