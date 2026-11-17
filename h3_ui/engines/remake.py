@@ -58,7 +58,7 @@ DOCUMENTED_PROFILE = "Original"
 READY = "Ready to generate."
 RUN_BUTTON = "remake-generate"
 # The engines that can repaint a frame. Qwen comes first, as the default: it edits frames best.
-EDIT_MODELS = tuple(sorted((engine for engine in engines_for_task("Image") if engine.id in ("h3", "qwen")),
+EDIT_MODELS = tuple(sorted((engine for engine in engines_for_task("Image") if engine.id in ("h3", "qwen", "gpt_image")),
                            key=lambda engine: engine.id != "qwen"))
 EDIT_BRIDGE = "remake-edit-bridge-{}"
 H3_MODE = "h3-conditioning-mode"
@@ -665,13 +665,25 @@ class RemakeHandlers:
         return ("" if "failed" in status else suggestion), status
 
     # Quick edit ------------------------------------------------------------
-    def quick_edit(self, picture, prompt, progress=no_progress):
-        """Repaint a picture from text with Qwen Image 2.1, keeping its size. Yields (image, status)."""
+    def quick_edit(self, picture, prompt, engine="qwen", progress=no_progress):
+        """Repaint a frame with Qwen or GPT Image. Yields (image, status)."""
         if not picture or not str(prompt or "").strip():
             raise H3Error("Write what to change in the frame.")
-        staged = self.deps.stage_file(str(picture), "qwen_image21_references", reuse=True)
+        if engine == "gpt_image":
+            from PIL import Image
+            from h3_app.generation.gpt_image import GptImageRequest, generate_gpt_image
+            with Image.open(picture) as image:
+                width, height = (1088, 1920) if image.height > image.width else (1920, 1088)
+            updates = generate_gpt_image(GptImageRequest(
+                prompt=prompt, reference_images=(str(picture),), width=width, height=height),
+                self.deps.runtime_config(), progress=progress)
+        elif engine == "qwen":
+            staged = self.deps.stage_file(str(picture), "qwen_image21_references", reuse=True)
+            updates = self.deps.qwen_take(quick_edit_request(prompt, staged), progress)
+        else:
+            raise H3Error("Choose Qwen or GPT Image for quick edits.")
         result = None
-        for update in self.deps.qwen_take(quick_edit_request(prompt, staged), progress):
+        for update in updates:
             status = str(update.status).split("\n\n")[0]
             if status.startswith("Error:"):
                 raise H3Error(status.removeprefix("Error:").strip())

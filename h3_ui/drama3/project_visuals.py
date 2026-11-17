@@ -119,15 +119,24 @@ def can_reuse_script(data, result=None, runtime=None):
 
 def carry_project_stills(store, name, previous_result, result, export):
     """Reuse illustrations after speaking/remixing changes the mix file and clock."""
-    if not result or not previous_result or Path(result) == Path(previous_result):
+    if not result or (previous_result and Path(result) == Path(previous_result)):
         return
     data = store.soundstage_project(name)[0]
+    if not previous_result:
+        previous_result = Path(export.deps.runtime_config().output_dir) / ".soundstage" / "plans" / (
+            hashlib.sha256(name.encode()).hexdigest() + ".wav")
     audio, settings = planning_mix(name, data, result, export, strict=True, store=store)
     saved = visuals.read_plan(audio)
     old = visuals.read_plan(previous_result)
     if not saved or not old:
         return
     old_duration = result_settings(previous_result).get("duration")
+    if not old_duration:
+        record = visuals.read_stills(previous_result, export.deps.runtime_config().output_dir)
+        if record and record.get("shots"):
+            frames = record.get("total_frames") or max(
+                item["first_frame"] + item["frames"] for item in record["shots"])
+            old_duration = frames / visuals.FPS
     if not old_duration:
         return
     shots = _shots(saved, settings["duration"], data)

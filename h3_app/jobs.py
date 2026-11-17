@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from threading import Event, Lock, RLock, Thread
@@ -21,6 +21,18 @@ from .input_leases import cleanup_orphans, create_lease, release_lease
 
 class JobCancelled(RuntimeError):
     pass
+
+
+def request_requires_gpu(family, values):
+    """Resource policy for the shared image entry points and their retained retries."""
+    if family == "image":
+        return not values or values[0] != "gpt_image"
+    if family == "remake_edit":
+        return len(values) < 3 or values[2] != "gpt_image"
+    if family == "drama3_visuals":
+        return not values or not (values[0] == "gpt_image" or
+                                  len(values) > 1 and values[1] == "gpt_image")
+    return True
 
 
 @dataclass
@@ -65,6 +77,11 @@ class Job:
     canvas_request: dict | None = None
     source_asset_ids: list[str] = field(default_factory=list)
     recovered: bool = False
+
+    @property
+    def requires_gpu(self):
+        """Derive resource needs from the retained request, including on retry."""
+        return request_requires_gpu(self.family, self.values() if self.snapshot_json else [])
 
     def persist(self):
         if self.checkpoint is not None:
@@ -562,8 +579,9 @@ class JobCoordinator:
         return job
 
     @contextmanager
-    def run(self, owner: str, family: str, *, accepted: Job | None = None):
+    def run(self, owner: str, family: str, *, accepted: Job | None = None, values=None):
         job = accepted or Job(owner, family)
+        requires_gpu = job.requires_gpu if accepted is not None else request_requires_gpu(family, values or [])
         with self.lock:
             self._prune()
             if job.owner != owner or job.family != family:
@@ -578,13 +596,14 @@ class JobCoordinator:
 
         try:
             job.check()
-            with self.gpu:
+            with self.gpu if requires_gpu else nullcontext():
                 job.check()
                 job.state = "preparing"
-                job.stage = "Preparing inputs and models"
-                for hook in list(self.gpu_claim_hooks):
-                    hook(job.family)
-                job.has_gpu = True
+                job.stage = "Preparing inputs and models" if requires_gpu else "Calling image API"
+                if requires_gpu:
+                    for hook in list(self.gpu_claim_hooks):
+                        hook(job.family)
+                job.has_gpu = requires_gpu
                 try:
                     yield job
                 finally:

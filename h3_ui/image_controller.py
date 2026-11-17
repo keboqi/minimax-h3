@@ -146,9 +146,17 @@ class ImageGenerationController:
     without depending on the ordering of another model's controls.
     """
 
-    def __init__(self, engine_views, handlers, h3, view, deps):
+    @classmethod
+    def api_only(cls, deps, fields):
+        return cls({}, {}, None, None, deps, fields=fields)
+
+    def __init__(self, engine_views, handlers, h3, view, deps, *, fields=None):
         self.handlers = handlers
         self.deps = deps
+        if fields is not None:
+            self.fields = fields
+            self.h3_fields = {}
+            return
         self.fields = {
             f"{engine}__{parameter}": getattr(engine_views[engine], component)
             for engine, options in GENERATION_OPTIONS.items() for parameter, component in options

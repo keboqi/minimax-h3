@@ -164,7 +164,122 @@ def _stream(updates, label):
     return path
 
 
+def _parallel_images(tasks, captured):
+    """Stream independent API jobs; publish results only on the calling thread."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+    from queue import Queue, Empty
+    from threading import Event
+    from h3_app.gpt_image import (DEFAULT_GPT_IMAGE_MODEL, gpt_image_credentials,
+                                  gpt_image_max_concurrency, normalize_gpt_image_models)
+    from h3_app.jobs import check_cancelled
+
+    models = normalize_gpt_image_models(captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)))
+    workers = gpt_image_max_concurrency(models, bool(captured.get("gpt_image__use_failback")),
+                                        credentials=gpt_image_credentials())
+    events, stop = Queue(), Event()
+
+    def run(index, task):
+        iterator = None
+        try:
+            options = {**captured, "gpt_image__models": (models[index % len(models)],),
+                       "gpt_image__batch_count": 1}
+            iterator = task(options)
+            while not stop.is_set():
+                check_cancelled()
+                try:
+                    update = next(iterator)
+                except StopIteration as done:
+                    events.put((index, True, done.value))
+                    return
+                events.put((index, False, update))
+        except BaseException as exc:
+            events.put((index, True, exc))
+        finally:
+            if iterator is not None:
+                iterator.close()
+
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="soundstage-image")
+    try:
+        for index, task in enumerate(tasks):
+            pool.submit(copy_context().run, run, index, task)
+        pending, errors = len(tasks), []
+        while pending:
+            check_cancelled()
+            try:
+                index, done, value = events.get(timeout=0.25)
+            except Empty:
+                continue
+            if isinstance(value, BaseException):
+                errors.append(value)
+                pending -= 1
+                continue
+            if done:
+                pending -= 1
+            yield index, done, value
+        if errors:
+            raise errors[0]
+    finally:
+        stop.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def illustrate_shots(controller, engine, shots, captured, use_references, finished=None, portraits=None,
+                     orientation="landscape", *, on_shot=None):
+    if engine != "gpt_image":
+        return (yield from _illustrate_shots_serial(controller, engine, shots, captured, use_references,
+                                                    finished, portraits, orientation, on_shot=on_shot))
+    finished = {"portraits": {}, "shots": []} if finished is None else finished
+    drawn = finished.setdefault("portraits", {})
+    details = finished.setdefault("shot_details", {})
+    done = finished.setdefault("shots", [])
+    portraits = portraits or {}
+    options = dict(captured)
+    widescreen(engine, options, orientation)
+    cast = list(dict.fromkeys(key for shot in shots for key in shot.references if key in portraits)) if use_references else []
+    missing = [key for key in cast if not drawn.get(key) or not Path(drawn[key]).is_file()]
+
+    def portrait_task(key):
+        def task(values):
+            _size(engine, values, PORTRAIT_SIZE, PORTRAIT_SIZE)
+            return (yield from _stream(controller.generate(engine, "Text to image", portraits[key], [], values),
+                                       f"Portrait · {key}"))
+        return task
+
+    for index, complete, value in _parallel_images([portrait_task(key) for key in missing], options):
+        if complete:
+            drawn[missing[index]] = value
+        else:
+            yield value
+
+    def shot_task(index):
+        def task(values):
+            local = {"portraits": dict(drawn), "shots": [], "shot_details": {}}
+            if index < len(done) and done[index] and Path(done[index]).is_file():
+                local["shots"] = [done[index]]
+                local["shot_details"] = {0: details.get(index, {})}
+            return (yield from _illustrate_shots_serial(controller, engine, [shots[index]], values,
+                                                        use_references, local, portraits, orientation))
+        return task
+
+    images, records = [None] * len(shots), [None] * len(shots)
+    for index, complete, value in _parallel_images([shot_task(i) for i in range(len(shots))], options):
+        if not complete:
+            yield value[0], str(value[1]).replace("Shot 1 of 1", f"Shot {index + 1} of {len(shots)}")
+            continue
+        paths, shot_records, _ = value
+        images[index], records[index] = paths[0], shot_records[0]
+        while len(done) <= index:
+            done.append(None)
+        done[index] = paths[0]
+        details[index] = {key: item for key, item in records[index].items() if key in STILL_METADATA_FIELDS}
+        if on_shot is not None:
+            record = on_shot(index, paths[0], records[index])
+            yield str(record), f"Shot {index + 1} of {len(shots)} · Ready"
+    return images, records, {key: Path(drawn[key]).name for key in cast}
+
+
+def _illustrate_shots_serial(controller, engine, shots, captured, use_references, finished=None, portraits=None,
                      orientation="landscape", *, on_shot=None):
     """Draw every scene from its text, then match its characters to their portraits.
 
@@ -641,7 +756,7 @@ def chosen_shots(shots, stills, only):
 
 
 def draw_stills(controller, deps, result_name, engine, style, limit, use_references, orientation, *values,
-                only=None):
+                only=None, mix=None):
     """Draw a mix's saved shot plan in ``style`` and ``orientation`` and keep the images as its stills;
     yields (record or skip, status).
 
@@ -649,7 +764,7 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
     already drawn for their time on the mix, and kept portraits drawn from the same prompt are
     reused, so a redrawn shot's characters match the rest.
     """
-    audio, settings = load_mix(deps, result_name)
+    audio, settings = mix if mix is not None else load_mix(deps, result_name)
     saved = read_plan(audio, limit)
     if saved is None:
         raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
@@ -804,6 +919,21 @@ def draw_previews(controller, deps, engine, presets, *values):
     captured = dict(zip(controller.fields, values, strict=True))
     widescreen(engine, captured)
     file = None
+    if engine == "gpt_image":
+        def task(name):
+            def draw(options):
+                return (yield from _stream(controller.generate(
+                    engine, "Text to image", preview_prompt(name), [], options), f"Preview · {name}"))
+            return draw
+
+        for index, complete, value in _parallel_images([task(name) for name in names], captured):
+            if complete:
+                file = keep_preview(root, engine, names[index], value)
+                yield file, f"Preview · {names[index]} · Kept"
+            else:
+                yield value
+        yield file, f"Drew {len(names)} style previews."
+        return
     for number, name in enumerate(names, 1):
         label = f"Preview {number} of {len(names)} · {name}"
         yield gr.skip(), label
@@ -840,10 +970,10 @@ def video_export(controller, deps, triggers=()):
     ``triggers`` are the studio events (opening it, switching task) on which each owner's Image
     tab values are handed to the export, as Remake and Storyboard take the MiniMax H3 settings.
     """
-    def generate(result_name, engine, style, limit, use_references, orientation, only, *values):
+    def generate(result_name, engine, style, limit, use_references, orientation, only, *values, mix=None):
         try:
             yield from draw_stills(controller, deps, result_name, engine, style, limit, use_references, orientation,
-                                   *values, only=json.loads(only) if only else None)
+                                   *values, only=json.loads(only) if only else None, mix=mix)
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 

@@ -126,6 +126,13 @@ def run():
         page.reload()
         expect(page.locator("#prompt")).to_have_value("")
         expect(page.locator("#result-image")).to_be_visible()
+        boot["gpu"] = False
+        boot["engines"] = [{"id": "gpt_image", "label": "GPT Image", "description": "API images"}]
+        state.update(engine="gpt_image", prompt="A bird without a GPU")
+        page.reload()
+        expect(page.locator("#prompt")).to_have_value("A bird without a GPU")
+        expect(page.locator("#run")).to_be_enabled()
+        expect(page.locator("#workshop-note")).to_be_visible()
         assert not errors, errors
         browser.close()
     print("Image page: delayed draft saves, model switching, preview pixels and Empty passed.")

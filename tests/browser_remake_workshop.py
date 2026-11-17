@@ -66,8 +66,16 @@ def main():
                 expect(view.locator("#workshop-note")).to_be_visible()
                 expect(view.locator("#primary")).to_be_disabled()
                 view.get_by_role("button", name="Extract frame", exact=True).click()
-                expect(view.get_by_role("button", name="Quick edit", exact=True)).to_have_count(0)
-                expect(view.get_by_role("button", name="Edit in Image", exact=True)).to_have_count(0)
+                expect(view.get_by_role("button", name="Quick edit", exact=True)).to_be_visible()
+                expect(view.locator("#edit-model")).to_have_value("gpt_image")
+                with page.expect_popup() as opened:
+                    view.get_by_role("button", name="Edit in Image", exact=True).click()
+                image_page = opened.value
+                expect(image_page).to_have_url(f"{url}/image/")
+                expect(image_page.locator("#editor")).to_be_visible()
+                expect(image_page.locator("#workshop-note")).to_contain_text("without starting a GPU")
+                image_page.close()
+                expect(view.get_by_role("button", name="Use latest from Media", exact=True)).to_be_visible()
                 with page.expect_download() as downloaded:
                     view.get_by_role("link", name="Download frame", exact=True).click()
                 assert downloaded.value.suggested_filename == "frame-1.png"

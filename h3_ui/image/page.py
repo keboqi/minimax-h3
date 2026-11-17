@@ -117,6 +117,7 @@ class ImagePageServices:
     interrupt: Callable[..., str] | None = None
     library: Callable[[], Any] = lambda: None
     followers: tuple = ()
+    engines: tuple = IMAGE_MODELS
 
 
 @dataclass
@@ -242,7 +243,7 @@ class ImagePageState:
         uploads = self.owner_root(owner) / "uploads"
         references = [uploads / Path(path).name for path in saved.get("references") or [] if path]
         return {
-            "engine": saved.get("engine") if saved.get("engine") in IMAGE_MODELS else IMAGE_MODELS[0],
+            "engine": saved.get("engine") if saved.get("engine") in self.services.engines else self.services.engines[0],
             "mode": EDIT_MODE if saved.get("mode") == EDIT_MODE else GENERATE_MODE,
             "prompt": str(saved.get("prompt") or ""), "references": files(references),
             "options": options, "writer": writer, "results": files(saved.get("results")),
@@ -254,6 +255,13 @@ class ImagePageState:
         kept = {**state, "writer": {name: value for name, value in state["writer"].items()
                                     if name not in SECRET_FIELDS}}
         target = self.owner_root(owner) / "settings.json"
+        # The CPU workspace edits only API options in this shared Studio draft.
+        if self.services.engines != IMAGE_MODELS:
+            try:
+                previous = json.loads(target.read_text(encoding="utf-8"))
+                kept["options"] = {**(previous.get("options") or {}), **kept["options"]}
+            except (OSError, ValueError, AttributeError, TypeError):
+                pass
         scratch = target.with_suffix(".tmp")
         scratch.write_text(json.dumps(kept, default=str), encoding="utf-8")
         scratch.replace(target)
@@ -279,7 +287,7 @@ class ImagePageState:
         """Another page hands over one picture to edit with ``engine``."""
         with self.lock:
             state = self.load(owner)
-            state.update(engine=engine if engine in IMAGE_MODELS else state["engine"],
+            state.update(engine=engine if engine in self.services.engines else state["engine"],
                          references=[self.keep(owner, path)], mode=EDIT_MODE)
             self.save(owner, state)
 
@@ -343,7 +351,7 @@ class ImagePageState:
         """One edit of the draft or of a model's options."""
         engine, options = state["engine"], state["options"]
         if action == "engine":
-            if changes.get("engine") not in IMAGE_MODELS:
+            if changes.get("engine") not in self.services.engines:
                 raise H3Error("Choose an image model.")
             state["engine"] = changes["engine"]
         elif action == "mode":
@@ -561,8 +569,8 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
         """What outlives ``request`` and names its owner to the job path."""
         return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
 
-    def require_gpu():
-        if not gpu or "image" not in JOBS.callbacks:
+    def require_generation(engine):
+        if (not gpu and engine != "gpt_image") or "image" not in JOBS.callbacks:
             raise H3Error("Open Image in Studio to generate on the GPU.")
 
     def run_payloads(owner: str) -> dict[str, Any]:
@@ -618,6 +626,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
                     "available": gpt_image_available() if engine.id == "gpt_image" else True,
                 }
                 for engine in sorted(engines_for_task("Image"), key=lambda item: IMAGE_MODELS.index(item.id))
+                if engine.id in services.engines
             ],
             "groups": [list(group) for group in GROUPS], "sizes": sizes,
             "modes": [["Generate", GENERATE_MODE], ["Edit", EDIT_MODE]],
@@ -769,11 +778,11 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     @app.post(f"{API}/generate", include_in_schema=False)
     @guarded
     def generate(request: Request):
-        require_gpu()
         owner = owner_of(request)
         session = session_of(request)
         with pages.lock:
             state = pages.load(owner)
+            require_generation(state["engine"])
             if issue := pages.issue(state):
                 raise H3Error(issue)
             engine = state["engine"]
@@ -864,7 +873,6 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     @app.post(f"{API}/interrupt", include_in_schema=False)
     @guarded
     def stop(request: Request):
-        require_gpu()
         owner = owner_of(request)
         run = runs[GENERATE].active(owner, RUN_KEY)
         if services.interrupt is None:

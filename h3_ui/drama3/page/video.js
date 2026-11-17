@@ -1,6 +1,7 @@
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
 export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
+  const canDraw = () => Boolean(state.boot.gpu || state.project?.video?.engine === "gpt_image");
   const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
   const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
 
@@ -265,7 +266,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
           type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
           onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
-      h("button", {type: "button", class: "btn btn-primary", "data-gpu": true, disabled: busy || !state.boot.gpu || (video.timing_pending && !state.project.result),
+      h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
                    onclick: () => drawImages([row.index])}, draw));
   }
 
@@ -283,7 +284,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (url) return h("span", {class: "style-thumb"}, h("img", {src: url, alt: "", loading: "lazy"}));
     const text = state.boot.video.styles[name] ? "No preview yet" : "Your own art direction";
     return h("span", {class: "style-thumb style-thumb-empty"}, h("span", {}, text),
-      draw ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy || !state.boot.gpu,
+      draw ? h("button", {type: "button", class: "btn btn-small", disabled: busy || !canDraw(),
                           title: `Draw this preset's sample scene with ${engineLabel(video)}`,
                           onclick: (event) => { event.stopPropagation(); drawPreviews([name]); }}, "Draw preview") : null);
   }
@@ -402,7 +403,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
           h("div", {class: "style-section-head"},
             h("div", {class: "style-head-text"}, h("h3", {id: "style-section-title"}, "Style"),
               h("span", {class: "muted small"}, `${Object.keys(previews).length} of ${Object.keys(boot.styles).length} previewed with ${engineLabel(video)}. Previews are kept per image model for every project.`)),
-            missing ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: busy || !state.boot.gpu,
+            missing ? h("button", {type: "button", class: "btn btn-small", disabled: busy || !canDraw(),
                                    title: `Draw each preset without a preview with ${engineLabel(video)}, in one run`,
                                    onclick: () => drawPreviews("missing")}, `Draw ${plural(missing, "missing preview")}`) : null),
           ...boot.style_groups.map((group) => h("section", {class: "style-group"},
@@ -458,7 +459,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     main.setAttribute("aria-label", looks ? "Characters and places" : "Shot plan");
     main.replaceChildren(h("div", {class: "card-head"}, views, filter, h("span", {class: "spacer"}),
       looks ? h("span", {class: "muted small"}, "Drawn once as references; shots that mention one match it.")
-        : rows.length ? h("button", {type: "button", class: "btn btn-small", "data-gpu": true, disabled: videoRunning() || !state.boot.gpu || !state.project.result,
+        : rows.length ? h("button", {type: "button", class: "btn btn-small", disabled: videoRunning() || !canDraw() || (!state.project.result && video.engine !== "gpt_image"),
                                      title: "Draw every shot from scratch, with new portraits", onclick: () => drawImages("all")}, "Draw every shot again") : null), body);
     renderInspector(rows);
     renderSettings();
@@ -481,9 +482,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     planButton.disabled = busy;
     planButton.textContent = videoRunning("plan") ? "Planning…" : rows.length ? "Plan again" : "Plan shots";
     planButton.className = rows.length ? "btn" : "btn btn-primary";
-    drawButton.hidden = !rows.length || !needs || !state.project.result;
-    drawButton.disabled = busy || !state.boot.gpu;
-    drawButton.title = state.boot.gpu ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
+    drawButton.hidden = !rows.length || !needs || (!state.project.result && video.engine !== "gpt_image");
+    drawButton.disabled = busy || !canDraw();
+    drawButton.title = canDraw() ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
     stop.hidden = !videoRunning("draw") && !videoRunning("preview");
     if (busy) {
@@ -499,7 +500,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     } else if (needs) {
       const counts = video.plan.counts;
       title.textContent = `${plural(needs, "shot")} need${needs === 1 ? "s" : ""} drawing`;
-      detail.textContent = video.timing_pending ? "The plan is saved with the project. Timing adapts after speech; draw images in Studio." : [counts.changed ? `${counts.changed} changed since drawn (prompt, style, frame or portraits)` : null,
+      detail.textContent = video.timing_pending ? "Timing adapts after speech. GPT Image can draw the saved shot plan now." : [counts.changed ? `${counts.changed} changed since drawn (prompt, style, frame or portraits)` : null,
                             counts.todo ? `${counts.todo} not drawn` : null].filter(Boolean).join(", ")
         + (counts.drawn ? `. The other ${counts.drawn} keep their images.` : ".");
     } else {

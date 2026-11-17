@@ -432,7 +432,7 @@
       : app.s.available === false ? app.s.readiness.message
       : !hasPrompt ? "Write an image prompt or edit instruction." : app.s.readiness.message;
     $("run-label").textContent = app.s.editing ? "Edit image" : "Generate image";
-    $("run").disabled = !app.boot.gpu || !ready || Boolean(run?.active);
+    $("run").disabled = !(app.boot.gpu || app.s.engine === "gpt_image") || !ready || Boolean(run?.active);
     $("stop").hidden = !run?.active;
     const status = $("run-status");
     status.hidden = !run || (!run.active && !run.error && !run.status);

@@ -6,9 +6,10 @@ import gradio as gr
 from .engines.feature import EngineDeps
 from .engines.remake import FRAME, RemakeHandlers
 from .remake_page import install_remake_page
+from .api_images import interrupt_api_image
 
 
-def build_remake_workshop(tab, ui, runtime, *, library=None):
+def build_remake_workshop(tab, ui, runtime, *, library=None, images=None):
     handlers = RemakeHandlers(EngineDeps(
         runtime_config=lambda: runtime, generation_services=lambda: None,
         stage_file=None, interrupt=None,
@@ -23,5 +24,7 @@ def build_remake_workshop(tab, ui, runtime, *, library=None):
     with tab, gr.Column(elem_classes=["h3-workspace"]):
         gr.HTML(FRAME)
     ui.h3_routes = (*getattr(ui, "h3_routes", ()),
-                    partial(install_remake_page, handlers=handlers, gpu=False))
+                    partial(install_remake_page, handlers=handlers, gpu=False,
+                            image_pages=images.pages if images else None,
+                            interrupt=interrupt_api_image))
     return handlers

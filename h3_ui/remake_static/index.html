@@ -28,7 +28,7 @@
 </div>
 
 <div id="editor" class="editor" hidden>
-  <p id="workshop-note" class="notice" hidden>Prepare and save this project here, then reopen it in Studio to render on the GPU. Download frames to edit elsewhere, then upload the edited images.</p>
+  <p id="workshop-note" class="notice" hidden>Edit frames here with GPT Image and save the project. Reopen it in Studio to render the video.</p>
   <section class="bar" aria-label="Remake project">
     <div class="project-menu">
       <button type="button" class="btn project-button" id="project-button" aria-expanded="false"></button>
@@ -167,7 +167,7 @@
           <h3>Reference frames <span class="small muted" id="pic-count"></span></h3>
           <label class="inline check" title="Holds each picture at its frame for the first four steps. Remake needs all pictures pinned or none."><input type="checkbox" id="pinned">Pin to frames</label>
         </div>
-        <label class="inline" title="MiniMax H3 edits on the model a run already loads, so nothing else has to load."><span class="small muted">Edit with</span><select id="edit-model" class="field tight" aria-label="Edit with"></select></label>
+        <label class="inline" title="Choose a frame editor. GPT Image uses the API without a GPU."><span class="small muted">Edit with</span><select id="edit-model" class="field tight" aria-label="Edit with"></select></label>
         <div class="pictures" id="pictures"></div>
       </section>
       <section class="block last" aria-label="Prompt">

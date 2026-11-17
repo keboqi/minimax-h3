@@ -177,7 +177,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             # The MiniMax H3 page hands Remake its settings; nothing is captured from Gradio.
             (),
             # The Image page takes the frame; its Gradio view stays unseen.
-            edit_targets={engine: EditTarget(receive=partial(hand_to_image, engine)) for engine in ("h3", "qwen")},
+            edit_targets={engine: EditTarget(receive=partial(hand_to_image, engine)) for engine in ("h3", "qwen", "gpt_image")},
         )
 
         from .remake_page import install_remake_page

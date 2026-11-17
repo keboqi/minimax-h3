@@ -116,6 +116,53 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None})
         self.assertIsNone(video["latest"])
 
+    def test_workshop_draws_gpt_images_before_speech_and_carries_them_to_the_mix(self):
+        from PIL import Image
+        from h3_ui.drama3.project_visuals import carry_project_stills
+        from h3_ui.drama3.visuals import video_export
+
+        drawn = []
+        def generate(engine, mode, prompt, refs, captured):
+            from h3_app.jobs import CURRENT_JOB
+            self.assertFalse(CURRENT_JOB.get().has_gpu)
+            path = self.runtime.output_dir / f"api-{uuid.uuid4().hex}.png"
+            Image.new("RGB", (8, 8)).save(path)
+            drawn.append(path)
+            yield [str(path)], "Complete"
+
+        controller = SimpleNamespace(fields={}, generate=generate)
+        export = video_export(controller, self.export.deps)
+        export.engines = [("GPT Image", "gpt_image")]
+        handlers = Drama3Handlers(Drama3Services(runtime_config=lambda: self.runtime, stage_file=None,
+                                                 generation_services=None, free_gpu=None))
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        install_soundstage_page(app, Drama3Actions.of(handlers, interrupt=None), store=self.store,
+                                output_dir=self.root / "outputs", takes_dir=lambda: self.root / "takes",
+                                runtime_config=lambda: self.runtime, video_export=export, gpu=False)
+        self.client = TestClient(app)
+        self.client.get(f"{API}/boot")
+        self.store.mark_soundstage_generated("Night Market", "")
+        plan = {"shots": [dict(cue=0, offset=offset, transition="cut", beat="Plums", prompt="A plum stall.")
+                          for offset in (0, 0.5)]}
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(plan)}))
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": [0]}))
+        self.assertIsNone(self.wait()["error"])
+        before = self.project()["video"]
+        self.assertEqual(len(drawn), 1)
+        self.assertEqual(before["plan"]["counts"]["drawn"], 1)
+        for row in before["plan"]["rows"]:
+            if row["image"]:
+                self.assertEqual(self.client.get(row["image"]).status_code, 200)
+        self.store.mark_soundstage_generated("Night Market", str(self.mix))
+        carry_project_stills(self.store, "Night Market", None, str(self.mix), export)
+        after = self.project()["video"]
+        self.assertEqual(after["plan"]["counts"]["drawn"], 1)
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": "missing"}))
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual(self.project()["video"]["plan"]["counts"]["drawn"], 2)
+        self.assertEqual(len(drawn), 2)
+
     def test_style_previews_are_drawn_with_the_projects_model_and_served(self):
         from PIL import Image
 

@@ -432,10 +432,10 @@
     const prompt = (slot.quick ?? "").trim();
     if (!prompt) throw new Error("Write what to change in the frame.");
     const opened = state.index;
-    state.quick = {index, status: "Waiting for the GPU…"};
+    state.quick = {index, status: "Starting image edit…"};
     renderPictures();
     try {
-      let {run} = await post("/quick-edit", {picture: slot.path, prompt});
+      let {run} = await post("/quick-edit", {picture: slot.path, prompt, engine: gpu() && $("edit-model").value !== "gpt_image" ? "qwen" : "gpt_image"});
       while (run.active) {
         await sleep(POLL_MS);
         ({run} = await request("GET", "/quick-edit/run"));
@@ -459,12 +459,13 @@
   const sendToImage = safely(async (index) => {
     const slot = state.slots[index];
     const model = $("edit-model").value;
-    await post("/send-to-image", {path: slot.path, model});
+    const sent = await post("/send-to-image", {path: slot.path, model});
     const bridge = window.parent === window ? null : window.parent.document.getElementById(BRIDGE.edit(model));
-    if (!bridge) throw new Error("Open Remake in the app to edit in Image.");
+    if (!sent.url && !bridge) throw new Error("Open Remake in the app to edit in Image.");
     slot.sent = true;
     renderPictures();
-    bridge.click();
+    if (sent.url) window.open(sent.url, "_blank");
+    else bridge.click();
   });
 
   const useLatestFromLibrary = safely(async (slot) => {
@@ -1127,13 +1128,13 @@
             if (state.alignSlot === index) { state.alignSlot = null; state.view = "source"; renderViewer(); }
             afterPictures();
           }, "btn quiet mini", {"aria-label": `Remove picture ${index + 1}`})),
-        gpu() ? quickRow : null,
+        quickRow,
         editing ? h("p", {className: "small muted", id: "quick-status", role: "status"}, state.quick.status) : null,
         h("div", {className: "row tightrow"}, pinField,
           slot.before ? button("Undo edit", () => replacePicture(index, slot.before.path, {before: false, untouched: slot.before.untouched}))
             : null,
           // Still offered once sent: the frame can go to another model.
-          gpu() ? button("Edit in Image", () => sendToImage(index)) : null,
+          button("Edit in Image", () => sendToImage(index)),
           h("a", {className: "btn", href: fileUrl(slot.path), download: `frame-${index + 1}.png`}, "Download frame"),
           button("Upload edited frame", () => { state.target = index; $("picture-input").click(); }),
           slot.sent ? button("Use latest from Media", () => useLatestFromLibrary(index), "btn primary") : null,
@@ -1683,7 +1684,7 @@
     try {
       state.boot = await request("GET", "/boot");
       $("workshop-note").hidden = gpu();
-      $("edit-model").closest("label").hidden = !gpu();
+      $("edit-model").closest("label").hidden = !state.boot.edit_models.length;
       $("open-settings").hidden = !gpu();
       if (!gpu()) $("no-projects").textContent = "Save any selection as a project, then reopen it in Studio to render.";
       state.shortEdge = prefs.outputEdge ?? state.boot.short_edge;

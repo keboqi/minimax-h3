@@ -68,7 +68,8 @@ def _spool(upload: UploadFile, directory: str, allowed) -> Path:
     return path
 
 
-def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None, gpu: bool = True) -> None:
+def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None, gpu: bool = True,
+                        image_pages=None) -> None:
     runs = Runs(busy="A Remake is already running.")
     edits = Runs(busy="A quick edit is already running.")
     callback = owned_generation(handlers.generate_remake, "remake")
@@ -77,8 +78,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         JOBS.callbacks.setdefault("remake", callback)
     edit_callback = owned_generation(handlers.quick_edit, "remake_edit")
     # The Jobs tab retries a quick edit through this.
-    if gpu:
-        JOBS.register_callback("remake_edit", edit_callback)
+    JOBS.register_callback("remake_edit", edit_callback)
     api = "/remake/api"
 
     def require_gpu():
@@ -157,7 +157,8 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         return {
             "gpu": gpu, "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
             "short_edges": list(SHORT_EDGES), "short_edge": DEFAULT_SHORT_EDGE,
-            "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS] if gpu else [],
+            "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS
+                            if gpu or model.id == "gpt_image"],
             "lengths": list(LENGTHS), "max_window": DEFAULT_WINDOW_FRAMES,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS), "openai_model": DEFAULT_OPENAI_PROMPT_MODEL},
@@ -332,7 +333,14 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/send-to-image", include_in_schema=False)
     @guarded
     def send_to_image(request: Request, body: dict = Body(...)):
-        require_gpu()
+        if not gpu:
+            if image_pages is None or body.get("model") != "gpt_image":
+                raise H3Error("Choose GPT Image to edit frames in Workshop.")
+            owner = owner_of(request)
+            path = str(body.get("path") or "")
+            handlers.require_readable(owner, path)
+            image_pages.receive(owner, "gpt_image", path)
+            return {"ok": True, "url": "/image/"}
         handlers.send_to_image(owner_of(request), str(body.get("path") or ""), body.get("model"))
         return {"ok": True}
 
@@ -423,7 +431,9 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/quick-edit", include_in_schema=False)
     @guarded
     def quick_edit(request: Request, body: dict = Body(...)):
-        require_gpu()
+        engine = body.get("engine") or ("qwen" if gpu else "gpt_image")
+        if not gpu and engine != "gpt_image":
+            raise H3Error("Choose GPT Image to edit frames in Workshop.")
         owner = owner_of(request)
         picture, prompt = body.get("picture"), str(body.get("prompt") or "").strip()
         handlers.require_readable(owner, picture)
@@ -432,7 +442,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         session = session_of(request)
 
         def work(run: Run):
-            job = JOBS.accept(owner, "remake_edit", [picture, prompt], callback=edit_callback, key=uuid.uuid4().hex,
+            job = JOBS.accept(owner, "remake_edit", [picture, prompt, engine], callback=edit_callback, key=uuid.uuid4().hex,
                               media_indices=(0,), output_indices=(0,))
             run.job_id = job.id
             for output, status in execute_accepted(job.id, session):

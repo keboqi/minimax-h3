@@ -125,9 +125,9 @@ class RemakePageTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail("The run never finished.")
 
-    def test_the_edit_models_are_h3_and_qwen(self):
+    def test_the_edit_models_include_gpt_image(self):
         models = self.ok(self.client.get(f"{API}/boot"))["edit_models"]
-        self.assertEqual([model["id"] for model in models], ["qwen", "h3"])
+        self.assertEqual([model["id"] for model in models], ["qwen", "h3", "gpt_image"])
 
     def workshop_client(self):
         from h3_ui.remake_workshop import build_remake_workshop
@@ -147,13 +147,16 @@ class RemakePageTests(unittest.TestCase):
         client, _ = self.workshop_client()
         boot = self.ok(client.get(f"{API}/boot"))
         self.assertFalse(boot["gpu"])
-        self.assertEqual(boot["edit_models"], [])
+        self.assertEqual([model["id"] for model in boot["edit_models"]], ["gpt_image"])
         jobs = len(JOBS.records)
-        for route in ("generate", "quick-edit", "send-to-image", "interrupt", "quick-edit/interrupt"):
+        for route in ("generate", "interrupt"):
             response = client.post(f"{API}/{route}", json={})
             self.assertEqual(response.status_code, 400, response.text)
             self.assertIn("Studio", response.text)
         self.assertEqual(len(JOBS.records), jobs)
+        response = client.post(f"{API}/quick-edit", json={"engine": "qwen"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("GPT Image", response.text)
 
     def test_workshop_short_project_reopens_in_studio_and_renders(self):
         client, _ = self.workshop_client()
@@ -323,6 +326,29 @@ class RemakePageTests(unittest.TestCase):
         self.assertTrue(edit.match_input_size)
         self.assertEqual(edit.turbo_variant, QWEN_IMAGE21_DEFAULTS["turbo_variant"])
         self.assertTrue(any(job.family == "remake_edit" for job in JOBS.records.values()))
+
+    def test_workshop_quick_edit_uses_gpt_image_without_gpu_services(self):
+        from h3_app.jobs import CURRENT_JOB
+        client, _ = self.workshop_client()
+        requests = []
+        result = self.output_dir / "api-edit.png"
+        Image.new("RGB", (16, 9), "blue").save(result)
+        def generate(request, runtime, *, progress):
+            self.assertFalse(CURRENT_JOB.get().has_gpu)
+            requests.append(request)
+            yield GenerationUpdate([str(result)], "Complete")
+        with patch("h3_app.generation.gpt_image.generate_gpt_image", generate):
+            self.ok(client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "make it blue"}))
+            for _ in range(100):
+                run = self.ok(client.get(f"{API}/quick-edit/run"))["run"]
+                if not run["active"]:
+                    break
+                time.sleep(0.02)
+        self.assertIsNone(run["error"])
+        self.assertEqual((requests[0].width, requests[0].height), (1920, 1088))
+        self.assertEqual(len(requests[0].reference_images), 1)
+        self.assertFalse(self.edits)
+        self.assertEqual(client.get(f"{API}/file", params={"path": run["result_url"]}).status_code, 200)
 
     def test_a_failed_quick_edit_reports_why(self):
         self.ok(self.client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "fail"}))

@@ -403,14 +403,14 @@ def build_ui(manager: ModelManager | None, media=None):
             gr.Markdown(
                 f"# {TITLE}\n"
                 "Manage media, prepare Remake, Dubbing and Sound Stage projects and plan storyboards without starting ComfyUI or "
-                "loading models. Storyboards prepared here open in the Studio, which "
+                "loading models. GPT Image can generate and edit images here through its API. Storyboards prepared here open in the Studio, which "
                 "generates their scenes."
             )
         else:
             gr.Markdown(
                 f"# {TITLE}\n"
                 "Prepare models, manage media, prepare Remake, Dubbing and Sound Stage projects and plan storyboards on the shared Modal "
-                "volume without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
+                "volume without starting the GPU endpoint. GPT Image can generate and edit images here through its API. CPU and RAM use Modal defaults.\n\n"
                 "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
                 "annotating or deleting media. Start it again afterwards so it sees the "
                 "latest files. Storyboards prepared here open on the GPU endpoint, which "
@@ -426,13 +426,20 @@ def build_ui(manager: ModelManager | None, media=None):
                 runtime, store = media
                 media_tab = gr.Tab("Media library")
                 library = build_media_library(media_tab, runtime, store)
+                from h3_ui.api_images import build_api_images
+                from h3_ui.media_console import media_controller
+                from h3_ui.storyboard.handlers import MediaLibrary
+                media_controller_api = media_controller(runtime)
+                image_library = MediaLibrary(library.search.h3_asset_index, media_controller_api.refresh_media_page,
+                                             media_controller_api.gallery_media_download_path)
+                images = build_api_images(ui, runtime, library=image_library)
                 from h3_ui.storyboard.workshop import build_storyboard_workshop
 
                 build_storyboard_workshop(gr.Tab("Storyboard"), ui, runtime, store, library=library)
                 from h3_ui.remake_workshop import build_remake_workshop
-                build_remake_workshop(gr.Tab("Remake"), ui, runtime, library=library)
+                build_remake_workshop(gr.Tab("Remake"), ui, runtime, library=library, images=images)
                 from h3_ui.drama3.workshop import build_soundstage_workshop
-                build_soundstage_workshop(gr.Tab("Sound Stage"), ui, runtime, store)
+                build_soundstage_workshop(gr.Tab("Sound Stage"), ui, runtime, store, images=images)
                 from h3_ui.dubbing.workshop import build_dubbing_workshop
                 build_dubbing_workshop(gr.Tab("Dubbing"), ui, runtime)
                 from h3_ui.result_views import load_result_view_scripts

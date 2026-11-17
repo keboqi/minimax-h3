@@ -12,6 +12,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 import json
+from functools import partial
 from pathlib import Path
 import time
 from typing import Callable
@@ -282,7 +283,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             drawing_job(export, run, owner, session, generate, input_names, values)
 
         run = VideoRun(owner, name, kind)
-        run.status = "Waiting for the GPU…"
+        run.status = "Waiting for image generation…"
         with runs.lock:
             check_available(owner, name)
             runs.start(run, work)
@@ -401,12 +402,13 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         ``only`` is ``all`` (the default), ``missing`` (shots not drawn from their current prompt) or
         a list of shot indexes; the other shots keep their images.
         """
-        if not gpu:
-            raise H3Error("Open Soundstage in Studio to draw the images on the GPU.")
         owner = owner_of(request)
-        if not project(name)[1]:
-            raise H3Error("Speak the project before drawing images.")
         _, audio, _mix_settings, settings = mix_of(name, strict=True)
+        result = project(name)[1]
+        if not result and settings["engine"] != "gpt_image":
+            raise H3Error("Speak the project before drawing images.")
+        if not gpu and settings["engine"] != "gpt_image":
+            raise H3Error("Choose GPT Image to draw images in Workshop.")
         if visuals.read_plan(audio, settings["limit"]) is None:
             raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
                           "Plan shots, or paste a plan from another chat model, then draw.")
@@ -417,7 +419,9 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             raise H3Error("Draw all shots, the missing ones, or a list of shots.")
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
                   settings["orientation"], json.dumps(only), *export.values(owner)]
-        return start_drawing(request, owner, name, DRAW, export.generate, visuals.VIDEO_INPUT_NAMES, values)
+        generate = (partial(export.generate, mix=(audio, _mix_settings))
+                    if settings["engine"] == "gpt_image" else export.generate)
+        return start_drawing(request, owner, name, DRAW, generate, visuals.VIDEO_INPUT_NAMES, values)
 
     @app.post(f"{api}/project/video/preview", include_in_schema=False)
     @guarded
@@ -427,13 +431,13 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         ``presets`` is ``missing`` (the default: presets with no current preview for the model) or a
         list of preset names.
         """
-        if not gpu:
-            raise H3Error("Open Soundstage in Studio to draw style previews on the GPU.")
         if export.preview is None:
             raise H3Error("Style previews aren't available here.")
         owner = owner_of(request)
         data, _result = project(name)
         settings = video_settings(data, export.engines)
+        if not gpu and settings["engine"] != "gpt_image":
+            raise H3Error("Choose GPT Image to draw style previews in Workshop.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
         presets = body.get("presets", "missing")
@@ -488,16 +492,17 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         """One of the mix's stills; only images its stills record names."""
         with found():
             owner_of(request)
-            _, result = project(name)
+            data, result = project(name)
+            audio, _ = planning_mix(name, data, result, export, store=store)
         root = export.deps.runtime_config().output_dir
-        record = visuals.read_stills(result, root) if result else None
+        record = visuals.read_stills(audio, root)
         names = {item["image"] for item in record["shots"]} | {
             item.get("image") for item in (record.get("portraits") or {}).values()} if record else set()
         if file not in names:
             raise not_found()
         # Each drawing names its images afresh, so a still never changes under its name.
         media = "image/png" if file.endswith(".png") else "image/jpeg"
-        return file_response(visuals.stills_dir(result, root) / file, media_type=media,
+        return file_response(visuals.stills_dir(audio, root) / file, media_type=media,
                              cache="private, max-age=31536000, immutable")
 
     @app.post(f"{api}/project/video/interrupt", include_in_schema=False)

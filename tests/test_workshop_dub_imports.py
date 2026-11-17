@@ -19,6 +19,10 @@ from h3_app.dubbing import pipeline, projects, session, shares
 from h3_app.dubbing.gemini import transcribe_prompt
 from h3_app.drama3.serving.speech import run_blocking
 from h3_ui.dubbing import handlers, page, presenters, share, tab, workshop
+from h3_ui.api_images import build_api_images
+from h3_ui.remake_workshop import build_remake_workshop
+from h3_ui.drama3.workshop import build_soundstage_workshop
+from h3_app.generation.gpt_image import generate_gpt_image
 line = {"start": 0.0, "end": 0.1, "speaker": "speaker1", "source": "Hi", "translation": "A long line to say", "dub": True}
 assert pipeline.long_lines([line]) == [0]
 assert pipeline.translation_issues([line]) == []

@@ -10,12 +10,14 @@ from h3_app.provenance import RUN_CONTEXT, render_snapshot
 
 GPU_QUEUE = {"concurrency_id": "h3-gpu", "concurrency_limit": 1}
 PROMPT_QUEUE = {"concurrency_id": "h3-prompt", "concurrency_limit": 4}
+IMAGE_QUEUE = {"concurrency_id": "h3-image", "concurrency_limit": 12}
 
 
 def bind_gpu_action(trigger, callback=None, **options):
     """Register generation or maintenance with the same GPU queue policy."""
     reference_map = options.pop("reference_map", None)
     resolver = options.pop("resolver", None)
+    queue = IMAGE_QUEUE if getattr(callback, "job_family", None) == "image" else GPU_QUEUE
     component = getattr(trigger, "__self__", None)
     if getattr(callback, "job_family", None) and (
         getattr(component, "visible", True) is not False
@@ -26,7 +28,7 @@ def bind_gpu_action(trigger, callback=None, **options):
             trigger,
             callback,
             options,
-            GPU_QUEUE,
+            queue,
             reference_map=reference_map,
             resolver=resolver,
         )
@@ -34,9 +36,9 @@ def bind_gpu_action(trigger, callback=None, **options):
 
     busy = busy_updates(component)
     if busy is None:
-        return trigger(callback, **options, **GPU_QUEUE)
+        return trigger(callback, **options, **queue)
     quiet = {"outputs": component, "queue": False, "api_name": False, "show_progress": "hidden"}
-    event = trigger(lambda: busy[0], **quiet).then(callback, **options, **GPU_QUEUE)
+    event = trigger(lambda: busy[0], **quiet).then(callback, **options, **queue)
     event.then(lambda: busy[1], **quiet)
     return event
 
@@ -86,8 +88,8 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
             if current is not None
             and current.owner == owner
             and (current.family == family)
-            and current.has_gpu
-            else JOBS.run(owner, family)
+            and (current.has_gpu or getattr(current, "claimed", False))
+            else JOBS.run(owner, family, values=values)
         )
         with scope as job:
             try:
@@ -180,7 +182,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
     )
     run.__signature__ = inspect.Signature(parameters)
     run.__annotations__ = {"request": gr.Request}
-    run.__name__ = callback.__name__
+    run.__name__ = getattr(callback, "__name__", type(callback).__name__)
     run.job_family = family
     run.job_input_names = names
     return run
