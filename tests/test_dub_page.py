@@ -263,6 +263,29 @@ class StudioPageTests(PageTests):
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
         self.assertIn("Pick a line", self.client.post(f"{API}/preview", json={"session": created.id, "line": 5}).json()["error"])
 
+    def test_new_takes_passes_all_selected_lines_to_the_handler(self):
+        created = self.session([
+            {"start": i, "end": i + 1, "source": f"Line {i}", "translation": f"Text {i}"}
+            for i in range(3)])
+        calls = []
+
+        def generate(session_id, numbers, *settings):
+            calls.append((session_id, numbers))
+            yield None, "Fresh takes ready."
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", lambda run, owner, session, family, values, callback: callback(*values)), \
+                patch.object(self.handlers, "preview_new_take", generate):
+            response = self.client.post(f"{API}/preview", json={"session": created.id, "fresh": True,
+                                                                 "lines": [2, 0, 2]})
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(self.wait("lines", created.id)["error"])
+        self.assertEqual(calls, [(created.id, "1,3")])
+        for invalid in ([], [True], [3], "1,3"):
+            response = self.client.post(f"{API}/preview", json={"session": created.id, "fresh": True,
+                                                                 "lines": invalid})
+            self.assertIn("Pick a line", response.json()["error"])
+
     def test_interrupt_with_nothing_running(self):
         self.assertEqual(self.client.post(f"{API}/interrupt", json={"kind": "dub", "session": "x"}).json()["message"],
                          "Nothing is running.")

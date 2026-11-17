@@ -1042,6 +1042,26 @@ class HandlerTests(Workspace):
         self.assertIsNone(updates[-1][0])
         self.assertIn("translated generation failed", updates[-1][1])
 
+    def test_new_takes_regenerates_every_selected_line_and_previews_only_the_first(self):
+        from h3_app.drama3.serving.audio import decode_wav
+
+        session = self.board_session()
+        samples = np.full(100, 0.2, dtype=np.float32)
+
+        def preview(request, index, **_kwargs):
+            self.assertEqual(request.regenerate, (0, 2))
+            yield pipeline.LinePreview(pipeline.RATE, samples * (index + 1), f"Line {index + 1} ready")
+
+        with patch.object(self.handlers, "_hf_token", return_value=None), \
+                patch.object(pipeline, "preview_line", side_effect=preview) as generate:
+            updates = list(self.handlers.preview_new_take(session.id, "1,3", pipeline.VOICE_LINE, "Balance",
+                                                          pipeline.TIMING_MATCH, 1.35, 16))
+        self.assertEqual([call.args[1] for call in generate.call_args_list], [0, 2])
+        audio = [value for value, _ in updates if isinstance(value, bytes)]
+        self.assertEqual(len(audio), 1)
+        np.testing.assert_allclose(decode_wav(audio[0])[0], samples, atol=2 / 32768)
+        self.assertIn("Generated fresh takes for 2 lines", updates[-1][1])
+
     def test_errors_become_status_lines(self):
         updates = list(self.handlers.analyze_source(None, None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_LOCAL,
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,

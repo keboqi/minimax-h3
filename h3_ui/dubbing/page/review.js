@@ -465,8 +465,11 @@ function lineNumbers(app) {
 
 function translateBody(app, picked) {
   const s = app.settings;
-  const same = app.session.same;
-  return {session: app.session.id, picked, target_language: app.session.target_language || s.target_language,
+  const target = s.target_language || app.session.target_language;
+  const same = target === app.boot.same;
+  // A language change replaces every translation, even when some lines are picked.
+  if (target !== app.session.target_language) picked = [];
+  return {session: app.session.id, picked, target_language: target,
     translator: s.translator, gemini_model: s.gemini_model, api_key: app.apiKey, notes: s.notes,
     translation_context: s.translation_context, style: same && s.rewrite ? s.rewrite_style : s.style,
     rewrite: same && s.rewrite && !s.rewrite_by_hand, shorten_lines: s.shorten_lines, readings: s.readings};
@@ -590,6 +593,7 @@ export function bindReview(app) {
       const s = app.settings;
       app.previewRun = null;
       app.startRun("preview", {session: app.session.id, line: lineNumbers(app)[0], fresh: action === "take",
+        ...(action === "take" ? {lines: lineNumbers(app)} : {}),
         voice_mode: s.voice_mode, preset: s.preset, timing: s.timing, max_speed: s.max_speed, parallel: s.parallel});
     } else if (action === "translate") {
       app.startRun("translate", translateBody(app, [...app.picks]));
@@ -602,12 +606,8 @@ export function bindReview(app) {
         toast(error.message, {error: true});
       }
     } else if (action === "copy-lines-prompt") {
-      const s = app.settings;
       try {
-        const data = await api.post("lines-prompt", {session: app.session.id, picked: [...app.picks],
-          target_language: app.session.target_language || s.target_language, notes: s.notes,
-          style: app.session.same && s.rewrite ? s.rewrite_style : s.style, shorten_lines: s.shorten_lines,
-          readings: s.readings});
+        const data = await api.post("lines-prompt", translateBody(app, [...app.picks]));
         app.linesRequest = data.request;
         toast(await copyText(data.prompt) ? data.status : "Copy failed.");
       } catch (error) {

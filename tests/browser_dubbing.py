@@ -6,13 +6,60 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+import numpy as np
 from playwright.sync_api import expect, sync_playwright
 
+from h3_app.dubbing import pipeline
 from tests.test_dub_page import PageTests
 
 
 class DubbingBrowserTests(PageTests):
     gpu = True
+
+    def test_language_change_and_new_takes_apply_to_all_requested_lines(self):
+        session = self.session([
+            {"start": i * 2, "end": i * 2 + 1, "source": f"Line {i + 1}", "translation": f"French {i + 1}"}
+            for i in range(3)], target_language="French")
+        generated = []
+
+        def preview(request, index, **_kwargs):
+            generated.append(index)
+            yield pipeline.LinePreview(pipeline.RATE, np.zeros(100, dtype=np.float32), "Fresh take ready.")
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", lambda run, owner, session, family, values, callback: callback(*values)), \
+                patch.object(self.handlers, "_hf_token", return_value=None), \
+                patch.object(pipeline.gemini, "translate", return_value=["German 1", "German 2", "German 3"]) as translate, \
+                patch.object(pipeline, "preview_line", side_effect=preview), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            state = {"screen": "source", "sessionId": session.id,
+                     "settings": {"target_language": "French", "translator": pipeline.TRANSLATOR_GEMINI}}
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+            page.get_by_label("Dub into", exact=True).select_option("German")
+            page.locator('[data-screen="review"]').click()
+            page.locator('[data-action="pick"][data-line="1"]').check()
+            page.locator(".inspector details.sub summary").click()
+            with page.expect_request("**/api/lines-prompt") as prompt_request:
+                page.locator('.inspector [data-action="copy-lines-prompt"]').click()
+            self.assertEqual(prompt_request.value.post_data_json["target_language"], "German")
+            self.assertEqual(prompt_request.value.post_data_json["picked"], [])
+            page.locator('.inspector [data-action="translate"]').click()
+            expect(page.locator(".readiness-title")).to_contain_text("German")
+            self.assertEqual(translate.call_args.kwargs["target_language"], "German")
+            saved = self.client.get("/dubbing/api/session", params={"id": session.id}).json()["session"]
+            self.assertEqual([line["translation"] for line in saved["board"]["lines"]],
+                             ["German 1", "German 2", "German 3"])
+
+            page.locator('[data-action="pick"][data-line="2"]').check()
+            with page.expect_request("**/api/preview") as request:
+                page.get_by_role("button", name="New takes", exact=True).click()
+            self.assertEqual(request.value.post_data_json["lines"], [1, 2])
+            expect(page.locator('.inspector [data-run-status]')).to_contain_text("Generated fresh takes for 2 lines")
+            self.assertEqual(generated, [1, 2])
+            browser.close()
 
     def test_timeline_scrolls_to_line_in_board_and_table(self):
         session = self.session([

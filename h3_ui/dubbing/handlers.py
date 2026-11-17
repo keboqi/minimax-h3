@@ -685,13 +685,19 @@ class DubbingHandlers:
             if not indices:
                 raise H3Error("Click a line in the table, or enter its number, to preview it.")
             request = self._dub_request(session_id, voice_mode, preset, timing, max_speed, parallel,
-                                   regenerate=str(indices[0] + 1) if fresh else "")
-            for update in self._gpu(lambda **kw: pipeline.preview_line(request, indices[0], **kw)):
-                if isinstance(update, pipeline.LinePreview):
-                    # Gradio peak-normalizes float arrays, undoing the speaker's volume setting.
-                    yield encode_wav(update.samples, update.rate), update.message
-                else:
-                    yield gr.skip(), update
+                                   regenerate=",".join(str(index + 1) for index in indices) if fresh else "")
+            selected = indices if fresh else indices[:1]
+            for index in selected:
+                for update in self._gpu(lambda **kw: pipeline.preview_line(request, index, **kw)):
+                    if isinstance(update, pipeline.LinePreview):
+                        # Keep the first selected line in the player while regenerating the others.
+                        # Gradio peak-normalizes float arrays, undoing the speaker's volume setting.
+                        audio = encode_wav(update.samples, update.rate) if index == selected[0] else gr.skip()
+                        yield audio, update.message
+                    else:
+                        yield gr.skip(), update
+            if len(selected) > 1:
+                yield gr.skip(), f"Generated fresh takes for {len(selected)} lines. Preview plays line {selected[0] + 1}."
         except Exception as exc:
             yield None, self._failed(exc)
 
@@ -713,7 +719,7 @@ class DubbingHandlers:
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=False)
 
     def preview_new_take(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
-        """Outputs: preview audio, line status. A new take of the first listed line, which the dub then uses."""
+        """Generate fresh takes of every listed line and preview the first; the dub uses the saved takes."""
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,

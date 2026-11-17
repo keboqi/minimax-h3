@@ -745,12 +745,15 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             raise H3Error(STUDIO_ONLY.format("preview a line"))
         session_id = str(body.get("session") or "")
         session = load(session_id)
-        line = body.get("line")
-        if not isinstance(line, int) or not 0 <= line < len(session.segments):
+        fresh = bool(body.get("fresh"))
+        indices = body.get("lines") if fresh and "lines" in body else [body.get("line")]
+        if (not isinstance(indices, list) or not indices
+                or any(not isinstance(index, int) or isinstance(index, bool)
+                       or not 0 <= index < len(session.segments) for index in indices)):
             raise H3Error("Pick a line first.")
-        callback = handlers.preview_new_take if body.get("fresh") else handlers.preview_line
-        values = [session_id, str(line + 1), *dub_settings(body)]
-        return start(request, LINES, session_id, "take" if body.get("fresh") else "preview", callback, values,
+        callback = handlers.preview_new_take if fresh else handlers.preview_line
+        values = [session_id, ",".join(str(index + 1) for index in sorted(set(indices))), *dub_settings(body)]
+        return start(request, LINES, session_id, "take" if fresh else "preview", callback, values,
                      reader(1, audio_index=0), session_id=session_id)
 
     def dub_inputs(session_id, body):
