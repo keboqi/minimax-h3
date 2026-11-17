@@ -36,7 +36,7 @@ from .page_video import boot_payload as video_boot_payload, install_video_routes
 from .result_view import clean_line
 from .page_adapter import generation_values as generation_values, SpeechProgress
 from .page_batch import Batches
-from .project_visuals import has_script_plan
+from .project_visuals import can_reuse_script, carry_project_stills, planning_mix
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
@@ -297,7 +297,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     def speak_job(run, owner: str, session, name: str, action: str, line=None) -> None:
         """Speak, remix or regenerate a line from the project as it is saved now."""
-        data, _ = project(name)
+        data, previous_result = project(name)
+        if video_export is not None and previous_result:
+            # Upgrade an older timestamp plan against its own audio before replacing the mix.
+            planning_mix(name, data, previous_result, video_export, store=store)
         values = generation_values(name, data, clips)
         if action == REGENERATE:
             values = [line, *values]
@@ -311,6 +314,11 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             if progress.output:
                 run.revision += 1
         if run.error is None:
+            if video_export is not None:
+                try:
+                    carry_project_stills(store, name, previous_result, project(name)[1], video_export)
+                except H3Error as exc:
+                    run.message = f"Speech ready. Illustrations need review: {exc}"
             run.status = "Done."
 
     @app.post(f"{api}/speak", include_in_schema=False)
@@ -359,10 +367,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             return run.stop_requested
 
         def work(run):
-            data = project(name)[0]
-            planned = illustrate and has_script_plan(data)
+            data, previous = project(name)
+            planned = can_reuse_script(data, previous, runtime_config)
             if data.get("prepared") or planned:
-                run.status = "Using the prepared script and its saved plan." if planned else "Using the prepared script."
+                run.status = "Using the saved script with its wording corrections." if planned else "Using the prepared script."
             else:
                 run.status = "Rewriting the script…"
                 _, status, refused = rewrite_project(actions, store, name, body, clip)

@@ -23,6 +23,7 @@ class Shot:
     # The scene text with a slot after each subject's name, ⟦key⟧, where an edit puts that subject's
     # reference tag (<image2>, <Picture 2>...) so the model knows which input is which person.
     tagged: str = ""
+    id: str = ""  # Stable across timing changes and wording corrections.
 
 
 def _encode(arguments, cwd=None):

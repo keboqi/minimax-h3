@@ -360,7 +360,8 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
                         picture.save(folder / draft_name, "PNG")
                 extra["draft"] = draft_name
         records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
-                        "beat": shot.beat, "prompt": shot.prompt, "image": name, **extra})
+                        "beat": shot.beat, "prompt": shot.prompt, "image": name,
+                        **({"shot_id": shot.id} if shot.id else {}), **extra})
     kept = {}
     for key, (image, fingerprint) in (portraits or {}).items():
         name = f"portrait-{fingerprint}.png"
@@ -392,9 +393,62 @@ def kept_portraits(record, root, audio):
 
 
 def match_stills(shots, record):
-    """Each plan shot's still, drawn for the same time on the mix, or None."""
-    by_time = {(int(item["first_frame"]), int(item["frames"])): item for item in (record or {}).get("shots") or []}
-    return [by_time.get((shot.first, shot.frames)) for shot in shots]
+    """Match stable shot identity; only older records may fall back to their clock."""
+    items = (record or {}).get("shots") or []
+    by_time = {(int(item["first_frame"]), int(item["frames"])): item for item in items}
+    legacy = {key: item for key, item in by_time.items() if not item.get("shot_id")}
+    by_id = {item["shot_id"]: item for item in items if item.get("shot_id")}
+    return [(by_id.get(shot.id) or legacy.get((shot.first, shot.frames))) if shot.id
+            else by_time.get((shot.first, shot.frames)) for shot in shots]
+
+
+def rebind_stills(audio, root, shots, *, previous_audio=None, previous_shots=None):
+    """Move existing drawings to a new clock, including a regenerated mix's new file.
+
+    Stable shot IDs preserve partial drawings. Older records are matched against their old
+    plan's times once, before their timestamps are changed. Prompts remain those actually drawn.
+    """
+    previous_audio = previous_audio or audio
+    record = read_stills(previous_audio, root)
+    if record is None:
+        return
+    old_shots = previous_shots if previous_shots is not None else shots
+    old_items = match_stills(old_shots, record)
+    by_id = {shot.id: item for shot, item in zip(old_shots, old_items) if shot.id and item}
+    if len(old_shots) == len(shots):
+        for old_shot, shot, item in zip(old_shots, shots, old_items):
+            if item and not old_shot.id and old_shot.beat == shot.beat:
+                by_id.setdefault(shot.id, item)
+    pairs = []
+    for shot, item in zip(shots, match_stills(shots, record)):
+        item = by_id.get(shot.id) or item
+        if item is not None:
+            pairs.append((shot, item))
+    if not pairs:
+        return
+    total = shots[-1].first + shots[-1].frames
+    same = Path(previous_audio) == Path(audio)
+    if same and record.get("total_frames") == total and all(
+            (item["first_frame"], item["frames"], bool(item["dissolve"]), item.get("shot_id", "")) ==
+            (shot.first, shot.frames, shot.dissolve, shot.id) for shot, item in pairs):
+        return
+    folder = stills_dir(previous_audio, root)
+    images = [folder / item["image"] for _, item in pairs]
+    if not same:
+        destination = stills_dir(audio, root)
+        destination.mkdir(parents=True, exist_ok=True)
+        for index, image in enumerate(images):
+            target = destination / image.name
+            copyfile(image, target)
+            images[index] = target
+    drawings = [Shot(shot.first, shot.frames, shot.dissolve, item.get("prompt", ""),
+                     shot.beat, id=shot.id) for shot, item in pairs]
+    extras = [{key: (str(folder / item[key]) if key == "draft" else item[key])
+               for key in ("draft", "characters", "matching") if item.get(key) is not None}
+              for _, item in pairs]
+    keep_stills(audio, root, drawings, images, record.get("details") or {},
+                extras=extras, total_frames=total, portraits=kept_portraits(record, root, previous_audio),
+                orientation=record.get("orientation", "landscape"))
 
 
 def retime_stills(audio, root, shots):
@@ -512,7 +566,17 @@ def portrait_keys(saved, style):
     Portraits drawn while the prompt still had SETTING_DETAIL stay current, so redrawing one shot
     of an older project keeps matching the faces already drawn."""
     old = portrait_prompts(saved, style, with_setting=True)
-    return {name: {prompt_key(prompt), prompt_key(old[name])} for name, prompt in portrait_prompts(saved, style).items()}
+    keys = {name: {prompt_key(prompt), prompt_key(old[name])}
+            for name, prompt in portrait_prompts(saved, style).items()}
+    # Before style moved to the front, the sheet body came first and the style line
+    # was unconditional (including "Art style: None" for style-neutral plans).
+    art_style = legacy_art_style(saved, style)
+    for name, (kind, anchor) in subjects(saved["plan"]).items():
+        if kind == "characters":
+            legacy = "\n".join(filter(None, [sheet_prompt(kind, name, anchor, None, ""),
+                                             f"Art style: {art_style}", style]))
+            keys[name].add(prompt_key(legacy))
+    return keys
 
 
 def chosen_shots(shots, stills, only):
@@ -577,7 +641,7 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
             elif still is not None:
                 path = folder / still["image"]
                 extra = {name: still[name] for name in ("draft", "characters", "matching") if name in still}
-                shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat)
+                shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat, id=shot.id)
             else:
                 continue
             kept_shots.append(shot)
@@ -585,7 +649,10 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
             extras.append(extra)
         for name, path in finished["portraits"].items():
             if name in prompts and Path(path).is_file():
-                kept[name] = (path, prompt_key(prompts[name]))
+                # A reused legacy portrait keeps its fingerprint and file name: later
+                # shots in this run still reference that same path.
+                if name not in kept or Path(kept[name][0]) != Path(path):
+                    kept[name] = (path, prompt_key(prompts[name]))
         return keep_stills(audio, root, kept_shots, kept_images, {
             "model": engine, "art_direction": style, "orientation": orientation, "visual_plan": saved["plan"],
             "keep_characters_consistent": use_references,

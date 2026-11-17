@@ -315,11 +315,26 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertNotIn("  ", prompt)
         old = portrait_prompts(saved, style, with_setting=True)["mara"]
         self.assertIn(SETTING_DETAIL.strip(), old)
-        self.assertEqual(portrait_keys(saved, style)["mara"], {prompt_key(prompt), prompt_key(old)})
+        self.assertTrue({prompt_key(prompt), prompt_key(old)} <= portrait_keys(saved, style)["mara"])
         # Portraits follow the chosen style, without an older plan's style written for another one.
         anime = portrait_prompts(saved, STYLE_PRESETS["Anime"])["mara"]
         self.assertIn("cel shading", anime)
         self.assertNotIn("Art style: ink", anime)
+
+    def test_portrait_keys_accept_the_original_body_first_prompts(self):
+        from h3_ui.drama3.visuals import portrait_keys, prompt_key
+
+        body = ("Portrait of mara: Mara, cropped hair. One single figure from the waist up, facing the viewer, "
+                "centered, calm expression. Only this one view of this one person. "
+                "Plain light grey background, even soft lighting. No text, labels or captions.")
+        for art_style in ("ink", None):
+            with self.subTest(art_style=art_style):
+                plan = {"characters": {"mara": "Mara, cropped hair"}}
+                if art_style:
+                    plan["art_style"] = art_style
+                saved = {"style": "comic", "plan": plan}
+                legacy = f"{body}\nArt style: {art_style}\ncomic"
+                self.assertIn(prompt_key(legacy), portrait_keys(saved, "comic")["mara"])
 
     def test_presets_are_grouped_by_use_with_a_preview_scene(self):
         from h3_ui.drama3.visuals import (SLIDE_STYLES, STYLE_GROUPS, STYLE_PRESETS, STYLE_PREVIEWS, STYLE_USES,
@@ -455,9 +470,10 @@ class IllustratedMixTests(unittest.TestCase):
                 # The setting is a floor; the cap comes from the mix length (one shot per 2 seconds).
                 self.assertEqual((request["min_shots"], request["max_shots"]), (3, 7))
                 cues = request["cues"]
-                self.assertEqual([c["start"] for c in cues], [0, 0, 4, 9])
+                self.assertEqual(request["timing"], "anchored")
+                self.assertEqual([c["start"] for c in cues], [0, 9])
                 self.assertEqual(cues[0]["text"], "Wait here")
-                self.assertTrue(cues[1]["loop"])
+                self.assertTrue(request["sounds"][0]["loop"])
                 self.assertEqual(cues[-1]["speaker"], "Jo")
                 self.assertEqual([s.first for s in shots], [0, 54, 216])
                 self.assertEqual([s.dissolve for s in shots], [False, False, True])
@@ -511,7 +527,13 @@ class IllustratedMixTests(unittest.TestCase):
                       f"Sure! {json.dumps(plan)} Enjoy."):
             with self.subTest(reply=reply[:20]):
                 parsed, shots = check_plan_reply(reply, settings, 2)
-                self.assertEqual(parsed, plan)
+                self.assertEqual(parsed["characters"], plan["characters"])
+                self.assertEqual([row["prompt"] for row in parsed["shots"]],
+                                 [row["prompt"] for row in plan["shots"]])
+                self.assertTrue(all("cue" in row and "start" not in row and row["id"]
+                                    for row in parsed["shots"]))
+                self.assertEqual(parsed["shots"][1]["phase"], "after")
+                self.assertEqual([shot.first for shot in shots], [0, 96])
                 self.assertEqual([s.references for s in shots], [("ana",), ()])
         for reply, error in (("not json", "isn't valid JSON"), (json.dumps({**plan, "shots": plan["shots"][:1]}),
                                                                   "fewer than the minimum of 2")):

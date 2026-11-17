@@ -20,7 +20,7 @@ import requests
 
 from h3_app import stable_audio
 from h3_app.drama3 import sounds as drama3_sounds
-from h3_app.drama3.results import CHARACTER_POSITIONS, DRAMA3_FAMILY, is_narrator, script_fingerprint
+from h3_app.drama3.results import CHARACTER_POSITIONS, DRAMA3_FAMILY, is_narrator, result_settings, script_fingerprint
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
@@ -830,8 +830,13 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     chunks: list[Chunk] = []
     node_chunks: dict[int, list[Chunk]] = {}
+    # Explicit remix/regenerate requests still name an older result's chunk keys. Keep that
+    # request's boundaries; ordinary Generate upgrades to independently reusable script lines.
+    legacy = bool((getattr(request, "remix_only", False) or getattr(request, "regenerate", ())) and
+                  any(len(chunk.get("lines") or []) > 1 for chunk in
+                      result_settings(getattr(request, "previous_result", "")).get("chunks") or []))
     for speech_node in speech_nodes:
-        planned = plan_turns_chunks(speech_node.turns, start_index=len(chunks))
+        planned = plan_turns_chunks(speech_node.turns, start_index=len(chunks), preserve_lines=not legacy)
         node_chunks[id(speech_node)] = planned
         chunks.extend(planned)
 
@@ -881,9 +886,13 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         keys[chunk.index] = take_store.occurrence_key(content_key, occurrence)
         occurrences[content_key] = occurrence + 1
     forced = set(getattr(request, "regenerate", ()) or ())
+    store = take_store.takes_root(runtime)
+    if getattr(request, "previous_result", "") and not legacy:
+        from .incremental import migrate_lines
+        migrate_lines(request.previous_result, store, set(keys.values()), references, sampling, budget,
+                      runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     if forced and not forced & set(keys.values()):
         raise H3Error("That line changed since it was generated. Generate speech, then choose the line again.")
-    store = take_store.takes_root(runtime)
     takes: dict[int, Take] = {}
     invalid_cached: dict[int, str] = {}
     for chunk in chunks:
@@ -1026,6 +1035,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
             "script_fingerprint": script_fingerprint(request.text),
+            "script_cues": [{"speaker": turn.speaker, "text": turn.text}
+                            for node in speech_nodes for turn in node.turns if spoken_text(turn.text)],
             "sound_count": len(sound_nodes),
             "word_timing": word_timing,
             "chunks": [{"speaker": t.chunk.speaker, "name": t.chunk.speaker,

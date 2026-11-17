@@ -1495,6 +1495,66 @@ class TakeReuseTests(unittest.TestCase):
         self.assertEqual(self.keys(snapshot)[:2], self.keys(first)[:2])
         self.assertIn("(2 reused)", updates[-1].status)
 
+    def test_editing_a_consecutive_same_speaker_line_preserves_its_neighbors(self):
+        script = "Alice: Hello there, friend.\nAlice: Ready to go?\nAlice: See you soon."
+        _, _, first = self.run_route(self.request(script), self.speech)
+        edited = script.replace("Ready to go?", "Shall we go?")
+        fake, _, second = self.run_route(self.request(edited), self.speech)
+        self.assertEqual(self.inputs(fake), ["Shall we go?"])
+        self.assertEqual([chunk["reused"] for chunk in second.call_args.args[1]["settings"]["chunks"]],
+                         [True, False, True])
+        self.assertEqual(self.keys(first)[::2], self.keys(second)[::2])
+
+    def test_legacy_merged_take_is_split_with_alignment_for_unchanged_lines(self):
+        from dataclasses import replace
+        from h3_app.provenance import write_snapshot
+        from h3_app.drama3.serving.planner import plan_turns_chunks
+
+        script = "Alice: Hello there, friend.\nAlice: Ready to go?\nAlice: See you soon."
+        # Produce an old merged take using the original planner policy.
+        def legacy(turns, **kwargs):
+            return plan_turns_chunks(turns, **{key: value for key, value in kwargs.items() if key != "preserve_lines"})
+        with patch.object(generate, "plan_turns_chunks", side_effect=legacy):
+            _, updates, first = self.run_route(self.request(script), self.speech)
+        previous = Path(updates[-1].output["value"])
+        write_snapshot(previous, first.call_args.args[1])
+        chunks = first.call_args.args[1]["settings"]["chunks"]
+        self.assertEqual(len(chunks), 1)
+
+        def align(take, *_args, **_kwargs):
+            size = len(audio.tidy_take(take.samples, take.rate)) // 3
+            return [(i * size, (i + 1) * size) for i in range(3)], [[], [], []]
+
+        edited = script.replace("Ready to go?", "Shall we go?")
+        with patch("h3_app.drama3.serving.incremental.align_take", side_effect=align):
+            fake, _, second = self.run_route(replace(self.request(edited), previous_result=str(previous)), self.speech)
+        self.assertEqual(self.inputs(fake), ["Shall we go?"])
+        self.assertEqual([chunk["reused"] for chunk in second.call_args.args[1]["settings"]["chunks"]],
+                         [True, False, True])
+        # Remix keeps the original grouped take keys and needs no alignment or synthesis.
+        with patch("h3_app.drama3.serving.incremental.align_take") as aligner:
+            fake, _, remixed = self.run_route(
+                replace(self.request(script), previous_result=str(previous), remix_only=True), self.speech)
+        fake.speech.assert_not_called()
+        aligner.assert_not_called()
+        self.assertEqual(self.keys(remixed), self.keys(first))
+
+        from h3_app.jobs import JobCancelled
+        # Migration must honor cancellation even when there is no current job context.
+        with patch("h3_app.drama3.serving.incremental.align_take", side_effect=JobCancelled("stopped")), \
+                self.assertRaises(JobCancelled):
+            self.run_route(replace(self.request(script), previous_result=str(previous)), self.speech)
+        # An unavailable aligner regenerates only the still-missing original middle line.
+        with patch("h3_app.drama3.serving.incremental.align_take", side_effect=ValueError("no alignment")):
+            fake, _, _ = self.run_route(replace(self.request(script), previous_result=str(previous)), self.speech)
+        self.assertEqual(self.inputs(fake), ["Ready to go?"])
+        # Cached legacy speech must never be repurposed for a different sampling request.
+        with patch("h3_app.drama3.serving.incremental.align_take") as aligner:
+            fake, _, _ = self.run_route(
+                replace(self.request(script), previous_result=str(previous), temperature=.8), self.speech)
+        aligner.assert_not_called()
+        self.assertEqual(self.inputs(fake), ["Hello there, friend.", "Ready to go?", "See you soon."])
+
     def test_unchanged_script_needs_no_server(self):
         self.run_route(self.request(self.SCRIPT), self.speech)
         fake, _updates, _snapshot = self.run_route(self.request(self.SCRIPT), self.speech)

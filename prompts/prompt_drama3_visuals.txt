@@ -4,11 +4,13 @@ sound descriptions are all story material. A voice or off-screen sound need not 
 Pictures should amplify the feeling of a moment, not just restate its words.
 
 TIMING
-When the request has timing="untimed", cues are ordered script lines without audio. Use each
+For every request, cues are ordered dialogue lines. Use each
 shot's "cue" (zero-based index in cues) and "offset" (fraction through that cue, from 0 inclusive
 to 1 exclusive) instead of "start". Begin at cue 0, offset 0 and advance strictly through the
 script. Split lines into multiple beats with fractional offsets when useful. Do not invent seconds.
-These anchors will be resolved against the generated speech later. Follow the same shot range,
+When timing="anchored", the cue timestamps and separate sounds list are pacing context only;
+still return cue and offset anchors, never fixed start times. When timing="untimed", no audio
+exists yet. These anchors will resolve against each generated or edited mix later. Follow the same shot range,
 continuity and image prompt requirements below.
 Every image shows exactly one moment: one framing, one action, never panels or a sequence. When a
 beat holds several moments (a question and its answer, an action and the reaction), give each its
@@ -86,9 +88,11 @@ Return a single JSON object in this shape:
 {"characters":{"mara":"Mara, woman in her thirties, cropped black hair, sharp cheekbones, ochre coat"},
  "props":{"old_radio":"bakelite radio, cracked cream casing, round brass dial"},
  "locations":{"station":"shuttered train station, iron canopy, a dark clock above the doors"},
- "shots":[{"start":0,"transition":"cut","beat":"Mara waits outside the locked station.",
+ "shots":[{"cue":0,"offset":0,"transition":"cut","beat":"Mara waits outside the locked station.",
  "prompt":"A wide, cold shot from across the square... @mara(collar turned up against the rain) shelters beneath the clock of @station(doors chained)."}]}
-For timed requests, start the first shot at 0 seconds. Use strictly increasing starts in seconds before the mix ends.
-The next start ends the previous shot, and the last image holds through the end.
+Start the first shot at cue 0, offset 0. Use strictly increasing anchors in dialogue order.
+For a pause or sound-only tail after a cue, optionally use "phase":"after" with offset as a
+fraction of the gap from that cue's end to the next cue's start (or the mix's end for the last cue).
+The next anchor ends the previous shot, and the last image holds through the end.
 Empty characters, props or locations objects are valid. Inside strings, use single quotes instead
 of double quotes, and never use line breaks.

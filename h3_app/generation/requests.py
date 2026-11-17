@@ -79,6 +79,8 @@ class Drama3Request:
     word_timing: bool = True
     # Names the output file; "" keeps the default name.
     title: str = ""
+    # Previous project mix, for migrating older merged takes to line-sized cached takes.
+    previous_result: str = ""
 
 
 

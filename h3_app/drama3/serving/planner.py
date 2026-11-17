@@ -182,9 +182,12 @@ def plan_turns_chunks(
     *,
     start_index: int = 0,
     limit: int = CHUNK_BYTES,
+    preserve_lines: bool = False,
 ) -> list[Chunk]:
-    """Merge consecutive turns of one speaker with identical speaker_effects, then cut near ``limit``.
+    """Cut near ``limit``, optionally retaining each script line as a take boundary.
 
+    The legacy policy merges consecutive turns with the same speaker and effects.
+    ``preserve_lines`` keeps neighboring dialogue independently reusable after an edit.
     Splitting and rejoining only ever drops or adds whitespace, so counting non-space
     characters finds where each merged turn's text lands in the chunks.
     """
@@ -193,7 +196,7 @@ def plan_turns_chunks(
         text = " ".join((turn.text or "").split())
         if not text:
             continue
-        if merged and merged[-1][0] == turn.speaker and merged[-1][2] == turn.speaker_effects:
+        if not preserve_lines and merged and merged[-1][0] == turn.speaker and merged[-1][2] == turn.speaker_effects:
             speaker, joined, effects, ends = merged[-1]
             merged[-1] = (speaker, f"{joined} {text}", effects, [*ends, ends[-1] + _visible(text)])
         else:

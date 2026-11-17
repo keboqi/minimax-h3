@@ -397,7 +397,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(project["video"]["plan"]["rows"][1]["start"], 1)
         self.assertEqual(visuals.read_plan(self.mix)["plan"]["shots"][1]["prompt"], "A bright plum.")
 
-    def auto_client(self):
+    def auto_client(self, speak_callback=None):
         from dataclasses import replace
         from h3_app.generation.results import GenerationUpdate
         from h3_ui.drama3.controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
@@ -411,7 +411,7 @@ class Drama3PageVideoTests(unittest.TestCase):
                    *[gr.skip()] * (2 * DRAMA3_SOUND_SLOTS), "Ready.", "Ready.")
 
         handlers = Drama3Handlers(Drama3Services(lambda: self.runtime, None, None, None))
-        actions = replace(Drama3Actions.of(handlers, interrupt=None), generate_drama3=speak,
+        actions = replace(Drama3Actions.of(handlers, interrupt=None), generate_drama3=speak_callback or speak,
                           prepare_drama3_cast=prepare)
         app = FastAPI()
         install_owner_cookie(app, self.store)
@@ -419,6 +419,104 @@ class Drama3PageVideoTests(unittest.TestCase):
                                 takes_dir=lambda: self.root / "takes", runtime_config=lambda: self.runtime,
                                 video_export=self.export)
         return TestClient(app)
+
+    def anchored_images(self):
+        from PIL import Image
+        plan = {"shots": [dict(cue=0, offset=offset, transition="cut", beat="Plums", prompt="A plum stall.")
+                          for offset in (0, .5)]}
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(plan)}))
+        shots = visuals.plan_shots_for(visuals.read_plan(self.mix), 8, STYLE_PRESETS[DEFAULT_STYLE])
+        images = []
+        for index in range(2):
+            file = self.root / f"kept-{index}.png"
+            Image.new("RGB", (32, 18), "red").save(file)
+            images.append(file)
+        visuals.keep_stills(self.mix, self.runtime.output_dir, shots, images, {}, total_frames=8 * 24)
+        return visuals.read_stills(self.mix, self.runtime.output_dir)
+
+    def test_auto_wording_fix_reuses_the_storyboard_and_images_on_the_new_mix(self):
+        from h3_app.generation.results import GenerationUpdate
+        record = self.anchored_images()
+        original_ids = [row["id"] for row in self.store.soundstage_project("Night Market")[0]["visual_plan"]["plan"]["shots"]]
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(text="Mia: Fresh plums!", prepared=False, auto_illustrate=True)
+        updated_mix = self.mix.with_name("corrected.mp3")
+        updated_mix.write_bytes(b"ID3")
+        write_snapshot(updated_mix, {"family": DRAMA3_FAMILY, "settings": {"duration": 6,
+            "chunks": [dict(name="Mia", text="Fresh plums!", start=0, end=4)]}})
+
+        def speak(*values):
+            self.store.mark_soundstage_generated(values[-1], str(updated_mix))
+            yield GenerationUpdate(str(updated_mix), "Done.")
+
+        client = self.auto_client(speak)
+        with patch("h3_ui.drama3.page_video.plan_shots") as planner, \
+                patch("h3_app.prompt_writers.drama3.enhance_drama3_text") as writer:
+            self.ok(client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_auto(client)
+        self.assertIsNone(run["error"], run)
+        planner.assert_not_called()
+        writer.assert_not_called()
+        self.assertEqual(self.renders, [])
+        migrated = visuals.read_stills(updated_mix, self.runtime.output_dir)
+        self.assertEqual([item["shot_id"] for item in migrated["shots"]], original_ids)
+        self.assertEqual(migrated["total_frames"], 6 * 24)
+        for before, after in zip(record["shots"], migrated["shots"]):
+            self.assertEqual((visuals.stills_dir(self.mix, self.runtime.output_dir) / before["image"]).read_bytes(),
+                             (visuals.stills_dir(updated_mix, self.runtime.output_dir) / after["image"]).read_bytes())
+
+    def test_alignment_repair_moves_existing_images_without_redrawing(self):
+        record = self.anchored_images()
+        write_snapshot(self.mix, {"family": DRAMA3_FAMILY, "settings": {"duration": 8,
+            "chunks": [dict(name="Mia", text="Plums!", start=0, end=4)]}})
+        project = self.project()
+        moved = visuals.read_stills(self.mix, self.runtime.output_dir)
+        self.assertEqual([item["first_frame"] for item in moved["shots"]], [0, 48])
+        self.assertNotEqual(moved["revision"], record["revision"])
+        self.assertEqual([item["image"] for item in moved["shots"]], [item["image"] for item in record["shots"]])
+        self.assertEqual(project["video"]["plan"]["counts"], {"drawn": 2, "changed": 0, "todo": 0})
+
+    def test_auto_wording_fix_without_illustrations_does_not_rewrite_the_script(self):
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(text="Mia: Fresh plums!", prepared=False, auto_illustrate=False)
+        client = self.auto_client()
+        with patch("h3_app.prompt_writers.drama3.enhance_drama3_text") as writer:
+            self.ok(client.post(f"{API}/auto", params=NAME, json={}))
+            run = self.wait_auto(client)
+        self.assertIsNone(run["error"], run)
+        writer.assert_not_called()
+
+    def test_numeric_tags_and_cast_names_share_cue_identity(self):
+        from h3_ui.drama3.project_visuals import can_reuse_script, project_cues
+        from h3_app.drama3.visual_plan import check_plan_reply
+        from h3_app.drama3.visual_timing import preview_settings
+        data = {"text": "<|speaker:0|> Plums!", "voice_0_save_name": "Mia", "shown_slots": 1}
+        cues = project_cues(data, lambda: self.runtime)
+        self.assertEqual(cues, [dict(speaker="Mia", text="Plums!")])
+        plan, _ = check_plan_reply(json.dumps({"shots": [dict(cue=0, offset=0, beat="Market",
+            prompt="A plum stall.", transition="cut")]}), preview_settings(data["text"], cues=cues), 1)
+        data.update(text="<|speaker:0|> Fresh plums!", visual_plan={"plan": plan})
+        self.assertTrue(can_reuse_script(data, runtime=lambda: self.runtime))
+
+    def test_speaker_edits_do_not_relabel_the_plan_playing_with_older_audio(self):
+        self.anchored_images()
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data.update(text="Leo: Plums!", prepared=False)
+        project = self.project()
+        self.assertNotIn("error", project["video"]["plan"])
+        self.assertEqual(project["result"]["lines"][0]["speaker"], "Mia")
+        saved = self.store.soundstage_project("Night Market")[0]["visual_plan"]["plan"]
+        self.assertEqual(saved["script_cues"], [dict(speaker="Mia", text="Plums!")])
+
+    def test_invalid_saved_plan_does_not_replace_the_last_valid_sidecar(self):
+        self.anchored_images()
+        before = visuals.read_plan(self.mix)
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data["visual_plan"]["plan"]["shots"][0]["prompt"] = ""
+        project = self.project()
+        self.assertTrue(project["video"]["plan"]["error"])
+        self.assertEqual(project["video"]["plan"]["rows"], [])
+        self.assertEqual(visuals.read_plan(self.mix), before)
 
     def wait_auto(self, client, batch=False):
         for _ in range(300):
@@ -525,7 +623,8 @@ class Drama3PageVideoTests(unittest.TestCase):
         updated = {**PLAN, "shots": [{**row, "prompt": "A newly chosen image."} for row in PLAN["shots"]]}
         save_project_plan(self.store, "Night Market", self.mix, "comic", 2, updated)
         planning_mix("Night Market", old_data, str(self.mix), self.export, store=self.store)
-        self.assertEqual(visuals.read_plan(self.mix)["plan"], updated)
+        self.assertEqual([row["prompt"] for row in visuals.read_plan(self.mix)["plan"]["shots"]],
+                         [row["prompt"] for row in updated["shots"]])
 
     def test_plan_rows_carry_status_and_edits_mark_shots_changed(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))

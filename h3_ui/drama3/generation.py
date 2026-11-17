@@ -230,6 +230,9 @@ class GenerationHandlers:
                 for name, audio, description, duration in request.sounds
             ))
         project = settings[names_end + 1] if len(settings) > names_end + 1 else ""
+        if project:
+            from h3_app.jobs import JOBS
+            request = replace(request, previous_result=JOBS.store.soundstage_project(project)[1] or "")
         for update in run_drama3(request, self._generation_services(), self._runtime_config(),
                                  progress=progress, free_gpu=self.free_comfy_vram):
             if project and update.output:

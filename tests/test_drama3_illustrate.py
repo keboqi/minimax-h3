@@ -98,6 +98,41 @@ class StillsTests(unittest.TestCase):
                          [(0, 3 * FPS, False), (3 * FPS, 2 * FPS, True)])
         self.assertEqual(names, ["a.jpg", "b.jpg"])
 
+    def test_rebinding_partial_stills_preserves_images_portraits_and_changed_prompts(self):
+        old = [Shot(0, FPS, False, "one", id="first"), Shot(FPS, 2 * FPS, True, "two", id="second")]
+        image = self.folder / "pattern.png"
+        Image.frombytes("RGB", (32, 18), bytes((i * 17) % 256 for i in range(32 * 18 * 3))).save(image)
+        visuals.keep_stills(self.audio, self.root, [old[1]], [image], {}, total_frames=3 * FPS,
+                            portraits={"mia": (self.png("portrait"), "original")})
+        record = visuals.read_stills(self.audio, self.root)
+        image_bytes = (visuals.stills_dir(self.audio, self.root) / record["shots"][0]["image"]).read_bytes()
+        newer = self.folder / "updated.mp3"
+        newer.write_bytes(b"mp3")
+        shots = [Shot(0, 2 * FPS, False, "one", id="first"),
+                 Shot(2 * FPS, 3 * FPS, True, "updated prompt", id="second")]
+        visuals.rebind_stills(newer, self.root, shots, previous_audio=self.audio, previous_shots=old)
+        moved = visuals.read_stills(newer, self.root)
+        self.assertEqual(len(moved["shots"]), 1)
+        self.assertEqual((moved["shots"][0]["first_frame"], moved["shots"][0]["frames"]), (2 * FPS, 3 * FPS))
+        self.assertEqual(moved["total_frames"], 5 * FPS)
+        self.assertEqual((visuals.stills_dir(newer, self.root) / moved["shots"][0]["image"]).read_bytes(), image_bytes)
+        self.assertEqual(moved["portraits"], record["portraits"])
+        self.assertEqual([visuals.shot_status(shot, item) for shot, item in zip(shots, visuals.match_stills(shots, moved))],
+                         ["todo", "changed"])
+
+    def test_rebinding_does_not_assign_another_shots_image_at_the_same_time(self):
+        old = [Shot(0, FPS, False, "same", id="first"), Shot(FPS, FPS, False, "same", id="second")]
+        visuals.keep_stills(self.audio, self.root, [old[1]], [self.png("second")], {}, total_frames=2 * FPS)
+        newer = self.folder / "new.mp3"
+        newer.write_bytes(b"mp3")
+        shots = [Shot(0, FPS // 2, False, "same", id="first"),
+                 Shot(FPS // 2, FPS // 2, False, "same", id="second"),
+                 Shot(FPS, FPS, False, "same", id="new-third")]
+        visuals.rebind_stills(newer, self.root, shots, previous_audio=self.audio, previous_shots=old)
+        record = visuals.read_stills(newer, self.root)
+        self.assertEqual([item["shot_id"] for item in record["shots"]], ["second"])
+        self.assertEqual([item is not None for item in visuals.match_stills(shots, record)], [False, True, False])
+
     def test_kept_stills_are_copied_and_portraits_kept(self):
         shots = [Shot(0, FPS, False, "one"), Shot(FPS, FPS, True, "two")]
         visuals.keep_stills(self.audio, self.root, shots, [self.png("a"), self.png("b")], {},
@@ -201,6 +236,34 @@ class StillsTests(unittest.TestCase):
                                   only="all"))
         self.assertEqual([call.args[1] for call in controller.generate.call_args_list], modes)
         json.dumps(second)  # the record stays plain JSON
+
+    def test_partial_redraw_reuses_legacy_portrait_through_every_checkpoint(self):
+        from h3_app.drama3.visual_plan import sheet_prompt
+
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        shots = visuals.plan_shots_for(visuals.read_plan(self.audio), 4.0, "comic")
+        body = sheet_prompt("characters", "mia", PLAN["characters"]["mia"], None, "")
+        legacy = f"{body}\nArt style: {PLAN.get('art_style') or PLAN.get('style')}\ncomic"
+        fingerprint = visuals.prompt_key(legacy)
+        visuals.keep_stills(self.audio, self.root, shots, [self.png(f"old-{i}") for i in range(3)], {},
+                            portraits={"mia": (self.png("portrait"), fingerprint)})
+        before = visuals.read_stills(self.audio, self.root)
+        deps = SimpleNamespace(resolve_result=lambda name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        controller = Mock(fields={})
+        calls = []
+
+        def generate(engine, mode, prompt, references, captured):
+            self.assertTrue(all(Path(path).is_file() for path in references))
+            calls.append(mode)
+            return [([str(self.png(f"new-{len(calls)}"))], "Complete")]
+
+        controller.generate.side_effect = generate
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3,
+                                 True, "landscape", only=[0, 1]))
+        self.assertEqual(calls, ["Text to image", "Image edit", "Text to image", "Image edit"])
+        self.assertEqual(visuals.read_stills(self.audio, self.root)["portraits"], before["portraits"])
 
     def test_each_completed_shot_is_published_before_the_next_generation(self):
         write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
