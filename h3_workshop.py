@@ -547,6 +547,25 @@ def _server(ui, runtime, *, host: str, port: int):
     ))
 
 
+def link_studio_media(runtime) -> None:
+    """Resolve Studio's saved absolute media paths in the CPU-only Workshop too.
+
+    Studio links ComfyUI's input/output to the shared volume. Saved projects and
+    provenance can retain those aliases, even though Workshop installs no ComfyUI.
+    Never replace an existing directory or a link to another location.
+    """
+    for name, shared in (("input", runtime.input_dir), ("output", runtime.output_dir)):
+        alias = runtime.comfy_dir / name
+        shared = Path(shared).resolve()
+        if alias.resolve() == shared:
+            continue
+        if alias.exists() or alias.is_symlink():
+            raise RuntimeError(f"Workshop media path {alias} already exists and does not point to {shared}.")
+        shared.mkdir(parents=True, exist_ok=True)
+        alias.parent.mkdir(parents=True, exist_ok=True)
+        alias.symlink_to(shared, target_is_directory=True)
+
+
 def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
     """Serve models and media on the shared Modal volume, without ComfyUI."""
     import threading
@@ -558,6 +577,7 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
     runtime = media_runtime(data, script_dir)
     for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
         folder.mkdir(parents=True, exist_ok=True)
+    link_studio_media(runtime)
     # Same state directory as the GPU endpoint's H3_WORKSPACE_DIR.
     store = WorkspaceStore(Path(data) / "h3-workspace")
     ui = build_ui(manager, (runtime, store))

@@ -13,6 +13,20 @@ from h3_models import MODEL_SPECS, model_manifest_key, read_json, write_json_ato
 
 
 class ModelManagerTests(unittest.TestCase):
+    def test_media_links_never_replace_existing_directories(self):
+        from types import SimpleNamespace
+
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            alias = root / "app" / "ComfyUI" / "input"
+            alias.mkdir(parents=True)
+            marker = alias / "keep.wav"
+            marker.write_bytes(b"existing")
+            runtime = SimpleNamespace(comfy_dir=alias.parent, input_dir=root / "input", output_dir=root / "output")
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                manager_module.link_studio_media(runtime)
+            self.assertEqual(marker.read_bytes(), b"existing")
+
     def setUp(self):
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

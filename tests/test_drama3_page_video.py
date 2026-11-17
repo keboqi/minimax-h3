@@ -714,6 +714,26 @@ class Drama3PageVideoTests(unittest.TestCase):
                                  json={"video_effects": True, "video_effects_override_reduced_motion": True}))
         self.assertTrue(self.project()["video"]["effects_override_reduced_motion"])
 
+    def test_workshop_finds_studio_audio_and_illustrations_through_shared_media_links(self):
+        from h3_workshop import link_studio_media
+
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        self.runtime.comfy_dir = self.root / "cpu-app" / "ComfyUI"
+        alias = self.runtime.comfy_dir / "output" / self.mix.relative_to(self.runtime.output_dir)
+        self.store.mark_soundstage_generated("Night Market", str(alias))
+        self.assertIsNone(self.project()["result"])
+        try:
+            link_studio_media(self.runtime)
+        except OSError as exc:
+            self.skipTest(f"Directory symlinks unavailable: {exc}")
+        link_studio_media(self.runtime)  # Startup may prepare the same paths more than once.
+        project = self.project()
+        self.assertEqual(project["result"]["file"], self.mix.name)
+        self.assertEqual(len(project["video"]["stills"]["shots"]), 2)
+        self.assertEqual(self.client.get(f"{API}/audio", params=NAME).content, self.mix.read_bytes())
+        self.assertEqual(self.client.get(project["video"]["stills"]["shots"][0]["url"]).status_code, 200)
+
     def test_drawing_some_shots_passes_which_ones(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
         self.ok(self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": [1]}))
