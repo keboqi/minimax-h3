@@ -423,6 +423,33 @@ class StoryboardRunnerTests(unittest.TestCase):
             sb.new_scene(f"S{i + 1}", f"prompt {i + 1}", link=link) for i, link in enumerate(("flow", *links))])
         return storyboard_id
 
+    def test_export_version_keeps_the_rendered_scenes_when_edits_arrive_during_render(self):
+        storyboard_id = self.make("cut")
+        original = self.service.load("a", storyboard_id)
+        scene_id = original["scenes"][0]["id"]
+        add_take(original, 0, "first")
+        add_take(original, 0, "alternative")
+        original["scenes"][0]["in_use"] = "first"
+        self.service.save("a", storyboard_id, original)
+
+        def render(board, destination, **kwargs):
+            self.assertEqual(board, original)
+            self.service.update_scene("a", storyboard_id, scene_id, prompt="Edited while exporting")
+            self.service.use_take("a", storyboard_id, scene_id, "alternative")
+            self.service.move_scene("a", storyboard_id, scene_id, 1)
+            return destination
+
+        with patch.object(self.service, "render", side_effect=render):
+            self.handlers.export("a", storyboard_id, True)
+
+        current = self.service.load("a", storyboard_id)
+        self.assertEqual(current["versions"][-1]["scenes"], original["scenes"])
+        self.assertEqual(current["versions"][-1]["cast"], original["cast"])
+        edited = next(scene for scene in current["scenes"] if scene["id"] == scene_id)
+        self.assertEqual(edited["prompt"], "Edited while exporting")
+        self.assertEqual(edited["in_use"], "alternative")
+        self.assertEqual(current["scenes"][-1]["id"], scene_id)
+
     def test_generate_remaining_chains_flows_from_the_take_in_use(self):
         storyboard_id = self.make("flow", "cut")
         completed = []

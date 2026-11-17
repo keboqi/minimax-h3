@@ -205,7 +205,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
             "storyboard": {"id": storyboard_id, "name": board["name"], "scenes": len(board["scenes"])},
             "settings": board["profile"],
         })
-        self.service.save_version(owner, storyboard_id, f"Exported {path.name}")
+        self.service.save_version(owner, storyboard_id, f"Exported {path.name}", source=board)
         return path
 
     # Generation ------------------------------------------------------------

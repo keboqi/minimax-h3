@@ -538,12 +538,13 @@ class StoryboardService:
         return self.change(owner, storyboard_id, edit)[0]
 
     # Versions --------------------------------------------------------------
-    def save_version(self, owner, storyboard_id, label=""):
+    def save_version(self, owner, storyboard_id, label="", *, source=None):
+        """Save the supplied document's scene list, or the current one for a manual version."""
         def edit(board):
             version = {
                 "id": model.new_id(), "created": time.time(),
                 "label": (str(label).strip() or f"Version {len(board['versions']) + 1}")[:80],
-                **model.snapshot(board),
+                **model.snapshot(board if source is None else source),
             }
             board["versions"].append(version)
             return version["id"]

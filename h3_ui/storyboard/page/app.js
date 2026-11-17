@@ -171,6 +171,8 @@
   };
   // A server reply is older than anything typed since, so unsaved fields stay on top.
   const applyBoard = (data, {keepInspector = false} = {}) => {
+    // An upload or writer reply may arrive after the user opens another storyboard.
+    if (data.id !== state.board?.id) return;
     for (const edits of [sending, dirty]) {
       for (const [id, {fields}] of edits) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
     }
