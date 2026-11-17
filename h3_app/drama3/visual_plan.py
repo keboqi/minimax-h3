@@ -9,6 +9,7 @@ from h3_app.errors import H3Error
 from h3_app.llm import repair_json
 from h3_app.prompt_writers.common import read_system_prompt, write_prompt
 from .visuals import FPS, Shot
+from .visual_effects import EFFECT_PRESETS, check_effects
 
 
 def _text(value):
@@ -145,6 +146,7 @@ def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape
     intervals = pairwise(_frame_boundaries(rows, duration))
     shots = []
     for i, (row, (first, end)) in enumerate(zip(rows, intervals, strict=True), 1):
+        check_effects(row.get("effects", []))
         if not all(_text(row.get(key)) for key in ("prompt", "beat")):
             raise H3Error(f"Shot {i} is missing its beat or image prompt.")
         if row.get("transition") not in ("cut", "dissolve"):
@@ -170,12 +172,14 @@ def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape
     return shots
 
 
-def edit_shot(plan, index, *, prompt=None, transition=None):
-    """A copy of ``plan`` with one shot's image prompt or incoming transition changed."""
+def edit_shot(plan, index, *, prompt=None, transition=None, effects=None):
+    """Copy a plan with one shot's image prompt, transition or playback effects changed."""
     rows = plan.get("shots") if isinstance(plan, dict) else None
     if not isinstance(rows, list) or not isinstance(index, int) or not 0 <= index < len(rows):
         raise H3Error("That shot is not in the current shot plan. Reload the page and try again.")
     row = dict(rows[index])
+    if effects is not None:
+        row["effects"] = check_effects(effects)
     if prompt is not None:
         if not _text(prompt):
             raise H3Error("A shot needs an image prompt.")
@@ -246,7 +250,7 @@ def plan_request(settings, minimum):
                            anchor_format="cue (zero-based dialogue index), offset (fraction 0 <= offset < 1)",
                            min_shots=int(minimum), max_shots=MAX_SHOTS if settings.get("untimed") else shot_cap(duration, minimum),
                            **({"speakers": speakers} if speakers else {}), cues=cues,
-                           sounds=settings.get("sounds") or []), ensure_ascii=False)
+                           sounds=settings.get("sounds") or [], effect_presets=EFFECT_PRESETS), ensure_ascii=False)
 
 
 def full_plan_prompt(settings, minimum, *, runtime):

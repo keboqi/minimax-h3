@@ -1,3 +1,5 @@
+import {cameraTransform, paintEffects} from "./effects.js";
+
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
 export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
@@ -83,6 +85,8 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
 
   // The stills on the mix's clock: the shot under the playhead, dissolving in over the one before it.
   const preloaded = new Set();
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+  reducedMotion?.addEventListener("change", () => paintStills(getPlayer().currentTime || 0));
   function paintStills(time) {
     const rows = rowsOf();
     const current = shotAt(rows, time);
@@ -99,6 +103,17 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     show(back, fading ? shots[index - 1].url : shot.url);
     if (fading) show(front, shot.url);
     front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
+    const row = rows[current];
+    const enabled = state.project.video.effects_enabled !== false && !reducedMotion?.matches;
+    const effects = enabled ? row?.effects || [] : [];
+    const progress = (time - (row?.start || 0)) / Math.max(0.001, (row?.end || 0) - (row?.start || 0));
+    front.style.transform = cameraTransform(effects, progress);
+    const previous = rows[shotAt(rows, shots[Math.max(0, index - 1)].start)];
+    back.style.transform = fading
+      ? cameraTransform(enabled ? previous?.effects || [] : [], 1)
+      : cameraTransform(effects, progress);
+    const overlay = $("still-effects");
+    if (overlay) paintEffects(overlay, effects, time - (row?.start || 0));
     // Fetch the next images before they are due, so a cut never waits on the network.
     for (const next of shots.slice(index + 1, index + 3)) {
       if (!preloaded.has(next.url)) { preloaded.add(next.url); new Image().src = next.url; }
@@ -266,6 +281,18 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
           type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
           onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
+      ...[ ["camera", "Camera movement"], ["overlay", "Atmosphere"] ].map(([kind, label]) => {
+        const presets = state.boot.video.effect_presets || {};
+        const effects = row.effects || [];
+        return h("label", {class: "field"}, h("span", {class: "label"}, label),
+          h("select", {"aria-label": label, "data-effect-kind": kind, disabled: busy,
+            onchange: () => editShot({index: row.index,
+              effects: [...box.querySelectorAll("select[data-effect-kind]")].map((select) => select.value).filter(Boolean)})},
+            h("option", {value: "", selected: !effects.some((id) => presets[id]?.kind === kind)}, "None"),
+            Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
+              h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
+      }),
+      h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion disables effects."),
       h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
                    onclick: () => drawImages([row.index])}, draw));
   }

@@ -33,6 +33,17 @@ def drain(iterator):
 
 
 class PlanEditTests(unittest.TestCase):
+    def test_effects_validate_and_do_not_change_image_prompts(self):
+        from h3_app.drama3.visual_plan import compile_plan
+        original = compile_plan(PLAN, 4, "ink", 3)
+        edited = edit_shot(PLAN, 1, effects=["push_in", "rain"])
+        self.assertEqual(compile_plan(edited, 4, "ink", 3), original)
+        self.assertNotIn("effects", PLAN["shots"][1])
+        self.assertEqual(edit_shot(edited, 1, effects=[])["shots"][1]["effects"], [])
+        for invalid in (["unknown"], ["rain", "snow"], ["push_in", "pan_left"], "rain", [None]):
+            with self.subTest(invalid=invalid), self.assertRaises(H3Error):
+                compile_plan({**PLAN, "shots": [{**row, "effects": invalid} for row in PLAN["shots"]]}, 4, "", 3)
+
     def test_edit_shot_and_subject_return_new_plans(self):
         edited = edit_shot(PLAN, 1, prompt="  @mia  drops @radio. ", transition="cut")
         self.assertEqual((edited["shots"][1]["prompt"], edited["shots"][1]["transition"]), ("@mia drops @radio.", "cut"))

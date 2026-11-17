@@ -694,6 +694,22 @@ class Drama3PageVideoTests(unittest.TestCase):
         refused = self.client.patch(f"{API}/project/video/shot", params=NAME, json={"index": 5, "prompt": "x"})
         self.assertIn("not in the current shot plan", refused.json()["error"])
 
+    def test_effect_edits_persist_without_invalidating_images(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        self.wait()
+        before = self.project()["video"]
+        edited = self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                          json={"index": 0, "effects": ["push_in", "rain"]}))["video"]
+        self.assertEqual(edited["plan"]["rows"][0]["effects"], ["push_in", "rain"])
+        self.assertEqual(edited["stills"], before["stills"])
+        self.assertEqual(edited["plan"]["counts"], before["plan"]["counts"])
+        self.assertEqual(self.project()["video"]["plan"]["rows"][0]["effects"], ["push_in", "rain"])
+        self.assertEqual(self.client.get("/soundstage/effects.js").status_code, 200)
+        self.assertTrue(edited["effects_enabled"])
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_effects": False}))
+        self.assertFalse(self.project()["video"]["effects_enabled"])
+
     def test_drawing_some_shots_passes_which_ones(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
         self.ok(self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": [1]}))

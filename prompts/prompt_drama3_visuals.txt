@@ -84,11 +84,22 @@ setting, with room left around them for text added later.
 Describe a single frame, never panels, a grid or a before-and-after. Show what is said through
 action, expression and staging: no text, captions, speech bubbles or lettering.
 
+PLAYBACK EFFECTS
+Give every shot an "effects" array, using IDs from the request's effect_presets dictionary.
+Choose at most one camera move and one atmospheric overlay per shot; [] means a still image.
+Prefer simple, broadly fitting choices: push_in for attention or anticipation, pull_out for
+context, vignette for tension or focus, warm_glow for warmth or memory. Use flash only for
+a clear reveal or impact at the shot's start, and lightning only for storm scenes. Add rain,
+snow, fog, dust or embers only where the setting justifies them. Do not force an effect on
+every shot; [] is valid and quiet shots can stay still. Never add effects that contradict the scene.
+These are reusable animations applied during page playback, not image generation instructions.
+Keep the image prompt a description of one still frame; do not ask the image model to animate it.
+
 Return a single JSON object in this shape:
 {"characters":{"mara":"Mara, woman in her thirties, cropped black hair, sharp cheekbones, ochre coat"},
  "props":{"old_radio":"bakelite radio, cracked cream casing, round brass dial"},
  "locations":{"station":"shuttered train station, iron canopy, a dark clock above the doors"},
- "shots":[{"cue":0,"offset":0,"transition":"cut","beat":"Mara waits outside the locked station.",
+ "shots":[{"cue":0,"offset":0,"transition":"cut","effects":["push_in","rain"],"beat":"Mara waits outside the locked station.",
  "prompt":"A wide, cold shot from across the square... @mara(collar turned up against the rain) shelters beneath the clock of @station(doors chained)."}]}
 Start the first shot at cue 0, offset 0. Use strictly increasing anchors in dialogue order.
 For a pause or sound-only tail after a cue, optionally use "phase":"after" with offset as a

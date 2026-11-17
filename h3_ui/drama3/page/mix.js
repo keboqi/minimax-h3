@@ -55,7 +55,14 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       h("div", {class: "seg subtitle-size", id: "subtitle-size", role: "group", "aria-label": "Subtitle size"},
         sizeButton(-1, "Smaller subtitles", "A−"),
         h("span", {class: "num small", id: "subtitle-size-value", "aria-live": "polite"}, `${video.subtitle_size}%`),
-        sizeButton(1, "Larger subtitles", "A+")));
+        sizeButton(1, "Larger subtitles", "A+")),
+      visualSource() === "stills" ? h("label", {class: "check", title: "Play the shot plan's visual effects on this page"},
+        h("input", {type: "checkbox", id: "effects-on", checked: video.effects_enabled !== false,
+          onchange: (event) => {
+            video.effects_enabled = event.target.checked;
+            saveVideo({video_effects: event.target.checked});
+            sync();
+          }}), "Visual effects") : null);
   }
 
   function renderPlayer() {
@@ -90,7 +97,8 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       // The stills slide along the mix's audio; an older mix with only a rendered video plays that.
       const picture = stills
         ? h("div", {class: "stills", onclick: playing},
-            h("img", {class: "still", id: "still-back", alt: ""}), h("img", {class: "still", id: "still-front", alt: ""}))
+            h("img", {class: "still", id: "still-back", alt: ""}), h("img", {class: "still", id: "still-front", alt: ""}),
+            h("canvas", {class: "still-effects", id: "still-effects", "aria-hidden": "true"}))
         : mixVideo;
       mixVideo.hidden = stills;
       if (stills) document.body.append(mixVideo);

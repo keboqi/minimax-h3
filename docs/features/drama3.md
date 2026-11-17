@@ -233,6 +233,15 @@ word by word when the mix has word timings. **Subtitles** shows or hides those l
 same on Mix & review and Illustrate), and **A−**/**A+** size them from 50% to 200%, scaled to the video's width;
 both are saved with the project. The timeline and lines follow Video as they follow Audio.
 
+The shot planner also chooses reusable page effects: a slow push in, pull out or pan, plus an
+optional atmosphere such as rain, snow, fog, dust, embers, lightning, a brief flash, warm glow
+or vignette. Each shot's **Camera movement** and **Atmosphere** controls can change these without
+redrawing images. **Visual effects**, beside Subtitles, turns all effects on or off and saves
+that preference with the project. Effects follow the audio clock when playing, pausing and
+seeking; the browser's reduced-motion preference disables them. Existing plans stay still until
+effects are added or the shots are planned again. Effects currently play only on this page;
+MP4 exports keep the still images and transitions without these effects.
+
 **Save to Media** renders the stills with the finished soundtrack into a 720p MP4 beside the mix
 (1280x720, or 720x1280 when the stills were drawn in Portrait 9:16, which the player then shows in a
 tall frame)

@@ -21,6 +21,7 @@ from urllib.parse import quote
 from fastapi import Body, FastAPI, Request
 
 from h3_app.drama3 import voice_looks
+from h3_app.drama3.visual_effects import EFFECT_PRESETS
 from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject, full_plan_prompt, mentions,
                                        plan_shots, subjects)
 from h3_app.errors import H3Error
@@ -36,7 +37,7 @@ from . import visuals
 from .project_visuals import planning_mix, save_project_plan
 
 VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
-                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int}
+                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int, "video_effects": bool}
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
@@ -76,6 +77,7 @@ def video_settings(data: dict, engines: list) -> dict:
             "orientation": visuals.orientation_of(data.get("video_orientation")),
             "continuity": data.get("video_continuity") is True,
             "subtitles": data.get("video_subtitles") is not False,
+            "effects_enabled": data.get("video_effects") is not False,
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
@@ -130,6 +132,7 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
                      "end": round((shot.first + shot.frames) / visuals.FPS, 3),
                      "transition": "Dissolve" if shot.dissolve else "Cut", "beat": shot.beat,
                      "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
+                     "effects": row.get("effects", []),
                      "image": still_url(name, still["image"]) if still else None})
     portraits = visuals.kept_portraits(record, root, audio)
     current_keys = visuals.portrait_keys(current, settings["style"])
@@ -201,6 +204,7 @@ def preview_url(engine: str, file: str) -> str:
 
 def boot_payload(engines: list) -> dict:
     return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
+            "effect_presets": EFFECT_PRESETS,
             "styles": visuals.STYLE_PRESETS, "style_groups": visuals.STYLE_GROUPS,
             "style_uses": visuals.STYLE_USES, "default_style": visuals.DEFAULT_STYLE,
             "custom_style": visuals.CUSTOM_STYLE, "limits": list(LIMITS),
@@ -311,11 +315,12 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @app.patch(f"{api}/project/video/shot", include_in_schema=False)
     @guarded
     def edit_plan_shot(name: str, request: Request, body: dict = Body(...)):
-        """Change one shot's image prompt or how it comes in; it shows as changed until drawn again."""
+        """Edit a shot; only image prompt changes require redrawing."""
         transition = body.get("transition")
         return edit_plan(name, lambda plan: edit_shot(
             plan, body.get("index"), prompt=body.get("prompt"),
-            transition=str(transition).lower() if transition is not None else None))(request)
+            transition=str(transition).lower() if transition is not None else None,
+            effects=body.get("effects")))(request)
 
     @app.patch(f"{api}/project/video/subject", include_in_schema=False)
     @guarded
