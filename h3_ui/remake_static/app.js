@@ -679,6 +679,7 @@
       state.mode = mode;
       renderAction();
       changed();
+      autosave();
     }));
     MODES.forEach(([, line], index) => { $("mode").children[index].title = line; });
 
@@ -1525,9 +1526,9 @@
       window.addEventListener("pointerup", onUp);
     });
 
-    $("smart").addEventListener("change", (event) => { state.smart = event.target.checked; renderPictures(); changed(); });
-    $("auto-prompts").addEventListener("change", (event) => { state.auto = event.target.checked; changed(); });
-    $("pinned").addEventListener("change", (event) => { state.pinned = event.target.checked; renderPictures(); changed(); });
+    $("smart").addEventListener("change", (event) => { state.smart = event.target.checked; renderPictures(); changed(); autosave(); });
+    $("auto-prompts").addEventListener("change", (event) => { state.auto = event.target.checked; changed(); autosave(); });
+    $("pinned").addEventListener("change", (event) => { state.pinned = event.target.checked; renderPictures(); changed(); autosave(); });
     $("scrub").addEventListener("input", (event) => setFrame(Number(event.target.value)));
     $("wipe").addEventListener("input", (event) => { state.wipe = Number(event.target.value); renderViewer(); });
     $("back").addEventListener("click", () => setFrame(state.frame - 1));
@@ -1584,6 +1585,7 @@
       renderViewer();
     });
     $("request").addEventListener("input", queueCheck);
+    $("request").addEventListener("change", autosave);
     $("prompt").addEventListener("input", () => { renderPromptMeta(); queueCheck(); });
     $("prompt").addEventListener("change", autosave);
     $("writer-backend").addEventListener("change", () => { fillWriterModels(); renderPromptMeta(); savePrefs(); });

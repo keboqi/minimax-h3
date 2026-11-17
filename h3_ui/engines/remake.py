@@ -703,8 +703,7 @@ class RemakeHandlers:
             yield None, "Scanning the source for cuts"
             runner = self.runner
             project = runner.plan(owner, source_video, selection)
-            project = runner.store_editor(project, window_index, prompt, use_carried, *slots)
-            project = runner.projects.edit(project, lambda current: current.update(
+            project = runner.store_editor(project, window_index, prompt, use_carried, *slots, options=dict(
                 mode=mode, request=str(edit_request or ""), smart=bool(smart), pinned=bool(pin_frames),
                 auto_prompts=bool(auto_prompts),
             ))

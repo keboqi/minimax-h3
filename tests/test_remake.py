@@ -1000,12 +1000,12 @@ class WindowRunTests(unittest.TestCase):
             state="changed", use_carried=False,
         ))
         self.run_windows(index=1, pin=None)
-        self.assertEqual(len(self.written), written)
+        self.assertEqual(len(self.written), written + 1)
         self.handlers.runner.projects.edit(self.project(), lambda current: current["windows"][1].update(
             state="changed", prompt_pictures=99,
         ))
         self.run_windows(index=1, pin=None)
-        self.assertEqual(len(self.written), written + 1)
+        self.assertEqual(len(self.written), written + 2)
 
     def test_a_window_keeps_only_its_take_and_a_regenerated_one_leaves_nothing_behind(self):
         def take(values, remake, progress):

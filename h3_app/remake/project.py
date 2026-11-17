@@ -20,6 +20,7 @@ PENDING, DONE, CHANGED, OUTDATED, FAILED = "pending", "done", "changed", "outdat
 STATE_NAMES = {PENDING: "Not generated", DONE: "Done", CHANGED: "Changed", OUTDATED: "Earlier window changed",
                FAILED: "Failed"}
 RENDERED = frozenset({DONE, OUTDATED})
+OPTION_DEFAULTS = {"mode": "Swap", "pinned": True, "smart": True, "auto_prompts": True, "request": ""}
 _LOCK = threading.Lock()
 
 
@@ -139,6 +140,17 @@ def save_editor(window: dict[str, Any], pictures: list[str], pins: list[int | No
     window.update(pictures=pictures, pins=pins, prompt=prompt, use_carried=bool(use_carried))
     if window["state"] in RENDERED:
         window["state"] = CHANGED
+
+
+def save_options(project: dict[str, Any], options: dict[str, Any]) -> None:
+    """Queue takes affected by changed conditioning or automatic prompt settings."""
+    changed = {key for key, default in OPTION_DEFAULTS.items()
+               if key in options and options[key] != project.get(key, default)}
+    conditioning = bool(changed & {"mode", "pinned", "smart"})
+    for window in project["windows"]:
+        if window["state"] in RENDERED and (conditioning or (changed and window["prompt_auto"])):
+            window["state"] = CHANGED
+    project.update(options)
 
 
 def record_take(project: dict[str, Any], index: int, take: str, *, current_inputs: bool) -> None:

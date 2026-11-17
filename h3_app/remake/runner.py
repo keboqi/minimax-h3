@@ -17,7 +17,8 @@ from h3_app.provenance import snapshot_path, write_snapshot
 from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
 from .model import FPS, RemakeGraph, RenderSize, check_pins, frames_for_seconds, render_size, request_overrides
 from .project import (
-    DONE, FAILED, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor, store_picture,
+    DONE, FAILED, OPTION_DEFAULTS, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor,
+    save_options, store_picture,
     window_inputs,
 )
 from .windows import needs_windows, plan_windows, selection_frames
@@ -127,7 +128,7 @@ class WindowRunner:
             if originals is not None:
                 window["originals"] = [originals.get(str(slot)) for slot, path in enumerate(pictures, 1) if path]
             if options is not None:
-                current.update(options)
+                save_options(current, options)
 
         return self.projects.edit(project, update)
 
@@ -167,6 +168,8 @@ class WindowRunner:
         def inputs_match(current, prompt):
             saved = current["windows"][index]
             return (saved["prompt"] == prompt
+                    and all(current.get(key, default) == getattr(options, key)
+                            for key, default in OPTION_DEFAULTS.items())
                     and all(saved[key] == window[key] for key in ("pictures", "pins", "use_carried"))
                     and window_inputs(current, index, pinned=options.pinned, smart=options.smart) == (pictures, pins))
 
@@ -184,12 +187,10 @@ class WindowRunner:
             trim_source(project["source"], clip, start=project["start"] + first / FPS, frames=frames,
                         width=project["width"], height=project["height"])
             text = window["prompt"]
-            # An auto prompt's <Picture N> tags only fit the pictures it was written for.
-            stale = window["prompt_auto"] and window["prompt_pictures"] != len(pictures)
             shared = project["windows"][0]["prompt"]
             if index and not options.auto_prompts and shared.strip() and (window["prompt_auto"] or not text.strip()):
                 text = shared
-            elif stale or not text.strip():
+            elif window["prompt_auto"] or not text.strip():
                 yield None, f"{label}: writing the prompt"
                 text = self._write_prompt(project, index, str(clip), pictures, pins, options)
             if text != window["prompt"]:
