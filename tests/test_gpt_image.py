@@ -136,9 +136,9 @@ class GptImageConfigTests(unittest.TestCase):
         self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-flare"], False), 2)
         self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], False), 4)
         self.assertEqual(gpt_image_max_concurrency(GPT_IMAGE_MODELS, False), 6)
-        self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-flare"], True), 2)
-        self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], True), 4)
-        self.assertEqual(gpt_image_max_concurrency(GPT_IMAGE_MODELS, True), 6)
+        self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-flare"], True), 4)
+        self.assertEqual(gpt_image_max_concurrency(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"], True), 8)
+        self.assertEqual(gpt_image_max_concurrency(GPT_IMAGE_MODELS, True), 12)
 
         self.assertEqual(validate_gpt_image_canvas(1920, 1088), (1920, 1088))
         self.assertEqual(validate_gpt_image_canvas(1088, 1920), (1088, 1920))
@@ -159,42 +159,50 @@ class GptImageRateLimiterTests(unittest.TestCase):
             sleeper=lambda delay: now.__setitem__(0, now[0] + delay))
         return limiter, now
 
-    def test_endpoints_and_credentials_share_the_model_budget(self):
+    def test_endpoint_model_budgets_are_independent(self):
         limiter, now = self.limiter()
         model = DEFAULT_GPT_IMAGE_MODEL
         limiter.acquire("https://primary", model, api_key="pk")
-        limiter.acquire("https://backup", model, api_key="fk")
-        self.assertEqual(limiter.available_slots("https://third", model, api_key="other"), 0)
+        limiter.acquire("https://primary", model, api_key="pk")
+        self.assertEqual(limiter.available_slots("https://primary", model, api_key="pk"), 0)
+        self.assertEqual(limiter.available_slots("https://backup", model, api_key="fk"), 2)
         self.assertEqual(limiter.available_slots("https://primary", "gpt-image-2"), 2)
         notices = []
         limiter.acquire("https://backup", model, api_key="fk", on_wait=notices.append)
+        self.assertEqual(now[0], 0)
+        self.assertEqual(notices, [])
+        limiter.acquire("https://primary", model, api_key="pk", on_wait=notices.append)
         self.assertGreaterEqual(now[0], 60)
         self.assertEqual(len(notices), 1)
 
-    def test_failback_does_not_add_planner_capacity(self):
+    def test_failback_adds_only_distinct_endpoint_capacity(self):
         creds = GptImageCredentials(api_url="https://primary", api_key="pk",
                                    failback_url="https://backup", failback_key="fk")
         limiter, _ = self.limiter()
         models = ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
-        plan = plan_gpt_image_slots(models, creds.endpoints(True), 4, limiter=limiter)
-        self.assertEqual([ep.name for ep, _ in plan], ["primary"] * 4)
-        self.assertEqual([model for _, model in plan], list(models) * 2)
-        with self.assertRaisesRegex(H3Error, "at most 4"):
-            plan_gpt_image_slots(models, creds.endpoints(True), 5, limiter=limiter)
+        plan = plan_gpt_image_slots(models, creds.endpoints(True), 8, limiter=limiter)
+        self.assertEqual([ep.name for ep, _ in plan], ["primary"] * 4 + ["failback"] * 4)
+        self.assertEqual([model for _, model in plan], list(models) * 4)
+        with self.assertRaisesRegex(H3Error, "at most 8"):
+            plan_gpt_image_slots(models, creds.endpoints(True), 9, limiter=limiter)
+        duplicate = GptImageCredentials(api_url="https://primary", api_key="pk",
+                                       failback_url="https://primary", failback_key="pk")
+        self.assertEqual(gpt_image_max_concurrency(models, True, credentials=duplicate), 4)
         with self.assertRaisesRegex(H3Error, "between 1 and 2"):
-            validate_gpt_image(GptImageRequest(prompt="fox", use_failback=True, batch_count=4), creds)
+            validate_gpt_image(GptImageRequest(prompt="fox", use_failback=True, batch_count=4), duplicate)
 
-    def test_provider_cooldown_is_shared_and_cancellable(self):
+    def test_provider_cooldown_is_endpoint_specific_and_cancellable(self):
         limiter, now = self.limiter()
-        limiter.defer(DEFAULT_GPT_IMAGE_MODEL, 1)
-        self.assertEqual(limiter.available_slots("https://backup", DEFAULT_GPT_IMAGE_MODEL), 0)
-        limiter.acquire("https://backup", DEFAULT_GPT_IMAGE_MODEL)
+        limiter.defer("https://primary", DEFAULT_GPT_IMAGE_MODEL, 1)
+        self.assertEqual(limiter.available_slots("https://primary", DEFAULT_GPT_IMAGE_MODEL), 0)
+        self.assertEqual(limiter.available_slots("https://backup", DEFAULT_GPT_IMAGE_MODEL), 2)
+        limiter.acquire("https://primary", DEFAULT_GPT_IMAGE_MODEL)
         self.assertGreaterEqual(now[0], 1)
-        limiter.defer(DEFAULT_GPT_IMAGE_MODEL, 5)
+        limiter.defer("https://primary", DEFAULT_GPT_IMAGE_MODEL, 5)
         def cancel():
             raise JobCancelled("cancelled")
         with self.assertRaises(JobCancelled):
-            limiter.acquire("https://backup", DEFAULT_GPT_IMAGE_MODEL, check_cancel=cancel)
+            limiter.acquire("https://primary", DEFAULT_GPT_IMAGE_MODEL, check_cancel=cancel)
         limiter.reset()
         self.assertEqual(limiter.available_slots("https://backup", DEFAULT_GPT_IMAGE_MODEL), 2)
 
@@ -212,7 +220,38 @@ class GptImageRateLimiterTests(unittest.TestCase):
 
 
 class GptImageGenerationTests(unittest.TestCase):
-    def test_429_retries_respect_shared_quota_before_using_failback(self):
+    def test_independent_preview_jobs_atomically_use_both_endpoints(self):
+        from collections import Counter
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier, Lock
+
+        ready, lock = Barrier(4), Lock()
+        calls = []
+        creds = GptImageCredentials(api_url="https://primary", api_key="pk",
+                                   failback_url="https://backup", failback_key="fk")
+        def unexpected_wait(delay):
+            raise AssertionError("Four requests should fit across two endpoint budgets")
+        limiter = GptImageRateLimiter(clock=lambda: 0, sleeper=unexpected_wait)
+        def call(endpoint, *args):
+            with lock:
+                calls.append(endpoint.name)
+            ready.wait(timeout=3)
+            return base64.b64decode(_png_b64())
+        with tempfile.TemporaryDirectory() as folder, patch(
+                "h3_app.generation.gpt_image._call_endpoint", side_effect=call):
+            runtime = _test_runtime(Path(folder))
+            def generate(index):
+                updates = list(generate_gpt_image(GptImageRequest(prompt=f"preview {index}", use_failback=True),
+                    runtime, credentials=creds, limiter=limiter))
+                self.assertEqual(len(updates[-1].output), 1, updates[-1].status)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(generate, range(4)))
+        self.assertEqual(Counter(calls), {"primary": 2, "failback": 2})
+        for endpoint in creds.endpoints(True):
+            self.assertEqual(limiter.available_slots(endpoint.url, DEFAULT_GPT_IMAGE_MODEL,
+                                                     api_key=endpoint.api_key), 0)
+
+    def test_429_retries_respect_endpoint_quota_before_using_failback(self):
         now, calls = [0.0], []
         limiter = GptImageRateLimiter(clock=lambda: now[0],
             sleeper=lambda delay: now.__setitem__(0, now[0] + delay))
@@ -236,7 +275,7 @@ class GptImageGenerationTests(unittest.TestCase):
         self.assertTrue(any("Rate limited; retry" in update.status for update in updates))
         self.assertTrue(any("Waiting" in update.status for update in updates))
 
-    def test_persistent_429_retries_are_bounded_and_failback_shares_budget(self):
+    def test_persistent_429_retries_are_bounded_and_failback_has_its_own_budget(self):
         now, calls = [0.0], []
         limiter = GptImageRateLimiter(clock=lambda: now[0],
             sleeper=lambda delay: now.__setitem__(0, now[0] + delay))
@@ -252,7 +291,7 @@ class GptImageGenerationTests(unittest.TestCase):
             updates = list(generate_gpt_image(GptImageRequest(prompt="bird", use_failback=True),
                 _test_runtime(Path(folder)), credentials=creds, limiter=limiter))
         self.assertEqual([name for name, _ in calls], ["primary"] * 3 + ["failback"] * 3)
-        self.assertEqual([stamp for _, stamp in calls], [0, 1, 60, 61, 120, 121])
+        self.assertEqual([stamp for _, stamp in calls], [0, 1, 60, 60, 61, 120])
         self.assertTrue(updates[-1].status.startswith("Error:"))
 
     def test_validate_gpt_image_rejects_missing_creds_and_over_concurrency(self):

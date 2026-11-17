@@ -456,8 +456,8 @@ to that Modal Secret, Colab Secrets, or local `.env`.
 GPT Image also edits Remake frames and draws Sound Stage illustrations and style
 previews without a GPU. Sound Stage can draw a saved shot plan before speech;
 its images carry over when speech supplies the final timing. Independent API
-images share a two-requests-per-minute budget per model across primary and
-failback. Rate-limited requests wait and retry, while
+images share a two-requests-per-minute budget per model on each endpoint;
+primary and failback have independent budgets. Rate-limited requests wait and retry, while
 character matching waits for its portrait and scene images.
 The same Gemini key also gives the writers optional free Gemma checks (song style detection,
 pronunciation note fixes and the strict source check), which stay inside the free per-minute quota

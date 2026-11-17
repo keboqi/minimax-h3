@@ -8,6 +8,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from dataclasses import dataclass
 import io
+import hashlib
 import math
 import re
 from datetime import datetime, timezone
@@ -61,7 +62,7 @@ class GptImageRequest:
 
 
 class GptImageRateLimiter:
-    """Thread-safe model quota shared by primary, failback, edits and generation."""
+    """Independent endpoint/model quotas, shared by all image jobs in this process."""
 
     def __init__(
         self,
@@ -76,8 +77,12 @@ class GptImageRateLimiter:
         self.clock = clock
         self.sleeper = sleeper
         self._lock = Lock()
-        self._buckets: dict[str, deque[float]] = {}
-        self._cooldowns: dict[str, float] = {}
+        self._buckets: dict[tuple[str, str, bytes], deque[float]] = {}
+        self._cooldowns: dict[tuple[str, str, bytes], float] = {}
+
+    @staticmethod
+    def _key(endpoint_url, model, api_key):
+        return (str(endpoint_url), str(model), hashlib.sha256(api_key.encode()).digest())
 
     def _prune(self, bucket: deque[float], now: float) -> None:
         cutoff = now - self.window_seconds
@@ -85,7 +90,7 @@ class GptImageRateLimiter:
             bucket.popleft()
 
     def available_slots(self, endpoint_url: str, model: str, *, api_key: str = "") -> int:
-        key = str(model)
+        key = self._key(endpoint_url, model, api_key)
         with self._lock:
             if self._cooldowns.get(key, 0) > self.clock():
                 return 0
@@ -104,21 +109,36 @@ class GptImageRateLimiter:
         check_cancel: Callable[[], None] = check_cancelled,
         on_wait: Callable[[float], None] | None = None,
     ) -> float:
-        key = str(model)
+        endpoint = GptImageEndpoint("endpoint", endpoint_url, api_key)
+        _, waited = self.acquire_endpoint((endpoint,), model, check_cancel=check_cancel, on_wait=on_wait)
+        return waited
+
+    def acquire_endpoint(
+        self, endpoints: tuple[GptImageEndpoint, ...], model: str, *,
+        check_cancel: Callable[[], None] = check_cancelled,
+        on_wait: Callable[[float], None] | None = None,
+    ) -> tuple[GptImageEndpoint, float]:
+        """Select and reserve an available endpoint atomically across independent jobs."""
+        if not endpoints:
+            raise H3Error("No GPT Image endpoint is configured.")
         waited = 0.0
         announced = False
         while True:
             check_cancel()
             with self._lock:
                 now = self.clock()
-                bucket = self._buckets.setdefault(key, deque())
-                self._prune(bucket, now)
-                cooldown = self._cooldowns.get(key, 0) - now
-                if len(bucket) < self.limit and cooldown <= 0:
-                    bucket.append(now)
-                    return waited
-                delay = max(0.01, cooldown,
-                            bucket[0] + self.window_seconds - now if len(bucket) >= self.limit else 0)
+                delays = []
+                for endpoint in endpoints:
+                    key = self._key(endpoint.url, model, endpoint.api_key)
+                    bucket = self._buckets.setdefault(key, deque())
+                    self._prune(bucket, now)
+                    cooldown = self._cooldowns.get(key, 0) - now
+                    if len(bucket) < self.limit and cooldown <= 0:
+                        bucket.append(now)
+                        return endpoint, waited
+                    delays.append(max(0.01, cooldown,
+                        bucket[0] + self.window_seconds - now if len(bucket) >= self.limit else 0))
+                delay = min(delays)
             if on_wait is not None and not announced:
                 on_wait(delay)
                 announced = True
@@ -126,10 +146,11 @@ class GptImageRateLimiter:
             self.sleeper(step)
             waited += step
 
-    def defer(self, model: str, seconds: float) -> None:
-        """Honor a provider's retry delay across all jobs using this model."""
+    def defer(self, endpoint_url: str, model: str, seconds: float, *, api_key: str = "") -> None:
+        """Cool down only the endpoint/model that the provider throttled."""
+        key = self._key(endpoint_url, model, api_key)
         with self._lock:
-            self._cooldowns[model] = max(self._cooldowns.get(model, 0), self.clock() + seconds)
+            self._cooldowns[key] = max(self._cooldowns.get(key, 0), self.clock() + seconds)
 
     def reset(self) -> None:
         with self._lock:
@@ -172,13 +193,15 @@ def plan_gpt_image_slots(
     *,
     limiter: GptImageRateLimiter = RATE_LIMITER,
 ) -> list[tuple[GptImageEndpoint, str]]:
-    """Round-robin models on primary; failback is reserved for failed attempts."""
+    """Plan independent endpoint/model slots; execution atomically reserves capacity."""
     if not endpoints:
         raise H3Error("No GPT Image endpoint is configured.")
-    max_slots = len(models) * GPT_IMAGE_RATE_LIMIT
+    endpoints = tuple(dict.fromkeys(endpoints))
+    max_slots = len(models) * len({(ep.url, ep.api_key) for ep in endpoints}) * GPT_IMAGE_RATE_LIMIT
     if batch_count < 1 or batch_count > max_slots:
         raise H3Error(f"GPT Image supports at most {max_slots} concurrent generations for this selection.")
-    return [(endpoints[0], models[index % len(models)]) for index in range(batch_count)]
+    return [(endpoints[(index // len(models)) // GPT_IMAGE_RATE_LIMIT], models[index % len(models)])
+            for index in range(batch_count)]
 
 
 def _encode_reference_file(path_str: str) -> tuple[str, bytes, str]:
@@ -310,14 +333,16 @@ def generate_gpt_image(
         yield GenerationUpdate(
             None,
             f"Preparing {batch_count} image request(s) across {', '.join(models)} "
-            f"({size_str}, quality={quality}) · 2 requests/min per model shared by primary and failback…",
+            f"({size_str}, quality={quality}) · 2 requests/min per model on each endpoint…",
         )
         timings.transition("Calling GPT Image API")
 
-        def call_endpoint(endpoint: GptImageEndpoint, model: str) -> bytes:
+        def call_endpoint(endpoint: GptImageEndpoint, model: str, *, reserved=False) -> bytes:
             for attempt in range(3):
-                limiter.acquire(endpoint.url, model, api_key=endpoint.api_key, check_cancel=check_cancel,
-                    on_wait=lambda delay: notices.put(f"{model} · Waiting {delay:.0f}s for the shared model quota"))
+                if attempt or not reserved:
+                    limiter.acquire(endpoint.url, model, api_key=endpoint.api_key, check_cancel=check_cancel,
+                        on_wait=lambda delay: notices.put(
+                            f"{model} ({endpoint.name}) · Waiting {delay:.0f}s for its quota"))
                 check_cancel()
                 try:
                     return _call_endpoint(endpoint, model, prompt, size_str, quality, encoded_references)
@@ -327,16 +352,20 @@ def generate_gpt_image(
                     delay = _rate_limit_delay(exc)
                     if delay is None:
                         raise
-                    limiter.defer(model, delay)
+                    limiter.defer(endpoint.url, model, delay, api_key=endpoint.api_key)
                     if attempt == 2:
                         raise
                     notices.put(f"{model} ({endpoint.name}) · Rate limited; retry {attempt + 1}/2 "
                                 f"after at least {delay:.0f}s and the next model quota slot")
 
         def run_slot(index: int, endpoint: GptImageEndpoint, model: str) -> tuple[int, Path, GptImageEndpoint]:
+            preferred = (endpoint, *(ep for ep in endpoints if
+                                    (ep.url, ep.api_key) != (endpoint.url, endpoint.api_key)))
+            endpoint, _ = limiter.acquire_endpoint(preferred, model, check_cancel=check_cancel,
+                on_wait=lambda delay: notices.put(f"{model} · Waiting {delay:.0f}s for an endpoint quota slot"))
             used_endpoint = endpoint
             try:
-                raw = call_endpoint(endpoint, model)
+                raw = call_endpoint(endpoint, model, reserved=True)
             except JobCancelled:
                 raise
             except Exception as primary_exc:
