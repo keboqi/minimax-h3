@@ -238,7 +238,9 @@ optional atmosphere such as rain, snow, fog, dust, embers, lightning, a brief fl
 or vignette. Each shot's **Camera movement** and **Atmosphere** controls can change these without
 redrawing images. **Visual effects**, beside Subtitles, turns all effects on or off and saves
 that preference with the project. Effects follow the audio clock when playing, pausing and
-seeking; the browser's reduced-motion preference disables them. Existing plans stay still until
+seeking. The browser's reduced-motion preference pauses them by default, with an unchecked
+Visual effects control and an explanation. Explicitly turning Visual effects on overrides reduced
+motion for that project; turning it off clears the override. Existing plans stay still until
 effects are added or the shots are planned again. Effects currently play only on this page;
 MP4 exports keep the still images and transitions without these effects.
 

@@ -9,6 +9,10 @@ const cameraMoves = {
 const lightEffects = new Set(["lightning", "flash", "warm_glow", "vignette"]);
 const particleEffects = new Set(["rain", "snow", "dust", "embers"]);
 
+export function effectsEnabled(video, reducedMotion) {
+  return video.effects_enabled !== false && (!reducedMotion || video.effects_override_reduced_motion === true);
+}
+
 export function cameraTransform(effects, progress) {
   const p = Math.max(0, Math.min(1, progress));
   const move = effects.find((id) => Object.hasOwn(cameraMoves, id));

@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraTransform, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraTransform, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+
+test("reduced motion pauses effects unless explicitly overridden for the project", () => {
+  assert.equal(effectsEnabled({}, false), true);
+  assert.equal(effectsEnabled({}, true), false);
+  assert.equal(effectsEnabled({effects_enabled: true}, true), false);
+  assert.equal(effectsEnabled({effects_override_reduced_motion: true}, true), true);
+  assert.equal(effectsEnabled({effects_enabled: false, effects_override_reduced_motion: true}, true), false);
+});
 
 test("camera moves clamp to shot boundaries and old plans remain still", () => {
   assert.equal(cameraTransform([], 0.5), "none");

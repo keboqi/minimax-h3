@@ -37,7 +37,8 @@ from . import visuals
 from .project_visuals import planning_mix, save_project_plan
 
 VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
-                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int, "video_effects": bool}
+                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int, "video_effects": bool,
+                "video_effects_override_reduced_motion": bool}
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
@@ -78,6 +79,7 @@ def video_settings(data: dict, engines: list) -> dict:
             "continuity": data.get("video_continuity") is True,
             "subtitles": data.get("video_subtitles") is not False,
             "effects_enabled": data.get("video_effects") is not False,
+            "effects_override_reduced_motion": data.get("video_effects_override_reduced_motion") is True,
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 

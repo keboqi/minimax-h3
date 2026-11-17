@@ -90,8 +90,22 @@ def run():
             page.wait_for_load_state("networkidle")
             page.emulate_media(reduced_motion="reduce")
             expect(page.locator("#still-back")).to_have_css("transform", "none")
-            page.emulate_media(reduced_motion="no-preference")
+            expect(page.get_by_label("Visual effects", exact=True)).not_to_be_checked()
+            expect(page.locator("#effects-motion-hint")).to_be_visible()
+            with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
+                page.get_by_label("Visual effects", exact=True).check()
             expect(page.locator("#still-back")).not_to_have_css("transform", "none")
+            assert fixture.project()["video"]["effects_override_reduced_motion"] is True
+            # The explicit choice survives a reload with reduced motion still enabled.
+            page.reload(wait_until="networkidle")
+            expect(page.get_by_label("Visual effects", exact=True)).to_be_checked()
+            expect(page.locator("#still-back")).not_to_have_css("transform", "none")
+            with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
+                page.get_by_label("Visual effects", exact=True).uncheck()
+            assert fixture.project()["video"]["effects_override_reduced_motion"] is False
+            expect(page.locator("#still-back")).to_have_css("transform", "none")
+            page.emulate_media(reduced_motion="no-preference")
+            expect(page.locator("#still-back")).to_have_css("transform", "none")
             assert not errors, errors
             browser.close()
         print("PASS: effect controls, persistence, canvas animation, seeking, reduced motion, module loading")

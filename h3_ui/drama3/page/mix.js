@@ -1,3 +1,5 @@
+import {effectsEnabled} from "./effects.js";
+
 // Mix view and local controls for Soundstage.
 export function lineTakes(result) {
   return result.lines.map((line) => {
@@ -41,6 +43,9 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
 
   function subtitleControls() {
     const video = state.project.video;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const effectsOn = effectsEnabled(video, reducedMotion);
+    const motionPaused = video.effects_enabled !== false && reducedMotion && !effectsOn;
     const sizeButton = (direction, label, text) => {
       const button = h("button", {type: "button", "data-step": String(direction), "aria-label": label, title: label,
                                   onclick: () => setSubtitleSize(direction)}, text);
@@ -56,13 +61,21 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         sizeButton(-1, "Smaller subtitles", "A−"),
         h("span", {class: "num small", id: "subtitle-size-value", "aria-live": "polite"}, `${video.subtitle_size}%`),
         sizeButton(1, "Larger subtitles", "A+")),
-      visualSource() === "stills" ? h("label", {class: "check", title: "Play the shot plan's visual effects on this page"},
-        h("input", {type: "checkbox", id: "effects-on", checked: video.effects_enabled !== false,
+      visualSource() === "stills" ? h("label", {class: "check", title: motionPaused
+        ? "Your system requests reduced motion. Turn this on to play effects for this project."
+        : "Play the shot plan's visual effects on this page"},
+        h("input", {type: "checkbox", id: "effects-on", checked: effectsOn,
           onchange: (event) => {
             video.effects_enabled = event.target.checked;
-            saveVideo({video_effects: event.target.checked});
+            video.effects_override_reduced_motion = event.target.checked && Boolean(reducedMotion);
+            saveVideo({video_effects: video.effects_enabled,
+              video_effects_override_reduced_motion: video.effects_override_reduced_motion});
+            const hint = $("effects-motion-hint");
+            if (hint) hint.hidden = true;
             sync();
-          }}), "Visual effects") : null);
+          }}), "Visual effects") : null,
+      visualSource() === "stills" ? h("span", {id: "effects-motion-hint", class: "muted small", hidden: !motionPaused},
+        "Paused by reduced motion · turn on to play") : null);
   }
 
   function renderPlayer() {

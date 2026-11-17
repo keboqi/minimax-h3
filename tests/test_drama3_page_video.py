@@ -709,6 +709,10 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertTrue(edited["effects_enabled"])
         self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_effects": False}))
         self.assertFalse(self.project()["video"]["effects_enabled"])
+        self.assertFalse(self.project()["video"]["effects_override_reduced_motion"])
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME,
+                                 json={"video_effects": True, "video_effects_override_reduced_motion": True}))
+        self.assertTrue(self.project()["video"]["effects_override_reduced_motion"])
 
     def test_drawing_some_shots_passes_which_ones(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))

@@ -1,4 +1,4 @@
-import {cameraTransform, paintEffects} from "./effects.js";
+import {cameraTransform, effectsEnabled, paintEffects} from "./effects.js";
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
@@ -86,7 +86,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
   // The stills on the mix's clock: the shot under the playhead, dissolving in over the one before it.
   const preloaded = new Set();
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  reducedMotion?.addEventListener("change", () => paintStills(getPlayer().currentTime || 0));
+  reducedMotion?.addEventListener("change", () => { renderPlayer(); sync(); });
   function paintStills(time) {
     const rows = rowsOf();
     const current = shotAt(rows, time);
@@ -104,7 +104,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (fading) show(front, shot.url);
     front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
     const row = rows[current];
-    const enabled = state.project.video.effects_enabled !== false && !reducedMotion?.matches;
+    const enabled = effectsEnabled(state.project.video, reducedMotion?.matches);
     const effects = enabled ? row?.effects || [] : [];
     const progress = (time - (row?.start || 0)) / Math.max(0.001, (row?.end || 0) - (row?.start || 0));
     front.style.transform = cameraTransform(effects, progress);
@@ -292,7 +292,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
               h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
       }),
-      h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion disables effects."),
+      h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion pauses effects unless you explicitly turn Visual effects on."),
       h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
                    onclick: () => drawImages([row.index])}, draw));
   }
