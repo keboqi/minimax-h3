@@ -22,6 +22,8 @@ class SoundHandlers:
                 description, duration, self._runtime_config(),
                 free_gpu=self.free_comfy_vram, hf_token=resolve_hf_token(),
             )
+        except JobCancelled:
+            raise
         except Exception as exc:
             yield gr.skip(), f"Sound generation failed: {exc}"
             return

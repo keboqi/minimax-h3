@@ -12,16 +12,26 @@ from .page_cast import cast_voices, speakers_payload
 from .page_store import editing, project_lock
 
 
-def project_cues(data, runtime=None):
-    """Use the same Cast labels for names, numeric tags and unlabelled dialogue."""
+def project_cast(data, runtime=None):
+    """Parser defaults shared by the script preview and illustration cue planner."""
     from h3_app.workflows.drama3 import resolve_speaker, speaker_label
 
     speakers = speakers_payload("", data, lambda _audio: None, runtime)
     names = {entry["slot"]: entry["name"] for entry in speakers}
+    configured = any(name != f"Speaker {slot}" for slot, name in names.items())
     voiced = [entry["slot"] for entry in speakers if entry["ready"] or data.get(f"voice_{entry['slot']}_audio")]
     default = speaker_label(voiced[0] if voiced else 0, names)
-    return script_cues(data.get("text") or "", default_speaker=default,
-                       resolve=lambda name: resolve_speaker(name, names) or " ".join(name.split()))
+    return dict(default_speaker=default, resolve=lambda name: resolve_speaker(name, names) or
+                (None if configured else " ".join(name.split())))
+
+
+def project_cues(data, runtime=None):
+    """Use the same Cast labels for names, numeric tags and unlabelled dialogue."""
+    text = data.get("text") or ""
+    if (data.get("script_mode") or "Basic") == "Basic":
+        from h3_app.drama3.serving.tree import strip_drama3_sound_tags
+        text = strip_drama3_sound_tags(text)
+    return script_cues(text, **project_cast(data, runtime))
 
 
 def planning_mix(name, data, result, export, *, strict=False, store=None):

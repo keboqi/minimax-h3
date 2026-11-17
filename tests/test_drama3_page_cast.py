@@ -168,6 +168,17 @@ class CastFixture(unittest.TestCase):
 
 
 class Drama3PageCastTests(CastFixture):
+    def test_a_deleted_sound_file_is_not_reported_ready(self):
+        from h3_app.drama3 import sounds
+        saved = sounds.save_sound("rain", write_wav(self.root / "rain.wav"), "Steady rain", 5, self.runtime)
+        with self.store.edit_soundstage_project("Night Market") as data:
+            data["sound_0_preset"] = saved.name
+        self.assertTrue(self.ok(self.client.get(f"{API}/project", params=NAME))["sounds"][0]["ready"])
+        sounds.delete_sound(saved.name, self.runtime)
+        entry = self.ok(self.client.get(f"{API}/project", params=NAME))["sounds"][0]
+        self.assertFalse(entry["ready"])
+        self.assertTrue(entry["missing"])
+
     def test_generation_does_not_replace_an_edited_slot(self):
         self.patch_slot("voice", 0, description="Original voice", preview_text="Hello there.")
         self.patch_slot("voice", 1, description="Other voice", preview_text="Good morning.")

@@ -72,7 +72,7 @@ def subjects(plan):
 def _mentions(keys):
     """A pattern for ``@key`` or ``@key(current state)``, longest keys first so prefixes never win."""
     names = "|".join(re.escape(key) for key in sorted(keys, key=len, reverse=True))
-    return re.compile(rf"@({names})(?:\s*[(（]([^)）]*)[)）])?") if names else None
+    return re.compile(rf"@({names})(?!\w)(?:\s*[(（]([^)）]*)[)）])?") if names else None
 
 
 _SLOT = re.compile(r"⟦([^⟦⟧]+)⟧")

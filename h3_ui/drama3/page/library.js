@@ -1,6 +1,20 @@
 // Library view and local controls for Soundstage.
 export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary, renderSlotEditor, field, toast, poller}) {
-  const libraryState = {tab: "speakers", group: "Global", data: null, picked: null, takes: null};
+  const libraryState = {tab: "speakers", group: "Global", data: null, picked: null, takes: null, drafts: new Map()};
+
+  function updateDraft(key, fields) {
+    libraryState.drafts.set(key, {...libraryState.drafts.get(key), ...fields});
+  }
+
+  function acknowledgeDraft(body, savedKey) {
+    // A save acknowledges only submitted values; typing while it ran remains a draft.
+    const draft = {...libraryState.drafts.get(body.key)};
+    for (const field of ["name", "description", "transcript"]) {
+      if (draft[field] === body[field]) delete draft[field];
+    }
+    libraryState.drafts.delete(body.key);
+    if (Object.keys(draft).length) libraryState.drafts.set(savedKey, draft);
+  }
 
   async function openLibrary() {
     libraryState.group = state.project.cast_settings.speaker_group || "Global";
@@ -26,6 +40,8 @@ export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary,
   async function libraryCall(path, body) {
     try {
       const data = await api(path, {method: "POST", body: {...body, project: state.project.name}});
+      if (path === "/library/speaker/update") acknowledgeDraft(body, data.key ?? body.key);
+      if (path === "/library/speaker/delete") libraryState.drafts.delete(body.key);
       if (data.project) castAnswered(data.project, {editor: true});
       if (data.key !== undefined) libraryState.picked = data.key;
       if (data.message) toast(data.message);
@@ -72,9 +88,11 @@ export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary,
       return [list, h("div", {class: "library-detail"}, h("p", {class: "muted"},
         "Pick a saved speaker to hear it, edit it, copy it to another group or try new voices for it."))];
     }
-    const name = h("input", {value: picked.name});
-    const description = h("textarea", {rows: 3, value: picked.description});
-    const transcript = h("textarea", {rows: 3, value: picked.transcript});
+    const draft = libraryState.drafts.get(picked.key) || {};
+    const edit = (field) => (event) => updateDraft(picked.key, {[field]: event.target.value});
+    const name = h("input", {value: draft.name ?? picked.name, oninput: edit("name")});
+    const description = h("textarea", {rows: 3, value: draft.description ?? picked.description, oninput: edit("description")});
+    const transcript = h("textarea", {rows: 3, value: draft.transcript ?? picked.transcript, oninput: edit("transcript")});
     const destination = h("select", {}, data.groups.filter((group) => group !== picked.group).map((group) => h("option", {}, group)));
     const count = h("select", {"aria-label": "How many voices"}, [1, 2, 3, 4].map((n) => h("option", {value: n}, `${n} voice${n > 1 ? "s" : ""}`)));
     const takes = libraryState.takes;
@@ -122,6 +140,7 @@ export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary,
   }
 
   async function tryVoices(picked, count, description, transcript) {
+    updateDraft(picked.key, {description, transcript});
     try {
       const data = await api("/library/speaker/takes", {method: "POST", body: {
         key: picked.key, count, description, transcript, project: state.project.name}});

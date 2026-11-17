@@ -499,7 +499,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     } else if (needs) {
       const counts = video.plan.counts;
       title.textContent = `${plural(needs, "shot")} need${needs === 1 ? "s" : ""} drawing`;
-      detail.textContent = video.timing_pending ? "The plan is saved with the project. Timing adapts after speech; draw images in Studio." : [counts.changed ? `${counts.changed} changed since drawn (prompt, style or frame)` : null,
+      detail.textContent = video.timing_pending ? "The plan is saved with the project. Timing adapts after speech; draw images in Studio." : [counts.changed ? `${counts.changed} changed since drawn (prompt, style, frame or portraits)` : null,
                             counts.todo ? `${counts.todo} not drawn` : null].filter(Boolean).join(", ")
         + (counts.drawn ? `. The other ${counts.drawn} keep their images.` : ".");
     } else {

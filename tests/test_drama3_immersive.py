@@ -41,9 +41,10 @@ class ImmersiveTests(unittest.TestCase):
 
     def test_unmatched_anchors_are_omitted_instead_of_playing_at_scene_start(self):
         plain, _ = self.render('Mia: Open the door.')
-        anchored, _ = self.render('<parallel>\n<sound name="hit" anchor="missing">Hit</sound>\n'
+        anchored, spans = self.render('<parallel>\n<sound name="hit" anchor="missing">Hit</sound>\n'
                                  'Mia: Open the door.\n</parallel>')
         np.testing.assert_array_equal(plain, anchored)
+        self.assertTrue(all(isinstance(key, int) for key in spans))
 
     def test_anchor_fallback_respects_occurrence_and_english_word_boundaries(self):
         self.assertIsNone(phrase_time('he', [('the', 0, 1)]))

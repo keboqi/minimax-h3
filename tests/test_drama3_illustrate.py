@@ -147,9 +147,70 @@ class StillsTests(unittest.TestCase):
         self.assertEqual(len(second["shots"]), 1)
         # A kept still is copied byte for byte, never re-encoded.
         self.assertEqual((folder / second["shots"][0]["image"]).read_bytes(), before)
-        self.assertEqual(second["portraits"], {"mia": {"image": "portrait-abc.png", "prompt": "abc"}})
+        self.assertEqual(second["portraits"], first["portraits"])
+        self.assertEqual(second["portraits"]["mia"]["prompt"], "abc")
         self.assertEqual(sorted(path.name for path in folder.glob("*.*") if path.suffix != ".json"),
-                         sorted([second["shots"][0]["image"], "portrait-abc.png"]))
+                         sorted([second["shots"][0]["image"], second["portraits"]["mia"]["image"]]))
+
+    def test_changed_portrait_pixels_get_a_new_immutable_filename(self):
+        shots = [Shot(0, FPS, False, "one")]
+        visuals.keep_stills(self.audio, self.root, shots, [self.png("a")], {},
+                            portraits={"mia": (self.png("old-portrait", "blue"), "same-prompt")})
+        before = visuals.read_stills(self.audio, self.root)["portraits"]["mia"]
+        visuals.keep_stills(self.audio, self.root, shots, [self.png("b")], {},
+                            portraits={"mia": (self.png("new-portrait", "red"), "same-prompt")})
+        after = visuals.read_stills(self.audio, self.root)["portraits"]["mia"]
+        self.assertEqual(before["prompt"], after["prompt"])
+        self.assertNotEqual(before["image"], after["image"])
+        self.assertNotEqual(before["version"], after["version"])
+
+    def test_portrait_identity_includes_transparency(self):
+        opaque = self.folder / "opaque.png"
+        transparent = self.folder / "transparent.png"
+        Image.new("RGBA", (8, 8), (255, 0, 0, 255)).save(opaque)
+        Image.new("RGBA", (8, 8), (255, 0, 0, 0)).save(transparent)
+        self.assertNotEqual(visuals.portrait_version(opaque), visuals.portrait_version(transparent))
+
+    def test_interrupted_all_shots_redraw_marks_remaining_old_faces_changed(self):
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        saved = visuals.read_plan(self.audio)
+        shots = visuals.plan_shots_for(saved, 4.0, "comic")
+        fingerprint = visuals.prompt_key(visuals.portrait_prompts(saved, "comic")["mia"])
+        visuals.keep_stills(self.audio, self.root, shots, [self.png(f"old-{i}") for i in range(3)], {},
+                            extras=[{"characters": ["mia"]}, {"characters": ["mia"]}, {"characters": []}],
+                            portraits={"mia": (self.png("old-face", "blue"), fingerprint)})
+        deps = SimpleNamespace(resolve_result=lambda _name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        controller = Mock(fields={})
+        controller.generate.side_effect = [[([str(self.png("new-face"))], "Complete")],
+            [([str(self.png("scene"))], "Complete")], [([str(self.png("matched"))], "Complete")],
+            [(None, "Error: interrupted")]]
+        with self.assertRaisesRegex(H3Error, "interrupted"):
+            drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape", only="all"))
+        record = visuals.read_stills(self.audio, self.root)
+        statuses = [visuals.shot_status(shot, item) for shot, item in zip(shots, visuals.match_stills(shots, record))]
+        self.assertEqual(statuses, ["drawn", "changed", "drawn"])
+        self.assertEqual(visuals.chosen_shots(shots, visuals.match_stills(shots, record), "missing"), [1])
+
+    def test_redrawing_an_unrelated_shot_preserves_an_edited_characters_old_portrait(self):
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        saved = visuals.read_plan(self.audio)
+        shots = visuals.plan_shots_for(saved, 4.0, "comic")
+        fingerprint = visuals.prompt_key(visuals.portrait_prompts(saved, "comic")["mia"])
+        visuals.keep_stills(self.audio, self.root, shots, [self.png(f"old-{i}") for i in range(3)], {},
+                            portraits={"mia": (self.png("old-face"), fingerprint)})
+        before = visuals.read_stills(self.audio, self.root)["portraits"]
+        changed = edit_subject(PLAN, "characters", "mia", "Mia, short silver hair and a green coat")
+        visuals.write_plan(self.audio, "comic", 3, changed)
+        deps = SimpleNamespace(resolve_result=lambda _name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        controller = Mock(fields={})
+        controller.generate.return_value = [([str(self.png("rain"))], "Complete")]
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape", only=[2]))
+        self.assertEqual(visuals.read_stills(self.audio, self.root)["portraits"], before)
+        self.assertTrue((visuals.stills_dir(self.audio, self.root) / before["mia"]["image"]).is_file())
 
     def test_matching_draft_and_request_survive_partial_redraw_without_recompression(self):
         shot = Shot(0, FPS, False, "one")

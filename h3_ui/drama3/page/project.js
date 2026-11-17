@@ -2,7 +2,7 @@ import {createSaves} from "./saves.js";
 import {StaleResponse} from "./transport.js";
 
 // Reconcile server snapshots with edits still owned by this browser.
-export function createProjects({state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, castAnswered, toast}) {
+export function createProjects({state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, renderPlayer, sync, castAnswered, toast}) {
   // All saves share project ownership and a real completion barrier.
   const saves = createSaves({
     send: (name, key, body) => {
@@ -21,7 +21,7 @@ export function createProjects({state, api, named, scope, renderSaveState, rende
       renderHeader(); renderSteps(); renderSettings();
       if (key === "script") { renderScript(); queueEstimate(); }
       // The video settings choose the plan shown, so the action bar follows them too.
-      if (key === "video") { renderVideo(); renderActions(); }
+      if (key === "video") { renderVideo(); renderActions(); renderPlayer(); sync(); }
       if (key.startsWith("slot:")) castAnswered(project);
     },
     failed: (name, error) => { if (state.project?.name === name) toast(`Not saved: ${error.message}`); },

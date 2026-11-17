@@ -914,7 +914,8 @@ def mix_parallel(tracks: list[dict | tuple], rate: int, *, lead_in: float | None
 
     speech_tracks = [t for t in valid if not t.get("is_sound", False)]
     sound_tracks = [t for t in valid if t.get("is_sound", False)]
-    has_bed = any(t.get("loop", False) and not t.get("speech_relative") and not t.get("cursor")
+    has_bed = any(t.get("loop", False) and not t.get("speech_relative") and
+                  (lead_in is not None or not t.get("cursor"))
                   for t in sound_tracks)
     lead = SCENE_LEAD_IN_SECONDS if lead_in is None else float(lead_in)
     offset = int(lead * rate) if speech_tracks and has_bed else 0

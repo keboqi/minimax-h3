@@ -209,6 +209,8 @@ class Drama3PageVideoTests(unittest.TestCase):
 
         with patch("h3_app.drama3.visual_plan.write_prompt", side_effect=slow_writer):
             self.ok(self.client.post(f"{API}/project/video/plan", params=NAME, json={}))
+            batch = self.ok(self.client.get(f"{API}/batch"))
+            self.assertTrue(next(row for row in batch["projects"] if row["name"] == NAME["name"])["busy"])
             refused = self.client.post(f"{API}/project/video/draw", params=NAME)
             self.assertIn("already being planned", refused.json()["error"])
             refused = self.client.post(f"{API}/project/video/plan", params=NAME, json={})

@@ -142,7 +142,7 @@ def cast_voices(data: dict, runtime) -> dict[str, str]:
             for entry in speakers_payload("", data, lambda _audio: None, runtime) if entry["description"].strip()}
 
 
-def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None]) -> list[dict]:
+def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None], runtime=None) -> list[dict]:
     """Every shown sound slot, with whether the script loops it and whether it has a clip."""
     from h3_app.drama3.serving.tree import extract_script_sounds
 
@@ -160,7 +160,15 @@ def sounds_payload(name: str, data: dict, clip: Callable[[Any], str | None]) -> 
                  "description": data.get(f"sound_{slot}_description") or "",
                  "duration": int(data.get(f"sound_{slot}_duration") or 5)}
         if _is_saved(preset, UPLOAD_SOUND):
-            entry.update(preset=preset, source="saved", clip=clip_url(name, "sound", slot, preset))
+            entry.update(preset=preset, source="saved")
+            if runtime is None:
+                entry["clip"] = clip_url(name, "sound", slot, preset)
+            else:
+                from h3_app.drama3.sounds import find_sound
+                if find_sound(preset, runtime()) is not None:
+                    entry["clip"] = clip_url(name, "sound", slot, preset)
+                else:
+                    entry["missing"] = True
         else:
             audio = clip(data.get(f"sound_{slot}_audio"))
             if audio:
@@ -343,7 +351,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
                 # The page lists only sounds with a name or clip, so a new sound takes the first empty
                 # slot, which stays listed (as open) until it is filled or another one is opened.
                 data.pop("_open_sound_slot", None)
-                listed = {entry["slot"] for entry in sounds_payload(name, {**data, key: limit}, clip)}
+                listed = {entry["slot"] for entry in sounds_payload(name, {**data, key: limit}, clip, runtime)}
                 free = next((slot for slot in range(limit) if slot not in listed), None)
                 if free is None:
                     raise H3Error("Every sound slot is in use.")

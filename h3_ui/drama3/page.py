@@ -115,7 +115,7 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None) ->
         # The speakers who are someone: named, or with a voice.
         "cast": [speaker for speaker in speakers if speaker["save_name"] or speaker["saved_name"] or speaker["ready"]],
         "speakers": speakers,
-        "sounds": sounds_payload(name, data, lambda value: _clip(clips, value)),
+        "sounds": sounds_payload(name, data, lambda value: _clip(clips, value), runtime),
         "cast_settings": cast_settings(data),
         "settings": {**{key: kind(speech_value(data, key)) for key, kind in SETTING_FIELDS.items()},
                      "preset": _preset(data)},
@@ -141,7 +141,7 @@ def batch_row(name: str, generated: bool, data: dict, clip, runtime, *, busy: bo
         "prepared": bool(data.get("prepared")),
         # The speakers who are someone without a voice yet, and sounds without a clip (Advanced only).
         "voices": sum(1 for speaker in speakers if (speaker["save_name"] or speaker["saved_name"]) and not speaker["ready"]),
-        "sounds": sum(1 for sound in sounds_payload(name, data, clip) if not sound["ready"]) if advanced else 0,
+        "sounds": sum(1 for sound in sounds_payload(name, data, clip, runtime) if not sound["ready"]) if advanced else 0,
     }
 
 
@@ -241,7 +241,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 "video": video_boot_payload(video_export.engines) if video_export else None,
                 **boot_payload(), **cast_boot_payload()}
 
-    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip)
+    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip, runtime=runtime_config)
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=clip,
                                     runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running, admission_lock=admission_lock)
@@ -435,7 +435,8 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 continue
             rows.append(batch_row(name, generated, data, clip, runtime_config,
                                   busy=runs.active(owner, name) is not None
-                                  or cast_jobs.runs.active(owner, name) is not None))
+                                  or cast_jobs.runs.active(owner, name) is not None
+                                  or (video_runs is not None and video_runs.active(owner, name) is not None)))
         return {"batch": batch_payload(owner), "projects": rows}
 
     @app.post(f"{api}/batch", include_in_schema=False)

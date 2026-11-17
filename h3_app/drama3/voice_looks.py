@@ -24,7 +24,7 @@ _AGE_WORDS = [
                                        r"grandpa|grandma)\b", (60, 100)),
     (r"\b(teen|teenage|teenager|adolescent)\b", (13, 19)), (r"\b(toddler|baby|infant)\b", (0, 3)),
     (r"\b(child|kid|little (?:boy|girl))\b", (3, 12)), (r"\b(boy|girl)\b", (5, 17)),
-    (r"\byoung (?:man|woman|adult)\b", (18, 30)), (r"\byoung\b", (16, 35)), (r"\bold\b", (60, 100)),
+    (r"\byoung (?:man|woman|adult)\b", (18, 30)), (r"\byoung\b", (16, 35)),
     (r"老年|老人|老头|老太|老妇|老者|年迈|爷爷|奶奶", (60, 100)), (r"中年", (40, 60)), (r"青年|年轻", (18, 35)),
     (r"少年|少女", (13, 19)), (r"孩子|小孩|儿童|男孩|女孩", (3, 12)),
 ]
@@ -41,7 +41,7 @@ def gender(text):
 def age(text):
     """The age range ``(low, high)`` in years the text states, or None."""
     lower = text.lower()
-    match = re.search(r"\b(\d{1,2})0s\b", lower) or re.search(r"(\d{1,2})0多岁|(\d{1,2})0来岁", text)
+    match = re.search(r"\b(?:in (?:his|her|their|the)|aged) (\d{1,2})0s\b", lower) or re.search(r"(\d{1,2})0多岁|(\d{1,2})0来岁", text)
     if match:
         decade = int(next(group for group in match.groups() if group)) * 10
         return decade, decade + 9
@@ -56,7 +56,7 @@ def age(text):
             return decade, decade + 9
     # A number word is an age only beside "years" or "aged"/"about" ("ten-gallon hat" is not).
     for word, years in _NUMBERS.items():
-        if re.search(rf"\b(?:aged|age|about|around) {word}\b|\b{word}[- ]years?\b", lower):
+        if re.search(rf"\b(?:aged|age|about|around) {word}\b|\b{word}[- ]years?[- ]old\b", lower):
             return years, years
     for pattern, years in _AGE_WORDS:
         if re.search(pattern, lower if pattern.startswith("\\b") else text):

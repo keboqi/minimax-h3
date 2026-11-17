@@ -190,6 +190,7 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
                 controller.generate(engine, "Text to image", portraits[key], [], square), label)
             finished["portraits"][key] = drawn[key]
     shot_records = []
+    versions = {name: portrait_version(path) for name, path in drawn.items()}
     images = []
     done = finished["shots"]
     for index, shot in enumerate(shots):
@@ -222,7 +223,8 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
             shot_details[index] = details
         images.append(path)
         shot_records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
-                             "image": Path(path).name, "draft": None, "characters": list(who), **details})
+                             "image": Path(path).name, "draft": None, "characters": list(who),
+                             "portrait_versions": {name: versions[name] for name in who}, **details})
         if on_shot is not None:
             record = on_shot(index, path, shot_records[-1])
             yield str(record), f"Shot {index + 1} of {len(shots)} · Ready"
@@ -297,6 +299,7 @@ def load_mix(deps, result_name):
 
 STILLS_RECORD = "stills.json"
 STILLS_QUALITY = 92  # JPEG quality of the web copies: close to the drawn image, a fraction of its size.
+STILL_METADATA_FIELDS = ("draft", "characters", "matching", "portrait_versions", "portrait_stale")
 
 
 def stills_dir(audio, root):
@@ -307,6 +310,46 @@ def stills_dir(audio, root):
 def prompt_key(prompt):
     """A short fingerprint of a portrait prompt: a kept portrait is reused while its prompt is unchanged."""
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+
+
+def portrait_version(path):
+    """Identity of the pixels, independent of PNG metadata or re-encoding."""
+    from PIL import Image
+    with Image.open(path) as image:
+        pixels = image.convert("RGBA")
+        return hashlib.sha256(str(pixels.size).encode() + pixels.tobytes()).hexdigest()[:16]
+
+
+def _keep_portraits(folder, portraits):
+    """Publish immutable portraits, preserving existing names while their pixels match."""
+    from PIL import Image
+
+    kept = {}
+    for key, (image, fingerprint) in (portraits or {}).items():
+        image = Path(image)
+        version = portrait_version(image)
+        name = f"portrait-{fingerprint}-{version}.png"
+        if image.name.startswith("portrait-") and image.suffix.lower() == ".png":
+            target = folder / image.name
+            if image.resolve() == target.resolve() or not target.exists() or portrait_version(target) == version:
+                name = image.name
+        target = folder / name
+        if not target.exists():
+            with Image.open(image) as picture:
+                picture.save(target, "PNG")
+        kept[key] = {"image": name, "prompt": fingerprint, "version": version}
+    return kept
+
+
+def _still_metadata(item, *, folder=None, previous_versions=None):
+    """Keep drawing provenance through checkpoints, partial redraws and mix retiming."""
+    extra = {key: item[key] for key in STILL_METADATA_FIELDS if item.get(key) is not None}
+    if folder is not None and extra.get("draft"):
+        extra["draft"] = str(folder / extra["draft"])
+    if previous_versions is not None and "portrait_versions" not in extra:
+        extra["portrait_versions"] = {name: previous_versions[name] for name in item.get("characters") or []
+                                       if name in previous_versions}
+    return extra
 
 
 def _write_stills_record(folder, record):
@@ -362,13 +405,12 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
         records.append({"first_frame": shot.first, "frames": shot.frames, "dissolve": shot.dissolve,
                         "beat": shot.beat, "prompt": shot.prompt, "image": name,
                         **({"shot_id": shot.id} if shot.id else {}), **extra})
-    kept = {}
-    for key, (image, fingerprint) in (portraits or {}).items():
-        name = f"portrait-{fingerprint}.png"
-        if Path(image).resolve() != (folder / name).resolve():
-            with Image.open(image) as picture:
-                picture.save(folder / name, "PNG")
-        kept[key] = {"image": name, "prompt": fingerprint}
+    kept = _keep_portraits(folder, portraits)
+    for item in records:
+        versions = item.get("portrait_versions") or {}
+        if versions:
+            item["portrait_stale"] = any((kept.get(name) or {}).get("version") != version
+                                         for name, version in versions.items())
     record = _write_stills_record(folder, {"revision": revision, "source": Path(audio).name, "fps": FPS,
                                            "total_frames": total_frames, "shots": records, "portraits": kept,
                                            "orientation": orientation_of(orientation), "details": details})
@@ -443,9 +485,7 @@ def rebind_stills(audio, root, shots, *, previous_audio=None, previous_shots=Non
             images[index] = target
     drawings = [Shot(shot.first, shot.frames, shot.dissolve, item.get("prompt", ""),
                      shot.beat, id=shot.id) for shot, item in pairs]
-    extras = [{key: (str(folder / item[key]) if key == "draft" else item[key])
-               for key in ("draft", "characters", "matching") if item.get(key) is not None}
-              for _, item in pairs]
+    extras = [_still_metadata(item, folder=folder) for _, item in pairs]
     keep_stills(audio, root, drawings, images, record.get("details") or {},
                 extras=extras, total_frames=total, portraits=kept_portraits(record, root, previous_audio),
                 orientation=record.get("orientation", "landscape"))
@@ -472,7 +512,7 @@ def shot_status(shot, still):
     """``drawn``, ``changed`` (drawn from another prompt) or ``todo`` (nothing drawn for its time)."""
     if still is None:
         return "todo"
-    return "drawn" if still.get("prompt") == shot.prompt else "changed"
+    return "drawn" if still.get("prompt") == shot.prompt and not still.get("portrait_stale") else "changed"
 
 
 def read_stills(audio, root):
@@ -622,10 +662,12 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
     finished = finished_images(key)
     # Drawing some shots matches their characters to the kept portraits (drawn from the same looks);
     # drawing them all starts afresh, portraits too.
-    kept = {} if only in (None, "all") else {name: item for name, item in kept_portraits(record, root, audio).items()
-                                  if item[1] in current.get(name, ())}
+    previous_portraits = kept_portraits(record, root, audio)
+    previous_versions = {name: portrait_version(path) for name, (path, _) in previous_portraits.items()}
+    kept = {} if only in (None, "all") else dict(previous_portraits)
     for name, (path, _fingerprint) in kept.items():
-        finished["portraits"].setdefault(name, str(path))
+        if _fingerprint in current.get(name, ()):
+            finished["portraits"].setdefault(name, str(path))
     folder = stills_dir(audio, root)
 
     def publish(index, image, details):
@@ -637,10 +679,10 @@ def draw_stills(controller, deps, result_name, engine, style, limit, use_referen
         for position, (shot, still) in enumerate(zip(shots, current)):
             if position == selected:
                 path = image
-                extra = {name: details[name] for name in ("draft", "characters", "matching") if name in details}
+                extra = _still_metadata(details)
             elif still is not None:
                 path = folder / still["image"]
-                extra = {name: still[name] for name in ("draft", "characters", "matching") if name in still}
+                extra = _still_metadata(still, previous_versions=previous_versions)
                 shot = Shot(shot.first, shot.frames, shot.dissolve, still.get("prompt") or "", shot.beat, id=shot.id)
             else:
                 continue

@@ -4,7 +4,7 @@ import time
 import uuid
 
 from h3_app.errors import H3Error
-from h3_app.jobs import record_failure
+from h3_app.jobs import JobCancelled, record_failure
 from h3_app.progress import no_progress
 from h3_app.status import StageTimings
 from h3_app.workflows.drama3 import (
@@ -72,6 +72,8 @@ def generate_drama3(request, services, runtime, *, progress=no_progress, free_gp
             request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
             hf_token=resolve_hf_token(), progress=progress,
         )
+    except JobCancelled:
+        raise
     except Exception as exc:
         record_failure(exc)
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")

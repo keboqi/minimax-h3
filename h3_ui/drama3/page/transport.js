@@ -32,3 +32,8 @@ export function createPoller(step, {delay = 1500, failed = () => {}, scope = () 
   again.stop = stop;
   return again;
 }
+
+export function interruptedRun(run) {
+  return Boolean(run && !run.active && !run.error &&
+    (run.stop_requested || run.status === "Interrupted." || run.status === "Auto interrupted."));
+}

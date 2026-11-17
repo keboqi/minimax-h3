@@ -8,8 +8,9 @@ missing key or a spent free quota leaves the fixed rules exactly as they were.
 from __future__ import annotations
 
 import json
+import re
 
-from h3_app.drama3.phonemes import HAN_RE, NOTE_RE, is_arpabet, note_problems, strip_notes
+from h3_app.drama3.phonemes import HAN_RE, NOTE_RE, SYLLABLE_RE, is_arpabet, note_problems, strip_notes
 from h3_app.llm import gemma
 
 MAX_READINGS = 20
@@ -38,6 +39,12 @@ def _same_span(old: str, new: str, word: str) -> bool:
         return True
     if word and all(HAN_RE.fullmatch(char) for char in word):
         return len(new.split()) == len(word)
+    if re.sub(r"[1-5\s]", "", old.lower()) == re.sub(r"[1-5\s]", "", new.lower()):
+        return True  # Restore missing tone digits/spaces without changing the syllable letters.
+    # Missing spaces do not change how many tone-number syllables were requested.
+    old_syllables = SYLLABLE_RE.findall(old.replace("ü", "v"))
+    if old_syllables and "".join(old_syllables) == re.sub(r"\s+", "", old.replace("ü", "v")):
+        return len(new.split()) == len(old_syllables)
     return len(new.split()) == len(old.split())
 
 

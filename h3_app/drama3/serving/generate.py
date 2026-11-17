@@ -752,6 +752,8 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         if spans is not None:
             for child, track, own, length in zip(node.children, tracks, track_spans, mix.sound_lengths):
                 if own is None:
+                    if length <= 0:
+                        continue
                     key, (_start, end, info) = _sound_span(child, length)
                     start = int(track.get("offset", 0)) + (mix.speech_offset if track.get("speech_relative") else 0)
                     spans[key] = (start, end, info)

@@ -1,12 +1,12 @@
 import {createScript} from "./script.js";
 import {createScriptView} from "./scriptview.js";
 import {createCast} from "./cast.js";
-import {createMix} from "./mix.js";
+import {createMix, lineTakes} from "./mix.js";
 import {createVideo} from "./video.js";
 import {createLibrary} from "./library.js";
 import {createBatch} from "./batch.js";
 import {createProjects} from "./project.js";
-import {createApi, createPoller, StaleResponse} from "./transport.js";
+import {createApi, createPoller, interruptedRun, StaleResponse} from "./transport.js";
 
 // The Soundstage page: a saved project's mix, its lines and takes, played and reviewed in the browser.
 // Playing, seeking and picking a line ask the server for nothing; speaking runs as a job the page polls.
@@ -123,13 +123,6 @@ export function startWorkspace() {
   }
 
   // -- Derived data ----------------------------------------------------------
-  /** Each subtitle line's take: the take whose span holds the line's start. */
-  function lineTakes(result) {
-    return result.lines.map((line) => result.takes.find((take) =>
-      take.start !== null && take.start !== undefined && take.start - 0.01 <= line.start && line.start < take.end)
-      ?? result.takes.find((take) => take.speaker === line.speaker && take.text.includes(line.text)) ?? null);
-  }
-
   /** Rows so that clips playing at the same time stack instead of overlapping. */
   function rows(spans) {
     const ends = [];
@@ -1111,6 +1104,11 @@ export function startWorkspace() {
     const before = state.run;
     state.run = run;
     if (run && !run.active) {
+      if (interruptedRun(run)) {
+        if (before?.active) toast(run.auto ? "Auto interrupted." : "Interrupted.");
+        await loadProject(name, {keepPick: true});
+        return;
+      }
       if (run.auto) {
         if (run.error) toast(`Auto stopped: ${run.error}`);
         else if (before?.active) toast(run.message ? `Auto finished. ${run.message}` : "Auto finished.");
@@ -1393,7 +1391,7 @@ export function startWorkspace() {
   });
 
   const {saves, reconcile, saveSettings, flushEdits} = createProjects({
-    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, castAnswered, toast
+    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, renderPlayer, sync, castAnswered, toast
   });
 
   return start();

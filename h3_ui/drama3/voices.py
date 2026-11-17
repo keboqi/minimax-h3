@@ -30,6 +30,8 @@ class VoiceHandlers:
         try:
             staged = self.stage_file(audio, "drama3_asr")
             transcript = transcribe_drama3_audio(staged, self._generation_services(), model_choice=model_choice)
+        except JobCancelled:
+            raise
         except Exception as exc:
             return gr.skip(), f"Transcription failed: {exc}"
         return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."
@@ -63,6 +65,8 @@ class VoiceHandlers:
                         yield gr.skip(), gr.skip(), update.status
             else:
                 raise H3Error("Choose Drama 3 or Qwen3-TTS VoiceDesign to generate a voice.")
+        except JobCancelled:
+            raise
         except Exception as exc:
             yield gr.skip(), gr.skip(), f"Voice generation failed: {exc}"
             return

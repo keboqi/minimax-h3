@@ -1,4 +1,13 @@
 // Mix view and local controls for Soundstage.
+export function lineTakes(result) {
+  return result.lines.map((line) => {
+    const sameSpeaker = result.takes.filter((take) => take.speaker === line.speaker);
+    const timed = sameSpeaker.filter((take) => take.start != null && take.start - 0.01 <= line.start && line.start < take.end);
+    return timed.find((take) => take.text.includes(line.text)) ?? timed[0]
+      ?? sameSpeaker.find((take) => take.text.includes(line.text)) ?? null;
+  });
+}
+
 export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLane, getPlayer}) {
   function setSubtitles(on) {
     state.project.video.subtitles = on;

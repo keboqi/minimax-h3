@@ -12,23 +12,28 @@ Song tasks.
 Soundstage is a page of its own at `/soundstage/`, outside Gradio, as Remake and Storyboard are;
 the Soundstage tab shows it in a frame and follows the studio's light or dark theme. The page's
 design is the [Soundstage Redesign canvas](https://claude.ai/artifact/WuBCLzyfabowc2uLy3CZZi).
-It holds three steps: **Script**, **Cast & sounds** and **Mix & review**. The step bar moves
+It holds four steps: **Script**, **Cast & sounds**, **Mix & review** and **Illustrate**. The step bar moves
 between them without asking the server for anything, and the address keeps the screen
-(`#script`, `#cast`, `#mix`). Projects are saved in the shared workspace database as you work.
+(`#script`, `#cast`, `#mix`, `#illustrate`). Projects are saved in the shared workspace database as you work.
 
 The CPU Workshop shows the same page in its Sound Stage tab.
 There it prepares projects: write and rewrite the script, cast speakers and sounds (describe,
 upload, transcripts, saved voices and the Voice library), set the speech and video settings, and
 play a mix already made. The top bar says **Prepare only**; anything that needs the GPU (speaking,
-Auto, making voices or sounds, transcribing, word timing, new voices and the illustrated video)
+Auto, making voices or sounds, transcribing, word timing, new voices and drawing illustrations)
 is off and says to open the project in Studio, where the same project continues. **Batch** then
-produces many prepared projects in one go there.
+produces many prepared projects in one go there. Workshop can plan and edit illustration shots
+before audio exists; both Workshop and Studio save dialogue cue anchors that adapt to generated speech.
 
 Pick a saved project at the top, or click **New project** to start one; it opens on Script as an
 Advanced draft. **Basic** and **Advanced** at the top switch the script mode.
 
 **Auto-produce**, at the top on every screen, does the whole production in one run: it rewrites the script with the writer (unless the writer already wrote it and it hasn't
-changed since), makes every missing voice and, in Advanced, every missing sound, then speaks.
+changed since, or the edits are small wording corrections), makes every missing voice and, in Advanced,
+every missing sound, then speaks. **Generate illustrations after speech** reuses the saved shot plan
+and existing drawings, adapting their timing; Batch has an explicit illustration override for its
+selected projects. Unchanged speech lines reuse their saved takes. See
+[Correcting a Sound Stage script](../examples/soundstage-incremental-edits.md) for adaptation limits.
 Each step starts only when the one before it worked. While it runs, the top bar shows its step and
 progress with **Interrupt**, the screens fill in as each step lands, and other voice, sound and
 speech jobs wait; it opens Mix & review when it finishes, or says which step stopped it and why.
@@ -170,11 +175,11 @@ run on the usual GPU job path with the Image tab's settings, are kept per image 
 changes. The shot plan keeps style and frame apart from what each shot shows: the planner never
 sees the art direction and writes the looks and image descriptions without a medium or aspect ratio,
 composed to read in a wide or a tall frame. When shots are drawn, each prompt opens with the frame
-(a widescreen 16:9 or a vertical 9:16 image) and ends with the Art direction, so changing the style
+(a widescreen 16:9 or a vertical 9:16 image), followed by the Art direction and scene description, so changing the style
 or the frame keeps the same plan: the shots drawn in another style or frame show as **Changed** until
 drawn again, and portraits follow the chosen style. Plans made before this keep the style their
 planner wrote, used only while the art direction they were planned with is chosen. The story presets
-ask for settings rendered with the same finish and focus as the characters, and the planner names
+keep background detail subordinate to the focal action, and the planner names
 concrete background elements in every shot (an explainer, lesson or business talk gets simple,
 uncluttered settings instead). The planner also gets each speaker's Cast voice description and keeps
 their gender and age. Saved art direction is preserved as written; a preset's earlier wording still
@@ -183,13 +188,13 @@ another Minimum shots chosen, the step says what that plan used and **Restore th
 back to show its shots again, in any style or frame. The plan uses the writer
 service set on Script, shows its elapsed time and
 stops after 5 minutes; a reply that arrives later is still saved unless a newer plan was made by
-then. **Use another chat model** copies the full planner prompt and applies a pasted plan, checked
+then. **Plan with another chat model** copies the full planner prompt and applies a pasted plan, checked
 like the planner's.
 
 The step has two views. **Shot plan** lists each shot with its image, time, cut or dissolve, story
-beat and prompt, and a status: **Drawn**, **Prompt changed** (drawn from an earlier prompt) or **Not
+beat and prompt, and a status: **Drawn**, **Changed** (an earlier prompt, style, frame or character portrait) or **Not
 drawn**; **Needs drawing** filters to the last two. It only lists the plan drawing would use, and
-says so when the saved plan was made for another Art direction or Minimum shots. Picking a shot, in
+says so when the saved plan was made for another Minimum shots. Picking a shot, in
 the list or on the player's **Shots** lane above the voices, jumps the player to it and opens it in
 the side panel, where its prompt can be edited (`@name` brings in a character, prop or place) and
 its cut or dissolve changed; a new transition applies to the drawn image at once, a new prompt marks
@@ -200,17 +205,19 @@ contradicts (a boy of sixteen voiced as an elderly man) is flagged, with a count
 
 The action bar's **Draw N shots** draws only the shots not drawn from their current prompt, with the
 Image tab's settings for the model, which the studio hands to the page each time it opens or switches
-task; **Draw this shot** in the side panel draws one, and **Draw every shot again** in How it's drawn
+task; **Draw this shot** in the side panel draws one, and **Draw every shot again** in the Shot plan header
 redraws them all with new portraits. The other shots keep their images, and characters are matched to
 the portraits kept from earlier drawings while their looks are unchanged, so a redrawn shot matches the
-rest. Drawing runs on the usual job path and can be interrupted. It renders no video: it keeps a JPEG
+rest. Portrait images have immutable, content-specific URLs. If a full redraw is interrupted after
+new portraits are used, remaining shots made with older portraits stay marked **Changed**.
+Drawing runs on the usual job path and can be interrupted. It renders no video: it keeps a JPEG
 copy of each image (the *stills*) with its shot's time, and the portraits, under `.soundstage/stills/`
 in the outputs, out of Media; a shot not drawn yet holds the image before it. When it finishes, the
 player switches to Video.
 
 Every scene is drawn from its text first, with the character, prop and location descriptions
-written into the prompt, at a 16:9 size whatever the Image tab is set to. With **Keep characters
-consistent** (on by default), Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one square portrait per
+written into the prompt, at the chosen 16:9 or 9:16 size. When **Keep characters
+consistent** is enabled, Qwen, P-H3-Image, FLUX 3 and Fibo Dev draw one square portrait per
 character, then repaint each finished scene's characters to match their portraits, with the scene
 as the first input so its composition stays. Props and locations are never image inputs: an edit
 model handed a location or a multi-view sheet copies it instead of drawing a new scene. When a

@@ -7,6 +7,7 @@ writes what they change back into the project.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Any, Callable
 import uuid
 
@@ -110,13 +111,13 @@ def script_payload(data: dict) -> dict:
             "writer": {key: _setting(data, key) for key in WRITER_FIELDS}}
 
 
-def preview_payload(text: str, script_mode: str) -> dict:
+def preview_payload(text: str, script_mode: str, **cast) -> dict:
     """The script's estimated timeline, in the shape of a mix's lines and sounds.
 
     Each line and sound also carries ``line``, the script line it comes from (1-based), so the page
     can jump between the script and the timeline; it is None when the script can't be matched up.
     """
-    settings = script_preview_settings(text, script_mode)
+    settings = script_preview_settings(text, script_mode, **cast)
     payload = timeline_payload(settings)
     speech, sounds = preview_source_lines(text, script_mode)
     chunks = settings["chunks"]
@@ -190,13 +191,36 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     return before, status, False
 
 
+def _source_line_numbers(estimated, spoken):
+    """Match split takes to source lines independently for each speaker."""
+    from h3_app.drama3.serving.cue_timing import normalized
+    from h3_app.drama3.serving.planner import spoken_text
+
+    pending = {}
+    for line in estimated:
+        pending.setdefault(line["speaker"], deque()).append((
+            normalized(spoken_text(line["text"])), line.get("line")))
+    numbers = []
+    for line in spoken:
+        words = normalized(spoken_text(line["text"]))
+        queue = pending.get(line["speaker"])
+        if not queue or not words or not queue[0][0].startswith(words):
+            return None
+        remaining, number = queue[0]
+        numbers.append(number)
+        queue[0] = (remaining[len(words):], number)
+        if not queue[0][0]:
+            queue.popleft()
+    return None if any(pending.values()) else numbers
+
+
 def spoken_payload(estimate: dict, settings: dict, script_mode: str, text: str) -> dict | None:
     """The spoken mix's real timeline, numbered with the estimate's script lines, or None.
 
     A mix belongs to the script when its source fingerprint and script mode still match.
     Older mixes without a fingerprint use the estimate, since their staging cannot be verified.
-    Lines are matched by speaker and words, not position, because voices
-    at the same time may be ordered differently. A sound takes the script line of the first unmatched
+    Split synthesis chunks retain their source line. Each speaker's lines stay in source order,
+    even when overlapping voices arrive in a different order. A sound takes the first unmatched
     sound of its name, or None.
     """
     if not settings or (settings.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC) != script_mode:
@@ -204,16 +228,13 @@ def spoken_payload(estimate: dict, settings: dict, script_mode: str, text: str) 
     if settings.get("script_fingerprint") != script_fingerprint(text):
         return None
     actual = timeline_payload(settings)
-    if not actual["lines"] or len(actual["lines"]) != len(estimate["lines"]):
+    if not actual["lines"]:
         return None
-    numbers: dict[tuple[str, str], list] = {}
-    for line in estimate["lines"]:
-        numbers.setdefault((line["speaker"], line["text"]), []).append(line.get("line"))
-    for line in actual["lines"]:
-        found = numbers.get((line["speaker"], line["text"]))
-        if not found:
-            return None
-        line["line"] = found.pop(0)
+    numbers = _source_line_numbers(estimate["lines"], actual["lines"])
+    if numbers is None:
+        return None
+    for line, number in zip(actual["lines"], numbers, strict=True):
+        line["line"] = number
     sound_lines: dict[str, list] = {}
     for sound in estimate["sounds"]:
         sound_lines.setdefault(sound["name"], []).append(sound.get("line"))
@@ -223,7 +244,7 @@ def spoken_payload(estimate: dict, settings: dict, script_mode: str, text: str) 
     return {**actual, "actual": True}
 
 
-def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip) -> None:
+def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip, runtime=None) -> None:
     """The Script step's routes; ``payload`` answers with a project's page payload, ``clip`` finds a clip."""
 
     def load(name: str) -> dict:
@@ -351,9 +372,10 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         """The script's timeline: the project's spoken mix when it is of this script, else an estimate."""
         owner_of(request)
         text, script_mode = str(body.get("text") or ""), str(body.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC)
-        estimate = preview_payload(text, script_mode)
+        data, result = store.soundstage_project(name) if name else ({}, None)
+        from .project_visuals import project_cast
+        estimate = preview_payload(text, script_mode, **project_cast(data, runtime))
         if not name:
             return estimate
-        _, result = store.soundstage_project(name)
         return spoken_payload(estimate, result_settings(result) if result else {}, script_mode, text) or estimate
 

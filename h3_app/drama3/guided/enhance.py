@@ -4,6 +4,7 @@ from dataclasses import replace
 import re
 
 from h3_app.errors import H3Error
+from h3_app.drama3.phonemes import NOTE_RE, note_start
 from .fidelity import fix_pattern
 from .model import Utterance
 
@@ -11,12 +12,13 @@ from .model import Utterance
 def add_pronunciations(text: str, readings: dict[str, str]) -> str:
     if not readings:
         return text
+    protected = [(note_start(text, note), note.end()) for note in NOTE_RE.finditer(text)]
     alternatives = [r'(?<![A-Za-z])' + re.escape(word) + r'(?![A-Za-z])'
                     if word.isascii() else re.escape(word)
                     for word in sorted(readings, key=len, reverse=True)]
 
     def annotate(match):
-        if text[match.end():match.end() + 1] == '{' or text[:match.start()].rfind('{') > text[:match.start()].rfind('}'):
+        if any(match.start() < end and match.end() > start for start, end in protected):
             return match.group()  # existing notes stay authoritative
         return f'{match.group()}{{{readings[match.group()]}}}'
 
@@ -31,7 +33,7 @@ def apply_content_annotations(utterances: list[Utterance], answer: dict) -> list
     result = []
     for position, utterance in enumerate(utterances):
         text = utterance.text
-        for uid, old, new in answer.get('fixes', []):
+        for uid, old, new in dict.fromkeys(tuple(fix) for fix in answer.get('fixes', [])):
             if uid in utterance.sources:
                 pattern = fix_pattern(old)
                 if len(pattern.findall(text)) != 1:

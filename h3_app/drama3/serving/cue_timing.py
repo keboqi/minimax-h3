@@ -38,7 +38,9 @@ def resolve_anchor(phrase, words, lines, *, edge="end", occurrence=1):
         return int(at)
     target = normalized(phrase)
     remaining = max(1, min(occurrence, 100))
+    from .planner import spoken_text
     for text, start, end in lines:
+        text = spoken_text(text)
         if target and target.isascii():
             tokens = re.findall(r"[^\W_]+", phrase)
             pattern = r"(?<!\w)" + r"\W*".join(re.escape(t) for t in tokens) + r"(?!\w)"
