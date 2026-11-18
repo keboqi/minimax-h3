@@ -34,6 +34,7 @@ from h3_app.workspace_store import request_owner
 from .engines.remake import EDIT_MODELS, READY, RemakeHandlers, next_run_details, readiness_message, readiness_step
 from .job_admission import execute_accepted
 from .job_bindings import owned_generation
+from .player_fullscreen import FULLSCREEN_SCRIPT
 from .storyboard.page import Run, Runs, guarded
 
 STATIC = Path(__file__).with_name("remake_static")
@@ -143,6 +144,10 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.get("/remake/", include_in_schema=False)
     def remake_page():
         return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/remake/fullscreen.js", include_in_schema=False)
+    def fullscreen_script():
+        return FileResponse(FULLSCREEN_SCRIPT, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/remake/{name}", include_in_schema=False)
     def remake_asset(name: str):

@@ -17,11 +17,12 @@ from urllib.parse import quote
 
 from h3_app.dubbing.results import Player
 from h3_app.dubbing.segments import format_time
+from h3_ui.player_fullscreen import BIND_FULLSCREEN_JS, FULLSCREEN_BUTTON
 from h3_ui.subtitle_words import word_spans_html
 
 ELEM_CLASS = "h3-dub-player-panel"
 
-PLAYER_JS = """
+PLAYER_JS = BIND_FULLSCREEN_JS + """
 // Gradio patches a new value into the existing DOM, so a regenerated result can reuse the old root:
 // its listeners are dropped through the AbortController before it is bound again.
 const players = new Map();
@@ -41,13 +42,15 @@ const bind = (root) => {
   const followers = [picture, music].filter(Boolean);
   const play = root.querySelector("[data-play]"), seek = root.querySelector("[data-seek]");
   const clock = root.querySelector("[data-time]"), state = root.querySelector("[data-state]");
+  const fullscreen = root.querySelector("[data-fullscreen]");
+  bindFullscreen(root, fullscreen, (message) => { state.textContent = message; }, signal);
   const subtitles = root.querySelector("[data-subtitles]"), musicToggle = root.querySelector("[data-music-toggle]");
   const captionTranslation = root.querySelector("[data-caption-translation]");
   const captionSource = root.querySelector("[data-caption-source]");
   const list = root.querySelector("[data-cues]"), cues = [...root.querySelectorAll("[data-cues] li")];
   const duration = Number(root.dataset.duration) || 0;
   let dragging = false, lit = null;
-  players.set(root, { controller, media: [voice, ...followers], revision: root.dataset.revision });
+  players.set(root, { controller, media: [voice, ...followers], revision: root.dataset.revision, fullscreen });
   const on = (target, name, handler, options) => target?.addEventListener(name, handler, { ...options, signal });
 
   // Each re-seek drops what a follower has buffered, so on a slow link small drift is left alone
@@ -201,7 +204,8 @@ const setup = () => {
     // Gradio can patch a repaired player's children while retaining its root and
     // data-bound attribute. Rebind to the new media/cues instead of keeping stale nodes.
     if (!previous || previous.revision !== root.dataset.revision
-        || previous.media[0] !== root.querySelector("[data-voice]")) bind(root);
+        || previous.media[0] !== root.querySelector("[data-voice]")
+        || previous.fullscreen !== root.querySelector("[data-fullscreen]")) bind(root);
   }
 };
 new MutationObserver(setup).observe(element, { childList: true, subtree: true,
@@ -274,8 +278,10 @@ def player_html(player: Player, *, key: str, url=file_url, viewer: bool = False)
     if player.video is not None:
         screen = (f'<video data-picture muted playsinline preload="metadata" '
                   f'src="{escape(url(player.video), quote=True)}"></video>')
+        fullscreen = FULLSCREEN_BUTTON
     else:
         screen = '<div class="h3-dub-player-poster" aria-hidden="true">Audio</div>'
+        fullscreen = ""
     music = (f'<audio data-music preload="metadata" src="{escape(url(player.music), quote=True)}"></audio>'
              if player.music is not None else "")
     toggle = ('<label class="h3-dub-player-check"><input type="checkbox" data-music-toggle checked> '
@@ -301,7 +307,7 @@ def player_html(player: Player, *, key: str, url=file_url, viewer: bool = False)
             "as one mix with its background.</p>")
     revision = hashlib.sha256(cues.encode()).hexdigest()[:16]
     return (
-        f'<div class="h3-dub-player" data-revision="{revision}" data-duration="{player.duration:.3f}" data-subtitles="translation">'
+        f'<div class="h3-dub-player" data-dub-fullscreen data-revision="{revision}" data-duration="{player.duration:.3f}" data-subtitles="translation">'
         f'{"" if viewer else _take_warning(player.lines)}'
         f'<div class="h3-dub-player-screen">{screen}<div class="h3-dub-player-caption" aria-hidden="true">'
         '<span data-caption-translation></span><span data-caption-source></span></div></div>'
@@ -310,7 +316,7 @@ def player_html(player: Player, *, key: str, url=file_url, viewer: bool = False)
         '<button type="button" data-play aria-pressed="false">Play</button>'
         f'<input type="range" data-seek min="0" max="{player.duration:.3f}" step="0.01" value="0" '
         'aria-label="Position">'
-        '<span data-time class="h3-dub-player-time">0:00</span></div>'
+        f'<span data-time class="h3-dub-player-time">0:00</span>{fullscreen}</div>'
         '<div class="h3-dub-player-options">'
         f'<fieldset><legend>Voice</legend>'
         f'<label><input type="radio" name="{group}" data-voice-choice value="{escape(dub, quote=True)}" checked> '

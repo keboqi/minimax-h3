@@ -1344,7 +1344,8 @@ export function startWorkspace() {
     videoFileButton: (...args) => videoFileButton(...args),
     visualSource: (...args) => visualSource(...args),
     shotLanes: (...args) => shotLanes(...args),
-    getPlayer: () => mix
+    getPlayer: () => mix,
+    toast
   });
   const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo,
          renderIllustrateActions, illustrateSummary, shotLanes} = createVideo({

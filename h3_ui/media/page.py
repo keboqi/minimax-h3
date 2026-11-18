@@ -104,6 +104,7 @@ def choice(value, choices, label: str, default):
 def result_css() -> str:
     """The Gradio app's rules for the dub player, illustrated video and Soundstage view, for this page."""
     from ..styles import H3_WORKSPACE_CSS as WORKSPACE
+    from ..player_fullscreen import PLAYER_FULLSCREEN_CSS
 
     start = WORKSPACE.find("/* The dub result player")
     end = WORKSPACE.find("/* Narrower windows", start)
@@ -112,7 +113,7 @@ def result_css() -> str:
     block = WORKSPACE[start:end].rstrip()
     if block.endswith("}") and block.count("{") < block.count("}"):
         block = block[:-1]
-    return block.replace(".dark .h3-workspace ", ':root[data-theme="dark"] ').replace(".h3-workspace ", "")
+    return block.replace(".dark .h3-workspace ", ':root[data-theme="dark"] ').replace(".h3-workspace ", "") + PLAYER_FULLSCREEN_CSS
 
 
 @dataclass(frozen=True)
@@ -455,9 +456,11 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
         from h3_ui.drama3.result_view import DRAMA3_SUBTITLES_JS
         from h3_ui.drama3.stage_video import STAGE_VIDEO_JS
         from h3_ui.dubbing.player import PLAYER_JS
+        from h3_ui.player_fullscreen import BIND_FULLSCREEN_JS
 
         return Response(
             f"export const followSubtitles = {DRAMA3_SUBTITLES_JS.strip()};\n"
+            f"export {BIND_FULLSCREEN_JS.strip()}\n"
             f"export function bindPlayer(element) {{\n{PLAYER_JS}\n}}\n"
             f"export function bindStage(element) {{\n{STAGE_VIDEO_JS}\n}}\n",
             media_type="application/javascript", headers={"Cache-Control": "no-cache"})

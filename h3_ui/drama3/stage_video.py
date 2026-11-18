@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from h3_ui.dubbing.player import file_url
+from h3_ui.player_fullscreen import BIND_FULLSCREEN_JS, FULLSCREEN_BUTTON
 
 ELEM_CLASS = "h3-stage-video-panel"
 # The settings-snapshot family of an illustrated video; its settings name the source mix.
@@ -29,19 +30,27 @@ def latest_export(audio):
     videos = [path for path in audio.parent.glob(f"{glob.escape(audio.stem)}_illustrated_*.mp4") if path.is_file()]
     return max(videos, key=lambda path: path.stat().st_mtime, default=None)
 
-STAGE_VIDEO_JS = """
+STAGE_VIDEO_JS = BIND_FULLSCREEN_JS + """
 // Gradio patches a new value into the existing DOM, so each new video rebinds through its revision.
 let bound = null;
 const bind = () => {
   const root = element.querySelector(".h3-stage-video");
-  if (!root || bound?.root === root && bound.revision === root.dataset.revision) return;
+  if (!root) return;
+  const video = root.querySelector("video"), fullscreen = root.querySelector("[data-fullscreen]");
+  const sameVideo = bound?.root === root && bound.revision === root.dataset.revision && bound.video === video;
+  if (sameVideo && bound.fullscreen === fullscreen) return;
   bound?.controller.abort();
   const controller = new AbortController(), signal = controller.signal;
-  bound = { root, revision: root.dataset.revision, controller };
-  const video = root.querySelector("video"), target = root.querySelector("[data-caption]");
+  bound = { root, revision: root.dataset.revision, controller, video, fullscreen };
+  const target = root.querySelector("[data-caption]");
+  const status = root.querySelector("[data-fullscreen-status]");
+  if (bindFullscreen(video.parentElement, fullscreen, (message) => {
+    status.textContent = message;
+    status.hidden = false;
+  }, signal)) video.controlsList?.add("nofullscreen");
   // The page's subtitle script tracks media whose source is set from script; a source parsed from
   // HTML is not, so the list would follow this video only once it plays, not on a seek while paused.
-  if (video.getAttribute("src")) video.src = video.getAttribute("src");
+  if (!sameVideo && video.getAttribute("src")) video.src = video.getAttribute("src");
   const toggle = root.querySelector("[data-captions]");
   const panel = () => {
     const id = root.dataset.media;
@@ -101,9 +110,10 @@ def stage_video_html(path, *, url=file_url) -> str:
     revision = escape(f"{path.name}:{source}", quote=True)
     return (
         f'<div class="h3-stage-video" data-revision="{revision}" data-media="{media.group(0) if media else ""}">'
-        '<div class="h3-dub-player-screen">'
+        '<div class="h3-dub-player-screen" data-stage-fullscreen>'
         f'<video controls playsinline preload="metadata" src="{escape(source, quote=True)}"></video>'
-        '<div class="h3-dub-player-caption" aria-hidden="true"><span data-caption></span></div></div>'
+        '<div class="h3-dub-player-caption" aria-hidden="true"><span data-caption></span></div>'
+        f'{FULLSCREEN_BUTTON}<span data-fullscreen-status role="status" hidden></span></div>'
         '<div class="h3-stage-video-options">'
         '<label><input type="checkbox" data-captions checked> Subtitles on the video</label>'
         f'<a href="{escape(source, quote=True)}" download="{escape(path.name, quote=True)}">Download video</a>'

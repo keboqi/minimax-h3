@@ -49,8 +49,20 @@ def run():
             page.on("console", record_console_error)
             page.route("**/soundstage/api/audio?*", lambda route: route.fulfill(body=audio.getvalue(), content_type="audio/wav"))
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
+            fullscreen = page.locator("#player-fullscreen")
+            expect(fullscreen).to_have_count(0)
             page.locator("#step-illustrate").click()
             expect(page.locator("#still-back")).to_be_visible()
+            inline_width = page.locator("#video-stage").evaluate("stage => stage.clientWidth")
+            fullscreen.click()
+            expect(page.locator("#player:fullscreen #still-back")).to_be_visible()
+            expect(page.locator("#player:fullscreen #play")).to_be_visible()
+            expect(page.locator("#player:fullscreen #video-caption")).to_contain_text("Plums!")
+            assert page.locator("#video-stage").evaluate("stage => stage.clientWidth") > inline_width
+            expect(fullscreen).to_have_text("Exit fullscreen")
+            fullscreen.click()
+            expect(fullscreen).to_have_text("Fullscreen")
+            expect(page.locator("#player:fullscreen")).to_have_count(0)
             engine = page.locator("#effects-engine")
             expect(engine).to_have_text("Effects engine · Idle")
             expect(page.locator("#lanes .effect-lane")).to_have_count(0)
@@ -86,6 +98,11 @@ def run():
             page.wait_for_function("document.getElementById('mix-audio').currentTime < 3")
             assert page.locator("#mix-audio").evaluate("audio => !audio.paused")
             page.locator("#play").click()
+            # Let the renderer settle before choosing which canvas to capture.
+            page.wait_for_function("""async () => {
+              const {gpuStatus} = await import('/soundstage/effects_webgpu.js');
+              return ['ready', 'unavailable'].includes(gpuStatus());
+            }""")
             # Seek the actual player while paused; every frame must reconstruct deterministically.
             def seek_frame(t):
                 info = page.evaluate("""async t => {

@@ -333,6 +333,7 @@
     const audio = h("select", {class: "field"}, h("option", {value: "mute", text: "Muted"}),
       h("option", {value: "a", text: "A only"}), h("option", {value: "b", text: "B only"}));
     const state = h("p", {class: "small muted", role: "status", "aria-live": "polite", text: "Loading media timing…"});
+    const fullscreen = h("button", {type: "button", class: "btn", "data-fullscreen": true, hidden: true, text: "Fullscreen"});
     let syncing = false;
     const end = () => Math.min(a.duration || 0, b.duration || 0);
     const pause = () => { a.pause(); b.pause(); play.textContent = "Play both"; };
@@ -357,11 +358,13 @@
       seek.value = a.currentTime;
       syncing = false;
     });
-    return h("div", {class: "stack"},
-      h("div", {class: "pairs"}, h("figure", {}, h("figcaption", {text: `A · ${left.name}`}), a),
+    const viewer = h("div", {class: "stack", "data-fullscreen-pair": true},
+      h("div", {class: "pairs", "data-compare-pictures": true}, h("figure", {}, h("figcaption", {text: `A · ${left.name}`}), a),
         h("figure", {}, h("figcaption", {text: `B · ${right.name}`}), b)),
       h("div", {class: "row tight"}, play, h("label", {class: "inline small grow"}, "Comparison time", seek),
-        h("label", {class: "inline small"}, "Audio", audio)), state);
+        h("label", {class: "inline small"}, "Audio", audio), fullscreen), state);
+    app.results?.bindFullscreen(viewer, fullscreen, (message) => { state.textContent = message; });
+    return viewer;
   };
   const compare = () => {
     const {a, b, kind} = app.pair;

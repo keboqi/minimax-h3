@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from h3_app.dubbing import shares
 from h3_app.dubbing.results import TRACKS
 
+from ..player_fullscreen import PLAYER_FULLSCREEN_CSS
 from .player import PLAYER_JS, player_html
 
 ROUTE = "/dub-share"
@@ -141,7 +142,7 @@ def page_html(share: shares.Share, token: str) -> str:
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">"
             "<meta name=\"robots\" content=\"noindex, nofollow\"><meta name=\"referrer\" content=\"no-referrer\">"
-            f"<title>{title}</title><style>{PAGE_CSS}</style></head><body>"
+            f"<title>{title}</title><style>{PAGE_CSS}{PLAYER_FULLSCREEN_CSS}</style></head><body>"
             f"<main><header><h1>{title}</h1>{language}</header>{body}</main>"
             f"<script>{{ const element = document.body;{PLAYER_JS}}}</script></body></html>")
 

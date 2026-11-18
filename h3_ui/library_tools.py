@@ -11,14 +11,17 @@ from h3_app.jobs import JOBS
 from h3_app.errors import H3Error
 from .media_previews import browser_gallery_items, browser_file_update
 from .media_view import favorite_label
+from .player_fullscreen import BIND_FULLSCREEN_JS, FULLSCREEN_BUTTON
 
-VIDEO_JS = """
+VIDEO_JS = BIND_FULLSCREEN_JS + """
 const setup = () => {
  const a = element.querySelector('[data-video-a]'), b = element.querySelector('[data-video-b]');
  if (!a || !b || a.dataset.bound) return;
  a.dataset.bound = 'true';
  const play = element.querySelector('[data-play]'), seek = element.querySelector('[data-seek]');
  const audio = element.querySelector('[data-audio]'), state = element.querySelector('[data-state]');
+ bindFullscreen(a.closest('[data-fullscreen-pair]'), element.querySelector('[data-fullscreen]'),
+   (message) => { state.textContent = message; });
  let syncing = false;
  const end = () => Math.min(a.duration || 0, b.duration || 0);
  const pause = () => { a.pause(); b.pause(); play.textContent = 'Play both'; };
@@ -56,12 +59,13 @@ def comparison_html(left, right):
         )
 
     return (
-        '<div class="h3-compare-video"><div class="h3-compare-pair">'
+        '<div class="h3-compare-video" data-fullscreen-pair><div class="h3-compare-pair" data-compare-pictures>'
         f'<figure><figcaption>A · {escape(Path(left).name)}</figcaption><video data-video-a preload="metadata" playsinline src="{escape(url(left), quote=True)}"></video></figure>'
         f'<figure><figcaption>B · {escape(Path(right).name)}</figcaption><video data-video-b preload="metadata" playsinline src="{escape(url(right), quote=True)}"></video></figure></div>'
-        '<button type="button" data-play>Play both</button> '
+        '<div data-compare-controls><button type="button" data-play>Play both</button> '
         '<label>Comparison time <input data-seek type="range" min="0" max="0" step="0.01" value="0"></label> '
         '<label>Audio <select data-audio><option value="mute">Muted</option><option value="a">A only</option><option value="b">B only</option></select></label>'
+        f' {FULLSCREEN_BUTTON}</div>'
         '<p data-state role="status" aria-live="polite">Loading media timing…</p></div>'
     )
 

@@ -1,3 +1,5 @@
+import {bindFullscreen} from "./fullscreen.js";
+
 // The Remake page. The browser holds the editor; a long selection's windows live in their project,
 // and scrubbing asks the server for nothing unless a source can't play here.
 (() => {
@@ -1535,6 +1537,7 @@
     $("back").addEventListener("click", () => setFrame(state.frame - 1));
     $("next").addEventListener("click", () => setFrame(state.frame + 1));
     $("play").addEventListener("click", () => setPlaying(!state.playing));
+    bindFullscreen($("viewer"), $("viewer-fullscreen"), (message) => toast(message, true));
     $("mute").addEventListener("click", () => {
       state.muted = !state.muted;
       renderMute();

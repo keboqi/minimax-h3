@@ -630,6 +630,11 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
   /* Short enough that the timeline stays in view beneath it. */
   width: min(100%, calc(56vh * 16 / 9)); margin: 0 auto; container-type: inline-size; }
 .video-stage.portrait { aspect-ratio: 9 / 16; width: min(100%, calc(64vh * 9 / 16)); }
+.player:fullscreen { display: grid; grid-template-rows: auto minmax(0, 1fr); border: 0; border-radius: 0; }
+.player:fullscreen .video-area { container-type: size; display: grid; place-items: center; background: #000; }
+.player:fullscreen .video-stage { width: min(100cqw, calc(100cqh * 16 / 9)); border-radius: 0; }
+.player:fullscreen .video-stage.portrait { width: min(100cqw, calc(100cqh * 9 / 16)); }
+.player:fullscreen .timeline, .player:fullscreen .legend { display: none; }
 .video-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 /* The stills: the current shot behind, the next dissolving in over it. */
 .stills { position: absolute; inset: 0; cursor: pointer; }

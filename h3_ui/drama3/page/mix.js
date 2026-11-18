@@ -1,4 +1,5 @@
 import {effectsEnabled} from "./effects.js";
+import {bindFullscreen} from "./fullscreen.js";
 
 // Mix view and local controls for Soundstage.
 export function lineTakes(result) {
@@ -10,7 +11,13 @@ export function lineTakes(result) {
   });
 }
 
-export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer}) {
+export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast}) {
+  const box = $("player");
+  const fullscreenButton = h("button", {type: "button", class: "btn btn-small", id: "player-fullscreen", hidden: true}, "Fullscreen");
+  const fullscreen = bindFullscreen(box, fullscreenButton, toast);
+  // Repaint the effects canvas at the new size even while playback is paused.
+  box.addEventListener("fullscreenchange", () => requestAnimationFrame(sync));
+
   function setSubtitles(on) {
     state.project.video.subtitles = on;
     saveVideo({video_subtitles: on});
@@ -80,8 +87,10 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
   }
 
   function renderPlayer() {
-    const box = $("player");
     const result = state.project.result;
+    const source = result ? visualSource() : null;
+    const showingVideo = source && state.mediaMode === "video";
+    if (!showingVideo || box.parentElement.hidden) fullscreen?.exit();
     if (!result) {
       box.replaceChildren(h("div", {class: "not-spoken"},
         h("strong", {}, "Not spoken yet"),
@@ -97,17 +106,18 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         h("strong", {}, result.title || state.project.title || state.project.name),
         h("span", {class: "muted small num", id: "clock"}, `0:00 / ${clock(result.duration)}`)),
       h("span", {class: "spacer"}),
-      visualSource() ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
+      source ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
         ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),
                                                        onclick: () => setMediaMode(mode)}, mode === "audio" ? "Audio" : "Video"))) : null,
-      state.mediaMode === "video" ? subtitleControls() : null,
-      state.mediaMode === "video"
+      showingVideo ? subtitleControls() : null,
+      showingVideo && fullscreen ? fullscreenButton : null,
+      showingVideo
         ? videoFileButton()
         : h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
     let stage = null;
-    if (state.mediaMode === "video") {
+    if (showingVideo) {
       const playing = () => (getPlayer().paused ? getPlayer().play() : getPlayer().pause());
-      const stills = visualSource() === "stills";
+      const stills = source === "stills";
       // The stills slide along the mix's audio; an older mix with only a rendered video plays that.
       const picture = stills
         ? h("div", {class: "stills", onclick: playing},
@@ -119,9 +129,10 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       else mixVideo.onclick = playing;
       // Drawn stills keep the frame they were drawn in; a tall one gets a tall stage.
       const tall = (stills ? state.project.video.stills.orientation : state.project.video.orientation) === "portrait";
-      stage = h("div", {class: tall ? "video-stage portrait" : "video-stage", id: "video-stage",
-                        style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
-                picture, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"}));
+      stage = h("div", {class: "video-area"},
+        h("div", {class: tall ? "video-stage portrait" : "video-stage", id: "video-stage",
+                  style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
+          picture, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"})));
     } else {
       mixVideo.hidden = true;
       document.body.append(mixVideo);

@@ -1,5 +1,7 @@
 """Design tokens and responsive styles for the Prism Studio Gradio UI."""
 
+from .player_fullscreen import PLAYER_FULLSCREEN_CSS
+
 H3_SETUP_CSS = """
 .h3-settings-summary {
   container-type: inline-size;
@@ -799,4 +801,4 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 @media (prefers-reduced-motion: reduce) {
   .h3-workspace *, .h3-workspace *::before, .h3-workspace *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
-"""
+""" + PLAYER_FULLSCREEN_CSS

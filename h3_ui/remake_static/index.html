@@ -55,10 +55,11 @@
 
   <div class="workarea">
     <div class="main">
-      <section class="panel" aria-label="Viewer">
+      <section class="panel" id="viewer" aria-label="Viewer">
         <div class="head">
           <div class="seg" role="group" aria-label="Viewer" id="tabs"></div>
           <span class="small muted mono" id="viewer-line"></span>
+          <button type="button" class="btn" id="viewer-fullscreen" hidden>Fullscreen</button>
         </div>
         <div class="stage" id="stage">
           <video id="source-video" playsinline preload="auto"></video>
@@ -235,6 +236,6 @@
 <dialog id="library" class="library" aria-label="Media library"></dialog>
 <input id="video-input" type="file" accept="video/*" hidden>
 <input id="picture-input" type="file" accept="image/*" hidden>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -35,6 +35,7 @@ from h3_app.workspace_store import request_owner
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
+from ..player_fullscreen import PLAYER_FULLSCREEN_CSS
 from .page_batch import Batches
 from . import presenters
 from .handlers import DubbingHandlers
@@ -44,7 +45,6 @@ from .share import share_path
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript"
                 for name in ("app.js", "api.js", "source.js", "review.js", "dub.js", "result.js", "ui.js", "batch.js")}
-STATIC_TYPES["app.css"] = "text/css"
 ROUTE = "/dubbing"
 API = f"{ROUTE}/api"
 UPLOAD_SUFFIXES = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | {".m4v"}
@@ -350,6 +350,11 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         """The result player's script, shared with the share page, as a module the page calls."""
         return Response("export function bindPlayers(element) {\n" + PLAYER_JS + "\n}\n",
                         media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+    @app.get(f"{ROUTE}/app.css", include_in_schema=False)
+    def dubbing_styles():
+        return Response((STATIC / "app.css").read_text(encoding="utf-8") + PLAYER_FULLSCREEN_CSS,
+                        media_type="text/css", headers={"Cache-Control": "no-cache"})
 
     @app.get(ROUTE + "/{name}", include_in_schema=False)
     def dubbing_asset(name: str):
