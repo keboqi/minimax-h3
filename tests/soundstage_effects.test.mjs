@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraTransform, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraFilter, cameraMotion, cameraTransform, cueTriggerElapsed, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
@@ -68,8 +68,8 @@ test("overlays reconstruct the same frame after seeking and clear when removed",
   }, set: (_, name, value) => {calls.push([name, value]); return true;}});
   const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
   for (const effect of [
-    "rain", "snow", "dust", "embers", "fog", "sunbeams", "smoke", "petals",
-    "lightning", "flash", "warm_glow", "cold_tint", "flicker", "vignette", "film_grain", "dream_bloom", "scanlines",
+    "rain", "snow", "dust", "embers", "fog", "sunbeams", "smoke", "petals", "underwater", "fireflies",
+    "lightning", "flash", "warm_glow", "cold_tint", "flicker", "vignette", "film_grain", "dream_bloom", "scanlines", "spotlight",
   ]) {
     calls.length = 0; paintEffects(canvas, [effect], 2.4); const first = [...calls];
     paintEffects(canvas, [effect], 7);
@@ -106,7 +106,139 @@ test("layered atmosphere and lighting overlays both render in one pass", () => {
 });
 
 test("shader IDs cover all overlays", () => {
-  assert.deepEqual(Object.keys(ATMO_IDS).sort(), ["dust", "embers", "fog", "petals", "rain", "smoke", "snow", "sunbeams"]);
+  assert.deepEqual(Object.keys(ATMO_IDS).sort(),
+    ["dust", "embers", "fireflies", "fog", "petals", "rain", "smoke", "snow", "sunbeams", "underwater"]);
   assert.deepEqual(Object.keys(LIGHT_IDS).sort(),
-    ["cold_tint", "dream_bloom", "film_grain", "flash", "flicker", "lightning", "scanlines", "vignette", "warm_glow"]);
+    ["cold_tint", "dream_bloom", "film_grain", "flash", "flicker", "lightning", "scanlines", "spotlight", "vignette", "warm_glow"]);
 });
+
+test("dissolve crossfades outgoing and incoming overlays instead of cutting at shot start", () => {
+  const alphas = [];
+  const ops = [];
+  const gradient = {addColorStop() {}};
+  let currentAlpha = 1;
+  const ctx = {
+    get globalAlpha() { return currentAlpha; },
+    set globalAlpha(v) { currentAlpha = v; alphas.push(Math.round(v * 100) / 100); },
+    save() { this._saved = currentAlpha; },
+    restore() { currentAlpha = this._saved ?? 1; },
+    clearRect() {},
+    beginPath() {},
+    moveTo() { ops.push(["moveTo", Math.round(currentAlpha * 100) / 100]); },
+    lineTo() {},
+    stroke() {},
+    fillRect() { ops.push(["fillRect", Math.round(currentAlpha * 100) / 100]); },
+    createRadialGradient() { return gradient; },
+    createLinearGradient() { return gradient; },
+  };
+  const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
+  // Outgoing shot has rain; incoming shot has vignette; 35% through dissolve.
+  paintEffects(canvas, ["vignette"], 0.35, null, {
+    fading: true,
+    fadeMix: 0.35,
+    backEffects: ["rain"],
+    backElapsed: 4.35,
+    shotIndex: 1,
+    backShotIndex: 0,
+  });
+  assert.ok(ops.some(([op, a]) => op === "moveTo" && a === 0.65), "outgoing rain fades out at 0.65 alpha");
+  assert.ok(ops.some(([op, a]) => op === "fillRect" && a === 0.35), "incoming vignette fades in at 0.35 alpha");
+
+  // Outgoing shot has rain; incoming shot has no effects; rain still fades out during dissolve.
+  ops.length = 0;
+  let backend = null;
+  paintEffects(canvas, [], 0.25, (b) => { backend = b; }, {
+    fading: true,
+    fadeMix: 0.25,
+    backEffects: ["rain"],
+    backElapsed: 4.25,
+  });
+  assert.equal(backend, "Canvas 2D");
+  assert.ok(ops.some(([op, a]) => op === "moveTo" && a === 0.75), "outgoing rain continues fading into a clean shot");
+});
+
+test("shot-seeded lightning varies flash timing across shots while keeping shot 0 deterministic", () => {
+  const ctx = {clearRect() {}, fillRect() {}};
+  const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
+  paintEffects(canvas, ["lightning"], 0.12, null, {shotIndex: 0});
+  const shot0Style = ctx.fillStyle;
+  assert.equal(shot0Style, "rgba(225,237,255,0.32)");
+
+  paintEffects(canvas, ["lightning"], 0.12, null, {shotIndex: 2});
+  const shot2Style = ctx.fillStyle;
+  assert.notEqual(shot2Style, shot0Style, "subsequent storm shots do not all flash at 0.12s");
+});
+
+test("cameraMotion exposes coupled pan, zoom, and impact shake vectors", () => {
+  assert.deepEqual(cameraMotion([], 0.5), {tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0});
+  const pan = cameraMotion(["pan_left"], 0);
+  assert.equal(pan.tx, 3);
+  assert.equal(pan.scale, 1.08);
+  const shakeStart = cameraMotion(["impact_shake"], 0.05, 0.05);
+  assert.ok(shakeStart.shake > 0.7, "impact shake reports active decay energy");
+  const shakeDone = cameraMotion(["impact_shake"], 0.8, 0.6);
+  assert.equal(shakeDone.shake, 0);
+
+  const tilt0 = cameraMotion(["dutch_tilt"], 0);
+  const tilt1 = cameraMotion(["dutch_tilt"], 1);
+  assert.equal(tilt0.angle, -1.5);
+  assert.equal(tilt1.angle, 1.5);
+  assert.match(cameraTransform(["dutch_tilt"], 0), /rotate\(-1\.5deg\) scale\(1\.04\)/);
+
+  const focusStart = cameraMotion(["rack_focus"], 0.05, 0.05);
+  assert.ok(focusStart.blur > 0.8, "rack focus starts softly defocused");
+  assert.match(cameraFilter(["rack_focus"], 0.05, 0.05), /^blur\(.+px\)$/);
+  const focusEnd = cameraMotion(["rack_focus"], 0.8, 1.2);
+  assert.equal(focusEnd.blur, 0);
+  assert.equal(cameraFilter(["rack_focus"], 0.8, 1.2), "none");
+});
+
+test("one-shot sound cues inside a shot deterministically trigger impact_shake and flash on the cue timestamp", (t) => {
+  // Pure function check for cueTriggerElapsed
+  const sounds = [
+    {name: "wind_bed", start: 0, end: 10, loop: true},
+    {name: "prism_shatter", start: 6.0, end: 6.8, loop: false},
+  ];
+  // Looped beds never re-trigger; before the 6.0s one-shot cue, elapsed from shotStart (4.0) is used.
+  assert.equal(cueTriggerElapsed(1.2, 4, 8, sounds), 1.2);
+  // At 6.05s (elapsed = 2.05s into the [4, 8) shot), the 6.0s one-shot cue just fired 0.05s ago.
+  assert.ok(Math.abs(cueTriggerElapsed(2.05, 4, 8, sounds) - 0.05) < 1e-6);
+
+  // Verify paintStills re-triggers impact_shake and flash at t = 6.05s when seeking.
+  const globals = {window: {}, document: {querySelectorAll: () => []}, Image: class {}};
+  for (const [name, value] of Object.entries(globals)) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {value, configurable: true});
+    t.after(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);
+  }
+  const back = {dataset: {}, style: {}}, front = {dataset: {}, style: {}};
+  const ctx = {clearRect() {}, fillRect() {}};
+  const overlay = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
+  const $ = (id) => ({"still-back": back, "still-front": front, "still-effects": overlay})[id];
+  const state = {project: {
+    result: {sounds},
+    video: {
+      plan: {rows: [
+        {index: 0, start: 0, image: "shot-a.png", effects: []},
+        {index: 1, start: 4, image: "shot-b.png", effects: ["impact_shake", "flash"]},
+      ]},
+      stills: {shots: [
+        {start: 0, end: 4, fade: 0, url: "shot-a.png"},
+        {start: 4, end: 8, fade: 0, url: "shot-b.png"},
+      ]},
+    },
+  }};
+  const {paintStills} = createVideo({state, $});
+
+  // At 5.2s (1.2s after shot start, before the 6.0s sound cue), impact_shake and flash have settled.
+  paintStills(5.2);
+  assert.equal(back.style.transform, "scale(1)");
+  assert.equal(ctx.fillStyle, "rgba(225,237,255,0)");
+
+  // At 6.05s (0.05s after prism_shatter one-shot sound cue), both impact_shake and flash fire.
+  paintStills(6.05);
+  assert.notEqual(back.style.transform, "scale(1)");
+  const flashAlpha = Number(ctx.fillStyle.match(/,([^,]+)\)$/)[1]);
+  assert.ok(flashAlpha > 0.25, `expected flash pulse on sound cue, got ${ctx.fillStyle}`);
+});
+

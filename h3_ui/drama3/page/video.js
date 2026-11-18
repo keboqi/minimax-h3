@@ -1,4 +1,4 @@
-import {cameraTransform, effectsEnabled, effectTrack, paintEffects} from "./effects.js";
+import {cameraFilter, cameraMotion, cameraTransform, cueTriggerElapsed, effectsEnabled, effectTrack, paintEffects} from "./effects.js";
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
@@ -105,25 +105,57 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (fading) show(front, shot.url);
     front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
     const enabled = effectsEnabled(state.project.video, reducedMotion?.matches);
-    const effectsFor = (still) => enabled ? rows.find((row) => row.image === still.url)?.effects || [] : [];
-    const effects = effectsFor(shot);
+    const rowFor = (still) => rows.find((row) => row.image === still.url);
+    const shotRow = rowFor(shot);
+    const backRow = fading ? rowFor(background) : null;
+    const effects = enabled ? shotRow?.effects || [] : [];
+    const backEffects = enabled && fading ? backRow?.effects || [] : [];
     const elapsed = time - shot.start;
     const progress = elapsed / Math.max(0.001, shot.end - shot.start);
-    front.style.transform = cameraTransform(effects, progress, elapsed);
+    const backElapsed = fading ? Math.max(0, time - background.start) : 0;
+    const fadeMix = fading ? Math.max(0, Math.min(1, (time - shot.start) / shot.fade)) : 1;
+    const sounds = state.project.result?.sounds || null;
+    const cueElapsed = cueTriggerElapsed(elapsed, shot.start, shot.end, sounds);
+    const backCueElapsed = fading ? cueTriggerElapsed(backElapsed, background.start, background.end, sounds) : 0;
+    const camTime = effects.includes("impact_shake") ? cueElapsed : elapsed;
+    const backCamTime = backEffects.includes("impact_shake") ? backCueElapsed : backElapsed;
+    front.style.transform = cameraTransform(effects, progress, camTime);
     back.style.transform = fading
-      ? cameraTransform(effectsFor(background), 1, background.end - background.start)
-      : cameraTransform(effects, progress, elapsed);
+      ? cameraTransform(backEffects, 1, backCamTime)
+      : cameraTransform(effects, progress, camTime);
+    const applyFilter = (el, value) => {
+      if (el.style.filter || value !== "none") el.style.filter = value;
+    };
+    applyFilter(front, cameraFilter(effects, progress, elapsed));
+    applyFilter(back, fading
+      ? cameraFilter(backEffects, 1, backElapsed)
+      : cameraFilter(effects, progress, elapsed));
     const overlay = $("still-effects");
     if (overlay) {
       const activeEffects = elapsed >= 0 ? effects : [];
       const engine = $("effects-engine");
+      const scene = {
+        shotIndex: shotRow?.index ?? index,
+        cam: cameraMotion(activeEffects, progress, camTime),
+        stillBack: back,
+        stillFront: front,
+        fading,
+        fadeMix,
+        cueElapsed,
+        backEffects,
+        backElapsed,
+        backCueElapsed,
+        backShotIndex: backRow?.index ?? Math.max(0, index - 1),
+        backCam: fading ? cameraMotion(backEffects, 1, backCamTime) : null,
+      };
       paintEffects(overlay, activeEffects, elapsed, (backend) => {
         if (!engine) return;
+        const anyEffects = activeEffects.length || (fading && backEffects.length);
         const inactive = state.project.video.effects_enabled === false ? "Off" : !enabled ? "Paused"
-          : activeEffects.length ? "Camera only" : "Idle";
+          : anyEffects ? "Camera only" : "Idle";
         const label = `Effects engine · ${backend ?? inactive}`;
         if (engine.textContent !== label) engine.textContent = label;
-      });
+      }, scene);
     }
     // Fetch the next images before they are due, so a cut never waits on the network.
     for (const next of shots.slice(index + 1, index + 3)) {

@@ -11,7 +11,9 @@ EFFECT_PRESETS = {
     "pan_up": {"label": "Pan up", "kind": "camera", "description": "Tilt or rise upward across the frame."},
     "pan_down": {"label": "Pan down", "kind": "camera", "description": "Drift downward to reveal the scene below."},
     "subtle_sway": {"label": "Subtle sway", "kind": "camera", "description": "Gentle handheld drift for tense or intimate moments."},
-    "impact_shake": {"label": "Impact shake", "kind": "camera", "description": "Brief damped camera shake at the start of the shot."},
+    "impact_shake": {"label": "Impact shake", "kind": "camera", "description": "Brief damped camera shake at the start of the shot or on a sound cue."},
+    "dutch_tilt": {"label": "Dutch tilt", "kind": "camera", "description": "Gentle rotational drift and push for unease or tension."},
+    "rack_focus": {"label": "Rack focus", "kind": "camera", "description": "Pulls from soft defocus into crisp clarity at the start of the shot."},
     "rain": {"label": "Rain", "kind": "atmosphere", "description": "Layered slanting rain across the frame."},
     "snow": {"label": "Snow", "kind": "atmosphere", "description": "Soft drifting snowflakes with gentle depth."},
     "fog": {"label": "Fog", "kind": "atmosphere", "description": "Slow translucent banks of drifting mist."},
@@ -20,6 +22,8 @@ EFFECT_PRESETS = {
     "sunbeams": {"label": "Sunbeams", "kind": "atmosphere", "description": "Diagonal shafts of light drifting gently from above."},
     "smoke": {"label": "Smoke", "kind": "atmosphere", "description": "Soft curling haze rising slowly through the frame."},
     "petals": {"label": "Petals", "kind": "atmosphere", "description": "Drifting blossoms or leaves tumbling in the breeze."},
+    "underwater": {"label": "Underwater", "kind": "atmosphere", "description": "Rising silvery bubbles and shimmering aquatic caustics."},
+    "fireflies": {"label": "Fireflies", "kind": "atmosphere", "description": "Bioluminescent glowing motes drifting on curved night paths."},
     "lightning": {"label": "Lightning", "kind": "lighting", "description": "Occasional brief cool light pulses for a storm."},
     "flash": {"label": "Flash", "kind": "lighting", "description": "One brief soft white flash at the start of a reveal or impact."},
     "warm_glow": {"label": "Warm glow", "kind": "lighting", "description": "Soft warm radial light breathing gently over the image."},
@@ -29,6 +33,7 @@ EFFECT_PRESETS = {
     "film_grain": {"label": "Film grain", "kind": "lighting", "description": "Subtle animated 35mm cinema grain."},
     "dream_bloom": {"label": "Dream bloom", "kind": "lighting", "description": "Soft ethereal halation for memories or surreal moments."},
     "scanlines": {"label": "Scanlines", "kind": "lighting", "description": "Faint monitor scanlines and cool phosphor glow."},
+    "spotlight": {"label": "Spotlight", "kind": "lighting", "description": "Focused overhead light cone with a softly darkened surround."},
 }
 
 

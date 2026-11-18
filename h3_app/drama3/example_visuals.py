@@ -45,7 +45,7 @@ BLACKTHORN_SHOTS = (
     (19, "cut", "The voice of Aegis recognizes the keeper.",
      "Medium two-shot in @chamber. @marcus(near @core, staring into its rings in disbelief) is the focus. @elena(across from him, looking at his face) remains clearly visible in the cold window light."),
     (23, "dissolve", "Aegis opens the receiver to the flooded vault.",
-     "Unoccupied view through @vault with silvery bubbles below the arches and a faint cyan glow escaping the bulkhead seam.", "fog", "push_in", "cold_tint"),
+     "Unoccupied view through @vault with silvery bubbles below the arches and a faint cyan glow escaping the bulkhead seam.", "underwater", "push_in", "cold_tint"),
     (26, "dissolve", "Elena listens for the voice below the rock.",
      "Solo close profile of @elena(listening intently beside @core) in @chamber, teal light on her cheek and soft iron window tracery behind her.", "dream_bloom"),
     (28, "cut", "The beacon ignites.",
