@@ -398,7 +398,7 @@ def build_ui(manager: ModelManager | None, media=None):
     """
     import gradio as gr
 
-    with gr.Blocks(title=TITLE) as ui:
+    with gr.Blocks(title=TITLE, fill_width=True) as ui:
         if manager is None:
             gr.Markdown(
                 f"# {TITLE}\n"

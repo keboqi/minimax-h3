@@ -714,6 +714,52 @@ class Drama3PageVideoTests(unittest.TestCase):
                                  json={"video_effects": True, "video_effects_override_reduced_motion": True}))
         self.assertTrue(self.project()["video"]["effects_override_reduced_motion"])
 
+    def test_script_effects_follow_the_spoken_or_estimated_clock(self):
+        from h3_app.drama3.results import result_settings, script_fingerprint
+
+        source = "Mia: Plums!"
+        settings = {**result_settings(self.mix), "script_mode": "Basic",
+                    "script_fingerprint": script_fingerprint(source)}
+        write_snapshot(self.mix, {"family": DRAMA3_FAMILY, "settings": settings})
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+
+        def preview(text):
+            return self.ok(self.client.post(f"{API}/preview", params=NAME,
+                                            json={"text": text, "script_mode": "Basic"}))
+
+        self.assertNotIn("effects", preview(source))
+        self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME, json={"index": 1, "effects": ["rain"]}))
+        actual = preview(source)
+        self.assertTrue(actual["actual"])
+        self.assertEqual(actual["effects"], [{"index": 1, "start": 4, "end": 8, "effects": ["rain"]}])
+        estimated = preview("Mia: Fresh plums!")
+        self.assertNotIn("actual", estimated)
+        effect, = estimated["effects"]
+        self.assertEqual(effect["end"], estimated["duration"])
+        self.assertGreater(effect["start"], 0)
+        self.assertLess(effect["start"], 4)
+        self.assertNotIn("effects", preview(source + "\nLeo: Thanks!"))
+
+    def test_examples_replace_the_previous_plan_and_load_effects_before_speech(self):
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        old_plan = visuals.read_plan(self.mix)
+        for lang, opening_effect in (("en", "rain"), ("zh", "snow"), ("zh-latest", "rain")):
+            with self.subTest(lang=lang):
+                loaded = self.ok(self.client.post(f"{API}/project/example", params=NAME, json={"example": lang}))
+                self.assertIsNone(loaded["result"])
+                video = loaded["video"]
+                self.assertTrue(video["timing_pending"])
+                self.assertEqual(video["limit"], 16)
+                rows = video["plan"]["rows"]
+                self.assertEqual(len(rows), 16)
+                self.assertEqual(rows[0]["effects"], [opening_effect, "push_in"])
+                self.assertEqual(self.project()["video"]["plan"], video["plan"])
+                preview = self.ok(self.client.post(f"{API}/preview", params=NAME, json=loaded["script"]))
+                self.assertEqual([clip["index"] for clip in preview["effects"]],
+                                 [row["index"] for row in rows if row["effects"]])
+        self.assertTrue(self.mix.is_file())
+        self.assertEqual(visuals.read_plan(self.mix), old_plan)
+
     def test_workshop_finds_studio_audio_and_illustrations_through_shared_media_links(self):
         from h3_workshop import link_studio_media
 

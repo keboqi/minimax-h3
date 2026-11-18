@@ -9,6 +9,23 @@ const cameraMoves = {
 const lightEffects = new Set(["lightning", "flash", "warm_glow", "vignette"]);
 const particleEffects = new Set(["rain", "snow", "dust", "embers"]);
 
+export function effectTrack(h, {shots, presets, place, pick, picked}) {
+  const clips = shots.filter((shot) => shot.effects?.length).map((shot) => {
+    const label = shot.effects.map((id) => presets?.[id]?.label || id).join(" · ");
+    const title = `Shot ${shot.index + 1} · ${label}`;
+    return h("button", {
+      type: "button", class: "clip effect-clip", "data-shot": shot.index,
+      "aria-label": title, "aria-pressed": picked == null ? null : String(shot.index === picked),
+      title, style: place(shot.start, shot.end),
+      onclick: (event) => { event.stopPropagation(); pick(shot); },
+    }, h("span", {}, label));
+  });
+  return clips.length ? {
+    name: h("span", {class: "lane-name effect-lane-name"}, "Visual effects"),
+    lane: h("div", {class: "lane effect-lane", role: "group", "aria-label": "Visual effects track"}, clips),
+  } : null;
+}
+
 export function effectsEnabled(video, reducedMotion) {
   return video.effects_enabled !== false && (!reducedMotion || video.effects_override_reduced_motion === true);
 }

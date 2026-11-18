@@ -241,7 +241,13 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
                 "video": video_boot_payload(video_export.engines) if video_export else None,
                 **boot_payload(), **cast_boot_payload()}
 
-    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip, runtime=runtime_config)
+    def example_blocked(owner, name):
+        return (runs.active(owner, name)
+                or (cast_jobs is not None and cast_jobs.runs.active(owner, name))
+                or (video_runs is not None and video_runs.active(owner, name)))
+
+    install_script_routes(app, actions, api=api, store=store, owner_of=owner_of, payload=payload, clip=clip,
+                          runtime=runtime_config, admission_lock=admission_lock, example_blocked=example_blocked)
     cast_jobs = install_cast_routes(app, actions, api=api, store=store, owner_of=owner_of, session_of=session_of,
                                     payload=payload, clips=clips, clip=clip,
                                     runtime=runtime_config, gpu=gpu, interrupt=interrupt, blocked=auto_running, admission_lock=admission_lock)

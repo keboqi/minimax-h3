@@ -10,7 +10,7 @@ export function lineTakes(result) {
   });
 }
 
-export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLane, getPlayer}) {
+export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer}) {
   function setSubtitles(on) {
     state.project.video.subtitles = on;
     saveVideo({video_subtitles: on});
@@ -135,11 +135,10 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       .filter((name) => result.lines.some((line) => line.speaker === name));
     const lanes = [];
     const tracks = [];
-    // The planned shots ride above the voices, on Illustrate and whenever the player shows Video.
-    const shots = shotLane(place);
-    if (shots) {
-      lanes.push(h("span", {class: "lane-group lane-group-shots"}, "Shots"), shots.name);
-      tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}), shots.lane);
+    const shots = shotLanes(place);
+    if (shots.length) {
+      lanes.push(h("span", {class: "lane-group lane-group-shots"}, "Shots"), ...shots.map(({name}) => name));
+      tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}), ...shots.map(({lane}) => lane));
     }
     lanes.push(h("span", {class: "lane-group"}, "Voices"));
     tracks.push(h("span", {class: "lane-gap", "aria-hidden": "true"}));
@@ -185,7 +184,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       const box = lanesBox.getBoundingClientRect();
       seek((event.clientX - box.left) / box.width * duration);
     });
-    const timeline = h("div", {class: "timeline", role: "group", "aria-label": "Voices and sounds on the timeline"},
+    const timeline = h("div", {class: "timeline", role: "group", "aria-label": "Mix timeline"},
       h("span"), ruler, h("div", {class: "lane-names"}, lanes), lanesBox);
     const legend = h("div", {class: "legend"},
       result.speakers.map((speaker) => h("span", {}, h("i", {style: {background: toneColor(speaker.tone)}}), speaker.name)),

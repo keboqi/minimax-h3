@@ -635,6 +635,21 @@ export function startWorkspace() {
 
   // -- Projects and runs -----------------------------------------------------
   let projectLoad = 0;
+  function loadMixAudio(name, result) {
+    mixAudio.pause();
+    mixVideo.pause();
+    takeAudio.pause();
+    takeAudio.removeAttribute("src");
+    delete takeAudio.dataset.key;
+    if (result) {
+      mixAudio.src = `${API}/audio?name=${encodeURIComponent(name)}&v=${result.version}`;
+    } else {
+      mixAudio.removeAttribute("src");
+      mixAudio.load();
+    }
+    lastActive = -1;
+  }
+
   async function loadProject(name, {keepPick = false} = {}) {
     const load = ++projectLoad;
     let project, revision;
@@ -678,19 +693,7 @@ export function startWorkspace() {
       state.illustrateView = "shots";
       state.shotFilter = "all";
     }
-    if (changed) {
-      mixAudio.pause();
-      mixVideo.pause();
-      takeAudio.pause();
-      takeAudio.removeAttribute("src");
-      delete takeAudio.dataset.key;
-      if (project.result) {
-        mixAudio.src = `${API}/audio?name=${encodeURIComponent(name)}&v=${project.result.version}`;
-      } else {
-        mixAudio.removeAttribute("src");
-      }
-      lastActive = -1;
-    }
+    if (changed) loadMixAudio(name, project.result);
     if (switched || !library) await loadLibrary(project.cast_settings.speaker_group);
     if (load !== projectLoad) return;
     loadVideoSource();
@@ -845,10 +848,23 @@ export function startWorkspace() {
   async function loadExample(example) {
     $("examples").open = false;
     const text = $("script-text").value.trim();
-    if (text && !confirm(`Replace this project's script and cast with “${example.label}”?`)) return;
+    const hasMix = Boolean(state.project.result);
+    if ((text || hasMix || state.project.video?.plan?.saved) &&
+        !confirm(`Replace this project's script, cast, sounds, and shot plan with “${example.label}”?`
+          + (hasMix ? " The current mix will be detached from the project." : ""))) return;
     try {
       await flushScript();
-      writerAnswered(await api(named("/project/example"), {method: "POST", body: {example: example.id}}), "Example loaded");
+      const data = await api(named("/project/example"), {method: "POST", body: {example: example.id}});
+      if (hasMix) loadMixAudio(data.name, data.result);
+      const project = state.boot.projects.find(({name}) => name === data.name);
+      if (project) project.generated = Boolean(data.result);
+      state.castPick = null;
+      state.picked = 0;
+      state.shotPick = 0;
+      state.shotFilter = "all";
+      state.illustrateView = "shots";
+      writerAnswered(data, "Example loaded");
+      loadVideoSource();
     } catch (error) {
       toast(error.message);
     }
@@ -1327,11 +1343,11 @@ export function startWorkspace() {
     toneColor,
     videoFileButton: (...args) => videoFileButton(...args),
     visualSource: (...args) => visualSource(...args),
-    shotLane: (...args) => shotLane(...args),
+    shotLanes: (...args) => shotLanes(...args),
     getPlayer: () => mix
   });
   const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo,
-         renderIllustrateActions, illustrateSummary, shotLane} = createVideo({
+         renderIllustrateActions, illustrateSummary, shotLanes} = createVideo({
     state,
     $: (...args) => $(...args),
     h,

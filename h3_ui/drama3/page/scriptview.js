@@ -1,5 +1,7 @@
 // The Script step's two views (code and visual) and the estimated timeline that follows them.
 // The timeline and the script locate each other by script line: the preview numbers every line and sound.
+import {effectTrack} from "./effects.js";
+
 export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows}) {
   const VIEW_KEY = "h3-soundstage-script-view";
   const CONTAINER = /(<\/?(?:parallel|sequential)\b[^<>]*>)/i;
@@ -601,6 +603,12 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       }))));
     }
     const located = timed().length > 0;
+    const effects = effectTrack(h, {shots: estimate.effects || [], presets: state.boot.video?.effect_presets, place,
+      pick: (shot) => {
+        const line = lineAt(shot.start);
+        if (line) locate(line);
+      }});
+    if (effects) lanes.push(h("div", {class: "estimate-effects"}, effects.name, effects.lane));
     const scenes = located ? sections(parse($("script-text").value)).filter((part) => part.scene) : [];
     const bands = scenes.length ? h("div", {class: "scene-bands"}, scenes.map((part, index) => {
       const start = startOf(part.node.n), end = Math.max(endOf(part.node.end), start);
@@ -620,10 +628,10 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
         if (line) locate(line);
       });
     }
-    // Closed, the bar keeps one slim voice lane so it covers little of the script; open adds scenes and sounds.
+    // Closed, the bar keeps one slim voice lane so it covers little of the script.
     box.classList.toggle("open", timelineOpen);
     const toggle = h("button", {type: "button", class: "estimate-toggle", "aria-expanded": String(timelineOpen),
-                                title: "Show scenes and sounds on the timeline", onclick: () => {
+                                title: "Show all timeline tracks", onclick: () => {
       timelineOpen = !timelineOpen;
       try { localStorage.setItem(TIMELINE_KEY, timelineOpen ? "open" : "closed"); } catch { /* Storage may be blocked. */ }
       box.classList.toggle("open", timelineOpen);

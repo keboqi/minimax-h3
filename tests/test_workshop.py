@@ -262,6 +262,7 @@ class ModelManagerTests(unittest.TestCase):
             "GRADIO_OUTPUT_DIR": str(data / "h3" / "gradio_outputs"),
         })
         ui = manager_module.build_ui(None, (runtime, default_store(runtime.outputs_dir)))
+        self.assertTrue(ui.get_config_file()["fill_width"])
         labels = {getattr(block, "label", None) for block in ui.blocks.values()}
         self.assertTrue({"Media library", "Storyboard", "Remake"} <= labels)
         self.assertNotIn("Models", labels)

@@ -14,8 +14,10 @@ import uuid
 from fastapi import Body, FastAPI, Request
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, OPENAI_PROMPT_MODELS
+from h3_app.drama3.example_visuals import example_visual_plan
 from h3_app.drama3.guided.budget import AUTO as SMART_BUDGET_AUTO, BUDGET_PROFILES
 from h3_app.drama3.results import NARRATOR_NAMES, result_settings, script_fingerprint
+from h3_app.drama3.visual_timing import anchor_plan, bind_plan, mix_cues
 from h3_app.errors import H3Error
 from h3_app.prompt_writers import drama3 as writer
 
@@ -111,13 +113,14 @@ def script_payload(data: dict) -> dict:
             "writer": {key: _setting(data, key) for key in WRITER_FIELDS}}
 
 
-def preview_payload(text: str, script_mode: str, **cast) -> dict:
+def preview_payload(text: str, script_mode: str, *, settings=None, **cast) -> dict:
     """The script's estimated timeline, in the shape of a mix's lines and sounds.
 
     Each line and sound also carries ``line``, the script line it comes from (1-based), so the page
     can jump between the script and the timeline; it is None when the script can't be matched up.
     """
-    settings = script_preview_settings(text, script_mode, **cast)
+    if settings is None:
+        settings = script_preview_settings(text, script_mode, **cast)
     payload = timeline_payload(settings)
     speech, sounds = preview_source_lines(text, script_mode)
     chunks = settings["chunks"]
@@ -244,7 +247,22 @@ def spoken_payload(estimate: dict, settings: dict, script_mode: str, text: str) 
     return {**actual, "actual": True}
 
 
-def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip, runtime=None) -> None:
+def preview_effects(plan: dict, settings: dict, cues: list) -> list:
+    """Resolve effect clips against the same clock as the script timeline."""
+    if not plan.get("script_cues") or not any(row.get("effects") for row in plan.get("shots", [])):
+        return []
+    try:
+        shots = bind_plan(plan, {**settings, "script_cues": cues})["shots"]
+    except H3Error:
+        return []  # The shot plan no longer fits this script.
+    duration = settings["duration"]
+    return [{"index": index, "start": shot["start"], "end": end, "effects": shot["effects"]}
+            for index, (shot, end) in enumerate(zip(shots, [row["start"] for row in shots[1:]] + [duration]))
+            if shot.get("effects") and 0 <= shot["start"] < end <= duration]
+
+
+def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, payload, clip, runtime=None,
+                          admission_lock, example_blocked) -> None:
     """The Script step's routes; ``payload`` answers with a project's page payload, ``clip`` finds a clip."""
 
     def load(name: str) -> dict:
@@ -350,21 +368,37 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
     @app.post(f"{api}/project/example", include_in_schema=False)
     @guarded
     def example(name: str, request: Request, body: dict = Body(...)):
+        from . import visuals
+        from .project_visuals import project_cues
+
         loaders = {"en": actions.load_drama3_example, "zh": actions.load_drama3_example_zh,
                    "zh-latest": actions.load_drama3_example_zh_latest}
-        loader = loaders.get(body.get("example"))
+        lang = body.get("example")
+        loader = loaders.get(lang)
         if loader is None:
             raise H3Error("Unknown example.")
-        with editing(store, name) as data:
-            before = data.get("text") or ""
-            outputs = list(loader(_setting(data, "speaker_group")))
-            clear_cast_clips(data)
-            rest = _apply_cast(data, outputs)
-            data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
-            meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]
-            _apply_sounds(data, meta, rest[2 + 3 * DRAMA3_SOUND_SLOTS:])
-            data["prepared"] = True
-        return answered(owner_of(request), name, before, str(outputs[1]), False)
+        owner = owner_of(request)
+        with admission_lock:
+            if example_blocked(owner, name):
+                raise H3Error("Wait for Soundstage to finish working on this project before loading an example.")
+            with editing(store, name, reset_result=True) as data:
+                before = data.get("text") or ""
+                outputs = list(loader(_setting(data, "speaker_group")))
+                clear_cast_clips(data)
+                rest = _apply_cast(data, outputs)
+                data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
+                meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]
+                _apply_sounds(data, meta, rest[2 + 3 * DRAMA3_SOUND_SLOTS:])
+                data["prepared"] = True
+
+                plan = anchor_plan(example_visual_plan(lang), {"script_cues": project_cues(data, runtime)})
+                limit = len(plan["shots"])
+                style = data.get("video_style")
+                if style is None:
+                    style = visuals.STYLE_PRESETS[visuals.DEFAULT_STYLE]
+                data["video_limit"] = limit
+                data["visual_plan"] = {"style": style, "limit": limit, "plan": plan}
+        return answered(owner, name, before, f"{outputs[1]} Included {limit} shots with visual effects.", False)
 
     @app.post(f"{api}/preview", include_in_schema=False)
     @guarded
@@ -374,8 +408,15 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         text, script_mode = str(body.get("text") or ""), str(body.get("script_mode") or writer.DRAMA3_SCRIPT_BASIC)
         data, result = store.soundstage_project(name) if name else ({}, None)
         from .project_visuals import project_cast
-        estimate = preview_payload(text, script_mode, **project_cast(data, runtime))
-        if not name:
-            return estimate
-        return spoken_payload(estimate, result_settings(result) if result else {}, script_mode, text) or estimate
+        estimated = script_preview_settings(text, script_mode, **project_cast(data, runtime))
+        estimate = preview_payload(text, script_mode, settings=estimated)
+        spoken = result_settings(result) if result else {}
+        actual = spoken_payload(estimate, spoken, script_mode, text)
+        timeline = actual or estimate
+        plan = (data.get("visual_plan") or {}).get("plan") or {}
+        if plan and estimate["lines"]:
+            effects = preview_effects(plan, spoken if actual else estimated, mix_cues(estimated))
+            if effects:
+                timeline["effects"] = effects
+        return timeline
 

@@ -1,4 +1,4 @@
-import {cameraTransform, effectsEnabled, paintEffects} from "./effects.js";
+import {cameraTransform, effectsEnabled, effectTrack, paintEffects} from "./effects.js";
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
@@ -78,7 +78,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         list.scrollTo({top: item.offsetTop - list.offsetTop - 8, behavior: "smooth"});
       }
     }
-    for (const clip of document.querySelectorAll("#lanes .shot-clip")) {
+    for (const clip of document.querySelectorAll("#lanes [data-shot]")) {
       clip.setAttribute("aria-pressed", String(Number(clip.dataset.shot) === index));
     }
   }
@@ -90,7 +90,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
   function paintStills(time) {
     const rows = rowsOf();
     const current = shotAt(rows, time);
-    for (const clip of document.querySelectorAll("#lanes .shot-clip")) clip.classList.toggle("active", Number(clip.dataset.shot) === current);
+    for (const clip of document.querySelectorAll("#lanes [data-shot]")) clip.classList.toggle("active", Number(clip.dataset.shot) === current);
     for (const item of document.querySelectorAll("#shot-list .shot-row")) item.classList.toggle("playing", Number(item.dataset.shot) === current);
     const back = $("still-back"), front = $("still-front");
     const shots = state.project.video?.stills?.shots;
@@ -121,19 +121,25 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     }
   }
 
-  /** The player's Shots lane: one block per planned shot, showing its image once drawn. */
-  function shotLane(place) {
+  /** The player's shot images and their visual effects share the shot plan's timing. */
+  function shotLanes(place) {
     const rows = rowsOf();
-    if (!rows.length || (state.screen !== "illustrate" && state.mediaMode !== "video")) return null;
-    const lane = h("div", {class: "lane shot-lane"}, rows.map((row) => h("button", {
-      type: "button", class: `shot-clip shot-${row.status}`, "data-shot": row.index,
-      "aria-pressed": String(row.index === state.shotPick),
-      "aria-label": `Shot ${row.index + 1}, ${clock(row.start)}: ${row.beat} (${STATUS[row.status][0]})`,
-      title: `Shot ${row.index + 1} · ${row.beat}`,
-      style: {...place(row.start, row.end), ...(row.image ? {backgroundImage: `url("${row.image}")`} : {})},
-      onclick: (event) => { event.stopPropagation(); pickShot(row.index); },
-    }, h("span", {"aria-hidden": "true"}, row.index + 1))));
-    return {name: h("span", {class: "lane-name shot-lane-name"}, "Images"), lane};
+    const lanes = [];
+    if (rows.length && (state.screen === "illustrate" || state.mediaMode === "video")) {
+      const lane = h("div", {class: "lane shot-lane"}, rows.map((row) => h("button", {
+        type: "button", class: `shot-clip shot-${row.status}`, "data-shot": row.index,
+        "aria-pressed": String(row.index === state.shotPick),
+        "aria-label": `Shot ${row.index + 1}, ${clock(row.start)}: ${row.beat} (${STATUS[row.status][0]})`,
+        title: `Shot ${row.index + 1} · ${row.beat}`,
+        style: {...place(row.start, row.end), ...(row.image ? {backgroundImage: `url("${row.image}")`} : {})},
+        onclick: (event) => { event.stopPropagation(); pickShot(row.index); },
+      }, h("span", {"aria-hidden": "true"}, row.index + 1))));
+      lanes.push({name: h("span", {class: "lane-name shot-lane-name"}, "Images"), lane});
+    }
+    const effects = effectTrack(h, {shots: rows, presets: state.boot.video?.effect_presets, place,
+      picked: state.shotPick, pick: (shot) => pickShot(shot.index)});
+    if (effects) lanes.push(effects);
+    return lanes;
   }
 
   function videoField(label, input, hint) {
@@ -470,11 +476,12 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
 
   function renderIllustrate() {
     const screen = $("screen-illustrate");
-    if (state.screen !== "illustrate" || !state.project.video) return;
+    const video = state.project.video;
+    if (state.screen !== "illustrate" || !video) return;
     // Leave the step alone while one of its fields is being typed in.
     if (screen.contains(document.activeElement) && document.activeElement.matches("input[type=text], textarea")) return;
     const main = $("illustrate-main");
-    const plan = state.project.video.plan;
+    const plan = video.plan;
     const rows = plan.rows;
     const warnings = plan.subjects.filter((item) => item.conflicts?.length).length;
     const looks = state.illustrateView === "looks";
@@ -554,5 +561,5 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
   }
 
   return {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo, renderIllustrate,
-          renderIllustrateActions, illustrateSummary, shotLane, pickShot};
+          renderIllustrateActions, illustrateSummary, shotLanes, pickShot};
 }

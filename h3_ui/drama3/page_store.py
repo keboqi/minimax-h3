@@ -26,13 +26,13 @@ def project_lock(name: str) -> RLock:
 
 
 @contextmanager
-def editing(store, name: str) -> Iterator[dict]:
+def editing(store, name: str, *, reset_result=False) -> Iterator[dict]:
     """Hold the project's lock, yield its saved data to edit in place, then save it.
 
     Nothing is saved when the block raises.
     """
     with project_lock(name):
-        with store.edit_soundstage_project(name) as data:
+        with store.edit_soundstage_project(name, reset_result=reset_result) as data:
             before = deepcopy(data)
             yield data
             for kind, count, shown in (("voice", DRAMA3_VOICE_SLOTS, "shown_slots"),

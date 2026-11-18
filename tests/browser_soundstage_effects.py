@@ -44,6 +44,7 @@ def run():
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             page.locator("#step-illustrate").click()
             expect(page.locator("#still-back")).to_be_visible()
+            expect(page.locator("#lanes .effect-lane")).to_have_count(0)
             assert page.locator("#shot-inspector select").count() == 2, (errors, page.locator("#screen-illustrate").inner_text())
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
                 page.get_by_label("Camera movement", exact=True).select_option("push_in")
@@ -56,10 +57,25 @@ def run():
             page.wait_for_load_state("networkidle")
             actual = fixture.project()["video"]["plan"]["rows"][0]["effects"]
             assert actual == ["push_in", "rain"], (actual, page.locator("body").inner_text(), errors)
+            effect = page.locator("#lanes .effect-clip")
+            expect(effect).to_have_count(1)
+            expect(effect).to_have_text("Slow push in · Rain")
+            assert effect.evaluate("clip => clip.style.width") == page.locator(
+                '#lanes .shot-clip[data-shot="0"]').evaluate("clip => clip.style.width")
             page.evaluate("""async source => {
               const audio = document.getElementById('mix-audio');
               await new Promise(resolve => { audio.addEventListener('canplaythrough', resolve, {once: true}); audio.src = source; audio.load(); });
             }""", "data:audio/wav;base64," + base64.b64encode(audio.getvalue()).decode())
+            # Picking a shot while the mix plays must seek without pausing it.
+            page.locator("#play").click()
+            page.wait_for_function("!document.getElementById('mix-audio').paused")
+            page.locator('#shot-list .shot-row[data-shot="1"]').click()
+            page.wait_for_function("document.getElementById('mix-audio').currentTime >= 4")
+            assert page.locator("#mix-audio").evaluate("audio => !audio.paused")
+            page.locator('#lanes .shot-clip[data-shot="0"]').click()
+            page.wait_for_function("document.getElementById('mix-audio').currentTime < 3")
+            assert page.locator("#mix-audio").evaluate("audio => !audio.paused")
+            page.locator("#play").click()
             # Seek the actual player while paused; every frame must reconstruct deterministically.
             frame = page.evaluate("""async () => {
               const audio = document.getElementById('mix-audio');
@@ -106,6 +122,17 @@ def run():
             expect(page.locator("#still-back")).to_have_css("transform", "none")
             page.emulate_media(reduced_motion="no-preference")
             expect(page.locator("#still-back")).to_have_css("transform", "none")
+            # A planned effect stays on the timeline when its playback is off.
+            expect(effect).to_have_text("Slow push in · Lightning")
+            page.locator('#lanes .shot-clip[data-shot="1"]').click()
+            effect.click()
+            expect(effect).to_have_attribute("aria-pressed", "true")
+            page.wait_for_function("document.getElementById('mix-audio').currentTime < 1")
+            page.locator("#step-script").click()
+            page.locator(".estimate-toggle").click()
+            expect(page.locator("#estimate .effect-clip")).to_have_text("Slow push in · Lightning")
+            page.locator("#step-mix").click()
+            expect(effect).to_have_text("Slow push in · Lightning")
             assert not errors, errors
             browser.close()
         print("PASS: effect controls, persistence, canvas animation, seeking, reduced motion, module loading")

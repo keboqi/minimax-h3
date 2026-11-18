@@ -135,12 +135,17 @@ a.step:hover { background: var(--raised); }
 .lane { position: relative; height: calc(var(--rows, 1) * 24px + 6px); background: var(--lane); border-radius: 6px; cursor: pointer; }
 .clip { position: absolute; top: calc(4px + var(--row, 0) * 24px); height: 20px; min-width: 3px; padding: 0; border: 0; border-radius: 4px; opacity: .9; overflow: hidden; }
 /* Voice clips carry a small waveform glyph. */
-#lanes .clip:not(.bed):not(.cue)::after { content: ""; position: absolute; inset: 0; background: rgba(255, 255, 255, .6);
+#lanes .clip:not(.bed, .cue, .effect-clip)::after { content: ""; position: absolute; inset: 0; background: rgba(255, 255, 255, .6);
   -webkit-mask: var(--wave) left center / 48px 100% repeat-x; mask: var(--wave) left center / 48px 100% repeat-x; }
 .clip:hover, .clip.active { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--playhead); }
 .clip.bed { background: var(--bed-line); color: var(--new); }
 .clip.cue { background: var(--cue-line); color: var(--cue-ink); }
-#lanes .clip > span { display: block; padding: 0 6px; font-family: var(--mono); font-size: 11px; font-weight: 500; line-height: 20px;
+.effect-lane-name { height: 30px; color: var(--tok-effect); white-space: normal; line-height: 1.1; }
+.clip.effect-clip { background: color-mix(in srgb, var(--tok-effect) 20%, var(--surface)); color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--tok-effect); }
+.clip.effect-clip:hover, .clip.effect-clip.active { background: color-mix(in srgb, var(--tok-effect) 35%, var(--surface)); }
+.clip.effect-clip[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 1; }
+#lanes .clip > span, .effect-clip > span { display: block; padding: 0 6px; font-family: var(--mono); font-size: 11px; font-weight: 500; line-height: 20px;
   text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .playhead { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--playhead); border-radius: 1px; pointer-events: none; }
 .playhead::before { content: ""; position: absolute; top: 4px; left: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--playhead);
@@ -325,11 +330,13 @@ button.step:hover { background: var(--raised); }
 .estimate-toggle:hover { background: var(--raised); }
 .estimate-toggle svg { transition: transform .15s; }
 .estimate.open .estimate-toggle svg { transform: rotate(180deg); }
-.estimate:not(.open) .scene-bands, .estimate:not(.open) .lane + .lane { display: none; }
+.estimate:not(.open) :is(.scene-bands, .lane + .lane, .estimate-effects) { display: none; }
 .estimate:not(.open) .lane { height: calc(var(--rows, 1) * 10px + 4px); }
 .estimate:not(.open) .clip { top: calc(2px + var(--row, 0) * 10px); height: 8px; }
 .estimate .lane { height: calc(var(--rows, 1) * 18px + 6px); cursor: default; }
 .estimate .clip { top: calc(3px + var(--row, 0) * 18px); height: 14px; border-radius: 3px; }
+.estimate-effects .effect-lane-name { height: auto; margin: 2px 0; }
+.estimate-effects .effect-clip > span { line-height: 14px; }
 .estimate .lanes.locating .lane, .estimate .lanes.locating .clip { cursor: pointer; }
 .estimate .clip.active { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--playhead); z-index: 1; }
 .estimate-window { position: absolute; top: -3px; bottom: -3px; min-width: 6px; border: 1.5px solid var(--accent); border-radius: 6px;
