@@ -545,7 +545,7 @@ class ImagePageState:
             "edit_size": compose("edit_size", editing), "separate": compose("batch_edit_inputs", editing),
             "layout": compose("layout"),
             "width": options[key_of(engine, "width")], "height": options[key_of(engine, "height")],
-            "seed": options[key_of(engine, "seed")],
+            "seed": options.get(key_of(engine, "seed")),
             "guidance": self.guidance(state, editing),
             "readiness": {"ready": not issue,
                           "message": issue or f"Ready to {'edit' if editing else 'generate'} with {self.labels[engine]}."},

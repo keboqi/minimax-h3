@@ -355,7 +355,6 @@ class GptImageGenerationTests(unittest.TestCase):
                 width=1920,
                 height=1088,
                 batch_count=4,
-                seed=7,
             )
             fake_openai = SimpleNamespace(OpenAI=FakeOpenAI)
             token = CURRENT_JOB.set(Job(owner="test", family="GPT Image"))
@@ -381,6 +380,7 @@ class GptImageGenerationTests(unittest.TestCase):
                 snap = read_snapshot(path)
                 self.assertIsNotNone(snap)
                 self.assertEqual(snap["family"], "GPT Image")
+                self.assertNotIn("seed", snap["settings"])
                 self.assertEqual(snap["settings"]["quality"], "low")
 
     def test_edit_uses_reference_images_and_failback_retries_primary_failure(self):

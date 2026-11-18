@@ -154,7 +154,8 @@ class ImagePageTests(unittest.TestCase):
 
     def test_every_job_option_has_a_place_on_the_page(self):
         own = [name for name in self.services.job_fields if not name.startswith("h3__")]
-        self.assertTrue(set(own) <= set(self.services.fields))
+        # Retained jobs still have a positional slot for the removed GPT Image seed.
+        self.assertEqual(set(own) - set(self.services.fields), {"gpt_image__seed"})
         for name in own:
             self.assertIn(name.partition("__")[2], {*GROUP_OF, *COMPOSE}, name)
         self.assertEqual([engine["id"] for engine in self.boot["engines"]],
@@ -438,6 +439,9 @@ class ImagePageTests(unittest.TestCase):
             self.assertFalse(state["failback_available"])
             self.assertEqual(state["options"]["gpt_image__models"], ["gpt-image-2.5-flare"])
             self.assertEqual(state["options"]["gpt_image__quality"], "low")
+            self.assertNotIn("gpt_image__seed", state["options"])
+            self.assertNotIn("gpt_image__seed", {row["name"] for row in state["fields"]})
+            self.assertIsNone(state["seed"])
             self.assertEqual((state["width"], state["height"]), (1920, 1088))
             self.assertEqual((state["batch"]["minimum"], state["batch"]["maximum"]), (1, 2))
 

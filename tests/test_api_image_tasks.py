@@ -153,6 +153,7 @@ class WorkshopApiImageTests(unittest.TestCase):
                 self.assertFalse(boot["gpu"])
                 self.assertEqual([item["id"] for item in boot["engines"]], ["gpt_image"])
                 self.assertEqual(boot["state"]["engine"], "gpt_image")
+                self.assertNotIn("gpt_image__seed", boot["state"]["options"])
                 response = client.post("/image/api/settings", json={"action": "engine", "changes": {"engine": "qwen"}})
                 self.assertEqual(response.status_code, 400)
                 client.post("/image/api/prompt", json={"prompt": "a blue bird"})

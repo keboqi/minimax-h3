@@ -199,13 +199,14 @@ class StoryboardHandlers(StoryboardApiHandlers):
                                    include_outdated=bool(include_outdated))
 
     def export(self, owner, storyboard_id, include_outdated) -> Path:
-        board = self.service.load(owner, storyboard_id)
-        path = self.service.render(board, self.service.export_path(board), include_outdated=bool(include_outdated))
-        self.services.publish(path, {
-            "storyboard": {"id": storyboard_id, "name": board["name"], "scenes": len(board["scenes"])},
-            "settings": board["profile"],
-        })
-        self.service.save_version(owner, storyboard_id, f"Exported {path.name}", source=board)
+        service = self.service
+        with service.export_source(owner, storyboard_id) as board:
+            path = service.render(board, service.export_path(board), include_outdated=bool(include_outdated))
+            self.services.publish(path, {
+                "storyboard": {"id": storyboard_id, "name": board["name"], "scenes": len(board["scenes"])},
+                "settings": board["profile"],
+            })
+            service.save_version(owner, storyboard_id, f"Exported {path.name}", source=board)
         return path
 
     # Generation ------------------------------------------------------------

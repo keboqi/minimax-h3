@@ -1,6 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {cameraTransform, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {createVideo} from "../h3_ui/drama3/page/video.js";
+
+test("camera moves follow the displayed stills across an undrawn shot and a dissolve", (t) => {
+  const globals = {window: {}, document: {querySelectorAll: () => []}, Image: class {}};
+  for (const [name, value] of Object.entries(globals)) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {value, configurable: true});
+    t.after(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);
+  }
+  const back = {dataset: {}, style: {}}, front = {dataset: {}, style: {}};
+  const $ = (id) => ({"still-back": back, "still-front": front})[id];
+  const state = {project: {video: {
+    plan: {rows: [
+      {index: 0, start: 0, image: "shot-a.png", effects: ["push_in"]},
+      {index: 1, start: 4, image: null, effects: ["pan_left"]},
+      {index: 2, start: 8, image: "shot-c.png", effects: ["pull_out"]},
+    ]},
+    stills: {shots: [
+      {start: 0, end: 4, fade: 0, url: "shot-a.png"},
+      {start: 8, end: 12, fade: 1, url: "shot-c.png"},
+    ]},
+  }}};
+  const {paintStills} = createVideo({state, $});
+
+  paintStills(6);
+  assert.equal(back.src, "shot-a.png");
+  assert.equal(back.style.transform, "scale(1.08)");
+  paintStills(8.5);
+  assert.equal(back.style.transform, "scale(1.08)");
+  assert.equal(front.src, "shot-c.png");
+  assert.equal(front.style.opacity, "0.5");
+  assert.equal(front.style.transform, "scale(1.07)");
+});
 
 test("reduced motion pauses effects unless explicitly overridden for the project", () => {
   assert.equal(effectsEnabled({}, false), true);

@@ -29,7 +29,7 @@ def build_api_images(ui, runtime, *, library=None):
         "quality": FieldSpec("choice", "Image quality", GPT_IMAGE_QUALITY, (("low", "low"),)),
         "width": FieldSpec("choice", "Width", 1920, (("1920", 1920), ("1088", 1088))),
         "height": FieldSpec("choice", "Height", 1088, (("1088", 1088), ("1920", 1920))),
-        "seed": FieldSpec("int", "Seed", -1),
+        "seed": FieldSpec("int", "Seed", -1),  # Input position for retained jobs.
         "batch_count": FieldSpec("int", "Concurrent images", 1, minimum=1,
                                  maximum=GPT_IMAGE_MAX_CONCURRENCY, step=1),
     }
@@ -48,7 +48,8 @@ def build_api_images(ui, runtime, *, library=None):
     JOBS.register_callback("image", owned_generation(
         generate, "image", input_names=("engine", "mode", "prompt", "references", *fields)))
     pages = ImagePageState(ImagePageServices(
-        root=lambda: private_image_root(runtime, JOBS.store.root), fields=fields,
+        root=lambda: private_image_root(runtime, JOBS.store.root),
+        fields={name: spec for name, spec in fields.items() if name != "gpt_image__seed"},
         job_fields=tuple(fields), presets={"gpt_image": (GPT_IMAGE_RESOLUTION_PRESETS,)},
         suggest=None, interrupt=interrupt_api_image, library=lambda: library, engines=("gpt_image",)))
     with gr.Tab("Image"):

@@ -239,7 +239,6 @@ class ImageGenerationController:
                 width=int(captured.get("gpt_image__width", 1920)),
                 height=int(captured.get("gpt_image__height", 1088)),
                 batch_count=int(captured.get("gpt_image__batch_count", 1)),
-                seed=int(captured.get("gpt_image__seed", -1)),
                 reference_images=tuple(active_references),
             )
             return generate_gpt_image(request, self.deps.runtime_config())

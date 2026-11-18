@@ -425,8 +425,12 @@ class StoryboardRunnerTests(unittest.TestCase):
 
     def test_export_version_keeps_the_rendered_scenes_when_edits_arrive_during_render(self):
         storyboard_id = self.make("cut")
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        reference = self.root / "reference.png"
+        reference.write_bytes(b"reference")
+        self.service.set_scene_media("a", storyboard_id, scene_id, "ref_images", [str(reference)])
         original = self.service.load("a", storyboard_id)
-        scene_id = original["scenes"][0]["id"]
+        saved_reference = Path(original["scenes"][0]["ref_images"][0])
         add_take(original, 0, "first")
         add_take(original, 0, "alternative")
         original["scenes"][0]["in_use"] = "first"
@@ -437,6 +441,8 @@ class StoryboardRunnerTests(unittest.TestCase):
             self.service.update_scene("a", storyboard_id, scene_id, prompt="Edited while exporting")
             self.service.use_take("a", storyboard_id, scene_id, "alternative")
             self.service.move_scene("a", storyboard_id, scene_id, 1)
+            self.service.set_scene_media("a", storyboard_id, scene_id, "ref_images", [])
+            self.assertTrue(saved_reference.is_file())
             return destination
 
         with patch.object(self.service, "render", side_effect=render):
@@ -445,10 +451,33 @@ class StoryboardRunnerTests(unittest.TestCase):
         current = self.service.load("a", storyboard_id)
         self.assertEqual(current["versions"][-1]["scenes"], original["scenes"])
         self.assertEqual(current["versions"][-1]["cast"], original["cast"])
+        self.assertTrue(saved_reference.is_file())
         edited = next(scene for scene in current["scenes"] if scene["id"] == scene_id)
+        self.assertEqual(edited["ref_images"], [])
         self.assertEqual(edited["prompt"], "Edited while exporting")
         self.assertEqual(edited["in_use"], "alternative")
         self.assertEqual(current["scenes"][-1]["id"], scene_id)
+
+    def test_failed_export_releases_removed_scene_media(self):
+        storyboard_id = self.make("cut")
+        scene_id = self.service.load("a", storyboard_id)["scenes"][0]["id"]
+        reference = self.root / "reference.png"
+        reference.write_bytes(b"reference")
+        self.service.set_scene_media("a", storyboard_id, scene_id, "ref_images", [str(reference)])
+        scene = self.service.load("a", storyboard_id)["scenes"][0]
+        saved_reference = Path(scene["ref_images"][0])
+
+        def render(board, destination, **kwargs):
+            self.service.set_scene_media("a", storyboard_id, scene_id, "ref_images", [])
+            self.assertTrue(saved_reference.is_file())
+            raise H3Error("Export failed")
+
+        with patch.object(self.service, "render", side_effect=render):
+            with self.assertRaisesRegex(H3Error, "Export failed"):
+                self.handlers.export("a", storyboard_id, True)
+
+        self.assertFalse(saved_reference.exists())
+        self.assertEqual(self.service.load("a", storyboard_id)["versions"], [])
 
     def test_generate_remaining_chains_flows_from_the_take_in_use(self):
         storyboard_id = self.make("flow", "cut")

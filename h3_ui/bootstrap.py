@@ -240,7 +240,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         # Reads what the MiniMax H3 page saved: P-H3-Image runs on that page's settings.
         h3_saved = H3PageState(h3_page_services)
         image_fields = {name: component for name, component in image_controller.fields.items()
-                        if not name.startswith("h3__")}
+                        if not name.startswith("h3__") and name != "gpt_image__seed"}
         # Shown with the model's options, though no generation takes them by name.
         image_fields["qwen__preset"] = engine_views["qwen"].preset
         image_fields["moss_image__rewrite_mode"] = engine_views["moss_image"].rewrite_mode

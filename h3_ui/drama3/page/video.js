@@ -99,21 +99,22 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     while (index + 1 < shots.length && shots[index + 1].start <= time) index += 1;
     const shot = shots[index];
     const fading = index > 0 && shot.fade > 0 && time < shot.start + shot.fade;
+    const background = fading ? shots[index - 1] : shot;
     const show = (image, url) => { if (image.dataset.src !== url) { image.src = url; image.dataset.src = url; } };
-    show(back, fading ? shots[index - 1].url : shot.url);
+    show(back, background.url);
     if (fading) show(front, shot.url);
     front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
-    const row = rows[current];
     const enabled = effectsEnabled(state.project.video, reducedMotion?.matches);
-    const effects = enabled ? row?.effects || [] : [];
-    const progress = (time - (row?.start || 0)) / Math.max(0.001, (row?.end || 0) - (row?.start || 0));
+    const effectsFor = (still) => enabled ? rows.find((row) => row.image === still.url)?.effects || [] : [];
+    const effects = effectsFor(shot);
+    const elapsed = time - shot.start;
+    const progress = elapsed / Math.max(0.001, shot.end - shot.start);
     front.style.transform = cameraTransform(effects, progress);
-    const previous = rows[shotAt(rows, shots[Math.max(0, index - 1)].start)];
     back.style.transform = fading
-      ? cameraTransform(enabled ? previous?.effects || [] : [], 1)
+      ? cameraTransform(effectsFor(background), 1)
       : cameraTransform(effects, progress);
     const overlay = $("still-effects");
-    if (overlay) paintEffects(overlay, effects, time - (row?.start || 0));
+    if (overlay) paintEffects(overlay, elapsed >= 0 ? effects : [], elapsed);
     // Fetch the next images before they are due, so a cut never waits on the network.
     for (const next of shots.slice(index + 1, index + 3)) {
       if (!preloaded.has(next.url)) { preloaded.add(next.url); new Image().src = next.url; }

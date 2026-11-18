@@ -57,7 +57,6 @@ class GptImageRequest:
     width: int = 1920
     height: int = 1088
     batch_count: int = 1
-    seed: int = -1
     reference_images: tuple[str, ...] = ()
 
 
@@ -443,7 +442,6 @@ def generate_gpt_image(
                                 "quality": quality,
                                 "width": width,
                                 "height": height,
-                                "seed": request.seed,
                                 "batch_count": batch_count,
                                 "variant_index": slot_index,
                                 "reference_count": len(references),

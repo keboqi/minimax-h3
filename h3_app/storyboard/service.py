@@ -6,6 +6,7 @@ import copy
 import hashlib
 import shutil
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
@@ -96,6 +97,7 @@ class StoryboardService:
         self.runtime = runtime
         # One process edits a storyboard at a time; each change is read-modify-write.
         self.lock = RLock()
+        self._export_media: dict[int, set[str]] = {}
 
     # Paths -----------------------------------------------------------------
     def cast_dir(self, storyboard_id: str) -> Path:
@@ -538,6 +540,20 @@ class StoryboardService:
         return self.change(owner, storyboard_id, edit)[0]
 
     # Versions --------------------------------------------------------------
+    @contextmanager
+    def export_source(self, owner, storyboard_id):
+        """Keep the export's scene media alive until its version has been saved."""
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            paths = {path for scene in board["scenes"] for path in model.media_paths(scene)}
+            self._export_media[id(board)] = paths
+        try:
+            yield board
+        finally:
+            with self.lock:
+                del self._export_media[id(board)]
+                self._collect_media(paths)
+
     def save_version(self, owner, storyboard_id, label="", *, source=None):
         """Save the supplied document's scene list, or the current one for a manual version."""
         def edit(board):
@@ -583,7 +599,7 @@ class StoryboardService:
             self.store.delete_storyboard(owner, storyboard_id)
             shutil.rmtree(self.store.root / "storyboards" / storyboard_id, ignore_errors=True)
             # Branches share take and scene media files, so keep any another storyboard still uses.
-            used = set()
+            used = set().union(*self._export_media.values())
             for other_owner, other_id in self._all_ids():
                 other = self.store.storyboard(other_owner, other_id)
                 for take in other["takes"].values():
@@ -611,7 +627,7 @@ class StoryboardService:
         """Remove scene media no storyboard, saved version or branch uses any more."""
         if not dropped:
             return
-        used = set()
+        used = set().union(*self._export_media.values())
         for other_owner, other_id in self._all_ids():
             used.update(self._scene_files(self.store.storyboard(other_owner, other_id)))
         for value in dropped - used:

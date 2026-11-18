@@ -91,7 +91,7 @@ def _move(component):
 
 def _build_size_settings(engine_views):
     size_groups = {}
-    with gr.Accordion("Output size and seed", open=True):
+    with gr.Accordion("Output settings", open=True):
         for engine in IMAGE_MODELS:
             with gr.Group(visible=engine == "qwen") as size_groups[engine]:
                 if engine == "h3":
@@ -118,7 +118,8 @@ def _build_size_settings(engine_views):
                     with gr.Row():
                         gpt_image_width = gr.Slider(1088, 1920, value=1920, step=832, label="Width")
                         gpt_image_height = gr.Slider(1088, 1920, value=1088, step=832, label="Height")
-                    gpt_image_seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
+                    # Keep the input position used by retained image jobs.
+                    gpt_image_seed = gr.Number(value=-1, precision=0, visible=False)
                 else:
                     for name in SIZE_FIELDS:
                         component = getattr(engine_views[engine], name, None)

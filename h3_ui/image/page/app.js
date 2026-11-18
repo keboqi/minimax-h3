@@ -180,7 +180,8 @@
       setTimeout(() => choose(50), 50);
     } catch { toast(`Open ${label} from the ${task} task.`); }
   };
-  const groupsShown = () => app.boot.groups.map((group, index) => [index, group])
+  const groupsShown = () => app.boot.groups.map((group, index) =>
+    [index, index === 1 && app.s.engine === "gpt_image" ? ["Size", "Exact width and height."] : group])
     .filter(([index]) => app.s.fields.some((field) => field.group === index));
   const openGroup = (index) => {
     saveUi({fine: true, group: index});
@@ -341,6 +342,7 @@
     const chosen = sizeChoice();
     const ratios = [...new Set(tiers.flatMap((tier) => tier.sizes.map((size) => size.ratio)))];
     const restricted = app.s.engine === "gpt_image";
+    $("open-size").textContent = restricted ? "Exact size" : "Exact size & seed";
     seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
     seg($("tier"), restricted ? tiers.map((tier, index) => [tier.label, index]) : [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
       (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value));

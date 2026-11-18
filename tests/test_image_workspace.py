@@ -299,7 +299,7 @@ class ImageGenerationControllerTests(unittest.TestCase):
         self.assertEqual(request.quality, "low")
         self.assertEqual((request.width, request.height), (1088, 1920))
         self.assertEqual(request.batch_count, 4)
-        self.assertEqual(request.seed, 9)
+        self.assertFalse(hasattr(request, "seed"))
         self.assertEqual(request.reference_images, ("ref.png",))
 
     def test_variations_accumulate_outputs_with_distinct_seeds_and_edit_inputs(self):
