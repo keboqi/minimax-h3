@@ -89,6 +89,20 @@ first and names them, and the first fresh start after them that stays as it is:
 **Switch and regenerate them**, **Switch, regenerate later**, or **Cancel**. Fresh
 starts stop changes from rippling further.
 
+## Subtitles
+
+Dialogue and lyrics inside `<d>` tags in a take's prompt appear as optional subtitles
+with estimated timing. Use the player's subtitle control to show them.
+In **Storyboard settings**, turn on **Automatically generate word-aligned subtitles after each take**
+to transcribe and time the generated audio as each take finishes. This setting is off by default.
+In Studio, **Generate word-aligned subtitles** analyzes the generated takes currently in use,
+even while the storyboard is incomplete. It reuses completed analyses and can retry takes that
+had a problem. If speech can only be timed as whole lines, those lines are kept.
+
+The full-video player uses the selected takes' subtitles and accounts for trimmed scene overlaps.
+Use **Download subtitles** in the full-video player to save a WebVTT file with word timings.
+MP4 exports include a toggleable subtitle track with line timings.
+
 ## Starting from a video
 
 A scene can be a video you already have instead of a generated clip, so the scenes after

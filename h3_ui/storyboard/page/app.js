@@ -272,14 +272,30 @@
     renderTakes();
   };
 
-  // Rebuilt only when the picture changes, so a playing take survives saves and polls.
+  const subtitleTrack = (src) => src && h("track", {src, kind: "subtitles", srclang: "und", label: "Subtitles"});
+
+  // Rebuilt only when the take changes, so playback survives saves and polls.
   const renderPreview = () => {
     const item = scene();
     const take = shownTake();
     const key = take ? take.id : `empty:${item.id}`;
-    if (key === state.previewKey) return;
-    state.previewKey = key;
     const node = $("preview");
+    if (key === state.previewKey) {
+      const video = node.querySelector("video");
+      const track = video?.querySelector("track");
+      const src = take?.subtitles || null;
+      if (video && src !== (track?.getAttribute("src") ?? null)) {
+        const showing = track?.track.mode === "showing";
+        track?.remove();
+        if (src) {
+          const replacement = subtitleTrack(src);
+          video.append(replacement);
+          if (showing) replacement.track.mode = "showing";
+        }
+      }
+      return;
+    }
+    state.previewKey = key;
     node.querySelectorAll("video").forEach((video) => {
       video.pause();
       video.removeAttribute("src");
@@ -287,7 +303,7 @@
     });
     if (take && !take.missing) {
       node.replaceChildren(h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
-        "aria-label": `Take ${take.number} of scene ${item.number}`}));
+        "aria-label": `Take ${take.number} of scene ${item.number}`}, subtitleTrack(take.subtitles)));
     } else {
       node.replaceChildren(h("div", {className: "empty"},
         h("strong", {}, take ? "This take is missing from disk" : item.kind === "media" ? "Not prepared yet" : "No take yet"),
@@ -316,7 +332,7 @@
       return;
     }
     const shown = shownTake();
-    const busy = Boolean(activeGenerate());
+    const busy = Boolean(state.run?.active);
     const blocked = item.issues.length > 0;
     const chips = item.takes.map((take) => chip(
       `Take ${take.number}${take.id === item.in_use ? " · in use" : ""}`,
@@ -324,6 +340,7 @@
       () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
     ));
     const row = [];
+    if (shown?.subtitle_error) row.push(h("span", {className: "small muted"}, shown.subtitle_error));
     const choices = [];
     if (shown && shown.id !== item.in_use) {
       choices.push(button("Use this take", useTake, "btn quiet"));
@@ -550,6 +567,13 @@
         ? button("Interrupt", interrupt, "btn danger")
         : button(pending ? `Generate all remaining scenes (${pending})` : "All scenes are done",
           () => startGeneration({action: "remaining"}), "btn primary", {disabled: !pending || busy}));
+      actions.push(busy && run.kind === "subtitles"
+        ? button("Interrupt subtitles", interrupt, "btn danger")
+        : button("Generate word-aligned subtitles", startSubtitles, "btn", {
+          disabled: busy || !scenes().some((scene) => scene.kind !== "media"
+            && scene.takes.some((take) => take.id === scene.in_use && !take.missing)),
+          title: "Transcribe and time the audio in all generated takes currently in use",
+        }));
     }
     actions.push(
       button("Play full video", () => startJoin(false), "btn", {disabled: busy}),
@@ -572,9 +596,12 @@
             h("strong", {className: "small"}, "Full storyboard video"),
             h("span", {className: "small muted"}, "Continuing scenes drop their repeated opening; fresh starts cut."),
             h("div", {className: "grow"}),
-            h("a", {className: "btn sm", href: state.fullVideo, download: `${state.board.name || "storyboard"}.mp4`}, "Download"),
+            state.fullVideo.subtitles && h("a", {className: "btn sm", href: state.fullVideo.subtitles,
+              download: `${state.board.name || "storyboard"}.vtt`}, "Download subtitles"),
+            h("a", {className: "btn sm", href: state.fullVideo.url, download: `${state.board.name || "storyboard"}.mp4`}, "Download"),
             button("Close", () => { state.fullVideo = null; renderFullVideo(); }, "btn sm")),
-          h("video", {src: state.fullVideo, controls: true, preload: "metadata", "aria-label": "Full video"}))] : []));
+          h("video", {src: state.fullVideo.url, controls: true, preload: "metadata", "aria-label": "Full video"},
+            subtitleTrack(state.fullVideo.subtitles)))] : []));
   };
 
   // Moving between scenes -------------------------------------------------
@@ -1244,6 +1271,15 @@
     return [
       panelHead("Storyboard settings"),
       state.board.settings && h("p", {className: "small muted"}, `Uses: ${state.board.settings}`),
+      h("label", {className: "check-label"},
+        h("input", {type: "checkbox", checked: state.board.auto_subtitles, onchange: async (event) => {
+          const input = event.target;
+          input.disabled = true;
+          const data = await act(() => request("PUT", boardUrl("/subtitle-settings"), {auto_subtitles: input.checked}));
+          if (data) applyBoard(data);
+          else { input.checked = !input.checked; input.disabled = false; }
+        }}), "Automatically generate word-aligned subtitles after each take"),
+      h("p", {className: "small muted"}, "Audio transcription runs on the GPU endpoint. Dialogue tagged in the prompt gets approximate subtitles until audio is analyzed."),
       state.boot.gpu && [
         button("Use my current MiniMax H3 settings", () => {
           if (state.board.done > 0 && !state.confirmProfile) {
@@ -1299,6 +1335,15 @@
     await saves;
     const data = await act(() => request("POST", boardUrl("/join"), {include_outdated: state.includeOutdated, export: exporting}));
     if (data) followRun(data.run, {started: true});
+    renderStripActions();
+  };
+  const startSubtitles = async () => {
+    const data = await act(() => request("POST", boardUrl("/subtitles")));
+    if (data) {
+      followRun(data.run, {started: true});
+      if (!data.run.active) await refreshBoard();
+    }
+    renderStage();
     renderStripActions();
   };
   const interrupt = async () => {
@@ -1409,7 +1454,7 @@
     if (run.error) toast(run.error, true);
     else if (run.message || run.status) toast(run.message || run.status);
     if (run.result_url) {
-      state.fullVideo = run.result_url;
+      state.fullVideo = {url: run.result_url, subtitles: run.subtitles_url};
       renderFullVideo();
     }
   };

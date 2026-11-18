@@ -51,6 +51,16 @@ def add_take(document, index, take_id=None):
 
 
 class StoryboardRuleTests(unittest.TestCase):
+    def test_subtitle_words_follow_worker_line_rounding(self):
+        from h3_app.storyboard import subtitles
+
+        word = {"text": "Hello", "start": 1.0001, "end": 1.9998}
+        group = {"lines": [{"text": "Hello!", "start": 1.0, "end": 2.0}], "words": [word]}
+        self.assertEqual(subtitles.aligned_lines([group])[0]["words"], [word])
+        group["words"] = []
+        self.assertEqual(subtitles.aligned_lines([group])[0]["words"], [])
+        self.assertEqual(subtitles.subtitle_text([{"text": "Short", "start": 1.0, "end": 1.0001}], web=False), "")
+
     def test_flow_scenes_follow_the_take_they_continue_from_until_a_cut(self):
         document = board("flow", "cut", "flow")
         self.assertEqual(sb.scene_states(document), ["done"] * 4)
@@ -337,7 +347,23 @@ class StoryboardServiceTests(unittest.TestCase):
                             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2",
                             "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
             document["takes"][scene["in_use"]]["video"] = str(path)
-        target = self.service.render(document, self.root / "joined.mp4")
+        continuing = document["takes"][document["scenes"][1]["in_use"]]
+        continuing["subtitles"] = [{"start": 1.1, "end": 1.95, "text": "old two words", "words": [
+            {"text": "old", "start": 1.1, "end": 1.4},
+            {"text": "two", "start": 1.65, "end": 1.75},
+            {"text": "words", "start": 1.8, "end": 1.95},
+        ]}]
+        track = self.root / "joined.vtt"
+        target = self.service.render(document, self.root / "joined.mp4", subtitle_preview=track)
+        vtt = track.read_text(encoding="utf-8")
+        self.assertIn("00:00:02.000 --> 00:00:02.325", vtt)
+        self.assertIn("<00:00:02.175><c>words</c>", vtt)
+        self.assertNotIn("old", vtt)
+        embedded = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", str(target), "-map", "0:s:0", "-f", "srt", "-"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn("two words", embedded)
         frames = subprocess.run(
             ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
              "stream=nb_read_frames", "-of", "csv=p=0", str(target)],

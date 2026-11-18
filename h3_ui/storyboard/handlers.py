@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import struct
 from time import monotonic
@@ -17,8 +18,9 @@ from h3_app.catalog import (
 from h3_app.errors import H3Error
 from h3_app import media_review
 from h3_app.generation.construct_graph import StoryboardGraph
-from h3_app.jobs import CURRENT_JOB
+from h3_app.jobs import CURRENT_JOB, JobCancelled
 from h3_app.staging import stage_file
+from h3_app.storyboard import subtitles
 from h3_app.storyboard.text import parse_scenes
 from h3_app.storyboard.writer import rewrite_story
 from h3_ui.job_admission import require_owner
@@ -46,6 +48,8 @@ WRITER_DEFAULTS = {
     "local_prompt_top_p": 0.9, "local_prompt_greedy": False, "local_prompt_seed": 0,
 }
 GENERATE_SCENE, GENERATE_REMAINING, SWITCH_AND_REGENERATE = "scene", "remaining", "switch"
+GENERATE_SUBTITLES = "subtitles"
+LOG = logging.getLogger(__name__)
 # Tail clips of scenes from Media, staged in ComfyUI's input for the scene that continues them.
 TAIL_CATEGORY = "storyboard_tails"
 
@@ -61,6 +65,7 @@ class StoryboardServices:
     publish: Callable[[Path, dict[str, Any]], None]
     # enhance_h3_prompt(**values) → (prompt, status)
     enhance_prompt: Callable[..., tuple[str, str]] | None = None
+    free_gpu: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -195,8 +200,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
     # Joining ---------------------------------------------------------------
     def play_all(self, owner, storyboard_id, include_outdated) -> Path:
         board = self.service.load(owner, storyboard_id)
-        return self.service.render(board, self.service.preview_path(storyboard_id),
-                                   include_outdated=bool(include_outdated))
+        path = self.service.preview_path(storyboard_id)
+        return self.service.render(board, path, include_outdated=bool(include_outdated),
+                                   subtitle_preview=path.with_suffix(".vtt"))
 
     def export(self, owner, storyboard_id, include_outdated) -> Path:
         service = self.service
@@ -249,13 +255,69 @@ class StoryboardHandlers(StoryboardApiHandlers):
             raise H3Error(f"Scene {index + 1} finished without a saved take.")
         outputs["prefix_frames"] = latent_prefix_frames(service.output_path(outputs["latent"])) if source else 0
         job = CURRENT_JOB.get()
-        service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
-                            seed=seed, inputs=inputs, job_id=job.id if job else None)
+        saved = service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
+                                    seed=seed, inputs=inputs, job_id=job.id if job else None)
         # Scored in the background with the MiniMax H3 page's option, so the next take starts at once.
         captured = self.settings.get(owner, {})
         media_review.schedule(video, values.get("prompt") or scene["prompt"],
                               api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
                               enabled=bool(captured.get("review", True)))
+        if saved.get("auto_subtitles"):
+            from h3_app.dubbing import tools
+
+            yield f"Scene {index + 1} · Transcribing and timing subtitles"
+            try:
+                self._subtitle_take(owner, storyboard_id, take_id, video)
+            finally:
+                # The next H3 take in this job needs the GPU back.
+                tools.stop()
+
+    def _subtitle_take(self, owner, storyboard_id, take_id, video) -> bool:
+        job = CURRENT_JOB.get()
+
+        def report(message):
+            if job is not None:
+                job.check()
+                job.stage = message
+                job.persist()
+
+        lines = None
+        error = None
+        try:
+            lines = subtitles.transcribe(str(video), self.service.runtime(),
+                                         free_gpu=self.services.free_gpu, report=report)
+            if any(not line["words"] for line in lines):
+                error = "Some lines could only be timed as whole lines."
+        except JobCancelled:
+            raise
+        except Exception:
+            LOG.exception("Subtitle generation failed for storyboard take %s", take_id)
+            error = "Audio subtitle generation failed."
+        if job is not None:
+            job.check()
+        self.service.save_subtitles(owner, storyboard_id, take_id, lines, error=error)
+        return error is None
+
+    def generate_subtitles(self, owner, storyboard_id):
+        board = self.service.load(owner, storyboard_id)
+        takes = [(index, take) for index, scene in enumerate(board["scenes"], 1)
+                 if not sb.is_media(scene) and (take := board["takes"].get(scene["in_use"]))
+                 and Path(take["video"]).is_file()]
+        if not takes:
+            raise H3Error("Generate at least one scene to create audio subtitles.")
+        pending = [(index, take) for index, take in takes if "subtitles" not in take or take.get("subtitle_error")]
+        failed = []
+        for index, take in pending:
+            yield f"Scene {index} · Transcribing and timing subtitles", None
+            if not self._subtitle_take(owner, storyboard_id, take["id"], take["video"]):
+                failed.append(str(index))
+            yield f"Scene {index} · Subtitle analysis finished", True
+        if failed:
+            yield f"Word timing was unavailable for some speech in scenes {', '.join(failed)}.", None
+        elif pending:
+            yield "Subtitle analysis finished for the storyboard.", None
+        else:
+            yield "The takes in use have already been analyzed.", None
 
     def prepare_scene(self, owner, storyboard_id, scene_id) -> Iterator[str]:
         """Fit a scene from Media to the canvas and cut its ending; CPU only, so the Workshop can too."""
@@ -374,5 +436,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
             yield from self.generate_remaining(storyboard_id, request)
         elif action == SWITCH_AND_REGENERATE:
             yield from self.switch_and_regenerate(storyboard_id, scene_id, take_id, request)
+        elif action == GENERATE_SUBTITLES:
+            if self.services.free_gpu is None:
+                raise H3Error("Audio subtitles are generated on the GPU endpoint.")
+            yield from self.generate_subtitles(require_owner(request), storyboard_id)
         else:
             raise H3Error(f"Unknown storyboard action {action!r}.")

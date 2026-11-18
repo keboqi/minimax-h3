@@ -68,6 +68,14 @@ def check(context, url):
     page.get_by_label("Name", exact=True).fill("Started here")
     page.get_by_role("button", name="Create storyboard").click()
     expect(page.locator("#scene-heading")).to_contain_text("Scene 1")
+    subtitles = page.get_by_role("button", name="Generate word-aligned subtitles")
+    expect(subtitles).to_be_disabled()
+    page.get_by_role("button", name="Settings", exact=True).click()
+    auto_subtitles = page.get_by_role("checkbox", name="Automatically generate word-aligned subtitles after each take")
+    expect(auto_subtitles).not_to_be_checked()
+    auto_subtitles.check()
+    expect(auto_subtitles).to_be_checked()
+    expect(auto_subtitles).to_be_enabled()
     assert context.request.post(url + "/test/seed").ok
 
     # The tab shows the page in a frame.
@@ -151,6 +159,7 @@ def check(context, url):
     expect(page.locator("#run-status")).to_contain_text("Scene 1", timeout=10000)
     assert context.request.post(url + "/test/release").ok
     expect(page.locator('#strip [aria-label^="Scene 1,"] .meta')).to_contain_text("Done", timeout=15000)
+    expect(subtitles).to_be_enabled()
 
     # A second take asks before it changes the scene that continues from the first.
     page.get_by_role("button", name=re.compile(r"Scene 2, ")).click()

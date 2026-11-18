@@ -34,6 +34,7 @@ class Run:
     finished_at: float | None = None
     error: str | None = None
     result_url: str | None = None
+    subtitles_url: str | None = None
     message: str | None = None
     # Set once the run has finished, for work that waits on it.
     done: Event = field(default_factory=Event, repr=False, compare=False)
@@ -41,7 +42,8 @@ class Run:
     def public(self, scene_id) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "status": self.status, "revision": self.revision,
                 "active": self.finished_at is None, "error": self.error, "scene_id": scene_id,
-                "project": self.project, "result_url": self.result_url, "message": self.message}
+                "project": self.project, "result_url": self.result_url, "message": self.message,
+                **({"subtitles_url": self.subtitles_url} if self.subtitles_url else {})}
 
 
 class Runs:

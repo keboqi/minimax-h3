@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from h3_app import media_review, storyboard as sb
+from h3_app.storyboard import subtitles
 
 MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
 TAKE_NOTE = "Every take is kept. Generate again for another version, then choose which one to use."
@@ -127,6 +128,8 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
         {"id": take_id, "number": number, "seed": board["takes"][take_id]["seed"],
          "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
          "poster": poster_url(board["takes"][take_id]["video"]),
+         "subtitles": _subtitle_track(storyboard_id, board["takes"][take_id]),
+         "subtitle_error": board["takes"][take_id].get("subtitle_error"),
          "missing": not Path(board["takes"][take_id]["video"]).is_file(),
          "continued_by": _continued_by(board, take_id),
          "review": media_review.public(board["takes"][take_id]["video"])}
@@ -158,6 +161,13 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
     }
 
 
+def _subtitle_track(storyboard_id, take):
+    if subtitles.take_lines(take):
+        return (f"/storyboard/api/boards/{storyboard_id}/takes/{take['id']}/subtitles.vtt"
+                f"?v={take.get('subtitle_revision', 0)}")
+    return None
+
+
 def _video(storyboard_id, board, index) -> dict[str, Any] | None:
     """A scene from Media: its clip, range, fit, the canvas it fits and its Fit preview frames."""
     scene = board["scenes"][index]
@@ -185,6 +195,7 @@ def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:
     done = states.count(sb.DONE)
     return {
         "id": storyboard_id, "name": board["name"], "settings": sb.profile_summary(board["profile"]),
+        "auto_subtitles": board.get("auto_subtitles", False),
         "total": clock(sb.total_seconds(board)), "done": done, "pending": len(states) - done,
         "queue": list(board["queue"]), "scenes": scenes, "generated": bool(board["takes"]),
         "cast": [{**_media(storyboard_id, member["image"], picture=True), "name": member["name"]}

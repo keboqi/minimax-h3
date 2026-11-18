@@ -984,6 +984,7 @@ def _storyboard_handlers():
         generate_take=_storyboard_take,
         request_defaults=storyboard_request_defaults,
         enhance_prompt=PROMPTS.enhance_h3_prompt,
+        free_gpu=lambda: free_comfy_vram(),
         publish=lambda path, metadata: write_snapshot(path, metadata),
     ))
 

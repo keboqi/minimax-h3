@@ -6,8 +6,9 @@ import copy
 import hashlib
 import shutil
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import RLock
 from typing import Any, Callable
 
@@ -16,7 +17,7 @@ from h3_app.errors import H3Error
 from h3_app.media_review import review_path
 from h3_app.processes import run_media_process
 
-from . import clip, model
+from . import clip, model, subtitles
 
 TAKE_FOLDER = "h3/.storyboard"
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
@@ -184,6 +185,11 @@ class StoryboardService:
     def rename(self, owner, storyboard_id, name):
         def edit(board):
             board["name"] = (str(name).strip() or board["name"])[:120]
+        return self.change(owner, storyboard_id, edit)[0]
+
+    def set_auto_subtitles(self, owner, storyboard_id, enabled: bool):
+        def edit(board):
+            board["auto_subtitles"] = enabled
         return self.change(owner, storyboard_id, edit)[0]
 
     def apply_profile(self, owner, storyboard_id, profile):
@@ -514,6 +520,17 @@ class StoryboardService:
             scene["in_use"] = take_id
         return self.change(owner, storyboard_id, edit)[0]
 
+    def save_subtitles(self, owner, storyboard_id, take_id, lines, *, error=None):
+        def edit(board):
+            take = board["takes"].get(take_id)
+            if take is None:
+                return
+            if lines is not None:
+                take["subtitles"] = lines
+                take["subtitle_revision"] = time.time_ns()
+            take["subtitle_error"] = error
+        self.change(owner, storyboard_id, edit)
+
     def delete_take(self, owner, storyboard_id, scene_id, take_id):
         with self.lock:
             board = self.load(owner, storyboard_id)
@@ -583,6 +600,7 @@ class StoryboardService:
         branched = model.new_storyboard(name or f"{board['name']} (copy)", copy.deepcopy(board["profile"]),
                                         copy.deepcopy(source["scenes"]))
         branched["takes"] = copy.deepcopy(board["takes"])
+        branched["auto_subtitles"] = board.get("auto_subtitles", False)
         for member in source["cast"]:
             branched["cast"].append(self._copy_cast(branch_id, member["name"], member["image"], from_branch_source=True))
         self.save(owner, branch_id, branched)
@@ -617,6 +635,7 @@ class StoryboardService:
                         path.unlink(missing_ok=True)
             preview = self.preview_path(storyboard_id)
             preview.unlink(missing_ok=True)
+            preview.with_suffix(".vtt").unlink(missing_ok=True)
             for folder in (media, preview.parent):
                 try:
                     folder.rmdir()  # Only when no branch still keeps takes or media there.
@@ -678,7 +697,8 @@ class StoryboardService:
             clips.append({"video": take["video"], "trim_frames": trim, "blend": blend})
         return clips
 
-    def render(self, board, destination: Path, *, include_outdated=True, timeout=3600) -> Path:
+    def render(self, board, destination: Path, *, include_outdated=True, timeout=3600,
+               subtitle_preview: Path | None = None) -> Path:
         """Join the takes: flows drop their repeated overlap, cuts join hard."""
         clips = self.clips(board, include_outdated=include_outdated)
         # A video from Media is fitted to the canvas, which a generated take's size may differ from.
@@ -687,6 +707,10 @@ class StoryboardService:
         fit = f",scale={width}:{height}:flags=lanczos,setsar=1" if mixed else ""
         sound = f",aresample={clip.AUDIO_RATE},aformat=channel_layouts=stereo" if mixed else ""
         arguments, chains, videos, sounds = [], [], "", ""
+        take_lines = [subtitles.take_lines(board["takes"][scene["in_use"]]) for scene in board["scenes"]]
+        with_subtitles = any(take_lines)
+        captions = []
+        elapsed_frames = 0
 
         def cut(label, output, start, end=None):
             until = f":end_frame={end}" if end is not None else ""
@@ -702,7 +726,7 @@ class StoryboardService:
             if len(parts) > 1:
                 chains.append(source + f"split={len(parts)}" + "".join(f"[s{part}]" for part in parts))
                 source = None
-            total = clip.video_frame_total(item["video"]) if hand_off else None
+            total = clip.video_frame_total(item["video"]) if hand_off or with_subtitles else None
             if hand_off and total <= hand_off:
                 raise H3Error(f"Scene {index + 1}'s clip is shorter than the overlap the next scene continues.")
             chains.append(cut(source or f"[sb{index}]", f"b{index}", start, total - hand_off if hand_off else None))
@@ -718,22 +742,44 @@ class StoryboardService:
             videos += f"[b{index}]"
             chains.append(f"[{index}:a]atrim=start={start / model.FPS:.6f},asetpts=PTS-STARTPTS{sound}[a{index}]")
             sounds += f"[a{index}]"
+            if with_subtitles:
+                captions.extend(subtitles.shifted_lines(take_lines[index], start / model.FPS, total / model.FPS,
+                                                        (elapsed_frames - start) / model.FPS))
+                elapsed_frames += total - start
         count = videos.count("[")
         graph = (";".join(chains) + f";{videos}concat=n={count}:v=1:a=0[v]"
                  f";{sounds}concat=n={len(clips)}:v=0:a=1[a]")
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_name(f"{destination.stem}.{model.new_id()[:8]}.partial{destination.suffix}")
-        process = run_media_process(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
-             "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial)],
-            timeout=timeout, partial_outputs=(partial,),
-        )
+        srt_text = subtitles.subtitle_text(captions, web=False)
+        with ExitStack() as temporary:
+            tracks = []
+            if srt_text:
+                folder = temporary.enter_context(TemporaryDirectory(prefix="h3-storyboard-captions-"))
+                srt = Path(folder) / "storyboard.srt"
+                srt.write_text(srt_text, encoding="utf-8")
+                arguments += ["-i", str(srt)]
+                tracks = ["-map", f"{len(clips)}:s:0", "-c:s", "mov_text", "-disposition:s:0", "0"]
+            process = run_media_process(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
+                 "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tracks,
+                 "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial)],
+                timeout=timeout, partial_outputs=(partial,),
+            )
         if process.returncode != 0 or not partial.is_file() or partial.stat().st_size == 0:
             partial.unlink(missing_ok=True)
             raise H3Error(f"Joining the scenes failed: {process.stderr.strip()[-600:] or 'ffmpeg reported no output'}")
         partial.replace(destination)
+        if subtitle_preview is not None and srt_text:
+            partial_track = partial.with_suffix(".vtt")
+            try:
+                partial_track.write_text(subtitles.subtitle_text(captions, web=True), encoding="utf-8")
+                partial_track.replace(subtitle_preview)
+            finally:
+                partial_track.unlink(missing_ok=True)
+        elif subtitle_preview is not None:
+            subtitle_preview.unlink(missing_ok=True)
         return destination
 
     def preview_path(self, storyboard_id) -> Path:

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from h3_app import storyboard as sb
 from h3_app.catalog import (
@@ -25,7 +25,7 @@ from h3_app.catalog import (
 )
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
-from h3_app.storyboard import clip
+from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
 from h3_app.workspace_store import request_owner
 
@@ -33,7 +33,9 @@ from ..job_admission import execute_accepted
 # Compatibility exports for existing callers.
 from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
 from .auto import WAITING, AutoRenders
-from .handlers import GENERATE_REMAINING, GENERATE_SCENE, SWITCH_AND_REGENERATE, StoryboardHandlers
+from .handlers import (
+    GENERATE_REMAINING, GENERATE_SCENE, GENERATE_SUBTITLES, SWITCH_AND_REGENERATE, StoryboardHandlers,
+)
 from .payload import board_payload, file_url, referenced_paths
 
 STATIC = Path(__file__).with_name("page")
@@ -127,7 +129,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             finally:
                 handlers.running_scene.pop((owner, storyboard_id), None)
 
-        return runs.start(Run(owner, storyboard_id, "generate"), work)
+        return runs.start(Run(owner, storyboard_id, "subtitles" if action == GENERATE_SUBTITLES else "generate"), work)
 
     def start_join(owner, storyboard_id, include, export) -> Run:
         def work(run):
@@ -138,6 +140,9 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             else:
                 path = handlers.play_all(owner, storyboard_id, include)
                 run.result_url = file_url(storyboard_id, str(path), v=path.stat().st_mtime_ns)
+                track = path.with_suffix(".vtt")
+                if track.is_file():
+                    run.subtitles_url = file_url(storyboard_id, str(track), v=track.stat().st_mtime_ns)
                 run.message = "Full video ready. Continuing scenes drop their repeated opening; fresh starts cut."
             run.status = "Done."
 
@@ -239,6 +244,16 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def rename(storyboard_id: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
         handlers.service.rename(owner, storyboard_id, body.get("name", ""))
+        return payload(owner, storyboard_id)
+
+    @app.put(f"{api}/boards/{{storyboard_id}}/subtitle-settings", include_in_schema=False)
+    @guarded
+    def subtitle_settings(storyboard_id: str, request: Request, body: dict = Body(...)):
+        enabled = body.get("auto_subtitles")
+        if not isinstance(enabled, bool):
+            raise H3Error("Choose whether subtitles should be generated automatically.")
+        owner = owner_of(request)
+        handlers.service.set_auto_subtitles(owner, storyboard_id, enabled)
         return payload(owner, storyboard_id)
 
     @app.delete(f"{api}/boards/{{storyboard_id}}", include_in_schema=False)
@@ -524,7 +539,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def owned_file(request: Request, storyboard_id, path) -> Path:
         try:
             board = handlers.service.load(owner_of(request), storyboard_id)
-            allowed = referenced_paths(board) | {str(handlers.service.preview_path(storyboard_id))}
+            preview = handlers.service.preview_path(storyboard_id)
+            allowed = referenced_paths(board) | {str(preview), str(preview.with_suffix(".vtt"))}
         except (H3Error, ValueError) as exc:
             raise HTTPException(status_code=404, detail="File not found") from exc
         file = Path(path)
@@ -534,8 +550,19 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     @app.get(f"{api}/boards/{{storyboard_id}}/file", include_in_schema=False)
     def storyboard_file(storyboard_id: str, path: str, request: Request):
-        return FileResponse(owned_file(request, storyboard_id, path),
+        file = owned_file(request, storyboard_id, path)
+        return FileResponse(file, media_type="text/vtt" if file.suffix == ".vtt" else None,
                             headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.get(f"{api}/boards/{{storyboard_id}}/takes/{{take_id}}/subtitles.vtt", include_in_schema=False)
+    def take_subtitles(storyboard_id: str, take_id: str, request: Request):
+        try:
+            board = handlers.service.load(owner_of(request), storyboard_id)
+            take = board["takes"][take_id]
+        except (H3Error, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=404, detail="Take not found") from exc
+        return Response(subtitles.subtitle_text(subtitles.take_lines(take), web=True), media_type="text/vtt",
+                        headers={"Cache-Control": "private, no-cache"})
 
     @app.get(f"{api}/boards/{{storyboard_id}}/thumb", include_in_schema=False)
     def storyboard_thumb(storyboard_id: str, path: str, request: Request):
@@ -564,14 +591,24 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         start_generation(owner, storyboard_id, action, session_of(request), body.get("scene_id"), body.get("take_id"))
         return {"run": run_payload(owner, storyboard_id)}
 
+    @app.post(f"{api}/boards/{{storyboard_id}}/subtitles", include_in_schema=False)
+    @guarded
+    def generate_subtitles(storyboard_id: str, request: Request):
+        if not gpu:
+            raise H3Error("Audio subtitles are generated on the GPU endpoint.")
+        owner = owner_of(request)
+        handlers.service.load(owner, storyboard_id)
+        start_generation(owner, storyboard_id, GENERATE_SUBTITLES, session_of(request))
+        return {"run": run_payload(owner, storyboard_id)}
+
     @app.post(f"{api}/boards/{{storyboard_id}}/interrupt", include_in_schema=False)
     @guarded
     def stop(storyboard_id: str, request: Request):
         if interrupt is None:
             raise H3Error("Nothing can run here.")
         owner = owner_of(request)
-        run = runs.active(owner, storyboard_id, "generate")
-        if run is None:
+        run = runs.active(owner, storyboard_id)
+        if run is None or run.kind not in ("generate", "subtitles"):
             message = "This storyboard isn't generating."
         elif run.job_id is None:
             message = "The run is still starting. Try again in a moment."

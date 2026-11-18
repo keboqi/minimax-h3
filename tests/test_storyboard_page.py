@@ -49,6 +49,7 @@ class StoryboardPageTests(unittest.TestCase):
         self.handlers = StoryboardHandlers(StoryboardServices(
             service=lambda: self.service, generate_take=self.fake_take,
             request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
+            free_gpu=lambda: None,
         ))
         self.interrupted = []
         app = FastAPI()
@@ -372,7 +373,7 @@ class StoryboardPageTests(unittest.TestCase):
         board = self.create()
         joined = []
 
-        def fake_render(document, destination, *, include_outdated=True):
+        def fake_render(document, destination, *, include_outdated=True, subtitle_preview=None):
             joined.append(include_outdated)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b"mp4")
@@ -383,6 +384,44 @@ class StoryboardPageTests(unittest.TestCase):
             run = self.wait_for_run(board)
         self.assertEqual(joined, [False])
         self.assertEqual(self.client.get(run["result_url"]).content, b"mp4")
+
+    def test_subtitle_setting_and_project_action(self):
+        board = self.create("A traveler says <d>[English] Scripted line.</d>")
+        url = f"{API}/boards/{board['id']}"
+        scene_id = board["scenes"][0]["id"]
+        lines = [{"text": "Spoken line", "start": 1.0, "end": 2.0, "words": [
+            {"text": "Spoken", "start": 1.0, "end": 1.4}, {"text": "line", "start": 1.5, "end": 2.0},
+        ]}]
+
+        def generate():
+            response = self.client.post(f"{url}/generate", json={"action": "scene", "scene_id": scene_id})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIsNone(self.wait_for_run(board)["error"])
+
+        with patch("h3_app.storyboard.subtitles.transcribe", return_value=lines) as transcribe:
+            self.assertFalse(board["auto_subtitles"])
+            generate()
+            transcribe.assert_not_called()
+            take = self.client.get(url).json()["scenes"][0]["takes"][0]
+            self.assertIn("Scripted line.", self.client.get(take["subtitles"]).text)
+
+            self.assertEqual(self.client.post(f"{url}/subtitles").status_code, 200)
+            self.assertIsNone(self.wait_for_run(board)["error"])
+            take = self.client.get(url).json()["scenes"][0]["takes"][0]
+            track = self.client.get(take["subtitles"])
+            self.assertIn("<c>Spoken </c><00:00:01.500><c>line</c>", track.text)
+            self.assertTrue(track.headers["content-type"].startswith("text/vtt"))
+
+            self.assertEqual(self.client.post(f"{url}/subtitles").status_code, 200)
+            self.wait_for_run(board)
+            transcribe.assert_called_once()
+
+            settings = self.client.put(f"{url}/subtitle-settings", json={"auto_subtitles": True}).json()
+            self.assertTrue(settings["auto_subtitles"])
+            generate()
+            self.assertEqual(transcribe.call_count, 2)
+            takes = self.client.get(url).json()["scenes"][0]["takes"]
+            self.assertIn("<c>Spoken", self.client.get(takes[1]["subtitles"]).text)
 
     def wait_for_auto(self):
         deadline = time.monotonic() + 10
