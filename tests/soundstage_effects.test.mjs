@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraTransform, effectsBackend, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraTransform, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
@@ -105,8 +105,7 @@ test("layered atmosphere and lighting overlays both render in one pass", () => {
   assert.ok(calls.includes("fillRect"), "expected lightning fill");
 });
 
-test("effectsBackend falls back to canvas2d without WebGPU and shader IDs cover all overlays", () => {
-  assert.equal(effectsBackend(), "canvas2d");
+test("shader IDs cover all overlays", () => {
   assert.deepEqual(Object.keys(ATMO_IDS).sort(), ["dust", "embers", "fog", "petals", "rain", "smoke", "snow", "sunbeams"]);
   assert.deepEqual(Object.keys(LIGHT_IDS).sort(),
     ["cold_tint", "dream_bloom", "film_grain", "flash", "flicker", "lightning", "scanlines", "vignette", "warm_glow"]);

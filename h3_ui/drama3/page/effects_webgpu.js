@@ -263,7 +263,7 @@ export function gpuStatus() {
   return gpuState;
 }
 
-export async function probeWebGPU(onReady) {
+export async function probeWebGPU(onChange) {
   if (gpuState !== "idle") return gpuState === "ready";
   const gpu = globalThis.navigator?.gpu;
   if (!gpu?.requestAdapter) {
@@ -296,13 +296,14 @@ export async function probeWebGPU(onReady) {
       gpuPipeline = null;
       configuredCanvas = null;
       gpuState = "unavailable";
+      onChange?.();
     });
     gpuDevice = device;
     gpuPipeline = pipeline;
     gpuUniformBuffer = uniformBuffer;
     gpuBindGroup = bindGroup;
     gpuState = "ready";
-    onReady?.();
+    onChange?.();
     return true;
   } catch {
     gpuState = "unavailable";

@@ -114,7 +114,17 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       ? cameraTransform(effectsFor(background), 1, background.end - background.start)
       : cameraTransform(effects, progress, elapsed);
     const overlay = $("still-effects");
-    if (overlay) paintEffects(overlay, elapsed >= 0 ? effects : [], elapsed);
+    if (overlay) {
+      const activeEffects = elapsed >= 0 ? effects : [];
+      const engine = $("effects-engine");
+      paintEffects(overlay, activeEffects, elapsed, (backend) => {
+        if (!engine) return;
+        const inactive = state.project.video.effects_enabled === false ? "Off" : !enabled ? "Paused"
+          : activeEffects.length ? "Camera only" : "Idle";
+        const label = `Effects engine · ${backend ?? inactive}`;
+        if (engine.textContent !== label) engine.textContent = label;
+      });
+    }
     // Fetch the next images before they are due, so a cut never waits on the network.
     for (const next of shots.slice(index + 1, index + 3)) {
       if (!preloaded.has(next.url)) { preloaded.add(next.url); new Image().src = next.url; }

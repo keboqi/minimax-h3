@@ -74,6 +74,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
             if (hint) hint.hidden = true;
             sync();
           }}), "Visual effects") : null,
+      visualSource() === "stills" ? h("span", {id: "effects-engine", class: "muted small"}, "Effects engine · Idle") : null,
       visualSource() === "stills" ? h("span", {id: "effects-motion-hint", class: "muted small", hidden: !motionPaused},
         "Paused by reduced motion · turn on to play") : null);
   }

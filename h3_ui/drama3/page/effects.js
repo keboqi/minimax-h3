@@ -85,10 +85,6 @@ function getSprites() {
   return sprites;
 }
 
-export function effectsBackend() {
-  return gpuStatus() === "ready" ? "webgpu" : "canvas2d";
-}
-
 export function effectTrack(h, {shots, presets, place, pick, picked}) {
   const clips = shots.filter((shot) => shot.effects?.length).map((shot) => {
     const label = shot.effects.map((id) => presets?.[id]?.label || id).join(" · ");
@@ -131,7 +127,7 @@ function sizeCanvas(canvas, w, h) {
 }
 
 let lastPaintArgs = null;
-export function paintEffects(canvas, effects, seconds) {
+export function paintEffects(canvas, effects, seconds, showBackend) {
   const atmospheres = effects.filter((id) => atmosphereEffects.has(id));
   const lights = effects.filter((id) => lightEffects.has(id));
   const width = Math.max(1, Math.round(canvas.clientWidth));
@@ -146,21 +142,28 @@ export function paintEffects(canvas, effects, seconds) {
       sizeCanvas(canvas, w, h);
       ctx.clearRect(0, 0, w, h);
     }
+    showBackend?.(null);
     return;
   }
   const t = Math.max(0, seconds);
-  lastPaintArgs = [canvas, effects, seconds];
+  lastPaintArgs = [canvas, effects, seconds, showBackend];
   if (gpuStatus() === "idle") {
-    probeWebGPU(() => { if (lastPaintArgs) paintEffects(...lastPaintArgs); });
+    probeWebGPU(() => {
+      if (lastPaintArgs?.[0].isConnected) paintEffects(...lastPaintArgs);
+    });
   }
   const atmoId = ATMO_IDS[atmospheres[0]] || 0;
   const lightId = LIGHT_IDS[lights[0]] || 0;
   if (atmospheres.length <= 1 && lights.length <= 1 && renderWebGPU(canvas, atmoId, lightId, t, w, h)) {
+    showBackend?.("WebGPU");
     return;
   }
   clearWebGPU(canvas);
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) {
+    showBackend?.("Unavailable");
+    return;
+  }
   sizeCanvas(canvas, w, h);
   ctx.clearRect(0, 0, w, h);
   for (const effect of atmospheres) {
@@ -172,6 +175,7 @@ export function paintEffects(canvas, effects, seconds) {
   for (const effect of lights) {
     paintLight(ctx, effect, t, w, h);
   }
+  showBackend?.("Canvas 2D");
 }
 
 function paintLight(ctx, effect, t, w, h) {

@@ -51,6 +51,8 @@ def run():
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             page.locator("#step-illustrate").click()
             expect(page.locator("#still-back")).to_be_visible()
+            engine = page.locator("#effects-engine")
+            expect(engine).to_have_text("Effects engine · Idle")
             expect(page.locator("#lanes .effect-lane")).to_have_count(0)
             assert page.locator("#shot-inspector select").count() == 3, (errors, page.locator("#screen-illustrate").inner_text())
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
@@ -58,6 +60,7 @@ def run():
             expect(page.get_by_label("Camera movement", exact=True)).to_have_value("push_in")
             page.wait_for_load_state("networkidle")
             assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == ["push_in"], "camera did not save"
+            expect(engine).to_have_text("Effects engine · Camera only")
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
                 page.get_by_label("Atmosphere", exact=True).select_option("rain")
             expect(page.get_by_label("Atmosphere", exact=True)).to_have_value("rain")
@@ -107,9 +110,12 @@ def run():
                 "clock": a["clock"], "imageChanged": a["image"] != b["image"],
             }
             assert frame["moves"] and frame["seeks"], (frame, errors)
+            backend = "WebGPU" if "still-effects-gpu" in c["className"] else "Canvas 2D"
+            expect(engine).to_have_text(f"Effects engine · {backend}")
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
                 page.get_by_label("Visual effects", exact=True).uncheck()
             expect(page.locator("#still-back")).to_have_css("transform", "none")
+            expect(engine).to_have_text("Effects engine · Off")
             page.wait_for_load_state("networkidle")
             assert fixture.project()["video"]["effects_enabled"] is False
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
@@ -125,6 +131,7 @@ def run():
             expect(page.locator("#still-back")).to_have_css("transform", "none")
             expect(page.get_by_label("Visual effects", exact=True)).not_to_be_checked()
             expect(page.locator("#effects-motion-hint")).to_be_visible()
+            expect(engine).to_have_text("Effects engine · Paused")
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
                 page.get_by_label("Visual effects", exact=True).check()
             expect(page.locator("#still-back")).not_to_have_css("transform", "none")
