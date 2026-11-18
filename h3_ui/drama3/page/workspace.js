@@ -137,12 +137,17 @@ export function startWorkspace() {
   }
 
   // -- Rendering -------------------------------------------------------------
+  function renderProjectSelection() {
+    $("project").value = openingProject ?? state.project?.name ?? "";
+    $("project-state").textContent = openingProject !== null ? "Opening…" : state.project?.result ? "Generated" : "Draft";
+  }
+
   function renderHeader() {
     const select = $("project");
     select.replaceChildren(...state.boot.projects.map((project) =>
-      h("option", {value: project.name, selected: project.name === state.project.name},
+      h("option", {value: project.name},
         project.name + (project.generated ? "" : " · Draft"))));
-    $("project-state").textContent = state.project.result ? "Generated" : "Draft";
+    renderProjectSelection();
     const mode = state.project.script.script_mode;
     $("mode").replaceChildren(...state.boot.script_modes.map((option) => h("button", {
       type: "button", "aria-pressed": String(option === mode),
@@ -635,6 +640,7 @@ export function startWorkspace() {
 
   // -- Projects and runs -----------------------------------------------------
   let projectLoad = 0;
+  let openingProject = null;
   function loadMixAudio(name, result) {
     mixAudio.pause();
     mixVideo.pause();
@@ -650,11 +656,30 @@ export function startWorkspace() {
     lastActive = -1;
   }
 
-  async function loadProject(name, {keepPick = false} = {}) {
+  async function loadProject(name, {keepPick = false, background = false} = {}) {
+    if (background && openingProject !== null) return;
     const load = ++projectLoad;
+    if (!background) {
+      openingProject = name;
+      renderProjectSelection();
+    }
+    try {
+      await readProject(name, load, keepPick);
+    } catch (error) {
+      if (load === projectLoad) throw error;
+    } finally {
+      if (!background && load === projectLoad) {
+        openingProject = null;
+        renderProjectSelection();
+      }
+    }
+  }
+
+  async function readProject(name, load, keepPick) {
     let project, revision;
     do {
       await flushEdits();
+      if (load !== projectLoad) return;
       revision = saves.revision(name);
       project = await api(named("/project", name), {unscoped: true});
       if (load !== projectLoad) return;
@@ -694,10 +719,13 @@ export function startWorkspace() {
       state.shotFilter = "all";
     }
     if (changed) loadMixAudio(name, project.result);
-    if (switched || !library) await loadLibrary(project.cast_settings.speaker_group);
-    if (load !== projectLoad) return;
     loadVideoSource();
     renderAll();
+    if (switched || !library) {
+      loadLibrary(project.cast_settings.speaker_group).then((loaded) => {
+        if (loaded && state.screen === "cast") renderCast();
+      });
+    }
     // A new mix replaces the estimate with its real timings, when it is of this script.
     if (changed) queueEstimate(0);
     if (isRunning()) poll();
@@ -953,12 +981,18 @@ export function startWorkspace() {
 
   // -- Cast & sounds ---------------------------------------------------------
   let library = null;
+  let libraryLoad = 0;
   async function loadLibrary(group) {
+    const load = ++libraryLoad;
+    const owner = scope();
+    let data;
     try {
-      library = await api(`/library?group=${encodeURIComponent(group || "Global")}`);
+      data = await api(`/library?group=${encodeURIComponent(group || "Global")}`);
     } catch (error) {
-      library = {groups: ["Global"], speakers: [], sounds: [], error: error.message};
+      data = {groups: ["Global"], speakers: [], sounds: [], error: error.message};
     }
+    if (load !== libraryLoad || owner !== scope()) return;
+    library = data;
     return library;
   }
 
@@ -1117,12 +1151,13 @@ export function startWorkspace() {
     const name = state.project.name;
     const {run} = await api(named("/run", name));
     if (name !== state.project.name) return;
+    if (openingProject !== null) { again(); return; }
     const before = state.run;
     state.run = run;
     if (run && !run.active) {
       if (interruptedRun(run)) {
         if (before?.active) toast(run.auto ? "Auto interrupted." : "Interrupted.");
-        await loadProject(name, {keepPick: true});
+        await loadProject(name, {keepPick: true, background: true});
         return;
       }
       if (run.auto) {
@@ -1134,12 +1169,12 @@ export function startWorkspace() {
         else if (before?.active) toast(run.status || "Word timing ready.");
       } else if (run.error) toast(`Speaking stopped: ${run.error}`);
       else if (before?.active) toast("Speech ready.");
-      await loadProject(name, {keepPick: true});
+      await loadProject(name, {keepPick: true, background: true});
       return;
     }
     if (run?.auto && run.revision !== autoRevision) {
       autoRevision = run.revision;
-      await loadProject(name, {keepPick: true});
+      await loadProject(name, {keepPick: true, background: true});
     }
     renderAuto();
     renderActions();
@@ -1188,10 +1223,7 @@ export function startWorkspace() {
         new MutationObserver(applyTheme).observe(window.parent.document.body, {attributes: true, attributeFilter: ["class"]});
       }
     } catch { /* Framed by another origin. */ }
-    $("project").addEventListener("change", (event) => loadProject(event.target.value).catch((error) => {
-      event.target.value = state.project?.name || "";
-      toast(error.message);
-    }));
+    $("project").addEventListener("change", (event) => loadProject(event.target.value).catch((error) => toast(error.message)));
     $("new-project").addEventListener("click", newProject);
     $("new-cancel").addEventListener("click", () => $("new-dialog").close());
     $("new-form").addEventListener("submit", (event) => {
@@ -1398,7 +1430,8 @@ export function startWorkspace() {
     flushEdits: () => flushEdits(),
     isRunning,
     writerService,
-    openProject: (name) => loadProject(name, {keepPick: name === state.project?.name}).catch((error) => toast(error.message)),
+    openProject: (name, {background = false} = {}) =>
+      loadProject(name, {background, keepPick: name === state.project?.name}).catch((error) => toast(error.message)),
     refreshProjects: async () => {
       try {
         state.boot.projects = (await api("/boot", {unscoped: true})).projects;

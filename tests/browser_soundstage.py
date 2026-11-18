@@ -14,7 +14,7 @@ from tests.test_drama3_page_video import Drama3PageVideoTests
 def run():
     fixture = Drama3PageVideoTests()
     fixture.setUp()
-    list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True))
+    list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True, "landscape", "null"))
     fixture.store.save_soundstage_project("Second", {"text": "Mia: Another draft.", "shown_slots": 1})
     fixture.store.save_soundstage_project("Scenes", {"script_mode": DRAMA3_SCRIPT_ADVANCED, "text": "\n".join([
         "Mia: Plums, two for one!",
@@ -160,9 +160,35 @@ def run():
             expect(page.locator("#script-text")).to_have_value("Mia: Edited during refresh.")
             assert fixture.store.soundstage_project("Night Market")[0]["text"] == "Mia: Edited during refresh."
             page.unroute("**/soundstage/api/project?*")
+
+            # A batch moving to the next item must not override a manual switch in flight.
+            items = [{"name": "Night Market", "state": "producing"}, {"name": "Scenes", "state": "waiting"}]
+            batch = {"id": "test-batch", "active": True, "current": "Night Market", "finished": 0, "items": items}
+            page.route("**/soundstage/api/batch?projects=false", lambda route: route.fulfill(json={"batch": batch}))
+            page.reload(wait_until="networkidle")
+            expect(page.locator("#batch-state")).to_contain_text("Night Market")
+            held_projects = []
+            page.route("**/soundstage/api/project?name=Second", lambda route: held_projects.append(route))
+            with page.expect_request("**/soundstage/api/project?name=Second"):
+                page.locator("#project").select_option("Second")
+            expect(page.locator("#project-state")).to_have_text("Opening…")
+            batch.update(current="Scenes", finished=1)
+            items[0]["state"] = "done"
+            items[1]["state"] = "producing"
+            expect(page.locator("#batch-state")).to_contain_text("Scenes")
+            expect(page.locator("#project")).to_have_value("Second")
+
+            # The new script is usable while its library request is still in flight.
+            held_library = []
+            page.route("**/soundstage/api/library?*", lambda route: held_library.append(route))
+            with page.expect_request("**/soundstage/api/library?*"):
+                held_projects[0].continue_()
+            expect(page.locator("#project-state")).to_have_text("Draft")
+            expect(page.locator("#script-text")).to_have_value("Mia: Keep this unsaved draft.")
+            held_library[0].continue_()
             assert not errors, errors
             browser.close()
-        print("PASS: modules, all page steps, still playback/subtitles, save-on-switch, failure/retry, and delayed refresh")
+        print("PASS: modules, all page steps, still playback/subtitles, save-on-switch, and project loading races")
     finally:
         server.should_exit = True
         thread.join(timeout=10)

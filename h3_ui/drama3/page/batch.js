@@ -149,15 +149,16 @@ export function createBatch({state, $, h, api, toast, NO_GPU, flushEdits, isRunn
     if (same && before.active && !batch.active) {
       announce(batch);
       refreshProjects();
-      if (state.project?.name === before.current) openProject(before.current);
+      if (state.project?.name === before.current) openProject(before.current, {background: true});
     }
     const step = batch?.active && batch.current ? `${batch.id}:${batch.current}` : null;
     if (step && step !== batchState.followed && state.project) {
       batchState.followed = step;
       // The page moves on with the queue while it shows the project the queue just left, and
       // picks up the run the queue started on the project it shows.
-      if (same && state.project.name === before.current) openProject(batch.current);
-      else if (state.project.name === batch.current && !isRunning()) openProject(batch.current);
+      if ((same && state.project.name === before.current) || (state.project.name === batch.current && !isRunning())) {
+        openProject(batch.current, {background: true});
+      }
     }
     render();
   }
