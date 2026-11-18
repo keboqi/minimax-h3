@@ -86,12 +86,8 @@ action, expression and staging: no text, captions, speech bubbles or lettering.
 
 PLAYBACK EFFECTS
 Give every shot an "effects" array, using IDs from the request's effect_presets dictionary.
-Choose at most one camera move and one atmospheric overlay per shot; [] means a still image.
-Prefer simple, broadly fitting choices: push_in for attention or anticipation, pull_out for
-context, vignette for tension or focus, warm_glow for warmth or memory. Use flash only for
-a clear reveal or impact at the shot's start, and lightning only for storm scenes. Add rain,
-snow, fog, dust or embers only where the setting justifies them. Do not force an effect on
-every shot; [] is valid and quiet shots can stay still. Never add effects that contradict the scene.
+Choose at most one camera move, one atmosphere overlay (rain, snow, fog, dust, embers, sunbeams, smoke, petals), and one lighting/framing overlay (lightning, flash, warm_glow, cold_tint, flicker, vignette, film_grain, dream_bloom, scanlines) per shot; [] means a still image.
+Prefer simple, broadly fitting choices: push_in for attention or anticipation, pull_out for context, pan_up/pan_down for vertical reveals, subtle_sway for tense or intimate dialogue, impact_shake for sudden blows or shocks, vignette for focus, warm_glow or flicker for warmth/firelight/memory, cold_tint for night or eerie scenes, dream_bloom for flashbacks, film_grain for cinema texture, scanlines for monitors/radios. Use flash only for a clear reveal or impact at the shot's start, and lightning only for storm scenes (which can combine with rain). Add rain, snow, fog, dust, embers, sunbeams, smoke or petals only where the setting justifies them. Do not force an effect on every shot; [] is valid and quiet shots can stay still. Never add effects that contradict the scene.
 These are reusable animations applied during page playback, not image generation instructions.
 Keep the image prompt a description of one still frame; do not ask the image model to animate it.
 

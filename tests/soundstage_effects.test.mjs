@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraTransform, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraTransform, effectsBackend, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
 test("camera moves follow the displayed stills across an undrawn shot and a dissolve", (t) => {
@@ -49,6 +50,11 @@ test("camera moves clamp to shot boundaries and old plans remain still", () => {
   assert.equal(cameraTransform(["push_in"], 2), "scale(1.08)");
   assert.equal(cameraTransform(["pull_out"], 0), "scale(1.08)");
   assert.match(cameraTransform(["pan_left"], 1), /translateX\(-3%\)/);
+  assert.match(cameraTransform(["pan_up"], 1), /translateY\(-3%\)/);
+  assert.match(cameraTransform(["pan_down"], 1), /translateY\(3%\)/);
+  assert.match(cameraTransform(["subtle_sway"], 0.5, 1.2), /translate\(.+\) scale\(1\.04\)/);
+  assert.notEqual(cameraTransform(["impact_shake"], 0.1, 0.05), "scale(1)");
+  assert.equal(cameraTransform(["impact_shake"], 0.5, 0.6), "scale(1)");
 });
 
 test("overlays reconstruct the same frame after seeking and clear when removed", () => {
@@ -59,7 +65,10 @@ test("overlays reconstruct the same frame after seeking and clear when removed",
     if (name === "createRadialGradient") return gradient;
   }, set: (_, name, value) => {calls.push([name, value]); return true;}});
   const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
-  for (const effect of ["rain", "snow", "dust", "embers", "fog", "lightning", "flash", "warm_glow", "vignette"]) {
+  for (const effect of [
+    "rain", "snow", "dust", "embers", "fog", "sunbeams", "smoke", "petals",
+    "lightning", "flash", "warm_glow", "cold_tint", "flicker", "vignette", "film_grain", "dream_bloom", "scanlines",
+  ]) {
     calls.length = 0; paintEffects(canvas, [effect], 2.4); const first = [...calls];
     paintEffects(canvas, [effect], 7);
     calls.length = 0; paintEffects(canvas, [effect], 2.4);
@@ -79,4 +88,24 @@ test("lightning reaches short shots and repeats on the same media clock", () => 
   assert.equal(ctx.fillStyle, "rgba(225,237,255,0)");
   paintEffects(canvas, ["lightning"], 7.12);
   assert.ok(Number(ctx.fillStyle.match(/,([^,]+)\)$/)[1]) > 0.31);
+});
+
+test("layered atmosphere and lighting overlays both render in one pass", () => {
+  const calls = [];
+  const gradient = {addColorStop() {}};
+  const ctx = new Proxy({}, {get: (_, name) => (...args) => {
+    calls.push(name);
+    if (name === "createRadialGradient" || name === "createLinearGradient") return gradient;
+  }, set: () => true});
+  const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
+  paintEffects(canvas, ["rain", "lightning"], 0.12);
+  assert.ok(calls.includes("moveTo"), "expected rain strokes");
+  assert.ok(calls.includes("fillRect"), "expected lightning fill");
+});
+
+test("effectsBackend falls back to canvas2d without WebGPU and shader IDs cover all overlays", () => {
+  assert.equal(effectsBackend(), "canvas2d");
+  assert.deepEqual(Object.keys(ATMO_IDS).sort(), ["dust", "embers", "fog", "petals", "rain", "smoke", "snow", "sunbeams"]);
+  assert.deepEqual(Object.keys(LIGHT_IDS).sort(),
+    ["cold_tint", "dream_bloom", "film_grain", "flash", "flicker", "lightning", "scanlines", "vignette", "warm_glow"]);
 });

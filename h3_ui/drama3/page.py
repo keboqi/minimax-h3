@@ -40,7 +40,8 @@ from .project_visuals import can_reuse_script, carry_project_stills, planning_mi
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
-                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "effects.js", "library.js", "project.js", "batch.js")}
+                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "effects.js", "effects_webgpu.js",
+                  "library.js", "project.js", "batch.js")}
 STATIC_TYPES["app.css"] = "text/css"
 GENERATE, REMIX, REGENERATE = "generate", "remix", "regenerate"
 SETTING_FIELDS = {"temperature": float, "top_p": float, "top_k": int, "word_timing": bool, "parallel": int,

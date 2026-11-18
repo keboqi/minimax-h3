@@ -40,12 +40,13 @@ def run():
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, reduced_motion="no-preference")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("console", lambda msg: errors.append(f"[{msg.type}] {msg.text}") if msg.type in ("error", "warning") else None)
             page.route("**/soundstage/api/audio?*", lambda route: route.fulfill(body=audio.getvalue(), content_type="audio/wav"))
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             page.locator("#step-illustrate").click()
             expect(page.locator("#still-back")).to_be_visible()
             expect(page.locator("#lanes .effect-lane")).to_have_count(0)
-            assert page.locator("#shot-inspector select").count() == 2, (errors, page.locator("#screen-illustrate").inner_text())
+            assert page.locator("#shot-inspector select").count() == 3, (errors, page.locator("#screen-illustrate").inner_text())
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
                 page.get_by_label("Camera movement", exact=True).select_option("push_in")
             expect(page.get_by_label("Camera movement", exact=True)).to_have_value("push_in")
@@ -77,21 +78,29 @@ def run():
             assert page.locator("#mix-audio").evaluate("audio => !audio.paused")
             page.locator("#play").click()
             # Seek the actual player while paused; every frame must reconstruct deterministically.
-            frame = page.evaluate("""async () => {
-              const audio = document.getElementById('mix-audio');
-              const canvas = document.getElementById('still-effects');
-              const draw = async t => {
-                await new Promise(resolve => { audio.addEventListener('seeked', resolve, {once: true}); audio.currentTime = t; });
-                return {image: canvas.toDataURL(), transform: document.getElementById('still-back').style.transform,
-                  time: audio.currentTime, duration: audio.duration, clock: document.getElementById('clock').textContent};
-              };
-              const a = await draw(1), b = await draw(2), c = await draw(1);
-              return {moves: a.image !== b.image && a.transform !== b.transform,
-                seeks: a.image === c.image && a.transform === c.transform,
-                transforms: [a.transform, b.transform, c.transform], times: [a.time, b.time], duration: a.duration,
-                clock: a.clock, imageChanged: a.image !== b.image};
-            }""")
-            assert frame["moves"] and frame["seeks"], frame
+            def seek_frame(t):
+                info = page.evaluate("""async t => {
+                  const audio = document.getElementById('mix-audio');
+                  await new Promise(resolve => { audio.addEventListener('seeked', resolve, {once: true}); audio.currentTime = t; });
+                  const gpu = document.querySelector('.still-effects-gpu');
+                  const active = gpu && gpu.style.visibility === 'visible' ? gpu : document.getElementById('still-effects');
+                  return {className: active.className, transform: document.getElementById('still-back').style.transform,
+                    time: audio.currentTime, duration: audio.duration, clock: document.getElementById('clock').textContent};
+                }""", t)
+                selector = ".still-effects-gpu" if "still-effects-gpu" in info["className"] else "#still-effects"
+                info["image"] = page.locator(selector).screenshot()
+                return info
+
+            a, b, c = seek_frame(1), seek_frame(2), seek_frame(1)
+            frame = {
+                "moves": a["image"] != b["image"] and a["transform"] != b["transform"],
+                "seeks": a["image"] == c["image"] and a["transform"] == c["transform"],
+                "className": a["className"],
+                "transforms": [a["transform"], b["transform"], c["transform"]],
+                "times": [a["time"], b["time"]], "duration": a["duration"],
+                "clock": a["clock"], "imageChanged": a["image"] != b["image"],
+            }
+            assert frame["moves"] and frame["seeks"], (frame, errors)
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
                 page.get_by_label("Visual effects", exact=True).uncheck()
             expect(page.locator("#still-back")).to_have_css("transform", "none")
@@ -101,8 +110,10 @@ def run():
                 page.get_by_label("Visual effects", exact=True).check()
             page.wait_for_load_state("networkidle")
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
-                page.get_by_label("Atmosphere", exact=True).select_option("lightning")
-            expect(page.get_by_label("Atmosphere", exact=True)).to_have_value("lightning")
+                page.get_by_label("Lighting & framing", exact=True).select_option("lightning")
+            expect(page.get_by_label("Lighting & framing", exact=True)).to_have_value("lightning")
+            page.wait_for_load_state("networkidle")
+            assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == ["push_in", "rain", "lightning"]
             page.wait_for_load_state("networkidle")
             page.emulate_media(reduced_motion="reduce")
             expect(page.locator("#still-back")).to_have_css("transform", "none")
@@ -123,16 +134,16 @@ def run():
             page.emulate_media(reduced_motion="no-preference")
             expect(page.locator("#still-back")).to_have_css("transform", "none")
             # A planned effect stays on the timeline when its playback is off.
-            expect(effect).to_have_text("Slow push in · Lightning")
+            expect(effect).to_have_text("Slow push in · Rain · Lightning")
             page.locator('#lanes .shot-clip[data-shot="1"]').click()
             effect.click()
             expect(effect).to_have_attribute("aria-pressed", "true")
             page.wait_for_function("document.getElementById('mix-audio').currentTime < 1")
             page.locator("#step-script").click()
             page.locator(".estimate-toggle").click()
-            expect(page.locator("#estimate .effect-clip")).to_have_text("Slow push in · Lightning")
+            expect(page.locator("#estimate .effect-clip")).to_have_text("Slow push in · Rain · Lightning")
             page.locator("#step-mix").click()
-            expect(effect).to_have_text("Slow push in · Lightning")
+            expect(effect).to_have_text("Slow push in · Rain · Lightning")
             assert not errors, errors
             browser.close()
         print("PASS: effect controls, persistence, canvas animation, seeking, reduced motion, module loading")

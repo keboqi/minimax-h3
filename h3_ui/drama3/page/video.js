@@ -109,10 +109,10 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const effects = effectsFor(shot);
     const elapsed = time - shot.start;
     const progress = elapsed / Math.max(0.001, shot.end - shot.start);
-    front.style.transform = cameraTransform(effects, progress);
+    front.style.transform = cameraTransform(effects, progress, elapsed);
     back.style.transform = fading
-      ? cameraTransform(effectsFor(background), 1)
-      : cameraTransform(effects, progress);
+      ? cameraTransform(effectsFor(background), 1, background.end - background.start)
+      : cameraTransform(effects, progress, elapsed);
     const overlay = $("still-effects");
     if (overlay) paintEffects(overlay, elapsed >= 0 ? effects : [], elapsed);
     // Fetch the next images before they are due, so a cut never waits on the network.
@@ -288,7 +288,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
           type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
           onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
-      ...[ ["camera", "Camera movement"], ["overlay", "Atmosphere"] ].map(([kind, label]) => {
+      ...[ ["camera", "Camera movement"], ["atmosphere", "Atmosphere"], ["lighting", "Lighting & framing"] ].map(([kind, label]) => {
         const presets = state.boot.video.effect_presets || {};
         const effects = row.effects || [];
         return h("label", {class: "field"}, h("span", {class: "label"}, label),

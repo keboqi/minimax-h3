@@ -706,6 +706,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(edited["plan"]["counts"], before["plan"]["counts"])
         self.assertEqual(self.project()["video"]["plan"]["rows"][0]["effects"], ["push_in", "rain"])
         self.assertEqual(self.client.get("/soundstage/effects.js").status_code, 200)
+        self.assertEqual(self.client.get("/soundstage/effects_webgpu.js").status_code, 200)
         self.assertTrue(edited["effects_enabled"])
         self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_effects": False}))
         self.assertFalse(self.project()["video"]["effects_enabled"])
