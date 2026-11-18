@@ -277,7 +277,7 @@ export async function probeWebGPU(onReady) {
     const device = await adapter.requestDevice();
     gpuFormat = gpu.getPreferredCanvasFormat?.() || "bgra8unorm";
     const module = device.createShaderModule({ code: WGSL });
-    const pipeline = device.createRenderPipeline({
+    const pipeline = await device.createRenderPipelineAsync({
       layout: "auto",
       vertex: { module, entryPoint: "vs" },
       fragment: { module, entryPoint: "fs", targets: [{ format: gpuFormat }] },

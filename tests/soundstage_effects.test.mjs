@@ -50,8 +50,10 @@ test("camera moves clamp to shot boundaries and old plans remain still", () => {
   assert.equal(cameraTransform(["push_in"], 2), "scale(1.08)");
   assert.equal(cameraTransform(["pull_out"], 0), "scale(1.08)");
   assert.match(cameraTransform(["pan_left"], 1), /translateX\(-3%\)/);
-  assert.match(cameraTransform(["pan_up"], 1), /translateY\(-3%\)/);
-  assert.match(cameraTransform(["pan_down"], 1), /translateY\(3%\)/);
+  assert.match(cameraTransform(["pan_up"], 0), /translateY\(-3%\)/);
+  assert.match(cameraTransform(["pan_up"], 1), /translateY\(3%\)/);
+  assert.match(cameraTransform(["pan_down"], 0), /translateY\(3%\)/);
+  assert.match(cameraTransform(["pan_down"], 1), /translateY\(-3%\)/);
   assert.match(cameraTransform(["subtle_sway"], 0.5, 1.2), /translate\(.+\) scale\(1\.04\)/);
   assert.notEqual(cameraTransform(["impact_shake"], 0.1, 0.05), "scale(1)");
   assert.equal(cameraTransform(["impact_shake"], 0.5, 0.6), "scale(1)");

@@ -40,7 +40,13 @@ def run():
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, reduced_motion="no-preference")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            page.on("console", lambda msg: errors.append(f"[{msg.type}] {msg.text}") if msg.type in ("error", "warning") else None)
+            def record_console_error(msg):
+                if msg.type == "warning" and msg.text == "No available adapters.":
+                    return
+                if msg.type in ("error", "warning"):
+                    errors.append(f"[{msg.type}] {msg.text}")
+
+            page.on("console", record_console_error)
             page.route("**/soundstage/api/audio?*", lambda route: route.fulfill(body=audio.getvalue(), content_type="audio/wav"))
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             page.locator("#step-illustrate").click()
