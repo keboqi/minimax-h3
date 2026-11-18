@@ -40,11 +40,15 @@ locations. Keys are short lowercase ASCII words without spaces, such as "mara", 
 "rain_alley". Each value is one self-contained line of what never changes. It is written into
 every shot that mentions the key, and each character is also drawn as a portrait that later
 scenes are matched to, so be concrete and visual:
-- characters: start with the name, then gender, age range, face, hair, build, default outfit and
-  one signature detail. When the request's speakers list describes a character's voice, take the
-  gender and age from it and never contradict it: a voice described as an elderly man is drawn as
-  an elderly man, a young girl's voice as a young girl. Let the voice's manner (gruff, gentle,
-  nervous) inform the face and posture. Use the speaker's name for the key, lowercased.
+- characters: start each description with the exact Cast speaker name followed by a comma, then
+  give the character's gender, age range, face, hair, build, default outfit and one signature
+  detail. Use a stable lowercase ASCII key, transliterated when needed. Match each visible
+  character to their own entry in "speakers" by name. State the character age and gender from
+  that speaker entry in the description itself: "沈星河, a Chinese woman in her late twenties" or
+  "尉迟烈, a Chinese man in his late forties". Each description must stand on its own for
+  the image model. A name, pronoun, occupation, hairstyle, or a relative age such as "younger"
+  or "older" is insufficient. Use the script to fill in missing traits. Give characters who
+  share a scene distinguishable faces, silhouettes and clothing, consistent with the story.
 - props: shape, material, colors and distinctive markings.
 - locations: architecture, layout, landmarks, materials and the usual time of day and weather,
   concrete enough to be drawn as sharply as the characters.
@@ -61,6 +65,14 @@ Never restate what the bible already says. Mention the focal subject first. Ment
 visible in this image, because each character mentioned is matched to their portrait. Mention the
 location with its @key too. Follow the story through time: a wet coat, a lamp going out, a broken
 window stays broken.
+
+In a shot with people, specify how many are visible. Give each visible character their own @key
+and bind their position, action and gaze to that key. In a two-shot, for example:
+"Two people near the center: @xinghe(left of center, pointing at the dial) speaks to
+@yuchi(right of center, looking down at the pointer)." Keep each person's face, build and outfit
+specific to their own description. When wardrobe or appearance changes, tie the change to the
+correct character and script beat. Keep faces and wardrobe separately readable when framing
+allows it. For a partial view, say exactly what part of each tagged character is in frame.
 
 Make the intended presence of people explicit. For an object-only insert, an instrument close-up,
 an empty interior or an unoccupied landscape, say that the frame contains only the described
@@ -103,3 +115,6 @@ fraction of the gap from that cue's end to the next cue's start (or the mix's en
 The next anchor ends the previous shot, and the last image holds through the end.
 Empty characters, props or locations objects are valid. Inside strings, use single quotes instead
 of double quotes, and never use line breaks.
+Before returning the JSON, check each visible character's description against their Cast voice
+for explicit age and gender. Check that each shot uses the correct character keys, assignments
+and visible headcount.

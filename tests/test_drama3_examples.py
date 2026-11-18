@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 import numpy as np
 
+from h3_app.drama3 import voice_looks
 from h3_app.drama3.cast import parse_script_cast_and_sounds, voices_without_sex
 from h3_app.drama3.example_story import example_story, example_story_reply_json
+from h3_app.drama3.example_visuals import example_visual_plan
 from h3_app.drama3.guided.local_staging import localize_existing_cues, phrase_count
 from h3_app.drama3.lint import lint_drama3_script, needs_direction
 from h3_app.drama3.serving import audio, generate
@@ -21,6 +23,8 @@ from h3_app.drama3.serving.tree import (
 )
 from h3_app.drama3.sound_policy import PERSPECTIVES, SOUND_ROLES
 from h3_app.drama3.sound_report import sound_density_report
+from h3_app.drama3.visual_plan import compile_plan
+from h3_app.drama3.visual_timing import anchor_plan, bind_plan, preview_settings
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
@@ -161,6 +165,40 @@ class SoundstageExamplesTests(unittest.TestCase):
                         if child.end_anchor:
                             self.assertEqual(phrase_count(child.end_anchor, speech), 1, child.end_anchor)
                             self.assertLess(plain.index(child.anchor), plain.index(child.end_anchor))
+
+    def test_visual_cast_matches_voice_and_reaches_the_image_prompts(self):
+        for lang, *_ in self.EXAMPLES:
+            with self.subTest(lang=lang):
+                title, script, speakers = example_story(lang)
+                voices = {speaker["name"]: speaker["description"] for speaker in speakers}
+                settings = preview_settings(script, title, voices)
+                plan = bind_plan(anchor_plan(example_visual_plan(lang), settings), settings)
+                shots = compile_plan(plan, settings["duration"], "", len(plan["shots"]))
+                for key, anchor in plan["characters"].items():
+                    voice = voices[anchor.split(",", 1)[0]]
+                    self.assertIsNotNone(voice_looks.gender(anchor), key)
+                    self.assertEqual(voice_looks.gender(anchor), voice_looks.gender(voice), key)
+                    self.assertIsNotNone(voice_looks.age(anchor), key)
+                    self.assertEqual(voice_looks.age(anchor), voice_looks.age(voice), key)
+                    tagged_shots = [shot for shot in shots if key in shot.references]
+                    self.assertTrue(tagged_shots, key)
+                    for shot in tagged_shots:
+                        self.assertIn(anchor, shot.prompt)
+
+    def test_kunlun_dial_dialogue_stages_the_two_cast_members_inside_the_outpost(self):
+        title, script, _ = example_story("zh")
+        settings = preview_settings(script, title)
+        plan = bind_plan(anchor_plan(example_visual_plan("zh"), settings), settings)
+        shots = compile_plan(plan, settings["duration"], "", len(plan["shots"]))
+        index = next(i for i, row in enumerate(plan["shots"])
+                     if "你看石盘上的刻度" in settings["script_cues"][row["cue"]]["text"])
+        shot = shots[index]
+        self.assertEqual(tuple(key for key in shot.references if key in plan["characters"]), ("xinghe", "yuchi"))
+        self.assertIn("outpost", shot.references)
+        self.assertIn("woman in her late twenties", shot.prompt)
+        self.assertIn("rust-red insulated jacket", shot.prompt)
+        self.assertIn("man in his late forties", shot.prompt)
+        self.assertIn("dark indigo expedition coat", shot.prompt)
 
     def test_zh_latest_keeps_dry_dialogue_and_reused_score(self):
         _title, raw_script, _speakers = example_story("zh-latest")
