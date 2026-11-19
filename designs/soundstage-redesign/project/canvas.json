@@ -14,7 +14,7 @@
       "x": 0,
       "y": 0,
       "w": 1440,
-      "h": 900,
+      "h": 1120,
       "title": "1 · Script Studio",
       "expand": "fill",
       "is_interactive": true
@@ -23,25 +23,25 @@
       "x": 1520,
       "y": 0,
       "w": 1440,
-      "h": 900,
+      "h": 1120,
       "title": "2 · Cast & Sounds",
       "expand": "fill",
       "is_interactive": true
     },
     "MixReview.dc.html": {
       "x": 0,
-      "y": 1020,
+      "y": 1240,
       "w": 1440,
-      "h": 900,
+      "h": 1120,
       "title": "3 · Mix & Review",
       "expand": "fill",
       "is_interactive": true
     },
     "Illustrate.dc.html": {
       "x": 1520,
-      "y": 1020,
+      "y": 1240,
       "w": 1440,
-      "h": 900,
+      "h": 1120,
       "title": "4 · Illustrate",
       "expand": "fill",
       "is_interactive": true
@@ -57,7 +57,7 @@
     "hero-title": {
       "x": 0,
       "y": -250,
-      "text": "Soundstage — Viewport-Locked Studio Redesign",
+      "text": "Soundstage — Page-Scroll Studio Redesign",
       "kind": "title1",
       "maxW": 2960
     }

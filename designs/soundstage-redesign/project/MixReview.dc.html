@@ -11,22 +11,18 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; overflow: hidden; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
     a { color: inherit; text-decoration: none; }
     a:hover { opacity: 0.92; }
     button, input, select, textarea { font: inherit; color: inherit; }
     button { cursor: pointer; }
-    .ss-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-    .ss-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-    .ss-scroll::-webkit-scrollbar-thumb { background: rgba(128, 145, 138, 0.35); border-radius: 999px; }
-    .ss-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </helmet>
 
-<div style="width: 100%; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+<div style="width: 100%; min-height: 100vh; display: flex; flex-direction: column; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
 
-  <!-- FIXED TOP STUDIO HEADER -->
-  <header style="flex: none; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}}; z-index: 10;">
+  <!-- STICKY TOP STUDIO HEADER -->
+  <header style="position: sticky; top: 0; flex: none; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}}; z-index: 20;">
     <div style="display: flex; align-items: center; gap: 8px; flex: none;">
       <svg width="26" height="26" viewBox="0 0 28 28" aria-hidden="true">
         <rect width="28" height="28" rx="7" fill="{{ink}}"></rect>
@@ -84,8 +80,8 @@
     </div>
   </header>
 
-  <!-- VIEWPORT-LOCKED DAW STUDIO (Zero Full-Page Scroll) -->
-  <main style="flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px; overflow: hidden;">
+  <!-- PAGE-SCROLL DAW STUDIO -->
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px;">
 
     <!-- FIXED TOP PLAYER & MULTI-LANE TIMELINE DECK (Never Scrolls Away) -->
     <section aria-label="Pinned player and multi-lane timeline" style="flex: none; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; padding: 12px 16px; display: flex; gap: 16px; align-items: stretch;">
@@ -197,11 +193,11 @@
       </div>
     </section>
 
-    <!-- LOWER VIEWPORT-LOCKED SPLIT (Left: Independently Scrollable Lines · Right: Tabbed Inspector) -->
-    <div style="flex: 1; min-height: 0; display: flex; gap: 12px; overflow: hidden;">
+    <!-- LOWER PAGE-FLOW SPLIT (Left: Natural-Flow Lines · Right: Sticky Tabbed Inspector) -->
+    <div style="display: flex; align-items: flex-start; gap: 12px;">
 
-      <!-- LINES LIST (Pinned Filter Header + Internal Scroll) -->
-      <section aria-label="Spoken lines" style="flex: 1; min-width: 0; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+      <!-- LINES LIST -->
+      <section aria-label="Spoken lines" style="flex: 1; min-width: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column;">
         <div style="flex: none; padding: 10px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
           <strong style="font-size: 14.5px; color: {{text}};">Lines</strong>
           <div role="group" aria-label="Filter lines" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 8px; background: {{lane}};">
@@ -216,7 +212,7 @@
           </label>
         </div>
 
-        <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 6px 0;">
+        <div style="padding: 6px 0;">
           <sc-for list="{{ visibleLines }}" as="ln" hint-placeholder-count="5">
             <button type="button" onClick="{{ ln.pick }}" aria-pressed="{{ ln.selected }}" style="width: 100%; display: grid; grid-template-columns: 36px 96px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 10px 16px; border: 0; border-left: 3px solid {{ ln.railColor }}; background: {{ ln.bg }}; text-align: left;">
               <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">{{ ln.num }}</span>
@@ -231,14 +227,14 @@
         </div>
       </section>
 
-      <!-- RIGHT FIXED TABBED INSPECTOR (Picked Line / How It Sounds — No Scrolling Down a Long Sidebar) -->
-      <aside aria-label="Line inspector and sound settings" style="width: 376px; flex: none; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+      <!-- RIGHT STICKY TABBED INSPECTOR -->
+      <aside aria-label="Line inspector and sound settings" style="position: sticky; top: 68px; align-self: flex-start; width: 376px; flex: none; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column;">
         <div role="tablist" aria-label="Inspector mode" style="flex: none; display: flex; padding: 0 16px; gap: 18px; border-bottom: 1px solid {{lineSoft}};">
           <button type="button" role="tab" onClick="{{ setTabLine }}" aria-selected="{{ isTabLine }}" style="height: 42px; padding: 0 2px; border: 0; border-bottom: 2px solid {{tabLineBorder}}; background: transparent; color: {{tabLineColor}}; font-size: 13.5px; font-weight: 700;">Picked line</button>
           <button type="button" role="tab" onClick="{{ setTabSound }}" aria-selected="{{ isTabSound }}" style="height: 42px; padding: 0 2px; border: 0; border-bottom: 2px solid {{tabSoundBorder}}; background: transparent; color: {{tabSoundColor}}; font-size: 13.5px; font-weight: 700;">How it sounds</button>
         </div>
 
-        <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;">
           <sc-if value="{{ isTabLine }}" hint-placeholder-val="{{ true }}">
             <div style="display: flex; flex-direction: column; gap: 14px;">
               <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: {{muted}};">
@@ -304,8 +300,8 @@
     </div>
   </main>
 
-  <!-- FIXED BOTTOM ACTION BAR -->
-  <footer style="flex: none; padding: 10px 16px; background: {{surface}}; border-top: 1px solid {{line}}; display: flex; align-items: center; gap: 16px;">
+  <!-- STICKY BOTTOM ACTION BAR -->
+  <footer style="position: sticky; bottom: 0; z-index: 20; flex: none; padding: 10px 16px; background: {{surface}}; border-top: 1px solid {{line}}; display: flex; align-items: center; gap: 16px;">
     <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;">
       <strong style="font-size: 13.5px; color: {{text}};">Mix ready · 2 lines flagged for review</strong>
       <span style="font-size: 12px; color: {{muted}};">Retake flagged lines or remix ambient levels, then move to Illustrate.</span>
@@ -321,7 +317,7 @@
   </footer>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"accent":{"editor":"color","options":["#0a7a68","#1864ab","#6741d9","#b45309"],"default":"#0a7a68"},"$preview":{"width":1440,"height":900}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"accent":{"editor":"color","options":["#0a7a68","#1864ab","#6741d9","#b45309"],"default":"#0a7a68"},"$preview":{"width":1440,"height":1120}}'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);

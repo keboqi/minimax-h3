@@ -11,22 +11,18 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; overflow: hidden; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
     a { color: inherit; text-decoration: none; }
     a:hover { opacity: 0.92; }
     button, input, select, textarea { font: inherit; color: inherit; }
     button { cursor: pointer; }
-    .ss-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-    .ss-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-    .ss-scroll::-webkit-scrollbar-thumb { background: rgba(128, 145, 138, 0.35); border-radius: 999px; }
-    .ss-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </helmet>
 
-<div style="width: 100%; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+<div style="width: 100%; min-height: 100vh; display: flex; flex-direction: column; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
 
-  <!-- FIXED TOP STUDIO HEADER -->
-  <header style="flex: none; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}}; z-index: 10;">
+  <!-- STICKY TOP STUDIO HEADER -->
+  <header style="position: sticky; top: 0; flex: none; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}}; z-index: 20;">
     <div style="display: flex; align-items: center; gap: 8px; flex: none;">
       <svg width="26" height="26" viewBox="0 0 28 28" aria-hidden="true">
         <rect width="28" height="28" rx="7" fill="{{ink}}"></rect>
@@ -84,8 +80,8 @@
     </div>
   </header>
 
-  <!-- VIEWPORT-LOCKED CAST & SOUNDS STUDIO (Zero Full-Page Scroll) -->
-  <main style="flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px; overflow: hidden;">
+  <!-- PAGE-SCROLL CAST & SOUNDS STUDIO -->
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px;">
 
     <!-- PINNED READINESS OVERVIEW STRIP (Always Visible Above Split Panes) -->
     <section aria-label="Asset readiness overview" style="flex: none; padding: 10px 16px; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
@@ -116,15 +112,15 @@
       </div>
     </section>
 
-    <!-- MASTER-DETAIL LOCKED SPLIT (Left: Scrollable Assets · Right: Fixed Slot Inspector) -->
-    <div style="flex: 1; min-height: 0; display: flex; gap: 12px; overflow: hidden;">
+    <!-- MASTER-DETAIL SPLIT (Left: Natural Page-Scroll Assets · Right: Sticky Slot Inspector) -->
+    <div style="display: flex; align-items: flex-start; gap: 12px;">
 
       <!-- LEFT ASSET WORKSPACE -->
-      <div style="flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden;">
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px;">
 
-        <!-- VOICES PANE (Independently Scrollable) -->
+        <!-- VOICES PANE -->
         <sc-if value="{{ showVoices }}" hint-placeholder-val="{{ true }}">
-          <section aria-label="Voices" style="flex: 1; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+          <section aria-label="Voices" style="border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column;">
             <div style="flex: none; padding: 10px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; justify-content: space-between;">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <strong style="font-size: 14.5px; color: {{text}};">Voices</strong>
@@ -133,7 +129,7 @@
               <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 12px; font-weight: 600;">+ Add voice</button>
             </div>
 
-            <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 14px 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 12px; align-content: start;">
+            <div style="padding: 14px 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 12px; align-content: start;">
               <sc-for list="{{ voices }}" as="v" hint-placeholder-count="4">
                 <button type="button" onClick="{{ v.pick }}" aria-pressed="{{ v.selected }}" style="padding: 13px; border-radius: 11px; border: 1.5px solid {{ v.border }}; background: {{ v.bg }}; text-align: left; display: flex; flex-direction: column; gap: 10px;">
                   <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
@@ -157,9 +153,9 @@
           </section>
         </sc-if>
 
-        <!-- SOUNDS & MUSIC PANE (Independently Scrollable Table) -->
+        <!-- SOUNDS & MUSIC PANE -->
         <sc-if value="{{ showSounds }}" hint-placeholder-val="{{ true }}">
-          <section aria-label="Sounds and music" style="flex: 1; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+          <section aria-label="Sounds and music" style="border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column;">
             <div style="flex: none; padding: 10px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; justify-content: space-between;">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <strong style="font-size: 14.5px; color: {{text}};">Sounds &amp; music</strong>
@@ -168,7 +164,7 @@
               <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 12px; font-weight: 600;">+ Add sound</button>
             </div>
 
-            <div class="ss-scroll" style="flex: 1; min-height: 0;">
+            <div style="overflow-x: auto;">
               <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
                 <thead>
                   <tr style="border-bottom: 1px solid {{lineSoft}}; color: {{muted}}; font-size: 11.5px; text-align: left;">
@@ -196,17 +192,17 @@
         </sc-if>
       </div>
 
-      <!-- RIGHT FIXED SLOT INSPECTOR (Always Anchored, Independent Scroll) -->
-      <aside aria-label="Voice slot editor" style="width: 380px; flex: none; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
-        <!-- Pinned Inspector Header -->
+      <!-- RIGHT STICKY SLOT INSPECTOR -->
+      <aside aria-label="Voice slot editor" style="position: sticky; top: 68px; align-self: flex-start; width: 380px; flex: none; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column;">
+        <!-- Inspector Header -->
         <div style="flex: none; padding: 14px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; gap: 10px;">
           <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ activeVoice.tone }}; flex: none;"></span>
           <strong style="font-size: 16px; color: {{text}}; flex: 1;">{{ activeVoice.name }}</strong>
           <span style="font-size: 11.5px; font-weight: 650; padding: 3px 9px; border-radius: 999px; background: {{ activeVoice.badgeBg }}; color: {{ activeVoice.badgeColor }};">{{ activeVoice.status }}</span>
         </div>
 
-        <!-- Scrollable Inspector Body -->
-        <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;">
+        <!-- Inspector Body -->
+        <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;">
           <!-- Preview Player Strip -->
           <div style="padding: 10px 12px; border-radius: 10px; background: {{raised}}; border: 1px solid {{line}}; display: flex; align-items: center; gap: 10px;">
             <button type="button" aria-label="Preview voice clip" style="width: 34px; height: 34px; border-radius: 50%; border: 0; background: {{accent}}; color: {{accentInk}}; display: inline-flex; align-items: center; justify-content: center; flex: none;">
@@ -262,8 +258,8 @@
     </div>
   </main>
 
-  <!-- FIXED BOTTOM ACTION BAR -->
-  <footer style="flex: none; padding: 10px 16px; background: {{surface}}; border-top: 1px solid {{line}}; display: flex; align-items: center; gap: 16px;">
+  <!-- STICKY BOTTOM ACTION BAR -->
+  <footer style="position: sticky; bottom: 0; z-index: 20; flex: none; padding: 10px 16px; background: {{surface}}; border-top: 1px solid {{line}}; display: flex; align-items: center; gap: 16px;">
     <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;">
       <strong style="font-size: 13.5px; color: {{text}};">2 voices still need reference clips</strong>
       <span style="font-size: 12px; color: {{muted}};">Leo and Warden can be generated automatically from their script descriptions.</span>
@@ -279,7 +275,7 @@
   </footer>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"accent":{"editor":"color","options":["#0a7a68","#1864ab","#6741d9","#b45309"],"default":"#0a7a68"},"$preview":{"width":1440,"height":900}}'>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"accent":{"editor":"color","options":["#0a7a68","#1864ab","#6741d9","#b45309"],"default":"#0a7a68"},"$preview":{"width":1440,"height":1120}}'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
