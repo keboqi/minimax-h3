@@ -17,11 +17,11 @@ function rackBlurDecay(p, t) {
 // Single source of truth for camera kinematics; drives both CSS transforms and WebGPU/Canvas2D camera coupling.
 const CAMERA_MOVES = {
   push_in: (p) => {
-    const scale = 1 + p * 0.08;
+    const scale = round3(1 + easeInOut(p) * 0.08);
     return { css: `scale(${scale})`, tx: 0, ty: 0, scale, shake: 0, angle: 0, blur: 0 };
   },
   pull_out: (p) => {
-    const scale = 1.08 - p * 0.08;
+    const scale = round3(1.08 - easeInOut(p) * 0.08);
     return { css: `scale(${scale})`, tx: 0, ty: 0, scale, shake: 0, angle: 0, blur: 0 };
   },
   pan_left: (p) => {
@@ -82,6 +82,14 @@ function evaluateCamera(effects, progress, seconds) {
   return move ? CAMERA_MOVES[move](p, seconds) : null;
 }
 
+export function cameraFrame(effects, progress, seconds, cueSeconds = seconds) {
+  const camera = evaluateCamera(effects, progress, effects?.includes("impact_shake") ? cueSeconds : seconds);
+  if (!camera) return STATIC_FRAME;
+  return {...camera, filter: camera.blur > 0 ? `blur(${round3(camera.blur * 4.5)}px)` : "none"};
+}
+
+const STATIC_FRAME = Object.freeze({...IDENTITY_CAMERA, css: "none", filter: "none"});
+
 const atmosphereEffects = new Set(Object.keys(ATMO_IDS));
 const lightEffects = new Set(Object.keys(LIGHT_IDS));
 
@@ -124,16 +132,37 @@ function getSprites() {
   const smoke = radialSprite(128, [[0, "rgba(128,136,146,0.28)"], [0.5, "rgba(116,124,134,0.12)"], [1, "rgba(110,118,128,0)"]]);
   const snow = radialSprite(32, [[0, "rgba(248,252,255,0.95)"], [0.45, "rgba(240,248,255,0.45)"], [1, "rgba(240,248,255,0)"]]);
   const ember = radialSprite(32, [[0, "rgba(255,220,120,0.98)"], [0.35, "rgba(255,130,45,0.65)"], [1, "rgba(255,80,20,0)"]]);
+  const firefly = radialSprite(32, [[0, "rgba(255,248,165,0.96)"], [0.42, "rgba(182,250,105,0.52)"], [1, "rgba(150,240,80,0)"]]);
+  const caustic = radialSprite(64, [[0, "rgba(105,228,255,0.22)"], [0.55, "rgba(85,205,240,0.08)"], [1, "rgba(65,180,225,0)"]]);
+  const bubble = makeSprite(24, (ctx, s) => {
+    const r = s * 0.42, cx = s / 2, cy = s / 2;
+    const g = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
+    g.addColorStop(0, "rgba(205,246,255,0.05)");
+    g.addColorStop(0.75, "rgba(205,246,255,0.28)");
+    g.addColorStop(0.95, "rgba(235,252,255,0.65)");
+    g.addColorStop(1, "rgba(205,246,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.32, cy - r * 0.32, r * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+  });
   const grain = makeSprite(128, (ctx, s) => {
     const img = ctx.createImageData(s, s);
     for (let i = 0; i < img.data.length; i += 4) {
       const idx = i >> 2;
-      const v = Math.floor(fraction(Math.sin(idx * 12.9898 + 78.233) * 43758.5453) * 255);
-      img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 28;
+      const rnd = fraction(Math.sin(idx * 12.9898 + 78.233) * 43758.5453);
+      const bright = rnd >= 0.5;
+      const v = bright ? 255 : 0;
+      const a = Math.round(Math.abs(rnd - 0.5) * 2 * 22);
+      img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = a;
     }
     ctx.putImageData(img, 0, 0);
   });
-  sprites = fog && snow && ember ? { fog, smoke, snow, ember, grain } : false;
+  sprites = fog && snow && ember ? { fog, smoke, snow, ember, firefly, caustic, bubble, grain } : false;
   return sprites;
 }
 
@@ -158,25 +187,45 @@ export function effectsEnabled(video, reducedMotion) {
   return video.effects_enabled !== false && (!reducedMotion || video.effects_override_reduced_motion === true);
 }
 
-/**
- * Deterministic timeline sound-cue onset time: when a shot contains one-shot sound cues
- * (`!sound.loop`) inside `(shotStart, shotEnd)`, transient effects (`impact_shake`, `flash`)
- * trigger at shot start and re-trigger at each one-shot sound cue's timestamp.
- */
-export function cueTriggerElapsed(elapsed, shotStart = 0, shotEnd = 0, sounds = null) {
-  if (elapsed < 0 || !Array.isArray(sounds) || !sounds.length || !(shotEnd > shotStart)) {
-    return elapsed;
+export function lastAtOrBefore(items, time, startOf) {
+  let low = 0, high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (startOf(items[mid]) <= time) low = mid + 1;
+    else high = mid;
   }
-  const time = shotStart + elapsed;
-  let best = elapsed;
-  for (const sound of sounds) {
-    if (!sound || sound.loop) continue;
-    const start = Number(sound.start);
-    if (Number.isFinite(start) && start > shotStart && start < shotEnd && start <= time) {
-      best = Math.min(best, time - start);
+  return low - 1;
+}
+
+const timestamp = (time) => time;
+const SETTLED_CUE_SECONDS = 1;
+export function effectCues(shots, sounds) {
+  const onsets = (sounds || []).filter((sound) => sound?.start != null && !sound.loop)
+    .map((sound) => Number(sound.start)).filter(Number.isFinite).sort((a, b) => a - b);
+  let lastFlash = -Infinity;
+  return shots.map(({start, end, effects}) => {
+    const shake = effects.includes("impact_shake"), flash = effects.includes("flash");
+    const candidates = shake || flash ? [start] : [];
+    if (candidates.length) {
+      for (let i = lastAtOrBefore(onsets, start, timestamp) + 1; i < onsets.length && onsets[i] < end; i++) {
+        candidates.push(onsets[i]);
+      }
     }
-  }
-  return best;
+    return {
+      shake: shake ? candidates : [],
+      // Coalesce dense cues across cuts as well as within a shot. The pulse lasts 0.45s.
+      flash: flash ? candidates.filter((onset) => {
+        if (onset < lastFlash + 0.5) return false;
+        lastFlash = onset;
+        return true;
+      }) : [],
+    };
+  });
+}
+
+export function cueElapsed(cues, time) {
+  const index = lastAtOrBefore(cues, time, timestamp);
+  return index < 0 ? SETTLED_CUE_SECONDS : time - cues[index];
 }
 
 export function cameraTransform(effects, progress, seconds) {
@@ -184,9 +233,7 @@ export function cameraTransform(effects, progress, seconds) {
 }
 
 export function cameraFilter(effects, progress, seconds) {
-  if (!effects?.includes?.("rack_focus")) return "none";
-  const decay = rackBlurDecay(clamp01(progress), seconds);
-  return decay > 0 ? `blur(${round3(decay * 4.5)}px)` : "none";
+  return cameraFrame(effects, progress, seconds).filter;
 }
 
 export function cameraMotion(effects, progress, seconds) {
@@ -217,30 +264,42 @@ function sizeCanvas(canvas, w, h) {
   }
 }
 
-let lastPaintArgs = null;
-export function paintEffects(canvas, effects, seconds, showBackend, scene = null) {
-  const atmospheres = effects.filter((id) => atmosphereEffects.has(id));
-  const lights = effects.filter((id) => lightEffects.has(id));
-  const fading = Boolean(scene?.fading && (scene?.fadeMix ?? 1) < 0.999);
-  const backEffects = fading && Array.isArray(scene?.backEffects) ? scene.backEffects : [];
-  const backAtmospheres = backEffects.filter((id) => atmosphereEffects.has(id));
-  const backLights = backEffects.filter((id) => lightEffects.has(id));
+const emptyEffects = {atmospheres: [], lights: []};
+const effectLayers = new WeakMap();
+function splitEffects(list) {
+  if (!Array.isArray(list) || !list.length) return emptyEffects;
+  const cached = effectLayers.get(list);
+  if (cached) return cached;
+  const atmospheres = [];
+  const lights = [];
+  for (const id of list) {
+    if (atmosphereEffects.has(id)) atmospheres.push(id);
+    else if (lightEffects.has(id)) lights.push(id);
+  }
+  const layers = {atmospheres, lights};
+  effectLayers.set(list, layers);
+  return layers;
+}
 
-  const width = Math.max(1, Math.round(canvas.clientWidth));
-  const height = Math.max(1, Math.round(canvas.clientHeight));
-  const scale = Math.min(1, 960 / width);
-  const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
+let lastPaintArgs = null;
+const paintedOverlays = new WeakSet();
+export function paintEffects(canvas, effects, seconds, showBackend, scene = null) {
+  const { atmospheres, lights } = splitEffects(effects);
+  const fading = Boolean(scene?.fading && (scene?.fadeMix ?? 1) < 1);
+  const { atmospheres: backAtmospheres, lights: backLights } = splitEffects(fading ? scene?.backEffects : null);
+
   if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length) {
     lastPaintArgs = null;
-    clearWebGPU(canvas);
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      sizeCanvas(canvas, w, h);
-      ctx.clearRect(0, 0, w, h);
+    if (paintedOverlays.delete(canvas)) {
+      clearWebGPU(canvas);
+      canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     }
     showBackend?.(null);
     return;
   }
+  const width = Math.max(1, Math.round(canvas.clientWidth));
+  const height = Math.max(1, Math.round(canvas.clientHeight));
+  paintedOverlays.add(canvas);
   const t = Math.max(0, seconds);
   const cueT = Math.max(0, scene?.cueElapsed ?? t);
   lastPaintArgs = [canvas, effects, seconds, showBackend, scene];
@@ -265,7 +324,7 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     lights.length <= 1 &&
     backAtmospheres.length <= 1 &&
     backLights.length <= 1 &&
-    renderWebGPU(canvas, atmoId, lightId, t, w, h, gpuScene)
+    renderWebGPU(canvas, atmoId, lightId, t, width, height, gpuScene)
   ) {
     showBackend?.("WebGPU");
     return;
@@ -276,6 +335,8 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     showBackend?.("Unavailable");
     return;
   }
+  const scale = Math.min(1, 960 / Math.max(width, height));
+  const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
   sizeCanvas(canvas, w, h);
   ctx.clearRect(0, 0, w, h);
 
@@ -317,139 +378,139 @@ function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, alpha, shotSeed, 
   });
 }
 
-function paintLight(ctx, effect, t, cueT, w, h, shotSeed = 0, shiftX = 0, shiftY = 0) {
-  if (effect === "vignette") {
-    const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.22,
-      w / 2, h / 2, Math.max(w, h) * 0.68);
-    gradient.addColorStop(0, "rgba(0,0,0,0)");
-    gradient.addColorStop(0.55, "rgba(0,0,0,0.14)");
-    gradient.addColorStop(1, "rgba(0,0,0,0.54)");
-    ctx.fillStyle = gradient;
+function paintVignette(ctx, _t, _cueT, w, h) {
+  const gradient = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.22,
+    w / 2, h / 2, Math.max(w, h) * 0.68);
+  gradient.addColorStop(0, "rgba(0,0,0,0)");
+  gradient.addColorStop(0.55, "rgba(0,0,0,0.14)");
+  gradient.addColorStop(1, "rgba(0,0,0,0.54)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function paintSpotlight(ctx, t, _cueT, w, h, _shotSeed, shiftX, shiftY) {
+  const cx = w * (0.5 + Math.sin(t * 0.28) * 0.035) + shiftX;
+  const cy = h * 0.48 + shiftY;
+  if (ctx.createRadialGradient) {
+    const shade = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.12, cx, cy, Math.max(w, h) * 0.62);
+    shade.addColorStop(0, "rgba(6,8,14,0)");
+    shade.addColorStop(0.58, "rgba(6,8,14,0.22)");
+    shade.addColorStop(1, "rgba(6,8,14,0.56)");
+    ctx.fillStyle = shade;
     ctx.fillRect(0, 0, w, h);
-    return;
   }
-  if (effect === "spotlight") {
-    const cx = w * (0.5 + Math.sin(t * 0.28) * 0.035) + shiftX;
-    const cy = h * 0.48 + shiftY;
+  withComposite(ctx, "screen", () => {
     if (ctx.createRadialGradient) {
-      const shade = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.12, cx, cy, Math.max(w, h) * 0.62);
-      shade.addColorStop(0, "rgba(6,8,14,0)");
-      shade.addColorStop(0.58, "rgba(6,8,14,0.22)");
-      shade.addColorStop(1, "rgba(6,8,14,0.56)");
-      ctx.fillStyle = shade;
-      ctx.fillRect(0, 0, w, h);
+      const beam = ctx.createRadialGradient(cx, h * 0.36 + shiftY, 0, cx, cy, Math.max(w, h) * 0.48);
+      beam.addColorStop(0, "rgba(255,240,204,0.15)");
+      beam.addColorStop(0.55, "rgba(255,232,184,0.06)");
+      beam.addColorStop(1, "rgba(255,225,170,0)");
+      ctx.fillStyle = beam;
+    } else {
+      ctx.fillStyle = "rgba(255,240,204,0.12)";
     }
-    withComposite(ctx, "screen", () => {
-      if (ctx.createRadialGradient) {
-        const beam = ctx.createRadialGradient(cx, h * 0.36 + shiftY, 0, cx, cy, Math.max(w, h) * 0.48);
-        beam.addColorStop(0, "rgba(255,240,204,0.15)");
-        beam.addColorStop(0.55, "rgba(255,232,184,0.06)");
-        beam.addColorStop(1, "rgba(255,225,170,0)");
-        ctx.fillStyle = beam;
-      } else {
-        ctx.fillStyle = "rgba(255,240,204,0.12)";
-      }
-      ctx.fillRect(0, 0, w, h);
-    });
-    return;
-  }
-  if (effect === "warm_glow") {
-    const pulse = 0.085 + Math.sin(t * 0.8) * 0.03;
-    withComposite(ctx, "screen", () => {
-      if (ctx.createRadialGradient) {
-        const cx = w * (0.5 + Math.sin(t * 0.22) * 0.06) + shiftX;
-        const cy = h * (0.42 + Math.cos(t * 0.18) * 0.04) + shiftY;
-        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
-        gradient.addColorStop(0, `rgba(255,196,112,${round3(pulse * 1.6)})`);
-        gradient.addColorStop(0.55, `rgba(255,162,72,${round3(pulse * 0.75)})`);
-        gradient.addColorStop(1, "rgba(255,140,50,0)");
-        ctx.fillStyle = gradient;
-      } else {
-        ctx.fillStyle = `rgba(255,177,85,${pulse})`;
-      }
-      ctx.fillRect(0, 0, w, h);
-    });
-    return;
-  }
-  if (effect === "cold_tint") {
-    const pulse = 0.09 + Math.sin(t * 0.5) * 0.02;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+function paintWarmGlow(ctx, t, _cueT, w, h, _shotSeed, shiftX, shiftY) {
+  const pulse = 0.085 + Math.sin(t * 0.8) * 0.03;
+  withComposite(ctx, "screen", () => {
     if (ctx.createRadialGradient) {
-      const gradient = ctx.createRadialGradient(w * 0.5, h * 0.35, Math.min(w, h) * 0.1,
-        w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
-      gradient.addColorStop(0, `rgba(110,165,235,${round3(pulse * 0.45)})`);
-      gradient.addColorStop(1, `rgba(48,96,175,${round3(pulse * 1.45)})`);
+      const cx = w * (0.5 + Math.sin(t * 0.22) * 0.06) + shiftX;
+      const cy = h * (0.42 + Math.cos(t * 0.18) * 0.04) + shiftY;
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
+      gradient.addColorStop(0, `rgba(255,196,112,${round3(pulse * 1.6)})`);
+      gradient.addColorStop(0.55, `rgba(255,162,72,${round3(pulse * 0.75)})`);
+      gradient.addColorStop(1, "rgba(255,140,50,0)");
       ctx.fillStyle = gradient;
     } else {
-      ctx.fillStyle = `rgba(80,130,210,${pulse})`;
+      ctx.fillStyle = `rgba(255,177,85,${pulse})`;
     }
     ctx.fillRect(0, 0, w, h);
-    return;
+  });
+}
+
+function paintColdTint(ctx, t, _cueT, w, h) {
+  const pulse = 0.09 + Math.sin(t * 0.5) * 0.02;
+  if (ctx.createRadialGradient) {
+    const gradient = ctx.createRadialGradient(w * 0.5, h * 0.35, Math.min(w, h) * 0.1,
+      w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
+    gradient.addColorStop(0, `rgba(110,165,235,${round3(pulse * 0.45)})`);
+    gradient.addColorStop(1, `rgba(48,96,175,${round3(pulse * 1.45)})`);
+    ctx.fillStyle = gradient;
+  } else {
+    ctx.fillStyle = `rgba(80,130,210,${pulse})`;
   }
-  if (effect === "flicker") {
-    const wave = 0.5 + 0.3 * Math.sin(t * 7.3) + 0.2 * Math.sin(t * 13.1);
-    const alpha = round3(0.035 + wave * 0.075);
-    withComposite(ctx, "screen", () => {
-      if (ctx.createRadialGradient) {
-        const cx = w * (0.5 + Math.sin(t * 5.1) * 0.02) + shiftX;
-        const cy = h * 0.62 + shiftY;
-        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.65);
-        gradient.addColorStop(0, `rgba(255,168,76,${round3(alpha * 1.7)})`);
-        gradient.addColorStop(1, "rgba(255,120,40,0)");
-        ctx.fillStyle = gradient;
-      } else {
-        ctx.fillStyle = `rgba(255,160,72,${alpha})`;
-      }
-      ctx.fillRect(0, 0, w, h);
-    });
-    return;
-  }
-  if (effect === "film_grain") {
-    const tile = getSprites()?.grain;
-    const frame = Math.floor(t * 24);
+  ctx.fillRect(0, 0, w, h);
+}
+
+function paintFlicker(ctx, t, _cueT, w, h, _shotSeed, shiftX, shiftY) {
+  const wave = 0.5 + 0.3 * Math.sin(t * 7.3) + 0.2 * Math.sin(t * 13.1);
+  const alpha = round3(0.035 + wave * 0.075);
+  withComposite(ctx, "screen", () => {
+    if (ctx.createRadialGradient) {
+      const cx = w * (0.5 + Math.sin(t * 5.1) * 0.02) + shiftX;
+      const cy = h * 0.62 + shiftY;
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.65);
+      gradient.addColorStop(0, `rgba(255,168,76,${round3(alpha * 1.7)})`);
+      gradient.addColorStop(1, "rgba(255,120,40,0)");
+      ctx.fillStyle = gradient;
+    } else {
+      ctx.fillStyle = `rgba(255,160,72,${alpha})`;
+    }
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+function paintFilmGrain(ctx, t, _cueT, w, h) {
+  const tile = getSprites()?.grain;
+  const frame = Math.floor(t * 24);
+  if (tile && ctx.createPattern && ctx.save && ctx.restore) {
     const ox = Math.floor(fraction(Math.sin(frame * 12.9898) * 43758.5453) * 128);
     const oy = Math.floor(fraction(Math.cos(frame * 78.233) * 19341.123) * 128);
-    if (tile && ctx.createPattern) {
-      withComposite(ctx, "overlay", () => {
-        const pattern = ctx.createPattern(tile, "repeat");
-        if (!pattern) return;
-        ctx.translate?.(-ox, -oy);
-        ctx.fillStyle = pattern;
-        ctx.fillRect(ox, oy, w + ox, h + oy);
-      });
+    const pattern = ctx.createPattern(tile, "repeat");
+    if (!pattern) return;
+    ctx.save();
+    ctx.translate?.(-ox, -oy);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(ox, oy, w + ox, h + oy);
+    ctx.restore();
+    return;
+  }
+  ctx.fillStyle = `rgba(128,128,128,${round3(0.03 + (frame % 3) * 0.01)})`;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function paintDreamBloom(ctx, t, _cueT, w, h, _shotSeed, shiftX, shiftY) {
+  const pulse = 0.14 + Math.sin(t * 0.55) * 0.03;
+  withComposite(ctx, "screen", () => {
+    if (ctx.createRadialGradient) {
+      const cx = w * 0.5 + shiftX;
+      const cy = h * 0.45 + shiftY;
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
+      gradient.addColorStop(0, `rgba(250,225,245,${round3(pulse)})`);
+      gradient.addColorStop(0.6, `rgba(245,215,240,${round3(pulse * 0.55)})`);
+      gradient.addColorStop(1, "rgba(240,210,235,0)");
+      ctx.fillStyle = gradient;
     } else {
-      ctx.fillStyle = `rgba(128,128,128,${round3(0.03 + (frame % 3) * 0.01)})`;
-      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = `rgba(250,225,245,${round3(pulse * 0.6)})`;
     }
-    return;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+function paintScanlines(ctx, t, _cueT, w, h) {
+  ctx.fillStyle = "rgba(10,22,32,0.14)";
+  for (let y = 0; y < h; y += 3) {
+    ctx.fillRect(0, y, w, 1);
   }
-  if (effect === "dream_bloom") {
-    const pulse = 0.14 + Math.sin(t * 0.55) * 0.03;
-    withComposite(ctx, "screen", () => {
-      if (ctx.createRadialGradient) {
-        const cx = w * 0.5 + shiftX;
-        const cy = h * 0.45 + shiftY;
-        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
-        gradient.addColorStop(0, `rgba(250,225,245,${round3(pulse)})`);
-        gradient.addColorStop(0.6, `rgba(245,215,240,${round3(pulse * 0.55)})`);
-        gradient.addColorStop(1, "rgba(240,210,235,0)");
-        ctx.fillStyle = gradient;
-      } else {
-        ctx.fillStyle = `rgba(250,225,245,${round3(pulse * 0.6)})`;
-      }
-      ctx.fillRect(0, 0, w, h);
-    });
-    return;
-  }
-  if (effect === "scanlines") {
-    ctx.fillStyle = "rgba(10,22,32,0.14)";
-    for (let y = 0; y < h; y += 3) {
-      ctx.fillRect(0, y, w, 1);
-    }
-    const barY = fraction(t * 0.08) * h;
-    ctx.fillStyle = "rgba(90,215,242,0.06)";
-    ctx.fillRect(0, barY, w, Math.max(4, h * 0.04));
-    return;
-  }
+  const barY = fraction(t * 0.08) * h;
+  ctx.fillStyle = "rgba(90,215,242,0.06)";
+  ctx.fillRect(0, barY, w, Math.max(4, h * 0.04));
+}
+
+function paintSurgeFlash(effect, ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) {
   // Lightning pulses once every 7s, below three flashes per second, with a brief secondary echo.
   // Flash uses cueT so it can trigger on one-shot sound cues as well as at shot start.
   const seedOffset = shotSeed > 0 ? fraction(Math.sin(shotSeed * 91.7 + 13.3) * 43758.5453) * 4.5 : 0;
@@ -475,6 +536,23 @@ function paintLight(ctx, effect, t, cueT, w, h, shotSeed = 0, shiftX = 0, shiftY
     ctx.fillStyle = `rgba(225,237,255,${alpha})`;
     ctx.fillRect(0, 0, w, h);
   });
+}
+
+const LIGHT_PAINTERS = {
+  vignette: paintVignette,
+  spotlight: paintSpotlight,
+  warm_glow: paintWarmGlow,
+  cold_tint: paintColdTint,
+  flicker: paintFlicker,
+  film_grain: paintFilmGrain,
+  dream_bloom: paintDreamBloom,
+  scanlines: paintScanlines,
+  lightning: (ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) => paintSurgeFlash("lightning", ctx, t, cueT, w, h, shotSeed, shiftX, shiftY),
+  flash: (ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) => paintSurgeFlash("flash", ctx, t, cueT, w, h, shotSeed, shiftX, shiftY),
+};
+
+function paintLight(ctx, effect, t, cueT, w, h, shotSeed = 0, shiftX = 0, shiftY = 0) {
+  LIGHT_PAINTERS[effect]?.(ctx, t, cueT, w, h, shotSeed, shiftX, shiftY);
 }
 
 function paintCloud(effect, ctx, t, w, h, shiftX = 0, shiftY = 0) {
@@ -562,20 +640,32 @@ function paintPetals(ctx, t, w, h, shiftX = 0, shiftY = 0) {
 
 function paintUnderwater(ctx, t, w, h, shiftX = 0, shiftY = 0) {
   const scale = Math.max(0.5, w / 960);
+  const causticSprite = getSprites()?.caustic;
+  const bubbleSprite = getSprites()?.bubble;
   withComposite(ctx, "screen", () => {
+    const baseAlpha = ctx.globalAlpha ?? 1;
     for (let i = 0; i < 4; i++) {
       const cx = (0.18 + i * 0.22 + Math.sin(t * 0.45 + i * 1.3) * 0.06) * w + shiftX;
       const cy = (0.18 + Math.cos(t * 0.35 + i) * 0.05) * h + shiftY;
-      const alpha = round3(0.05 + 0.025 * Math.sin(t * 0.8 + i));
-      if (ctx.createRadialGradient) {
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.34);
-        g.addColorStop(0, `rgba(105,228,255,${alpha})`);
-        g.addColorStop(1, "rgba(65,180,225,0)");
-        ctx.fillStyle = g;
+      const pulse = 0.23 + 0.11 * Math.sin(t * 0.8 + i);
+      if (causticSprite && ctx.drawImage && ctx.save && ctx.restore) {
+        const radius = w * 0.34;
+        ctx.save();
+        ctx.globalAlpha = baseAlpha * pulse;
+        ctx.drawImage(causticSprite, cx - radius, cy - radius, radius * 2, radius * 2);
+        ctx.restore();
       } else {
-        ctx.fillStyle = `rgba(105,228,255,${alpha})`;
+        const alpha = round3(0.05 + 0.025 * Math.sin(t * 0.8 + i));
+        if (ctx.createRadialGradient) {
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.34);
+          g.addColorStop(0, `rgba(105,228,255,${alpha})`);
+          g.addColorStop(1, "rgba(65,180,225,0)");
+          ctx.fillStyle = g;
+        } else {
+          ctx.fillStyle = `rgba(105,228,255,${alpha})`;
+        }
+        ctx.fillRect(0, 0, w, h);
       }
-      ctx.fillRect(0, 0, w, h);
     }
     const count = 44;
     for (let i = 0; i < count; i++) {
@@ -584,10 +674,18 @@ function paintUnderwater(ctx, t, w, h, shiftX = 0, shiftY = 0) {
       const wobble = Math.sin(t * (1.2 + seed) + i * 1.5) * 0.028;
       const x = fraction(PHASES[i] + wobble) * w + shiftX * depth;
       const radius = (1.6 + seed * 2.2) * depth * scale;
-      ctx.beginPath();
-      ctx.fillStyle = `rgba(205,246,255,${round3(depth * 0.62)})`;
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
+      if (bubbleSprite && ctx.drawImage && ctx.save && ctx.restore) {
+        const size = radius * 2.6;
+        ctx.save();
+        ctx.globalAlpha = baseAlpha * clamp01(depth * 0.85);
+        ctx.drawImage(bubbleSprite, x - size / 2, y - size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(205,246,255,${round3(depth * 0.62)})`;
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   });
 }
@@ -595,7 +693,9 @@ function paintUnderwater(ctx, t, w, h, shiftX = 0, shiftY = 0) {
 function paintFireflies(ctx, t, w, h, shiftX = 0, shiftY = 0) {
   const scale = Math.max(0.5, w / 960);
   const count = 32;
+  const sprite = getSprites()?.firefly;
   withComposite(ctx, "screen", () => {
+    const baseAlpha = ctx.globalAlpha ?? 1;
     for (let i = 0; i < count; i++) {
       const seed = SEEDS[i], depth = DEPTHS[i];
       const phase = PHASES[i] * Math.PI * 2;
@@ -604,7 +704,13 @@ function paintFireflies(ctx, t, w, h, shiftX = 0, shiftY = 0) {
       const pulse = 0.2 + 0.8 * Math.pow(0.5 + 0.5 * Math.sin(t * (1.7 + seed * 2.0) + phase), 2);
       const radius = (2.0 + seed * 1.8) * depth * scale;
       const alpha = round3(depth * pulse * 0.88);
-      if (ctx.createRadialGradient) {
+      if (sprite && ctx.drawImage && ctx.save && ctx.restore) {
+        const size = radius * 7.2;
+        ctx.save();
+        ctx.globalAlpha = baseAlpha * clamp01(alpha);
+        ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+        ctx.restore();
+      } else if (ctx.createRadialGradient) {
         const g = ctx.createRadialGradient(x, y, 0, x, y, radius * 3.6);
         g.addColorStop(0, `rgba(255,248,165,${alpha})`);
         g.addColorStop(0.45, `rgba(182,250,105,${round3(alpha * 0.55)})`);
@@ -621,50 +727,53 @@ function paintFireflies(ctx, t, w, h, shiftX = 0, shiftY = 0) {
   });
 }
 
-function paintParticles(effect, ctx, t, w, h, shiftX = 0, shiftY = 0) {
-  const rain = effect === "rain", ember = effect === "embers", dust = effect === "dust";
-  const count = rain ? 115 : dust ? 38 : ember ? 56 : 64;
-  const scale = Math.max(0.5, w / 960);
-  if (rain) {
-    // Batch rain streaks into 3 depth layers (far fine sheet, mid rain, foreground fast streaks).
-    const buckets = [
-      { width: Math.max(0.7, 0.55 * scale), style: "rgba(195,220,240,0.18)", speed: 0.76, slant: 4.5, indices: [] },
-      { width: Math.max(0.9, 0.9 * scale), style: "rgba(195,220,240,0.28)", speed: 0.94, slant: 5.5, indices: [] },
-      { width: Math.max(1.15, 1.25 * scale), style: "rgba(205,228,248,0.38)", speed: 1.16, slant: 6.5, indices: [] },
-    ];
-    for (let i = 0; i < count; i++) {
+const RAIN_LAYERS = [
+  { minDepth: 0, maxDepth: 0.58, width: 0.55, minWidth: 0.7, style: "rgba(195,220,240,0.18)", speed: 0.76, slant: 4.5 },
+  { minDepth: 0.58, maxDepth: 0.8, width: 0.9, minWidth: 0.9, style: "rgba(195,220,240,0.28)", speed: 0.94, slant: 5.5 },
+  { minDepth: 0.8, maxDepth: 2, width: 1.25, minWidth: 1.15, style: "rgba(205,228,248,0.38)", speed: 1.16, slant: 6.5 },
+].map((layer) => ({
+  ...layer,
+  indices: Array.from({length: 115}, (_, index) => index)
+    .filter((index) => DEPTHS[index] >= layer.minDepth && DEPTHS[index] < layer.maxDepth),
+}));
+
+function paintRain(ctx, t, w, h, shiftX, shiftY, scale) {
+  for (const layer of RAIN_LAYERS) {
+    ctx.beginPath();
+    ctx.strokeStyle = layer.style;
+    ctx.lineWidth = Math.max(layer.minWidth, layer.width * scale);
+    for (const i of layer.indices) {
       const depth = DEPTHS[i];
-      const bucket = depth < 0.58 ? buckets[0] : depth < 0.8 ? buckets[1] : buckets[2];
-      bucket.indices.push(i);
+      const seed = SEEDS[i];
+      const y = fraction(seed + t * layer.speed * depth) * (h + 40) - 20 + shiftY * depth;
+      const x = fraction(PHASES[i] - t * 0.13 * depth) * w + shiftX * depth;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - layer.slant * depth * scale, y + (15 + seed * 12) * depth * scale);
     }
-    for (const bucket of buckets) {
-      if (!bucket.indices.length) continue;
-      ctx.beginPath();
-      ctx.strokeStyle = bucket.style;
-      ctx.lineWidth = bucket.width;
-      for (const i of bucket.indices) {
-        const seed = SEEDS[i], depth = DEPTHS[i];
-        const y = fraction(seed + t * bucket.speed * depth) * (h + 40) - 20 + shiftY * depth;
-        const x = fraction(PHASES[i] - t * 0.13 * depth) * w + shiftX * depth;
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - bucket.slant * depth * scale, y + (15 + seed * 12) * depth * scale);
-      }
-      ctx.stroke();
+    ctx.stroke();
+  }
+  if (ctx.createLinearGradient) {
+    const mist = ctx.createLinearGradient(0, h * 0.72, 0, h);
+    if (mist) {
+      mist.addColorStop(0, "rgba(185,205,220,0)");
+      mist.addColorStop(1, "rgba(185,205,220,0.12)");
+      ctx.fillStyle = mist;
+      ctx.fillRect(0, h * 0.72, w, h * 0.28);
     }
-    if (ctx.createLinearGradient) {
-      const mist = ctx.createLinearGradient(0, h * 0.72, 0, h);
-      if (mist) {
-        mist.addColorStop(0, "rgba(185,205,220,0)");
-        mist.addColorStop(1, "rgba(185,205,220,0.12)");
-        ctx.fillStyle = mist;
-        ctx.fillRect(0, h * 0.72, w, h * 0.28);
-      }
-    }
+  }
+}
+
+function paintParticles(effect, ctx, t, w, h, shiftX = 0, shiftY = 0) {
+  const scale = Math.max(0.5, w / 960);
+  if (effect === "rain") {
+    paintRain(ctx, t, w, h, shiftX, shiftY, scale);
     return;
   }
-
+  const ember = effect === "embers", dust = effect === "dust";
+  const count = dust ? 38 : ember ? 56 : 64;
   const sprite = ember ? getSprites()?.ember : !dust ? getSprites()?.snow : null;
   const draw = () => {
+    const baseAlpha = ctx.globalAlpha ?? 1;
     for (let i = 0; i < count; i++) {
       const seed = SEEDS[i], depth = DEPTHS[i];
       const speed = ember ? -0.17 : dust ? -0.022 : 0.085;
@@ -674,8 +783,9 @@ function paintParticles(effect, ctx, t, w, h, shiftX = 0, shiftY = 0) {
       const radius = (dust ? 1.5 : ember ? 2.1 : 2.6) * depth * scale;
       if (sprite && ctx.drawImage && ctx.save && ctx.restore) {
         const size = radius * (ember ? 5.2 : 4.4);
+        const twinkle = ember ? (0.68 + 0.32 * Math.sin(t * 9.5 + i * 2.3)) : 1;
         ctx.save();
-        ctx.globalAlpha = (ctx.globalAlpha ?? 1) * clamp01(depth * (ember ? 0.95 : 0.85));
+        ctx.globalAlpha = baseAlpha * clamp01(depth * (ember ? 0.95 * twinkle : 0.85));
         ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
         ctx.restore();
       } else {

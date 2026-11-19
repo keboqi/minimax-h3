@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraFilter, cameraMotion, cameraTransform, cueTriggerElapsed, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraFilter, cameraMotion, cameraTransform, cueElapsed, effectCues, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
@@ -33,7 +33,7 @@ test("camera moves follow the displayed stills across an undrawn shot and a diss
   assert.equal(back.style.transform, "scale(1.08)");
   assert.equal(front.src, "shot-c.png");
   assert.equal(front.style.opacity, "0.5");
-  assert.equal(front.style.transform, "scale(1.07)");
+  assert.equal(front.style.transform, "scale(1.077)");
 });
 
 test("reduced motion pauses effects unless explicitly overridden for the project", () => {
@@ -202,15 +202,15 @@ test("cameraMotion exposes coupled pan, zoom, and impact shake vectors", () => {
 });
 
 test("one-shot sound cues inside a shot deterministically trigger impact_shake and flash on the cue timestamp", (t) => {
-  // Pure function check for cueTriggerElapsed
   const sounds = [
     {name: "wind_bed", start: 0, end: 10, loop: true},
     {name: "prism_shatter", start: 6.0, end: 6.8, loop: false},
   ];
   // Looped beds never re-trigger; before the 6.0s one-shot cue, elapsed from shotStart (4.0) is used.
-  assert.equal(cueTriggerElapsed(1.2, 4, 8, sounds), 1.2);
+  const [{shake}] = effectCues([{start: 4, end: 8, effects: ["impact_shake"]}], sounds);
+  assert.ok(Math.abs(cueElapsed(shake, 5.2) - 1.2) < 1e-6);
   // At 6.05s (elapsed = 2.05s into the [4, 8) shot), the 6.0s one-shot cue just fired 0.05s ago.
-  assert.ok(Math.abs(cueTriggerElapsed(2.05, 4, 8, sounds) - 0.05) < 1e-6);
+  assert.ok(Math.abs(cueElapsed(shake, 6.05) - 0.05) < 1e-6);
 
   // Verify paintStills re-triggers impact_shake and flash at t = 6.05s when seeking.
   const globals = {window: {}, document: {querySelectorAll: () => []}, Image: class {}};
@@ -259,5 +259,45 @@ test("explicit seconds=0 is respected for rack_focus and subtle_sway", () => {
   assert.equal(cameraFilter(["rack_focus"], 0.5), "none");
   assert.equal(cameraMotion(["subtle_sway"], 0.5, 0).tx, 0);
   assert.equal(cameraMotion(["subtle_sway"], 0.5, 0).ty, 0.55);
+});
+
+test("dense cues retrigger shake and space flashes across a cut", () => {
+  const effects = ["impact_shake", "flash"];
+  const shots = [{start: 0, end: 1, effects}, {start: 1, end: 2, effects}];
+  const [first, second] = effectCues(shots, [
+    {start: 1.75}, {start: 0.75}, {start: 0.25}, {start: 1.25}, {start: 1.5, loop: true},
+  ]);
+  assert.deepEqual(first, {shake: [0, 0.25, 0.75], flash: [0, 0.75]});
+  assert.deepEqual(second, {shake: [1, 1.25, 1.75], flash: [1.25, 1.75]});
+  assert.ok(cueElapsed(second.flash, 1.1) >= 0.45);
+  assert.equal(cueElapsed(second.shake, 1.125), 0.125);
+  assert.equal(cueElapsed(second.flash, 1.25), 0);
+});
+
+test("reused still URLs resolve effects for the matching shot start time", (t) => {
+  const globals = {window: {}, document: {querySelectorAll: () => []}, Image: class {}};
+  for (const [name, value] of Object.entries(globals)) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, {value, configurable: true});
+    t.after(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);
+  }
+  const back = {dataset: {}, style: {}}, front = {dataset: {}, style: {}};
+  const $ = (id) => ({"still-back": back, "still-front": front})[id];
+  const state = {project: {video: {
+    plan: {rows: [
+      {index: 0, start: 0, image: "shared.png", effects: ["push_in"]},
+      {index: 1, start: 4, image: "shared.png", effects: ["pull_out"]},
+    ]},
+    stills: {shots: [
+      {start: 0, end: 4, fade: 0, url: "shared.png"},
+      {start: 4, end: 8, fade: 0, url: "shared.png"},
+    ]},
+  }}};
+  const {paintStills} = createVideo({state, $});
+
+  paintStills(0);
+  assert.equal(back.style.transform, "scale(1)");
+  paintStills(4);
+  assert.equal(back.style.transform, "scale(1.08)");
 });
 

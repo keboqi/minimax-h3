@@ -101,9 +101,8 @@ fn blendOver(dst: vec4f, srcRgb: vec3f, srcA: f32) -> vec4f {
 fn blendScreen(dst: vec4f, srcRgb: vec3f, srcA: f32) -> vec4f {
   let a = clamp(srcA, 0.0, 1.0);
   let rgb = dst.rgb + srcRgb * a * (1.0 - dst.rgb);
-  // Keep premultiplied occlusion alpha low for additive light emitters so they illuminate
-  // rather than washing out dark backdrop pixels when composited in overlay mode.
-  let outA = clamp(dst.a + a * 0.14 * (1.0 - dst.a), 0.0, 1.0);
+  // Keep the screen blend premultiplied for both the shader and the browser compositor.
+  let outA = a + dst.a * (1.0 - a);
   return vec4f(rgb, outA);
 }
 
@@ -146,13 +145,14 @@ fn rainLayer(uv: vec2f, t: f32, scale: vec2f, speed: f32, slantAmt: f32) -> f32 
   let id = floor(st);
   let f = fract(st);
   let rnd = hash21(id);
-  if (rnd < 0.60) { return 0.0; }
-  let x = fract(rnd * 17.3) * 0.6 + 0.2;
-  let yStart = fract(rnd * 31.7) * 0.32;
+  if (rnd < 0.58) { return 0.0; }
+  let x = fract(rnd * 17.3) * 0.62 + 0.19;
+  let yStart = fract(rnd * 31.7) * 0.30;
   let dx = abs(f.x - x);
-  let streak = invSmooth(0.0, 0.046, dx)
-    * smoothstep(yStart, yStart + 0.12, f.y)
-    * invSmooth(yStart + 0.45, yStart + 0.76, f.y);
+  // Tapered droplet: gentle fading tail at top, bright leading tip at bottom.
+  let streak = invSmooth(0.0, 0.044, dx)
+    * smoothstep(yStart, yStart + 0.34, f.y)
+    * invSmooth(yStart + 0.50, yStart + 0.60, f.y);
   return streak * (0.45 + 0.55 * rnd);
 }
 
@@ -210,7 +210,8 @@ fn petalLayer(uv: vec2f, aspect: f32, t: f32, grid: f32, speedX: f32, speedY: f3
         let d = length(shaped) / sizeScale;
         let petalA = invSmooth(0.11, 0.22, d) * (0.62 + 0.25 * rnd.y);
         if (petalA > 0.001) {
-          let petalRgb = mix(vec3f(0.99, 0.75, 0.82), vec3f(0.96, 0.58, 0.40), rnd.y);
+          let baseRgb = mix(vec3f(0.99, 0.75, 0.82), vec3f(0.96, 0.58, 0.40), rnd.y);
+          let petalRgb = baseRgb * (0.82 + 0.22 * tumble);
           out = blendOver(out, petalRgb, petalA);
         }
       }
@@ -330,29 +331,31 @@ fn sampleScene(
 
   // Radial chromatic aberration around frame center.
   let radial = (uv - vec2f(0.5)) * dist.z;
-  let rSample = textureSampleLevel(tex, texSampler, clamp(tuv + radial, vec2f(0.0), vec2f(1.0)), 0.0);
-  let gSample = textureSampleLevel(tex, texSampler, tuv, 0.0);
-  let bSample = textureSampleLevel(tex, texSampler, clamp(tuv - radial, vec2f(0.0), vec2f(1.0)), 0.0);
-  var rgb = vec3f(rSample.r, gSample.g, bSample.b);
+  var rgb = textureSampleLevel(tex, texSampler, tuv, 0.0).rgb;
+  if (dist.z > 0.0001) {
+    rgb.r = textureSampleLevel(tex, texSampler, tuv + radial, 0.0).r;
+    rgb.b = textureSampleLevel(tex, texSampler, tuv - radial, 0.0).b;
+  }
 
-  // Real image-sampled optical highlight bloom & rack-focus defocus kernel.
-  let needsBloom = (light == 1u || light == 2u || light == 3u || light == 5u || light == 8u || light == 10u || atmo == 6u || atmo == 9u);
+  // Real image-sampled optical highlight bloom & 12-tap Vogel-disk rack-focus defocus kernel.
+  let needsBloom = ((light == 1u && dist.z > 0.0) || (light == 2u && cueT < 0.45) ||
+    light == 3u || light == 5u || light == 8u || light == 10u || atmo == 6u || atmo == 9u);
   if ((needsBloom || camBlur > 0.001) && inside > 0.0) {
     let texel = vec2f(1.0) / max(vec2f(64.0), res * 0.45);
-    let spread = 1.0 + camBlur * 1.85;
-    let r1 = texel * 3.5 * spread;
-    let r2 = texel * 8.0 * spread;
-    let c0 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f( r1.x,  0.0), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c1 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f(-r1.x,  0.0), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c2 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f( 0.0,  r1.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c3 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f( 0.0, -r1.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c4 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f( r2.x,  r2.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c5 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f(-r2.x,  r2.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c6 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f( r2.x, -r2.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let c7 = textureSampleLevel(tex, texSampler, clamp(tuv + vec2f(-r2.x, -r2.y), vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-    let blur = (c0 + c1 + c2 + c3) * 0.15 + (c4 + c5 + c6 + c7) * 0.10;
+    let maxRadius = texel * (6.5 + camBlur * 16.5);
+    var vogel = array<vec2f, 12>(
+      vec2f( 0.204,  0.000), vec2f(-0.261,  0.239), vec2f( 0.039, -0.455),
+      vec2f( 0.340,  0.427), vec2f(-0.618, -0.105), vec2f( 0.564, -0.391),
+      vec2f(-0.181,  0.719), vec2f(-0.426, -0.663), vec2f( 0.831,  0.145),
+      vec2f(-0.768,  0.449), vec2f( 0.299, -0.884), vec2f( 0.483,  0.854)
+    );
+    var blur = vec3f(0.0);
+    for (var i = 0; i < 12; i++) {
+      blur += textureSampleLevel(tex, texSampler, clamp(tuv + vogel[i] * maxRadius, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
+    }
+    blur *= (1.0 / 12.0);
     if (camBlur > 0.001) {
-      rgb = mix(rgb, blur, clamp(camBlur * 0.88, 0.0, 0.88));
+      rgb = mix(rgb, blur, clamp(camBlur * 0.90, 0.0, 0.90));
     }
     let luma = dot(blur, vec3f(0.299, 0.587, 0.114));
     let highlight = blur * smoothstep(0.42, 0.92, luma);
@@ -372,7 +375,7 @@ fn sampleScene(
       rgb += highlight * vec3f(0.85, 0.94, 1.15) * (env.x * 1.4);
     } else if (light == 2u) { // flash: reveal highlight bloom (sound-cue aware)
       let a = max(0.0, 1.0 - cueT / 0.45);
-      rgb += highlight * vec3f(1.0, 0.98, 0.95) * (a * 0.85);
+      rgb += highlight * vec3f(1.0, 0.98, 0.95) * (a * 0.36);
     } else if (light == 10u) { // spotlight: warm stage highlight bloom inside cone
       rgb += highlight * vec3f(1.05, 0.95, 0.78) * 0.22;
     } else if (atmo == 6u) { // sunbeams: warm light scatter
@@ -429,10 +432,11 @@ fn renderLayer(
     let mistNoise = 0.85 + 0.3 * noise2(vec2f(wAuv.x * 3.0 + t * 0.25, worldUv.y * 4.0));
     let mist = smoothstep(0.66, 1.0, screenUv.y) * 0.13 * mistNoise;
     out = blendOver(out, vec3f(0.72, 0.80, 0.88), mist);
-  } else if (atmo == 2u) { // snow
+  } else if (atmo == 2u) { // 3-layer snow (foreground soft bokeh, midground, distant)
+    let s0 = particleDots(worldUv + vec2f(0.19, 0.71), aspect, t, 6.5, 0.78, 0.75, 0.21, 2.7);
     let s1 = particleDots(worldUv, aspect, t, 11.0, 0.55, 0.55, 0.16, 2.2);
     let s2 = particleDots(worldUv + vec2f(0.41, 0.23), aspect, t, 18.0, 0.35, 0.4, 0.12, 2.0);
-    let snowA = clamp(s1.x * 0.72 + s2.x * 0.45, 0.0, 0.85);
+    let snowA = clamp(s0.x * 0.42 + s1.x * 0.70 + s2.x * 0.42, 0.0, 0.88);
     out = blendOver(out, vec3f(0.95, 0.98, 1.0), snowA);
   } else if (atmo == 3u) { // fog
     let n1 = fbm(wAuv * 2.1 + vec2f(t * 0.06, sin(t * 0.12) * 0.05));
@@ -443,11 +447,12 @@ fn renderLayer(
   } else if (atmo == 4u) { // dust
     let d1 = particleDots(worldUv, aspect, t, 9.5, -0.14, 0.65, 0.11, 2.3);
     out = blendScreen(out, vec3f(1.0, 0.91, 0.72), d1.x * 0.45);
-  } else if (atmo == 5u) { // embers
+  } else if (atmo == 5u) { // embers with organic twinkle
     let e1 = particleDots(worldUv, aspect, t, 10.5, -0.85, 0.75, 0.15, 2.6);
     let e2 = particleDots(worldUv + vec2f(0.31, 0.17), aspect, t, 16.0, -0.62, 0.6, 0.11, 2.4);
-    let emberA = clamp(e1.x * 0.9 + e2.x * 0.6, 0.0, 1.0);
-    let emberRgb = mix(vec3f(1.0, 0.38, 0.10), vec3f(1.0, 0.82, 0.36), clamp(e1.y + e2.y, 0.0, 1.0));
+    let flicker = 0.72 + 0.28 * sin(t * 9.5 + (e1.y + e2.y) * 12.0);
+    let emberA = clamp((e1.x * 0.9 + e2.x * 0.6) * flicker, 0.0, 1.0);
+    let emberRgb = mix(vec3f(1.0, 0.38, 0.10), vec3f(1.0, 0.84, 0.38), clamp(e1.y + e2.y, 0.0, 1.0));
     out = blendScreen(out, emberRgb, emberA);
   } else if (atmo == 6u) { // radial volumetric sunbeams
     let sunPos = vec2f(0.24 * aspect, -0.18);
@@ -554,9 +559,8 @@ fn renderLayer(
 }
 
 fn compositeOverBase(base: vec4f, layer: vec4f) -> vec4f {
-  let rgb = clamp(layer.rgb + base.rgb * (1.0 - layer.a), vec3f(0.0), vec3f(1.0));
-  let a = clamp(layer.a + base.a * (1.0 - layer.a), 0.0, 1.0);
-  return vec4f(rgb, a);
+  // The sampled shot includes the stage's black matte, including any contain bars.
+  return vec4f(layer.rgb + base.rgb * (1.0 - layer.a), 1.0);
 }
 
 @fragment
@@ -582,37 +586,22 @@ fn fs(in: VSOut) -> @location(0) vec4f {
 
   let hasBaseTex = texMode >= 0.5;
   let frontLayer = renderLayer(uv, res, t, cueT, atmo, light, u.cam, camAngle, shotSeed, hasBaseTex);
-  var layer = frontLayer;
-  if (fadeMix < 0.999) {
-    let backLayer = renderLayer(uv, res, backT, backCueT, backAtmo, backLight, u.backCam, backCamAngle, backShotSeed, hasBaseTex);
-    layer = mix(backLayer, frontLayer, fadeMix);
+  if (texMode >= 1.5) {
+    let backLayer = renderLayer(uv, res, backT, backCueT, backAtmo, backLight, u.backCam, backCamAngle, backShotSeed, true);
+    let backBase = sampleScene(backTex, u.texSizes.xy, uv, res, u.backCam, backCamAngle, backCamBlur, backT, backCueT, backAtmo, backLight, backShotSeed);
+    let frontBase = sampleScene(frontTex, u.texSizes.zw, uv, res, u.cam, camAngle, camBlur, t, cueT, atmo, light, shotSeed);
+    return mix(compositeOverBase(backBase, backLayer), compositeOverBase(frontBase, frontLayer), fadeMix);
   }
-
-  // Unified Texture Compositor path when still image textures are available on GPU.
   if (hasBaseTex) {
-    let isPair = texMode >= 1.5;
-    var base = sampleScene(
-      backTex,
-      u.texSizes.xy,
-      uv,
-      res,
-      select(u.cam, u.backCam, isPair),
-      select(camAngle, backCamAngle, isPair),
-      select(camBlur, backCamBlur, isPair),
-      select(t, backT, isPair),
-      select(cueT, backCueT, isPair),
-      select(atmo, backAtmo, isPair),
-      select(light, backLight, isPair),
-      select(shotSeed, backShotSeed, isPair)
-    );
-    if (isPair) {
-      let frontBase = sampleScene(frontTex, u.texSizes.zw, uv, res, u.cam, camAngle, camBlur, t, cueT, atmo, light, shotSeed);
-      base = mix(base, frontBase, fadeMix);
-    }
-    return compositeOverBase(base, layer);
+    let base = sampleScene(backTex, u.texSizes.xy, uv, res, u.cam, camAngle, camBlur, t, cueT, atmo, light, shotSeed);
+    return compositeOverBase(base, frontLayer);
+  }
+  if (fadeMix < 1.0) {
+    let backLayer = renderLayer(uv, res, backT, backCueT, backAtmo, backLight, u.backCam, backCamAngle, backShotSeed, false);
+    return mix(backLayer, frontLayer, fadeMix);
   }
 
-  return layer;
+  return frontLayer;
 }
 `;
 
@@ -623,8 +612,10 @@ let gpuUniformBuffer = null;
 let gpuSampler = null;
 let gpuDummyTexture = null;
 let gpuBindGroup = null;
-let gpuBindGroupKey = "";
+let boundBackView = null;
+let boundFrontView = null;
 let gpuFormat = "bgra8unorm";
+let gpuDummyView = null;
 
 // 32 x 4 bytes = 128 bytes (8 vec4 blocks)
 const uniformData = new ArrayBuffer(128);
@@ -632,17 +623,18 @@ const uniformFloats = new Float32Array(uniformData);
 const uniformUints = new Uint32Array(uniformData);
 
 const textureSlots = {
-  back: { src: "", texture: null, width: 1, height: 1, valid: false },
-  front: { src: "", texture: null, width: 1, height: 1, valid: false },
+  back: null,
+  front: null,
 };
 
 function resetTextureSlots() {
   for (const key of ["back", "front"]) {
-    try { textureSlots[key].texture?.destroy?.(); } catch { /* ignore */ }
-    textureSlots[key] = { src: "", texture: null, width: 1, height: 1, valid: false };
+    textureSlots[key]?.texture.destroy();
+    textureSlots[key] = null;
   }
   gpuBindGroup = null;
-  gpuBindGroupKey = "";
+  boundBackView = null;
+  boundFrontView = null;
 }
 
 export function gpuStatus() {
@@ -679,17 +671,19 @@ export async function probeWebGPU(onChange) {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
-    const dummyTexture = device.createTexture({
+    const dummyView = device.createTexture({
       size: [1, 1],
       format: "rgba8unorm",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    }).createView();
     device.lost.then(() => {
       resetTextureSlots();
+      try { gpuUniformBuffer?.destroy?.(); } catch { /* ignore */ }
       gpuDevice = null;
       gpuPipeline = null;
+      gpuUniformBuffer = null;
       gpuSampler = null;
-      gpuDummyTexture = null;
+      gpuDummyView = null;
       configuredCanvas = null;
       gpuState = "unavailable";
       onChange?.();
@@ -698,88 +692,60 @@ export async function probeWebGPU(onChange) {
     gpuPipeline = pipeline;
     gpuUniformBuffer = uniformBuffer;
     gpuSampler = sampler;
-    gpuDummyTexture = dummyTexture;
+    gpuDummyView = dummyView;
     resetTextureSlots();
     gpuState = "ready";
-    onChange?.();
-    return true;
   } catch {
     gpuState = "unavailable";
     return false;
   }
+  onChange?.();
+  return true;
 }
 
-function syncStillTexture(slotName, img) {
-  const slot = textureSlots[slotName];
-  if (!gpuDevice || !img || !img.complete || !(img.naturalWidth > 0) || !(img.naturalHeight > 0)) {
-    slot.valid = false;
-    return false;
-  }
-  const src = img.currentSrc || img.src || "";
-  if (!src) {
-    slot.valid = false;
-    return false;
-  }
-  if (slot.valid && slot.src === src && slot.texture) {
-    return true;
-  }
-  if (!gpuDevice.queue?.copyExternalImageToTexture || typeof GPUTextureUsage === "undefined") {
-    slot.valid = false;
-    return false;
-  }
-  try {
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    if (!slot.texture || slot.width !== w || slot.height !== h) {
-      try { slot.texture?.destroy?.(); } catch { /* ignore */ }
-      slot.texture = gpuDevice.createTexture({
-        size: [w, h],
-        format: "rgba8unorm",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-      });
-      slot.width = w;
-      slot.height = h;
-      gpuBindGroup = null;
-    }
-    gpuDevice.queue.copyExternalImageToTexture(
-      { source: img },
-      { texture: slot.texture },
-      [w, h],
-    );
-    slot.src = src;
-    slot.valid = true;
-    return true;
-  } catch {
-    slot.valid = false;
-    return false;
-  }
+function readyStill(img) {
+  return img?.complete && img.naturalWidth > 0 && img.naturalHeight > 0 && (img.currentSrc || img.src);
 }
 
-function ensureBindGroup() {
-  if (!gpuDevice || !gpuPipeline || !gpuUniformBuffer) return null;
-  if (!gpuSampler || !gpuDummyTexture) {
-    if (!gpuBindGroup) {
-      gpuBindGroup = gpuDevice.createBindGroup({
-        layout: gpuPipeline.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: { buffer: gpuUniformBuffer } }],
-      });
-    }
-    return gpuBindGroup;
+function syncStillTexture(name, img, src) {
+  // Once a dissolve ends, its incoming image is already resident in the other slot.
+  const other = name === "back" ? "front" : "back";
+  if (textureSlots[name]?.src !== src && textureSlots[other]?.src === src) {
+    [textureSlots[name], textureSlots[other]] = [textureSlots[other], textureSlots[name]];
   }
-  const backTex = (textureSlots.back.valid && textureSlots.back.texture) || gpuDummyTexture;
-  const frontTex = (textureSlots.front.valid && textureSlots.front.texture) || gpuDummyTexture;
-  const key = `${backTex === gpuDummyTexture ? "0" : textureSlots.back.src}|${frontTex === gpuDummyTexture ? "0" : textureSlots.front.src}`;
-  if (!gpuBindGroup || gpuBindGroupKey !== key) {
+  let slot = textureSlots[name];
+  if (slot?.src === src) return slot;
+  const width = img.naturalWidth, height = img.naturalHeight;
+  if (Math.max(width, height) > gpuDevice.limits.maxTextureDimension2D) return null;
+  if (!slot || slot.width !== width || slot.height !== height) {
+    const texture = gpuDevice.createTexture({
+      size: [width, height],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    slot?.texture.destroy();
+    slot = textureSlots[name] = {texture, view: texture.createView(), width, height, src: null};
+  }
+  slot.src = null;
+  gpuDevice.queue.copyExternalImageToTexture({source: img}, {texture: slot.texture}, [width, height]);
+  slot.src = src;
+  return slot;
+}
+
+function ensureBindGroup(back, front) {
+  const backView = back?.view || gpuDummyView, frontView = front?.view || gpuDummyView;
+  if (!gpuBindGroup || backView !== boundBackView || frontView !== boundFrontView) {
     gpuBindGroup = gpuDevice.createBindGroup({
       layout: gpuPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: gpuUniformBuffer } },
         { binding: 1, resource: gpuSampler },
-        { binding: 2, resource: backTex.createView() },
-        { binding: 3, resource: frontTex.createView() },
+        { binding: 2, resource: backView },
+        { binding: 3, resource: frontView },
       ],
     });
-    gpuBindGroupKey = key;
+    boundBackView = backView;
+    boundFrontView = frontView;
   }
   return gpuBindGroup;
 }
@@ -804,6 +770,9 @@ export function clearWebGPU(hostCanvas) {
 }
 
 const DEG_TO_RAD = Math.PI / 180;
+const IMAGE_ATMOSPHERE = new Set(["rain", "fog", "sunbeams", "smoke", "underwater"].map((id) => ATMO_IDS[id]));
+const IMAGE_LIGHT = new Set(Object.values(LIGHT_IDS).filter((id) => id !== LIGHT_IDS.vignette));
+const usesImage = (atmo, light, cam) => IMAGE_ATMOSPHERE.has(atmo) || IMAGE_LIGHT.has(light) || cam?.blur || cam?.shake;
 let configuredCanvas = null;
 export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene = null) {
   if (gpuState !== "ready" || !gpuDevice || !gpuPipeline) return false;
@@ -811,6 +780,34 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
   if (!gpuCanvas) return false;
   const ctx = gpuCanvas.getContext("webgpu");
   if (!ctx) return false;
+  const fading = Boolean(scene?.fading);
+  const backAtmoId = fading ? (scene.backAtmoId || 0) : 0;
+  const backLightId = fading ? (scene.backLightId || 0) : 0;
+  const backSrc = readyStill(scene?.stillBack);
+  const frontSrc = fading && readyStill(scene.stillFront);
+  let back = null, front = null;
+  if (backSrc && (!fading || frontSrc) && (usesImage(atmoId, lightId, scene.cam) || usesImage(backAtmoId, backLightId, scene.backCam))) {
+    try {
+      back = syncStillTexture("back", scene.stillBack, backSrc);
+      if (fading && back) {
+        front = frontSrc === backSrc ? back : syncStillTexture("front", scene.stillFront, frontSrc);
+        if (!front) back = null;
+      }
+    } catch {
+      // The overlay can still run if the browser rejects a source texture.
+      back = null;
+    }
+  }
+  const texMode = front ? 2 : back ? 1 : 0;
+  if (texMode) {
+    const ratio = Math.min(globalThis.devicePixelRatio || 1, 1280 / Math.max(w, h));
+    w = Math.max(1, Math.round(w * ratio));
+    h = Math.max(1, Math.round(h * ratio));
+  } else {
+    const ratio = Math.min(1, 960 / Math.max(w, h));
+    w = Math.max(1, Math.round(w * ratio));
+    h = Math.max(1, Math.round(h * ratio));
+  }
   const resized = gpuCanvas.width !== w || gpuCanvas.height !== h;
   if (resized) {
     gpuCanvas.width = w;
@@ -826,12 +823,7 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
     configuredCanvas = gpuCanvas;
   }
 
-  const fading = Boolean(scene?.fading);
-  const backReady = syncStillTexture("back", scene?.stillBack);
-  const frontReady = fading ? syncStillTexture("front", scene?.stillFront) : false;
-  const texMode = fading ? (backReady && frontReady ? 2 : 0) : (backReady ? 1 : 0);
-  const bindGroup = ensureBindGroup();
-  if (!bindGroup) return false;
+  const bindGroup = ensureBindGroup(back, front);
 
   const cam = scene?.cam || { tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0 };
   const backCam = scene?.backCam || { tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0 };
@@ -862,10 +854,10 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
   uniformFloats[15] = backCam.shake || 0;
 
   // vec4f[4]: texSizes (backW, backH, frontW, frontH)
-  uniformFloats[16] = textureSlots.back.width || w;
-  uniformFloats[17] = textureSlots.back.height || h;
-  uniformFloats[18] = textureSlots.front.width || w;
-  uniformFloats[19] = textureSlots.front.height || h;
+  uniformFloats[16] = back?.width ?? w;
+  uniformFloats[17] = back?.height ?? h;
+  uniformFloats[18] = front?.width ?? w;
+  uniformFloats[19] = front?.height ?? h;
 
   // vec4f[5]: camExtra (camAngleRad, camBlur, backCamAngleRad, backCamBlur)
   uniformFloats[20] = (cam.angle || 0) * DEG_TO_RAD;
@@ -882,8 +874,8 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
   // vec4u[7]: effectIds (atmoId, lightId, backAtmoId, backLightId)
   uniformUints[28] = atmoId;
   uniformUints[29] = lightId;
-  uniformUints[30] = fading ? (scene?.backAtmoId || 0) : 0;
-  uniformUints[31] = fading ? (scene?.backLightId || 0) : 0;
+  uniformUints[30] = backAtmoId;
+  uniformUints[31] = backLightId;
 
   gpuDevice.queue.writeBuffer(gpuUniformBuffer, 0, uniformData);
 

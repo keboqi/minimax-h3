@@ -1,4 +1,7 @@
-import {cameraFilter, cameraMotion, cameraTransform, cueTriggerElapsed, effectsEnabled, effectTrack, paintEffects} from "./effects.js";
+import {cameraFrame, cueElapsed, effectCues, effectsEnabled, effectTrack, lastAtOrBefore, paintEffects} from "./effects.js";
+
+const EMPTY = Object.freeze([]);
+const startOf = (shot) => shot.start;
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
@@ -54,14 +57,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
                         onclick: saveVideoToMedia}, saving ? "Saving to Media…" : "Save to Media");
   }
 
-  const rowsOf = () => state.project.video?.plan?.rows || [];
+  const rowsOf = () => state.project.video?.plan?.rows || EMPTY;
   const needsDrawing = (rows) => rows.filter((row) => row.status !== "drawn").length;
   const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
-  const shotAt = (rows, time) => {
-    let index = -1;
-    for (const row of rows) if (row.start <= time + 0.01) index = row.index;
-    return index;
-  };
 
   /** Pick a shot: it opens in the panel, and the player jumps to it so its image shows there. */
   function pickShot(index, {jump = true} = {}) {
@@ -83,83 +81,114 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     }
   }
 
-  // The stills on the mix's clock: the shot under the playhead, dissolving in over the one before it.
+  // The stills on the mix's clock: the shot under the playhead, dissolving over the one before it.
   const preloaded = new Set();
+  let timeline = null;
+  let activeShot = -1, lanes = null, list = null;
+  let observedOverlay = null;
+  const stageResize = typeof ResizeObserver === "function" ? new ResizeObserver(() => sync()) : null;
   const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   reducedMotion?.addEventListener("change", () => { renderPlayer(); sync(); });
+
+  function updateShotHighlights(current) {
+    const nextLanes = $("lanes"), nextList = $("shot-list");
+    if (current === activeShot && nextLanes === lanes && nextList === list) return;
+    activeShot = current;
+    lanes = nextLanes;
+    list = nextList;
+    for (const clip of lanes?.querySelectorAll("[data-shot]") || EMPTY) {
+      clip.classList.toggle("active", Number(clip.dataset.shot) === current);
+    }
+    for (const item of list?.querySelectorAll(".shot-row") || EMPTY) {
+      item.classList.toggle("playing", Number(item.dataset.shot) === current);
+    }
+  }
+
+  function playbackShots(rows, stills, sounds) {
+    if (timeline?.rows === rows && timeline.stills === stills && timeline.sounds === sounds) return timeline.shots;
+    const rowsByTime = new Map(), rowsByImage = new Map();
+    for (const row of rows) {
+      if (!row.image) continue;
+      rowsByTime.set(row.start, row);
+      if (!rowsByImage.has(row.image)) rowsByImage.set(row.image, row);
+    }
+    const shots = stills.map((still, index) => {
+      // A plan can reuse an image. Prefer the row with the same time and image.
+      const timed = rowsByTime.get(still.start);
+      const row = timed?.image === still.url ? timed : rowsByImage.get(still.url);
+      return {...still, index: row?.index ?? index, effects: row?.effects || EMPTY};
+    });
+    const cues = effectCues(shots, sounds);
+    shots.forEach((shot, index) => { shot.cues = cues[index]; });
+    timeline = {rows, stills, sounds, shots};
+    return shots;
+  }
+
+  function paintCamera(image, shot, effects, time) {
+    const elapsed = Math.max(0, Math.min(time, shot.end) - shot.start);
+    const progress = elapsed / Math.max(0.001, shot.end - shot.start);
+    const frame = cameraFrame(effects, progress, elapsed, cueElapsed(shot.cues.shake, time));
+    if (image.style.transform !== frame.css) image.style.transform = frame.css;
+    if (image.style.filter !== frame.filter && (image.style.filter || frame.filter !== "none")) image.style.filter = frame.filter;
+    return frame;
+  }
+
   function paintStills(time) {
     const rows = rowsOf();
-    const current = shotAt(rows, time);
-    for (const clip of document.querySelectorAll("#lanes [data-shot]")) clip.classList.toggle("active", Number(clip.dataset.shot) === current);
-    for (const item of document.querySelectorAll("#shot-list .shot-row")) item.classList.toggle("playing", Number(item.dataset.shot) === current);
-    const back = $("still-back"), front = $("still-front");
-    const shots = state.project.video?.stills?.shots;
-    if (!back || !front || !shots?.length) return;
-    let index = 0;
-    while (index + 1 < shots.length && shots[index + 1].start <= time) index += 1;
+    const row = rows[lastAtOrBefore(rows, time + 0.01, startOf)];
+    updateShotHighlights(row?.index ?? -1);
+    const back = $("still-back"), front = $("still-front"), overlay = $("still-effects");
+    if (observedOverlay !== overlay) {
+      stageResize?.disconnect();
+      if (overlay) stageResize?.observe(overlay);
+      observedOverlay = overlay;
+    }
+    const video = state.project.video, stills = video?.stills?.shots;
+    if (!back || !front || !stills?.length) return;
+    const shots = playbackShots(rows, stills, state.project.result?.sounds);
+    const index = Math.max(0, lastAtOrBefore(shots, time, startOf));
     const shot = shots[index];
     const fading = index > 0 && shot.fade > 0 && time < shot.start + shot.fade;
     const background = fading ? shots[index - 1] : shot;
-    const show = (image, url) => { if (image.dataset.src !== url) { image.src = url; image.dataset.src = url; } };
+    const show = (image, url) => { if (image.dataset.src !== url) { image.dataset.src = url; image.src = url; } };
     show(back, background.url);
     if (fading) show(front, shot.url);
-    front.style.opacity = fading ? String(Math.max(0, (time - shot.start) / shot.fade)) : "0";
-    const enabled = effectsEnabled(state.project.video, reducedMotion?.matches);
-    const rowFor = (still) => rows.find((row) => row.image === still.url);
-    const shotRow = rowFor(shot);
-    const backRow = fading ? rowFor(background) : null;
-    const effects = enabled ? shotRow?.effects || [] : [];
-    const backEffects = enabled && fading ? backRow?.effects || [] : [];
     const elapsed = time - shot.start;
-    const progress = elapsed / Math.max(0.001, shot.end - shot.start);
-    const backElapsed = fading ? Math.max(0, time - background.start) : 0;
-    const fadeMix = fading ? Math.max(0, Math.min(1, (time - shot.start) / shot.fade)) : 1;
-    const sounds = state.project.result?.sounds || null;
-    const cueElapsed = cueTriggerElapsed(elapsed, shot.start, shot.end, sounds);
-    const backCueElapsed = fading ? cueTriggerElapsed(backElapsed, background.start, background.end, sounds) : 0;
-    const camTime = effects.includes("impact_shake") ? cueElapsed : elapsed;
-    const backCamTime = backEffects.includes("impact_shake") ? backCueElapsed : backElapsed;
-    front.style.transform = cameraTransform(effects, progress, camTime);
-    back.style.transform = fading
-      ? cameraTransform(backEffects, 1, backCamTime)
-      : cameraTransform(effects, progress, camTime);
-    const applyFilter = (el, value) => {
-      if (el.style.filter || value !== "none") el.style.filter = value;
-    };
-    applyFilter(front, cameraFilter(effects, progress, elapsed));
-    applyFilter(back, fading
-      ? cameraFilter(backEffects, 1, backElapsed)
-      : cameraFilter(effects, progress, elapsed));
-    const overlay = $("still-effects");
+    const fadeMix = fading ? elapsed / shot.fade : 1;
+    const opacity = fading ? String(fadeMix) : "0";
+    if (front.style.opacity !== opacity) front.style.opacity = opacity;
+    const enabled = effectsEnabled(video, reducedMotion?.matches);
+    const effects = enabled && elapsed >= 0 ? shot.effects : EMPTY;
+    const backEffects = enabled && fading ? background.effects : EMPTY;
+    const backCam = paintCamera(back, background, fading ? backEffects : effects, time);
+    const cam = fading ? paintCamera(front, shot, effects, time) : backCam;
     if (overlay) {
-      const activeEffects = elapsed >= 0 ? effects : [];
       const engine = $("effects-engine");
-      const scene = {
-        shotIndex: shotRow?.index ?? index,
-        cam: cameraMotion(activeEffects, progress, camTime),
+      paintEffects(overlay, effects, elapsed, (backend) => {
+        if (!engine) return;
+        const inactive = video.effects_enabled === false ? "Off" : !enabled ? "Paused"
+          : (effects.length || backEffects.length) ? "Camera only" : "Idle";
+        const label = `Effects engine · ${backend ?? inactive}`;
+        if (engine.textContent !== label) engine.textContent = label;
+      }, {
+        shotIndex: shot.index,
+        cam,
         stillBack: back,
         stillFront: front,
         fading,
         fadeMix,
-        cueElapsed,
+        cueElapsed: cueElapsed(shot.cues.flash, time),
         backEffects,
-        backElapsed,
-        backCueElapsed,
-        backShotIndex: backRow?.index ?? Math.max(0, index - 1),
-        backCam: fading ? cameraMotion(backEffects, 1, backCamTime) : null,
-      };
-      paintEffects(overlay, activeEffects, elapsed, (backend) => {
-        if (!engine) return;
-        const anyEffects = activeEffects.length || (fading && backEffects.length);
-        const inactive = state.project.video.effects_enabled === false ? "Off" : !enabled ? "Paused"
-          : anyEffects ? "Camera only" : "Idle";
-        const label = `Effects engine · ${backend ?? inactive}`;
-        if (engine.textContent !== label) engine.textContent = label;
-      }, scene);
+        backElapsed: fading ? time - background.start : 0,
+        backCueElapsed: cueElapsed(background.cues.flash, time),
+        backShotIndex: background.index,
+        backCam,
+      });
     }
     // Fetch the next images before they are due, so a cut never waits on the network.
-    for (const next of shots.slice(index + 1, index + 3)) {
-      if (!preloaded.has(next.url)) { preloaded.add(next.url); new Image().src = next.url; }
+    for (let i = index + 1; i < Math.min(shots.length, index + 3); i++) {
+      const {url} = shots[i];
+      if (!preloaded.has(url)) { preloaded.add(url); new Image().src = url; }
     }
   }
 
