@@ -13,13 +13,15 @@ def run():
     images = [{"path": f"{index}.png", "name": f"{index}.png", "url": f"/fixture/{index}.png"}
               for index in range(4)]
     state = dict(engine="qwen", mode="Text to image", editing=False, generate_only=False,
-                 prompt="Bird", ui={}, options={}, references=[], fields=[], changed={},
+                 prompt="", ui={}, options={}, references=[], fields=[], changed={},
                  preset=None, batch=None, edit_size=None, separate=None, layout=None,
                  width=1024, height=1024, seed=-1, guidance="", readiness={"ready": True, "message": "Ready"},
                  can_enhance=False, writer="", results={"images": images, "settings": ""})
-    boot = dict(state=state, runs={}, gpu=True, modes=["Text to image", "Image edit"],
-                engines=[{"id": "qwen", "label": "Qwen", "description": "Fixture"},
-                         {"id": "flux3", "label": "FLUX", "description": "Fixture"}], sizes={}, groups=[])
+    boot = dict(state=state, runs={}, gpu=True, modes=[["Generate", "Text to image"], ["Edit", "Image edit"]],
+                engines=[{"id": engine, "label": label} for engine, label in (
+                    ("h3", "MiniMax H3"), ("qwen", "Qwen Image 2.1"), ("flux3", "FLUX 3 Image Klein"),
+                    ("moss_image", "MOSS-Image"), ("fibo2", "Fibo 2.0"), ("gpt_image", "GPT Image"),
+                )], sizes={}, groups=[])
     colors = ["red", "green", "blue", "yellow"]
     writes = []
     held = []
@@ -70,11 +72,26 @@ def run():
     with sync_playwright() as playwright:
         chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
         browser = playwright.chromium.launch(executable_path=str(chrome) if chrome.exists() else None)
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("**/*", route)
         page.goto("http://test.local/image/")
+        toolbar = page.get_by_role("region", name="Image controls")
+        expect(toolbar.get_by_role("button")).to_have_count(10)
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 800})
+            toolbar_width, content_width, centers = toolbar.evaluate("""bar => [
+                bar.clientWidth, bar.scrollWidth,
+                [...bar.querySelectorAll('#mode button, #models button, #steps, #readiness, #refresh, #run')]
+                    .map(control => {
+                        const {top, height} = control.getBoundingClientRect();
+                        return top + height / 2;
+                    })
+            ]""")
+            assert max(centers) - min(centers) <= 1, centers
+            assert (content_width > toolbar_width) == (width == 390), (width, toolbar_width, content_width)
+        page.set_viewport_size({"width": 1280, "height": 800})
 
         def switch_with_delayed_save(label, text, layout=None):
             nonlocal delay_prompt
@@ -102,8 +119,8 @@ def run():
             expect(page.locator("#prompt")).to_have_value(text)
             assert state["prompt"] == text
 
-        switch_with_delayed_save("FLUX", "A new prompt")
-        switch_with_delayed_save("Qwen", "An edited prompt", "A box around the bird")
+        switch_with_delayed_save("FLUX 3 Image Klein", "A new prompt")
+        switch_with_delayed_save("Qwen Image 2.1", "An edited prompt", "A box around the bird")
         page.reload()
         expect(page.locator("#prompt")).to_have_value("An edited prompt")
         for index in (0, 1, 2, 3, 0, 3, 1):
@@ -135,7 +152,7 @@ def run():
         expect(page.locator("#workshop-note")).to_be_visible()
         assert not errors, errors
         browser.close()
-    print("Image page: delayed draft saves, model switching, preview pixels and Empty passed.")
+    print("Image page: toolbar layout, delayed draft saves, model switching, preview pixels and Empty passed.")
 
 
 if __name__ == "__main__":

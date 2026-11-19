@@ -517,8 +517,6 @@
   const render = () => {
     if (!app.s) return;
     seg($("mode"), app.boot.modes, app.s.mode, (value) => change("mode", {mode: value}), {disabled: app.s.generate_only});
-    $("mode-help").textContent = app.s.generate_only ? "MOSS-Image generates from text only."
-      : app.s.editing ? "Change the images you add. The first one is the edit target." : "Create an image from the prompt alone. Adding an image switches to Edit.";
     const isAvailable = (item) => item.id === "gpt_image" && app.s.gpt_image_available !== undefined
       ? app.s.gpt_image_available
       : item.available !== false;
@@ -534,9 +532,6 @@
           : `${item.label} is not available: configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY.`;
       }
     }
-    $("about").textContent = (app.s.engine === "gpt_image" && app.s.available === false)
-      ? `${engine().description} Not available: configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY in .env or runtime secrets.`
-      : engine().description;
     $("references").hidden = !app.s.editing;
     // Typing in a Fine-tune box must not lose the box to a redraw from another answer.
     const typing = $("fine-rows").contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);

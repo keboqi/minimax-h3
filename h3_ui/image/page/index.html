@@ -9,22 +9,16 @@
 <body>
 <div id="editor" class="editor" hidden>
   <p id="workshop-note" class="notice" hidden>GPT Image generates and edits through the API without starting a GPU.</p>
-  <section class="bar" aria-label="Model">
-    <div class="seg wrap" role="group" aria-label="Image model" id="models"></div>
-    <span class="small muted grow" id="about"></span>
-  </section>
-  <section class="bar" aria-label="Image run">
+  <section class="bar" aria-label="Image controls" tabindex="0">
     <div class="seg" role="group" aria-label="Image task" id="mode"></div>
-    <span class="small muted grow" id="mode-help"></span>
-    <div class="action">
-      <div class="readiness">
-        <div class="steps" id="steps"></div>
-        <p class="small muted" role="status" id="readiness"></p>
-      </div>
-      <button type="button" class="btn quiet" id="refresh">Refresh status</button>
-      <button type="button" class="btn" id="stop" hidden>Interrupt</button>
-      <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter"><span id="run-label">Generate image</span> <kbd aria-hidden="true">Ctrl ↵</kbd></button>
+    <div class="seg" role="group" aria-label="Image model" id="models"></div>
+    <div class="readiness">
+      <div class="steps" id="steps"></div>
+      <p class="small muted" role="status" id="readiness"></p>
     </div>
+    <button type="button" class="btn quiet" id="refresh">Refresh status</button>
+    <button type="button" class="btn" id="stop" hidden>Interrupt</button>
+    <button type="button" class="btn primary big" id="run" title="Ctrl / ⌘ + Enter"><span id="run-label">Generate image</span> <kbd aria-hidden="true">Ctrl ↵</kbd></button>
   </section>
   <p class="status" id="run-status" role="status" aria-label="Generation progress" hidden></p>
 
