@@ -27,6 +27,7 @@ from fastapi.responses import (
 )
 
 from starlette.middleware.gzip import GZipMiddleware
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from .gradio_frontend import install_gradio_frontend_patch
 from .queue_transport import QueueTransportHeadMiddleware, install_queue_transport
 
@@ -342,6 +343,8 @@ def build_server(
         include_in_schema=False,
     )
     async def comfy_http_proxy(path: str, request: Request) -> Response:
+        if is_cpu_only():
+            return PlainTextResponse(CPU_ONLY_MESSAGE, status_code=503)
         upstream_path = _comfy_upstream_path(
             path,
             request.scope.get("raw_path"),
@@ -405,6 +408,9 @@ def build_server(
 
     @app.websocket(f"{COMFY_PROXY_PATH}/{{path:path}}")
     async def comfy_websocket_proxy(socket: WebSocket, path: str) -> None:
+        if is_cpu_only():
+            await _close_websocket(socket, code=1011)
+            return
         query = f"?{socket.url.query}" if socket.url.query else ""
         upstream_url = re.sub(r"^http", "ws", config.comfy_url, count=1)
         upstream_path = _comfy_upstream_path(

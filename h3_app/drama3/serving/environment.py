@@ -19,6 +19,7 @@ from h3_requirements import (
 
 from h3_app.errors import H3Error
 from h3_app.workers.env import SCRUBBED_ENV, compiler_env, setup_lock, uv_command
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
 __all__ = ["compiler_env", "install_env", "is_ready", "prepare", "uv_command"]
 
@@ -66,6 +67,8 @@ def install_env(venv: Path) -> dict[str, str]:
 
 def prepare(venv: Path, *, force: bool = False, run=None, log=print) -> Path:
     """Create or reuse an environment; publish readiness only after the smoke test."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     venv = Path(venv)
     label = "SGLang-Omni"
     if os.name != "posix":

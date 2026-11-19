@@ -9,6 +9,7 @@ from h3_models import DEFAULT_LTX25_MODEL, MODEL_SPECS, resolve_hf_token, stale_
 from h3_app import model_service
 from h3_app.catalog import LTX25_UPSCALE, LTX25_WORKFLOWS
 from h3_app.errors import H3Error
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.model_types import (
     ModelConfig,
     ModelProfile,
@@ -196,6 +197,9 @@ class ModelController:
 
     def _prepare_ltx25_model_set(self, required_keys: Iterable[str], label: str):
         """Lazily fetch a named set and refresh the visible model inventory."""
+        if is_cpu_only():
+            yield (CPU_ONLY_MESSAGE, self.render_ltx25_official_model_inventory())
+            return
         try:
             required_keys = tuple(dict.fromkeys(required_keys))
             stale = stale_model_keys(

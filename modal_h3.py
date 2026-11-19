@@ -794,7 +794,7 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
-# The Prism Workshop has its own small CPU image; it does not build or import ComfyUI.
+# Prism Workshop and the CPU Studio UI preview share this small CPU image; neither builds or imports ComfyUI.
 console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
@@ -809,16 +809,17 @@ if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
-        "h3_models.py", "h3_gpu.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
+        "gradio_app.py", "h3_models.py", "h3_gpu.py", "h3_workshop.py", "h3_sources.py", "h3_prompt_rewriter.py",
         "h3_requirements.py", "h3_workshop_requirements.py", "h3_node_patches.py", "prompts/prompt.txt",
     ):
         console_image = console_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
         )
-    for prompt in sorted((LOCAL / "prompts").glob("prompt_drama3*.txt")):
-        console_image = console_image.add_local_file(
-            prompt, remote_path=(ROOT / "prompts" / prompt.name).as_posix(), copy=False,
-        )
+    for name in PROMPT_FILES:
+        if name != "prompt.txt":
+            console_image = console_image.add_local_file(
+                LOCAL_PROMPTS / name, remote_path=(PROMPTS / name).as_posix(), copy=False,
+            )
     # Repository snapshots reuse the runtime's own downloaders and layouts, and
     # the media library reuses the main application's controller and views.
     for package in ("h3_app", "h3_ui"):
@@ -1060,7 +1061,13 @@ def gradio_env() -> dict[str, str]:
     return env
 
 
-def publish_gradio(gradio_process: subprocess.Popen) -> None:
+def cpu_studio_env() -> dict[str, str]:
+    env = gradio_env()
+    env["H3_CPU_ONLY"] = "1"
+    return env
+
+
+def publish_gradio(gradio_process: subprocess.Popen, *, check_comfy_proxy: bool = True) -> None:
     """Wait for the UI, persist its workspace, and check the ComfyUI proxy."""
     wait_for_service(
         f"http://127.0.0.1:{UI_PORT}/",
@@ -1075,6 +1082,8 @@ def publish_gradio(gradio_process: subprocess.Popen) -> None:
         f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
         flush=True,
     )
+    if not check_comfy_proxy:
+        return
     try:
         wait_for_comfy_frontend(
             f"http://127.0.0.1:{UI_PORT}/comfyui/",
@@ -1291,3 +1300,50 @@ class H3SoundstageService(PreloadedService):
     )
     def serve(self):
         """Expose the servers initialized by the snapshot lifecycle hooks."""
+
+
+@app.cls(
+    image=console_image,
+    timeout=21600,
+    volumes={DATA.as_posix(): volume},
+    secrets=[hf_secret],
+    max_containers=1,
+    scaledown_window=SCALEDOWN_WINDOW,
+)
+@modal.concurrent(max_inputs=100)
+class H3StudioUIService:
+    """Full Prism Studio UI on CPU for frontend/UX testing without ComfyUI or a GPU."""
+
+    @modal.enter()
+    def start(self):
+        prepare_runtime_models()
+        print("[modal-h3] Launching CPU-only Prism Studio UI", flush=True)
+        self.gradio_process = subprocess.Popen(
+            ["python", "-u", UI.as_posix()],
+            env=cpu_studio_env(),
+        )
+        publish_gradio(self.gradio_process, check_comfy_proxy=False)
+
+    @modal.exit()
+    def stop(self):
+        process = getattr(self, "gradio_process", None)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        try:
+            volume.commit()
+        except Exception as exc:
+            print(f"[modal-h3] Could not commit volume on CPU UI exit: {exc}", flush=True)
+
+    @modal.web_server(
+        UI_PORT,
+        startup_timeout=180,
+        label="h3-ui",
+        requires_proxy_auth=PROXY_AUTH,
+    )
+    def serve(self):
+        """Expose the CPU-only Prism Studio UI."""

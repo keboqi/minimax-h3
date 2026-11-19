@@ -26,6 +26,7 @@ from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
 from h3_app.provenance import write_snapshot
 from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speaker_label
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
 from . import audio, environment, rooms, takes as take_store
 from .alignment import take_audio_digest
@@ -203,6 +204,8 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
 
 
 def _ready_server(settings, server, label, free_gpu, hf_token, *, evict=True) -> Iterator[GenerationUpdate]:
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     yield from _with_heartbeat(f"Preparing the {label} environment",
                                lambda _progress: environment.prepare(settings.venv))
     yield from _with_heartbeat("Downloading the Drama 3 checkpoint",

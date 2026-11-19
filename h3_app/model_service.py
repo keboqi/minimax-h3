@@ -22,6 +22,7 @@ from h3_app.catalog import (
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS, JobCancelled, check_cancelled
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.model_types import (
     ModelConfig,
     ModelProfile,
@@ -352,6 +353,8 @@ def ensure_models(
     names to check afterwards (``failure`` names the missing one); with
     ``verify_always`` they are checked even when nothing was downloaded.
     """
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     keys = tuple(keys)
     stale = missing_models(keys, runtime=runtime)
     if stale:
@@ -622,6 +625,8 @@ def ensure_trt_video_vae_engine(
     runtime: RuntimeConfig,
 ) -> bool:
     """Provision and compile the TensorRT decoder engine only when required."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     with JOBS.maintenance("trt-compile"), _TRT_VAE_COMPILE_LOCK:
         ensure_trt_video_vae(models, require_engine=False, runtime=runtime)
         if not force and trt_vae_engine_is_current(models, runtime=runtime):
@@ -661,6 +666,8 @@ def ensure_ltx25_models(
     model_choice: str = DEFAULT_LTX25_MODEL, *, runtime: RuntimeConfig
 ) -> bool:
     """Download the gated LTX-2.5 model set only when its tab is used."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     required_keys = tuple(ltx25_model_keys(model_choice).values())
     if not missing_ltx25_model_names(model_choice, runtime=runtime):
         return False

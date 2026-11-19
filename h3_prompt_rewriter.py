@@ -387,6 +387,10 @@ _LOCAL_REWRITER = _LocalPromptRewriter()
 
 
 def rewrite_prompt(**kwargs: Any) -> tuple[str, str]:
+    from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
+
+    if is_cpu_only():
+        raise RuntimeError(CPU_ONLY_MESSAGE)
     return _LOCAL_REWRITER.rewrite(**kwargs)
 
 

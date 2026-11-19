@@ -69,6 +69,11 @@ def backend_status_html(detail: str) -> str:
             '<div class="h3-system-ready" role="status">'
             f"<strong>Ready</strong><span>{headline}</span></div>"
         )
+    if detail.startswith("CPU UI preview"):
+        return (
+            '<div class="h3-system-status" role="status">'
+            "<strong>CPU preview</strong><span>No GPU backend</span></div>"
+        )
     return (
         '<div class="h3-system-warning" role="alert">'
         "<strong>Backend needs attention</strong>"

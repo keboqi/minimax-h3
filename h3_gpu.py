@@ -10,6 +10,18 @@ import re
 import subprocess
 
 
+CPU_ONLY_ENV = "H3_CPU_ONLY"
+CPU_ONLY_MESSAGE = (
+    "No GPU backend is attached to this CPU UI preview endpoint. "
+    "Open a GPU Studio endpoint (h3, h3-video, or h3-soundstage) to run GPU generation."
+)
+
+
+def is_cpu_only() -> bool:
+    """True when serving the full UI without a GPU or ComfyUI backend."""
+    return os.environ.get(CPU_ONLY_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def gpu_profile() -> str:
     """Policy selected by the launcher; no hardware queries during imports."""
     return "a100" if os.environ.get("H3_GPU_PROFILE", "").strip().lower() == "a100" else "default"

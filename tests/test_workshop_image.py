@@ -55,6 +55,20 @@ class WorkshopImageIsolationTests(unittest.TestCase):
         _, _, cpu = self.recipe((), local=False)
         cpu.uv_pip_install.assert_not_called()
 
+    def test_console_image_mounts_full_studio_runtime_without_duplicate_paths(self):
+        ns, _, cpu = self.recipe(("cpu-package==1",))
+        file_mounts = [call for call in cpu.mock_calls if call[0] == "add_local_file"]
+        dir_mounts = [call for call in cpu.mock_calls if call[0] == "add_local_dir"]
+        remote_files = [call.kwargs["remote_path"] for call in file_mounts]
+        remote_dirs = [call.kwargs["remote_path"] for call in dir_mounts]
+        self.assertEqual(len(remote_files), len(set(remote_files)))
+        self.assertEqual(len(remote_dirs), len(set(remote_dirs)))
+        self.assertTrue(all(call.kwargs["copy"] is False for call in (*file_mounts, *dir_mounts)))
+        self.assertIn("/opt/h3/gradio_app.py", remote_files)
+        for name in ns["PROMPT_FILES"]:
+            self.assertIn(f"/opt/h3/prompts/{name}", remote_files)
+        self.assertEqual(set(remote_dirs), {"/opt/h3/h3_app", "/opt/h3/h3_ui"})
+
 
 if __name__ == "__main__":
     unittest.main()

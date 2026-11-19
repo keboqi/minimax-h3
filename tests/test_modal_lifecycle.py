@@ -1,6 +1,7 @@
 """Exercise GPU server lifecycle without allocating a Modal container."""
 import ast
 from pathlib import Path, PurePosixPath
+import subprocess
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
@@ -64,10 +65,28 @@ class ModalLifecycleTests(unittest.TestCase):
             for method in nodes["PreloadedService"].body if isinstance(method, ast.FunctionDef)
             and method.name in {"start", "resume"}
         }
+        cpu_studio = nodes["H3StudioUIService"]
+        self.cpu_cls_kwargs = {
+            kw.arg: kw.value
+            for dec in cpu_studio.decorator_list
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "cls"
+            for kw in dec.keywords
+        }
+        cpu_serve = next(
+            method for method in cpu_studio.body
+            if isinstance(method, ast.FunctionDef) and method.name == "serve"
+        )
+        self.cpu_serve_kwargs = {
+            kw.arg: kw.value
+            for dec in cpu_serve.decorator_list
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+            and dec.func.attr == "web_server"
+            for kw in dec.keywords
+        }
         # Execute the real lifecycle bodies without SDK decoration or image builds.
         body = [nodes[name] for name in (
-            "start_comfy", "gradio_env", "publish_gradio", "wait_for_preload",
-            "H3Service", "PreloadedService",
+            "start_comfy", "gradio_env", "cpu_studio_env", "publish_gradio", "wait_for_preload",
+            "H3Service", "PreloadedService", "H3StudioUIService",
         )]
         for node in body:
             node.decorator_list = []
@@ -87,7 +106,9 @@ class ModalLifecycleTests(unittest.TestCase):
             "UI_PORT": 7860,
             "os": SimpleNamespace(getenv=Mock(return_value=None)),
             "print": Mock(),
-            "subprocess": SimpleNamespace(Popen=self.calls.launch, PIPE="pipe"),
+            "subprocess": SimpleNamespace(
+                Popen=self.calls.launch, PIPE="pipe", TimeoutExpired=subprocess.TimeoutExpired,
+            ),
             "prepare_runtime_models": self.calls.prepare,
             "sync_ltx25_workflows": self.calls.sync,
             "service_env": Mock(return_value={}),
@@ -253,6 +274,36 @@ class ModalLifecycleTests(unittest.TestCase):
         process = Mock(poll=Mock(return_value=3), returncode=3)
         with self.assertRaisesRegex(RuntimeError, "exited before its models loaded: 3"):
             self.env["wait_for_preload"](process, timeout=5, label="video preload")
+
+    def test_cpu_studio_decorator_uses_cpu_image_without_gpu_or_snapshots(self):
+        self.assertEqual(self.cpu_cls_kwargs["image"].id, "console_image")
+        self.assertEqual(ast.literal_eval(self.cpu_cls_kwargs["max_containers"]), 1)
+        for forbidden in ("gpu", "cpu", "memory", "min_containers", "enable_memory_snapshot", "experimental_options"):
+            self.assertNotIn(forbidden, self.cpu_cls_kwargs)
+        self.assertEqual(ast.literal_eval(self.cpu_serve_kwargs["label"]), "h3-ui")
+
+    def test_cpu_studio_service_launches_gradio_without_comfy_or_proxy_check(self):
+        self.calls.launch.side_effect = [self.gradio]
+        cpu_service = self.env["H3StudioUIService"]()
+        cpu_service.start()
+        self.assertIsNone(cpu_service.serve())
+        self.assertEqual([call[0] for call in self.calls.mock_calls], [
+            "prepare", "launch", "ready", "commit",
+        ])
+        self.assertEqual(self.calls.launch.call_args.args, (["python", "-u", "/opt/h3/gradio_app.py"],))
+        launched_env = self.calls.launch.call_args.kwargs["env"]
+        self.assertEqual(launched_env["H3_CPU_ONLY"], "1")
+        self.assertEqual(launched_env["GRADIO_SERVER_NAME"], "0.0.0.0")
+        self.assertEqual(launched_env["GRADIO_SERVER_PORT"], "7860")
+        self.assertIs(self.calls.ready.call_args.args[1], self.gradio)
+        self.calls.frontend.assert_not_called()
+
+        self.calls.reset_mock()
+        self.gradio.poll.return_value = None
+        cpu_service.stop()
+        self.gradio.terminate.assert_called_once_with()
+        self.gradio.wait.assert_called_once_with(timeout=10)
+        self.calls.commit.assert_called_once_with()
 
 
 if __name__ == "__main__":

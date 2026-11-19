@@ -21,6 +21,7 @@ from typing import Callable
 
 from h3_app.errors import H3Error
 from h3_app.jobs import check_cancelled
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
 # Inherited interpreter settings would leak ComfyUI's packages into the venv.
 SCRUBBED_ENV = ("PYTHONPATH", "PYTHONHOME", "PIP_CONSTRAINT", "UV_CONSTRAINT", "VIRTUAL_ENV")
@@ -156,6 +157,8 @@ def prepare_venv(venv: Path, log: Path, *, name: str, label: str, fingerprint: s
     ``name`` appears in the missing-uv message and ``label`` in step failures. An
     existing interpreter is kept and the pins are reinstalled into it.
     """
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     if report is not None:
         report(f"Checking {label} environment (waiting if another setup is running)")
         print(f"[{label}] Checking environment: {venv}", flush=True)

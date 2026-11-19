@@ -30,7 +30,7 @@ from h3_requirements import (
 from h3_app.drama3.serving import checkpoint, environment as sglang_environment
 from h3_app.drama3.serving.server import SglangOmniServer, gpu_memory, reclaim_audio_tools
 from h3_app.errors import H3Error
-from h3_gpu import is_a100
+from h3_gpu import CPU_ONLY_MESSAGE, is_a100, is_cpu_only
 from h3_app.workers.env import setup_lock, uv_command
 
 from . import segments as segment_tools
@@ -138,6 +138,8 @@ def is_ready(venv: Path) -> bool:
 
 def prepare(venv: Path, *, run=None, log=print) -> None:
     """Create the environment once; readiness is published only after the smoke test."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     venv = Path(venv)
     require_supported()
     run = run or (lambda command, **kwargs: subprocess.run(command, check=True, **kwargs))
@@ -572,6 +574,8 @@ def reply_activity(reply: dict, words: list[dict]) -> dict[str, list[list[float]
 def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], None], hf_token=None,
                report: Callable[[str], None] = lambda _message: None) -> dict:
     """``{"segments", "words", "activity"}`` for ``audio`` (16 kHz mono); the server sleeps once they are back."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     require_supported()
     if duration > MAX_SECONDS:
         raise H3Error(f"Nemotron transcribes up to {MAX_SECONDS // 60} minutes at once; this source runs "

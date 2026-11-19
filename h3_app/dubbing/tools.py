@@ -13,7 +13,9 @@ import time
 
 from h3_app import audio_tools
 from h3_app.dubbing import tools_worker as layout
+from h3_app.errors import H3Error
 from h3_app.workers import env as worker_env
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.workers.resident import ResidentWorker, WorkerSlot
 from h3_requirements import (
     DUB_TOOLS_READY_MARKER as READY_MARKER,
@@ -98,6 +100,8 @@ def _make_room(op: str, worker, free_gpu) -> None:
 def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = None,
         report=lambda _message: None) -> dict:
     """Send one request to the resident worker, preparing the environment and GPU room first."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     from h3_app.drama3.serving.server import persist_caches
     from h3_app.jobs import JOBS
 

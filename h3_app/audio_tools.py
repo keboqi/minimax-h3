@@ -13,7 +13,9 @@ from pathlib import Path
 import time
 
 from h3_app import audio_tools_worker as layout
+from h3_app.errors import H3Error
 from h3_app.workers import env as worker_env
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.workers.resident import RequestFailed, ResidentWorker as _ResidentWorker, WorkerSlot
 from h3_requirements import (
     AUDIO_TOOLS_READY_MARKER as READY_MARKER,
@@ -137,6 +139,8 @@ def _worker_for(model: str, runtime, *, free_gpu, hf_token: str | None, evict: b
 
 def run(model: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = None) -> dict:
     """Send one request to the resident worker, starting it and fetching weights as needed."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     from h3_app.jobs import JOBS
     from h3_app.drama3.serving.server import persist_caches
 
@@ -154,6 +158,8 @@ def preload(model: str, runtime, *, free_gpu, hf_token: str | None = None) -> bo
     True once it is loaded (or already was); False when the GPU has no room for it,
     leaving the first request to make room as usual.
     """
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     from h3_app.jobs import JOBS
 
     JOBS.add_gpu_claim_hook(release_for_job)

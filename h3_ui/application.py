@@ -68,6 +68,7 @@ from h3_app.comfy import ComfyClient
 from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
 from h3_app.provenance import RUN_CONTEXT, write_snapshot, render_snapshot
 from h3_app.errors import H3Error
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.catalog import (
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
@@ -255,11 +256,18 @@ def ensure_lightvae(video_encoder: str, decoder: str) -> bool:
     return model_service.ensure_lightvae(video_encoder, decoder, runtime=_runtime_config())
 
 
+def _require_gpu() -> None:
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
+
+
 def api_get(path: str, **kwargs: Any) -> requests.Response:
+    _require_gpu()
     return ComfyClient(COMFY_URL, REQUEST_TIMEOUT, HTTP).get(path, **kwargs)
 
 
 def api_post(path: str, **kwargs: Any) -> requests.Response:
+    _require_gpu()
     return ComfyClient(COMFY_URL, REQUEST_TIMEOUT, HTTP).post(path, **kwargs)
 
 
@@ -508,6 +516,7 @@ def wait_for_comfy(timeout: float = COMFY_START_WAIT) -> None:
 
     Returns at once when ComfyUI answers; an interrupt still stops the waiting job.
     """
+    _require_gpu()
     deadline, error = time.monotonic() + timeout, None
     while True:
         try:
@@ -601,6 +610,7 @@ def free_comfy_vram(timeout: float = 60.0) -> None:
     /free only queues flags. Unchanged global free VRAM is not acknowledgement:
     wait for ComfyUI's own reported Torch allocation to clear instead.
     """
+    _require_gpu()
     unload_prompt_rewriter()
     wait_for_comfy()
     unload_comfy_models()
@@ -634,6 +644,8 @@ def free_comfy_vram(timeout: float = 60.0) -> None:
 @gpu_maintenance("unload")
 def unload_all_models() -> tuple[str, str]:
     """Unload every resident ComfyUI model and refresh the backend summary."""
+    if is_cpu_only():
+        return (CPU_ONLY_MESSAGE, backend_status())
     local_was_loaded = unload_prompt_rewriter()
     try:
         unload_comfy_models()
@@ -657,6 +669,11 @@ def _catalog_inventory(mode, limit):
 
 
 def backend_status() -> str:
+    if is_cpu_only():
+        return (
+            "CPU UI preview · No GPU backend attached (ComfyUI, SGLang-Omni and GPU workers are disabled). "
+            "All UI pages, Media library, prompt writers, project editing and GPT Image API remain available."
+        )
     try:
         stats = api_get("/system_stats").json()
         live_nodes = set(object_info())

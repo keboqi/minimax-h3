@@ -19,6 +19,7 @@ from typing import Callable
 from h3_app.drama3.serving import environment
 from h3_app.drama3.serving.server import FALLBACK_GPU_GIB, SglangOmniServer, gpu_memory
 from h3_app.errors import H3Error
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
 MODEL_REPO = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
 MODEL_REVISION = "704aa4a9c304e8520be88901e0d1960158ef5b15"
@@ -262,6 +263,8 @@ def supported() -> bool:
 def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], None], hf_token=None,
                report: Callable[[str], None] = lambda _message: None) -> list[dict]:
     """Timed speaker lines of ``audio``; the server sleeps again once they are back."""
+    if is_cpu_only():
+        raise H3Error(CPU_ONLY_MESSAGE)
     if not supported():
         raise H3Error("MOSS runs on SGLang-Omni, which requires Linux. Use Qwen3-ASR or Gemini here.")
     if duration > MAX_SECONDS:
