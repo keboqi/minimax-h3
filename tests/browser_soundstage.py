@@ -8,6 +8,7 @@ from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
 from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED
+from h3_app.provenance import write_snapshot
 from tests.test_drama3_page_video import Drama3PageVideoTests
 
 
@@ -15,6 +16,11 @@ def run():
     fixture = Drama3PageVideoTests()
     fixture.setUp()
     list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True, "landscape", "null"))
+    legacy_mix = fixture.mix.with_name("legacy.mp3")
+    legacy_mix.write_bytes(b"ID3")
+    write_snapshot(legacy_mix, {"settings": {"duration": 2.0}})
+    fixture.store.save_soundstage_project("Legacy Mix", {"text": "Mia: An older mix.", "shown_slots": 1})
+    fixture.store.mark_soundstage_generated("Legacy Mix", str(legacy_mix))
     fixture.store.save_soundstage_project("Second", {"text": "Mia: Another draft.", "shown_slots": 1})
     fixture.store.save_soundstage_project("Scenes", {"script_mode": DRAMA3_SCRIPT_ADVANCED, "text": "\n".join([
         "Mia: Plums, two for one!",
@@ -105,7 +111,11 @@ def run():
             page.wait_for_function(fits)
             assert page.locator("#script-text").evaluate("a => a.clientHeight") > wide_height
             assert page.evaluate(no_page_scroll)
-            page.set_viewport_size({"width": 800, "height": 1000})
+            page.locator("#toggle-writer").click()
+            expect(page.locator("#writer-col")).to_be_hidden()
+            page.set_viewport_size({"width": 700, "height": 1000})
+            page.locator("#toggle-writer").click()
+            expect(page.locator("#writer-col")).to_be_visible()
             page.wait_for_function(fits)
             page.set_viewport_size({"width": 1440, "height": 1000})
             page.locator("#script-text").fill(original_script)
@@ -151,6 +161,12 @@ def run():
             expect(page.locator("#player .player-deck")).to_be_visible()
             page.locator("#step-illustrate").click()
             assert page.evaluate(no_page_scroll)
+            expect(page.locator("#lines .line")).to_have_count(1)
+            page.locator("#project").select_option("Legacy Mix")
+            expect(page.locator("#player .player-title")).to_contain_text("Legacy Mix")
+            expect(page.locator("#toast")).not_to_contain_text("reading 'end'")
+            page.locator("#project").select_option("Night Market")
+            expect(page.locator("#player .player-title")).to_contain_text("Night Market")
             page.locator("#step-mix").click()
             page.get_by_role("button", name="Video", exact=True).click()
             expect(page.locator("#still-back")).to_be_visible()

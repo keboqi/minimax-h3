@@ -570,26 +570,29 @@ export function startWorkspace() {
     const playing = started.filter(({line}) => line.end > time);
     const lit = new Set((playing.length ? playing : started.slice(-1)).map(({index}) => index));
     const active = Math.max(-1, ...lit);
-    for (const button of $("lines").querySelectorAll(".line")) {
-      const index = Number(button.dataset.line);
-      const line = result.lines[index];
-      button.classList.toggle("playing", lit.has(index));
-      button.classList.toggle("past", line.end <= time && !lit.has(index));
-      for (const word of button.querySelectorAll(".word")) {
-        const start = Number(word.dataset.start), end = Number(word.dataset.end);
-        word.classList.toggle("spoken", lit.has(index) && start <= time);
-        word.classList.toggle("current", lit.has(index) && start <= time && time < end + 0.08);
-      }
-    }
     for (const clip of document.querySelectorAll("#lanes .clip[data-line]")) {
       clip.classList.toggle("active", lit.has(Number(clip.dataset.line)));
     }
-    if (active >= 0 && active !== lastActive && !mix.paused && $("follow").checked) {
-      const row = $("lines").querySelector(`.line[data-line="${active}"]`);
+    if (state.screen === "mix") {
       const list = $("lines");
-      if (row) list.scrollTo({top: row.offsetTop - list.offsetTop - (list.clientHeight - row.offsetHeight) / 2, behavior: "smooth"});
+      for (const button of list.querySelectorAll(".line")) {
+        const index = Number(button.dataset.line);
+        const line = result.lines[index];
+        if (!line) continue;
+        button.classList.toggle("playing", lit.has(index));
+        button.classList.toggle("past", line.end <= time && !lit.has(index));
+        for (const word of button.querySelectorAll(".word")) {
+          const start = Number(word.dataset.start), end = Number(word.dataset.end);
+          word.classList.toggle("spoken", lit.has(index) && start <= time);
+          word.classList.toggle("current", lit.has(index) && start <= time && time < end + 0.08);
+        }
+      }
+      if (active >= 0 && active !== lastActive && !mix.paused && $("follow").checked) {
+        const row = list.querySelector(`.line[data-line="${active}"]`);
+        if (row) list.scrollTo({top: row.offsetTop - list.offsetTop - (list.clientHeight - row.offsetHeight) / 2, behavior: "smooth"});
+      }
     }
-    lastActive = active;
+    lastActive = state.screen === "mix" ? active : -1;
     paintStills(time);
     const caption = $("video-caption");
     if (caption) {
@@ -608,7 +611,7 @@ export function startWorkspace() {
         }
       }
     }
-    const progress = $("take-progress");
+    const progress = state.screen === "mix" ? $("take-progress") : null;
     if (progress) {
       const current = lineTakes(result)[state.picked];
       const own = current && takeAudio.dataset.key === current.key && takeAudio.duration;
