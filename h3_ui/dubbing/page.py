@@ -10,6 +10,7 @@ Line edits save at once.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from html import unescape
 from pathlib import Path
 from threading import RLock
@@ -25,7 +26,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.results import TRACKS, load_result
+from h3_app.dubbing.results import TRACKS, load_player, load_result
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
@@ -113,6 +114,16 @@ def _status(status) -> str:
     return "" if text is SKIP or not isinstance(text, str) else text
 
 
+@lru_cache(maxsize=128)
+def _source_duration(source: Path, _size: int, _modified: int, _changed: int) -> float:
+    from h3_app.media_tools import probe_audio_seconds
+
+    duration = probe_audio_seconds(source)
+    if duration is None:
+        raise ValueError("Source duration unavailable.")
+    return duration
+
+
 def source_info(path) -> dict | None:
     """The picked file: its name, kind, size and length."""
     if not path:
@@ -121,13 +132,12 @@ def source_info(path) -> dict | None:
     info = {"path": str(source), "name": source.name, "kind": "Video" if pipeline.is_video(source) else "Audio",
             "size": None, "seconds": None}
     try:
-        info["size"] = source.stat().st_size
+        stat = source.stat()
     except OSError:
-        pass
+        return info
+    info["size"] = stat.st_size
     try:
-        from h3_app.media_tools import probe_audio_seconds
-
-        info["seconds"] = probe_audio_seconds(source)
+        info["seconds"] = _source_duration(source, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
     except Exception:
         pass
     return info
@@ -169,7 +179,15 @@ def _version(path) -> str:
         return "0"
 
 
-def result_payload(session: sessions.Session) -> dict | None:
+def _result_player_html(session_id, output, player) -> str:
+    if player is None:
+        return ""
+    urls = {getattr(player, track): f"{API}/track?session={session_id}&name={track}&v={_version(getattr(player, track))}"
+            for track in TRACKS if getattr(player, track)}
+    return player_html(player, key=Path(output).stem, url=urls.__getitem__)
+
+
+def result_payload(session: sessions.Session, *, include_player: bool = True) -> dict | None:
     """The latest finished dub: its player, files and what can still be done to it."""
     from h3_app.provenance import read_snapshot
 
@@ -188,11 +206,9 @@ def result_payload(session: sessions.Session) -> dict | None:
                       {"video": "Dubbed video", "audio": "Dub mix", "subtitles": "Subtitles"}[kind],
                       "url": f"{API}/output?session={sid}&name={quote(path.name)}&v={_version(path)}"})
     player = result.player
-    html, cues, timed, failed = "", 0, 0, []
+    html = _result_player_html(sid, output, player) if include_player or player is None else None
+    cues, timed, failed = 0, 0, []
     if player is not None:
-        urls = {getattr(player, track): f"{API}/track?session={sid}&name={track}&v={_version(getattr(player, track))}"
-                for track in TRACKS if getattr(player, track)}
-        html = player_html(player, key=Path(output).stem, url=urls.__getitem__)
         cues = len(player.lines)
         timed = sum(bool(cue.get("translation_words")) for cue in player.lines)
         failed = [cue.get("line_number") for cue in player.lines if cue.get("take_problem")]
@@ -311,7 +327,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         token = shares.find(runtime(), output) if output and not gpu else None
         return origin(request) + share_path(token) if token else None
 
-    def payload(request: Request, session: sessions.Session) -> dict:
+    def payload(request: Request, session: sessions.Session, *, include_player: bool = True) -> dict:
         speakers = None
         if pipeline.speaker_settings_available(session):
             cards = presenters.speakers_value(session, handlers._voice_choices())
@@ -330,11 +346,12 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                 "rewrite_style": data.get("rewrite_style") or "", "pipeline": data.get("pipeline") or "",
                 "voice_default": pipeline.default_voice_mode(data.get("pipeline")),
                 "source": source, "board": lines_payload(session),
-                "speakers": speakers, "readiness": readiness_payload(session), "result": result_payload(session),
+                "speakers": speakers, "readiness": readiness_payload(session),
+                "result": result_payload(session, include_player=include_player),
                 "share": share_url(request, session), "label": pipeline.dub_label(session)}
 
-    def session_answer(request: Request, session_id, **extra) -> dict:
-        return {"session": payload(request, load(session_id)), **extra}
+    def session_answer(request: Request, session_id, *, include_player: bool = True, **extra) -> dict:
+        return {"session": payload(request, load(session_id), include_player=include_player), **extra}
 
     # The page --------------------------------------------------------------
     @app.get(ROUTE, include_in_schema=False)
@@ -434,7 +451,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         name = str(body.get("name") or "")
         data, session = projects.load(runtime(), name)
         return {"project": {"name": name, "session": session.id}, "settings": data["settings"],
-                "session": payload(request, session)}
+                "session": payload(request, session, include_player=body.get("include_player") is not False)}
 
     @app.post(f"{API}/project/save", include_in_schema=False)
     @guarded
@@ -449,9 +466,9 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
 
     @app.get(f"{API}/session", include_in_schema=False)
     @guarded
-    def read_session(id: str, request: Request):
+    def read_session(id: str, request: Request, include_player: bool = True):
         owner_of(request)
-        return session_answer(request, id)
+        return session_answer(request, id, include_player=include_player)
 
     # Lines -----------------------------------------------------------------
     def edited(request, session_id, answer, *, status_index, board_index=0):
@@ -973,6 +990,15 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return {"session": payload(request, loaded)}
 
     # Files -----------------------------------------------------------------
+    @app.get(f"{API}/result-player", include_in_schema=False)
+    @guarded
+    def result_player(session: str, request: Request):
+        owner_of(request)
+        loaded = load(session)
+        output = loaded.data.get("last_output")
+        player = load_player(output) if output else None
+        return {"html": _result_player_html(loaded.id, output, player)}
+
     def latest_result(session_id: str):
         session = load(session_id)
         output = session.data.get("last_output")

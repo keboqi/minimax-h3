@@ -142,11 +142,12 @@ import {bindFullscreen} from "./fullscreen.js";
   };
   const originals = () => Object.fromEntries(state.slots.flatMap((slot, index) =>
     (slot?.original && slot.untouched ? [[index + 1, slot.original]] : [])));
-  const editor = () => ({
+  const editFields = () => ({
     video: state.source?.path, selection: selection(), prompt: $("prompt").value, request: $("request").value,
     pinned: state.pinned, smart: state.smart, auto_prompts: state.auto, window: state.index, mode: state.mode,
-    slots: state.slots, originals: originals(), use_carried: state.useCarried, writer: writer(),
+    originals: originals(), use_carried: state.useCarried,
   });
+  const editor = () => ({...editFields(), slots: state.slots, writer: writer()});
 
   // Saving and checking ----------------------------------------------------
   const setSaveLabel = (label) => {
@@ -159,25 +160,36 @@ import {bindFullscreen} from "./fullscreen.js";
   };
 
   let checkTimer;
+  let checkRevision = 0;
   const queueCheck = () => {
+    const revision = ++checkRevision;
     clearTimeout(checkTimer);
     checkTimer = setTimeout(safely(async () => {
       if (!state.source) return;
-      state.check = await post("/check", editor());
+      const check = await post("/check", editor());
+      if (revision !== checkRevision || !state.source) return;
+      state.check = check;
       renderAction();
       renderNextRun();
     }), CHECK_DELAY_MS);
   };
   // Saves run one at a time: moving quickly across windows must keep them in order.
   let saving = Promise.resolve();
-  const saveWindow = (create = false, {keepalive = false} = {}) => {
+  let savedEditor;
+  const saveBody = (project) => ({
+    ...editFields(), slots: state.slots.map((slot) => slot && {path: slot.path, pin: slot.pin}), project,
+  });
+  const saveWindow = (create = false) => {
     if (!state.project && !create) return Promise.resolve();
-    setSaveLabel("Saving…");
     // Autosave belongs to the open project, even while a selection change is pending.
-    const body = {...editor(), project: create ? null : state.project.key};
+    const body = saveBody(create ? null : state.project.key);
+    const snapshot = JSON.stringify(body);
     saving = saving.catch(() => {}).then(async () => {
+      if (!create && snapshot === savedEditor) return;
+      setSaveLabel("Saving…");
       try {
-        const result = await post("/save", body, {keepalive});
+        const result = await post("/save", body);
+        savedEditor = JSON.stringify({...body, project: result.key});
         setSaveLabel("All changes saved");
         return result;
       } catch (error) {
@@ -207,8 +219,8 @@ import {bindFullscreen} from "./fullscreen.js";
   };
   const flushNow = () => {
     if (!state.project || !state.source) return;
-    const body = {...editor(), project: state.project.key};
-    post("/save", body, {keepalive: true}).catch(() => {});
+    const body = saveBody(state.project.key);
+    if (JSON.stringify(body) !== savedEditor) post("/save", body, {keepalive: true}).catch(() => {});
   };
   const changed = () => { queueCheck(); savePrefs(); };
 
@@ -291,6 +303,12 @@ import {bindFullscreen} from "./fullscreen.js";
     const video = $("source-video");
     delete video.dataset.failed;
     video.src = fileUrl(source.path);
+    const result = $("result-video");
+    if (result.dataset.url) {
+      delete result.dataset.url;
+      result.removeAttribute("src");
+      result.load();
+    }
     $("run-status").hidden = !running();
     showEditor(true);
   };
@@ -330,22 +348,17 @@ import {bindFullscreen} from "./fullscreen.js";
     const targetWindow = Math.max(0, Math.min((data.windows?.length || 1) - 1, Number(initialWindow) || 0));
     Object.assign(state, {start: chosen.start, lastStart: chosen.start, end: chosen.end, shortEdge: chosen.short_edge,
                           mix: chosen.mix, maxWindow: chosen.max_window, mode: data.mode, smart: data.smart,
-                          pinned: data.pinned, auto: data.auto_prompts, long: true, project: data, index: targetWindow,
+                          pinned: data.pinned, auto: data.auto_prompts, long: data.long, project: data, index: targetWindow,
                           frame: data.windows?.[targetWindow]?.own?.[0] ?? 0, output: data.output, view: "source",
-                          menu: false, saveLabel: "All changes saved"});
+                          menu: false, check: null, saveLabel: "All changes saved"});
     stored.set(SESSION.project, data.key);
     stored.set(SESSION.window, String(targetWindow));
     $("request").value = data.request;
     loadEditor(openWindow());
     showSource(data.source_info);
-    await refreshSelection();
-    if (targetWindow > 0 && state.project && targetWindow < state.project.windows.length) {
-      state.index = targetWindow;
-      state.frame = openWindow().own[0];
-      loadEditor(openWindow());
-      renderAll();
-      queueCheck();
-    }
+    savedEditor = JSON.stringify(saveBody(data.key));
+    renderAll();
+    queueCheck();
     if (data.note) toast(data.note);
   });
 
@@ -822,7 +835,7 @@ import {bindFullscreen} from "./fullscreen.js";
     const wantsResult = view === "result" || view === "compare";
     const result = $("result-video");
     const url = take ? fileUrl(take) : "";
-    if (take && result.dataset.url !== url) {
+    if (wantsResult && take && result.dataset.url !== url) {
       result.src = url;
       result.dataset.url = url;
     }

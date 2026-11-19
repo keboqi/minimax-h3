@@ -29,7 +29,6 @@ from h3_app.provenance import read_snapshot
 
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
-from .page_cast import cast_voices
 from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, value, writer_service
 from .page_store import editing
 from .stage_video import latest_export
@@ -156,7 +155,7 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
             "art_style": str(plan.get("art_style") or plan.get("style") or "")}
 
 
-def video_payload(name: str, data: dict, result, export, *, store=None) -> dict:
+def video_payload(name: str, data: dict, result, export, *, store=None, result_snapshot=None) -> dict:
     """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
     settings = video_settings(data, export.engines)
     root = export.deps.runtime_config().output_dir
@@ -166,7 +165,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None) -> dict:
     timing_error = None
     if result or data.get("visual_plan"):
         try:
-            audio, mix_settings = planning_mix(name, data, result, export, store=store)
+            audio, mix_settings = planning_mix(name, data, result, export, store=store, result_snapshot=result_snapshot)
         except H3Error as exc:
             # A cleared script must remain editable even when it still has an old plan.
             return {**settings, "timing_pending": not bool(result),
@@ -174,10 +173,10 @@ def video_payload(name: str, data: dict, result, export, *, store=None) -> dict:
                     "stills": None, "latest": None, "previews": {}}
         timing_error = mix_settings.get("visual_timing_error")
         saved = visuals.read_plan(audio)
-        current = visuals.read_plan(audio, settings["limit"])
+        current = saved if saved is not None and saved.get("limit") == settings["limit"] else None
         duration = float(mix_settings.get("duration") or 0)
         record = visuals.read_stills(audio, root)
-        voices = cast_voices(data, export.deps.runtime_config) if current else {}
+        voices = mix_settings["voices"] if current else {}
         stale = saved is not None and current is None
         plan = {**plan_payload(name, current, duration, record, voices, root, audio, settings),
                 "stale": stale, "saved": saved is not None,

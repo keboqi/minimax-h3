@@ -497,11 +497,13 @@ export function startWorkspace() {
     renderScript();
     if (state.screen === "cast") renderCast();
     renderPlayer();
-    renderFilters();
-    renderLines();
-    renderInspector();
+    if (state.screen === "mix") {
+      renderFilters();
+      renderLines();
+      renderInspector();
+      renderWordRepair();
+    }
     renderSettings();
-    renderWordRepair();
     renderVideo();
     renderAuto();
     renderActions();

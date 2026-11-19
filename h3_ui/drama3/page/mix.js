@@ -3,13 +3,24 @@ import {bindFullscreen} from "./fullscreen.js";
 import {readPref, writePref} from "./layout.js";
 
 // Mix view and local controls for Soundstage.
+const takesByResult = new WeakMap();
+
 export function lineTakes(result) {
-  return result.lines.map((line) => {
-    const sameSpeaker = result.takes.filter((take) => take.speaker === line.speaker);
+  const cached = takesByResult.get(result);
+  if (cached) return cached;
+  const bySpeaker = new Map();
+  for (const take of result.takes) {
+    if (!bySpeaker.has(take.speaker)) bySpeaker.set(take.speaker, []);
+    bySpeaker.get(take.speaker).push(take);
+  }
+  const matches = result.lines.map((line) => {
+    const sameSpeaker = bySpeaker.get(line.speaker) || [];
     const timed = sameSpeaker.filter((take) => take.start != null && take.start - 0.01 <= line.start && line.start < take.end);
     return timed.find((take) => take.text.includes(line.text)) ?? timed[0]
       ?? sameSpeaker.find((take) => take.text.includes(line.text)) ?? null;
   });
+  takesByResult.set(result, matches);
+  return matches;
 }
 
 export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast}) {

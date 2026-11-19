@@ -34,11 +34,12 @@ def project_cues(data, runtime=None):
     return script_cues(text, **project_cast(data, runtime))
 
 
-def planning_mix(name, data, result, export, *, strict=False, store=None):
+def planning_mix(name, data, result, export, *, strict=False, store=None, result_snapshot=None):
     with project_lock(name):
         if store is not None:
             data = store.soundstage_project(name)[0]
-        audio, settings, canonical = _planning_mix(name, data, result, export, strict=strict)
+        audio, settings, canonical = _planning_mix(name, data, result, export, strict=strict,
+                                                   result_snapshot=result_snapshot)
         if canonical is not None and store is not None and canonical != data.get("visual_plan"):
             with editing(store, name) as current:
                 current["visual_plan"] = canonical
@@ -67,11 +68,11 @@ def _publish_mix_plan(audio, current, saved, settings, data, root):
     visuals.rebind_stills(audio, root, shots, previous_shots=previous_shots)
 
 
-def _planning_mix(name, data, result, export, *, strict):
+def _planning_mix(name, data, result, export, *, strict, result_snapshot):
     voices = cast_voices(data, export.deps.runtime_config)
     if result:
         audio = Path(result)
-        settings = {**result_settings(audio), "voices": voices}
+        settings = {**(result_settings(audio) if result_snapshot is None else result_snapshot), "voices": voices}
     else:
         root = Path(export.deps.runtime_config().output_dir) / ".soundstage" / "plans"
         root.mkdir(parents=True, exist_ok=True)

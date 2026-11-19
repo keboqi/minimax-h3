@@ -178,8 +178,8 @@ span.link-toggle { cursor: default; }
 .frame:hover { border-color: var(--dash); }
 .frame[aria-current="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .frame.drag-over { border-color: var(--accent); background: var(--accent-soft); }
-.frame .thumb { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 132px; border-radius: 4px;
-  background: var(--empty-take) center / contain no-repeat; }
+.frame .thumb { display: block; width: 100%; aspect-ratio: auto 16 / 9; max-height: 132px; border-radius: 4px;
+  background: var(--empty-take); object-fit: contain; }
 .frame .title { display: block; padding-top: 4px; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .frame .meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .frame .bar { display: block; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }

@@ -80,11 +80,12 @@ def _take_status(chunk: dict) -> str:
     return "reused" if chunk.get("reused") else "new"
 
 
-def result_payload(path: str | Path | None) -> dict | None:
+def result_payload(path: str | Path | None, settings: dict | None = None) -> dict | None:
     """What the page draws for a mix: its lines, sounds and takes on the timeline."""
     if not path or not Path(path).is_file():
         return None
-    settings = result_settings(path)
+    if settings is None:
+        settings = result_settings(path)
     takes = []
     for chunk in settings.get("chunks") or []:
         if not chunk.get("take"):
@@ -105,7 +106,7 @@ def _preset(data: dict) -> str | None:
                  if tuple(float(value) for value in values) == current), None)
 
 
-def project_payload(name: str, data: dict, result, clips: Path, runtime=None) -> dict:
+def project_payload(name: str, data: dict, result, clips: Path, runtime=None, *, mix_settings=None) -> dict:
     text = str(speech_value(data, "text"))
     speakers = speakers_payload(name, data, lambda value: _clip(clips, value), runtime)
     return {
@@ -120,7 +121,7 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None) ->
         "cast_settings": cast_settings(data),
         "settings": {**{key: kind(speech_value(data, key)) for key, kind in SETTING_FIELDS.items()},
                      "preset": _preset(data)},
-        "result": result_payload(result),
+        "result": result_payload(result, mix_settings),
         "script": script_payload(data),
     }
 
@@ -197,9 +198,12 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     def payload(owner, name):
         data, result = project(name)
-        return {**project_payload(name, data, result, clips, runtime_config), "run": run_payload(owner, name),
+        mix_settings = result_settings(result) if result else None
+        return {**project_payload(name, data, result, clips, runtime_config, mix_settings=mix_settings),
+                "run": run_payload(owner, name),
                 "cast_run": latest(cast_jobs.runs if cast_jobs is not None else None, owner, name),
-                "video": video_payload(name, data, result, video_export, store=store) if video_export else None,
+                "video": video_payload(name, data, result, video_export, store=store, result_snapshot=mix_settings)
+                if video_export else None,
                 "video_run": latest(video_runs, owner, name)}
 
     def voice_settings(data: dict) -> list:

@@ -180,10 +180,10 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
   app.picks = new Set([...app.picks].filter((index) => index < count));
 }
 
-export async function refresh() {
+export async function refresh({includePlayer = true} = {}) {
   if (!app.sessionId) return;
   try {
-    setSession((await api.get("session", {id: app.sessionId})).session);
+    setSession((await api.get("session", {id: app.sessionId, include_player: includePlayer})).session);
   } catch (error) {
     toast(error.message, {error: true});
     app.session = null;
@@ -341,7 +341,7 @@ async function loadProject(name = document.getElementById("project-list").value)
     return;
   }
   try {
-    const data = await api.post("project/load", {name});
+    const data = await api.post("project/load", {name, include_player: false});
     applyProject(data);
     toast(`Opened ${name}.`);
     go(data.session.board.lines.length ? "review" : "source");
@@ -463,7 +463,7 @@ async function start() {
   app.sessionId = saved.sessionId || null;
   app.screen = saved.screen || "source";
   bindChrome();
-  if (app.sessionId) await refresh(); else render();
+  if (app.sessionId) await refresh({includePlayer: app.screen === "result"}); else render();
   poll();
   document.title = `Dubbing${app.project ? ` · ${app.project.name}` : ""}`;
 }

@@ -111,13 +111,7 @@ def _thumb(storyboard_id, board, scene, media) -> str | None:
     return thumb_url(storyboard_id, picture) if picture else None
 
 
-def _continued_by(board, take_id) -> list[int]:
-    """The numbers of the scenes whose take in use was made from this take."""
-    return [number for number, scene in enumerate(board["scenes"], 1)
-            if board["takes"].get(scene["in_use"], {}).get("inputs", {}).get("source_take") == take_id]
-
-
-def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
+def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]:
     scene = board["scenes"][index]
     media = sb.scene_media(scene)
     flow = sb.flows_from_previous(board, index)
@@ -131,7 +125,7 @@ def _scene(storyboard_id, board, index, states) -> dict[str, Any]:
          "subtitles": _subtitle_track(storyboard_id, board["takes"][take_id]),
          "subtitle_error": board["takes"][take_id].get("subtitle_error"),
          "missing": not Path(board["takes"][take_id]["video"]).is_file(),
-         "continued_by": _continued_by(board, take_id),
+         "continued_by": continuations.get(take_id, []),
          "review": media_review.public(board["takes"][take_id]["video"])}
         for number, take_id in enumerate(scene["takes"], 1) if take_id in board["takes"]
     ]
@@ -191,7 +185,12 @@ def _video(storyboard_id, board, index) -> dict[str, Any] | None:
 
 def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:
     states = sb.scene_states(board)
-    scenes = [_scene(storyboard_id, board, index, states) for index in range(len(board["scenes"]))]
+    continuations: dict[str, list[int]] = {}
+    for number, scene in enumerate(board["scenes"], 1):
+        source = board["takes"].get(scene["in_use"], {}).get("inputs", {}).get("source_take")
+        if source is not None:
+            continuations.setdefault(source, []).append(number)
+    scenes = [_scene(storyboard_id, board, index, states, continuations) for index in range(len(board["scenes"]))]
     done = states.count(sb.DONE)
     return {
         "id": storyboard_id, "name": board["name"], "settings": sb.profile_summary(board["profile"]),

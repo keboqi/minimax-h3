@@ -186,6 +186,7 @@ class RemakePageTests(unittest.TestCase):
                     slots=[{"path": window["pictures"][0], "pin": 12}, None, None, None])
         selected = self.ok(self.client.post(f"{API}/selection", json=body))
         self.assertEqual(selected["project"]["key"], saved["key"])
+        self.assertEqual(loaded["long"], selected["long"])
         self.ok(self.client.post(f"{API}/generate", json=body))
         run = self.finished_run()
         self.assertIsNone(run["error"])

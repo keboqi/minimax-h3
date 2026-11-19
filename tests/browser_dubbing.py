@@ -9,7 +9,8 @@ from urllib.parse import urlsplit
 import numpy as np
 from playwright.sync_api import expect, sync_playwright
 
-from h3_app.dubbing import pipeline
+from h3_app.dubbing import pipeline, session as sessions
+from h3_app.dubbing.results import Player, player_folder, save_player
 from tests.test_dub_page import PageTests
 
 
@@ -196,6 +197,35 @@ class DubbingBrowserTests(PageTests):
             expect(page.get_by_label("Dub into", exact=True)).to_have_value("French")
             self.assertEqual(page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page')).sessionId"),
                              saved["session"])
+            browser.close()
+
+    def test_opening_a_finished_project_defers_player_until_result(self):
+        session = self.session([{"start": 0, "end": 1, "source": "Hello", "translation": "Bonjour"}])
+        output = self.root / "dub.mp3"
+        output.write_bytes(b"mix")
+        tracks = player_folder(output)
+        tracks.mkdir(parents=True)
+        dub, original = tracks / "dub.mp3", tracks / "original.mp3"
+        dub.write_bytes(b"dub")
+        original.write_bytes(b"original")
+        save_player(tracks, Player(None, dub, original, None, 1, []))
+        sessions.modify(session, lambda current: current.data.update(last_output=str(output)))
+        self.client.post("/dubbing/api/project/save", json={"name": "Interview", "session": session.id})
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            player_requests = []
+            page.on("request", lambda request: player_requests.append(request.url) if "/api/result-player" in request.url else None)
+            page.goto("http://dubbing.test/dubbing/")
+            page.locator("#project-list").select_option("Interview")
+            page.get_by_role("button", name="Load", exact=True).click()
+            expect(page.locator("#screen")).to_have_attribute("data-screen", "review")
+            self.assertEqual(player_requests, [])
+            page.locator('button[data-screen="result"]').click()
+            expect(page.locator("#player-slot .h3-dub-player")).to_be_visible()
+            self.assertEqual(len(player_requests), 1)
             browser.close()
 
     def test_target_language_picker(self):

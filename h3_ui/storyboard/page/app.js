@@ -469,22 +469,6 @@
     if (data) applyBoard(data, {keepInspector: true});
   };
 
-  // A scene's thumb takes its picture's own shape, so portrait and wide scenes show whole, not cropped.
-  // Shapes are remembered by URL so redrawing the strip doesn't flicker back to the default.
-  const thumbRatios = new Map();
-  const sizeThumb = (node, url) => {
-    const known = thumbRatios.get(url);
-    if (known) { node.style.aspectRatio = known; return; }
-    const probe = new Image();
-    probe.onload = () => {
-      if (!probe.naturalWidth || !probe.naturalHeight) return;
-      const ratio = `${probe.naturalWidth} / ${probe.naturalHeight}`;
-      thumbRatios.set(url, ratio);
-      node.style.aspectRatio = ratio;
-    };
-    probe.src = url;
-  };
-
   const FLOW_ICON = "M5 12h14M13 6l6 6-6 6";
   const CUT_ICON = "M8.1 8.1L20 20M8.1 15.9L20 4M9 6a3 3 0 1 1-6 0a3 3 0 1 1 6 0M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0";
   const VIDEO_ICON = "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM10 9l5 3-5 3z";
@@ -509,11 +493,11 @@
           onclick: () => toggleSceneLink(item),
         }, icon(item.flow ? FLOW_ICON : CUT_ICON)));
       }
-      const thumb = h("span", {className: "thumb"});
-      if (item.thumb) {
-        thumb.style.backgroundImage = `url("${item.thumb}")`;
-        sizeThumb(thumb, item.thumb);
-      }
+      const thumb = item.thumb
+        ? h("img", {className: "thumb", alt: "", decoding: "async",
+          loading: item.id === state.sceneId ? "eager" : "lazy", src: item.thumb})
+        : h("span", {className: "thumb"});
+      thumb.draggable = false;
       const isRunning = item.id === running;
       const durationText = item.flow
         ? `${item.seconds}s (+${Number(item.added_seconds.toFixed(1))}s)`

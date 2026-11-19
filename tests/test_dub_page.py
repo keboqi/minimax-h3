@@ -90,6 +90,18 @@ class WorkshopPageTests(PageTests):
         self.assertIn("Pick the source again",
                       self.client.post(f"{API}/analyze", json={"source": str(secret)}).json()["error"])
 
+    def test_source_duration_is_reused_until_the_file_changes(self):
+        def duration():
+            return self.client.get(f"{API}/source", params={"path": str(self.media)}).json()["source"]["seconds"]
+
+        with patch("h3_app.media_tools.probe_audio_seconds", side_effect=[None, 2.0, 3.0]) as probe:
+            self.assertIsNone(duration())
+            self.assertEqual(duration(), 2.0)
+            self.assertEqual(duration(), 2.0)
+            self.media.write_bytes(b"replacement")
+            self.assertEqual(duration(), 3.0)
+            self.assertEqual(probe.call_count, 3)
+
     def test_line_edits_follow_the_same_language_rule(self):
         created = self.session([
             {"start": 1, "end": 2, "speaker": "speaker1", "source": "Add three grams.", "translation": "Add three grams.",
@@ -237,6 +249,15 @@ class WorkshopPageTests(PageTests):
         sessions.modify(created, lambda current: current.data.update(last_output=str(output)))
         result = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]
         self.assertIn("h3-dub-player", result["html"])
+        self.client.post(f"{API}/project/save", json={"name": "Interview", "session": created.id})
+        with patch("h3_ui.dubbing.page.player_html", side_effect=AssertionError("Rendered the deferred player")):
+            reopened = self.client.post(f"{API}/project/load", json={"name": "Interview", "include_player": False})
+            self.assertEqual(reopened.status_code, 200)
+            self.assertEqual(reopened.json()["session"]["result"], {**result, "html": None})
+            restored = self.client.get(f"{API}/session", params={"id": created.id, "include_player": False})
+            self.assertEqual(restored.json()["session"]["result"], {**result, "html": None})
+        player = self.client.get(f"{API}/result-player", params={"session": created.id})
+        self.assertEqual(player.json(), {"html": result["html"]})
         self.assertEqual([f["name"] for f in result["files"]], ["日本語.mp3", "日本語.french.srt"])
         self.assertFalse(result["separated"])
         self.assertEqual(self.client.get(f"{API}/track", params={"session": created.id, "name": "dub"}).content, b"dub")

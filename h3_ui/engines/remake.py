@@ -15,6 +15,7 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -174,8 +175,21 @@ def _scratch_path(suffix: str) -> Path:
     return directory / f"{uuid.uuid4().hex}{suffix}"
 
 
+@lru_cache(maxsize=128)
+def _probe_source(path: Path, _size: int, _modified: int, _changed: int):
+    return probe_video_metadata(path)
+
+
+def _source_metadata(path: Path):
+    try:
+        stat = path.stat()
+    except OSError:
+        return probe_video_metadata(path)
+    return _probe_source(path, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
 def _render_size(video, short_edge) -> RenderSize:
-    metadata = probe_video_metadata(Path(video))
+    metadata = _source_metadata(Path(video))
     return render_size(short_edge, metadata.width, metadata.height)
 
 
@@ -425,7 +439,7 @@ class RemakeHandlers:
     @staticmethod
     def source_payload(video, sha=None, name=None) -> dict[str, Any]:
         path = Path(video)
-        metadata = probe_video_metadata(path)
+        metadata = _source_metadata(path)
         return {
             "path": str(path), "sha": sha or file_content_sha256(path), "name": name or path.stem,
             "width": metadata.width, "height": metadata.height, "has_audio": bool(metadata.has_audio),
@@ -484,6 +498,7 @@ class RemakeHandlers:
             raise H3Error("This project's copy of the source is gone.")
         chosen = project["selection"]
         data = project_payload(project)
+        data["long"] = needs_windows(chosen["start"], chosen["end"], chosen["max_window"])
         data["source_info"] = self.source_payload(project["source"], chosen["sha"], data["name"])
         data["note"] = ("It keeps its crossfades. Upload the source again for seamless windows."
                         if chosen["mix"] else "")

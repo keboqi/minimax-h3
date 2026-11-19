@@ -6,6 +6,7 @@ import {copyText, esc, icon, plural, size, toast} from "./ui.js";
 
 let mounted = {key: null, node: null};
 let bindPlayers = null;
+const playerRequests = new WeakMap();
 
 function chips(result) {
   const s = result.settings || {};
@@ -210,6 +211,18 @@ export async function afterResult(app) {
   const slot = document.getElementById("player-slot");
   const result = app.session?.result;
   if (!slot || !result) return;
+  if (result.html === null) {
+    slot.textContent = "Loading player…";
+    if (!playerRequests.has(result)) playerRequests.set(result, api.get("result-player", {session: app.session.id}));
+    try {
+      result.html = (await playerRequests.get(result)).html;
+    } catch (error) {
+      playerRequests.delete(result);
+      if (slot.isConnected) slot.textContent = error.message;
+      return;
+    }
+    if (!slot.isConnected) return;
+  }
   const key = result.html;
   if (mounted.key !== key) {
     if (!bindPlayers) bindPlayers = (await import("./player.js")).bindPlayers;
