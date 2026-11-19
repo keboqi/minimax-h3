@@ -83,6 +83,17 @@ def active_pins(pins: Sequence[int | None]) -> tuple[int | None, ...]:
     return tuple(pins) if any(pin is not None for pin in pins) else ()
 
 
+def _accept_editor_save(data: dict, order: list | None) -> bool:
+    """Keep a late autosave from overwriting a newer unload save from the same page."""
+    if order is None:
+        return True
+    previous = data.get("editor_save_order")
+    if previous and previous[0] == order[0] and previous[1] >= order[1]:
+        return False
+    data["editor_save_order"] = order
+    return True
+
+
 @dataclass(frozen=True)
 class WindowRunner:
     runtime: Callable[[], Any]
@@ -116,18 +127,19 @@ class WindowRunner:
         return self.projects.create(owner, selection.key, video, data, plans)
 
     def store_editor(self, project, index, prompt, use_carried, pictures, pins, *,
-                     options=None, originals=None) -> dict[str, Any]:
+                     options=None, originals=None, save_order=None) -> dict[str, Any]:
         """Save the editor's filled slots to a window."""
         kept = [(path, pin) for path, pin in zip(pictures, pins) if path]
         stored = [store_picture(project, path) for path, _pin in kept]
 
         def update(current):
             window = current["windows"][int(index)]
-            save_editor(window, stored, [None if pin is None else int(pin) for _path, pin in kept],
-                        prompt, use_carried)
-            if originals is not None:
-                window["originals"] = [originals.get(str(slot)) for slot, path in enumerate(pictures, 1) if path]
-            if options is not None:
+            if _accept_editor_save(window, save_order):
+                save_editor(window, stored, [None if pin is None else int(pin) for _path, pin in kept],
+                            prompt, use_carried)
+                if originals is not None:
+                    window["originals"] = [originals.get(str(slot)) for slot, path in enumerate(pictures, 1) if path]
+            if options is not None and _accept_editor_save(current, save_order):
                 save_options(current, options)
 
         return self.projects.edit(project, update)

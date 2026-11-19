@@ -101,6 +101,23 @@ class RemakeStateTests(unittest.TestCase):
         saved = self.save(**{key: getattr(self.options, key) for key in OPTION_DEFAULTS})
         self.assertEqual(saved["windows"][0]["state"], "done")
 
+    def test_late_autosave_cannot_overwrite_newer_unload_save(self):
+        def save(index, revision, prompt, request):
+            return self.runner.store_editor(
+                self.project, index, prompt, True, [str(self.picture)], [12],
+                options={"request": request}, save_order=["editor", revision],
+            )
+
+        self.project = self.runner.projects.edit(self.project, lambda current: current["windows"].append(
+            {**current["windows"][0], "index": 1},
+        ))
+        save(0, 3, "robot prompt", "new request")
+        save(0, 2, "discarded prompt", "old request")
+        saved = save(1, 1, "second window's prompt", "old request")
+        self.assertEqual(saved["request"], "new request")
+        self.assertEqual([window["prompt"] for window in saved["windows"]],
+                         ["robot prompt", "second window's prompt"])
+
     def test_prompt_settings_do_not_queue_typed_windows(self):
         self.project = self.runner.projects.edit(self.project, lambda current: current["windows"].append(
             {**current["windows"][0], "index": 1, "prompt_auto": False},

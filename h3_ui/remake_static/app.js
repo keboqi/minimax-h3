@@ -176,6 +176,9 @@ import {bindFullscreen} from "./fullscreen.js";
   // Saves run one at a time: moving quickly across windows must keep them in order.
   let saving = Promise.resolve();
   let savedEditor;
+  let pendingSaves = 0;
+  const saveSession = crypto.getRandomValues(new Uint32Array(4)).join("-");
+  let saveRevision = 0;
   const saveBody = (project) => ({
     ...editFields(), slots: state.slots.map((slot) => slot && {path: slot.path, pin: slot.pin}), project,
   });
@@ -184,11 +187,13 @@ import {bindFullscreen} from "./fullscreen.js";
     // Autosave belongs to the open project, even while a selection change is pending.
     const body = saveBody(create ? null : state.project.key);
     const snapshot = JSON.stringify(body);
+    const saveOrder = [saveSession, ++saveRevision];
+    pendingSaves++;
     saving = saving.catch(() => {}).then(async () => {
       if (!create && snapshot === savedEditor) return;
       setSaveLabel("Saving…");
       try {
-        const result = await post("/save", body);
+        const result = await post("/save", {...body, save_order: saveOrder});
         savedEditor = JSON.stringify({...body, project: result.key});
         setSaveLabel("All changes saved");
         return result;
@@ -196,7 +201,7 @@ import {bindFullscreen} from "./fullscreen.js";
         setSaveLabel("Couldn't save");
         throw error;
       }
-    });
+    }).finally(() => { pendingSaves--; });
     return saving;
   };
   // A save can finish after the selection has moved on to another project.
@@ -220,7 +225,9 @@ import {bindFullscreen} from "./fullscreen.js";
   const flushNow = () => {
     if (!state.project || !state.source) return;
     const body = saveBody(state.project.key);
-    if (JSON.stringify(body) !== savedEditor) post("/save", body, {keepalive: true}).catch(() => {});
+    // A pending write can still replace the last acknowledged snapshot during unload.
+    if (!pendingSaves && JSON.stringify(body) === savedEditor) return;
+    post("/save", {...body, save_order: [saveSession, ++saveRevision]}, {keepalive: true}).catch(() => {});
   };
   const changed = () => { queueCheck(); savePrefs(); };
 

@@ -540,6 +540,13 @@ class RemakeHandlers:
             raise H3Error("Remake type must be Swap or Edit.")
         if not video:
             raise H3Error("Add a source video first.")
+        save_order = options.get("save_order")
+        if save_order is not None and not (
+            isinstance(save_order, list) and len(save_order) == 2
+            and isinstance(save_order[0], str) and 0 < len(save_order[0]) <= 64
+            and type(save_order[1]) is int and save_order[1] > 0
+        ):
+            raise H3Error("Invalid editor save order.")
         runner = self.runner
         key = options.get("project")
         project = self._named_project(owner, key) if key else runner.plan(owner, video, selection)
@@ -550,7 +557,7 @@ class RemakeHandlers:
             options={"mode": options.get("mode", SWAP), "request": str(options.get("request") or ""),
                      "smart": bool(options.get("smart", True)), "pinned": bool(options.get("pinned", True)),
                      "auto_prompts": bool(options.get("auto_prompts", True))},
-            originals=options.get("originals") or {},
+            originals=options.get("originals") or {}, save_order=save_order,
         )
         return project_payload(project)
 
