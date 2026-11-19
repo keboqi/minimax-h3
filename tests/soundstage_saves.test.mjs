@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createSaves} from "../h3_ui/drama3/page/saves.js";
+import {createProjects} from "../h3_ui/drama3/page/project.js";
 import {createApi, createPoller, StaleResponse} from "../h3_ui/drama3/page/transport.js";
 
 const deferred = () => {
@@ -88,4 +89,42 @@ test("stopping a poller cancels its scheduled request", async () => {
   poll(); poll.stop();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(calls, 0);
+});
+
+test("reconcile preserves video effects toggles and saveSettings awaits server response", async () => {
+  const reply = deferred();
+  const noop = () => {};
+  const state = {project: {name: "A", settings: {temperature: 1.0}, video: {effects_enabled: true, effects_override_reduced_motion: false}}};
+  const {saves, reconcile, saveSettings} = createProjects({
+    state,
+    api: async (_path, {body}) => {
+      if ("temperature" in body) {
+        await reply.promise;
+        return {name: "A", settings: {temperature: 0.75}, video: {...state.project.video}};
+      }
+      return {name: "A", settings: {...state.project.settings}, video: {effects_enabled: false, effects_override_reduced_motion: true}};
+    },
+    named: (path, name) => `${path}?name=${name}`,
+    scope: () => "A:1",
+    renderSaveState: noop, renderHeader: noop, renderSteps: noop, renderSettings: noop,
+    renderScript: noop, queueEstimate: noop, renderVideo: noop, renderActions: noop,
+    renderPlayer: noop, sync: noop, castAnswered: noop, toast: noop,
+  });
+
+  saves.queue("A", "video", {video_effects: false, video_effects_override_reduced_motion: true}, 5000);
+  reconcile({name: "A", settings: {temperature: 1.0}, video: {effects_enabled: true, effects_override_reduced_motion: false}});
+  assert.equal(state.project.video.effects_enabled, false);
+  assert.equal(state.project.video.effects_override_reduced_motion, true);
+  assert.equal("undefined" in state.project.video, false);
+  await saves.flush("A");
+
+  const saving = saveSettings({temperature: 0.75});
+  let done = false;
+  saving.then(() => { done = true; });
+  await Promise.resolve();
+  assert.equal(done, false);
+  reply.resolve();
+  await saving;
+  assert.equal(done, true);
+  assert.equal(state.project.settings.temperature, 0.75);
 });

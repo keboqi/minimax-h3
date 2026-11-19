@@ -121,7 +121,8 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       // The stills slide along the mix's audio; an older mix with only a rendered video plays that.
       const picture = stills
         ? h("div", {class: "stills", onclick: playing},
-            h("img", {class: "still", id: "still-back", alt: ""}), h("img", {class: "still", id: "still-front", alt: ""}),
+            h("img", {class: "still", id: "still-back", alt: "", onload: sync}),
+            h("img", {class: "still", id: "still-front", alt: "", onload: sync}),
             h("canvas", {class: "still-effects", id: "still-effects", "aria-hidden": "true"}))
         : mixVideo;
       mixVideo.hidden = stills;

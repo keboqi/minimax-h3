@@ -253,7 +253,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                 except FuturesTimeout:
                     if time.monotonic() - started >= visuals.PLAN_TIMEOUT:
                         raise H3Error("The illustration planner timed out. Try another writer or paste a plan.")
-            save_project_plan(store, name, audio, settings["style"], settings["limit"], plan_data)
+            save_project_plan(store, name, audio, settings["style"], settings["limit"], plan_data,
+                              runtime=export.deps.runtime_config)
         else:
             # An explicitly prepared plan wins over the default minimum in Auto.
             settings["limit"] = saved["limit"]
@@ -308,7 +309,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                 plan = change(saved["plan"])
                 shots = visuals.plan_shots_for({**saved, "plan": plan}, float(mix_settings["duration"]),  # still valid
                                                settings["style"], settings["orientation"])
-                save_project_plan(store, name, audio, saved["style"], saved["limit"], plan)
+                save_project_plan(store, name, audio, saved["style"], saved["limit"], plan,
+                                  runtime=export.deps.runtime_config)
                 # A cut or dissolve applies to the drawn images straight away; a prompt waits for a redraw.
                 visuals.retime_stills(audio, export.deps.runtime_config().output_dir, shots)
                 return payload(owner, name)
@@ -342,7 +344,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         run_id = None
 
         def save_reply(plan_data):
-            return save_project_plan(store, name, audio, settings["style"], settings["limit"], plan_data, run=run_id)
+            return save_project_plan(store, name, audio, settings["style"], settings["limit"], plan_data, run=run_id,
+                                     runtime=export.deps.runtime_config)
 
         def work(run):
             started = time.monotonic()
@@ -398,7 +401,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             plan_data, shots = check_plan_reply(reply, mix_settings, settings["limit"])
             # Claiming a run drops the reply of any planning still running for this mix.
             save_project_plan(store, name, audio, settings["style"], settings["limit"], plan_data,
-                              run=visuals.claim_plan(audio))
+                              run=visuals.claim_plan(audio), runtime=export.deps.runtime_config)
         return {**payload(owner_of(request), name), "message": f"Applied the pasted {len(shots)}-shot plan."}
 
     @app.post(f"{api}/project/video/draw", include_in_schema=False)

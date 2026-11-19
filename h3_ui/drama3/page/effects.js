@@ -9,7 +9,7 @@ const round3 = (value) => Math.round(value * 1000) / 1000;
 const IDENTITY_CAMERA = Object.freeze({ tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0 });
 
 function rackBlurDecay(p, t) {
-  const time = t > 0 ? t : p * 4;
+  const time = t ?? p * 4;
   if (time < 0 || time >= 0.95) return 0;
   return round3(Math.pow(1 - time / 0.95, 2));
 }
@@ -41,13 +41,13 @@ const CAMERA_MOVES = {
     return { css: `translateY(${ty}%) scale(1.08)`, tx: 0, ty, scale: 1.08, shake: 0, angle: 0, blur: 0 };
   },
   subtle_sway: (p, t) => {
-    const time = t > 0 ? t : p * 4;
+    const time = t ?? p * 4;
     const tx = round3(Math.sin(time * 0.9) * 0.85);
     const ty = round3(Math.cos(time * 0.65) * 0.55);
     return { css: `translate(${tx}%, ${ty}%) scale(1.04)`, tx, ty, scale: 1.04, shake: 0, angle: 0, blur: 0 };
   },
   impact_shake: (p, t) => {
-    const time = t > 0 ? t : p * 4;
+    const time = t ?? p * 4;
     if (time < 0 || time >= 0.45) {
       return { css: "scale(1)", tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0 };
     }
@@ -76,7 +76,7 @@ const CAMERA_MOVES = {
   },
 };
 
-function evaluateCamera(effects, progress, seconds = 0) {
+function evaluateCamera(effects, progress, seconds) {
   const p = clamp01(progress);
   const move = effects?.find?.((id) => Object.hasOwn(CAMERA_MOVES, id));
   return move ? CAMERA_MOVES[move](p, seconds) : null;
@@ -179,17 +179,17 @@ export function cueTriggerElapsed(elapsed, shotStart = 0, shotEnd = 0, sounds = 
   return best;
 }
 
-export function cameraTransform(effects, progress, seconds = 0) {
+export function cameraTransform(effects, progress, seconds) {
   return evaluateCamera(effects, progress, seconds)?.css ?? "none";
 }
 
-export function cameraFilter(effects, progress, seconds = 0) {
+export function cameraFilter(effects, progress, seconds) {
   if (!effects?.includes?.("rack_focus")) return "none";
   const decay = rackBlurDecay(clamp01(progress), seconds);
   return decay > 0 ? `blur(${round3(decay * 4.5)}px)` : "none";
 }
 
-export function cameraMotion(effects, progress, seconds = 0) {
+export function cameraMotion(effects, progress, seconds) {
   const evaluated = evaluateCamera(effects, progress, seconds);
   if (!evaluated) return { ...IDENTITY_CAMERA };
   const { tx, ty, scale, shake, angle, blur } = evaluated;
@@ -281,17 +281,15 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
 
   const shotSeed = scene?.shotIndex ?? 0;
   const cam = scene?.cam || null;
+  const fadeMix = fading ? clamp01(scene.fadeMix ?? 1) : 1;
   if (fading && (backAtmospheres.length || backLights.length)) {
-    const fadeMix = clamp01(scene.fadeMix ?? 1);
     const backT = Math.max(0, scene.backElapsed ?? 0);
     const backCueT = Math.max(0, scene.backCueElapsed ?? backT);
     const backSeed = scene.backShotIndex ?? 0;
     paintLayer2D(ctx, backAtmospheres, backLights, backT, backCueT, w, h, 1 - fadeMix, backSeed, scene.backCam || null);
-    if (atmospheres.length || lights.length) {
-      paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, fadeMix, shotSeed, cam);
-    }
-  } else {
-    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, 1, shotSeed, cam);
+  }
+  if (atmospheres.length || lights.length) {
+    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, fadeMix, shotSeed, cam);
   }
   showBackend?.("Canvas 2D");
 }

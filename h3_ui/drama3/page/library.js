@@ -81,7 +81,9 @@ export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary,
         if (confirm(`Delete the group “${libraryState.group}” and all ${data.speakers.length} of its saved speakers? This can't be undone.`)) {
           const group = libraryState.group;
           libraryState.group = "Global";
-          libraryCall("/library/group/delete", {group});
+          libraryCall("/library/group/delete", {group}).then((reply) => {
+            if (!reply) { libraryState.group = group; renderLibrary(); }
+          });
         }
       }}, "Delete this group") : null);
     if (!picked) {
@@ -123,7 +125,9 @@ export function createLibrary({state, $, h, API, api, castAnswered, loadLibrary,
         takes && takes.key === picked.key ? h("div", {class: "takes"}, takes.takes.map((url, index) => url ? h("div", {class: "take-row"},
           h("span", {class: "small"}, `Voice ${index + 1}`), h("audio", {controls: true, preload: "none", src: url}),
           h("button", {type: "button", class: "btn btn-small", disabled: working,
-                       onclick: () => libraryCall("/library/speaker/use-take", {run: takes.id, index}).then(() => { libraryState.takes = null; renderLibrary(); })},
+                       onclick: () => libraryCall("/library/speaker/use-take", {run: takes.id, index}).then((reply) => {
+                         if (reply) { libraryState.takes = null; renderLibrary(); }
+                       })},
             "Keep this voice")) : null)) : null))];
   }
 

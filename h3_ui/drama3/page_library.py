@@ -17,7 +17,7 @@ from h3_app.errors import H3Error
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
 from .controls import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
-from .page_common import SKIP, PageRun, file_response, found, run_job, value
+from .page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from .page_store import editing
 
 MAX_TAKES = 4
@@ -193,6 +193,8 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
 
     @app.get(f"{api}/library/take", include_in_schema=False)
     def take_clip(request: Request, run: str, index: int):
+        if index < 0:
+            raise not_found()
         with found():
             file = owned_run(request, run).takes[index]
         return file_response(file)

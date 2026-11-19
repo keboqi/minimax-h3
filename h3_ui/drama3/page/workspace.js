@@ -855,7 +855,7 @@ export function startWorkspace() {
     try {
       await flushScript();
       const {prompt} = await api(named("/project/writer-prompt"), {method: "POST", body: {}});
-      await navigator.clipboard.writeText(prompt);
+      await copyText(prompt);
       toast("Writer prompt copied. Paste it into any chat model.");
     } catch (error) {
       toast(`Could not copy the prompt: ${error.message}`);
@@ -1062,7 +1062,7 @@ export function startWorkspace() {
 
   let clipTarget = null;
   function chooseClip(kind, slot) {
-    clipTarget = {kind, slot};
+    clipTarget = {kind, slot, name: state.project.name, owner: scope()};
     const input = $("clip-input");
     input.value = "";
     input.click();
@@ -1070,18 +1070,21 @@ export function startWorkspace() {
 
   async function uploadClip(file) {
     if (!clipTarget || !file) return;
-    const {kind, slot} = clipTarget;
-    await flushSlots();
-    const form = new FormData();
-    form.append("file", file);
+    const {kind, slot, name, owner} = clipTarget;
+    clipTarget = null;
     try {
-      const response = await fetch(`${API}${named(`/project/slot/upload?kind=${kind}&slot=${slot}`)}`, {method: "POST", body: form});
+      await saves.flush(name);
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${API}${named(`/project/slot/upload?kind=${kind}&slot=${slot}`, name)}`, {method: "POST", body: form});
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.error || data.detail || "Upload failed.");
       castAnswered(data, {editor: true});
-      toast(kind === "voice" ? "Clip uploaded. Add its exact transcript, or click Transcribe." : "Clip uploaded.");
+      if (scope() === owner) {
+        toast(kind === "voice" ? "Clip uploaded. Add its exact transcript, or click Transcribe." : "Clip uploaded.");
+      }
     } catch (error) {
-      toast(error.message);
+      if (scope() === owner) toast(error.message);
     }
   }
 

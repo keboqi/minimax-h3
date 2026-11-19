@@ -54,6 +54,7 @@ def _keep_clip(path, directory: Path) -> str:
 
 VOICE_FIELDS = {"save_name": str, "description": str, "preview_text": str, "language": str, "transcript": str}
 SOUND_FIELDS = {"save_name": str, "description": str, "duration": int}
+SOUND_RANGES = {"duration": (1, 47)}
 CAST_SETTINGS = {"voice_engine": str, "asr_model": str, "skip_existing": bool, "skip_existing_sounds": bool,
                  "speaker_group": str}
 CAST_DEFAULTS = {"voice_engine": ENGINE_QWEN, "asr_model": DEFAULT_DRAMA3_ASR, "skip_existing": True,
@@ -297,6 +298,7 @@ def install_cast_routes(app: FastAPI, actions, *, api: str, store, owner_of, ses
         def change(data):
             values = {}
             apply_fields(values, body, fields,
+                         ranges=SOUND_RANGES if kind == "sound" else None,
                          choices={"language": LANGUAGES} if kind == "voice" else None)
             data.update({f"{prefix}_{key}": val for key, val in values.items()})
             if body.get("source") == "upload":

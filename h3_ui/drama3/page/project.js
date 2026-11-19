@@ -39,8 +39,11 @@ export function createProjects({state, api, named, scope, renderSaveState, rende
       } else if (key === "settings") Object.assign(state.project.settings, body);
       else if (key === "video" && state.project.video) {
         const names = {video_engine: "engine", video_style: "style", video_limit: "limit", video_orientation: "orientation",
-          video_continuity: "continuity", video_subtitles: "subtitles", video_subtitle_size: "subtitle_size"};
-        for (const [field, value] of Object.entries(body)) state.project.video[names[field]] = value;
+          video_continuity: "continuity", video_subtitles: "subtitles", video_subtitle_size: "subtitle_size",
+          video_effects: "effects_enabled", video_effects_override_reduced_motion: "effects_override_reduced_motion"};
+        for (const [field, value] of Object.entries(body)) {
+          if (names[field]) state.project.video[names[field]] = value;
+        }
       } else if (key.startsWith("slot:")) {
         const [, kind, index] = key.split(":");
         const list = kind === "voice" ? state.project.speakers : state.project.sounds;
@@ -51,7 +54,11 @@ export function createProjects({state, api, named, scope, renderSaveState, rende
     return true;
   }
 
-  function saveSettings(values) { saves.queue(state.project.name, "settings", values, 0); }
+  function saveSettings(values) {
+    const name = state.project.name;
+    saves.queue(name, "settings", values, 0);
+    return saves.flush(name).catch(() => {});
+  }
 
   async function flushEdits() {
     if (!state.project) return;

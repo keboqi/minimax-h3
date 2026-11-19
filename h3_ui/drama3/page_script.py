@@ -41,6 +41,7 @@ WRITER_DEFAULTS = {"speaker_mode": writer.DRAMA3_SPEAKER_AUTO, "writer_workflow"
 WRITER_CHOICES = {"speaker_mode": writer.DRAMA3_SPEAKER_MODES,
                   "writer_workflow": writer.DRAMA3_WORKFLOWS,
                   "smart_budget_profile": BUDGET_PROFILES}
+WRITER_RANGES = {"max_batch_lines": (writer.DRAMA3_GUIDED_BATCH_MIN, writer.DRAMA3_GUIDED_BATCH_MAX)}
 WORKFLOW_NOTES = {
     writer.DRAMA3_WORKFLOWS[0]: "One call. Best with strong models.",
     writer.DRAMA3_WORKFLOWS[1]: "Short steps, so small, fast models can manage.",
@@ -161,7 +162,7 @@ def rewrite_project(actions, store, name: str, body: dict, clip) -> tuple[str, s
     into the project as saved when it arrives, keeping clips and settings changed meanwhile.
     """
     def choose(data):
-        apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
+        apply_fields(data, body, WRITER_FIELDS, ranges=WRITER_RANGES, choices=WRITER_CHOICES)
         return dict(data)
 
     data = edit_project(store, name, choose)  # The writer choices stay, whatever it answers.
@@ -292,7 +293,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
             raise H3Error("Unknown script mode.")
         with editing(store, name) as data:
             before = (data.get("text"), data.get("script_mode"))
-            apply_fields(data, body, {**SCRIPT_FIELDS, **WRITER_FIELDS},
+            apply_fields(data, body, {**SCRIPT_FIELDS, **WRITER_FIELDS}, ranges=WRITER_RANGES,
                          choices={**WRITER_CHOICES, "script_mode": writer.DRAMA3_SCRIPT_MODES})
             if (data.get("text"), data.get("script_mode")) != before:
                 data["prepared"] = False
@@ -300,12 +301,10 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         return payload(owner_of(request), name)
 
     @app.post(f"{api}/project/rewrite", include_in_schema=False)
+    @guarded
     def rewrite(name: str, request: Request, body: dict = Body(...)):
-        try:
-            owner = owner_of(request)
-            before, status, refused = rewrite_project(actions, store, name, body, clip)
-        except (H3Error, ValueError) as exc:
-            return {"error": str(exc)}
+        owner = owner_of(request)
+        before, status, refused = rewrite_project(actions, store, name, body, clip)
         return answered(owner, name, before, status, refused)
 
     @app.post(f"{api}/project/writer-prompt", include_in_schema=False)
@@ -313,7 +312,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
     def writer_prompt(name: str, request: Request, body: dict = Body(default={})):
         owner_of(request)
         data = load(name)
-        apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
+        apply_fields(data, body, WRITER_FIELDS, ranges=WRITER_RANGES, choices=WRITER_CHOICES)
         return {"prompt": actions.copy_drama3_writer_prompt(data.get("text") or "", _setting(data, "speaker_mode"),
                                                            *writer_slots(data, clip))}
 
@@ -351,7 +350,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
         if not reply.strip():
             raise H3Error("Paste the chat model's reply first.")
         with editing(store, name) as data:
-            apply_fields(data, body, WRITER_FIELDS, choices=WRITER_CHOICES)
+            apply_fields(data, body, WRITER_FIELDS, ranges=WRITER_RANGES, choices=WRITER_CHOICES)
             before = data.get("text") or ""
             # "Keep my exact words" decides, as for a rewrite: off keeps the reply and lists the changes.
             outputs = list(actions.apply_drama3_writer_reply(reply, before, _setting(data, "speaker_mode"),

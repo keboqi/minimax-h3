@@ -1,5 +1,67 @@
 # Upstream status
 
+## Component and LoRA audit — 2026-11-18
+
+Checked 19 pinned Git sources, 25 PyPI packages and the 27 LoRA repositories
+from the November 15 audit. Eleven source pins match their upstream heads.
+All 38 configured LoRA entries are available, and all 19 configured SHA-256
+values match Hugging Face metadata. The other 19 entries have no checksum in
+the catalog. Comfy-Org MiniMax-H3 changed its Pika workflow links, and LightX2V
+updated its README. Their weight inventories and published hashes are unchanged.
+The separate prompt-rewriter adapter is also available. The metadata and exact
+source comparisons are in `.cache/upstream-audit-2026-11-18/`.
+
+### Components
+
+- **Qualify T8 Audio v1.106.3 first.** It adds Core 0.45 FinalLayer grid support
+  and preserves the legacy shift arguments when a consumer supports both.
+  The `MiniMaxH3AudioConditioningT8` class used by FL2VA voice references has an
+  identical Python AST at our pin and v1.106.3. The update adds extension
+  registration and runtime code across 271 changed files. Check that ComfyUI
+  registers the node and accepts the existing graph, then run a voice-reference
+  generation with the current Core and accelerator combination before pinning.
+  [Release notes](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/blob/be3a3e9219feb63848b3415f1dd1d1571b812203/docs/RELEASE_1.106.3.md)
+- **Adapt Drama 3 before moving SGLang-Omni.** The new default runs the vocoder
+  inside the engine process for single-GPU serving. Our CUDA checkpoint code
+  expects three worker processes, so the default topology would fail that sleep
+  check. Make the worker expectation match the launched topology and exercise
+  sleep and wake with both GPU profiles. Our `window_cuda_graphs=false` override
+  also disables the new short, complete-WAV vocoder graphs. Measure those graphs'
+  memory and latency before enabling them. The current head is 47 commits ahead
+  and also includes decode and prefill CUDA-graph improvements.
+  [Vocoder changes](https://github.com/sgl-project/sglang-omni/pull/3646) · [Engine changes](https://github.com/sgl-project/sglang-omni/pull/3648)
+- **Take ComfyUI's next tagged release through a model-switch check.** v0.45.0
+  remains the latest tagged release. Main fixes sampling schedules leaking
+  between model variants after Dynamic VRAM restores buffers. That path is
+  relevant to H3 stage offload. Test A → B → A with different H3 sampler
+  schedules and keep the frontend paired with the selected Core revision.
+  [Release](https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.45.0) · [Dynamic VRAM fix](https://github.com/Comfy-Org/ComfyUI/pull/16491)
+- **KJNodes is a preview feature candidate.** Its new TinyVAE loader supports the
+  H3 Image decoder's early exits through `ModelPreviewOverride`. It is relevant
+  if we add live H3 Image previews. LTXVideo and all three Spectrum pins already
+  match upstream. No additional package change emerged from the PyPI check.
+  [KJNodes change](https://github.com/kijai/ComfyUI-KJNodes/commit/ff6bdf6c)
+
+### LoRA candidates
+
+- **Try Kijai's compact LightX2V FL2V 8-step v1.2 first for download savings.**
+  The new rank-24 BF16 conversion is 336 MB versus 2.12 GB for the configured
+  official file. Compare matched seeds at 768p on the FL2VA profiles we ship.
+  Check motion and audio sync before exposing it as an optional FL2VA choice.
+  The size difference establishes a download saving. Inference speed and output
+  quality still need measurement. [Weight upload](https://huggingface.co/Kijai/MiniMax-H3_comfy/commit/c64ac4de8c5101af8a1b2057038d13fc1e72f950)
+- **Keep DMAD eight-step and Regenerate IC as separate evaluation candidates.**
+  DMAD eight-step uses LCM/simple, CFG 1, strength 1 and video/audio shifts
+  12/2. The rank-21 Regenerate IC conversion needs the draft-video Ref2VA
+  conditioning path and its HyperFlow and LMS stack. TaoMate-HD likewise has
+  its own progressive-resolution sampling path and is lower priority.
+  [DMAD](https://huggingface.co/ZhengmingYu/DMAD) · [Regenerate IC](https://huggingface.co/Efficient-Large-Model/Open-H3-Regenerate-2K-IC) · [TaoMate-HD](https://huggingface.co/TaoLiveAIGC/TaoMate-HD-preview)
+
+The 113 focused FL2VA voice, Drama 3 serving and component tests passed against
+the current checkout. The candidate assessment uses metadata and source review.
+GPU output quality, performance and CUDA checkpoint behavior on the candidate
+versions remain unverified.
+
 ## ComfyUI, LTXVideo and SGLang-Omni upgrades implemented — 2026-11-15
 
 - **ComfyUI** now pins the **v0.45.0** release (`989d93d0`): the previous pin

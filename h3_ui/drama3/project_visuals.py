@@ -145,7 +145,7 @@ def carry_project_stills(store, name, previous_result, result, export):
                           previous_audio=previous_result, previous_shots=old_shots)
 
 
-def save_project_plan(store, name, audio, style, limit, plan, *, run=None):
+def save_project_plan(store, name, audio, style, limit, plan, *, run=None, runtime=None):
     """Publish both copies under the same lock used when a refresh resolves the plan.
 
     Reading the sidecar back after releasing this lock lets a refresh restore the old project
@@ -155,7 +155,7 @@ def save_project_plan(store, name, audio, style, limit, plan, *, run=None):
         snapshot = result_settings(audio)
         if not snapshot.get("duration"):
             data = store.soundstage_project(name)[0]
-            snapshot = preview_settings(data.get("text") or "", cues=plan.get("script_cues") or project_cues(data))
+            snapshot = preview_settings(data.get("text") or "", cues=plan.get("script_cues") or project_cues(data, runtime))
         plan = anchor_plan(plan, snapshot)
         bound = bind_plan(plan, snapshot)
         if run is None:

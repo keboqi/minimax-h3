@@ -155,6 +155,14 @@ test("dissolve crossfades outgoing and incoming overlays instead of cutting at s
   });
   assert.equal(backend, "Canvas 2D");
   assert.ok(ops.some(([op, a]) => op === "moveTo" && a === 0.75), "outgoing rain continues fading into a clean shot");
+
+  ops.length = 0;
+  paintEffects(canvas, ["vignette"], 0.25, null, {
+    fading: true,
+    fadeMix: 0.25,
+    backEffects: [],
+  });
+  assert.deepEqual(ops, [["fillRect", 0.25]], "incoming vignette fades in from a clean shot");
 });
 
 test("shot-seeded lightning varies flash timing across shots while keeping shot 0 deterministic", () => {
@@ -235,10 +243,21 @@ test("one-shot sound cues inside a shot deterministically trigger impact_shake a
   assert.equal(back.style.transform, "scale(1)");
   assert.equal(ctx.fillStyle, "rgba(225,237,255,0)");
 
+  paintStills(6);
+  assert.equal(cameraMotion(["impact_shake"], 0.5, 0).shake, 1);
+  assert.equal(back.style.transform, "translate(0%, 1.1%) scale(1.03)");
+
   // At 6.05s (0.05s after prism_shatter one-shot sound cue), both impact_shake and flash fire.
   paintStills(6.05);
   assert.notEqual(back.style.transform, "scale(1)");
   const flashAlpha = Number(ctx.fillStyle.match(/,([^,]+)\)$/)[1]);
   assert.ok(flashAlpha > 0.25, `expected flash pulse on sound cue, got ${ctx.fillStyle}`);
+});
+
+test("explicit seconds=0 is respected for rack_focus and subtle_sway", () => {
+  assert.equal(cameraFilter(["rack_focus"], 0.5, 0), "blur(4.5px)");
+  assert.equal(cameraFilter(["rack_focus"], 0.5), "none");
+  assert.equal(cameraMotion(["subtle_sway"], 0.5, 0).tx, 0);
+  assert.equal(cameraMotion(["subtle_sway"], 0.5, 0).ty, 0.55);
 });
 
