@@ -25,7 +25,7 @@ from h3_ui.presentation import (
     mode_presentation,
     result_format_presentation,
 )
-from h3_ui.styles import H3_SETUP_CSS
+from h3_ui.styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from h3_app.contracts import GENERATION_FIELDS
 
 
@@ -711,6 +711,93 @@ class UiContractTests(unittest.TestCase):
             [choice[0] for choice in task["props"]["choices"]],
             ["Video", "Image", "Song", "Remake", "Storyboard", "Soundstage", "Dubbing"],
         )
+
+    def test_engine_switcher_lives_in_header_without_help_and_hides_single_engine_tasks(self) -> None:
+        from h3_app.capabilities import TASKS, engines_for_task
+        from h3_ui.layout import show_engine_picker
+
+        def contains(root_node, target_id: int) -> bool:
+            return root_node.get("id") == target_id or any(
+                contains(child, target_id) for child in root_node.get("children", [])
+            )
+
+        header = next(
+            c for c in self.config["components"]
+            if "h3-workspace-header" in c.get("props", {}).get("elem_classes", [])
+        )
+        engine_bar = next(
+            c for c in self.config["components"]
+            if "h3-engine-bar" in c.get("props", {}).get("elem_classes", [])
+        )
+        engine = next(
+            c for c in self.config["components"]
+            if c["type"] == "radio" and c["props"].get("label") == "Engine"
+        )
+        main_tabs = next(
+            c for c in self.config["components"]
+            if c["type"] == "tabs" and c.get("props", {}).get("elem_id") == "h3-main-tabs"
+        )
+        create_tab = self.find_layout_node(main_tabs["id"])["children"][0]
+
+        engine_tabs = next(
+            c for c in self.config["components"]
+            if c.get("props", {}).get("elem_id") == "h3-engine-tabs"
+        )
+
+        self.assertIs(engine["props"]["show_label"], False)
+        self.assertTrue(contains(self.find_layout_node(header["id"]), engine_bar["id"]))
+        self.assertTrue(contains(self.find_layout_node(engine_bar["id"]), engine["id"]))
+        self.assertFalse(contains(create_tab, engine["id"]))
+        self.assertEqual([child["id"] for child in create_tab["children"]], [engine_tabs["id"]])
+        self.assertFalse(any(
+            "h3-engine-help" in c.get("props", {}).get("elem_classes", [])
+            for c in self.config["components"]
+        ))
+        self.assertFalse(any(
+            contains(self.find_layout_node(header["id"]), c["id"])
+            and c["type"] == "markdown"
+            for c in self.config["components"]
+        ))
+
+        for task_name in TASKS:
+            self.assertEqual(show_engine_picker(task_name, engines_for_task(task_name)), task_name == "Video")
+
+        select_task = next(
+            fn for fn in self.demo.fns.values()
+            if getattr(fn.fn, "__name__", "") == "select_task"
+        )
+        self.assertEqual([c._id for c in select_task.outputs[:2]], [engine["id"], engine_bar["id"]])
+        session = self.restored_session()
+        for task_name, expected in (("Video", True), ("Image", False), ("Audio / Music", False),
+                                    ("Remake", False), ("Storyboard", False), ("TTS", False), ("Dub", False)):
+            args = [deepcopy(component.value) for component in select_task.inputs]
+            args[0] = task_name
+            args[2] = False
+            args[-1] = session
+            result = select_task.fn(*args)
+            self.assertIs(result[0]["visible"], expected, task_name)
+            self.assertIs(result[1]["visible"], expected, task_name)
+
+        output_ids = [component._id for component in self.restore.outputs]
+        engine_idx = output_ids.index(engine["id"])
+        bar_idx = output_ids.index(engine_bar["id"])
+        for task_name, expected in (("Remake", False), ("Video", True)):
+            args = [deepcopy(component.value) for component in self.restore.inputs]
+            args[0] = {"schema_version": 12, "values": {"workspace.task": task_name, "workspace.engine": engines_for_task(task_name)[0].id}}
+            args[-1] = type(args[-1])()
+            restored = self.restore.fn(*args)
+            self.assertIs(restored[engine_idx]["visible"], expected, task_name)
+            self.assertIs(restored[bar_idx]["visible"], expected, task_name)
+
+        depth = 0
+        for line in H3_WORKSPACE_CSS.splitlines():
+            for ch in line:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    self.assertGreaterEqual(depth, 0)
+        self.assertEqual(depth, 0)
 
     def test_generated_media_outputs_are_display_only(self) -> None:
         labels = {

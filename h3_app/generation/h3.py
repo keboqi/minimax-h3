@@ -18,6 +18,7 @@ from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
 from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS, STORYBOARD_NODES
 from h3_app.errors import H3Error
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.media import history_output_candidates
 from h3_app.remake import REMAKE_NODES, STEPS as REMAKE_STEPS, RemakeGraph
 
@@ -77,6 +78,10 @@ def generate(
 
     ``remake`` runs Viggle Remake on the same model stack, attention, memory and finishing settings.
     """
+    if is_cpu_only():
+        record_failure(H3Error(CPU_ONLY_MESSAGE))
+        yield GenerationUpdate(None, f"Error: {CPU_ONLY_MESSAGE}")
+        return
     if str(request.output.result_format).strip().lower() == "image":
         from .h3_image import generate_h3_image_from_h3
 

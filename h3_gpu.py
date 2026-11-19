@@ -12,7 +12,7 @@ import subprocess
 
 CPU_ONLY_ENV = "H3_CPU_ONLY"
 CPU_ONLY_MESSAGE = (
-    "No GPU backend is attached to this CPU UI preview endpoint. "
+    "No GPU backend is attached to this CPU Workshop endpoint. "
     "Open a GPU Studio endpoint (h3, h3-video, or h3-soundstage) to run GPU generation."
 )
 

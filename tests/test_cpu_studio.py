@@ -49,14 +49,25 @@ with TemporaryDirectory() as directory:
     os.environ["H3_CPU_ONLY"] = "1"
 
     from h3_gpu import CPU_ONLY_MESSAGE
+    from h3_app.workspace_store import WorkspaceStore
     from h3_ui import application as app
+    from h3_ui.media_console import media_runtime
+    import h3_workshop
 
-    demo = app.build_ui().queue(default_concurrency_limit=1, max_size=8)
+    class FakeVolume:
+        def commit(self):
+            pass
+
+    manager = h3_workshop.ModelManager(root, FakeVolume())
+    runtime = media_runtime(root, Path.cwd())
+    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    store = WorkspaceStore(root / "h3-workspace")
+    demo = h3_workshop.build_ui(manager, (runtime, store))
     try:
-        server = app.build_server(
-            demo, [str(app.OUTPUT_DIR.resolve()), str(app.OUTPUTS_DIR.resolve())],
-        )
-        client = TestClient(server)
+        assert any(getattr(block, "label", None) == "Models" for block in demo.blocks.values())
+        server = h3_workshop._server(demo, runtime, host="127.0.0.1", port=7860)
+        client = TestClient(server.config.app)
 
         for route in (
             "/", "/h3/", "/image/", "/song/", "/ltx/",
@@ -136,8 +147,8 @@ class CpuStudioTests(unittest.TestCase):
                 patch.object(app.HTTP, "get", side_effect=AssertionError("unexpected ComfyUI HTTP GET")):
             detail = app.backend_status()
             compact = app.compact_backend_status(detail)
-        self.assertTrue(detail.startswith("CPU UI preview"))
-        self.assertIn("CPU preview", compact)
+        self.assertTrue(detail.startswith("CPU Workshop"))
+        self.assertIn("CPU Workshop", compact)
         self.assertIn("No GPU backend", compact)
         self.assertIn("h3-system-status", compact)
         self.assertNotIn("Backend needs attention", compact)
@@ -147,6 +158,8 @@ class CpuStudioTests(unittest.TestCase):
         from h3_app import audio_tools, model_service
         from h3_app.drama3.serving import environment as drama3_env, generate as drama3_generate
         from h3_app.dubbing import moss, nemotron, tools as dub_tools
+        from h3_app.generation import h3 as h3_generation
+        from h3_app.generation.requests import H3Request
         from h3_app.model_types import ModelConfig
         from h3_app.workers import env as worker_env
         from h3_ui import application as app
@@ -199,7 +212,14 @@ class CpuStudioTests(unittest.TestCase):
 
             message, status = app.unload_all_models()
             self.assertEqual(message, expected)
-            self.assertTrue(status.startswith("CPU UI preview"))
+            self.assertTrue(status.startswith("CPU Workshop"))
+
+            h3_request = H3Request.from_values(app.storyboard_request_defaults())
+            h3_updates = list(h3_generation.generate(
+                h3_request, None, runtime, run_context={},
+            ))
+            self.assertEqual(len(h3_updates), 1)
+            self.assertEqual(h3_updates[0].status, f"Error: {expected}")
 
             ltx_updates = list(app.MODELS.prepare_ltx25_official_workflow("Text / image to video — single stage"))
             self.assertEqual(len(ltx_updates), 1)

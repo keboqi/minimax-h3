@@ -25,6 +25,7 @@ from h3_app.catalog import (
 )
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
 from h3_app.workspace_store import request_owner
@@ -579,6 +580,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.post(f"{api}/boards/{{storyboard_id}}/generate", include_in_schema=False)
     @guarded
     def generate(storyboard_id: str, request: Request, body: dict = Body(...)):
+        if is_cpu_only():
+            raise H3Error(CPU_ONLY_MESSAGE)
         if not gpu:
             raise H3Error("Scenes are generated on the GPU endpoint.")
         owner = owner_of(request)
@@ -594,6 +597,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.post(f"{api}/boards/{{storyboard_id}}/subtitles", include_in_schema=False)
     @guarded
     def generate_subtitles(storyboard_id: str, request: Request):
+        if is_cpu_only():
+            raise H3Error(CPU_ONLY_MESSAGE)
         if not gpu:
             raise H3Error("Audio subtitles are generated on the GPU endpoint.")
         owner = owner_of(request)
@@ -651,6 +656,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.post(f"{api}/auto", include_in_schema=False)
     @guarded
     def start_auto(request: Request, body: dict = Body(...)):
+        if is_cpu_only():
+            raise H3Error(CPU_ONLY_MESSAGE)
         if not gpu:
             raise H3Error("Scenes are generated on the GPU endpoint.")
         owner = owner_of(request)

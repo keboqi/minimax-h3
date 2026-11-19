@@ -1,0 +1,66 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-19T01:06:21Z"
+  },
+  "title": "Soundstage UI/UX Redesign",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "1 · Script Studio",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "CastSounds.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "2 · Cast & Sounds",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "MixReview.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "3 · Mix & Review",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Illustrate.dc.html": {
+      "x": 1520,
+      "y": 1020,
+      "w": 1440,
+      "h": 900,
+      "title": "4 · Illustrate",
+      "expand": "fill",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "CastSounds.dc.html",
+    "MixReview.dc.html",
+    "Illustrate.dc.html"
+  ],
+  "notes": {
+    "hero-title": {
+      "x": 0,
+      "y": -250,
+      "text": "Soundstage — Viewport-Locked Studio Redesign",
+      "kind": "title1",
+      "maxW": 2960
+    }
+  },
+  "designSystems": []
+}

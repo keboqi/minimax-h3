@@ -53,7 +53,7 @@ TASK_OPENS_CREATE_JS = """
 """
 
 
-def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
+def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_models=None) -> gr.Blocks:
     audio_probe_cache.install()
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
@@ -61,7 +61,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         gr.Blocks(title="Prism Studio", fill_width=True) as demo,
         gr.Column(elem_classes=["h3-workspace"]),
     ):
-        # The top bar: brand, Create tasks, then the main tab row (placed by CSS), then status.
+        # The top bar: brand, Create tasks, the main tab row (placed by CSS), status, and engine switcher.
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
                 '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">PS</span>'
@@ -75,7 +75,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 system_summary = gr.HTML(
                     services.compact_backend_status(initial_backend)
                 )
-        app_views = create_app_views(summary_root=summary_root, task_root=task_root)
+            engine_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-engine-bar"])
+        app_views = create_app_views(
+            summary_root=summary_root,
+            task_root=task_root,
+            engine_root=engine_root,
+            include_models=build_models is not None,
+        )
         with app_views.system if app_views is not None else nullcontext():
             gr.Markdown(
                 "## System\nManage your backend, memory, and browser preferences. "
@@ -500,5 +506,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
         demo.load(None, js=REFERENCE_TAG_JS, api_name=False)
         load_result_view_scripts(demo)
+        if build_models is not None and app_views.models is not None:
+            with app_views.models:
+                build_models(demo)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

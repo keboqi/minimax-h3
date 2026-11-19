@@ -38,6 +38,7 @@ def media_runtime(data: Path, script_dir: Path) -> RuntimeConfig:
     runtime = RuntimeConfig.from_environment(
         Path(script_dir),
         {"COMFY_DIR": str(Path(script_dir) / "ComfyUI"),
+         "MODELS_CONFIG": str(data / "h3_models.json"),
          "GRADIO_OUTPUT_DIR": str(data / "output")},
     )
     # The GPU endpoint links ComfyUI's input/output folders to these directories.

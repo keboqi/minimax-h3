@@ -214,19 +214,20 @@ class ModelManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager._path("turbo_lora")
 
-    def test_media_library_omits_gpu_enhancement(self):
+    def test_modal_workshop_serves_full_studio_ui_with_models_tab(self):
         import gradio as gr
 
         from h3_app import media_catalog
-        from h3_app.workspace_store import WorkspaceStore
-        from h3_ui.media_console import media_runtime
-
         from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui import application as studio_app
+        from h3_ui.media_console import media_runtime
 
         previous = media_catalog.get_media_catalog()
         self.addCleanup(setattr, media_catalog, "_CATALOG", previous)
-        # build_ui configures the shared job registry with this test's temporary store.
+        # build_ui configures the shared job registry and runtime override with this test's temporary paths.
         self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        self.addCleanup(studio_app.set_runtime_override, None)
         data = Path(self.temp.name)
         runtime = media_runtime(data, data / "app")
         self.assertEqual(runtime.output_dir, (data / "output").resolve())
@@ -234,27 +235,25 @@ class ModelManagerTests(unittest.TestCase):
         ui = manager_module.build_ui(self.manager, (runtime, WorkspaceStore(data / "h3-workspace")))
         blocks = ui.blocks.values()
         labels = {getattr(block, "label", None) for block in blocks}
-        self.assertTrue({"Media library", "Models"} <= labels)
-        # The page places each tab by its position among the Tabs' children, so anything else
-        # there shifts the tabs after it: Storyboard then showed over Sound Stage.
+        self.assertTrue({"Create", "Media", "Models", "Jobs", "System", "API & workflows"} <= labels)
         tabs = next(block for block in blocks if isinstance(block, gr.Tabs))
         self.assertEqual([child.label for child in tabs.children],
-                         ["Models", "Media library", "Image", "Storyboard", "Remake", "Sound Stage", "Dubbing"])
+                         ["Create", "Media", "Models", "Jobs", "System", "API & workflows"])
         self.assertTrue(all(isinstance(child, gr.Tab) for child in tabs.children))
-        enhance = [block for block in blocks if getattr(block, "label", None) == "Enhance selected media"]
-        self.assertEqual([block.visible for block in enhance], [False])
-        run = next(block for block in blocks if getattr(block, "value", None) == "Enhance selected media"
-                   and type(block).__name__ == "Button")
-        self.assertFalse(any(run._id in [t[0] for t in dep.targets] for dep in ui.fns.values()))
+        self.assertGreaterEqual(len(getattr(ui, "h3_routes", ())), 9)
 
     def test_colab_workshop_has_no_models_tab_or_volume_reload(self):
+        import gradio as gr
+
         from h3_app import media_catalog
         from h3_app.config import RuntimeConfig
         from h3_app.jobs import JOBS
         from h3_app.workspace_store import default_store
+        from h3_ui import application as studio_app
 
         self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
         self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        self.addCleanup(studio_app.set_runtime_override, None)
         data = Path(self.temp.name)
         # The Studio's own layout: run_h3.sh exports these for both apps.
         runtime = RuntimeConfig.from_environment(data, {
@@ -263,9 +262,9 @@ class ModelManagerTests(unittest.TestCase):
         })
         ui = manager_module.build_ui(None, (runtime, default_store(runtime.outputs_dir)))
         self.assertTrue(ui.get_config_file()["fill_width"])
-        labels = {getattr(block, "label", None) for block in ui.blocks.values()}
-        self.assertTrue({"Media library", "Storyboard", "Remake"} <= labels)
-        self.assertNotIn("Models", labels)
+        tabs = next(block for block in ui.blocks.values() if isinstance(block, gr.Tabs))
+        self.assertEqual([child.label for child in tabs.children],
+                         ["Create", "Media", "Jobs", "System", "API & workflows"])
         buttons = {block.value for block in ui.blocks.values() if type(block).__name__ == "Button"}
         self.assertNotIn("Reload shared volume", buttons)
 
@@ -323,42 +322,49 @@ class ModelManagerTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        import h3_gpu
         from h3_app import media_catalog
         from h3_app import storyboard as sb
         from h3_app.jobs import JOBS
         from h3_app.workspace_store import COOKIE, WorkspaceStore, install_owner_cookie
+        from h3_ui import application as studio_app
         from h3_ui.media_console import media_runtime
 
         self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
         self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        self.addCleanup(studio_app.set_runtime_override, None)
         data = Path(self.temp.name)
         store = WorkspaceStore(data / "h3-workspace")
-        ui = manager_module.build_ui(self.manager, (media_runtime(data, data / "app"), store))
-        self.assertIn("Storyboard", {getattr(block, "label", None) for block in ui.blocks.values()})
-        JOBS.store = store
-        app = FastAPI()
-        install_owner_cookie(app, store)
-        for install in ui.h3_routes:
-            install(app)
-        client = TestClient(app)
-        self.assertFalse(client.get("/storyboard/api/boot").json()["gpu"])
-        created = client.post("/storyboard/api/boards", json={"name": "Workshop story", "story": "One.\n\n---\n\nTwo."})
-        self.assertEqual(created.status_code, 200)
-        board = created.json()
-        refused = client.post(f"/storyboard/api/boards/{board['id']}/generate", json={"action": "remaining"})
-        self.assertEqual(refused.status_code, 400)
-        self.assertIn("GPU endpoint", refused.json()["error"])
-        # Created from the defaults, and shared: the GPU endpoint's browser sees it too.
-        storyboard = store.storyboard("gpu-browser", board["id"])
-        self.assertEqual(storyboard["profile"], sb.make_profile(sb.request_defaults(), sb.request_defaults()))
-        self.assertEqual([row["name"] for row in store.storyboards("gpu-browser")], ["Workshop story"])
-        self.assertIn(COOKIE, client.cookies)
+        with patch.dict("os.environ", {"H3_CPU_ONLY": "1"}):
+            ui = manager_module.build_ui(self.manager, (media_runtime(data, data / "app"), store))
+            self.assertIn("Storyboard", {getattr(block, "label", None) for block in ui.blocks.values()})
+            JOBS.store = store
+            app = FastAPI()
+            install_owner_cookie(app, store)
+            for install in ui.h3_routes:
+                install(app)
+            client = TestClient(app)
+            self.assertTrue(client.get("/storyboard/api/boot").json()["gpu"])
+            created = client.post("/storyboard/api/boards", json={"name": "Workshop story", "story": "One.\n\n---\n\nTwo."})
+            self.assertEqual(created.status_code, 200)
+            board = created.json()
+            refused = client.post(f"/storyboard/api/boards/{board['id']}/generate", json={"action": "remaining"})
+            self.assertEqual(refused.status_code, 400)
+            self.assertEqual(refused.json()["error"], h3_gpu.CPU_ONLY_MESSAGE)
+            # Created from the defaults, and shared: the GPU endpoint's browser sees it too.
+            storyboard = store.storyboard("gpu-browser", board["id"])
+            expected_defaults = studio_app.storyboard_request_defaults()
+            self.assertEqual(storyboard["profile"], sb.make_profile(expected_defaults, expected_defaults))
+            self.assertEqual([row["name"] for row in store.storyboards("gpu-browser")], ["Workshop story"])
+            self.assertIn(COOKIE, client.cookies)
 
     def test_cpu_endpoint_has_default_resources_and_independent_image(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
         self.assertNotIn("provision_models", functions)
+        self.assertNotIn("H3StudioUIService", classes)
         manager = functions["workshop"]
         decorator = next(d for d in manager.decorator_list
                          if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
@@ -368,6 +374,37 @@ class ModelManagerTests(unittest.TestCase):
         for resource in ("gpu", "cpu", "memory"):
             self.assertNotIn(resource, arguments)
         self.assertNotIn("sync_models", ast.unparse(functions["prepare_runtime_models"]))
+
+    def test_workshop_serve_sets_cpu_only_commits_volume_and_starts_server(self):
+        from h3_app import media_catalog
+        from h3_app.jobs import JOBS
+        from h3_ui import application as studio_app
+
+        self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        self.addCleanup(studio_app.set_runtime_override, None)
+        data = Path(self.temp.name)
+        server = Mock()
+        events = []
+
+        def fake_build_ui(manager, media):
+            events.append(("build_ui", manager_module.os.environ.get("H3_CPU_ONLY"), manager is not None))
+            return Mock()
+
+        self.volume.commit.side_effect = lambda: events.append(("commit",))
+
+        with patch.dict("os.environ", {}, clear=False), \
+                patch.object(manager_module, "link_studio_media") as link_media, \
+                patch.object(manager_module, "build_ui", side_effect=fake_build_ui), \
+                patch.object(manager_module, "_server", return_value=server), \
+                patch("threading.Thread") as thread_cls:
+            manager_module.os.environ.pop("H3_CPU_ONLY", None)
+            manager_module.serve(data, self.volume, port=7860, script_dir=data / "app")
+            self.assertEqual(manager_module.os.environ.get("H3_CPU_ONLY"), "1")
+        link_media.assert_called_once()
+        self.assertEqual(events, [("build_ui", "1", True), ("commit",)])
+        thread_cls.assert_called_once_with(target=server.run, name="workshop", daemon=True)
+        thread_cls.return_value.start.assert_called_once_with()
 
     def test_workshop_serves_the_soundstage_page_for_preparing_without_a_gpu(self):
         import gradio as gr

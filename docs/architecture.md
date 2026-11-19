@@ -20,7 +20,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 
 | Module | Owns |
 |---|---|
-| setup_h3.py, run_h3.sh, modal_h3.py, Colab notebook | Environment provisioning and deployment lifecycle (including the CPU-only `h3-ui` preview via `H3_CPU_ONLY`) |
+| setup_h3.py, run_h3.sh, modal_h3.py, Colab notebook | Environment provisioning and deployment lifecycle (including the upgraded CPU-only `workshop` Studio preview via `H3_CPU_ONLY`) |
 | h3_requirements.py | Dependency compatibility policy shared by setup and Modal |
 | h3_node_patches.py, h3_attention.py, custom_nodes/H3Acceleration/ | Pinned upstream compatibility patches and GPU runtime optimizations |
 | h3_app/config.py | Immutable startup paths, backend mode and transport limits |

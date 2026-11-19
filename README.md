@@ -18,8 +18,8 @@ One top bar holds the navigation, so the centre of the window stays for the
 work: the Create tasks, in two groups (Video, Image and Song; then Remake, Storyboard, Soundstage and
 Dubbing), then
 Media, Jobs, System and API & workflows, with backend and job status
-at the right. Picking a task opens it from any tab; its engine choice sits at
-the top of Create. On narrow windows the bar stacks into scrolling rows.
+at the right. Picking a task opens it from any tab; when a task has multiple
+studio engines, its engine switcher sits in the right corner of the top bar. On narrow windows the bar stacks into scrolling rows.
 
 The studio layout separates composition, output settings, and preview into
 clearly marked sections, with a shared teal palette in light and dark mode.
@@ -358,26 +358,18 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
-Deployment exposes five independent URLs: two CPU-only endpoints (`workshop` for
-**Prism Workshop**, and `h3-ui` for a full **Prism Studio** UI/UX preview
-without a GPU or ComfyUI) and three GPU endpoints that serve Prism Studio (`h3`,
+Deployment exposes four independent URLs: `workshop` for the CPU-only
+**Prism Workshop**, and three GPU endpoints that serve Prism Studio (`h3`,
 `h3-video`, and `h3-soundstage`; see **Preloaded endpoints** below). Open the **workshop** URL
-printed by Modal first, or open **h3-ui** to test the full Studio interface on
-CPU without allocating a GPU. Both CPU endpoints share the same lightweight
-image with Modal's default CPU and RAM; opening either one does not start an
-expensive GPU endpoint or ComfyUI. `h3-ui` mounts the shared Modal volume and
-serves every Studio page, navigation state, Media library, project editor,
-hosted prompt writer, and GPT Image API for frontend testing, while failing
+printed by Modal first. Workshop uses a separate lightweight CPU image with
+Modal's default CPU and RAM; opening it does not start an expensive GPU
+endpoint or ComfyUI. It serves the full Prism Studio UI/UX plus a **Models**
+manager tab on the shared Modal volume, so you can prepare models and projects
+(Media, Storyboard, Remake, Soundstage, Dubbing, hosted prompt writers, and GPT
+Image API) or test every Studio page and control on CPU, while failing
 immediately with an informative message on GPU-only actions (ComfyUI generation,
 on-demand GPU model downloads, and local GPU workers) instead of waiting for
-ComfyUI. Workshop's **Models** tab prepares checkpoints and LoRAs; its
-**Media library** tab is the main app's library without GPU enhancement. Its
-**Storyboard** tab prepares scenes and cast, rewrites a story into H3 prompts, and
-enhances individual prompts using Gemini or an OpenAI-compatible service. Open the
-shared storyboard in Studio to apply H3 settings and generate its scenes.
-The **Sound Stage** tab shows the Soundstage page for preparing on CPU: write and rewrite the script,
-cast voices and sounds, and set up the project; it saves as you go. Open the same project in Studio to
-generate voices, sound effects, and speech.
+ComfyUI. Open a GPU endpoint when ready to generate on the GPU.
 
 The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
 300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses
@@ -417,7 +409,7 @@ stops instead of sleeping when another engine needs the GPU; a server started
 after that sleeps as usual. Other engines still work on both endpoints, loading
 their models on demand.
 
-All endpoints (`h3`, `h3-video`, `h3-soundstage`, `h3-ui`, and `workshop`) share
+All endpoints (`h3`, `h3-video`, `h3-soundstage`, and `workshop`) share
 the volume and its workspace database, so use one at a time, as noted below.
 `H3_MODAL_MIN_CONTAINERS` applies to each of the GPU endpoints.
 
@@ -442,7 +434,7 @@ retry, and completed files remain saved to the shared volume.
 
 Stop the GPU endpoints before downloading or removing models, or before
 importing, annotating, or deleting media, or editing projects/storyboards in
-Workshop or `h3-ui`, then start them after you finish: these
+Workshop, then start them after you finish: these
 services write the same workspace database on the volume. Modal volumes require a reload to see another
 container's commits, and their file locks do not coordinate separate containers.
 GPU startup now loads the catalog without provisioning models or checking remote

@@ -65,28 +65,24 @@ class ModalLifecycleTests(unittest.TestCase):
             for method in nodes["PreloadedService"].body if isinstance(method, ast.FunctionDef)
             and method.name in {"start", "resume"}
         }
-        cpu_studio = nodes["H3StudioUIService"]
-        self.cpu_cls_kwargs = {
+        self.assertNotIn("H3StudioUIService", nodes)
+        workshop_fn = nodes["workshop"]
+        self.workshop_fn_kwargs = {
             kw.arg: kw.value
-            for dec in cpu_studio.decorator_list
-            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "cls"
+            for dec in workshop_fn.decorator_list
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "function"
             for kw in dec.keywords
         }
-        cpu_serve = next(
-            method for method in cpu_studio.body
-            if isinstance(method, ast.FunctionDef) and method.name == "serve"
-        )
-        self.cpu_serve_kwargs = {
+        self.workshop_serve_kwargs = {
             kw.arg: kw.value
-            for dec in cpu_serve.decorator_list
-            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
-            and dec.func.attr == "web_server"
+            for dec in workshop_fn.decorator_list
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "web_server"
             for kw in dec.keywords
         }
         # Execute the real lifecycle bodies without SDK decoration or image builds.
         body = [nodes[name] for name in (
             "start_comfy", "gradio_env", "cpu_studio_env", "publish_gradio", "wait_for_preload",
-            "H3Service", "PreloadedService", "H3StudioUIService",
+            "workshop", "H3Service", "PreloadedService",
         )]
         for node in body:
             node.decorator_list = []
@@ -100,11 +96,13 @@ class ModalLifecycleTests(unittest.TestCase):
         self.calls.sync.return_value = ["workflow.json"]
         self.env = {
             "Path": Path,
+            "ROOT": PurePosixPath("/opt/h3"),
+            "DATA": PurePosixPath("/data"),
             "COMFY": PurePosixPath("/opt/h3/ComfyUI"),
             "UI": PurePosixPath("/opt/h3/gradio_app.py"),
             "COMFY_PORT": 8188,
             "UI_PORT": 7860,
-            "os": SimpleNamespace(getenv=Mock(return_value=None)),
+            "os": SimpleNamespace(getenv=Mock(return_value=None), environ={}),
             "print": Mock(),
             "subprocess": SimpleNamespace(
                 Popen=self.calls.launch, PIPE="pipe", TimeoutExpired=subprocess.TimeoutExpired,
@@ -275,35 +273,33 @@ class ModalLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "exited before its models loaded: 3"):
             self.env["wait_for_preload"](process, timeout=5, label="video preload")
 
-    def test_cpu_studio_decorator_uses_cpu_image_without_gpu_or_snapshots(self):
-        self.assertEqual(self.cpu_cls_kwargs["image"].id, "console_image")
-        self.assertEqual(ast.literal_eval(self.cpu_cls_kwargs["max_containers"]), 1)
+    def test_workshop_decorator_uses_cpu_image_without_gpu_or_snapshots(self):
+        self.assertEqual(self.workshop_fn_kwargs["image"].id, "console_image")
+        self.assertEqual(ast.literal_eval(self.workshop_fn_kwargs["max_containers"]), 1)
         for forbidden in ("gpu", "cpu", "memory", "min_containers", "enable_memory_snapshot", "experimental_options"):
-            self.assertNotIn(forbidden, self.cpu_cls_kwargs)
-        self.assertEqual(ast.literal_eval(self.cpu_serve_kwargs["label"]), "h3-ui")
+            self.assertNotIn(forbidden, self.workshop_fn_kwargs)
+        self.assertEqual(ast.literal_eval(self.workshop_serve_kwargs["label"]), "workshop")
 
-    def test_cpu_studio_service_launches_gradio_without_comfy_or_proxy_check(self):
-        self.calls.launch.side_effect = [self.gradio]
-        cpu_service = self.env["H3StudioUIService"]()
-        cpu_service.start()
-        self.assertIsNone(cpu_service.serve())
-        self.assertEqual([call[0] for call in self.calls.mock_calls], [
-            "prepare", "launch", "ready", "commit",
-        ])
-        self.assertEqual(self.calls.launch.call_args.args, (["python", "-u", "/opt/h3/gradio_app.py"],))
-        launched_env = self.calls.launch.call_args.kwargs["env"]
-        self.assertEqual(launched_env["H3_CPU_ONLY"], "1")
-        self.assertEqual(launched_env["GRADIO_SERVER_NAME"], "0.0.0.0")
-        self.assertEqual(launched_env["GRADIO_SERVER_PORT"], "7860")
-        self.assertIs(self.calls.ready.call_args.args[1], self.gradio)
-        self.calls.frontend.assert_not_called()
+    def test_workshop_entrypoint_prepares_models_and_launches_cpu_studio(self):
+        import sys
+        from unittest.mock import patch
 
-        self.calls.reset_mock()
-        self.gradio.poll.return_value = None
-        cpu_service.stop()
-        self.gradio.terminate.assert_called_once_with()
-        self.gradio.wait.assert_called_once_with(timeout=10)
-        self.calls.commit.assert_called_once_with()
+        serve_mock = Mock()
+        fake_workshop = SimpleNamespace(serve=serve_mock)
+        self.env["service_env"].return_value = {"H3_WORKSPACE_DIR": "/data/h3-workspace"}
+        with patch.dict(sys.modules, {"h3_workshop": fake_workshop}):
+            self.env["workshop"]()
+        self.calls.prepare.assert_called_once_with()
+        self.calls.launch.assert_not_called()
+        self.assertEqual(self.env["os"].environ["H3_CPU_ONLY"], "1")
+        self.assertEqual(self.env["os"].environ["GRADIO_SERVER_NAME"], "0.0.0.0")
+        self.assertEqual(self.env["os"].environ["GRADIO_SERVER_PORT"], "7860")
+        serve_mock.assert_called_once_with(
+            Path(PurePosixPath("/data")),
+            self.env["volume"],
+            port=7860,
+            script_dir=Path(PurePosixPath("/opt/h3")),
+        )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,4 @@
-"""Prism Workshop: models, the media library and storyboards on the shared Modal volume, CPU only.
-
-No application runtime, ComfyUI, torch, or GPU dependencies are imported here.
-"""
+"""Prism Workshop: full Prism Studio UI/UX plus Models manager on CPU without ComfyUI or a GPU."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -392,60 +389,13 @@ TITLE = "Prism Workshop"
 
 
 def build_ui(manager: ModelManager | None, media=None):
-    """Models, plus the GPU-free Media library and Storyboard when ``media`` is (runtime, store).
+    """Full Prism Studio UI on CPU, plus the Models tab when ``manager`` is given."""
+    from h3_ui import application as studio_app
 
-    Without a ``manager`` (Colab), there is no Models tab.
-    """
-    import gradio as gr
-
-    with gr.Blocks(title=TITLE, fill_width=True) as ui:
-        if manager is None:
-            gr.Markdown(
-                f"# {TITLE}\n"
-                "Manage media, prepare Remake, Dubbing and Sound Stage projects and plan storyboards without starting ComfyUI or "
-                "loading models. GPT Image can generate and edit images here through its API. Storyboards prepared here open in the Studio, which "
-                "generates their scenes."
-            )
-        else:
-            gr.Markdown(
-                f"# {TITLE}\n"
-                "Prepare models, manage media, prepare Remake, Dubbing and Sound Stage projects and plan storyboards on the shared Modal "
-                "volume without starting the GPU endpoint. GPT Image can generate and edit images here through its API. CPU and RAM use Modal defaults.\n\n"
-                "Stop the GPU endpoint before changing models, editing storyboards, or importing, "
-                "annotating or deleting media. Start it again afterwards so it sees the "
-                "latest files. Storyboards prepared here open on the GPU endpoint, which "
-                "generates their scenes."
-            )
-        with gr.Tabs():
-            if manager is not None:
-                with gr.Tab("Models"):
-                    _build_models(ui, manager)
-            if media is not None:
-                from h3_ui.media_console import build_media_library
-
-                runtime, store = media
-                media_tab = gr.Tab("Media library")
-                library = build_media_library(media_tab, runtime, store)
-                from h3_ui.api_images import build_api_images
-                from h3_ui.media_console import media_controller
-                from h3_ui.storyboard.handlers import MediaLibrary
-                media_controller_api = media_controller(runtime)
-                image_library = MediaLibrary(library.search.h3_asset_index, media_controller_api.refresh_media_page,
-                                             media_controller_api.gallery_media_download_path)
-                images = build_api_images(ui, runtime, library=image_library)
-                from h3_ui.storyboard.workshop import build_storyboard_workshop
-
-                build_storyboard_workshop(gr.Tab("Storyboard"), ui, runtime, store, library=library)
-                from h3_ui.remake_workshop import build_remake_workshop
-                build_remake_workshop(gr.Tab("Remake"), ui, runtime, library=library, images=images)
-                from h3_ui.drama3.workshop import build_soundstage_workshop
-                build_soundstage_workshop(gr.Tab("Sound Stage"), ui, runtime, store, images=images)
-                from h3_ui.dubbing.workshop import build_dubbing_workshop
-                build_dubbing_workshop(gr.Tab("Dubbing"), ui, runtime)
-                from h3_ui.result_views import load_result_view_scripts
-
-                load_result_view_scripts(ui)
-    return ui.queue(default_concurrency_limit=1)
+    runtime, store = media if media is not None else (None, None)
+    build_models = (lambda ui: _build_models(ui, manager)) if manager is not None else None
+    ui = studio_app.build_ui(runtime=runtime, store=store, build_models=build_models)
+    return ui.queue(default_concurrency_limit=1, max_size=8)
 
 
 def _build_models(ui, manager: ModelManager):
@@ -457,9 +407,12 @@ def _build_models(ui, manager: ModelManager):
         for family, keys in groups.items() for key in keys
     ]
     gr.Markdown(
-        "Prepare models and LoRAs on CPU before opening the generation endpoint. "
+        "## Models\n"
+        "Prepare models and LoRAs on CPU before opening a GPU Studio endpoint. "
         "Files are saved to the shared Modal volume. Gated models require accepting "
-        "their Hugging Face licenses and a valid HF_TOKEN in the Modal Secret."
+        "their Hugging Face licenses and a valid HF_TOKEN in the Modal Secret.\n\n"
+        "Stop the GPU endpoints before downloading or removing models, or before changing "
+        "shared media or projects; start them again afterwards so they see the latest files."
     )
     presets = gr.Dropdown(
         list(model_presets()), label="Presets", multiselect=True,
@@ -527,7 +480,7 @@ def _server(ui, runtime, *, host: str, port: int):
 
     from h3_app import server as server_routes
     from h3_app.catalog import (
-        AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, UVICORN_WEBSOCKET_OPTIONS, VIDEO_EXTENSIONS,
+        AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, LTX25_WORKFLOWS, UVICORN_WEBSOCKET_OPTIONS, VIDEO_EXTENSIONS,
     )
     from h3_ui.styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 
@@ -536,7 +489,7 @@ def _server(ui, runtime, *, host: str, port: int):
         [str(runtime.output_dir.resolve()), str(runtime.outputs_dir.resolve())],
         server_routes.ServerConfig(
             # No ComfyUI runs here; its proxy routes report it as unavailable.
-            runtime.comfy_url, runtime.output_dir, runtime.outputs_dir, {},
+            runtime.comfy_url, runtime.output_dir, runtime.outputs_dir, LTX25_WORKFLOWS,
             runtime.workflow_dir, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS,
             AUDIO_EXTENSIONS, H3_SETUP_CSS + H3_WORKSPACE_CSS, runtime.gallery_thumbnails_dir,
         ),
@@ -567,12 +520,13 @@ def link_studio_media(runtime) -> None:
 
 
 def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
-    """Serve models and media on the shared Modal volume, without ComfyUI."""
+    """Serve the full CPU Studio UI and model manager on the shared Modal volume, without ComfyUI."""
     import threading
 
     from h3_app.workspace_store import WorkspaceStore
     from h3_ui.media_console import media_runtime
 
+    os.environ["H3_CPU_ONLY"] = "1"
     manager = ModelManager(data, volume)
     runtime = media_runtime(data, script_dir)
     for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
@@ -581,12 +535,13 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
     # Same state directory as the GPU endpoint's H3_WORKSPACE_DIR.
     store = WorkspaceStore(Path(data) / "h3-workspace")
     ui = build_ui(manager, (runtime, store))
+    volume.commit()
     server = _server(ui, runtime, host="0.0.0.0", port=port)
     threading.Thread(target=server.run, name="workshop", daemon=True).start()
 
 
 def main() -> None:
-    """Serve the Studio's media and storyboards on Colab, without models or ComfyUI.
+    """Serve the full CPU Studio UI on Colab/local without models or ComfyUI.
 
     Uses the Studio's folders and workspace store (run_h3.sh exports COMFY_DIR and
     GRADIO_OUTPUT_DIR), and the same Gradio Share / Cloudflare public URL settings.
@@ -599,48 +554,56 @@ def main() -> None:
     from h3_app.public_url import launch_cloudflare, public_url_settings, start_gradio_share, stop_cloudflare
     from h3_app.workspace_store import default_store
 
-    script_dir = Path(__file__).resolve().parent
-    runtime = RuntimeConfig.from_environment(script_dir)
-    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
-        folder.mkdir(parents=True, exist_ok=True)
-    ui = build_ui(None, (runtime, default_store(runtime.outputs_dir)))
-    port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
-    server = _server(ui, runtime, host=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"), port=port)
-    cloudflare_enabled, share_enabled = public_url_settings()
-    cache_dir = script_dir / ".cache" / "cloudflared"
-    stopped = threading.Event()
-    tunnel = None
-
-    def publish():
-        nonlocal tunnel
-        while not server.started:
-            if stopped.wait(0.1):
-                return
-        print(f"[workshop] {TITLE} is ready at http://127.0.0.1:{port}", flush=True)
-        if cloudflare_enabled:
-            tunnel = launch_cloudflare(port, cache_dir=cache_dir)
-        if share_enabled and not stopped.is_set():
-            share_url = start_gradio_share(
-                lambda: gradio_networking.setup_tunnel(
-                    local_host="127.0.0.1", local_port=port, share_token=ui.share_token,
-                    share_server_address=getattr(ui, "share_server_address", None),
-                    share_server_tls_certificate=getattr(ui, "share_server_tls_certificate", None),
-                ),
-                stop=stopped,
-            )
-            if share_url is None and tunnel is None and not stopped.is_set():
-                print("[workshop] Gradio Share is unavailable; opening a Cloudflare URL instead", flush=True)
-                tunnel = launch_cloudflare(port, cache_dir=cache_dir)
-
-    publisher = threading.Thread(target=publish, name="workshop-public-url", daemon=True)
-    publisher.start()
+    previous_cpu_only = os.environ.get("H3_CPU_ONLY")
+    os.environ["H3_CPU_ONLY"] = "1"
     try:
-        # uvicorn handles SIGINT/SIGTERM in the main thread and returns on shutdown.
-        server.run()
+        script_dir = Path(__file__).resolve().parent
+        runtime = RuntimeConfig.from_environment(script_dir)
+        for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
+            folder.mkdir(parents=True, exist_ok=True)
+        ui = build_ui(None, (runtime, default_store(runtime.outputs_dir)))
+        port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+        server = _server(ui, runtime, host=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"), port=port)
+        cloudflare_enabled, share_enabled = public_url_settings()
+        cache_dir = script_dir / ".cache" / "cloudflared"
+        stopped = threading.Event()
+        tunnel = None
+
+        def publish():
+            nonlocal tunnel
+            while not server.started:
+                if stopped.wait(0.1):
+                    return
+            print(f"[workshop] {TITLE} is ready at http://127.0.0.1:{port}", flush=True)
+            if cloudflare_enabled:
+                tunnel = launch_cloudflare(port, cache_dir=cache_dir)
+            if share_enabled and not stopped.is_set():
+                share_url = start_gradio_share(
+                    lambda: gradio_networking.setup_tunnel(
+                        local_host="127.0.0.1", local_port=port, share_token=ui.share_token,
+                        share_server_address=getattr(ui, "share_server_address", None),
+                        share_server_tls_certificate=getattr(ui, "share_server_tls_certificate", None),
+                    ),
+                    stop=stopped,
+                )
+                if share_url is None and tunnel is None and not stopped.is_set():
+                    print("[workshop] Gradio Share is unavailable; opening a Cloudflare URL instead", flush=True)
+                    tunnel = launch_cloudflare(port, cache_dir=cache_dir)
+
+        publisher = threading.Thread(target=publish, name="workshop-public-url", daemon=True)
+        publisher.start()
+        try:
+            # uvicorn handles SIGINT/SIGTERM in the main thread and returns on shutdown.
+            server.run()
+        finally:
+            stopped.set()
+            publisher.join()
+            stop_cloudflare(tunnel)
     finally:
-        stopped.set()
-        publisher.join()
-        stop_cloudflare(tunnel)
+        if previous_cpu_only is None:
+            os.environ.pop("H3_CPU_ONLY", None)
+        else:
+            os.environ["H3_CPU_ONLY"] = previous_cpu_only
 
 
 if __name__ == "__main__":

@@ -13,8 +13,10 @@ import requests
 
 
 SERVER = """
+import os
 from pathlib import Path
 import sys
+os.environ["H3_CPU_ONLY"] = "1"
 from h3_ui.media_console import media_runtime
 from h3_app.workspace_store import WorkspaceStore
 from h3_workshop import build_ui, _server
@@ -58,13 +60,11 @@ def main():
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(url)
-                page.get_by_role("tab", name="Remake", exact=True).click(timeout=60000)
+                page.locator('.h3-task-picker label', has_text="Remake").click(timeout=60000)
                 view = page.frame_locator(".h3-remake-frame")
                 # The page binds its controls only after booting; an earlier file would be lost.
                 expect(view.locator("#no-projects")).to_contain_text("Save any selection")
                 view.locator("#video-input").set_input_files(str(source))
-                expect(view.locator("#workshop-note")).to_be_visible()
-                expect(view.locator("#primary")).to_be_disabled()
                 view.get_by_role("button", name="Extract frame", exact=True).click()
                 expect(view.get_by_role("button", name="Quick edit", exact=True)).to_be_visible()
                 expect(view.locator("#edit-model")).to_have_value("gpt_image")
@@ -73,7 +73,6 @@ def main():
                 image_page = opened.value
                 expect(image_page).to_have_url(f"{url}/image/")
                 expect(image_page.locator("#editor")).to_be_visible()
-                expect(image_page.locator("#workshop-note")).to_contain_text("without starting a GPU")
                 image_page.close()
                 expect(view.get_by_role("button", name="Use latest from Media", exact=True)).to_be_visible()
                 with page.expect_download() as downloaded:

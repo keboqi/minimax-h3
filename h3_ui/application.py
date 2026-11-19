@@ -206,10 +206,19 @@ H3 = H3Handlers(H3Services(
 
 
 PROMPTS = PromptController(PromptServices(_runtime_config=lambda: _runtime_config()))
+_RUNTIME_OVERRIDE: RuntimeConfig | None = None
+
+
+def set_runtime_override(runtime: RuntimeConfig | None) -> None:
+    """Override runtime paths when building the UI for an alternate root (e.g. Workshop)."""
+    global _RUNTIME_OVERRIDE
+    _RUNTIME_OVERRIDE = runtime
 
 
 def _runtime_config() -> RuntimeConfig:
     """Build an explicit service context from startup configuration."""
+    if _RUNTIME_OVERRIDE is not None:
+        return _RUNTIME_OVERRIDE
     return replace(
         RUNTIME,
         input_root=INPUT_DIR,
@@ -671,8 +680,8 @@ def _catalog_inventory(mode, limit):
 def backend_status() -> str:
     if is_cpu_only():
         return (
-            "CPU UI preview · No GPU backend attached (ComfyUI, SGLang-Omni and GPU workers are disabled). "
-            "All UI pages, Media library, prompt writers, project editing and GPT Image API remain available."
+            "CPU Workshop · No GPU backend attached (ComfyUI, SGLang-Omni and GPU workers are disabled). "
+            "All UI pages, Media library, Models manager (on Modal), prompt writers, project editing and GPT Image API remain available."
         )
     try:
         stats = api_get("/system_stats").json()
@@ -1032,14 +1041,17 @@ def refresh_backend_views() -> tuple[str, str]:
     return (compact_backend_status(detail), detail)
 
 
-def build_ui() -> gr.Blocks:
+def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=None) -> gr.Blocks:
     """Compose the workspace using explicit catalogs and callbacks."""
     from .bootstrap import build_ui as compose_ui
     from .contracts import BootstrapCatalog, BootstrapServices
     from h3_app.jobs import JOBS
     from h3_app.workspace_store import default_store
 
-    JOBS.configure(default_store(OUTPUTS_DIR))
+    if runtime is not None:
+        set_runtime_override(runtime)
+    active_runtime = _runtime_config()
+    JOBS.configure(store if store is not None else default_store(active_runtime.outputs_dir))
     from h3_app.media_catalog import configure_media_catalog
 
     configure_media_catalog(JOBS.store, _runtime_config)
@@ -1057,7 +1069,7 @@ def build_ui() -> gr.Blocks:
         BootstrapCatalog(
             AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
             AUTO_SOL_TOKEN_THRESHOLD=AUTO_SOL_TOKEN_THRESHOLD,
-            COMFY_DIR=COMFY_DIR,
+            COMFY_DIR=active_runtime.comfy_dir,
             DEFAULT_AUTO_RESOLUTION_MEGAPIXELS=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
             DEFAULT_GEMINI_PROMPT_MODEL=DEFAULT_GEMINI_PROMPT_MODEL,
             DEFAULT_INPUT_IMAGE_FRAME_PRESET=DEFAULT_INPUT_IMAGE_FRAME_PRESET,
@@ -1124,7 +1136,7 @@ def build_ui() -> gr.Blocks:
             drama3_actions=_drama3_actions(),
             dubbing_actions=dubbing_handlers,
             engine_deps=_engine_deps(),
-            soundstage_workspace=(JOBS.store, OUTPUT_DIR),
+            soundstage_workspace=(JOBS.store, active_runtime.output_dir),
             storyboard_handlers=_storyboard_handlers(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
@@ -1152,6 +1164,7 @@ def build_ui() -> gr.Blocks:
             unload_all_models=unload_all_models,
             upscale_selected_input_images=MEDIA.upscale_selected_input_images,
         ),
+        build_models=build_models,
     )
 
 

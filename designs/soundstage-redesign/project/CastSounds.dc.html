@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Soundstage — Cast &amp; Sounds</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; overflow: hidden; }
+    a { color: inherit; text-decoration: none; }
+    a:hover { opacity: 0.92; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    .ss-scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+    .ss-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .ss-scroll::-webkit-scrollbar-thumb { background: rgba(128, 145, 138, 0.35); border-radius: 999px; }
+    .ss-scroll::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</helmet>
+
+<div style="width: 100%; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+
+  <!-- FIXED TOP STUDIO HEADER -->
+  <header style="flex: none; height: 56px; padding: 0 16px; display: flex; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}}; z-index: 10;">
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <svg width="26" height="26" viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="7" fill="{{ink}}"></rect>
+        <path d="M7 15v-2M11 18v-8M15 20V8M19 17v-6M23 15v-2" stroke="{{inkAccent}}" stroke-width="2" stroke-linecap="round"></path>
+      </svg>
+      <strong style="font-size: 15px; font-weight: 700; letter-spacing: -0.02em; color: {{text}};">Soundstage</strong>
+    </div>
+
+    <div style="width: 1px; height: 22px; background: {{line}}; flex: none;"></div>
+
+    <div style="display: flex; align-items: center; gap: 6px; flex: none;">
+      <label style="display: flex; align-items: center;">
+        <select aria-label="Active project" style="height: 34px; max-width: 196px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <option>Ch. 04 · Midnight Platform</option>
+          <option>Ch. 03 · Rain on Harbor St</option>
+        </select>
+      </label>
+      <span style="font-size: 11.5px; font-weight: 600; color: {{ok}}; background: {{okBg}}; padding: 3px 8px; border-radius: 999px;">Saved</span>
+    </div>
+
+    <!-- INTEGRATED 4-STEP PIPELINE -->
+    <nav aria-label="Production steps" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0;">
+      <a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px; border-radius: 9px; background: transparent; color: {{text}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span style="width: 20px; height: 20px; border-radius: 50%; background: {{accentSoft}}; color: {{accent}}; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;">✓</span>
+        <span>Script</span>
+      </a>
+      <span style="width: 14px; height: 1.5px; background: {{accent}}; opacity: 0.45; flex: none;"></span>
+      <a href="CastSounds.dc.html" aria-current="step" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px; border-radius: 9px; background: {{accentSoft}}; color: {{accent}}; font-size: 13px; font-weight: 700; white-space: nowrap;">
+        <span style="width: 20px; height: 20px; border-radius: 50%; background: {{accent}}; color: {{accentInk}}; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;">2</span>
+        <span>Cast &amp; sounds</span>
+        <span style="font-size: 11px; font-weight: 600; color: {{warn}}; background: {{warnBg}}; padding: 1px 6px; border-radius: 999px;">2 missing</span>
+      </a>
+      <span style="width: 14px; height: 1.5px; background: {{line}}; flex: none;"></span>
+      <a href="MixReview.dc.html" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px; border-radius: 9px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span style="width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid {{line}}; color: {{muted}}; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;">3</span>
+        <span>Mix &amp; review</span>
+      </a>
+      <span style="width: 14px; height: 1.5px; background: {{line}}; flex: none;"></span>
+      <a href="Illustrate.dc.html" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px; border-radius: 9px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span style="width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid {{line}}; color: {{muted}}; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;">4</span>
+        <span>Illustrate</span>
+      </a>
+    </nav>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <span style="display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border-radius: 999px; background: {{okBg}}; color: {{ok}}; font-size: 11.5px; font-weight: 600;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: {{okDot}};"></span>
+        GPU ready
+      </span>
+      <button type="button" style="height: 34px; padding: 0 11px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; color: {{text}}; font-size: 13px; font-weight: 600;">Batch</button>
+      <button type="button" style="height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid {{ink}}; border-radius: 8px; background: {{ink}}; color: {{inkFg}}; font-size: 13px; font-weight: 600;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{inkAccent}}" stroke-width="2.2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+        Auto-produce
+      </button>
+    </div>
+  </header>
+
+  <!-- VIEWPORT-LOCKED CAST & SOUNDS STUDIO (Zero Full-Page Scroll) -->
+  <main style="flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 12px 16px; overflow: hidden;">
+
+    <!-- PINNED READINESS OVERVIEW STRIP (Always Visible Above Split Panes) -->
+    <section aria-label="Asset readiness overview" style="flex: none; padding: 10px 16px; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: {{muted}};">Readiness</span>
+        <span style="font-size: 12.5px; font-weight: 650; color: {{warn}}; background: {{warnBg}}; padding: 3px 10px; border-radius: 999px;">Voices 2 / 4 ready</span>
+        <span style="font-size: 12.5px; font-weight: 650; color: {{ok}}; background: {{okBg}}; padding: 3px 10px; border-radius: 999px;">Sounds 5 / 5 ready</span>
+      </div>
+
+      <!-- Segmented Focus Filter (Voices + Sounds Split vs Focused) -->
+      <div role="group" aria-label="Asset filter" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{lane}};">
+        <button type="button" onClick="{{ setTabSplit }}" aria-pressed="{{ isSplit }}" style="height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{splitBg}}; color: {{splitColor}}; font-size: 12.5px; font-weight: 600;">Split view</button>
+        <button type="button" onClick="{{ setTabVoices }}" aria-pressed="{{ isVoicesOnly }}" style="height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{voicesBg}}; color: {{voicesColor}}; font-size: 12.5px; font-weight: 600;">Voices (4)</button>
+        <button type="button" onClick="{{ setTabSounds }}" aria-pressed="{{ isSoundsOnly }}" style="height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{soundsBg}}; color: {{soundsColor}}; font-size: 12.5px; font-weight: 600;">Sounds &amp; music (5)</button>
+      </div>
+
+      <span style="flex: 1;"></span>
+
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: {{muted}};">
+          <span>Speaker group</span>
+          <select style="height: 32px; padding: 0 8px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 12.5px; font-weight: 600;">
+            <option>Noir Series · Main Cast</option>
+            <option>Default voices</option>
+          </select>
+        </label>
+        <button type="button" style="height: 32px; padding: 0 11px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; color: {{text}}; font-size: 12.5px; font-weight: 600;">Voice library</button>
+      </div>
+    </section>
+
+    <!-- MASTER-DETAIL LOCKED SPLIT (Left: Scrollable Assets · Right: Fixed Slot Inspector) -->
+    <div style="flex: 1; min-height: 0; display: flex; gap: 12px; overflow: hidden;">
+
+      <!-- LEFT ASSET WORKSPACE -->
+      <div style="flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden;">
+
+        <!-- VOICES PANE (Independently Scrollable) -->
+        <sc-if value="{{ showVoices }}" hint-placeholder-val="{{ true }}">
+          <section aria-label="Voices" style="flex: 1; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+            <div style="flex: none; padding: 10px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 14.5px; color: {{text}};">Voices</strong>
+                <span style="font-size: 12px; color: {{muted}};">4 cast members in script</span>
+              </div>
+              <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 12px; font-weight: 600;">+ Add voice</button>
+            </div>
+
+            <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 14px 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 12px; align-content: start;">
+              <sc-for list="{{ voices }}" as="v" hint-placeholder-count="4">
+                <button type="button" onClick="{{ v.pick }}" aria-pressed="{{ v.selected }}" style="padding: 13px; border-radius: 11px; border: 1.5px solid {{ v.border }}; background: {{ v.bg }}; text-align: left; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <span style="width: 32px; height: 32px; border-radius: 50%; background: {{ v.avatarBg }}; color: {{ v.tone }}; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none;">{{ v.initial }}</span>
+                    <div style="flex: 1; min-width: 0;">
+                      <strong style="display: block; font-size: 14px; color: {{text}}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ v.name }}</strong>
+                      <span style="font-size: 11.5px; color: {{muted}};">{{ v.lines }} lines</span>
+                    </div>
+                  </div>
+                  <!-- Compact Waveform Glyph -->
+                  <svg width="100%" height="20" viewBox="0 0 180 20" preserveAspectRatio="none" aria-hidden="true">
+                    <path d="M2 10h4M10 6v8M16 3v14M22 7v6M28 4v12M34 8v4M40 2v16M46 6v8M52 5v10M58 8v4M64 3v14M70 6v8M76 4v12M82 7v6M88 5v10M94 8v4M100 3v14M106 6v8M112 4v12M118 7v6M124 5v10M130 8v4M136 4v12M142 7v6M148 5v10M154 8v4M160 6v8M166 8v4M172 9v2" stroke="{{ v.waveColor }}" stroke-width="2" stroke-linecap="round"></path>
+                  </svg>
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                    <span style="font-size: 11.5px; font-weight: 650; padding: 2px 8px; border-radius: 999px; background: {{ v.badgeBg }}; color: {{ v.badgeColor }};">{{ v.status }}</span>
+                    <span style="font-size: 11.5px; color: {{muted}}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ v.note }}</span>
+                  </div>
+                </button>
+              </sc-for>
+            </div>
+          </section>
+        </sc-if>
+
+        <!-- SOUNDS & MUSIC PANE (Independently Scrollable Table) -->
+        <sc-if value="{{ showSounds }}" hint-placeholder-val="{{ true }}">
+          <section aria-label="Sounds and music" style="flex: 1; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+            <div style="flex: none; padding: 10px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 14.5px; color: {{text}};">Sounds &amp; music</strong>
+                <span style="font-size: 12px; color: {{muted}};">2 beds · 3 one-shot cues</span>
+              </div>
+              <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 12px; font-weight: 600;">+ Add sound</button>
+            </div>
+
+            <div class="ss-scroll" style="flex: 1; min-height: 0;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                  <tr style="border-bottom: 1px solid {{lineSoft}}; color: {{muted}}; font-size: 11.5px; text-align: left;">
+                    <th style="padding: 8px 16px; font-weight: 650;">Cue ID</th>
+                    <th style="padding: 8px 12px; font-weight: 650;">Kind</th>
+                    <th style="padding: 8px 12px; font-weight: 650;">Description</th>
+                    <th style="padding: 8px 16px; font-weight: 650; text-align: right;">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ sounds }}" as="snd" hint-placeholder-count="5">
+                    <tr style="border-bottom: 1px solid {{lineSoft}};">
+                      <td style="padding: 9px 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: {{text}};">{{ snd.id }}</td>
+                      <td style="padding: 9px 12px;">
+                        <span style="font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: {{ snd.kindBg }}; color: {{ snd.kindColor }};">{{ snd.kind }}</span>
+                      </td>
+                      <td style="padding: 9px 12px; color: {{muted}};">{{ snd.desc }}</td>
+                      <td style="padding: 9px 16px; text-align: right; font-weight: 650; color: {{ok}};">Ready · {{ snd.dur }}</td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </sc-if>
+      </div>
+
+      <!-- RIGHT FIXED SLOT INSPECTOR (Always Anchored, Independent Scroll) -->
+      <aside aria-label="Voice slot editor" style="width: 380px; flex: none; min-height: 0; border-radius: 12px; background: {{surface}}; border: 1px solid {{line}}; display: flex; flex-direction: column; overflow: hidden;">
+        <!-- Pinned Inspector Header -->
+        <div style="flex: none; padding: 14px 16px; border-bottom: 1px solid {{lineSoft}}; display: flex; align-items: center; gap: 10px;">
+          <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ activeVoice.tone }}; flex: none;"></span>
+          <strong style="font-size: 16px; color: {{text}}; flex: 1;">{{ activeVoice.name }}</strong>
+          <span style="font-size: 11.5px; font-weight: 650; padding: 3px 9px; border-radius: 999px; background: {{ activeVoice.badgeBg }}; color: {{ activeVoice.badgeColor }};">{{ activeVoice.status }}</span>
+        </div>
+
+        <!-- Scrollable Inspector Body -->
+        <div class="ss-scroll" style="flex: 1; min-height: 0; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;">
+          <!-- Preview Player Strip -->
+          <div style="padding: 10px 12px; border-radius: 10px; background: {{raised}}; border: 1px solid {{line}}; display: flex; align-items: center; gap: 10px;">
+            <button type="button" aria-label="Preview voice clip" style="width: 34px; height: 34px; border-radius: 50%; border: 0; background: {{accent}}; color: {{accentInk}}; display: inline-flex; align-items: center; justify-content: center; flex: none;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+            </button>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+              <div style="height: 5px; border-radius: 999px; background: {{lane}}; overflow: hidden;">
+                <div style="width: 42%; height: 100%; background: {{accent}};"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {{muted}};">
+                <span>Reference take</span>
+                <span>00:08.4</span>
+              </div>
+            </div>
+          </div>
+
+          <label style="display: flex; flex-direction: column; gap: 5px;">
+            <span style="font-size: 12px; font-weight: 650; color: {{muted}};">Voice design description</span>
+            <textarea rows="4" style="width: 100%; padding: 9px 11px; border: 1px solid {{line}}; border-radius: 9px; background: {{raised}}; color: {{text}}; font-size: 13px; line-height: 1.5; resize: none;">{{ activeVoice.prompt }}</textarea>
+          </label>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <button type="button" style="flex: 1; height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: {{accent}}; color: {{accentInk}}; font-size: 13px; font-weight: 700;">Generate voice</button>
+            <button type="button" style="height: 36px; padding: 0 12px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; color: {{text}}; font-size: 13px; font-weight: 600;">Upload clip</button>
+            <button type="button" style="height: 36px; padding: 0 12px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; color: {{text}}; font-size: 13px; font-weight: 600;">Pick from library</button>
+          </div>
+
+          <!-- Sample Lines in Script -->
+          <div style="padding-top: 12px; border-top: 1px solid {{lineSoft}}; display: flex; flex-direction: column; gap: 8px;">
+            <span style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: {{muted}};">Lines in this script</span>
+            <div style="padding: 8px 10px; border-radius: 8px; background: {{raised}}; border: 1px solid {{lineSoft}}; font-size: 13px; color: {{text}};">
+              “{{ activeVoice.sample1 }}”
+            </div>
+            <div style="padding: 8px 10px; border-radius: 8px; background: {{raised}}; border: 1px solid {{lineSoft}}; font-size: 13px; color: {{text}};">
+              “{{ activeVoice.sample2 }}”
+            </div>
+          </div>
+
+          <!-- Generator Settings (Compact Accordion) -->
+          <div style="padding-top: 12px; border-top: 1px solid {{lineSoft}}; display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 12px; font-weight: 650; color: {{muted}};">Generator settings</span>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: {{muted}};">
+              <span>Voice model</span>
+              <strong style="color: {{text}};">Qwen-TTS Design v2</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: {{muted}};">
+              <span>Auto-save to group</span>
+              <strong style="color: {{ok}};">Enabled</strong>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- FIXED BOTTOM ACTION BAR -->
+  <footer style="flex: none; padding: 10px 16px; background: {{surface}}; border-top: 1px solid {{line}}; display: flex; align-items: center; gap: 16px;">
+    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px;">
+      <strong style="font-size: 13.5px; color: {{text}};">2 voices still need reference clips</strong>
+      <span style="font-size: 12px; color: {{muted}};">Leo and Warden can be generated automatically from their script descriptions.</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px; flex: none;">
+      <a href="Main.dc.html" style="height: 40px; padding: 0 14px; border: 1px solid {{line}}; border-radius: 9px; background: {{surface}}; color: {{text}}; font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center;">Back to script</a>
+      <button type="button" style="height: 40px; padding: 0 16px; border: 0; border-radius: 9px; background: {{accent}}; color: {{accentInk}}; font-size: 13.5px; font-weight: 700;">Make the missing (2)</button>
+      <a href="MixReview.dc.html" style="height: 40px; padding: 0 14px; border: 1px solid {{line}}; border-radius: 9px; background: {{raised}}; color: {{text}}; font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+        Mix &amp; review
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"></path></svg>
+      </a>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"accent":{"editor":"color","options":["#0a7a68","#1864ab","#6741d9","#b45309"],"default":"#0a7a68"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      assetView: 'split',
+      selectedVoice: 2
+    };
+  }
+  renderVals() {
+    const dark = (this.props.theme ?? 'light') === 'dark';
+    const accent = dark ? '#66d8bb' : (this.props.accent ?? '#0a7a68');
+    const p = dark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', line: '#34463e', lineSoft: '#2a3a34',
+      text: '#e9f1ed', muted: '#a9bdb3', accent, accentInk: '#0b2a23', accentSoft: '#1f3d35', selected: '#1c332d',
+      ink: '#e9f1ed', inkFg: '#0f1715', inkAccent: '#0a7a68', lane: '#22312c',
+      ok: '#8fe0ad', okBg: '#1b3a29', okDot: '#4cd384', warn: '#fdba74', warnBg: '#432010',
+      newCol: '#a5c8ff', newBg: '#1c2d47', cueInk: '#f0c77a', cueBg: 'rgba(240,179,90,0.16)',
+      toneNarrator: '#94a3b8', tone0: '#ff8787', tone1: '#74c0fc', tone2: '#a9e34b'
+    } : {
+      bg: '#f4f6f5', surface: '#ffffff', raised: '#f7f9f8', line: '#dce3e0', lineSoft: '#e8eeeb',
+      text: '#17211e', muted: '#4a5853', accent, accentInk: '#ffffff', accentSoft: '#e1f2ec', selected: '#eef7f4',
+      ink: '#17211e', inkFg: '#ffffff', inkAccent: '#7fe0c8', lane: '#eef2f0',
+      ok: '#1c6b3f', okBg: '#e6f4ec', okDot: '#23a35a', warn: '#8a420e', warnBg: '#fdecdc',
+      newCol: '#1d4f9a', newBg: '#e3eefc', cueInk: '#6b4200', cueBg: '#fdf1dc',
+      toneNarrator: '#5b6b80', tone0: '#c92a2a', tone1: '#1864ab', tone2: '#2b8a3e'
+    };
+
+    const voicesRaw = [
+      {
+        name: 'Narrator', initial: 'N', lines: '12', tone: p.toneNarrator, ready: true, note: 'Saved in group',
+        prompt: 'Calm, measured baritone narrator with dry late-night radio warmth and crisp diction.',
+        sample1: 'The last express hissed to a halt beneath the sodium lamps, leaving only mist.',
+        sample2: 'No one on platform nine looked up when the signal tower clicked to amber.'
+      },
+      {
+        name: 'Mia', initial: 'M', lines: '14', tone: p.tone0, ready: true, note: 'Saved in group',
+        prompt: 'Sharp, alert late-20s woman, slightly breathless under pressure, natural cadence.',
+        sample1: 'You told me the archive closed at ten, Leo. Why are the stairwell lights still on?',
+        sample2: 'Stay behind the concrete pillar. Someone is already checking the third landing.'
+      },
+      {
+        name: 'Leo', initial: 'L', lines: '11', tone: p.tone1, ready: false, note: 'Needs generation',
+        prompt: 'Wry mid-30s archivist with a low, unhurried voice and dry amusement even in danger.',
+        sample1: 'Because whoever took the ledger did not bother locking the roof hatch on their way out.',
+        sample2: 'Keep your torch down. The ballast stones echo all the way to the ticket hall.'
+      },
+      {
+        name: 'Warden', initial: 'W', lines: '5', tone: p.tone2, ready: false, note: 'Needs generation',
+        prompt: 'Authoritative, clipped station official, brisk cadence suited for PA intercom filtering.',
+        sample1: 'Platform nine is closed for inspection. All remaining passengers clear the concourse.',
+        sample2: 'Security unit two, check the north service stairs immediately.'
+      }
+    ];
+
+    const voices = voicesRaw.map((v, idx) => {
+      const selected = this.state.selectedVoice === idx;
+      return {
+        ...v,
+        selected,
+        status: v.ready ? 'Ready' : 'Missing',
+        badgeBg: v.ready ? p.okBg : p.warnBg,
+        badgeColor: v.ready ? p.ok : p.warn,
+        waveColor: v.ready ? v.tone : p.line,
+        avatarBg: dark ? 'rgba(255,255,255,0.08)' : 'rgba(23,33,30,0.06)',
+        border: selected ? v.tone : p.line,
+        bg: selected ? p.selected : p.surface,
+        pick: () => this.setState({ selectedVoice: idx })
+      };
+    });
+
+    const sounds = [
+      { id: 'rain_canopy_loop', kind: 'Loop', kindBg: p.newBg, kindColor: p.newCol, desc: 'Steady midnight drizzle on corrugated tin roof', dur: '18.0s' },
+      { id: 'cello_tension_bed', kind: 'Loop', kindBg: p.newBg, kindColor: p.newCol, desc: 'Low bowed cello pulse, subtle minor swell', dur: '24.0s' },
+      { id: 'train_brakes_hiss', kind: 'Shot', kindBg: p.cueBg, kindColor: p.cueInk, desc: 'Air brakes releasing with distant rail clank', dur: '2.4s' },
+      { id: 'metal_door_creak', kind: 'Shot', kindBg: p.cueBg, kindColor: p.cueInk, desc: 'Heavy stairwell hatch hinging open', dur: '1.2s' },
+      { id: 'footsteps_wet_stairs', kind: 'Shot', kindBg: p.cueBg, kindColor: p.cueInk, desc: 'Brisk footsteps ascending damp concrete', dur: '1.8s' }
+    ];
+
+    const isSplit = this.state.assetView === 'split';
+    const isVoicesOnly = this.state.assetView === 'voices';
+    const isSoundsOnly = this.state.assetView === 'sounds';
+
+    return {
+      ...p,
+      voices,
+      sounds,
+      activeVoice: voices[this.state.selectedVoice] ?? voices[0],
+      isSplit,
+      isVoicesOnly,
+      isSoundsOnly,
+      showVoices: isSplit || isVoicesOnly,
+      showSounds: isSplit || isSoundsOnly,
+      splitBg: isSplit ? p.surface : 'transparent',
+      splitColor: isSplit ? p.text : p.muted,
+      voicesBg: isVoicesOnly ? p.surface : 'transparent',
+      voicesColor: isVoicesOnly ? p.text : p.muted,
+      soundsBg: isSoundsOnly ? p.surface : 'transparent',
+      soundsColor: isSoundsOnly ? p.text : p.muted,
+      setTabSplit: () => this.setState({ assetView: 'split' }),
+      setTabVoices: () => this.setState({ assetView: 'voices' }),
+      setTabSounds: () => this.setState({ assetView: 'sounds' })
+    };
+  }
+}
+</script>
+</body>
+</html>

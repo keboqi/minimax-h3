@@ -794,7 +794,7 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
-# Prism Workshop and the CPU Studio UI preview share this small CPU image; neither builds or imports ComfyUI.
+# Prism Workshop uses this small CPU image; it does not build or import ComfyUI.
 console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
@@ -972,18 +972,17 @@ def wait_for_comfy_frontend(
     volumes={DATA.as_posix(): volume},
     secrets=[hf_secret],
     max_containers=1,
-    scaledown_window=300,
+    scaledown_window=SCALEDOWN_WINDOW,
 )
 @modal.concurrent(max_inputs=100)
 @modal.web_server(
-    UI_PORT, startup_timeout=120, label="workshop", requires_proxy_auth=PROXY_AUTH,
+    UI_PORT, startup_timeout=180, label="workshop", requires_proxy_auth=PROXY_AUTH,
 )
 def workshop():
     from h3_workshop import serve
 
-    os.environ["H3_WORKSPACE_DIR"] = (DATA / "h3-workspace").as_posix()
-    os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
-    os.environ["HF_HOME"] = "/tmp/hf"
+    prepare_runtime_models()
+    os.environ.update(cpu_studio_env())
     serve(Path(DATA), volume, port=UI_PORT, script_dir=Path(ROOT))
 
 
@@ -1067,7 +1066,7 @@ def cpu_studio_env() -> dict[str, str]:
     return env
 
 
-def publish_gradio(gradio_process: subprocess.Popen, *, check_comfy_proxy: bool = True) -> None:
+def publish_gradio(gradio_process: subprocess.Popen) -> None:
     """Wait for the UI, persist its workspace, and check the ComfyUI proxy."""
     wait_for_service(
         f"http://127.0.0.1:{UI_PORT}/",
@@ -1082,8 +1081,6 @@ def publish_gradio(gradio_process: subprocess.Popen, *, check_comfy_proxy: bool 
         f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
         flush=True,
     )
-    if not check_comfy_proxy:
-        return
     try:
         wait_for_comfy_frontend(
             f"http://127.0.0.1:{UI_PORT}/comfyui/",
@@ -1300,50 +1297,3 @@ class H3SoundstageService(PreloadedService):
     )
     def serve(self):
         """Expose the servers initialized by the snapshot lifecycle hooks."""
-
-
-@app.cls(
-    image=console_image,
-    timeout=21600,
-    volumes={DATA.as_posix(): volume},
-    secrets=[hf_secret],
-    max_containers=1,
-    scaledown_window=SCALEDOWN_WINDOW,
-)
-@modal.concurrent(max_inputs=100)
-class H3StudioUIService:
-    """Full Prism Studio UI on CPU for frontend/UX testing without ComfyUI or a GPU."""
-
-    @modal.enter()
-    def start(self):
-        prepare_runtime_models()
-        print("[modal-h3] Launching CPU-only Prism Studio UI", flush=True)
-        self.gradio_process = subprocess.Popen(
-            ["python", "-u", UI.as_posix()],
-            env=cpu_studio_env(),
-        )
-        publish_gradio(self.gradio_process, check_comfy_proxy=False)
-
-    @modal.exit()
-    def stop(self):
-        process = getattr(self, "gradio_process", None)
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-        try:
-            volume.commit()
-        except Exception as exc:
-            print(f"[modal-h3] Could not commit volume on CPU UI exit: {exc}", flush=True)
-
-    @modal.web_server(
-        UI_PORT,
-        startup_timeout=180,
-        label="h3-ui",
-        requires_proxy_auth=PROXY_AUTH,
-    )
-    def serve(self):
-        """Expose the CPU-only Prism Studio UI."""
