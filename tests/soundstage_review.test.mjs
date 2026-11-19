@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {lineTakes} from "../h3_ui/drama3/page/mix.js";
+import {createMix, lineTakes} from "../h3_ui/drama3/page/mix.js";
 import {interruptedRun} from "../h3_ui/drama3/page/transport.js";
 import {createProjects} from "../h3_ui/drama3/page/project.js";
 import {createLibrary} from "../h3_ui/drama3/page/library.js";
@@ -77,4 +77,49 @@ test("voice library drafts survive generation and polling rerenders", async () =
   await saving;
   assert.equal(lib.libraryState.drafts.has("mia"), false);
   assert.deepEqual(lib.libraryState.drafts.get(picked.key), {description: "Edited while saving"});
+});
+
+test("renderLines includes start-end timestamps formatted like illustrate", () => {
+  const prevDoc = globalThis.document;
+  globalThis.document = {fullscreenEnabled: false, fullscreenElement: null};
+  try {
+    const h = (tag, attrs = {}, ...children) => ({tag, ...attrs, children: children.flat(Infinity).filter(Boolean)});
+    const surfaces = new Map();
+    const $ = (id) => {
+      if (!surfaces.has(id)) surfaces.set(id, {
+        children: [],
+        addEventListener() {},
+        replaceChildren(...nodes) { this.children = nodes; },
+      });
+      return surfaces.get(id);
+    };
+    const clock = (seconds) => {
+      const whole = Math.floor(seconds);
+      return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+    };
+    const state = {
+      filter: "all",
+      picked: 0,
+      project: {
+        result: {
+          lines: [
+            {speaker: "narrator", text: "First line.", start: 0, end: 2.4},
+            {speaker: "lin", text: "Second line.", start: 11.2, end: 18.9},
+          ],
+          takes: [],
+        },
+      },
+    };
+    const mix = createMix({
+      state, $, h, API: "/api", STATUS_LABELS: {new: "New"}, FILTERS: [["all", "All"]], ICONS: {},
+      clock, lineTakes, speakerTone: () => "narrator", toneColor: () => "#fff",
+      pick: () => {}, svg: () => null,
+    });
+    mix.renderLines();
+    const walk = (node) => (node && typeof node === "object" ? [node, ...(node.children || []).flatMap(walk)] : []);
+    const times = walk($("lines")).filter((node) => node.class === "line-time num");
+    assert.deepEqual(times.map((node) => node.children.join("")), ["0:00–0:02", "0:11–0:18"]);
+  } finally {
+    globalThis.document = prevDoc;
+  }
 });

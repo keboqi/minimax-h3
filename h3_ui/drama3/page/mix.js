@@ -281,11 +281,13 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     list.replaceChildren(...result.lines.map((line, index) => {
       const take = takes[index];
       if (state.filter !== "all" && take?.status !== state.filter) return null;
+      const timing = line.start != null && line.end != null ? `${clock(line.start)}–${clock(line.end)}` : "";
       return h("li", {},
         h("button", {type: "button", class: "line", "data-line": index, "aria-pressed": String(index === state.picked),
                      onclick: () => pick(index, {seek: true})},
           h("span", {class: "line-number num"}, index + 1),
           h("span", {class: "line-speaker", style: {color: toneColor(speakerTone(line.speaker))}}, line.speaker),
+          h("span", {class: "line-time num"}, timing),
           h("span", {class: "line-text"}, wordNodes(line)),
           take ? h("span", {class: `status status-${take.status}`}, STATUS_LABELS[take.status]) : h("span")));
     }).filter(Boolean));
