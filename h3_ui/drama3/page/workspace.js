@@ -5,6 +5,7 @@ import {createMix, lineTakes} from "./mix.js";
 import {createVideo} from "./video.js";
 import {createLibrary} from "./library.js";
 import {createBatch} from "./batch.js";
+import {createLayout, readPref, writePref} from "./layout.js";
 import {createProjects} from "./project.js";
 import {createApi, createPoller, interruptedRun, StaleResponse} from "./transport.js";
 
@@ -159,6 +160,7 @@ export function startWorkspace() {
     gpu.dataset.ready = String(state.boot.gpu);
     gpu.textContent = state.boot.gpu ? "GPU ready" : "Prepare only";
     gpu.title = state.boot.gpu ? "" : "No GPU here: write, cast and manage voices, then speak the project in Studio.";
+    layout.renderScriptOverview(state.project, state.estimate);
   }
 
   function renderSteps() {
@@ -188,6 +190,7 @@ export function startWorkspace() {
     $("illustrate-summary").textContent = pictures.text;
     if (pictures.state) $("step-illustrate").dataset.state = pictures.state;
     else delete $("step-illustrate").dataset.state;
+    layout.renderScriptOverview(state.project, state.estimate);
   }
 
   // -- Subtitles on the video: shown or hidden (C), and their size ------------
@@ -521,6 +524,7 @@ export function startWorkspace() {
     for (const button of $("lines").querySelectorAll(".line")) {
       button.setAttribute("aria-pressed", String(Number(button.dataset.line) === index));
     }
+    layout.selectMixTab("mix-tab-line");
     renderInspector();
     renderActions();
     if (andSeek) seek(result.lines[index].start);
@@ -708,7 +712,7 @@ export function startWorkspace() {
       state.estimate = null;
       if (!location.hash) state.screen = project.result ? "mix" : "script";
     }
-    try { localStorage.setItem(LAST_PROJECT, name); } catch { /* Storage may be blocked. */ }
+    writePref(LAST_PROJECT, name);
     state.videoRun = project.video_run;
     if (switched) {
       // Illustrate is about the pictures: a project opened there shows them when it has any.
@@ -898,51 +902,6 @@ export function startWorkspace() {
     }
   }
 
-  // The Script screen's frame: which side columns show, the writer's two tabs, and room for the action bar.
-  const LAYOUT_KEY = "h3-soundstage-layout";
-  function bindScriptLayout() {
-    let layout = {outline: true, writer: true};
-    try { layout = {...layout, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}")}; } catch { /* Storage may be blocked. */ }
-    const apply = () => {
-      $("screen-script").classList.toggle("hide-outline", !layout.outline);
-      $("screen-script").classList.toggle("hide-writer", !layout.writer);
-      $("toggle-outline").setAttribute("aria-pressed", String(layout.outline));
-      $("toggle-writer").setAttribute("aria-pressed", String(layout.writer));
-    };
-    const toggle = (key) => () => {
-      layout = {...layout, [key]: !layout[key]};
-      try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch { /* Storage may be blocked. */ }
-      apply();
-    };
-    $("toggle-outline").addEventListener("click", toggle("outline"));
-    $("toggle-writer").addEventListener("click", toggle("writer"));
-    apply();
-
-    const tabs = [$("writer-tab-built"), $("writer-tab-paste")];
-    const select = (tab, focus = false) => {
-      for (const each of tabs) {
-        const on = each === tab;
-        each.setAttribute("aria-selected", String(on));
-        each.tabIndex = on ? 0 : -1;
-        $(each.getAttribute("aria-controls")).hidden = !on;
-      }
-      if (focus) tab.focus();
-    };
-    for (const tab of tabs) {
-      tab.addEventListener("click", () => select(tab));
-      tab.addEventListener("keydown", (event) => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault();
-        select(tabs[(tabs.indexOf(tab) + 1) % tabs.length], true);
-      });
-    }
-
-    // The sticky side columns stop above the action bar, whatever its height.
-    const bar = document.querySelector(".actionbar");
-    const measure = () => document.documentElement.style.setProperty("--bar-h", `${bar.offsetHeight}px`);
-    if (bar && "ResizeObserver" in window) new ResizeObserver(measure).observe(bar);
-  }
-
   // The script's timeline follows the saved script: the spoken mix's timings while they fit it, else an estimate.
   function queueEstimate(delay = 400) {
     clearTimeout(state.estimateTimer);
@@ -1040,7 +999,7 @@ export function startWorkspace() {
       if (!project) return;
       const list = kind === "voice" ? project.speakers : project.sounds;
       const added = kind === "sound" ? list.find((sound) => sound.open) : list.at(-1);
-      if (add && added) pickSlot(kind, added.slot);
+      if (add && added) { layout.ensureCastSection(kind); pickSlot(kind, added.slot); }
       else { state.castPick = null; renderCast(); }
     });
   }
@@ -1268,7 +1227,7 @@ export function startWorkspace() {
     $("title").addEventListener("input", (event) => saveScript({title: event.target.value}));
     $("strict").addEventListener("change", (event) => saveScript({strict_source: event.target.checked}, {now: true}));
     $("rewrite").addEventListener("click", rewrite);
-    bindScriptLayout();
+    layout.bind();
     $("copy-prompt").addEventListener("click", copyPrompt);
     $("apply-reply").addEventListener("click", applyReply);
     document.addEventListener("click", (event) => {
@@ -1293,8 +1252,7 @@ export function startWorkspace() {
     const projects = state.boot.projects;
     if (!projects.length) { showEmpty(); return; }
     if (SCREENS.includes(location.hash.slice(1))) state.screen = location.hash.slice(1);
-    let last = null;
-    try { last = localStorage.getItem(LAST_PROJECT); } catch { /* Storage may be blocked. */ }
+    const last = readPref(LAST_PROJECT);
     const first = projects.find((project) => project.name === last) ?? projects.find((project) => project.generated) ?? projects[0];
     try {
       await loadProject(first.name);
@@ -1309,6 +1267,7 @@ export function startWorkspace() {
   }
 
 
+  const layout = createLayout({$: (...args) => $(...args), shortMode, clock});
   const {scriptSpeakers, highlight, paintEditor, renderWriter, renderWriterResult, renderScript, NAME, TOKEN} = createScript({
     state,
     $: (...args) => $(...args),
@@ -1324,7 +1283,10 @@ export function startWorkspace() {
     painted: () => scriptView.painted(),
     showCast: () => show("cast")
   });
-  const scriptView = createScriptView({state, $: (...args) => $(...args), h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows});
+  const scriptView = createScriptView({
+    state, $: (...args) => $(...args), h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows,
+    onEstimate: () => layout.renderScriptOverview(state.project, state.estimate),
+  });
   const {renderEstimate} = scriptView;
   const {castRunning, castJob, slotNote, slotWorking, speakerLines, missingItems, pickSlot, ensurePick, renderCast, renderCastLists, field, renderSlotEditor, noteBox, sourceSwitch, voiceEditor, soundEditor, renderGeneratorSettings, renderCastActions} = createCast({
     state,
@@ -1348,7 +1310,8 @@ export function startWorkspace() {
     scriptSpeakers,
     NAME,
     TOKEN,
-    getLibrary: () => library
+    getLibrary: () => library,
+    onCastRendered: () => layout.renderCastOverview(state.project),
   });
   const {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, wordNodes, renderFilters, renderLines, renderInspector, renderSettings} = createMix({
     state,

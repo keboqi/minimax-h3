@@ -317,33 +317,35 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         h("span", {class: "spacer"}),
         h("button", {type: "button", class: "btn btn-icon", "aria-label": "Previous shot", disabled: row.index === 0, onclick: () => step(-1)}, "‹"),
         h("button", {type: "button", class: "btn btn-icon", "aria-label": "Next shot", disabled: row.index === rows.length - 1, onclick: () => step(1)}, "›")),
-      h("p", {class: "muted small"}, row.image ? "The player shows this shot while the playhead is on it." : "Not drawn yet: the player holds the image before it."),
-      h("div", {class: "field"}, h("span", {class: "label"}, "Story beat"), h("span", {class: "shot-inspector-beat"}, row.beat)),
-      h("label", {class: "field"}, h("span", {class: "label"}, "Image prompt"),
-        h("textarea", {rows: 6, value: row.prompt, disabled: busy, onchange: (event) => editShot({index: row.index, prompt: event.target.value})}),
-        h("span", {class: "muted small"}, "@name brings in a character, prop or place as Characters & places describes it.")),
-      row.subjects.length ? h("div", {class: "field"}, h("span", {class: "label"}, "Shows"),
-        h("div", {class: "shot-subjects"}, row.subjects.map((key) => h("button", {
-          type: "button", class: "chip chip-quiet", onclick: () => { state.illustrateView = "looks"; renderIllustrate(); },
-          title: subjects.get(key)?.anchor || ""}, key)))) : null,
-      h("div", {class: "field"}, h("span", {class: "label"}, "Comes in with"),
-        h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
-          type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
-          onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
-      ...[ ["camera", "Camera movement"], ["atmosphere", "Atmosphere"], ["lighting", "Lighting & framing"] ].map(([kind, label]) => {
-        const presets = state.boot.video.effect_presets || {};
-        const effects = row.effects || [];
-        return h("label", {class: "field"}, h("span", {class: "label"}, label),
-          h("select", {"aria-label": label, "data-effect-kind": kind, disabled: busy,
-            onchange: () => editShot({index: row.index,
-              effects: [...box.querySelectorAll("select[data-effect-kind]")].map((select) => select.value).filter(Boolean)})},
-            h("option", {value: "", selected: !effects.some((id) => presets[id]?.kind === kind)}, "None"),
-            Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
-              h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
-      }),
-      h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion pauses effects unless you explicitly turn Visual effects on."),
-      h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
-                   onclick: () => drawImages([row.index])}, draw));
+      h("div", {class: "shot-inspector-body"},
+        h("p", {class: "muted small"}, row.image ? "The player shows this shot while the playhead is on it." : "Not drawn yet: the player holds the image before it."),
+        h("div", {class: "field"}, h("span", {class: "label"}, "Story beat"), h("span", {class: "shot-inspector-beat"}, row.beat)),
+        h("label", {class: "field"}, h("span", {class: "label"}, "Image prompt"),
+          h("textarea", {rows: 6, value: row.prompt, disabled: busy, onchange: (event) => editShot({index: row.index, prompt: event.target.value})}),
+          h("span", {class: "muted small"}, "@name brings in a character, prop or place as Characters & places describes it.")),
+        row.subjects.length ? h("div", {class: "field"}, h("span", {class: "label"}, "Shows"),
+          h("div", {class: "shot-subjects"}, row.subjects.map((key) => h("button", {
+            type: "button", class: "chip chip-quiet", onclick: () => { state.illustrateView = "looks"; renderIllustrate(); },
+            title: subjects.get(key)?.anchor || ""}, key)))) : null,
+        h("div", {class: "field"}, h("span", {class: "label"}, "Comes in with"),
+          h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
+            type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
+            onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
+        ...[ ["camera", "Camera movement"], ["atmosphere", "Atmosphere"], ["lighting", "Lighting & framing"] ].map(([kind, label]) => {
+          const presets = state.boot.video.effect_presets || {};
+          const effects = row.effects || [];
+          return h("label", {class: "field"}, h("span", {class: "label"}, label),
+            h("select", {"aria-label": label, "data-effect-kind": kind, disabled: busy,
+              onchange: () => editShot({index: row.index,
+                effects: [...box.querySelectorAll("select[data-effect-kind]")].map((select) => select.value).filter(Boolean)})},
+              h("option", {value: "", selected: !effects.some((id) => presets[id]?.kind === kind)}, "None"),
+              Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
+                h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
+        }),
+        h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion pauses effects unless you explicitly turn Visual effects on.")),
+      h("div", {class: "shot-inspector-foot"},
+        h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
+                     onclick: () => drawImages([row.index])}, draw)));
   }
 
   function pickStyle(name) {

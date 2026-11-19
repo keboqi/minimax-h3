@@ -8,83 +8,96 @@
 </head>
 <body>
 <div id="app" class="app" hidden>
-  <header class="topbar">
-    <div class="brand">
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" class="brand-mark"></rect><path d="M7 15v-2M11 18v-8M15 20V8M19 17v-6M23 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
-      <span>Soundstage</span>
-    </div>
-    <label class="project-picker">
-      <span class="sr-only">Project</span>
-      <select id="project"></select>
-    </label>
-    <button type="button" class="btn btn-small" id="new-project">New project</button>
-    <span id="project-state" class="chip" role="status"></span>
-    <span id="save-state" class="muted small" role="status"></span>
-    <span class="spacer"></span>
-    <div class="seg layout-toggle" role="group" aria-label="Layout" id="layout">
-      <button type="button" id="toggle-outline" aria-pressed="true" aria-label="Show the outline column" title="Outline column">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16M5.5 8h1.5M5.5 11h1.5"></path></svg>
+  <div class="studio-chrome">
+    <header class="topbar">
+      <div class="brand">
+        <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect width="28" height="28" rx="7" class="brand-mark"></rect><path d="M7 15v-2M11 18v-8M15 20V8M19 17v-6M23 15v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg>
+        <span>Soundstage</span>
+      </div>
+      <label class="project-picker">
+        <span class="sr-only">Project</span>
+        <select id="project"></select>
+      </label>
+      <button type="button" class="btn btn-small" id="new-project">New project</button>
+      <span id="project-state" class="chip" role="status"></span>
+      <span id="save-state" class="muted small" role="status"></span>
+      <span class="spacer"></span>
+      <div class="seg layout-toggle" role="group" aria-label="Layout" id="layout">
+        <button type="button" id="toggle-outline" aria-pressed="true" aria-label="Show the outline column" title="Outline column">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16M5.5 8h1.5M5.5 11h1.5"></path></svg>
+        </button>
+        <button type="button" id="toggle-writer" aria-pressed="true" aria-label="Show the writer column" title="Writer column">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16M17 8h1.5M17 11h1.5"></path></svg>
+        </button>
+      </div>
+      <div class="seg" role="group" aria-label="Script mode" id="mode"></div>
+      <span id="gpu" class="gpu"></span>
+      <div class="auto-status" id="auto-status" role="status" hidden>
+        <span class="auto-dot" aria-hidden="true"></span>
+        <span id="auto-status-text"></span>
+        <button type="button" class="btn btn-small" id="auto-interrupt">Interrupt</button>
+      </div>
+      <button type="button" class="chip batch-chip" id="batch-state" hidden></button>
+      <button type="button" class="btn btn-small" id="batch-open" title="Produce several prepared projects one after another">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
+        Batch
       </button>
-      <button type="button" id="toggle-writer" aria-pressed="true" aria-label="Show the writer column" title="Writer column">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M15 4v16M17 8h1.5M17 11h1.5"></path></svg>
-      </button>
-    </div>
-    <div class="seg" role="group" aria-label="Script mode" id="mode"></div>
-    <span id="gpu" class="gpu"></span>
-    <div class="auto-status" id="auto-status" role="status" hidden>
-      <span class="auto-dot" aria-hidden="true"></span>
-      <span id="auto-status-text"></span>
-      <button type="button" class="btn btn-small" id="auto-interrupt">Interrupt</button>
-    </div>
-    <button type="button" class="chip batch-chip" id="batch-state" hidden></button>
-    <button type="button" class="btn btn-small" id="batch-open" title="Produce several prepared projects one after another">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
-      Batch
-    </button>
-    <div class="auto-split" id="auto-split">
-      <button type="button" class="btn btn-small" id="auto" title="Rewrite the script if it needs it, make every missing voice and sound, then speak">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-        Auto-produce
-      </button>
-      <details class="menu" id="auto-menu">
-        <summary class="btn btn-small" aria-label="Auto options">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
-        </summary>
-        <div class="menu-items auto-options">
-          <p class="small">Auto rewrites the script unless the writer already did, makes every missing voice and (in Advanced) every missing sound, then speaks.</p>
-          <label class="check"><input type="checkbox" id="auto-illustrate"> Generate illustrations after speech (reuse the saved shot plan)</label>
-          <label class="check"><input type="checkbox" id="auto-save"> Save the voices it makes to the speaker group</label>
-        </div>
-      </details>
-    </div>
-  </header>
+      <div class="auto-split" id="auto-split">
+        <button type="button" class="btn btn-small" id="auto" title="Rewrite the script if it needs it, make every missing voice and sound, then speak">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+          Auto-produce
+        </button>
+        <details class="menu" id="auto-menu">
+          <summary class="btn btn-small" aria-label="Auto options">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+          </summary>
+          <div class="menu-items auto-options">
+            <p class="small">Auto rewrites the script unless the writer already did, makes every missing voice and (in Advanced) every missing sound, then speaks.</p>
+            <label class="check"><input type="checkbox" id="auto-illustrate"> Generate illustrations after speech (reuse the saved shot plan)</label>
+            <label class="check"><input type="checkbox" id="auto-save"> Save the voices it makes to the speaker group</label>
+          </div>
+        </details>
+      </div>
+    </header>
 
-  <nav class="steps" aria-label="Steps">
-    <button type="button" class="step" id="step-script" data-screen="script">
-      <span class="step-dot" aria-hidden="true">1</span>
-      <span class="step-text"><strong>Script</strong><span id="script-summary"></span></span>
-    </button>
-    <span class="step-arrow" aria-hidden="true"></span>
-    <button type="button" class="step" id="step-cast" data-screen="cast">
-      <span class="step-dot" aria-hidden="true">2</span>
-      <span class="step-text"><strong>Cast &amp; sounds</strong><span id="cast-summary"></span></span>
-    </button>
-    <span class="step-arrow" aria-hidden="true"></span>
-    <button type="button" class="step" id="step-mix" data-screen="mix">
-      <span class="step-dot" aria-hidden="true">3</span>
-      <span class="step-text"><strong>Mix &amp; review</strong><span id="mix-summary"></span></span>
-    </button>
-    <span class="step-arrow" aria-hidden="true"></span>
-    <button type="button" class="step" id="step-illustrate" data-screen="illustrate">
-      <span class="step-dot" aria-hidden="true">4</span>
-      <span class="step-text"><strong>Illustrate</strong><span id="illustrate-summary"></span></span>
-    </button>
-  </nav>
+    <nav class="steps" aria-label="Steps">
+      <button type="button" class="step" id="step-script" data-screen="script">
+        <span class="step-dot" aria-hidden="true">1</span>
+        <span class="step-text"><strong>Script</strong><span id="script-summary"></span></span>
+      </button>
+      <span class="step-arrow" aria-hidden="true"></span>
+      <button type="button" class="step" id="step-cast" data-screen="cast">
+        <span class="step-dot" aria-hidden="true">2</span>
+        <span class="step-text"><strong>Cast &amp; sounds</strong><span id="cast-summary"></span></span>
+      </button>
+      <span class="step-arrow" aria-hidden="true"></span>
+      <button type="button" class="step" id="step-mix" data-screen="mix">
+        <span class="step-dot" aria-hidden="true">3</span>
+        <span class="step-text"><strong>Mix &amp; review</strong><span id="mix-summary"></span></span>
+      </button>
+      <span class="step-arrow" aria-hidden="true"></span>
+      <button type="button" class="step" id="step-illustrate" data-screen="illustrate">
+        <span class="step-dot" aria-hidden="true">4</span>
+        <span class="step-text"><strong>Illustrate</strong><span id="illustrate-summary"></span></span>
+      </button>
+    </nav>
+  </div>
 
   <!-- Script: outline, script and writer; either side column can be hidden from the top bar -->
   <main class="main" id="screen-script" hidden>
     <div class="columns script-columns">
       <aside class="side outline-col" id="outline-col" aria-label="Outline">
+        <section class="card overview-card" id="script-overview" aria-label="Project overview">
+          <div class="overview-head">
+            <h2 class="rail-title">Overview</h2>
+            <span class="chip" id="overview-mode"></span>
+          </div>
+          <div class="overview-stats">
+            <div class="overview-stat"><strong class="num" id="overview-duration">—</strong><span>Est. time</span></div>
+            <div class="overview-stat"><strong class="num" id="overview-lines">0</strong><span>Lines</span></div>
+            <div class="overview-stat"><strong class="num" id="overview-assets">0/0</strong><span>Cast ready</span></div>
+          </div>
+        </section>
         <section class="card rail" aria-labelledby="outline-scenes-title">
           <h2 class="rail-title" id="outline-scenes-title">Scenes</h2>
           <div class="rail-list" id="outline-scenes"></div>
@@ -106,15 +119,17 @@
             <div class="menu-items" id="example-items"></div>
           </details>
         </div>
-        <div class="editor" id="code-view">
-          <div class="editor-body">
-            <span class="line-band" id="line-band" aria-hidden="true" hidden></span>
-            <pre class="editor-mirror" id="script-mirror" aria-hidden="true"></pre>
-            <textarea id="script-text" spellcheck="false" aria-label="Speech text"
-                      placeholder="Mia: Welcome [with warm excitement] back!&#10;Leo: Took you long enough. [laughs]"></textarea>
+        <div class="script-scroll" id="script-scroll">
+          <div class="editor" id="code-view">
+            <div class="editor-body">
+              <span class="line-band" id="line-band" aria-hidden="true" hidden></span>
+              <pre class="editor-mirror" id="script-mirror" aria-hidden="true"></pre>
+              <textarea id="script-text" spellcheck="false" aria-label="Speech text"
+                        placeholder="Mia: Welcome [with warm excitement] back!&#10;Leo: Took you long enough. [laughs]"></textarea>
+            </div>
           </div>
+          <div class="visual" id="visual-view" aria-label="Script, as scenes" hidden></div>
         </div>
-        <div class="visual" id="visual-view" aria-label="Script, as scenes" hidden></div>
         <div class="syntax-strip small">
           <span><code class="tok-name" style="color: var(--tone-0)">Mia:</code> starts a line</span>
           <span><code class="tok-cue">[softly]</code> delivery cue</span>
@@ -142,27 +157,35 @@
             <button type="button" role="tab" id="writer-tab-paste" aria-selected="false" aria-controls="writer-paste" tabindex="-1">Another chat model</button>
           </div>
           <div class="writer-panel" id="writer-built" role="tabpanel" aria-labelledby="writer-tab-built">
-            <div class="field">
-              <span class="label">Speakers</span>
-              <div class="seg seg-fill" role="group" aria-label="Speakers" id="speaker-mode"></div>
+            <div class="writer-fields">
+              <div class="field">
+                <span class="label">Speakers</span>
+                <div class="seg seg-fill" role="group" aria-label="Speakers" id="speaker-mode"></div>
+              </div>
+              <div class="field">
+                <span class="label">How it writes</span>
+                <div class="workflows" role="group" aria-label="How it writes" id="workflows"></div>
+              </div>
+              <label class="switch"><input type="checkbox" role="switch" id="strict"><span class="switch-track" aria-hidden="true"></span> Keep my exact words</label>
+              <details class="more">
+                <summary>More writer settings</summary>
+                <div class="more-body" id="writer-more"></div>
+              </details>
             </div>
-            <div class="field">
-              <span class="label">How it writes</span>
-              <div class="workflows" role="group" aria-label="How it writes" id="workflows"></div>
+            <div class="writer-foot">
+              <button type="button" class="btn btn-primary btn-block" id="rewrite">Rewrite script</button>
             </div>
-            <label class="switch"><input type="checkbox" role="switch" id="strict"><span class="switch-track" aria-hidden="true"></span> Keep my exact words</label>
-            <details class="more">
-              <summary>More writer settings</summary>
-              <div class="more-body" id="writer-more"></div>
-            </details>
-            <button type="button" class="btn btn-primary btn-block" id="rewrite">Rewrite script</button>
           </div>
           <div class="writer-panel" id="writer-paste" role="tabpanel" aria-labelledby="writer-tab-paste" hidden>
-            <p class="muted small">Copy the full writer prompt into any chat model, then paste its JSON reply. It is checked like the built-in writer.</p>
-            <button type="button" class="btn btn-small" id="copy-prompt">Copy full writer prompt</button>
-            <label class="field"><span class="label">Pasted reply</span>
-              <textarea id="reply" rows="6" placeholder='{"script": "Mia: ...", "speakers": [...]}'></textarea></label>
-            <button type="button" class="btn btn-primary btn-block" id="apply-reply">Apply pasted reply</button>
+            <div class="writer-fields">
+              <p class="muted small">Copy the full writer prompt into any chat model, then paste its JSON reply. It is checked like the built-in writer.</p>
+              <button type="button" class="btn btn-small" id="copy-prompt">Copy full writer prompt</button>
+              <label class="field"><span class="label">Pasted reply</span>
+                <textarea id="reply" rows="6" placeholder='{"script": "Mia: ...", "speakers": [...]}'></textarea></label>
+            </div>
+            <div class="writer-foot">
+              <button type="button" class="btn btn-primary btn-block" id="apply-reply">Apply pasted reply</button>
+            </div>
           </div>
         </section>
       </aside>
@@ -171,21 +194,34 @@
 
   <!-- Cast & sounds -->
   <main class="main" id="screen-cast" hidden>
-    <div class="columns">
+    <section class="card cast-overview" aria-label="Cast and sounds overview">
+      <div class="cast-overview-badges">
+        <span class="overview-badge" id="cast-overview-voices"></span>
+        <span class="overview-badge" id="cast-overview-sounds"></span>
+      </div>
+      <div class="seg" role="group" aria-label="Cast view" id="cast-view-filter">
+        <button type="button" data-view="split" aria-pressed="true">Split view</button>
+        <button type="button" data-view="voices" aria-pressed="false">Voices</button>
+        <button type="button" data-view="sounds" aria-pressed="false">Sounds &amp; music</button>
+      </div>
+      <span class="spacer"></span>
+      <div class="cast-overview-tools">
+        <label class="inline-field">Saved to
+          <select id="speaker-group"></select>
+        </label>
+        <button type="button" class="btn btn-small" id="new-group">New group</button>
+        <button type="button" class="btn btn-small" id="open-library">Voice library</button>
+      </div>
+    </section>
+    <div class="columns cast-columns">
       <div class="cast-main">
-        <section class="card" aria-labelledby="voices-title">
+        <section class="card" id="cast-voices-card" aria-labelledby="voices-title">
           <div class="card-head">
             <h2 id="voices-title">Voices <span class="muted" id="voices-count"></span></h2>
-            <span class="spacer"></span>
-            <label class="inline-field">Saved to
-              <select id="speaker-group"></select>
-            </label>
-            <button type="button" class="btn btn-small" id="new-group">New group</button>
-            <button type="button" class="btn btn-small" id="open-library">Voice library</button>
           </div>
           <div class="cast-grid" id="cast-grid"></div>
         </section>
-        <section class="card" aria-labelledby="sounds-title">
+        <section class="card" id="cast-sounds-card" aria-labelledby="sounds-title">
           <div class="card-head">
             <h2 id="sounds-title">Sounds &amp; music <span class="muted" id="sounds-count"></span></h2>
             <span class="spacer"></span>
@@ -195,7 +231,7 @@
           <div class="card-foot"><button type="button" class="btn btn-small" id="add-sound">Add sound</button></div>
         </section>
       </div>
-      <aside class="side">
+      <aside class="side cast-side">
         <section class="card slot-editor" id="slot-editor" aria-live="polite"></section>
         <details class="card generator-settings">
           <summary>Generator settings</summary>
@@ -208,7 +244,7 @@
   <!-- Mix & review -->
   <main class="main" id="screen-mix" hidden>
     <section class="card player" id="player" aria-label="Mix"></section>
-    <div class="columns">
+    <div class="columns mix-columns">
       <section class="card lines" aria-label="Lines">
         <div class="card-head">
           <h2>Lines</h2>
@@ -218,29 +254,37 @@
         </div>
         <ol class="line-list" id="lines"></ol>
       </section>
-      <aside class="side">
-        <section class="card inspector" id="inspector" aria-label="Picked line"></section>
-        <section class="card sound-settings" aria-label="How it sounds">
-          <h2>How it sounds</h2>
-          <p class="muted small">Used the next time you speak or remix this project.</p>
-          <div class="seg" role="group" aria-label="Speech preset" id="presets"></div>
-          <label class="check"><input type="checkbox" id="word-timing" checked> Word-by-word subtitles</label>
-          <div class="word-repair" id="word-repair"></div>
-          <details class="more speech-settings">
-            <summary>Speech settings</summary>
-            <div class="more-body" id="speech-settings"></div>
-          </details>
+      <aside class="side mix-side">
+        <section class="card mix-inspector-card" aria-label="Line and sound settings">
+          <div class="tabs" role="tablist" aria-label="Mix inspector">
+            <button type="button" role="tab" id="mix-tab-line" aria-selected="true" aria-controls="inspector">Picked line</button>
+            <button type="button" role="tab" id="mix-tab-sound" aria-selected="false" aria-controls="mix-sound-panel" tabindex="-1">How it sounds</button>
+          </div>
+          <div class="mix-inspector-body">
+            <section class="inspector" id="inspector" role="tabpanel" aria-labelledby="mix-tab-line" aria-label="Picked line"></section>
+            <section class="sound-settings" id="mix-sound-panel" role="tabpanel" aria-labelledby="mix-tab-sound" aria-label="How it sounds" hidden>
+              <h2>How it sounds</h2>
+              <p class="muted small">Used the next time you speak or remix this project.</p>
+              <div class="seg" role="group" aria-label="Speech preset" id="presets"></div>
+              <label class="check"><input type="checkbox" id="word-timing" checked> Word-by-word subtitles</label>
+              <div class="word-repair" id="word-repair"></div>
+              <details class="more speech-settings">
+                <summary>Speech settings</summary>
+                <div class="more-body" id="speech-settings"></div>
+              </details>
+            </section>
+          </div>
         </section>
+        <section class="card video-pointer" id="video-panel" aria-label="Illustrated video" hidden></section>
       </aside>
     </div>
-    <section class="card video-pointer" id="video-panel" aria-label="Illustrated video" hidden></section>
   </main>
 
   <!-- Illustrate: the shot plan, or its characters and places, drawn into stills that play in the shared player -->
   <main class="main" id="screen-illustrate" hidden>
-    <div class="columns">
+    <div class="columns illustrate-columns">
       <section class="card illustrate-main" id="illustrate-main" aria-label="Shot plan"></section>
-      <aside class="side">
+      <aside class="side illustrate-side">
         <section class="card shot-inspector" id="shot-inspector" aria-live="polite"></section>
       </aside>
     </div>

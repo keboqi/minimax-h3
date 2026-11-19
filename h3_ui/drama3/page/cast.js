@@ -1,5 +1,5 @@
 // Cast view and local controls for Soundstage.
-export function createCast({state, $, h, toneColor, svg, NO_GPU, AUTO_STAGES, autoRunning, flushSlots, saveSlot, reviewSlotProposal, saveCastSettings, resizeSlots, useSaved, make, chooseClip, saveToLibrary, removeClip, scriptSpeakers, NAME, TOKEN, getLibrary}) {
+export function createCast({state, $, h, toneColor, svg, NO_GPU, AUTO_STAGES, autoRunning, flushSlots, saveSlot, reviewSlotProposal, saveCastSettings, resizeSlots, useSaved, make, chooseClip, saveToLibrary, removeClip, scriptSpeakers, NAME, TOKEN, getLibrary, onCastRendered = () => {}}) {
   function castRunning() { return Boolean(state.castRun?.active) || autoRunning(); }
   /** The run making the cast: a cast job, or Auto while it makes voices and sounds. */
   function castJob() {
@@ -129,6 +129,7 @@ export function createCast({state, $, h, toneColor, svg, NO_GPU, AUTO_STAGES, au
         })));
     }
     $("add-sound").disabled = sounds.length >= state.boot.slots.sounds;
+    onCastRendered();
   }
 
   function field(label, input) {

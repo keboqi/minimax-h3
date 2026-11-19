@@ -1,5 +1,6 @@
 import {effectsEnabled} from "./effects.js";
 import {bindFullscreen} from "./fullscreen.js";
+import {readPref, writePref} from "./layout.js";
 
 // Mix view and local controls for Soundstage.
 export function lineTakes(result) {
@@ -13,10 +14,23 @@ export function lineTakes(result) {
 
 export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast}) {
   const box = $("player");
+  const COMPACT_KEY = "h3-soundstage-player-compact";
+  let compactPlayer = readPref(COMPACT_KEY) === "true";
+  let compactButton = null;
+  const syncCompact = (enabled = Boolean(state.project?.result)) => {
+    box.classList.toggle("is-compact", enabled && compactPlayer && document.fullscreenElement !== box);
+    if (compactButton) {
+      compactButton.textContent = compactPlayer ? "Show timeline" : "Compact";
+      compactButton.setAttribute("aria-expanded", String(!compactPlayer));
+    }
+  };
   const fullscreenButton = h("button", {type: "button", class: "btn btn-small", id: "player-fullscreen", hidden: true}, "Fullscreen");
   const fullscreen = bindFullscreen(box, fullscreenButton, toast);
   // Repaint the effects canvas at the new size even while playback is paused.
-  box.addEventListener("fullscreenchange", () => requestAnimationFrame(sync));
+  box.addEventListener("fullscreenchange", () => {
+    syncCompact();
+    requestAnimationFrame(sync);
+  });
 
   function setSubtitles(on) {
     state.project.video.subtitles = on;
@@ -92,12 +106,23 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
     const showingVideo = source && state.mediaMode === "video";
     if (!showingVideo || box.parentElement.hidden) fullscreen?.exit();
     if (!result) {
+      compactButton = null;
+      syncCompact(false);
       box.replaceChildren(h("div", {class: "not-spoken"},
         h("strong", {}, "Not spoken yet"),
         h("p", {class: "muted"}, "Speak renders the project as last saved in the Soundstage tab. "
           + "Its timeline, lines and takes appear here.")));
       return;
     }
+    compactButton = h("button", {
+      type: "button", class: "btn btn-small", id: "player-compact-toggle",
+      onclick: () => {
+        compactPlayer = !compactPlayer;
+        writePref(COMPACT_KEY, compactPlayer);
+        syncCompact(true);
+      },
+    });
+    syncCompact(true);
     const playButton = h("button", {type: "button", class: "play", id: "play", "aria-label": "Play",
                                     onclick: () => (getPlayer().paused ? getPlayer().play() : getPlayer().pause())}, svg(ICONS.play, 18, true));
     const head = h("div", {class: "player-head"},
@@ -106,6 +131,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         h("strong", {}, result.title || state.project.title || state.project.name),
         h("span", {class: "muted small num", id: "clock"}, `0:00 / ${clock(result.duration)}`)),
       h("span", {class: "spacer"}),
+      compactButton,
       source ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
         ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),
                                                        onclick: () => setMediaMode(mode)}, mode === "audio" ? "Audio" : "Video"))) : null,
@@ -130,7 +156,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       else mixVideo.onclick = playing;
       // Drawn stills keep the frame they were drawn in; a tall one gets a tall stage.
       const tall = (stills ? state.project.video.stills.orientation : state.project.video.orientation) === "portrait";
-      stage = h("div", {class: "video-area"},
+      stage = h("div", {class: tall ? "video-area is-portrait" : "video-area"},
         h("div", {class: tall ? "video-stage portrait" : "video-stage", id: "video-stage",
                   style: {"--caption-scale": String(state.project.video.subtitle_size / 100)}},
           picture, h("p", {class: "video-caption", id: "video-caption", "aria-live": "off"})));
@@ -205,7 +231,12 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
                               h("span", {}, h("i", {style: {background: "var(--cue-line)"}}), "One-shot effect")] : null,
       h("span", {class: "spacer"}),
       h("span", {}, "Click a clip or a line to jump there"));
-    box.replaceChildren(...[head, stage, timeline, legend].filter(Boolean));
+    const deck = h("div", {class: "player-deck"},
+      stage,
+      h("div", {class: "player-timeline-wrap"},
+        h("div", {class: "player-timeline-scroll"}, timeline),
+        legend));
+    box.replaceChildren(head, deck);
   }
 
   function wordNodes(line) {

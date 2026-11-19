@@ -1,8 +1,9 @@
 // The Script step's two views (code and visual) and the estimated timeline that follows them.
 // The timeline and the script locate each other by script line: the preview numbers every line and sound.
 import {effectTrack} from "./effects.js";
+import {readPref, writePref} from "./layout.js";
 
-export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows}) {
+export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows, onEstimate = () => {}}) {
   const VIEW_KEY = "h3-soundstage-script-view";
   const CONTAINER = /(<\/?(?:parallel|sequential)\b[^<>]*>)/i;
   // Like the speech parser, a sound tag must open and close on one line; one split over lines is read as speech.
@@ -12,10 +13,9 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   const EDIT_ICON = "M4 20h4L19 9l-4-4L4 16v4z";
   const TIMELINE_KEY = "h3-soundstage-timeline";
   let flashTimer = 0, visualTimer = 0, outlineTimer = 0, frame = 0;
-  let timelineOpen = false;
-  try { timelineOpen = localStorage.getItem(TIMELINE_KEY) === "open"; } catch { /* Storage may be blocked. */ }
+  let timelineOpen = readPref(TIMELINE_KEY) === "open";
 
-  try { state.scriptView = localStorage.getItem(VIEW_KEY) === "visual" ? "visual" : "code"; } catch { state.scriptView = "code"; }
+  state.scriptView = readPref(VIEW_KEY) === "visual" ? "visual" : "code";
   state.scriptLine = 1;
 
   // -- Reading the script ------------------------------------------------------
@@ -426,22 +426,36 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     markTimeline();
   }
 
-  /** The part of the window the script can be seen in: under the script's sticky head, above the sticky action bar. */
+  function scroller() {
+    const box = $("script-scroll");
+    if (!box || !box.clientHeight) return null;
+    const overflow = getComputedStyle(box).overflowY;
+    return overflow === "auto" || overflow === "scroll" ? box : null;
+  }
+
+  /** The part of the window the script can be seen in: the internal script scroller when locked, else the window. */
   function viewport() {
+    const box = scroller();
+    if (box) {
+      const rect = box.getBoundingClientRect();
+      return {top: rect.top, bottom: rect.bottom};
+    }
     const bar = document.querySelector(".actionbar");
     const head = document.querySelector("#screen-script .script-head");
     return {top: head ? Math.max(0, head.getBoundingClientRect().bottom) : 0,
             bottom: bar ? bar.getBoundingClientRect().top : window.innerHeight};
   }
 
-  /** Scroll the page so ``element`` sits in the middle of what can be seen. */
+  /** Scroll the script container (or page on narrow screens) so ``element`` sits in the middle of what can be seen. */
   function centre(element) {
     const rect = element.getBoundingClientRect();
     const view = viewport();
     const middle = (view.top + view.bottom) / 2;
     // A line taller than the view starts at its top instead.
     const delta = rect.height > view.bottom - view.top - 40 ? rect.top - view.top - 24 : rect.top + rect.height / 2 - middle;
-    window.scrollBy({top: delta, behavior: "smooth"});
+    const box = scroller();
+    if (box) box.scrollBy({top: delta, behavior: "smooth"});
+    else window.scrollBy({top: delta, behavior: "smooth"});
   }
 
   /** Open line ``n`` in the code view with the caret at its start. */
@@ -493,7 +507,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
 
   function setView(view) {
     state.scriptView = view;
-    try { localStorage.setItem(VIEW_KEY, view); } catch { /* Storage may be blocked. */ }
+    writePref(VIEW_KEY, view);
     const code = view === "code";
     $("code-view").hidden = !code;
     $("visual-view").hidden = code;
@@ -583,6 +597,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     if (!estimate || !estimate.lines.length) {
       box.replaceChildren(h("div", {class: "estimate-head"},
         h("span", {}, h("strong", {}, "Estimated timeline"), " · add a spoken line to see it")));
+      onEstimate();
       return;
     }
     const duration = estimate.duration || Math.max(...estimate.lines.map((line) => line.end));
@@ -633,7 +648,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     const toggle = h("button", {type: "button", class: "estimate-toggle", "aria-expanded": String(timelineOpen),
                                 title: "Show all timeline tracks", onclick: () => {
       timelineOpen = !timelineOpen;
-      try { localStorage.setItem(TIMELINE_KEY, timelineOpen ? "open" : "closed"); } catch { /* Storage may be blocked. */ }
+      writePref(TIMELINE_KEY, timelineOpen ? "open" : "closed");
       box.classList.toggle("open", timelineOpen);
       toggle.setAttribute("aria-expanded", String(timelineOpen));
       updateWindow();
@@ -646,6 +661,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
           + (estimate.actual ? "as spoken in the last mix" : spoken), located ? " · click to find it in the script" : ""),
         h("span", {class: "num"}, `${estimate.actual ? "" : "≈ "}${clock(duration)}`)),
       bands || "", lanesBox);
+    onEstimate();
     markTimeline();
     updateWindow();
     // Line and scene times come from the estimate, so the views and the outline redraw with it.
@@ -674,7 +690,8 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       editorWidth = width;
       if (state.project && !$("code-view").hidden) paintEditor();
     }).observe(area);
-    // The script grows with its text and the page scrolls, so the In view window follows the page.
+    // The script scrolls inside #script-scroll (or window on narrow screens), so the In view window follows both.
+    $("script-scroll")?.addEventListener("scroll", updateWindow, {passive: true});
     window.addEventListener("scroll", updateWindow, {passive: true});
     window.addEventListener("resize", () => { placeBand(); updateWindow(); });
     $("script-view").replaceChildren(...[["visual", "Visual", "M3 4h18v6H3zM3 14h12v6H3z"], ["code", "Code", "m8 7-5 5 5 5M16 7l5 5-5 5"]]

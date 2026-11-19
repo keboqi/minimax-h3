@@ -53,6 +53,14 @@ def run():
             page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
             expect(page.locator("#app")).to_be_visible()
             page.locator("#step-script").click()
+            no_page_scroll = "() => document.documentElement.scrollHeight <= window.innerHeight"
+            expect(page.locator("#script-overview")).to_be_visible()
+            assert page.evaluate(no_page_scroll)
+            assert page.evaluate("""() => {
+              const chrome = document.querySelector('.studio-chrome').getBoundingClientRect();
+              const bar = document.querySelector('.actionbar').getBoundingClientRect();
+              return chrome.top >= 0 && bar.bottom <= window.innerHeight;
+            }""")
             # The visual view reads the script as scenes; the timeline and both views find each other's lines.
             page.locator("#project").select_option("Scenes")
             expect(page.locator("#estimate .clip[data-line]")).to_have_count(6)
@@ -96,6 +104,7 @@ def run():
             page.locator("#toggle-writer").click()
             page.wait_for_function(fits)
             assert page.locator("#script-text").evaluate("a => a.clientHeight") > wide_height
+            assert page.evaluate(no_page_scroll)
             page.set_viewport_size({"width": 800, "height": 1000})
             page.wait_for_function(fits)
             page.set_viewport_size({"width": 1440, "height": 1000})
@@ -109,6 +118,16 @@ def run():
             assert fixture.store.soundstage_project("Night Market")[0]["text"] == "Mia: A newer line."
             page.locator("#step-cast").click()
             expect(page.locator("#cast-grid")).to_be_visible()
+            assert page.evaluate(no_page_scroll)
+            page.locator('#cast-view-filter button[data-view="voices"]').click()
+            expect(page.locator("#cast-voices-card")).to_be_visible()
+            expect(page.locator("#cast-sounds-card")).to_be_hidden()
+            page.locator('#cast-view-filter button[data-view="sounds"]').click()
+            expect(page.locator("#cast-voices-card")).to_be_hidden()
+            expect(page.locator("#cast-sounds-card")).to_be_visible()
+            page.locator('#cast-view-filter button[data-view="split"]').click()
+            expect(page.locator("#cast-voices-card")).to_be_visible()
+            expect(page.locator("#cast-sounds-card")).to_be_visible()
             page.locator("#open-library").click()
             expect(page.locator("#library-dialog")).to_be_visible()
             page.locator("#library-close").click()
@@ -119,6 +138,20 @@ def run():
             page.locator("#step-mix").click()
             expect(page.locator("#player .player-title")).to_be_visible()
             expect(page.get_by_role("heading", name="Illustrated video", exact=True)).to_be_visible()
+            assert page.evaluate(no_page_scroll)
+            page.locator("#mix-tab-sound").click()
+            expect(page.locator("#mix-sound-panel")).to_be_visible()
+            expect(page.locator("#inspector")).to_be_hidden()
+            page.locator("#mix-tab-line").click()
+            expect(page.locator("#inspector")).to_be_visible()
+            expect(page.locator("#mix-sound-panel")).to_be_hidden()
+            page.locator("#player-compact-toggle").click()
+            expect(page.locator("#player .player-deck")).to_be_hidden()
+            page.locator("#player-compact-toggle").click()
+            expect(page.locator("#player .player-deck")).to_be_visible()
+            page.locator("#step-illustrate").click()
+            assert page.evaluate(no_page_scroll)
+            page.locator("#step-mix").click()
             page.get_by_role("button", name="Video", exact=True).click()
             expect(page.locator("#still-back")).to_be_visible()
             page.get_by_role("button", name="Larger subtitles", exact=True).click()
