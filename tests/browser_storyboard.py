@@ -89,6 +89,14 @@ def check(context, url):
     picker = page.get_by_label("Storyboard", exact=True)
     picker.select_option(label="Board 0")
     expect(page.locator("#strip .frame")).to_have_count(8)
+    assert page.locator("main").bounding_box()["y"] < page.get_by_role("region", name="Filmstrip").bounding_box()["y"]
+    actions = page.get_by_text("Scene actions", exact=True)
+    duplicate = page.get_by_role("button", name="Duplicate scene")
+    expect(duplicate).to_be_hidden()
+    actions.click()
+    expect(duplicate).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(duplicate).to_be_hidden()
     page.wait_for_load_state("networkidle")
     page.screenshot(path=str(ARTIFACTS / "editor.png"))
 
@@ -116,6 +124,7 @@ def check(context, url):
     expect(page.locator("#scene-heading")).to_contain_text("Scene 3")
 
     stage = page.get_by_role("main")
+    inspector = page.locator("#inspector")
     prompt_tab = page.get_by_role("tab", name="Prompt & Flow")
     media_tab = page.get_by_role("tab", name=re.compile(r"^Media & Cast"))
     timing_tab = page.get_by_role("tab", name="Timing & Seed")
@@ -168,7 +177,7 @@ def check(context, url):
 
     # A run goes on while the page is reloaded and fills in the filmstrip.
     assert context.request.post(url + "/test/hold").ok
-    stage.get_by_role("button", name="Generate this scene").click()
+    inspector.get_by_role("button", name="Generate this scene").click()
     expect(page.locator("#run-status")).to_contain_text("Scene 1", timeout=10000)
     page.get_by_role("button", name=re.compile(r"Scene 5, ")).click()  # Browsing stays free during a run.
     expect(page.locator("#scene-heading")).to_contain_text("Scene 5")
@@ -185,6 +194,11 @@ def check(context, url):
     show_subtitles = page.get_by_role("checkbox", name="Show subtitles")
     burn_subtitles = page.get_by_role("checkbox", name="Burn in subtitles")
     scene_one.click()
+    subtitle_drawer = page.get_by_role("region", name="Subtitles", exact=True)
+    subtitle_toggle = page.get_by_role("button", name="Subtitles", exact=True)
+    expect(subtitle_drawer).to_be_hidden()
+    subtitle_toggle.click()
+    expect(subtitle_toggle).to_have_attribute("aria-expanded", "true")
     expect(show_subtitles).to_be_checked()
     expect(burn_subtitles).to_be_enabled()
     expect(burn_subtitles).not_to_be_checked()
@@ -198,15 +212,18 @@ def check(context, url):
     expect(show_subtitles).not_to_be_checked()
     show_subtitles.check()
     assert page.locator("#preview video").evaluate("(video) => video.textTracks[0].mode") == "showing"
+    page.keyboard.press("Escape")
+    expect(subtitle_drawer).to_be_hidden()
+    expect(subtitle_toggle).to_be_focused()
 
     # A second take asks before it changes the scene that continues from the first.
     scene_two.click()
     page.get_by_role("button", name="Text", exact=True).click()
     expect(page.locator("#checklist")).to_contain_text("Ready to generate")
-    stage.get_by_role("button", name="Generate this scene").click()
+    inspector.get_by_role("button", name="Generate this scene").click()
     expect(page.locator('#strip [aria-label^="Scene 2,"] .meta')).to_contain_text("Done", timeout=15000)
     page.get_by_role("button", name=re.compile(r"Scene 1, ")).click()
-    stage.get_by_role("button", name="Generate another take").click()
+    inspector.get_by_role("button", name="Generate another take").click()
     second_take = stage.get_by_role("button", name=re.compile(r"^Take 2\b"))
     expect(second_take).to_be_visible(timeout=15000)
     expect(page.locator("#run-status")).to_have_count(0, timeout=15000)
@@ -244,6 +261,7 @@ def check(context, url):
 
     # Cast pictures upload, Escape returns to the scene, and clicking a tag chip inserts into the prompt.
     page.get_by_role("button", name="Cast", exact=True).click()
+    expect(page.get_by_role("region", name="Filmstrip")).to_be_hidden()
     page.get_by_label("Name", exact=True).fill("Mei")
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Upload picture").click()
@@ -251,6 +269,17 @@ def check(context, url):
     expect(page.locator("#inspector").get_by_text("Mei", exact=True)).to_be_visible(timeout=10000)
     page.keyboard.press("Escape")
     expect(page.get_by_label("Scene title")).to_be_visible()
+    expect(page.get_by_role("region", name="Filmstrip")).to_be_visible()
+    page.get_by_role("button", name="Auto render", exact=True).click()
+    expect(page.get_by_role("heading", name="Queue storyboards")).to_be_visible()
+    pick = inspector.get_by_role("checkbox", name=re.compile(r"^Board 0\b"))
+    pick.check()
+    expect(pick).to_be_focused()
+    expect(inspector.get_by_role("button", name="Render and export 1 storyboard")).to_be_enabled()
+    inspector.get_by_role("button", name="Clear", exact=True).click()
+    expect(pick).not_to_be_checked()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("region", name="Filmstrip")).to_be_visible()
     page.get_by_role("button", name=re.compile(r"Scene 7, ")).click()
     page.get_by_role("button", name="References", exact=False).first.click()
     media_tab.click()
@@ -290,12 +319,15 @@ def check_full_preview(context, url):
     page.get_by_label("Storyboard", exact=True).select_option(seeded.json()["id"])
     expect(page.locator("#strip .frame")).to_have_count(3)
     toolbar = page.get_by_role("region", name="Subtitles", exact=True)
+    subtitle_toggle = page.get_by_role("button", name="Subtitles", exact=True)
     language = toolbar.get_by_role("combobox", name="Translation language", exact=True)
+    subtitle_toggle.click()
     expect(language).to_be_visible()
     with page.expect_response(lambda response: response.url.endswith("/subtitle-settings")) as saved:
         language.select_option("French")
     assert saved.value.ok
     page.reload(wait_until="domcontentloaded")
+    subtitle_toggle.click()
     expect(language).to_have_value("French")
     toolbar.get_by_text("Translation options", exact=True).click()
     model = toolbar.get_by_role("combobox", name="Translation model", exact=True)
@@ -319,6 +351,7 @@ def check_full_preview(context, url):
     assert regenerated.value.post_data_json["model"] == "gemini-3.5-flash-lite"
     expect(page.locator("#translate-scene")).to_be_enabled()
     page.reload(wait_until="domcontentloaded")
+    subtitle_toggle.click()
     expect(status).to_contain_text("Scene 1 · Subtitles available, translation ready")
     requests = []
     page.on("request", lambda request: requests.append(request.post_data_json)

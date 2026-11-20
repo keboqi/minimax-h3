@@ -29,7 +29,7 @@
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
-    includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
+    includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: false,
     showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
@@ -158,12 +158,14 @@
     state.board = data;
     const row = state.boot.boards.find((item) => item.id === data.id);
     if (row && data.generated !== undefined && row.generated !== data.generated) row.generated = data.generated;
-    if (!data.scenes.some((item) => item.id === state.sceneId)) {
+    const sceneRemoved = !data.scenes.some((item) => item.id === state.sceneId);
+    if (sceneRemoved) {
       state.sceneId = data.scenes[0].id;
       keepInspector = false;
     }
     if (data.run !== undefined) followRun(data.run);
     render({keepInspector});
+    if (sceneRemoved) revealSelectedFrame();
   };
 
   // Rendering -------------------------------------------------------------
@@ -182,6 +184,14 @@
     state.confirmProfile = false;
     renderTopbar();
     renderInspector();
+  };
+
+  const toggleSubtitleDrawer = (open) => {
+    state.subtitlesOpen = open;
+    placeSubtitleToolbar();
+    const toggle = $("toggle-subtitles");
+    toggle.setAttribute("aria-expanded", String(open));
+    (open ? $("close-subtitles") : toggle).focus();
   };
 
   const renderTopbar = () => {
@@ -205,17 +215,12 @@
       h("span", {className: "topbar-brand-icon", "aria-hidden": "true"},
         icon("M4 6h16v12H4z M10 9.5l5 2.5-5 2.5z")),
       h("strong", {}, "Storyboard"));
-    const subtitleToggle = chip("Subtitles", state.subtitlesOpen, () => {
-      state.subtitlesOpen = !state.subtitlesOpen;
-      const home = $("subtitle-toolbar-home");
-      if (home) home.hidden = !state.subtitlesOpen;
-      renderTopbar();
+    const subtitleToggle = button("Subtitles", () => toggleSubtitleDrawer(!state.subtitlesOpen), "btn sm", {
+      id: "toggle-subtitles", "aria-controls": "subtitle-toolbar", "aria-expanded": String(state.subtitlesOpen),
     });
-    const home = $("subtitle-toolbar-home");
-    if (home) home.hidden = !state.subtitlesOpen;
     $("topbar").replaceChildren(...[
       brand,
-      h("label", {className: "board-picker"}, "Storyboard", select),
+      h("div", {className: "board-picker"}, select),
       button("New storyboard", showStart, "btn sm"),
       h("div", {className: "stat-pill mono small"},
         `${scenes().length} scenes · ${state.board.total} · ${state.board.done} done`),
@@ -239,25 +244,30 @@
   const renderStage = () => {
     const item = scene();
     const index = scenes().indexOf(item);
+    const actionsOpen = $("scene-actions")?.open;
     $("stage-head").replaceChildren(
       h("div", {className: "nav-group"},
         button(icon("M15 6l-6 6 6 6"), () => step(-1), "btn icon", {"aria-label": "Previous scene", disabled: index === 0}),
         button(icon("M9 6l6 6-6 6"), () => step(1), "btn icon",
           {"aria-label": "Next scene", disabled: index === scenes().length - 1})),
-      h("span", {className: "scene-code mono"}, String(item.number).padStart(2, "0")),
       h("h1", {id: "scene-heading"}, `Scene ${item.number} · ${item.title || "Untitled scene"}`),
       stateBadge(item, false, "scene-state"),
       h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
-      h("div", {className: "stage-actions", role: "group", "aria-label": "Scene actions"},
-        button("Insert scene after", () => addScene(item.id), "btn sm"),
-        button("Insert video after", () => addScene(item.id, "media"), "btn sm",
-          {title: "Add a scene that plays a video from Media; the scene after it can continue it"}),
-        button("Duplicate scene", duplicateScene, "btn sm"),
-        h("span", {className: "divider", "aria-hidden": "true"}),
-        button("Move earlier", () => moveScene(-1), "btn sm", {disabled: item.number === 1}),
-        button("Move later", () => moveScene(1), "btn sm", {disabled: item.number === scenes().length}),
-        h("div", {className: "grow"}),
-        button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1})),
+      h("details", {className: "stage-actions", id: "scene-actions", open: Boolean(actionsOpen)},
+        h("summary", {className: "btn sm"}, "Scene actions"),
+        h("div", {className: "stage-action-list", onclick: (event) => {
+          if (!event.target.closest("button")) return;
+          const actions = $("scene-actions");
+          actions.open = false;
+          actions.querySelector("summary").focus();
+        }},
+          button("Insert scene after", () => addScene(item.id), "btn sm"),
+          button("Insert video after", () => addScene(item.id, "media"), "btn sm",
+            {title: "Add a scene that plays a video from Media; the scene after it can continue it"}),
+          button("Duplicate scene", duplicateScene, "btn sm"),
+          button("Move earlier", () => moveScene(-1), "btn sm", {disabled: index === 0}),
+          button("Move later", () => moveScene(1), "btn sm", {disabled: index === scenes().length - 1}),
+          button("Delete scene", deleteScene, "btn sm danger", {disabled: scenes().length === 1}))),
     );
     renderPreview();
     const notes = [];
@@ -470,7 +480,7 @@
       updatePreviewSubtitles(null, null);
       node.replaceChildren(h("div", {className: "empty"},
         h("strong", {}, take ? "This take is missing from disk" : item.kind === "media" ? "Not prepared yet" : "No take yet"),
-        h("span", {className: "muted"}, item.kind === "media"
+        h("span", {}, item.kind === "media"
           ? "Choose a video, set In, Out and Fit, then press Prepare clip."
           : state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
     }
@@ -553,11 +563,10 @@
         button("Use seed", () => useSeed(shown.seed), "btn sm",
           {title: "Set this scene's seed to this take's seed"})));
     }
-    const generate = generateSceneButton(item, "generate-scene");
     $("take-row").replaceChildren(...[
       chips.length ? h("div", {className: "take-chips"}, chips) : null,
       row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
-      generate ? h("div", {className: "take-foot"}, generate) : null].filter(Boolean));
+    ].filter(Boolean));
     const doomed = shown?.id === state.deletingTake && shown.id !== item.in_use ? shown : null;
     $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
       h("p", {}, state.question),
@@ -655,22 +664,10 @@
     if (data) applyBoard(data, {keepInspector: true});
   };
 
-  const FLOW_ICON = "M5 12h14M13 6l6 6-6 6";
-  const CUT_ICON = "M8.1 8.1L20 20M8.1 15.9L20 4M9 6a3 3 0 1 1-6 0a3 3 0 1 1 6 0M9 18a3 3 0 1 1-6 0a3 3 0 1 1 6 0";
   const VIDEO_ICON = "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM10 9l5 3-5 3z";
 
   const renderStrip = () => {
-    const stripHead = $("strip-head");
-    if (stripHead) {
-      stripHead.replaceChildren(
-        h("div", {className: "filmstrip-head-left"},
-          h("span", {className: "filmstrip-label"}, `Timeline · ${scenes().length} Scenes`),
-          h("span", {className: "small muted"}, "Click connector pill to toggle Continue vs Cut")),
-        h("div", {className: "chips"},
-          button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "btn sm"),
-          button([icon(VIDEO_ICON), "Add video from Media"], () => addScene(null, "media"), "btn sm",
-            {title: "A scene that plays a video from Media; the next scene can continue it"})));
-    }
+    $("strip-heading").textContent = `Timeline · ${scenes().length} scenes`;
     const running = activeGenerate()?.scene_id;
     const items = [];
     scenes().forEach((item, index) => {
@@ -736,10 +733,21 @@
         h("span", {className: "small muted"}, item.flow ? "Continue" : "Cut")));
       items.push(card);
     });
-    items.push(button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "add-frame"));
-    items.push(button([icon(VIDEO_ICON), "Add video from Media"], () => addScene(null, "media"), "add-frame",
-      {title: "A scene that plays a video from Media; the next scene can continue it"}));
+    items.push(h("div", {className: "filmstrip-add"},
+      button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "add-frame"),
+      button([icon(VIDEO_ICON), "Add video from Media"], () => addScene(null, "media"), "add-frame",
+        {title: "A scene that plays a video from Media; the next scene can continue it"})));
     $("strip").replaceChildren(...items);
+  };
+
+  const revealSelectedFrame = () => {
+    const strip = $("strip");
+    const selected = strip.querySelector('[aria-current="true"]');
+    if (!selected || !strip.clientWidth) return;
+    const viewport = strip.getBoundingClientRect();
+    const card = selected.getBoundingClientRect();
+    if (card.left < viewport.left) strip.scrollLeft += card.left - viewport.left;
+    else if (card.right > viewport.right) strip.scrollLeft += card.right - viewport.right;
   };
 
   const renderStripActions = () => {
@@ -775,16 +783,19 @@
     renderSubtitleControls(shownTake());
   };
 
-  const restoreSubtitleToolbar = () => {
+  const placeSubtitleToolbar = (panel = $("full-video").firstElementChild) => {
     const home = $("subtitle-toolbar-home");
     const toolbar = $("subtitle-toolbar");
-    if (!home.contains(toolbar)) home.append(toolbar);
+    const docked = panel && (state.subtitlesOpen || document.fullscreenElement === panel);
+    if (docked && toolbar.parentElement !== panel) panel.querySelector(".full-video-head").after(toolbar);
+    if (!docked && toolbar.parentElement !== home) home.append(toolbar);
+    home.hidden = docked || !state.subtitlesOpen;
   };
 
   const closeFullVideo = () => {
     const root = $("full-video");
     const videos = root.querySelectorAll("video");
-    restoreSubtitleToolbar();
+    placeSubtitleToolbar(null);
     refreshFullSubtitles = null;
     root.replaceChildren();
     videos.forEach(releaseVideo);
@@ -887,8 +898,7 @@
     const panel = h("div", {className: "full-video-panel", onfullscreenchange: () => {
       const expanded = document.fullscreenElement === panel;
       fullscreen.textContent = expanded ? "Exit fullscreen" : "Fullscreen";
-      if (expanded) panel.prepend($("subtitle-toolbar"));
-      else if (panel.isConnected) restoreSubtitleToolbar();
+      if (panel.isConnected) placeSubtitleToolbar(panel);
     }},
       h("div", {className: "full-video-head"},
         h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
@@ -896,6 +906,7 @@
         button("Close", closeFullVideo, "btn sm")),
       h("div", {className: "full-video-viewport"}, videos));
     $("full-video").replaceChildren(panel);
+    placeSubtitleToolbar(panel);
     refreshFullSubtitles = () => videos.forEach(updateSubtitles);
     loadClip(active, playlist[0]);
     playScene();
@@ -914,6 +925,7 @@
         button("Close", closeFullVideo, "btn sm")),
       h("video", {src: run.result_url, controls: true, preload: "metadata", "aria-label": "Full video"},
         subtitleTrack(run.subtitles_url))));
+    placeSubtitleToolbar();
   };
 
   // Moving between scenes -------------------------------------------------
@@ -926,14 +938,16 @@
     state.deletingTake = null;
     state.panel = null;
     state.confirmProfile = false;
+    const actions = $("scene-actions");
+    if (actions) actions.open = false;
     stored.set("h3-storyboard-scene", sceneId);
     document.querySelectorAll("#strip .frame").forEach((frame) => {
       frame.setAttribute("aria-current", String(frame.dataset.scene === sceneId));
-      if (frame.dataset.scene === sceneId) frame.scrollIntoView({block: "nearest", inline: "nearest"});
     });
     renderTopbar();
     renderStage();
     renderInspector();
+    revealSelectedFrame();
   };
   const step = (offset) => {
     const next = scenes()[scenes().indexOf(scene()) + offset];
@@ -941,8 +955,14 @@
   };
   document.addEventListener("keydown", (event) => {
     if (event.defaultPrevented || $("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
-    if (event.key === "Escape" && state.panel && !$("library").open) {
-      closePanel();
+    if (event.key === "Escape" && !$("library").open && !document.fullscreenElement) {
+      const actions = $("scene-actions");
+      if (state.subtitlesOpen) toggleSubtitleDrawer(false);
+      else if (state.panel) closePanel();
+      else if (actions?.open) {
+        actions.open = false;
+        actions.querySelector("summary").focus();
+      } else return;
       event.preventDefault();
       return;
     }
@@ -957,6 +977,8 @@
     const isPanel = Boolean(panels[state.panel]);
     const workarea = document.querySelector(".workarea");
     if (workarea) workarea.classList.toggle("panel-open", isPanel);
+    const filmstrip = $("filmstrip");
+    if (filmstrip) filmstrip.hidden = isPanel;
     const nodes = (panels[state.panel] || scenePanel)();
     $("inspector").classList.toggle("scene-mode", !isPanel);
     $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
@@ -1114,7 +1136,7 @@
     mirror.innerHTML = highlightPrompt(item.prompt ?? "");
     const textarea = h("textarea", {
       id: "scene-prompt",
-      rows: 14,
+      rows: 9,
       value: item.prompt ?? "",
       placeholder: "Describe what happens, the camera and the sound.",
       oninput: (event) => {
@@ -1179,8 +1201,7 @@
             event.preventDefault();
             activateTab(tabs[next][0]);
           },
-        }, label))),
-      checklist(item));
+        }, label))));
 
     const titleField = textField("Scene title", "title", {maxLength: 120});
 
@@ -1267,7 +1288,8 @@
       h("div", {className: "small muted"},
         h("strong", {style: "color:var(--text)"}, `${item.seconds}s`),
         ` · ${item.added || item.runs_as}`),
-      generateSceneButton(item, "inspector-generate-scene"));
+      generateSceneButton(item, "inspector-generate-scene"),
+      checklist(item));
 
     const body = tab === "media" ? mediaTab : (tab === "timing" ? timingTab : promptTab);
     const panel = h("div", {id: "inspector-tab-panel", role: "tabpanel", "aria-labelledby": `inspector-tab-${tab}`}, body);
@@ -1431,6 +1453,7 @@
     state.sceneId = data.scene_id;
     state.previewTake = null;
     applyBoard(data);
+    revealSelectedFrame();
   };
   const duplicateScene = async () => {
     const url = sceneUrl("/duplicate");
@@ -1439,12 +1462,16 @@
     if (!data) return;
     state.sceneId = data.scene_id;
     applyBoard(data);
+    revealSelectedFrame();
   };
   const moveScene = async (offset) => {
     const url = sceneUrl("/move");
     await flush();
     const data = await act(() => request("POST", url, {offset}));
-    if (data) applyBoard(data);
+    if (data) {
+      applyBoard(data);
+      revealSelectedFrame();
+    }
   };
   const deleteScene = async () => {
     if (!confirm(`Delete scene ${scene().number}?`)) return;
@@ -1632,13 +1659,14 @@
       h("h3", {}, "Cast Roster"),
       h("p", {className: "small muted"}, "Add a picture of each person. Scenes using Reference media can then tick them, so they look the same in every scene."),
       ...castRows,
-      h("label", {className: "field"}, "Name", name),
-      h("div", {className: "chips"},
-        button("Upload picture", async () => {
-          const [file] = await pickFiles("image/*", false);
-          if (file) add((form) => form.append("file", file));
-        }, "btn quiet"),
-        state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn")),
+      h("div", {className: "column cast-add"},
+        h("label", {className: "field"}, "Name", name),
+        h("div", {className: "chips"},
+          button("Upload picture", async () => {
+            const [file] = await pickFiles("image/*", false);
+            if (file) add((form) => form.append("file", file));
+          }, "btn quiet"),
+          state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn"))),
     ]);
 
     const collectProjectMedia = () => {
@@ -1674,7 +1702,7 @@
     const projectMedia = collectProjectMedia();
     const libGrid = h("div", {className: "project-media-grid"});
     const libStatus = h("p", {className: "small muted"});
-    const libQuery = h("input", {type: "search", placeholder: "Filter project media by name or scene…"});
+    const libQuery = h("input", {type: "search", "aria-label": "Search project media", placeholder: "Filter by name or scene…"});
     let libKind = "all";
 
     const renderProjectMedia = () => {
@@ -1779,14 +1807,17 @@
     }
     return notes.join(" · ");
   };
-  const autoPanel = () => {
+  const autoMonitor = () => {
     const auto = state.auto;
     const nodes = [
-      panelHead("Auto render"),
-      h("p", {className: "small muted"}, "Renders each selected storyboard's remaining scenes in turn. Once every scene of a storyboard is done, its full video is exported to Media and the next storyboard starts. It runs on the server, so this page can be closed; Jobs lists each storyboard's run."),
+      h("h3", {}, auto?.active ? "Active batch" : "Last batch"),
     ];
     if (auto) {
-      nodes.push(h("h3", {className: "small"}, auto.active ? "Rendering" : "Last auto render"),
+      nodes.push(h("div", {className: "column auto-progress"},
+        h("span", {className: "small mono"}, `${auto.finished} of ${auto.items.length} storyboards processed`),
+        h("progress", {value: auto.finished, max: auto.items.length, "aria-label": "Storyboards processed"}),
+        auto.active ? button(auto.stopping ? "Stopping…" : "Stop auto render", stopAuto, "btn danger",
+          {disabled: auto.stopping}) : null),
         auto.items.map((item) => {
           const live = item.id === auto.current && auto.status;
           return h("div", {className: "list-row"},
@@ -1798,43 +1829,65 @@
             button("Open", () => openBoard(item.id), "btn sm", {disabled: item.id === state.board.id}));
         }));
       if (auto.error) nodes.push(h("div", {className: "warning", role: "status"}, auto.error));
-      if (auto.active) {
-        nodes.push(h("div", {className: "chips"},
-          button(auto.stopping ? "Stopping…" : "Stop auto render", stopAuto, "btn danger", {disabled: auto.stopping})));
-        return nodes;
-      }
-    }
+    } else nodes.push(h("p", {className: "small muted"}, "No batch has run yet."));
+    return h("section", {className: "column"}, nodes);
+  };
+
+  const autoQueue = () => {
+    const nodes = [h("h3", {}, "Queue storyboards")];
     const boards = state.autoBoards;
-    if (!boards) return [...nodes, h("p", {className: "muted"}, "Loading storyboards…")];
+    if (state.auto?.active) nodes.push(h("p", {className: "small muted"}, "The next batch can start when the current batch finishes."));
+    else if (!boards) nodes.push(h("p", {className: "muted"}, "Loading storyboards…"));
+    else nodes.push(autoQueueControls(boards));
+    return h("section", {className: "column"}, nodes);
+  };
+
+  const autoQueueControls = (boards) => {
     const known = new Set(boards.map((board) => board.id));
     for (const id of [...state.autoSelected]) if (!known.has(id)) state.autoSelected.delete(id);
-    const chosen = boards.filter((board) => state.autoSelected.has(board.id));
-    const toggle = (id, on) => {
-      if (on) state.autoSelected.add(id); else state.autoSelected.delete(id);
-      renderInspector();
+    const renderButton = button("", startAuto, "btn primary");
+    const clearButton = button("Clear", () => {
+      state.autoSelected.clear();
+      syncSelection();
+    }, "btn sm");
+    const picks = boards.map((board) => ({
+      board,
+      input: h("input", {type: "checkbox", onchange: (event) => {
+        if (event.target.checked) state.autoSelected.add(board.id);
+        else state.autoSelected.delete(board.id);
+        syncSelection();
+      }}),
+    }));
+    const syncSelection = () => {
+      for (const {input, board} of picks) input.checked = state.autoSelected.has(board.id);
+      const count = state.autoSelected.size;
+      clearButton.disabled = renderButton.disabled = !count;
+      renderButton.textContent = count ? `Render and export ${count} storyboard${count === 1 ? "" : "s"}`
+        : "Select storyboards to render";
     };
-    nodes.push(
-      h("div", {className: "row"},
-        h("h3", {className: "small"}, "Choose storyboards"),
-        h("div", {className: "chips"},
-          button("Select all with scenes left", () => {
-            boards.filter((board) => board.runnable).forEach((board) => state.autoSelected.add(board.id));
-            renderInspector();
-          }, "btn sm"),
-          button("Clear", () => { state.autoSelected.clear(); renderInspector(); }, "btn sm", {disabled: !chosen.length}))),
-      boards.map((board) => h("label", {className: "list-row auto-pick"},
-        h("input", {type: "checkbox", checked: state.autoSelected.has(board.id),
-          onchange: (event) => toggle(board.id, event.target.checked)}),
+    syncSelection();
+    return [
+      h("div", {className: "chips"},
+        button("Select all with scenes left", () => {
+          boards.filter((board) => board.runnable).forEach((board) => state.autoSelected.add(board.id));
+          syncSelection();
+        }, "btn sm"),
+        clearButton),
+      picks.map(({board, input}) => h("label", {className: "list-row auto-pick"},
+        input,
         h("div", {className: "grow"},
           h("div", {}, board.name),
           h("div", {className: board.needs_input.length ? "small needs" : "small muted"}, autoBoardNote(board))))),
       h("p", {className: "small muted"}, "Storyboards render in the order listed. Scenes that still need input are skipped, and their storyboard isn't exported."),
-      h("div", {className: "chips"},
-        button(chosen.length ? `Render and export ${chosen.length} storyboard${chosen.length === 1 ? "" : "s"}` : "Select storyboards to render",
-          startAuto, "btn primary", {disabled: !chosen.length})),
-    );
-    return nodes;
+      h("div", {className: "chips"}, renderButton),
+    ];
   };
+
+  const autoPanel = () => [
+    panelHead("Auto render"),
+    h("p", {className: "small muted"}, "Auto render exports each completed storyboard to Media. The batch runs on the server, and you can follow each storyboard in Jobs."),
+    h("div", {className: "scene-columns"}, autoMonitor(), autoQueue()),
+  ];
 
   const WRITER_KEY = "h3-storyboard-writer";
   const writerSettings = () => {
@@ -1855,6 +1908,7 @@
     };
   };
   const bindSubtitleControls = () => {
+    $("close-subtitles").addEventListener("click", () => toggleSubtitleDrawer(false));
     const language = $("subtitle-language");
     language.replaceChildren(...state.boot.subtitle_languages.map((name) => h("option", {value: name}, name)));
     language.onchange = () => {
@@ -2196,7 +2250,7 @@
       const found = parseScenes(story.value);
       const total = found.reduce((sum, [, seconds]) => sum + (seconds ?? Number(usual.value)), 0);
       previewRoot.replaceChildren(
-        h("div", {className: "row"}, h("h2", {}, `${found.length} ${found.length === 1 ? "scene" : "scenes"}`),
+        h("div", {className: "row"}, h("h3", {}, `${found.length} ${found.length === 1 ? "scene" : "scenes"}`),
           h("span", {className: "mono small muted"}, `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`)),
         ...found.flatMap(([text, seconds], index) => [
           index > 0 ? h("span", {className: `start-conn mono ${connect === "cut" ? "cut" : ""}`},
@@ -2230,7 +2284,7 @@
     };
     root.replaceChildren(
       h("header", {className: "topbar"},
-        h("h1", {style: "font-size:22px"}, "New storyboard"), h("div", {className: "grow"}),
+        h("h1", {}, "New storyboard"), h("div", {className: "grow"}),
         state.boot.boards.length ? button("Cancel", () => openBoard(state.board?.id || state.boot.boards[0].id)) : null,
         button("Create storyboard", create, "btn primary")),
       h("div", {className: "start-grid"},
@@ -2245,6 +2299,7 @@
             undoBtn),
           status, writerForm()),
         h("aside", {className: "start-preview", "aria-label": "Scene preview"},
+          h("h2", {}, "Scene breakdown"),
           h("fieldset", {}, h("legend", {}, "How should the scenes connect?"), connectChips),
           previewRoot,
           h("p", {className: "small muted"}, state.boot.gpu
@@ -2281,6 +2336,7 @@
     $("start").hidden = true;
     $("editor").hidden = false;
     render();
+    revealSelectedFrame();
   };
   const openBoard = async (storyboardId) => {
     await flush();

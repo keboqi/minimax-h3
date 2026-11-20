@@ -4,8 +4,8 @@ The **Storyboard** task makes a long video from a list of scenes. Each scene is 
 MiniMax H3 clip. A scene either **continues** the one before it, so motion and sound
 carry on, or **starts fresh** as a new shot. The scenes are joined into one video at
 the end. It sits in Create between Remake and Soundstage. Background and decisions are
-in the [plan](../plans/long-video-storyboard.md); the agreed design is the
-[Storyboard Redesign canvas](https://claude.ai/artifact/ETR9sQf3pvaVTFTX737mv9).
+in the [plan](../plans/long-video-storyboard.md). The current layouts are in the
+[Storyboard design files](../../designs/storyboard-refactor/project/).
 
 Storyboard is a page of its own at `/storyboard/`, outside Gradio; the tab shows it in a
 frame. The browser holds the whole storyboard, so moving between scenes (the filmstrip,
@@ -50,9 +50,10 @@ The storyboard picker marks a project **Generated** as soon as it has a recorded
 
 ## A scene
 
-The filmstrip along the top shows each scene's picture, number, title, length and a
+The timeline below the preview and inspector shows each scene's picture, number, title, length and a
 status: Done, Out of date, Not generated or Needs input. A line between two scenes marks
-a fresh start (a cut). Click a scene to edit it; **Add scene** adds one at the end.
+a fresh start (a cut). Click a scene to edit it. Use **Add scene** at the end of the
+timeline or **Scene actions** above the preview to insert, duplicate, move, or delete a scene.
 
 The heading names the scene and the H3 mode it runs as, and the inspector on the right
 says what it comes after. It then offers exactly what that scene can use:
@@ -92,7 +93,8 @@ starts stop changes from rippling further.
 ## Subtitles
 
 Dialogue and lyrics inside `<d>` tags in a take's prompt appear as optional subtitles
-with estimated timing. Use the player's subtitle control to show them.
+with estimated timing. Use the player's subtitle control or open **Subtitles** in the
+top bar to change their visibility.
 In **Storyboard settings**, turn on **Automatically generate word-aligned subtitles after each take**
 to transcribe and time the generated audio as each take finishes. This setting is off by default.
 In Studio, **Generate word-aligned subtitles** analyzes the generated takes currently in use,
@@ -100,16 +102,16 @@ even while the storyboard is incomplete. It reuses completed analyses and can re
 had a problem. If speech can only be timed as whole lines, those lines are kept.
 
 The full storyboard preview uses the selected takes' subtitles. **Show subtitles** controls
-them across the entire preview. In **Storyboard settings → Subtitle translation**, choose a
+them across the entire preview. In the **Subtitles** drawer, choose a
 target language and model. The default is **Gemma 4 26B A4B IT**, with **Gemma 4 31B IT** and
 **Gemini 3.5 Flash-Lite** also available. All three use the Gemini API key shared with Prompt
 writer. Leave the key blank to use the server's Gemini API key.
 
 **Show translation** adds a smaller, line-timed row under the original captions in either the
-scene take player or the full preview. **Translate subtitles** on the filmstrip turns it on by
-default for the full preview and includes it in **Export to Media**. Scene playback translates
-only the take being previewed. Full playback and export translate missing captions in storyboard
-order and reuse translations saved for the same take and language, even after you select a
+scene take player or the full preview. **Translate this take** translates the take being
+previewed. **Translate missing takes** translates the current takes in storyboard order.
+**Translate on export** includes translations in **Export to Media**. These actions reuse
+translations saved for the same take and language, even after you select a
 different model. **Regenerate translation** replaces the saved translation using the selected
 model. If the original caption text changes, its translation is generated again.
 
