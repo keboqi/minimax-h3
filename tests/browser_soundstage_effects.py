@@ -69,7 +69,6 @@ def run(*, webgpu=False):
     thread = Thread(target=lambda: server.run(sockets=[listener]), daemon=True)
     try:
         fixture.ok(fixture.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
-        list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
         audio = BytesIO()
         with wave.open(audio, "wb") as wav:
             wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
@@ -98,9 +97,23 @@ def run(*, webgpu=False):
 
             page.on("console", record_console_error)
             page.route("**/soundstage/api/audio?*", lambda route: route.fulfill(body=audio.getvalue(), content_type="audio/wav"))
-            page.goto(f"http://127.0.0.1:{port}/soundstage/", wait_until="networkidle")
+            url = f"http://127.0.0.1:{port}/soundstage/"
+            page.goto(url, wait_until="networkidle")
             fullscreen = page.locator("#player-fullscreen")
             expect(fullscreen).to_have_count(0)
+            page.locator("#step-illustrate").click()
+            summary = page.locator("#shot-effects")
+            dialog = page.locator("#effects-dialog")
+            source = dialog.get_by_label("Preview source")
+            preview_image = dialog.locator(".effect-preview img")
+            summary.click()
+            expect(source).to_have_value("camera")
+            assert source.locator('option[value="shot"]').evaluate("option => option.disabled")
+            expect(preview_image).to_have_attribute("src", f"{url}effect-demo-camera.webp")
+            preview_image.evaluate("image => image.decode()")
+            dialog.get_by_role("button", name="Cancel", exact=True).click()
+            list(fixture.fake_export(fixture.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+            page.reload(wait_until="networkidle")
             page.locator("#step-illustrate").click()
             expect(page.locator("#still-back")).to_be_visible()
             inline_width = page.locator("#video-stage").evaluate("stage => stage.clientWidth")
@@ -116,16 +129,76 @@ def run(*, webgpu=False):
             engine = page.locator("#effects-engine")
             expect(engine).to_have_text("Effects engine · Idle")
             expect(page.locator("#lanes .effect-lane")).to_have_count(0)
-            assert page.locator("#shot-inspector select").count() == 3, (errors, page.locator("#screen-illustrate").inner_text())
+            expect(page.locator("#shot-inspector select")).to_have_count(0)
+            apply = dialog.get_by_role("button", name="Apply effects")
+            first_shot, second_shot = fixture.project()["video"]["plan"]["rows"]
+            page.locator('#shot-list .shot-row[data-shot="1"]').click()
+            summary.click()
+            expect(source).to_have_value("shot")
+            expect(preview_image).to_have_attribute("src", second_shot["image"])
+            dialog.get_by_role("button", name="Cancel", exact=True).click()
+            page.evaluate("""() => {
+              const decode = HTMLImageElement.prototype.decode;
+              HTMLImageElement.prototype.decode = function () {
+                if (this.closest('.effect-preview') && this.src.includes('/api/video/still?')) {
+                  HTMLImageElement.prototype.decode = decode;
+                  return Promise.reject(new Error('Cannot decode the shot'));
+                }
+                return decode.call(this);
+              };
+            }""")
+            summary.click()
+            expect(source).to_have_value("camera")
+            expect(dialog.get_by_role("status")).to_contain_text("The shot image couldn’t load.")
+            expect(preview_image).to_have_attribute("src", f"{url}effect-demo-camera.webp")
+            dialog.get_by_role("button", name="Cancel", exact=True).click()
+            page.locator('#shot-list .shot-row[data-shot="0"]').click()
+            expect(summary).to_contain_text("No effects selected")
+            summary.click()
+            expect(dialog).to_be_visible()
+            expect(apply).to_be_disabled()
+            expect(source).to_have_value("shot")
+            expect(preview_image).to_have_attribute("src", first_shot["image"])
+            preview_image.evaluate("image => image.decode()")
+            push = dialog.get_by_role("button", name="Slow push in", exact=True)
+            push.click()
+            expect(push).to_have_attribute("aria-pressed", "true")
+            for demo in ("camera", "atmosphere", "lighting"):
+                source.select_option(demo)
+                expect(preview_image).to_have_attribute("src", f"{url}effect-demo-{demo}.webp")
+                preview_image.evaluate("image => image.decode()")
+            dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+            expect(source).to_have_value("lighting")
+            expect(dialog.locator(".effect-summary-chips")).to_have_text("Slow push in")
+            source.select_option("shot")
+            expect(preview_image).to_have_attribute("src", first_shot["image"])
+            play_preview = dialog.get_by_role("button", name="Play preview")
+            play_preview.click()
+            page.wait_for_function("document.querySelector('.effect-preview img').style.transform !== 'scale(1)'")
+            dialog.get_by_role("button", name="Stop preview").click()
+            assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == []
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
-                page.get_by_label("Camera movement", exact=True).select_option("push_in")
-            expect(page.get_by_label("Camera movement", exact=True)).to_have_value("push_in")
+                apply.click()
+            expect(dialog).to_be_hidden()
+            expect(summary).to_be_focused()
+            expect(summary).to_contain_text("Slow push in")
             page.wait_for_load_state("networkidle")
             assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == ["push_in"], "camera did not save"
             expect(engine).to_have_text("Effects engine · Camera only")
+            summary.click()
+            expect(source).to_have_value("shot")
+            expect(push).to_have_attribute("aria-pressed", "true")
+            dialog.get_by_role("button", name="None", exact=True).click()
+            dialog.get_by_role("button", name="Cancel", exact=True).click()
+            expect(summary).to_contain_text("Slow push in")
+            summary.click()
+            dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+            expect(preview_image).to_have_attribute("src", first_shot["image"])
+            dialog.get_by_role("button", name="Rain", exact=True).click()
+            expect(dialog.locator(".effect-summary-chips")).to_contain_text("Rain")
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
-                page.get_by_label("Atmosphere", exact=True).select_option("rain")
-            expect(page.get_by_label("Atmosphere", exact=True)).to_have_value("rain")
+                apply.click()
+            expect(summary).to_contain_text("Rain")
             page.wait_for_load_state("networkidle")
             actual = fixture.project()["video"]["plan"]["rows"][0]["effects"]
             assert actual == ["push_in", "rain"], (actual, page.locator("body").inner_text(), errors)
@@ -207,19 +280,30 @@ def run(*, webgpu=False):
               };
               window.restoreEffectFetch = () => { window.fetch = originalFetch; };
             }""")
-            page.get_by_label("Atmosphere", exact=True).select_option("snow")
+            summary.click()
+            dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+            dialog.get_by_role("button", name="Snow", exact=True).click()
+            dialog.get_by_role("button", name="Lighting & framing", exact=True).click()
+            expect(preview_image).to_have_attribute("src", first_shot["image"])
+            dialog.get_by_role("button", name="Lightning", exact=True).click()
+            expect(dialog.get_by_text("Playing this preview includes brief flashes.")).to_be_visible()
+            assert page.evaluate("window.effectWrites.length") == 0
+            apply.click()
             page.wait_for_function("window.releaseEffectWrite !== undefined")
-            page.get_by_label("Lighting & framing", exact=True).select_option("lightning")
-            assert page.evaluate("window.effectWrites.length") == 1
+            expect(dialog.get_by_role("button", name="Saving…")).to_be_disabled()
+            page.keyboard.press("Escape")
+            expect(dialog).to_be_visible()
             page.evaluate("window.releaseEffectWrite()")
             expect(effect).to_have_text("Slow push in · Snow · Lightning")
             assert page.evaluate("window.effectWrites") == [
-                {"index": 0, "effect_kind": "atmosphere", "effect": "snow"},
-                {"index": 0, "effect_kind": "lighting", "effect": "lightning"},
+                {"index": 0, "effects": ["push_in", "snow", "lightning"]},
             ]
             page.evaluate("window.restoreEffectFetch()")
+            summary.click()
+            dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+            dialog.get_by_role("button", name="Rain", exact=True).click()
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
-                page.get_by_label("Atmosphere", exact=True).select_option("rain")
+                apply.click()
             expect(effect).to_have_text("Slow push in · Rain · Lightning")
             page.wait_for_load_state("networkidle")
             assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == ["push_in", "rain", "lightning"]

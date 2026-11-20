@@ -231,14 +231,18 @@ export function startWorkspace() {
   function editPlan(path, body) {
     const owner = scope(), url = named(path);
     const pending = planEdits.then(async () => {
+      let saved = false;
       try {
         await flushVideo();
         const data = await api(url, {method: "PATCH", body, unscoped: true});
-        if (owner === scope() && data.video) state.project.video = data.video;
+        if (owner === scope() && data.video) {
+          state.project.video = data.video;
+          saved = true;
+        }
       } catch (error) {
         if (owner === scope()) toast(error.message);
       }
-      if (pending !== planEdits || owner !== scope()) return;
+      if (pending !== planEdits || owner !== scope()) return saved;
       // Refresh after the queued edits so an earlier reply cannot reset a newer choice.
       document.activeElement?.blur();
       renderVideo();
@@ -246,6 +250,7 @@ export function startWorkspace() {
       renderActions();
       renderPlayer();
       sync();
+      return saved;
     }).catch((error) => { if (owner === scope()) toast(error.message); });
     planEdits = pending;
     return pending;

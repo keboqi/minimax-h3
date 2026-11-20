@@ -274,6 +274,19 @@ function splitEffects(list) {
   return layers;
 }
 
+// Preview canvases stay independent of the player's WebGPU surface and clock.
+export function paintEffectPreview(canvas, image, effects, seconds, duration) {
+  const {atmospheres, lights} = splitEffects(effects);
+  const camera = cameraFrame(effects, seconds / duration, seconds);
+  image.style.transform = camera.css;
+  image.style.filter = camera.filter;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const {width, height} = canvas;
+  ctx.clearRect(0, 0, width, height);
+  paintLayer2D(ctx, atmospheres, lights, seconds, seconds, width, height, 0, camera);
+}
+
 let lastPaintArgs = null;
 const paintedOverlays = new WeakSet();
 const dissolveCanvases = new WeakMap();

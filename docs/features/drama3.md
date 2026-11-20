@@ -234,8 +234,11 @@ same on Mix & review and Illustrate), and **A−**/**A+** size them from 50% to 
 both are saved with the project. The timeline and lines follow Video as they follow Audio.
 
 The shot planner can choose one camera move, one atmosphere, and one lighting effect per shot.
-Use **Camera movement**, **Atmosphere**, and **Lighting & framing** to change them without
-redrawing. Impact shake and flash can follow one-shot sound cues as well as the start of the shot.
+The shot inspector lists the selected effects. Open **Visual effects** there to browse preview
+cards for **Camera movement**, **Atmosphere**, and **Lighting & framing**. **Play preview** shows
+the combination on the selected shot's image. Use **Preview source** to switch to a demo scene.
+Shots without an image open on a demo. **Apply effects** saves your choices without redrawing.
+Impact shake and flash can follow one-shot sound cues as well as the start of the shot.
 Flash pulses are spaced at least half a second apart, including across cuts. **Visual effects**,
 beside Subtitles, turns effects on or off and saves that preference with the project. Effects
 follow the audio clock when playing, pausing and seeking. The browser's reduced-motion preference

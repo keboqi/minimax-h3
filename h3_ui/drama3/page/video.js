@@ -1,4 +1,5 @@
 import {effectsEnabled, effectTrack, lastAtOrBefore} from "./effects.js";
+import {openEffectsPicker} from "./effects_picker.js";
 import {paintStage, showStageStills, stageFrame, stageTimeline} from "./stage.js";
 
 const EMPTY = Object.freeze([]);
@@ -289,6 +290,8 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (!rows[state.shotPick]) state.shotPick = 0;
     const row = rows[state.shotPick];
     const busy = videoRunning();
+    const presets = state.boot.video.effect_presets || {};
+    const effectLabels = (row.effects || []).map((id) => presets[id]?.label).filter(Boolean);
     const subjects = new Map(state.project.video.plan.subjects.map((item) => [item.key, item]));
     const step = (by) => pickShot(Math.min(rows.length - 1, Math.max(0, row.index + by)));
     const draw = {drawn: "Draw this shot again", changed: "Redraw with the new prompt", todo: "Draw this shot"}[row.status];
@@ -314,18 +317,16 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
           h("div", {class: "seg", role: "group", "aria-label": "Transition"}, ["Cut", "Dissolve"].map((name) => h("button", {
             type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
             onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
-        ...[ ["camera", "Camera movement"], ["atmosphere", "Atmosphere"], ["lighting", "Lighting & framing"] ].map(([kind, label]) => {
-          const presets = state.boot.video.effect_presets || {};
-          const effects = row.effects || [];
-          return h("label", {class: "field"}, h("span", {class: "label"}, label),
-            h("select", {"aria-label": label, disabled: busy,
-              onchange: (event) => editShot({index: row.index,
-                effect_kind: kind, effect: event.target.value})},
-              h("option", {value: "", selected: !effects.some((id) => presets[id]?.kind === kind)}, "None"),
-              Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
-                h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
-        }),
-        h("p", {class: "muted small"}, "Visual effects play without redrawing and are included in saved videos when enabled. Reduced motion pauses effects in the player unless you explicitly turn Visual effects on.")),
+        h("button", {type: "button", id: "shot-effects", class: "effect-summary", "aria-haspopup": "dialog",
+          "aria-controls": "effects-dialog", disabled: busy,
+          onclick: () => openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
+            save: (effects) => editShot({index: row.index, effects}),
+            restoreFocus: () => $("shot-effects")?.focus()})},
+          h("span", {class: "effect-summary-head"}, h("strong", {}, "Visual effects"),
+            h("span", {class: "drawn-chip-edit"}, "Edit")),
+          h("span", {class: "effect-summary-chips"}, effectLabels.length
+            ? effectLabels.map((label) => h("span", {class: "chip"}, label))
+            : h("span", {class: "muted small"}, "No effects selected")))),
       h("div", {class: "shot-inspector-foot"},
         h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
                      onclick: () => drawImages([row.index])}, draw)));
