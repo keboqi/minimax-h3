@@ -44,10 +44,11 @@ def run():
                     chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
                     browser = playwright.chromium.launch(
                         headless=True, **({"executable_path": str(chrome)} if chrome.exists() else {}))
-                    check(browser.new_context(viewport={"width": 1440, "height": 1000}), url)
+                    context = browser.new_context(viewport={"width": 1440, "height": 1000})
+                    check(context, url)
+                    check_full_preview(context, url)
                     browser.close()
-                print("PASS: scene switching makes no server request, edits save alone, a run survives a reload, "
-                      "and takes, interrupt and cast work")
+                print("PASS: scene switching, saves, generation, takes, interrupt, cast and full preview")
             except BaseException:
                 print(log_path.read_text(encoding="utf-8", errors="replace")[-3000:])
                 raise
@@ -239,6 +240,47 @@ def check(context, url):
     page.get_by_role("button", name="+ Mei = <Picture 1>").click()
     expect(page.get_by_label("Prompt", exact=True)).to_have_value(re.compile(r"<Picture 1>"))
     assert not errors, errors
+
+
+def check_full_preview(context, url):
+    seeded = context.request.post(url + "/test/seed-preview")
+    assert seeded.ok
+    page = context.new_page()
+    errors = []
+    joins = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("request", lambda request: joins.append(request.url) if request.url.endswith("/join") else None)
+    page.goto(url + "/storyboard/", wait_until="domcontentloaded")
+    page.get_by_label("Storyboard", exact=True).select_option(seeded.json()["id"])
+    expect(page.locator("#strip .frame")).to_have_count(3)
+    page.get_by_role("button", name="Play full video").click()
+    preview = page.locator("#full-video")
+    position = preview.get_by_role("status")
+    subtitles = preview.get_by_role("checkbox", name="Show subtitles")
+    active = preview.locator("video:not(.standby)")
+    expect(position).to_have_text("Scene 1 of 3")
+    active.evaluate("video => video.pause()")
+    page.wait_for_function("""() => {
+      const next = document.querySelector('#full-video video.standby');
+      return next.readyState >= 2 && !next.seeking && next.currentTime === 1;
+    }""")
+    expect(subtitles).to_be_checked()
+    subtitles.uncheck()
+    preview.get_by_role("button", name="Fullscreen", exact=True).click()
+    expect(preview.get_by_role("button", name="Exit fullscreen")).to_be_visible()
+    active.evaluate("video => video.play()")
+    expect(position).to_have_text("Scene 2 of 3")
+    assert active.evaluate("video => video.currentTime >= 1 && video.textTracks[0].mode === 'disabled'")
+    subtitles.check()
+    expect(position).to_have_text("Scene 3 of 3")
+    page.wait_for_function("""() => document.querySelector('#full-video video:not(.standby)')
+      .textTracks[0]?.activeCues?.[0]?.text === 'Line 3'""")
+    expect(preview.get_by_role("button", name="Exit fullscreen")).to_be_visible()
+    preview.get_by_role("button", name="Close").click()
+    expect(preview.locator("video")).to_have_count(0)
+    assert not joins, joins
+    assert not errors, errors
+    page.close()
 
 
 def picture():

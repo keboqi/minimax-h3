@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import threading
 import wave
@@ -96,6 +97,26 @@ def seed(request: Request):
             service.set_mode(owner, storyboard_id, scene["id"], sb.FRAMES if index % 2 else sb.REFERENCES)
         boards.append(storyboard_id)
     return {"boards": boards}
+
+
+@server.post("/test/seed-preview")
+def seed_preview(request: Request):
+    owner = store.verify_owner(request.cookies.get(COOKIE))
+    profile = sb.make_profile(sb.request_defaults(), sb.request_defaults())
+    scenes = [sb.new_scene(f"Scene {number}", f"<d>Line {number}</d>", seconds=5, link=link)
+              for number, link in enumerate((sb.CUT, sb.FLOW, sb.CUT), 1)]
+    storyboard_id = service.create(owner, "Preview", profile, scenes=scenes)
+    for index, color in enumerate(("red", "green", "blue")):
+        path = runtime.output_dir / f"preview-{storyboard_id}-{index}.mp4"
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                        "-i", f"color={color}:s=160x90:r=24:d=3", "-f", "lavfi", "-i", "anullsrc",
+                        "-c:v", "libx264", "-c:a", "aac", "-shortest", "-movflags", "+faststart",
+                        str(path)], check=True, timeout=15)
+        board = service.load(owner, storyboard_id)
+        service.record_take(owner, storyboard_id, scenes[index]["id"], sb.new_id(), video=path,
+                            latents={"latent": None, "prefix_frames": 24 if index == 1 else 0},
+                            seed=0, inputs=sb.scene_inputs(board, index))
+    return {"id": storyboard_id}
 
 
 @server.post("/test/hold")

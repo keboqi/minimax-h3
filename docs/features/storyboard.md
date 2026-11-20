@@ -99,8 +99,8 @@ In Studio, **Generate word-aligned subtitles** analyzes the generated takes curr
 even while the storyboard is incomplete. It reuses completed analyses and can retry takes that
 had a problem. If speech can only be timed as whole lines, those lines are kept.
 
-The full-video player uses the selected takes' subtitles and accounts for trimmed scene overlaps.
-Use **Download subtitles** in the full-video player to save a WebVTT file with word timings.
+The full storyboard preview uses the selected takes' subtitles. **Show subtitles** controls
+them across the entire preview.
 MP4 exports include a toggleable subtitle track with line timings.
 
 ## Starting from a video
@@ -141,11 +141,12 @@ the next scene without its repeated opening.
 
 **Generate
 all remaining scenes** makes every scene without a current take, in order, and skips
-scenes that still need input. **Play full video** and **Export to Media** join the takes
-in use: continuing scenes drop their repeated opening, fresh starts join as cuts. A scene
-continuing a video from Media instead eases across that opening from the real frames into its
-own VAE-redrawn copy of them, so fine detail such as eyes does not jump at the join. Export
-saves a version. **Versions** keeps scene lists to come back to or branch.
+scenes that still need input. **Play full video** streams the takes in use in storyboard order,
+preloading each next take while the current one plays. Continuing scenes skip their repeated
+opening and fresh starts play from the beginning. **Export to Media** renders a single MP4 and
+saves a version. When a scene continues a video from Media, the export blends across the
+overlap from the original frames into the generated copy. **Versions** keeps scene lists to
+come back to or branch.
 
 ## Auto render
 

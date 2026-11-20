@@ -29,7 +29,8 @@
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
-    includeOutdated: true, showSubtitles: true, burnSubtitles: false, fullVideo: null, saveLabel: "All changes saved",
+    includeOutdated: true, showSubtitles: true, showFullSubtitles: true, burnSubtitles: false,
+    saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
   };
@@ -245,6 +246,12 @@
 
   const subtitleTrack = (src) => src && h("track", {src, kind: "subtitles", srclang: "und", label: "Subtitles"});
 
+  const releaseVideo = (video) => {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  };
+
   const updatePreviewSubtitles = (video, src) => {
     $("preview-subtitles").hidden = !src;
     if (!video) return;
@@ -270,14 +277,11 @@
       return;
     }
     state.previewKey = key;
-    node.querySelectorAll("video").forEach((video) => {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    });
+    node.querySelectorAll("video").forEach(releaseVideo);
     if (take && !take.missing) {
       const video = h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
-        "aria-label": `Take ${take.number} of scene ${item.number}`});
+        "aria-label": `Take ${take.number} of scene ${item.number}`,
+        onplay: () => $("full-video").querySelector("video:not(.standby)")?.pause()});
       const checkbox = $("show-subtitles");
       checkbox.onchange = () => {
         state.showSubtitles = checkbox.checked;
@@ -552,13 +556,13 @@
         }));
     }
     actions.push(
-      button("Play full video", () => startJoin(false), "btn", {disabled: busy}),
+      button("Play full video", playFullVideo),
       h("label", {className: "check-label", title: hasSubtitles ? null : "No subtitles are available in the takes in use"},
         h("input", {type: "checkbox", checked: hasSubtitles && state.burnSubtitles,
           disabled: busy || !hasSubtitles,
           onchange: (event) => { state.burnSubtitles = event.target.checked; }}),
         "Burn in subtitles"),
-      button("Export to Media", () => startJoin(true), "btn", {disabled: busy}),
+      button("Export to Media", exportToMedia, "btn", {disabled: busy}),
       h("label", {className: "check-label"},
         h("input", {type: "checkbox", checked: state.includeOutdated,
           onchange: (event) => { state.includeOutdated = event.target.checked; }}),
@@ -570,19 +574,136 @@
     $("strip-actions").replaceChildren(...actions);
   };
 
-  const renderFullVideo = () => {
-    $("full-video").replaceChildren(...(state.fullVideo
-      ? [h("div", {className: "full-video-panel"},
-          h("div", {className: "full-video-head"},
-            h("strong", {className: "small"}, "Full storyboard video"),
-            h("span", {className: "small muted"}, "Continuing scenes drop their repeated opening; fresh starts cut."),
-            h("div", {className: "grow"}),
-            state.fullVideo.subtitles && h("a", {className: "btn sm", href: state.fullVideo.subtitles,
-              download: `${state.board.name || "storyboard"}.vtt`}, "Download subtitles"),
-            h("a", {className: "btn sm", href: state.fullVideo.url, download: `${state.board.name || "storyboard"}.mp4`}, "Download"),
-            button("Close", () => { state.fullVideo = null; renderFullVideo(); }, "btn sm")),
-          h("video", {src: state.fullVideo.url, controls: true, preload: "metadata", "aria-label": "Full video"},
-            subtitleTrack(state.fullVideo.subtitles)))] : []));
+  const closeFullVideo = () => {
+    const root = $("full-video");
+    const videos = root.querySelectorAll("video");
+    root.replaceChildren();
+    videos.forEach(releaseVideo);
+  };
+
+  const playFullVideo = async () => {
+    if (!state.includeOutdated && (dirty.size || sending.size)) {
+      const boardId = state.board.id;
+      await flush();
+      if (state.board.id !== boardId || $("editor").hidden) return;
+    }
+    const playlist = [];
+    for (const item of scenes()) {
+      const take = item.takes.find((take) => take.id === item.in_use);
+      if (!take) return toast(`Scene ${item.number} has no take yet.`, true);
+      if (item.state === "outdated" && !state.includeOutdated) {
+        return toast(`Scene ${item.number} is outdated. Regenerate it or include out-of-date scenes.`, true);
+      }
+      if (take.missing) return toast(`Scene ${item.number}'s take is missing from disk.`, true);
+      playlist.push(take);
+    }
+    closeFullVideo();
+    // Preload the next take and seek past its overlap before the handoff.
+    let active = h("video", {preload: "auto", playsInline: true});
+    let standby = h("video", {preload: "auto", playsInline: true, className: "standby"});
+    const videos = [active, standby];
+    let index = 0;
+    const position = h("span", {className: "small muted", role: "status"});
+    const checkbox = h("input", {type: "checkbox", checked: state.showFullSubtitles,
+      onchange: () => {
+        state.showFullSubtitles = checkbox.checked;
+        videos.forEach(updateSubtitles);
+      }});
+    const updateSubtitles = (video) => {
+      const track = video.querySelector("track");
+      if (track) track.track.mode = state.showFullSubtitles ? "showing" : "disabled";
+    };
+    const loadClip = (video, take) => {
+      const track = subtitleTrack(take?.subtitles);
+      video.replaceChildren(...(track ? [track] : []));
+      if (!take) {
+        video.onloadedmetadata = null;
+        video.onseeking = null;
+        releaseVideo(video);
+        return;
+      }
+      video.onloadedmetadata = () => {
+        if (take.preview_start) video.currentTime = take.preview_start;
+      };
+      video.onseeking = () => {
+        if (video.currentTime < take.preview_start - 0.01) video.currentTime = take.preview_start;
+      };
+      video.src = take.video;
+      updateSubtitles(video);
+    };
+    const playScene = () => {
+      const current = active;
+      current.classList.remove("standby");
+      current.controls = true;
+      current.setAttribute("aria-label", `Storyboard scene ${index + 1}`);
+      standby.classList.add("standby");
+      standby.controls = false;
+      position.textContent = `Scene ${index + 1} of ${playlist.length}`;
+      current.play().catch(() => {
+        if (current === active && current.isConnected && current.error) {
+          position.textContent = `Scene ${index + 1} could not be played.`;
+        }
+      });
+      loadClip(standby, playlist[index + 1]);
+    };
+    for (const video of videos) {
+      if (document.fullscreenEnabled) video.controlsList?.add("nofullscreen");
+      video.disablePictureInPicture = true;
+      video.onplay = () => {
+        if (video.isConnected) $("preview").querySelector("video")?.pause();
+      };
+      video.onerror = () => {
+        if (video === active && video.isConnected) position.textContent = `Scene ${index + 1} could not be played.`;
+      };
+      video.onended = () => {
+        if (video !== active || !video.isConnected || index + 1 === playlist.length) return;
+        index += 1;
+        [active, standby] = [standby, active];
+        active.muted = video.muted;
+        active.volume = video.volume;
+        active.playbackRate = video.playbackRate;
+        playScene();
+      };
+      video.textTracks.addEventListener("change", () => {
+        if (video !== active || !video.isConnected) return;
+        const track = video.querySelector("track");
+        if (!track) return;
+        checkbox.checked = state.showFullSubtitles = track.track.mode === "showing";
+        updateSubtitles(standby);
+      });
+    }
+    const fullscreen = button("Fullscreen", () => {
+      const change = document.fullscreenElement === panel
+        ? document.exitFullscreen() : panel.requestFullscreen();
+      change.catch(() => toast("Couldn't change fullscreen mode.", true));
+    }, "btn sm");
+    const panel = h("div", {className: "full-video-panel", onfullscreenchange: () => {
+      fullscreen.textContent = document.fullscreenElement === panel ? "Exit fullscreen" : "Fullscreen";
+    }},
+      h("div", {className: "full-video-head"},
+        h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
+        playlist.some((take) => take.subtitles) && h("label", {className: "check-label"}, checkbox, "Show subtitles"),
+        document.fullscreenEnabled && fullscreen,
+        button("Close", closeFullVideo, "btn sm")),
+      h("div", {className: "full-video-viewport"}, videos));
+    $("full-video").replaceChildren(panel);
+    loadClip(active, playlist[0]);
+    playScene();
+  };
+
+  const showJoinedVideo = (run) => {
+    closeFullVideo();
+    $("full-video").replaceChildren(h("div", {className: "full-video-panel"},
+      h("div", {className: "full-video-head"},
+        h("strong", {className: "small"}, "Full storyboard video"),
+        h("span", {className: "small muted"}, "Continuing scenes drop their repeated opening; fresh starts cut."),
+        h("div", {className: "grow"}),
+        run.subtitles_url && h("a", {className: "btn sm", href: run.subtitles_url,
+          download: `${state.board.name || "storyboard"}.vtt`}, "Download subtitles"),
+        h("a", {className: "btn sm", href: run.result_url, download: `${state.board.name || "storyboard"}.mp4`}, "Download"),
+        button("Close", closeFullVideo, "btn sm")),
+      h("video", {src: run.result_url, controls: true, preload: "metadata", "aria-label": "Full video"},
+        subtitleTrack(run.subtitles_url))));
   };
 
   // Moving between scenes -------------------------------------------------
@@ -1311,13 +1432,13 @@
     renderStrip();
     renderStripActions();
   };
-  const startJoin = async (exporting) => {
+  const exportToMedia = async () => {
     await flush();
     await saves;
     const data = await act(() => request("POST", boardUrl("/join"), {
       include_outdated: state.includeOutdated,
-      export: exporting,
-      burn_subtitles: exporting && state.burnSubtitles && hasExportSubtitles(),
+      export: true,
+      burn_subtitles: state.burnSubtitles && hasExportSubtitles(),
     }));
     if (data) followRun(data.run, {started: true});
     renderStripActions();
@@ -1438,10 +1559,7 @@
     stored.set(ANNOUNCED_KEY, JSON.stringify([...announced].slice(-50)));
     if (run.error) toast(run.error, true);
     else if (run.message || run.status) toast(run.message || run.status);
-    if (run.result_url) {
-      state.fullVideo = {url: run.result_url, subtitles: run.subtitles_url};
-      renderFullVideo();
-    }
+    if (run.result_url && !$("full-video").querySelector(".full-video-viewport")) showJoinedVideo(run);
   };
   const poll = async () => {
     state.pollTimer = null;
@@ -1489,6 +1607,7 @@
 
   const showStart = () => {
     flush();
+    closeFullVideo();
     $("editor").hidden = true;
     const root = $("start");
     root.hidden = false;
@@ -1580,6 +1699,7 @@
     showBoard(data);
   };
   const showBoard = (data) => {
+    closeFullVideo();
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
     state.run = null;
@@ -1591,7 +1711,6 @@
     // Auto render follows the queue from board to board, so its panel stays open.
     state.panel = state.panel === "auto" ? "auto" : null;
     state.confirmProfile = false;
-    state.fullVideo = null;
     stored.set("h3-storyboard-board", data.id);
     const saved = stored.get("h3-storyboard-scene");
     state.sceneId = data.scenes.some((item) => item.id === saved) ? saved : data.scenes[0].id;
@@ -1599,7 +1718,6 @@
     $("start").hidden = true;
     $("editor").hidden = false;
     render();
-    renderFullVideo();
   };
   const openBoard = async (storyboardId) => {
     await flush();

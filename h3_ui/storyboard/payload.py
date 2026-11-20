@@ -121,6 +121,7 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
     takes = [
         {"id": take_id, "number": number, "seed": board["takes"][take_id]["seed"],
          "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
+         "preview_start": sb.model.overlap_seconds(board["takes"][take_id]["prefix_frames"]) if flow else 0,
          "poster": poster_url(board["takes"][take_id]["video"]),
          "subtitles": _subtitle_track(storyboard_id, board["takes"][take_id]),
          "subtitle_error": board["takes"][take_id].get("subtitle_error"),
