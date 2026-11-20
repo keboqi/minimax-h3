@@ -1044,12 +1044,19 @@
     textarea.setSelectionRange(cursor, cursor);
   };
 
+  const AUDIO_ICON = "M11 5L6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13";
+  const PLAY_BADGE_ICON = "M8 5l11 7-11 7V5z";
+
   const tagHintNode = (item) => {
-    if (!item.tags.length) {
+    const videos = item.mode === "Reference media" ? (item.ref_videos || []) : [];
+    const audios = item.ref_audios || [];
+    const picTags = item.mode === "Reference media" ? (item.tags || []) : [];
+    if (!picTags.length && !videos.length && !audios.length) {
       return h("p", {className: "small muted", id: "tag-hint"}, "Tick cast or add an image, video or audio.");
     }
     const thumbByTag = new Map((item.pictures || []).map((pic) => [pic.tag, pic.thumb]));
-    const chips = item.tags.map((entry, idx) => {
+    const summaryLabels = [...picTags];
+    const chips = picTags.map((entry, idx) => {
       const match = entry.match(/<Picture \d+>/);
       const tag = match ? match[0] : entry;
       const thumb = thumbByTag.get(entry) || item.pictures?.[idx]?.thumb;
@@ -1059,8 +1066,28 @@
       return button(content, () => insertIntoPrompt(tag), thumb ? "tag-chip with-thumb" : "tag-chip",
         {title: `Insert ${tag} into prompt`});
     });
+    videos.forEach((video, idx) => {
+      const tag = `<Video ${idx + 1}>`;
+      const label = `video ${idx + 1} = ${tag}`;
+      summaryLabels.push(label);
+      const badge = h("span", {className: "tag-video-badge", "aria-hidden": "true"}, icon(PLAY_BADGE_ICON));
+      const thumb = video.poster
+        ? h("span", {className: "tag-thumb-wrap"},
+          h("img", {className: "tag-thumb", src: video.poster, alt: "", loading: "lazy"}), badge)
+        : h("span", {className: "tag-thumb-wrap"}, badge);
+      chips.push(button([thumb, `+ ${label}`], () => insertIntoPrompt(tag), "tag-chip with-thumb",
+        {title: `Insert ${tag}${video.name ? ` (${video.name})` : ""} into prompt`}));
+    });
+    audios.forEach((audio, idx) => {
+      const tag = `<Audio ${idx + 1}>`;
+      const label = `audio ${idx + 1} = ${tag}`;
+      summaryLabels.push(label);
+      const badge = h("span", {className: "tag-audio-icon", "aria-hidden": "true"}, icon(AUDIO_ICON));
+      chips.push(button([badge, `+ ${label}`], () => insertIntoPrompt(tag), "tag-chip with-thumb",
+        {title: `Insert ${tag}${audio.name ? ` (${audio.name})` : ""} into prompt`}));
+    });
     return h("div", {className: "tag-bar", id: "tag-hint"},
-      h("span", {className: "small muted"}, `In the prompt (click to insert): ${item.tags.join(", ")}`),
+      h("span", {className: "small muted"}, `In the prompt (click to insert): ${summaryLabels.join(", ")}`),
       h("div", {className: "chips"}, chips));
   };
 
@@ -1119,10 +1146,14 @@
       onclick: () => { state.inspectorTab = id; renderInspector(); },
     }, label);
 
+    const refCount = item.mode === "Reference media"
+      ? (item.pictures?.length || 0) + (item.ref_videos?.length || 0) + (item.ref_audios?.length || 0)
+      : (item.first_image ? 1 : 0) + (item.last_image ? 1 : 0) + (item.ref_audios?.length || 0);
+
     const headerBar = h("div", {className: "inspector-head"},
       h("div", {className: "inspector-tabs", role: "tablist", "aria-label": "Inspector sections"},
         tabBtn("prompt", "Prompt & Flow"),
-        tabBtn("media", item.mode === "Text to video" ? "Media & Cast" : `Media & Cast (${item.pictures.length})`),
+        tabBtn("media", item.mode === "Text to video" ? "Media & Cast" : `Media & Cast (${refCount})`),
         tabBtn("timing", "Timing & Seed")),
       checklist(item));
 
@@ -1142,7 +1173,7 @@
               chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
               chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
         ].filter(Boolean)),
-        item.mode === "Reference media" ? tagHintNode(item) : null,
+        (item.mode === "Reference media" || (item.mode === "First / last frame" && item.ref_audios?.length)) ? tagHintNode(item) : null,
         promptField(item),
         h("div", {className: "row"},
           h("span", {className: "small muted", id: "prompt-hint"}, item.hint || item.context),

@@ -30,6 +30,7 @@
   --tok-dialogue: #7a4b00;
   --tok-dialogue-bg: #fdf1dc;
   --tok-effect: #1f7486;
+  --tok-effect-bg: #e0f2f5;
   --tok-key: #1864ab;
   --tok-key-bg: #e3eefc;
   --shadow-sm: 0 1px 2px rgba(16, 28, 24, 0.05);
@@ -68,6 +69,7 @@
   --tok-dialogue: #f0c77a;
   --tok-dialogue-bg: rgba(240, 179, 90, 0.16);
   --tok-effect: #6fd0c2;
+  --tok-effect-bg: rgba(111, 208, 194, 0.14);
   --tok-key: #74c0fc;
   --tok-key-bg: rgba(116, 192, 252, 0.14);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -152,6 +154,23 @@ h1, h2, h3, p { margin: 0; }
   width: 34px; height: 34px; border-radius: 5px; object-fit: cover; flex: none;
   background: var(--raised); border: 1px solid var(--line); display: block;
 }
+.tag-thumb-wrap {
+  position: relative; width: 44px; height: 34px; border-radius: 5px; overflow: hidden; flex: none;
+  background: #070b0a; border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center;
+}
+.tag-thumb-wrap .tag-thumb { width: 100%; height: 100%; border: 0; border-radius: 0; }
+.tag-video-badge {
+  position: absolute; inset: auto 3px 3px auto; width: 15px; height: 15px; border-radius: 999px;
+  background: rgba(10, 15, 14, 0.85); color: #eef4f1;
+  display: inline-flex; align-items: center; justify-content: center; pointer-events: none;
+}
+.tag-video-badge svg { width: 9px; height: 9px; fill: currentColor; }
+.tag-audio-icon {
+  width: 30px; height: 30px; border-radius: 6px; flex: none;
+  background: var(--tok-effect-bg); color: var(--tok-effect); border: 1px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.tag-audio-icon svg { width: 16px; height: 16px; }
 .tag-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
 
 /* Form Fields */
@@ -478,7 +497,7 @@ span.link-toggle { cursor: default; }
 .tok-tag { color: var(--tok-tag); }
 .tok-ref { color: var(--tok-ref); background: var(--tok-ref-bg); border-radius: 3px; }
 .tok-dialogue { color: var(--tok-dialogue); background: var(--tok-dialogue-bg); border-radius: 3px; }
-.tok-effect { color: var(--tok-effect); }
+.tok-effect { color: var(--tok-effect); background: var(--tok-effect-bg); border-radius: 3px; }
 .tok-key { color: var(--tok-key); background: var(--tok-key-bg); border-radius: 3px; }
 
 /* Full Video Panel */
