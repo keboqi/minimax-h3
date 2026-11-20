@@ -2,59 +2,13 @@
 // The MiniMax H3 page. The server owns every setting and its policy; this draws what it answers.
 (() => {
   const API = "/h3/api";
-  const $ = (id) => document.getElementById(id);
-  const h = (tag, props = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (key === "class") node.className = value;
-      else if (key === "text") node.textContent = value;
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-      else if (key in node && key !== "list") node[key] = value;
-      else node.setAttribute(key, value === true ? "" : value);
-    }
-    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, createClient, createToast, seg} = globalThis.H3PageCommon;
+  const {request, post} = createClient(API);
+  const {toast, guard} = createToast();
 
   const app = {boot: null, s: null, runs: {}, progress: [], files: [], take: 0, suggestion: null, previous: null,
                enhanceContext: null, polling: false, picking: null,
                input: {slots: [], preset: "1920 × 1920", width: 1920, height: 1920, model: "", seed: -1, force_offload: false}};
-
-  const request = async (method, path, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
-    if (form) options.body = body;
-    else if (body !== undefined) {
-      options.headers = {"Content-Type": "application/json"};
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(`${API}${path}`, options);
-    let data = null;
-    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
-    return data;
-  };
-  const post = (path, body, extra) => request("POST", path, body, extra);
-
-  const visibleBottom = () => {
-    const frame = window.frameElement;
-    if (!frame) return innerHeight;
-    try { return Math.min(innerHeight, window.parent.innerHeight - frame.getBoundingClientRect().top); } catch { return innerHeight; }
-  };
-  let toastTimer;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.className = error ? "toast error" : "toast";
-    node.style.bottom = `${Math.max(20, innerHeight - visibleBottom() + 20)}px`;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
-  };
-  // Every action that can fail reports here instead of leaving the page silent.
-  const guard = (action) => async (...args) => {
-    try { return await action(...args); } catch (error) { toast(error.message, true); return undefined; }
-  };
 
   const completedEnhancements = new Set();
   const take = (answer) => {
@@ -80,14 +34,6 @@
   };
 
   // Controls ----------------------------------------------------------------
-  const seg = (node, options, current, pick, {disabled = false, multi = false} = {}) => {
-    node.replaceChildren(...options.map((option) => {
-      const [label, value] = Array.isArray(option) ? option : [String(option), option];
-      const on = multi ? current.includes(value) : value === current;
-      return h("button", {type: "button", "aria-pressed": String(on), disabled, text: label, onclick: () => pick(value, on)});
-    }));
-    return node;
-  };
   const number = (value, commit, {disabled = false, label} = {}) => h("input", {
     class: "field num mono", type: "text", inputMode: "decimal", value: String(value), disabled, "aria-label": label,
     onchange: (event) => {

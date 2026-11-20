@@ -9,7 +9,8 @@ import math
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
+from urllib.parse import quote
 import uuid
 
 from fastapi import HTTPException, UploadFile
@@ -20,6 +21,30 @@ from h3_app.errors import H3Error
 
 SECRET_FIELDS = ("gemini_api_key", "openai_api_key")
 UI_LIMIT = 4096
+
+
+def plain(text: str) -> str:
+    """Markdown or HTML status text as the plain line the page shows."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|\*\*", " ", str(text or ""))).strip()
+
+
+def path_of(value: Any) -> str | None:
+    """Extract a file path string from a Gradio media dict, list/tuple, or scalar value."""
+    if isinstance(value, dict):
+        return path_of(
+            value.get("path")
+            or value.get("video")
+            or value.get("image")
+            or value.get("name")
+            or value.get("value")
+        )
+    if isinstance(value, (list, tuple)):
+        return path_of(value[0]) if value else None
+    return str(value) if value else None
+
+
+def quote_path(path: str | Path) -> str:
+    return quote(str(path), safe="")
 
 
 @dataclass(frozen=True)
@@ -163,17 +188,31 @@ def change_writer(writer: dict[str, Any], changes: Mapping[str, Any]) -> None:
 
 
 # Pictures, the Media library and files -----------------------------------------
-def spool_image(upload: UploadFile, folder: Path, rollback: ExitStack) -> Path:
-    """An uploaded picture saved in ``folder``; ``rollback`` removes it if the edit fails."""
+def spool_upload(
+    upload: UploadFile,
+    folder: Path | str,
+    allowed: Iterable[str],
+    rollback: ExitStack | None = None,
+    *,
+    kind: str = "file",
+) -> Path:
+    """Save an uploaded file in ``folder`` after checking its suffix; ``rollback`` removes it on failure."""
+    allowed_set = set(allowed)
     suffix = Path(upload.filename or "").suffix.lower()
-    if suffix not in catalog.IMAGE_EXTENSIONS:
-        raise H3Error(f"{upload.filename} isn't a supported image ({', '.join(sorted(catalog.IMAGE_EXTENSIONS))}).")
+    if suffix not in allowed_set:
+        raise H3Error(f"{upload.filename} isn't a supported {kind} ({', '.join(sorted(allowed_set))}).")
     stem = re.sub(r"[^\w. -]", "_", Path(upload.filename or "").stem).strip(" .")[:60] or "upload"
-    path = folder / f"{uuid.uuid4().hex[:12]}-{stem}{suffix}"
+    path = Path(folder) / f"{uuid.uuid4().hex[:12]}-{stem}{suffix}"
     with path.open("xb") as handle:
-        rollback.callback(path.unlink, missing_ok=True)
+        if rollback is not None:
+            rollback.callback(path.unlink, missing_ok=True)
         shutil.copyfileobj(upload.file, handle)
     return path
+
+
+def spool_image(upload: UploadFile, folder: Path, rollback: ExitStack | None = None) -> Path:
+    """An uploaded picture saved in ``folder``; ``rollback`` removes it if the edit fails."""
+    return spool_upload(upload, folder, catalog.IMAGE_EXTENSIONS, rollback, kind="image")
 
 
 def library_source(library, source: str) -> str:

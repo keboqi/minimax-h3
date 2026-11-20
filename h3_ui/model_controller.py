@@ -29,72 +29,48 @@ class ModelServices:
     unload_comfy_models: Callable[[], None]
 
 
+def _forward_runtime(name: str):
+    target = getattr(model_service, name)
+
+    def method(self, *args, **kwargs):
+        return target(*args, runtime=self.services._runtime_config(), **kwargs)
+
+    method.__name__ = name
+    return method
+
+
+_RUNTIME_FORWARDS = (
+    "load_model_config",
+    "trt_vae_decoder_paths",
+    "ensure_h3_text_encoder",
+    "ensure_h3_veda_predictor",
+    "ensure_h3_semantic_bridge",
+    "ensure_h3_latent_upscaler_model",
+    "ensure_profile_model",
+    "ensure_turbo_lora",
+    "ensure_base_video_vae",
+    "ensure_audio_vae",
+    "ensure_int8_video_vae",
+    "ensure_single_frame_image_vae",
+    "missing_ltx25_model_names",
+    "ensure_ltx25_models",
+    "ensure_ltx25_ingredients_model",
+    "ensure_seedvr2_upscale_models",
+    "ensure_ltx25_upscale_models",
+    "ensure_cq_image_enhance_models",
+    "missing_music3_model_names",
+    "ensure_music3_models",
+    "missing_qwen_image21_model_names",
+    "ensure_qwen_image21_models",
+    "missing_yue2_model_names",
+    "ensure_yue2_models",
+    "ensure_model_keys",
+)
+
+
 class ModelController:
     def __init__(self, services: ModelServices):
         self.services = services
-
-    def load_model_config(self) -> ModelConfig:
-        return model_service.load_model_config(
-            runtime=self.services._runtime_config()
-        )
-
-    def trt_vae_decoder_paths(self, models: ModelConfig) -> tuple[Path, Path, Path]:
-        return model_service.trt_vae_decoder_paths(
-            models, runtime=self.services._runtime_config()
-        )
-
-    def ensure_h3_text_encoder(
-        self, models: ModelConfig, model_choice: str
-    ) -> tuple[str, bool]:
-        return model_service.ensure_h3_text_encoder(
-            models, model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_h3_veda_predictor(self, mode: str) -> None:
-        return model_service.ensure_h3_veda_predictor(
-            mode, runtime=self.services._runtime_config()
-        )
-
-    def ensure_h3_semantic_bridge(self) -> None:
-        return model_service.ensure_h3_semantic_bridge(
-            runtime=self.services._runtime_config()
-        )
-
-    def ensure_h3_latent_upscaler_model(self, model_choice: str) -> bool:
-        return model_service.ensure_h3_latent_upscaler_model(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_profile_model(
-        self, profile_key: str, profile: ModelProfile, mode: str
-    ) -> bool:
-        return model_service.ensure_profile_model(
-            profile_key, profile, mode, runtime=self.services._runtime_config()
-        )
-
-    def ensure_turbo_lora(
-        self, models: ModelConfig, turbo_variant: str, mode: str
-    ) -> bool:
-        return model_service.ensure_turbo_lora(
-            models, turbo_variant, mode, runtime=self.services._runtime_config()
-        )
-
-    def ensure_base_video_vae(self, models: ModelConfig) -> bool:
-        return model_service.ensure_base_video_vae(
-            models, runtime=self.services._runtime_config()
-        )
-
-    def ensure_audio_vae(self, models: ModelConfig) -> bool:
-        return model_service.ensure_audio_vae(
-            models, runtime=self.services._runtime_config()
-        )
-
-    def ensure_int8_video_vae(
-        self, models: ModelConfig, *, lynnreal: bool = False, sol: bool = False
-    ) -> bool:
-        return model_service.ensure_int8_video_vae(
-            models, runtime=self.services._runtime_config(), lynnreal=lynnreal, sol=sol
-        )
 
     def ensure_trt_video_vae_engine(
         self,
@@ -121,26 +97,10 @@ class ModelController:
         except Exception as exc:
             return f"TensorRT VAE compilation failed: {exc}"
 
-    def ensure_single_frame_image_vae(self, models: ModelConfig) -> bool:
-        return model_service.ensure_single_frame_image_vae(
-            models, runtime=self.services._runtime_config()
-        )
-
-    def missing_ltx25_model_names(
-        self, model_choice: str = DEFAULT_LTX25_MODEL
-    ) -> list[str]:
-        return model_service.missing_ltx25_model_names(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_ltx25_models(self, model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
-        return model_service.ensure_ltx25_models(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_ltx25_ingredients_model(self) -> bool:
-        return model_service.ensure_ltx25_ingredients_model(
-            runtime=self.services._runtime_config()
+    def ensure_h3_regenerate_models(self, models: ModelConfig, option: str, **kwargs) -> bool:
+        return model_service.ensure_h3_regenerate_models(
+            models, option, runtime=self.services._runtime_config(),
+            release_backend=self.services.unload_comfy_models, **kwargs
         )
 
     def render_ltx25_official_model_inventory(self) -> str:
@@ -267,72 +227,6 @@ class ModelController:
             "all official workflow models",
         )
 
-    def ensure_seedvr2_upscale_models(
-        self, models: ModelConfig, model_choice: str
-    ) -> bool:
-        return model_service.ensure_seedvr2_upscale_models(
-            models, model_choice, runtime=self.services._runtime_config()
-        )
 
-    def ensure_h3_regenerate_models(self, models: ModelConfig, option: str, **kwargs) -> bool:
-        return model_service.ensure_h3_regenerate_models(
-            models, option, runtime=self.services._runtime_config(),
-            release_backend=self.services.unload_comfy_models, **kwargs
-        )
-
-    def ensure_ltx25_upscale_models(
-        self, model_choice: str = DEFAULT_LTX25_MODEL, *, option: str = LTX25_UPSCALE
-    ) -> bool:
-        return model_service.ensure_ltx25_upscale_models(
-            model_choice, runtime=self.services._runtime_config(), option=option
-        )
-
-    def ensure_cq_image_enhance_models(self) -> bool:
-        return model_service.ensure_cq_image_enhance_models(
-            runtime=self.services._runtime_config()
-        )
-
-    def missing_music3_model_names(self, model_choice: str) -> list[str]:
-        return model_service.missing_music3_model_names(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_music3_models(self, model_choice: str) -> bool:
-        return model_service.ensure_music3_models(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def missing_qwen_image21_model_names(
-        self, model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
-    ) -> list[str]:
-        return model_service.missing_qwen_image21_model_names(
-            model_choice,
-            text_encoder_choice,
-            turbo_variant,
-            runtime=self.services._runtime_config(),
-        )
-
-    def ensure_qwen_image21_models(
-        self, model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
-    ) -> bool:
-        return model_service.ensure_qwen_image21_models(
-            model_choice,
-            text_encoder_choice,
-            turbo_variant,
-            runtime=self.services._runtime_config(),
-        )
-
-    def missing_yue2_model_names(self, model_choice: str) -> list[str]:
-        return model_service.missing_yue2_model_names(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_yue2_models(self, model_choice: str) -> bool:
-        return model_service.ensure_yue2_models(
-            model_choice, runtime=self.services._runtime_config()
-        )
-
-    def ensure_model_keys(self, keys: tuple[str, ...]) -> bool:
-        return model_service.ensure_model_keys(
-            keys, runtime=self.services._runtime_config()
-        )
+for _name in _RUNTIME_FORWARDS:
+    setattr(ModelController, _name, _forward_runtime(_name))

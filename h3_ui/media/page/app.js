@@ -2,20 +2,12 @@
 // The Media page. The server owns the library, annotations, deletion checks and long work; this draws what it answers.
 (() => {
   const API = "/media/api";
-  const $ = (id) => document.getElementById(id);
-  const h = (tag, props = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (key === "class") node.className = value;
-      else if (key === "text") node.textContent = value;
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-      else if (key in node && key !== "list") node[key] = value;
-      else node.setAttribute(key, value === true ? "" : value);
-    }
-    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, createClient, createToast} = globalThis.H3PageCommon;
+  const {request, post: rawPost} = createClient(API);
+  const post = (path, body = {}) => rawPost(path, body);
+  const query = (params) => new URLSearchParams(params).toString();
+  const {toast, guard} = createToast({duration: 3500, errorDuration: 6000});
+
   const STAR = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#ffd27a" role="img" aria-label="Favorite"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"></path></svg>';
   const NOUN = {Video: "video", Image: "image", Audio: "audio"};
   const PAIR_EMPTY = "Choose an image or video in the library to start.";
@@ -24,35 +16,6 @@
     boot: null, mode: "Video", query: "", favorite: false, engine: "", sort: "newest", limit: 48,
     items: [], selected: null, item: null, tab: "details", stage: "audio",
     pair: {kind: null, a: null, b: null}, pairMessage: null, runs: {}, seen: {}, baselined: false, polling: false, results: null,
-  };
-
-  const request = async (method, path, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
-    if (form) options.body = body;
-    else if (body !== undefined) {
-      options.headers = {"Content-Type": "application/json"};
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(`${API}${path}`, options);
-    let data = null;
-    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
-    return data;
-  };
-  const post = (path, body = {}) => request("POST", path, body);
-  const query = (params) => new URLSearchParams(params).toString();
-
-  let toastTimer = null;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.classList.toggle("error", error);
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 6000 : 3500);
-  };
-  const guard = (action) => async (...args) => {
-    try { return await action(...args); } catch (error) { toast(error.message, true); }
   };
 
   // Browsing ------------------------------------------------------------------

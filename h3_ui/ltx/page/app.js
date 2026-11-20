@@ -2,58 +2,12 @@
 // The LTX 2.5 page. The server owns the draft, the options and their policy; this draws what it answers.
 (() => {
   const API = "/ltx/api";
-  const $ = (id) => document.getElementById(id);
-  const h = (tag, props = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (key === "class") node.className = value;
-      else if (key === "text") node.textContent = value;
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-      else if (key in node && key !== "list") node[key] = value;
-      else node.setAttribute(key, value === true ? "" : value);
-    }
-    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, createClient, createToast, seg, rangeOf, presetText: sharedPresetText} = globalThis.H3PageCommon;
+  const {request, post} = createClient(API);
+  const {toast, guard} = createToast();
 
   const app = {boot: null, s: null, runs: {}, workflows: [], missing: 0, take: 0, suggestion: null, previous: null,
                enhanceNote: "", polling: false, live: null};
-
-  const request = async (method, path, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
-    if (form) options.body = body;
-    else if (body !== undefined) {
-      options.headers = {"Content-Type": "application/json"};
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(`${API}${path}`, options);
-    let data = null;
-    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
-    return data;
-  };
-  const post = (path, body, extra) => request("POST", path, body, extra);
-
-  const visibleBottom = () => {
-    const frame = window.frameElement;
-    if (!frame) return innerHeight;
-    try { return Math.min(innerHeight, window.parent.innerHeight - frame.getBoundingClientRect().top); } catch { return innerHeight; }
-  };
-  let toastTimer;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.className = error ? "toast error" : "toast";
-    node.style.bottom = `${Math.max(20, innerHeight - visibleBottom() + 20)}px`;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
-  };
-  // Every action that can fail reports here instead of leaving the page silent.
-  const guard = (action) => async (...args) => {
-    try { return await action(...args); } catch (error) { toast(error.message, true); return undefined; }
-  };
 
   const take = (answer) => {
     if (!answer) return;
@@ -84,20 +38,6 @@
   };
 
   // Controls ----------------------------------------------------------------
-  // The buttons stay in place while their labels do: a redraw that lands between a press and its
-  // release (a poll, a prompt saved as the box loses focus) would otherwise swallow the click.
-  const seg = (node, options, current, pick, {disabled = false} = {}) => {
-    const items = options.map((option) => Array.isArray(option) ? option : [String(option), option]);
-    const kept = node.children.length === items.length && items.every(([label], index) => node.children[index].textContent === label);
-    if (!kept) node.replaceChildren(...items.map(([label]) => h("button", {type: "button", text: label})));
-    items.forEach(([, value], index) => {
-      const button = node.children[index];
-      button.setAttribute("aria-pressed", String(value === current));
-      button.disabled = disabled;
-      button.onclick = () => pick(value);
-    });
-    return node;
-  };
   const fixed = (field, value) => Number(value).toFixed(field.step && field.step < 1 ? (field.step < 0.1 ? 2 : 1) : 0);
   // A slider sends its value when let go; while it moves only its label follows.
   const slider = (field, label, {suffix = "", disabled = false} = {}) => {
@@ -108,7 +48,7 @@
     return [input, out];
   };
   const commitOf = (field) => (value) => field.store === "writer" ? changeWriter({[field.name]: value}) : change("edit", {[field.name]: value});
-  const rangeOf = (field) => field.minimum === null || field.minimum === undefined ? "" : `${field.minimum} – ${field.maximum}`;
+  const presetText = (field) => sharedPresetText(field, {booleanLabels: false});
   const control = (field) => {
     const commit = commitOf(field);
     const {kind, label, value} = field;
@@ -141,10 +81,6 @@
     }
     return [h("input", {class: "field text", type: kind === "password" ? "password" : "text", value: value ?? "", placeholder: field.placeholder, autocomplete: "off",
                         disabled, "aria-label": label, onchange: (event) => commit(event.target.value)})];
-  };
-  const presetText = (field) => {
-    const found = field.choices?.find(([, choice]) => choice === field.preset);
-    return found ? found[0] : String(field.preset ?? "blank");
   };
   const fineRow = (field) => h("div", {class: "fine-row"},
     h("div", {class: "about"},

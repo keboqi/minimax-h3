@@ -5,8 +5,7 @@ the GPU endpoint, where it is spoken.
 """
 from functools import partial
 
-import gradio as gr
-
+from ..media_console import add_workshop_routes, workshop_column
 from .bindings import Drama3Actions
 from .handlers import Drama3Handlers, Drama3Services
 from .tab import build_soundstage_tab
@@ -29,10 +28,8 @@ def build_soundstage_workshop(tab, ui, runtime, store, *, images=None):
 
     handlers = Drama3Handlers(Drama3Services(lambda: runtime, None, None, None))
     actions = Drama3Actions.of(handlers, interrupt=None)
-    with tab, gr.Column(elem_classes=["h3-workspace"]) as root:
-        pass
-    build_soundstage_tab(root, actions, gpu=False)
-    ui.h3_routes = (*getattr(ui, "h3_routes", ()), partial(
+    build_soundstage_tab(workshop_column(tab), actions, gpu=False)
+    add_workshop_routes(ui, partial(
         install_soundstage_page, actions=actions, store=store, output_dir=runtime.output_dir,
         takes_dir=lambda: takes_root(runtime), runtime_config=lambda: runtime, gpu=False,
         interrupt=interrupt_api_image, video_export=export))

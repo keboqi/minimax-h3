@@ -14,6 +14,7 @@ from h3_app import storyboard as sb
 from h3_app.config import RuntimeConfig
 from h3_app.provenance import write_snapshot
 
+from ..media_console import workshop_column, workshop_media_library
 from .handlers import MediaLibrary, StoryboardHandlers, StoryboardServices
 from .tab import build_storyboard_tab
 
@@ -34,14 +35,7 @@ def workshop_handlers(runtime: RuntimeConfig, store) -> StoryboardHandlers:
 def build_storyboard_workshop(tab: gr.Tab, ui: gr.Blocks, runtime: RuntimeConfig, store, *,
                               library=None) -> StoryboardHandlers:
     """The GPU-free Storyboard in ``tab``; ``library`` lends its media picker index."""
-    with tab, gr.Column(elem_classes=["h3-workspace"]) as root:
-        pass
     handlers = workshop_handlers(runtime, store)
-    build_storyboard_tab(root, ui, handlers, gpu=False)
-    if library is not None:
-        from h3_ui.media_console import media_controller
-
-        controller = media_controller(runtime)
-        handlers.library = MediaLibrary(library.search.h3_asset_index, controller.refresh_media_page,
-                                        controller.gallery_media_download_path)
+    build_storyboard_tab(workshop_column(tab), ui, handlers, gpu=False)
+    handlers.library = workshop_media_library(runtime, library)
     return handlers

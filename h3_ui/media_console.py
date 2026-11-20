@@ -50,6 +50,32 @@ def media_controller(runtime: RuntimeConfig) -> MediaController:
     return MediaController(SimpleNamespace(_runtime_config=lambda: runtime, catalog_inventory=catalog_inventory))
 
 
+def workshop_column(tab: gr.Tab) -> gr.Column:
+    """Create the standard workspace column inside a Workshop tab."""
+    with tab, gr.Column(elem_classes=["h3-workspace"]) as root:
+        pass
+    return root
+
+
+def add_workshop_routes(ui: gr.Blocks, *routes) -> None:
+    """Register one or more FastAPI route installers on a Workshop Gradio app."""
+    ui.h3_routes = (*getattr(ui, "h3_routes", ()), *routes)
+
+
+def workshop_media_library(runtime: RuntimeConfig, library):
+    """Build a MediaLibrary adapter from a Workshop GalleryView when provided."""
+    if library is None:
+        return None
+    from .storyboard.handlers import MediaLibrary
+
+    controller = media_controller(runtime)
+    return MediaLibrary(
+        library.search.h3_asset_index,
+        controller.refresh_media_page,
+        controller.gallery_media_download_path,
+    )
+
+
 def build_media_library(
     tab: gr.Tab, runtime: RuntimeConfig, store,
 ) -> GalleryView:

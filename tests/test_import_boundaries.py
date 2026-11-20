@@ -57,9 +57,44 @@ def private_imports():
     return sorted(set(found))
 
 
+PAGE_MODULES = (
+    "h3_ui/h3/page.py",
+    "h3_ui/ltx/page.py",
+    "h3_ui/image/page.py",
+    "h3_ui/song/page.py",
+    "h3_ui/media/page.py",
+    "h3_ui/remake_page.py",
+    "h3_ui/storyboard/page.py",
+    "h3_ui/drama3/page.py",
+    "h3_ui/dubbing/page.py",
+)
+SHARED_PAGE_NAMES = {"plain", "Run", "Runs", "guarded", "OwnerPageState", "private_page_root", "install_static_page"}
+
+
+def peer_page_imports():
+    """(importer, source, name) where a standalone page imports shared infrastructure from a peer page."""
+    peer_sources = {module_name(ROOT / rel) for rel in PAGE_MODULES}
+    found = []
+    for rel in PAGE_MODULES:
+        path = ROOT / rel
+        module = module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                source = resolve(module, path, node)
+                if source in peer_sources and source != module:
+                    for alias in node.names:
+                        if alias.name in SHARED_PAGE_NAMES:
+                            found.append((module, source, alias.name))
+    return sorted(set(found))
+
+
 class ImportBoundaryTests(unittest.TestCase):
     def test_no_private_names_cross_feature_boundaries(self):
         self.assertEqual(private_imports(), [])
+
+    def test_standalone_pages_use_shared_page_infrastructure(self):
+        self.assertEqual(peer_page_imports(), [])
 
 
 if __name__ == "__main__":

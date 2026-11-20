@@ -62,8 +62,9 @@ def run():
             data = io.BytesIO()
             Image.new("RGB", (40, 40), colors[index]).save(data, format="PNG")
             request.fulfill(body=data.getvalue(), content_type="image/png")
-        elif path in ("/image/", "/image/app.js", "/image/app.css"):
-            file = static / (Path(path).name if not path.endswith("/") else "index.html")
+        elif path in ("/image/", "/image/app.js", "/image/app.css", "/image/common.js"):
+            name = Path(path).name if not path.endswith("/") else "index.html"
+            file = (static.parents[1] / "page_static" / "common.js") if name == "common.js" else (static / name)
             content_type = {".html": "text/html", ".js": "application/javascript", ".css": "text/css"}[file.suffix]
             request.fulfill(body=file.read_bytes(), content_type=content_type)
         else:

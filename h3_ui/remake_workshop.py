@@ -3,10 +3,11 @@ from functools import partial
 
 import gradio as gr
 
+from .api_images import interrupt_api_image
 from .engines.feature import EngineDeps
 from .engines.remake import FRAME, RemakeHandlers
+from .media_console import add_workshop_routes, workshop_column, workshop_media_library
 from .remake_page import install_remake_page
-from .api_images import interrupt_api_image
 
 
 def build_remake_workshop(tab, ui, runtime, *, library=None, images=None):
@@ -14,17 +15,17 @@ def build_remake_workshop(tab, ui, runtime, *, library=None, images=None):
         runtime_config=lambda: runtime, generation_services=lambda: None,
         stage_file=None, interrupt=None,
     ))
-    if library is not None:
-        from .media_console import media_controller
-        from .storyboard.handlers import MediaLibrary
-
-        controller = media_controller(runtime)
-        handlers.library = MediaLibrary(library.search.h3_asset_index, controller.refresh_media_page,
-                                        controller.gallery_media_download_path)
-    with tab, gr.Column(elem_classes=["h3-workspace"]):
+    handlers.library = workshop_media_library(runtime, library)
+    with workshop_column(tab):
         gr.HTML(FRAME)
-    ui.h3_routes = (*getattr(ui, "h3_routes", ()),
-                    partial(install_remake_page, handlers=handlers, gpu=False,
-                            image_pages=images.pages if images else None,
-                            interrupt=interrupt_api_image))
+    add_workshop_routes(
+        ui,
+        partial(
+            install_remake_page,
+            handlers=handlers,
+            gpu=False,
+            image_pages=images.pages if images else None,
+            interrupt=interrupt_api_image,
+        ),
+    )
     return handlers

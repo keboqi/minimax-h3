@@ -5,6 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const commonSource = fs.readFileSync(path.join(__dirname, "../h3_ui/page_static/common.js"), "utf8");
 const source = fs.readFileSync(path.join(__dirname, "../h3_ui/storyboard/page/app.js"), "utf8");
 
 for (const kind of ["picture", "video"]) {
@@ -23,6 +24,7 @@ for (const kind of ["picture", "video"]) {
       },
     });
     // Expose the actual page actions without starting its DOM-dependent boot sequence.
+    vm.runInContext(commonSource, context);
     vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
       "  globalThis.page = {state, uploadMedia, uploadVideo};\n})();"), context);
     const page = context.page;

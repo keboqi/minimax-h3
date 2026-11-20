@@ -5,19 +5,8 @@
   const SAVE_DELAY_MS = 400;
   const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
-  const $ = (id) => document.getElementById(id);
-
-  const h = (tag, attributes = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [name, value] of Object.entries(attributes)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
-      else if (name in node && name !== "list") node[name] = value;
-      else node.setAttribute(name, value === true ? "" : value);
-    }
-    node.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, visibleArea, createToast} = globalThis.H3PageCommon;
+  const {toast} = createToast();
   const chip = (label, pressed, onclick) =>
     h("button", {type: "button", className: "chip", "aria-pressed": String(pressed), onclick}, label);
   const button = (label, onclick, className = "btn", extra = {}) =>
@@ -66,24 +55,6 @@
     return data;
   };
 
-  // In the tab the frame is taller than the window, so what's visible is only part of it.
-  const visibleArea = () => {
-    const frame = window.frameElement;
-    if (!frame) return {top: 0, bottom: innerHeight};
-    const box = frame.getBoundingClientRect();
-    return {top: Math.max(0, -box.top), bottom: Math.min(innerHeight, window.parent.innerHeight - box.top)};
-  };
-
-  let toastTimer;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.className = error ? "toast error" : "toast";
-    node.style.bottom = `${innerHeight - visibleArea().bottom + 20}px`;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
-  };
   // Any action on the server: a failure reports itself and leaves the page as it is.
   const act = async (work, done) => {
     try {

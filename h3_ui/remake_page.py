@@ -10,14 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-import shutil
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from typing import Any
 import uuid
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, IMAGE_EXTENSIONS,
@@ -29,16 +27,17 @@ from h3_app.remake import DEFAULT_SHORT_EDGE, FPS, MAX_PICTURES, SHORT_EDGES
 from h3_app.remake.model import SECTIONS
 from h3_app.remake.runner import Selection
 from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, LENGTHS, needs_windows
-from h3_app.workspace_store import request_owner
 
 from .engines.remake import EDIT_MODELS, READY, RemakeHandlers, next_run_details, readiness_message, readiness_step
 from .job_admission import execute_accepted
 from .job_bindings import owned_generation
+from .page_fields import library_items, library_source, spool_upload as _spool
+from .page_routes import install_static_page, interrupt_active_run, owner_of, session_of
+from .page_runs import Run, Runs, guarded
 from .player_fullscreen import FULLSCREEN_SCRIPT
-from .storyboard.page import Run, Runs, guarded
 
 STATIC = Path(__file__).with_name("remake_static")
-STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
+STATIC_TYPES = {"app.js": "application/javascript", "helpers.js": "application/javascript", "app.css": "text/css"}
 # ``generate_remake``'s positions of the source and the four pictures.
 MEDIA_INDICES = (1, 7, 8, 9, 10)
 RUN_KEY = "remake"
@@ -59,16 +58,6 @@ def _slots(body: dict[str, Any]) -> tuple[list[Any], list[Any]]:
             [slot.get("pin") if slot else None for slot in slots])
 
 
-def _spool(upload: UploadFile, directory: str, allowed) -> Path:
-    suffix = Path(upload.filename or "").suffix.lower()
-    if suffix not in allowed:
-        raise H3Error(f"{upload.filename} isn't a supported file ({', '.join(sorted(allowed))}).")
-    path = Path(directory) / f"{uuid.uuid4().hex}{suffix}"
-    with path.open("wb") as handle:
-        shutil.copyfileobj(upload.file, handle)
-    return path
-
-
 def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=None, gpu: bool = True,
                         image_pages=None) -> None:
     runs = Runs(busy="A Remake is already running.")
@@ -86,13 +75,6 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         if not gpu:
             raise H3Error("Open this project in Studio to render or edit frames on the GPU.")
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
-
     def run_payload(owner):
         run = runs.latest(owner, RUN_KEY)
         return run.public(None) if run is not None else None
@@ -102,13 +84,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         return run.public(None) if run is not None else None
 
     def interrupted(request: Request, run: Run | None, family: str) -> str:
-        if interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            return "Nothing is running."
-        if run.job_id is None:
-            return "The run is still starting. Try again in a moment."
-        return interrupt(session_of(request), family=family, job_id=run.job_id)
+        return interrupt_active_run(request, run, family, interrupt)
 
     def readable(request: Request, path: str) -> tuple[str, Path]:
         """The owner and the file a GET names; anything else is simply not found."""
@@ -129,31 +105,16 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         return owner, pictures, pins
 
     def library_picture(owner, path: str) -> str:
-        if handlers.library is None:
-            raise H3Error("The media library isn't available here.")
-        handlers.library.validate_path(path, "Image")
-        if not Path(path).is_file():
-            raise H3Error("This image is unavailable. Refresh the library and choose another.")
-        return handlers.adopt_picture(owner, path)
+        return handlers.adopt_picture(owner, library_source(handlers.library, path))
 
     # The page --------------------------------------------------------------
-    @app.get("/remake", include_in_schema=False)
-    def remake_redirect():
-        return RedirectResponse("/remake/")
-
-    @app.get("/remake/", include_in_schema=False)
-    def remake_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/remake/fullscreen.js", include_in_schema=False)
-    def fullscreen_script():
-        return FileResponse(FULLSCREEN_SCRIPT, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/remake/{name}", include_in_schema=False)
-    def remake_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(
+        app,
+        "/remake",
+        STATIC,
+        STATIC_TYPES,
+        extra_files={"fullscreen.js": (FULLSCREEN_SCRIPT, "application/javascript")},
+    )
 
     @app.get(f"{api}/boot", include_in_schema=False)
     @guarded
@@ -309,15 +270,7 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @guarded
     def library(request: Request, query: str = "", limit: int = 24):
         owner_of(request)
-        if handlers.library is None:
-            raise H3Error("The media library isn't available here.")
-        limit = max(1, min(limit, 240))
-        index = handlers.library.index
-        page = handlers.library.refresh_page("Image", limit, paths=index.inventory("Image", query, limit=limit))
-        version = index.versions.get("Image", 0)
-        return {"items": [{"path": str(path), "caption": caption,
-                           "thumb": f"/media-previews/{Path(thumb).name}?v={version}"}
-                          for path, (thumb, caption) in zip(page.paths, page.items)]}
+        return library_items(handlers.library, query, limit)
 
     @app.post(f"{api}/align/check", include_in_schema=False)
     @guarded

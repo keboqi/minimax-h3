@@ -9,17 +9,13 @@ thread here, and the page polls it. Remake and Storyboard follow the settings sa
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import re
 import shutil
-from threading import RLock
-from types import SimpleNamespace
 from typing import Any, Callable
 import uuid
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app import catalog
 from h3_models import (
@@ -36,10 +32,15 @@ from h3_app.reference_metadata import describe_reference
 from h3_app.settings import transition_modes
 from h3_app.storyboard import PROFILE_FIELDS
 from h3_app.storyboard.model import request_defaults
-from h3_app.workspace_store import request_owner
 
 from ..job_admission import execute_accepted
+from ..page_fields import (
+    SECRET_FIELDS, UI_LIMIT, library_items, library_source, owned_file, path_of as _path_of, plain,
+    quote_path as _quote, spool_upload as _spool, update_value as _update_value,
+)
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of, validate_ui_patch
 from ..page_runs import Run, Runs, guarded
+from ..page_state import OwnerPageState, private_page_root
 from ..presentation import generation_readiness
 from ..storyboard.handlers import WRITER_FIELDS
 from . import layout
@@ -86,6 +87,20 @@ class H3PageServices:
     library: Callable[[], Any] = lambda: None
     followers: tuple = ()
     attention_backend: str = "sol"
+
+    @classmethod
+    def from_bootstrap(cls, catalog_cfg, services, *, library: Callable[[], Any], followers: tuple) -> H3PageServices:
+        return cls(
+            root=lambda: services.engine_deps.runtime_config().outputs_dir / ".h3-page",
+            resolve=services.resolve_request_settings,
+            describe=services.describe_settings,
+            enhance=services.enhance_h3_prompt,
+            interrupt=services.interrupt,
+            compile_trt=services.compile_trt_video_vae,
+            library=library,
+            followers=followers,
+            attention_backend=catalog_cfg.SERVER_ATTENTION_BACKEND,
+        )
 
 
 @dataclass
@@ -153,9 +168,9 @@ def coerce(name: str, value: Any, default: Any) -> Any:
     return "" if value is None else str(value)
 
 
-def plain(text: str) -> str:
-    """Markdown or HTML status text as the plain line the page shows."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|\*\*", " ", str(text or ""))).strip()
+def private_h3_root(runtime, workspace: Path) -> Path:
+    """Keep owner drafts outside the served roots, including on upgrades."""
+    return private_page_root(runtime, workspace, "h3", migrate_from=".h3-page")
 
 
 def readiness_line(ready) -> str:
@@ -179,60 +194,12 @@ def _map_to(mapping: ReferenceMap) -> dict:
                           "engine_ordinal": b.engine_ordinal, "unresolved": b.unresolved} for b in mapping.bindings]}
 
 
-def _spool(upload: UploadFile, folder: Path, allowed) -> Path:
-    suffix = Path(upload.filename or "").suffix.lower()
-    if suffix not in allowed:
-        raise H3Error(f"{upload.filename} isn't a supported file ({', '.join(sorted(allowed))}).")
-    stem = re.sub(r"[^\w. -]", "_", Path(upload.filename or "").stem).strip(" .")[:60] or "upload"
-    path = folder / f"{uuid.uuid4().hex[:12]}-{stem}{suffix}"
-    with path.open("wb") as handle:
-        shutil.copyfileobj(upload.file, handle)
-    return path
-
-
-def _update_value(update) -> tuple[bool, Any]:
-    """Whether a Gradio update sets a value, and the value."""
-    if isinstance(update, dict) and update.get("__type__") == "update":
-        return ("value" in update, update.get("value"))
-    return (True, update)
-
-
-def _path_of(value) -> str | None:
-    if isinstance(value, dict):
-        return _path_of(value.get("path") or value.get("video"))
-    if isinstance(value, (list, tuple)):
-        return _path_of(value[0]) if value else None
-    return str(value) if value else None
-
-
-class H3PageState:
+class H3PageState(OwnerPageState):
     """Each owner's settings, prompt and media, saved as one JSON file."""
-
-    def __init__(self, services: H3PageServices):
-        self.services = services
-        self.lock = RLock()
-        self.secrets: dict[str, dict[str, str]] = {}
-        self.granted: dict[str, set[str]] = {}
-
-    # Storage ---------------------------------------------------------------
-    def owner_root(self, owner: str) -> Path:
-        folder = self.services.root() / re.sub(r"[^\w-]", "_", owner)
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-
-    def uploads(self, owner: str) -> Path:
-        folder = self.owner_root(owner) / "uploads"
-        folder.mkdir(exist_ok=True)
-        return folder
 
     def load(self, owner: str) -> dict[str, Any]:
         defaults = setting_defaults()
-        saved: dict[str, Any] = {}
-        try:
-            saved = json.loads((self.owner_root(owner) / "settings.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-        saved = saved if isinstance(saved, dict) else {}
+        saved = self.read_saved(owner)
         values = dict(defaults)
         for name, value in (saved.get("values") or {}).items():
             if name in defaults:
@@ -241,10 +208,7 @@ class H3PageState:
                 except H3Error:
                     continue
         values["result_format"] = "Video"
-        writer = writer_defaults()
-        writer.update({name: value for name, value in (saved.get("writer") or {}).items()
-                       if name in writer and name not in SECRET_FIELDS})
-        writer.update(self.secrets.get(owner, {}))
+        writer = self.load_writer(owner, saved, writer_defaults())
         media = {name: path for name, path in (saved.get("media") or {}).items()
                  if name in MEDIA_FIELDS and path and Path(path).is_file()}
         return {"values": values, "memory": saved.get("memory") or None, "writer": writer, "media": media,
@@ -253,13 +217,7 @@ class H3PageState:
                 "ui": saved.get("ui") if isinstance(saved.get("ui"), dict) else {}}
 
     def save(self, owner: str, state: dict[str, Any]) -> None:
-        self.secrets[owner] = {name: state["writer"].get(name) or "" for name in SECRET_FIELDS}
-        kept = {**state, "writer": {name: value for name, value in state["writer"].items()
-                                    if name not in SECRET_FIELDS}}
-        target = self.owner_root(owner) / "settings.json"
-        scratch = target.with_suffix(".tmp")
-        scratch.write_text(json.dumps(kept, default=str), encoding="utf-8")
-        scratch.replace(target)
+        self.write_saved(owner, state)
         self.follow(owner, state)
 
     def follow(self, owner: str, state: dict[str, Any]) -> None:
@@ -274,15 +232,6 @@ class H3PageState:
             return {"profile": profile, "writer": {name: state["writer"].get(name) for name in WRITER_FIELDS},
                     "review": bool(state["writer"].get("review", True))}
         return profile
-
-    def may_read(self, owner: str, path) -> bool:
-        if str(path) in self.granted.get(owner, ()):
-            return True
-        return self.owner_root(owner).resolve() in Path(path).resolve().parents
-
-    def grant(self, owner: str, path) -> str:
-        self.granted.setdefault(owner, set()).add(str(path))
-        return str(path)
 
     # Requests --------------------------------------------------------------
     @staticmethod
@@ -407,12 +356,6 @@ class H3PageState:
                 "settings": render_snapshot(paths) if paths else ""}
 
 
-def _quote(path: str) -> str:
-    from urllib.parse import quote
-
-    return quote(str(path), safe="")
-
-
 def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True) -> H3PageState:
     """Serve the page at ``/h3/`` and its API under ``/h3/api``."""
     pages = H3PageState(services)
@@ -424,13 +367,6 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
             return pages.followed(follower, pages.load(owner))
 
         follower.settings = Followed(load)
-
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
 
     def require_gpu():
         if not gpu:
@@ -457,19 +393,7 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
             return answer(owner, state)
 
     # The page --------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def h3_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def h3_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def h3_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded
@@ -570,9 +494,7 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
     @guarded
     def change_ui(request: Request, body: dict = Body(...)):
         """What only the page reads: the open Fine-tune group, the chosen ratio and size."""
-        ui = body.get("ui")
-        if not isinstance(ui, dict) or len(json.dumps(ui)) > UI_LIMIT:
-            raise H3Error("That is too much to remember.")
+        ui = validate_ui_patch(body)
         return edit(request, lambda state: state.update(ui=ui))
 
     # Media -----------------------------------------------------------------
@@ -624,16 +546,10 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
     def media_from_library(request: Request, body: dict = Body(...)):
         owner = owner_of(request)
         name = slot_of(body.get("slot"))
-        library = services.library()
-        if library is None or name not in IMAGE_SLOTS:
+        if name not in IMAGE_SLOTS:
             raise H3Error("The media library isn't available here.")
-        source = str(body.get("source") or "")
-        library.validate_path(source, "Image")
-        if not Path(source).is_file():
-            raise H3Error("This image is unavailable. Refresh the library and choose another.")
-        target = pages.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(source).name}"
-        shutil.copy2(source, target)
-        return place(request, name, str(target))
+        source = library_source(services.library(), str(body.get("source") or ""))
+        return place(request, name, pages.keep(owner, source))
 
     @app.post(f"{API}/media/clear", include_in_schema=False)
     @guarded
@@ -658,27 +574,11 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
     @guarded
     def library_page(request: Request, query: str = "", limit: int = 24):
         owner_of(request)
-        library = services.library()
-        if library is None:
-            raise H3Error("The media library isn't available here.")
-        limit = max(1, min(limit, 240))
-        page = library.refresh_page("Image", limit, paths=library.index.inventory("Image", query, limit=limit))
-        version = library.index.versions.get("Image", 0)
-        return {"items": [{"path": str(path), "caption": caption,
-                           "thumb": f"/media-previews/{Path(thumb).name}?v={version}"}
-                          for path, (thumb, caption) in zip(page.paths, page.items)]}
+        return library_items(services.library(), query, limit)
 
     @app.get(f"{API}/file", include_in_schema=False)
     def read_file(path: str, request: Request, download: bool = False):
-        try:
-            owner = owner_of(request)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
-        file = Path(path)
-        if not pages.may_read(owner, path) or not file.is_file():
-            raise HTTPException(status_code=404, detail="File not found")
-        return FileResponse(file, filename=file.name if download else None,
-                            headers={"Cache-Control": "private, max-age=3600"})
+        return owned_file(lambda: owner_of(request), pages.may_read, path, download)
 
     # Long work -------------------------------------------------------------
     def start(owner: str, kind: str, work: Callable[[H3Run], None]) -> dict[str, Any]:
@@ -876,15 +776,8 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
         if kind not in (GENERATE, UPSCALE):
             raise H3Error("Unknown step.")
         run = runs[kind].active(owner, RUN_KEY)
-        if services.interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
-        else:
-            message = services.interrupt(session_of(request), family="h3" if kind == GENERATE else "h3-input",
-                                         job_id=run.job_id)
+        family = "h3" if kind == GENERATE else "h3-input"
+        message = interrupt_active_run(request, run, family, services.interrupt)
         return {"message": message, "runs": run_payloads(owner)}
 
     return pages

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, Callable, Mapping, Sequence
 
 
@@ -50,3 +50,11 @@ class H3ViewServices:
     GENERATION_POSTPROCESS_OPTIONS: Sequence[str]
     UPSCALE_RESOLUTION_PRESETS: Mapping[str, Any]
     DEFAULT_UPSCALE_RESOLUTION: str
+
+    @classmethod
+    def from_bootstrap(cls, catalog: Any, services: Any) -> H3ViewServices:
+        values = {
+            item.name: getattr(catalog, item.name) if hasattr(catalog, item.name) else getattr(services, item.name)
+            for item in fields(cls)
+        }
+        return cls(**values)

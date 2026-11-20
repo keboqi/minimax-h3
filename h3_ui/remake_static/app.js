@@ -1,51 +1,18 @@
 import {bindFullscreen} from "./fullscreen.js";
+import {
+  API, POLL_MS, PULSE_MS, CHECK_DELAY_MS, DRAG_PX, MIN_SELECTION_S, PREFS, SESSION, BRIDGE, QUEUED,
+  CHECK, CROSS, CHEVRON, PLAY_SVG, PAUSE_SVG, VOLUME_SVG, MUTE_SVG,
+  svg, stored, loadPrefs, formatClock, fileUrl,
+} from "./helpers.js";
 
 // The Remake page. The browser holds the editor; a long selection's windows live in their project,
 // and scrubbing asks the server for nothing unless a source can't play here.
 (() => {
-  const API = "/remake/api";
-  const POLL_MS = 1500;
-  const PULSE_MS = 2500;
-  const CHECK_DELAY_MS = 200;
-  const DRAG_PX = 4;
-  const MIN_SELECTION_S = 0.5;
-  const PREFS = "h3-remake-prefs";
-  const SESSION = {project: "h3-remake-project", window: "h3-remake-window"};
-  const BRIDGE = {edit: (model) => `remake-edit-bridge-${model}`, settings: "remake-settings-bridge"};
-  const QUEUED = ["pending", "changed", "failed"];
-  const $ = (id) => document.getElementById(id);
-
-  const h = (tag, attributes = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [name, value] of Object.entries(attributes)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (name.startsWith("on")) node.addEventListener(name.slice(2), value);
-      else if (name in node) node[name] = value;
-      else node.setAttribute(name, value === true ? "" : value);
-    }
-    node.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, visibleArea, createToast, createClient} = globalThis.H3PageCommon;
+  const {request, post} = createClient(API);
+  const {toast, guard: safely} = createToast();
   const button = (label, onclick, className = "btn", extra = {}) =>
     h("button", {type: "button", className, onclick, ...extra}, label);
-  const svg = (markup) => {
-    const holder = document.createElement("span");
-    holder.innerHTML = markup;
-    return holder.firstChild;
-  };
-  const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 6.5l2.8 2.8L10 3.5"/></svg>';
-  const CROSS = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>';
-  const CHEVRON = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 4l4 4 4-4"/></svg>';
-  const PLAY_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 1.5v11l9-5.5z"/></svg>';
-  const PAUSE_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3 2h3v10H3zM8 2h3v10H8z"/></svg>';
-  const VOLUME_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5.2h2.6L8 2.5v9L4.6 8.8H2z" fill="currentColor"/><path d="M10 4.5a3.5 3.5 0 0 1 0 5M11.6 2.8a6 6 0 0 1 0 8.4" stroke-linecap="round"/></svg>';
-  const MUTE_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5.2h2.6L8 2.5v9L4.6 8.8H2z" fill="currentColor"/><path d="M9.8 5l3 4M12.8 5l-3 4" stroke-linecap="round"/></svg>';
-
-  const stored = {
-    get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
-    set(key, value) { try { sessionStorage.setItem(key, value); } catch { /* Private windows refuse it. */ } },
-    remove(key) { try { sessionStorage.removeItem(key); } catch { /* Private windows refuse it. */ } },
-  };
 
   const state = {
     boot: null, source: null, start: 0, end: 0, lastStart: 0, shortEdge: 480, maxWindow: 226, mix: 0,
@@ -55,7 +22,7 @@ import {bindFullscreen} from "./fullscreen.js";
     muted: false, saveLabel: "All changes saved",
     menu: false, renaming: null, confirming: null, target: null, settings: null, quick: null,
   };
-  const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })();
+  const prefs = loadPrefs();
   const savePrefs = () => {
     const kept = {mode: state.mode, outputEdge: state.shortEdge, maxWindow: state.maxWindow, smart: state.smart,
                   editWith: $("edit-model").value, muted: state.muted,
@@ -63,56 +30,10 @@ import {bindFullscreen} from "./fullscreen.js";
     try { localStorage.setItem(PREFS, JSON.stringify(kept)); } catch { /* Private windows refuse it. */ }
   };
 
-  const request = async (method, path, body, {form = false, keepalive = false} = {}) => {
-    const options = {method, credentials: "same-origin", keepalive};
-    if (form) options.body = body;
-    else if (body !== undefined) {
-      options.headers = {"Content-Type": "application/json"};
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(`${API}${path}`, options);
-    let data = null;
-    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
-    return data;
-  };
-  const post = (path, body, extra) => request("POST", path, body, extra);
-  const fileUrl = (path) => `${API}/file?path=${encodeURIComponent(path)}`;
-
-  // In the tab the frame is taller than the window, so what's visible is only part of it.
-  const visibleArea = () => {
-    const frame = window.frameElement;
-    if (!frame) return {top: 0, bottom: innerHeight};
-    try {
-      const box = frame.getBoundingClientRect();
-      return {top: Math.max(0, -box.top), bottom: Math.min(innerHeight, window.parent.innerHeight - box.top)};
-    } catch {
-      return {top: 0, bottom: innerHeight};
-    }
-  };
-
-  let toastTimer;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.className = error ? "toast error" : "toast";
-    node.style.bottom = `${Math.max(20, innerHeight - visibleArea().bottom + 20)}px`;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
-  };
-  // Every action reports its own failure; the page stays usable.
-  const safely = (work) => async (...args) => {
-    try { return await work(...args); } catch (error) { toast(error.message, true); return undefined; }
-  };
-
   // Timing -----------------------------------------------------------------
   const gpu = () => state.boot?.gpu !== false;
   const fps = () => state.boot.fps;
-  const clock = (frames) => {
-    const seconds = frames / fps();
-    return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
-  };
+  const clock = (frames) => formatClock(frames, fps());
   const selectionFrames = () => Math.max(1, Math.floor((state.end - state.start) * fps() + 1e-6));
   const total = () => state.project?.frames ?? Math.min(selectionFrames(), state.maxWindow);
   const single = () => ({index: 0, own: [0, total()], render: [0, total()], hold: 0, kind: "start",

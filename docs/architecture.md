@@ -53,6 +53,12 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/application.py | Startup and runtime configuration, the ComfyUI and file effects controllers and engines receive, the full H3 `generate`, and the controller and handler singletons. Controllers never import it; tests patch its effects and find a name's owner with `tests/app_targets.py` |
 | h3_ui/snapshot_preload.py | Modal's `h3-video` and `h3-soundstage` endpoints: loads the default H3 Video or Soundstage models before the workspace opens, then waits for the snapshot restore to start the UI |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
+| h3_ui/page_fields.py, page_runs.py, page_queue.py, page_state.py, page_routes.py, page_static/common.js | Shared standalone page infrastructure: option schemas, process-local runs and batch queues, per-owner JSON draft/upload state outside served output roots, static route mounting, and browser DOM/transport/control primitives |
+| h3_ui/h3/page.py, h3_ui/h3/page/ | The MiniMax H3 standalone page at `/h3/` and its JSON API; Remake, Storyboard, Image and Media follow its saved settings |
+| h3_ui/ltx/page.py, h3_ui/ltx/page/ | The LTX 2.5 standalone page at `/ltx/` and its JSON API |
+| h3_ui/image/page.py, h3_ui/image/page/ | The Image standalone page at `/image/` and its JSON API across MiniMax H3, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0 and GPT Image |
+| h3_ui/song/page.py, h3_ui/song/page/ | The Song standalone page at `/song/` and its JSON API for Music 3 and YuE2 |
+| h3_ui/media/page.py, h3_ui/media/page/ | The Media library standalone page at `/media/` and its JSON API |
 | h3_ui/image_workspace.py | Common Image view, model option placement and explicit preference components |
 | h3_ui/image_bindings.py | Common Image mode, reference actions, readiness, queue bindings and prompt review |
 | h3_ui/image_controller.py | Image draft validation and named option adapters to existing model handlers; H3 requests reuse current settings without capturing Video media |

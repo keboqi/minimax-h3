@@ -16,13 +16,12 @@ from pathlib import Path
 import shutil
 import tempfile
 from threading import RLock
-from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import quote
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, Response
 
 import h3_models as models
 from h3_app import catalog
@@ -30,12 +29,12 @@ from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
 from h3_app.provenance import read_snapshot
-from h3_app.workspace_store import request_owner
 
-from ..h3.page import plain
 from ..job_admission import execute_accepted
 from ..library_tools import lineage_steps
 from ..media_actions import DeletionIntent, file_fingerprints
+from ..page_fields import plain
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of as build_session
 from ..page_runs import Run, Runs, guarded
 
 STATIC = Path(__file__).with_name("page")
@@ -154,6 +153,43 @@ def media_url(path, mode: str, *, download: bool = False) -> str:
 
 class MediaPageState:
     """The page's server side: listing, selection, annotations and deletion intents per owner."""
+
+    @classmethod
+    def from_bootstrap(
+        cls,
+        services,
+        *,
+        index: Callable[[], Any],
+        set_as: Callable[[], Any],
+        h3_saved: Any,
+        seedvr2_default: str | None,
+    ) -> MediaPageState:
+        from types import SimpleNamespace
+
+        return cls(
+            MediaPageServices(
+                controller=SimpleNamespace(
+                    **{
+                        name: getattr(services, name)
+                        for name in (
+                            "gallery_media_download_path",
+                            "refresh_media_page",
+                            "list_media_paths",
+                            "import_gallery_media",
+                            "delete_selected_gallery_media",
+                            "empty_generated_media_gallery",
+                        )
+                    }
+                ),
+                index=index,
+                downloads=services.dubbing_actions,
+                set_as=set_as,
+                enhance=True,
+                h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
+                interrupt=services.interrupt,
+                seedvr2_default=seedvr2_default,
+            )
+        )
 
     def __init__(self, services: MediaPageServices):
         self.services = services
@@ -411,13 +447,9 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
     runs = {kind: Runs(busy=message) for kind, message in BUSY.items()}
     css = result_css()
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
     def session_of(request: Request, owner: str):
         # Downloads stop by this key; enhancement builds its download link from ``request``.
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=f"media-{owner}",
-                               headers=dict(request.headers), request=request, client=request.client)
+        return build_session(request, session_hash=f"media-{owner}", include_request=True)
 
     def run_payloads(owner: str) -> dict[str, Any]:
         found = {}
@@ -438,14 +470,6 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
             raise HTTPException(status_code=404, detail="File not found") from exc
 
     # The page --------------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def media_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def media_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
     @app.get(f"{ROUTE}/results.css", include_in_schema=False)
     def media_result_css():
         return Response(css, media_type="text/css", headers={"Cache-Control": "no-cache"})
@@ -465,11 +489,7 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
             f"export function bindStage(element) {{\n{STAGE_VIDEO_JS}\n}}\n",
             media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def media_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded
@@ -737,14 +757,11 @@ def install_media_page(app: FastAPI, pages: MediaPageState) -> MediaPageState:
     def enhance_stop(request: Request):
         owner = owner_of(request)
         run = runs[ENHANCE].active(owner, ENHANCE)
-        if services.interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The enhancement is still starting. Try again in a moment."
-        else:
-            message = services.interrupt(session_of(request, owner), family="gallery", job_id=run.job_id)
+        message = interrupt_active_run(
+            request, run, "gallery", services.interrupt,
+            starting="The enhancement is still starting. Try again in a moment.",
+            session=session_of(request, owner),
+        )
         return {"message": plain(message), "runs": run_payloads(owner)}
 
     @app.get(f"{API}/run", include_in_schema=False)

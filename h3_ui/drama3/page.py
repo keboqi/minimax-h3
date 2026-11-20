@@ -11,20 +11,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
-from types import SimpleNamespace
 from threading import RLock
 from typing import Any, Callable
 
-from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Body, FastAPI, Request
 
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
-from h3_app.workspace_store import request_owner
 
 from ..job_bindings import owned_generation
+from ..page_routes import install_static_page, owner_of, session_of
 from ..page_runs import Runs, guarded
 from .controls import DRAMA3_SAMPLING_PRESETS
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
@@ -178,13 +175,6 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     }
     api = "/soundstage/api"
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
-
     def project(name: str) -> tuple[dict, str | None]:
         data, result = store.soundstage_project(name)
         return data, result if result and Path(result).is_file() else None
@@ -221,19 +211,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     video_runs = None
 
     # The page --------------------------------------------------------------
-    @app.get("/soundstage", include_in_schema=False)
-    def soundstage_redirect():
-        return RedirectResponse("/soundstage/")
-
-    @app.get("/soundstage/", include_in_schema=False)
-    def soundstage_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/soundstage/{name}", include_in_schema=False)
-    def soundstage_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, "/soundstage", STATIC, STATIC_TYPES)
 
     @app.get(f"{api}/boot", include_in_schema=False)
     @guarded

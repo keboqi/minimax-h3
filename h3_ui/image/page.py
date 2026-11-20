@@ -10,20 +10,12 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-import errno
-import json
 from pathlib import Path
 import re
-import shutil
-from tempfile import TemporaryDirectory
-from threading import RLock
-from types import SimpleNamespace
 from typing import Any, Callable, Mapping
-from urllib.parse import quote
 import uuid
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
 from h3_app.gpt_image import (
@@ -38,20 +30,20 @@ from h3_app.provenance import render_snapshot
 from h3_app.reference_metadata import describe_reference
 from h3_app.workflows.flux3 import flux3_sampling_defaults
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
-from h3_app.workspace_store import request_owner
 
 from ..engines.controls import resolution_preset_values
 from ..engines.moss_image import moss_image_turbo_defaults, moss_image_turbo_size_steps
 from ..engines.qwen.bindings import qwen_turbo_defaults
 from ..engines.qwen.view import QWEN_IMAGE21_LIGHTNING_MODES
-from ..h3.page import plain
 from ..image_controller import IMAGE_MODELS, draft_issue, image_mode, reference_limit, reference_tag
 from ..job_admission import execute_accepted
 from ..page_fields import (
-    SECRET_FIELDS, UI_LIMIT, FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
-    review_row, spool_image, update_value, writer_defaults, writer_rows,
+    FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
+    path_of as _path_of, plain, quote_path as _quote, review_row, spool_image, update_value, writer_rows,
 )
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of, validate_ui_patch
 from ..page_runs import Run, Runs, guarded
+from ..page_state import OwnerPageState, private_page_root
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
@@ -145,45 +137,11 @@ class Live(dict):
 
 def private_image_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots, including on upgrades."""
-    outputs = runtime.outputs_dir.resolve()
-    comfy = runtime.output_dir.resolve()
-    root = (workspace / "image-page").resolve()
-    if any(root.is_relative_to(public) for public in (outputs, comfy)):
-        outer = comfy if outputs.is_relative_to(comfy) else outputs
-        root = (outer.with_name(f".{outer.name}-image-drafts") / outputs.relative_to(outer)).resolve()
-        if any(root.is_relative_to(public) for public in (outputs, comfy)):
-            raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private image drafts.")
-    previous = outputs / ".image-page"
-    if previous.is_dir():
-        root.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            previous.rename(root)
-        except OSError as error:
-            if error.errno != errno.EXDEV:
-                raise
-            # The workspace may be on a different volume. Publish only a complete copy.
-            with TemporaryDirectory(dir=root.parent) as staging:
-                copy = Path(staging) / "image-page"
-                shutil.copytree(previous, copy)
-                copy.rename(root)
-            shutil.rmtree(previous)
-    return root
+    return private_page_root(runtime, workspace, "image", migrate_from=".image-page")
 
 
 def key_of(engine: str, parameter: str) -> str:
     return f"{'image' if engine == 'h3' else engine}__{parameter}"
-
-
-def _path_of(value) -> str | None:
-    if isinstance(value, dict):
-        return _path_of(value.get("path") or value.get("image"))
-    if isinstance(value, (list, tuple)):
-        return _path_of(value[0]) if value else None
-    return str(value) if value else None
-
-
-def _quote(path: str) -> str:
-    return quote(str(path), safe="")
 
 
 def _size(name: str) -> dict[str, Any]:
@@ -193,51 +151,78 @@ def _size(name: str) -> dict[str, Any]:
             "height": height}
 
 
-class ImagePageState:
+class ImagePageState(OwnerPageState):
     """Each owner's draft and every model's options, saved as one JSON file."""
 
+    @classmethod
+    def from_bootstrap(
+        cls,
+        services,
+        image_controller,
+        engine_views: Mapping[str, Any],
+        engine_handlers: Mapping[str, Any],
+        *,
+        h3_saved: Any,
+        library: Callable[[], Any],
+        followers: tuple = (),
+    ) -> ImagePageState:
+        from functools import partial
+        from h3_app.catalog import H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS
+        from h3_app.gpt_image import GPT_IMAGE_RESOLUTION_PRESETS
+        from h3_app.h3_image import H3_IMAGE_16M_PRESETS
+        from ..image_controller import suggest_prompt
+        from ..page_fields import spec_of
+
+        image_fields = {
+            name: component
+            for name, component in image_controller.fields.items()
+            if not name.startswith("h3__") and name != "gpt_image__seed"
+        }
+        image_fields["qwen__preset"] = engine_views["qwen"].preset
+        image_fields["moss_image__rewrite_mode"] = engine_views["moss_image"].rewrite_mode
+        image_root = private_image_root(services.engine_deps.runtime_config(), JOBS.store.root)
+        return cls(
+            ImagePageServices(
+                root=lambda: image_root,
+                fields={name: spec_of(component) for name, component in image_fields.items()},
+                job_fields=tuple(image_controller.fields),
+                presets={
+                    **{
+                        engine: tuple(tuple(value for _label, value in dropdown.choices) for dropdown in pair)
+                        for engine, pair in {
+                            "qwen": (engine_views["qwen"].output_resolution_1k, engine_views["qwen"].output_resolution_2k),
+                            **{
+                                engine: (engine_views[engine].resolution_small, engine_views[engine].resolution_large)
+                                for engine in ("flux3", "moss_image", "fibo2")
+                            },
+                        }.items()
+                    },
+                    "h3": (H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_16M_PRESETS),
+                    "gpt_image": (GPT_IMAGE_RESOLUTION_PRESETS,),
+                },
+                suggest=partial(suggest_prompt, engine_handlers, runtime=services.engine_deps.runtime_config()),
+                h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
+                h3_defaults={
+                    name: getattr(component, "value", None)
+                    for name, component in image_controller.h3_fields.items()
+                },
+                interrupt=services.interrupt,
+                library=library,
+                followers=followers,
+            )
+        )
+
     def __init__(self, services: ImagePageServices):
-        self.services = services
-        self.lock = RLock()
-        self.secrets: dict[str, dict[str, str]] = {}
-        self.granted: dict[str, set[str]] = {}
+        super().__init__(services)
         self.labels = {engine.id: engine.label for engine in engines_for_task("Image")}
         for follower in services.followers:
             follower.settings = Live(self.job_options)
 
-    # Storage ---------------------------------------------------------------
-    def owner_root(self, owner: str) -> Path:
-        folder = self.services.root() / re.sub(r"[^\w-]", "_", owner)
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-
-    def uploads(self, owner: str) -> Path:
-        folder = self.owner_root(owner) / "uploads"
-        folder.mkdir(exist_ok=True)
-        return folder
-
-    def defaults(self) -> dict[str, Any]:
-        return {name: spec.default for name, spec in self.services.fields.items()}
-
     def load(self, owner: str) -> dict[str, Any]:
-        saved: dict[str, Any] = {}
-        try:
-            saved = json.loads((self.owner_root(owner) / "settings.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-        saved = saved if isinstance(saved, dict) else {}
-        options = self.defaults()
-        for name, value in (saved.get("options") or {}).items():
-            if name in options:
-                try:
-                    options[name] = coerce(self.services.fields[name], value)
-                except H3Error:
-                    continue
+        saved = self.read_saved(owner)
+        options = self.load_options(saved)
         _clamp_gpt_image_options(options)
-        writer = writer_defaults()
-        writer.update({name: value for name, value in (saved.get("writer") or {}).items()
-                       if name in writer and name not in SECRET_FIELDS})
-        writer.update(self.secrets.get(owner, {}))
+        writer = self.load_writer(owner, saved)
         files = lambda paths: [str(path) for path in paths or [] if path and Path(path).is_file()]
         # Earlier drafts stored absolute paths under the old output directory.
         uploads = self.owner_root(owner) / "uploads"
@@ -251,37 +236,8 @@ class ImagePageState:
         }
 
     def save(self, owner: str, state: dict[str, Any]) -> None:
-        self.secrets[owner] = {name: state["writer"].get(name) or "" for name in SECRET_FIELDS}
-        kept = {**state, "writer": {name: value for name, value in state["writer"].items()
-                                    if name not in SECRET_FIELDS}}
-        target = self.owner_root(owner) / "settings.json"
         # The CPU workspace edits only API options in this shared Studio draft.
-        if self.services.engines != IMAGE_MODELS:
-            try:
-                previous = json.loads(target.read_text(encoding="utf-8"))
-                kept["options"] = {**(previous.get("options") or {}), **kept["options"]}
-            except (OSError, ValueError, AttributeError, TypeError):
-                pass
-        scratch = target.with_suffix(".tmp")
-        scratch.write_text(json.dumps(kept, default=str), encoding="utf-8")
-        scratch.replace(target)
-
-    def may_read(self, owner: str, path) -> bool:
-        if str(path) in self.granted.get(owner, ()):
-            return True
-        return self.owner_root(owner).resolve() in Path(path).resolve().parents
-
-    def grant(self, owner: str, path) -> str:
-        self.granted.setdefault(owner, set()).add(str(path))
-        return str(path)
-
-    def keep(self, owner: str, source, rollback: ExitStack | None = None) -> str:
-        """A copy of ``source`` among the owner's uploads, so the draft outlives where it came from."""
-        target = self.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(source).name}"
-        if rollback is not None:
-            rollback.callback(target.unlink, missing_ok=True)
-        shutil.copy2(source, target)
-        return str(target)
+        self.write_saved(owner, state, merge_options=self.services.engines != IMAGE_MODELS)
 
     def receive(self, owner: str, engine: str, path: str) -> None:
         """Another page hands over one picture to edit with ``engine``."""
@@ -562,13 +518,6 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     services = pages.services
     runs = {kind: Runs(busy=message) for kind, message in BUSY.items()}
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
-
     def require_generation(engine):
         if (not gpu and engine != "gpt_image") or "image" not in JOBS.callbacks:
             raise H3Error("Open Image in Studio to generate on the GPU.")
@@ -592,19 +541,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
             return answer(owner, state)
 
     # The page --------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def image_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def image_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def image_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded
@@ -684,9 +621,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     @guarded
     def change_ui(request: Request, body: dict = Body(...)):
         """What only the page reads: the open Fine-tune group."""
-        ui = body.get("ui")
-        if not isinstance(ui, dict) or len(json.dumps(ui)) > UI_LIMIT:
-            raise H3Error("That is too much to remember.")
+        ui = validate_ui_patch(body)
         return edit(request, lambda state: state.update(ui=ui))
 
     # Images to edit ----------------------------------------------------------
@@ -875,14 +810,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     def stop(request: Request):
         owner = owner_of(request)
         run = runs[GENERATE].active(owner, RUN_KEY)
-        if services.interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
-        else:
-            message = services.interrupt(session_of(request), family="image", job_id=run.job_id)
+        message = interrupt_active_run(request, run, "image", services.interrupt)
         return {"message": message, "runs": run_payloads(owner)}
 
     return pages

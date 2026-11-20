@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-import shutil
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from h3_app import storyboard as sb
 from h3_app.catalog import (
@@ -28,9 +26,10 @@ from h3_app.jobs import JOBS
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
-from h3_app.workspace_store import request_owner
 
 from ..job_admission import execute_accepted
+from ..page_fields import spool_upload
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of
 # Compatibility exports for existing callers.
 from ..page_runs import Run as Run, Runs as Runs, guarded as guarded
 from .auto import WAITING, AutoRenders
@@ -97,13 +96,6 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     JOBS.register_callback("storyboard", handlers.run_job)
     api = "/storyboard/api"
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None)
-
     def payload(owner, storyboard_id):
         board = handlers.service.load(owner, storyboard_id)
         data = board_payload(storyboard_id, board)
@@ -161,19 +153,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     auto_payload = autos.payload
 
-    @app.get("/storyboard", include_in_schema=False)
-    def storyboard_redirect():
-        return RedirectResponse("/storyboard/")
-
-    @app.get("/storyboard/", include_in_schema=False)
-    def storyboard_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/storyboard/{name}", include_in_schema=False)
-    def storyboard_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, "/storyboard", STATIC, STATIC_TYPES)
 
     def start_prepare(owner, storyboard_id, scene_id) -> Run:
         """Fit a scene from Media and cut its ending: ffmpeg on the CPU, so the Workshop can too."""
@@ -359,16 +339,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
     def spool(files: list[UploadFile], directory: str, allowed) -> list[str]:
         """Saved uploads under unique names: a stored file with the same name is another file."""
-        paths = []
-        for upload in files:
-            suffix = Path(upload.filename or "").suffix.lower()
-            if suffix not in allowed:
-                raise H3Error(f"{upload.filename} isn't a supported file ({', '.join(sorted(allowed))}).")
-            path = Path(directory) / f"{uuid.uuid4().hex}{suffix}"
-            with path.open("wb") as handle:
-                shutil.copyfileobj(upload.file, handle)
-            paths.append(str(path))
-        return paths
+        return [str(spool_upload(upload, directory, allowed)) for upload in files]
 
     def library_source(path: str, kind: str = "Image") -> str:
         if handlers.library is None:
@@ -609,17 +580,13 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.post(f"{api}/boards/{{storyboard_id}}/interrupt", include_in_schema=False)
     @guarded
     def stop(storyboard_id: str, request: Request):
-        if interrupt is None:
-            raise H3Error("Nothing can run here.")
         owner = owner_of(request)
         run = runs.active(owner, storyboard_id)
-        if run is None or run.kind not in ("generate", "subtitles"):
-            message = "This storyboard isn't generating."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
-        else:
-            # One owner can run several storyboards; only this one stops.
-            message = interrupt(session_of(request), family="storyboard", job_id=run.job_id)
+        active = run if run is not None and run.kind in ("generate", "subtitles") else None
+        # One owner can run several storyboards; only this one stops.
+        message = interrupt_active_run(
+            request, active, "storyboard", interrupt, idle="This storyboard isn't generating."
+        )
         return {"message": message, "run": run_payload(owner, storyboard_id)}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/join", include_in_schema=False)

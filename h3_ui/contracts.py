@@ -79,6 +79,11 @@ class BootstrapCatalog:
     YUE2_DEFAULTS: Any
     YUE2_MODEL_CHOICES: Any
 
+    @classmethod
+    def from_mapping(cls, values, **overrides):
+        merged = {**values, **overrides}
+        return cls(**{item.name: merged[item.name] for item in fields(cls)})
+
 
 @dataclass(frozen=True)
 class BootstrapServices:

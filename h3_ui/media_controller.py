@@ -106,20 +106,20 @@ class MediaController:
     def __init__(self, services: MediaServices):
         self.services = services
 
-    def video_download_path(self, video: str | Path) -> str:
-        return gallery_store.video_download_path(
-            video, runtime=self.services._runtime_config()
-        )
+    def _runtime(self):
+        return self.services._runtime_config()
 
-    def managed_video_path(
-        self, video: str | Path, *, require_file: bool = True
-    ) -> Path:
-        retained = self._retained_input(video)
+    def _managed_path(self, media: str | Path, resolver: Callable[..., Path], *, require_file: bool = True) -> Path:
+        retained = self._retained_input(media)
         if retained is not None:
             return retained
-        return gallery_store.managed_video_path(
-            video, require_file=require_file, runtime=self.services._runtime_config()
-        )
+        return resolver(media, require_file=require_file, runtime=self._runtime())
+
+    def video_download_path(self, video: str | Path) -> str:
+        return gallery_store.video_download_path(video, runtime=self._runtime())
+
+    def managed_video_path(self, video: str | Path, *, require_file: bool = True) -> Path:
+        return self._managed_path(video, gallery_store.managed_video_path, require_file=require_file)
 
     def absolute_video_url(
         self, video: str | Path, request: gr.Request, *, download: bool = False
@@ -129,35 +129,23 @@ class MediaController:
         url = f"{base_url}{relative_url}"
         return f"{url}?download=1" if download else url
 
-    def absolute_video_download_url(
-        self, video: str | Path, request: gr.Request
-    ) -> str:
+    def absolute_video_download_url(self, video: str | Path, request: gr.Request) -> str:
         return self.absolute_video_url(video, request, download=True)
 
     def gallery_video_paths(self, *, limit: int | None = 200) -> list[Path]:
-        return gallery_store.gallery_video_paths(
-            limit=limit, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_video_paths(limit=limit, runtime=self._runtime())
 
     def gallery_thumbnail(self, video: Path) -> Path | None:
-        return gallery_store.gallery_thumbnail(
-            video, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_thumbnail(video, runtime=self._runtime())
 
     def gallery_thumbnail_path(self, video: str | Path) -> Path:
-        return gallery_store.gallery_thumbnail_path(
-            video, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_thumbnail_path(video, runtime=self._runtime())
 
     def gallery_resolution_text(self, video: Path) -> str:
-        return gallery_store.gallery_resolution_text(
-            video, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_resolution_text(video, runtime=self._runtime())
 
     def generated_video_family(self, video: str | Path) -> str:
-        return gallery_store.generated_video_family(
-            video, runtime=self.services._runtime_config()
-        )
+        return gallery_store.generated_video_family(video, runtime=self._runtime())
 
     def forget_gallery_metadata(self, video: str | Path | None = None) -> None:
         from h3_app.media_catalog import get_media_catalog
@@ -166,38 +154,20 @@ class MediaController:
             catalog.store.forget_asset(video)
         return gallery_store.forget_gallery_metadata(video)
 
-    def managed_gallery_image_path(
-        self, image: str | Path, *, require_file: bool = True
-    ) -> Path:
-        retained = self._retained_input(image)
-        if retained is not None:
-            return retained
-        return gallery_store.managed_image_path(
-            image, require_file=require_file, runtime=self.services._runtime_config()
-        )
+    def managed_gallery_image_path(self, image: str | Path, *, require_file: bool = True) -> Path:
+        return self._managed_path(image, gallery_store.managed_image_path, require_file=require_file)
 
     def gallery_image_paths(self, *, limit: int | None = 200) -> list[Path]:
-        return gallery_store.gallery_image_paths(
-            limit=limit, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_image_paths(limit=limit, runtime=self._runtime())
 
     def gallery_image_resolution_text(self, image: Path) -> str:
         return gallery_store.gallery_image_resolution_text(image)
 
-    def managed_gallery_audio_path(
-        self, audio: str | Path, *, require_file: bool = True
-    ) -> Path:
-        retained = self._retained_input(audio)
-        if retained is not None:
-            return retained
-        return gallery_store.managed_audio_path(
-            audio, require_file=require_file, runtime=self.services._runtime_config()
-        )
+    def managed_gallery_audio_path(self, audio: str | Path, *, require_file: bool = True) -> Path:
+        return self._managed_path(audio, gallery_store.managed_audio_path, require_file=require_file)
 
     def gallery_audio_paths(self, *, limit: int | None = 200) -> list[Path]:
-        return gallery_store.gallery_audio_paths(
-            limit=limit, runtime=self.services._runtime_config()
-        )
+        return gallery_store.gallery_audio_paths(limit=limit, runtime=self._runtime())
 
     def gallery_media_mode(self, mode: str) -> str:
         return str(mode) if str(mode) in {"Video", "Image", "Audio"} else "Video"
@@ -205,13 +175,9 @@ class MediaController:
     def gallery_media_download_path(self, media: str | Path, mode: str) -> str:
         media_mode = self.gallery_media_mode(mode)
         if media_mode == "Image":
-            return gallery_store.image_download_path(
-                media, runtime=self.services._runtime_config()
-            )
+            return gallery_store.image_download_path(media, runtime=self._runtime())
         if media_mode == "Audio":
-            return gallery_store.audio_download_path(
-                media, runtime=self.services._runtime_config()
-            )
+            return gallery_store.audio_download_path(media, runtime=self._runtime())
         return self.video_download_path(media)
 
     def absolute_gallery_media_download_url(
@@ -241,7 +207,7 @@ class MediaController:
                 f"The selected file is not a supported {media_mode.lower()}.",
                 clear_selection=False,
             )
-        destination_dir = self.services._runtime_config().outputs_dir / "imports"
+        destination_dir = self._runtime().outputs_dir / "imports"
         destination_dir.mkdir(parents=True, exist_ok=True)
         destination = (
             destination_dir
@@ -255,45 +221,62 @@ class MediaController:
             clear_selection=False,
         )
 
-    def refresh_gallery_page(self, limit: int = 48, *, paths=None) -> AssetPage:
-        if isinstance(paths, AssetInventory) and paths.kind != "Video":
+    def _scan_media_page(
+        self,
+        kind: str,
+        noun: str,
+        list_fn: Callable[..., list[Path]],
+        family_fn: Callable[[Path], str],
+        thumbnails_fn: Callable[[list[Path]], Iterable[tuple[Path | None, bool]]],
+        limit: int,
+        paths: Any = None,
+        *,
+        use_placeholder: bool = False,
+    ) -> AssetPage:
+        if isinstance(paths, AssetInventory) and paths.kind != kind:
             raise ValueError("Gallery inventory does not match the media type.")
-        if isinstance(paths, AssetInventory) and paths.kind == "Video":
-            videos = list(paths.paths)
-        else:
-            videos = self.gallery_video_paths(limit=None)
+        all_files = (
+            list(paths.paths)
+            if isinstance(paths, AssetInventory) and paths.kind == kind
+            else list_fn(limit=None)
+        )
         if paths is not None and not isinstance(paths, AssetInventory):
             selected = {Path(path).resolve() for path in paths}
-            videos = [path for path in videos if path.resolve() in selected]
-        shown_videos = videos[: max(0, limit)]
+            all_files = [path for path in all_files if path.resolve() in selected]
+        shown = all_files[: max(0, limit)]
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        posters = preview_results(
-            shown_videos, self.gallery_thumbnail, kind="Video",
-            cache_root=self.services._runtime_config().gallery_thumbnails_dir,
-        )
-        for video, (thumbnail, _pending) in zip(shown_videos, posters):
+        runtime = self._runtime()
+        for item, (thumbnail, _pending) in zip(shown, thumbnails_fn(shown)):
             if thumbnail is None:
                 failed += 1
-                thumbnail = gallery_store.gallery_placeholder(
-                    video, kind="Video", runtime=self.services._runtime_config()
-                )
+                if use_placeholder:
+                    thumbnail = gallery_store.gallery_placeholder(item, kind=kind, runtime=runtime)
             if thumbnail is None:
                 continue
             try:
-                stat = video.stat()
+                stat = item.stat()
             except OSError:
                 continue
-            timestamp = time.strftime(
-                "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
-            )
+            timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
             size_mb = stat.st_size / (1024 * 1024)
-            caption = f"{self.generated_video_family(video)} · {video.name} · {timestamp} · {size_mb:.1f} MB"
+            caption = f"{family_fn(item)} · {item.name} · {timestamp} · {size_mb:.1f} MB"
             items.append((str(thumbnail), caption))
-            selectable_paths.append(str(video))
-        return AssetPage.from_scan(
-            items, selectable_paths, len(videos), limit, "videos", failed
+            selectable_paths.append(str(item))
+        return AssetPage.from_scan(items, selectable_paths, len(all_files), limit, noun, failed)
+
+    def refresh_gallery_page(self, limit: int = 48, *, paths=None) -> AssetPage:
+        cache_root = self._runtime().gallery_thumbnails_dir
+        return self._scan_media_page(
+            "Video",
+            "videos",
+            self.gallery_video_paths,
+            self.generated_video_family,
+            lambda shown: preview_results(shown, self.gallery_thumbnail, kind="Video", cache_root=cache_root),
+            limit,
+            paths,
+            use_placeholder=True,
         )
 
     def list_media_paths(self, mode):
@@ -302,7 +285,7 @@ class MediaController:
             "Image": gallery_store.gallery_image_paths,
             "Audio": gallery_store.gallery_audio_paths,
         }[self.gallery_media_mode(mode)](
-            limit=None, runtime=self.services._runtime_config(), strict=True,
+            limit=None, runtime=self._runtime(), strict=True,
         )
 
     def refresh_media_page(
@@ -316,7 +299,7 @@ class MediaController:
                 raise ValueError("Gallery inventory does not match the media type.")
             items, selected = [], []
             failed = 0
-            root = self.services._runtime_config().gallery_thumbnails_dir
+            root = self._runtime().gallery_thumbnails_dir
             for row in paths.records[:max(0, limit)]:
                 info = row["metadata"]["_media"]
                 name = info.get("thumbnail")
@@ -331,89 +314,31 @@ class MediaController:
             raise ValueError("Gallery inventory does not match the media type.")
         if media_mode == "Video":
             return self.refresh_gallery_page(limit, paths=paths)
+        runtime = self._runtime()
         if media_mode == "Audio":
-            all_audio_files = (
-                list(paths.paths)
-                if isinstance(paths, AssetInventory) and paths.kind == "Audio"
-                else self.gallery_audio_paths(limit=None)
-            )
-            if paths is not None and not isinstance(paths, AssetInventory):
-                selected = {Path(path).resolve() for path in paths}
-                all_audio_files = [
-                    path for path in all_audio_files if path.resolve() in selected
-                ]
-            audio_files = all_audio_files[: max(0, limit)]
-            items: list[tuple[str, str]] = []
-            selectable_paths: list[str] = []
-            failed = 0
-            for audio in audio_files:
-                thumbnail = gallery_store.gallery_audio_thumbnail(
-                    audio, runtime=self.services._runtime_config()
-                )
-                if thumbnail is None:
-                    failed += 1
-                    continue
-                try:
-                    stat = audio.stat()
-                except OSError:
-                    continue
-                timestamp = time.strftime(
-                    "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
-                )
-                size_mb = stat.st_size / (1024 * 1024)
-                family = gallery_store.generated_audio_family(
-                    audio, runtime=self.services._runtime_config()
-                )
-                caption = f"{family} · {audio.name} · {timestamp} · {size_mb:.1f} MB"
-                items.append((str(thumbnail), caption))
-                selectable_paths.append(str(audio))
-            return AssetPage.from_scan(
-                items,
-                selectable_paths,
-                len(all_audio_files),
-                limit,
+            return self._scan_media_page(
+                "Audio",
                 "audio files",
-                failed,
+                self.gallery_audio_paths,
+                lambda audio: gallery_store.generated_audio_family(audio, runtime=runtime),
+                lambda shown: ((gallery_store.gallery_audio_thumbnail(audio, runtime=runtime), False) for audio in shown),
+                limit,
+                paths,
             )
-        all_images = (
-            list(paths.paths)
-            if isinstance(paths, AssetInventory) and paths.kind == "Image"
-            else self.gallery_image_paths(limit=None)
-        )
-        if paths is not None and not isinstance(paths, AssetInventory):
-            selected = {Path(path).resolve() for path in paths}
-            all_images = [path for path in all_images if path.resolve() in selected]
-        images = all_images[: max(0, limit)]
-        items: list[tuple[str, str]] = []
-        selectable_paths: list[str] = []
-        failed = 0
-        runtime = self.services._runtime_config()
-        posters = preview_results(
-            images,
-            lambda image: gallery_store.gallery_image_thumbnail(image, runtime=runtime),
-            kind="Image", cache_root=runtime.gallery_thumbnails_dir,
-        )
-        for image, (thumbnail, _pending) in zip(images, posters):
-            if thumbnail is None:
-                failed += 1
-                thumbnail = gallery_store.gallery_placeholder(
-                    image, kind="Image", runtime=self.services._runtime_config()
-                )
-            if thumbnail is None:
-                continue
-            try:
-                stat = image.stat()
-            except OSError:
-                continue
-            timestamp = time.strftime(
-                "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
-            )
-            size_mb = stat.st_size / (1024 * 1024)
-            caption = f"{gallery_store.generated_image_family(image, runtime=self.services._runtime_config())} · {image.name} · {timestamp} · {size_mb:.1f} MB"
-            items.append((str(thumbnail), caption))
-            selectable_paths.append(str(image))
-        return AssetPage.from_scan(
-            items, selectable_paths, len(all_images), limit, "images", failed
+        return self._scan_media_page(
+            "Image",
+            "images",
+            self.gallery_image_paths,
+            lambda image: gallery_store.generated_image_family(image, runtime=runtime),
+            lambda shown: preview_results(
+                shown,
+                lambda image: gallery_store.gallery_image_thumbnail(image, runtime=runtime),
+                kind="Image",
+                cache_root=runtime.gallery_thumbnails_dir,
+            ),
+            limit,
+            paths,
+            use_placeholder=True,
         )
 
     def refresh_media_gallery(self, mode: str = "Video", limit: int = 48):

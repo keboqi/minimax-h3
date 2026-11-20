@@ -10,18 +10,13 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import re
-import shutil
 from threading import RLock
-from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Mapping
-from urllib.parse import quote
 import uuid
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile
 
 from h3_app import media_review
 from h3_app.errors import H3Error
@@ -29,15 +24,15 @@ from h3_app.jobs import JOBS
 from h3_app.policy import ltx25_frame_length, validate_resolution
 from h3_app.provenance import render_snapshot
 from h3_app.reference_metadata import describe_reference
-from h3_app.workspace_store import request_owner
 
-from ..h3.page import plain
 from ..job_admission import execute_accepted
 from ..page_fields import (
-    SECRET_FIELDS, UI_LIMIT, FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
-    spool_image, update_value, writer_defaults, writer_rows,
+    FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
+    path_of as _path_of, plain, quote_path as _quote, spool_image, update_value, writer_rows,
 )
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of, validate_ui_patch
 from ..page_runs import Run, Runs, guarded
+from ..page_state import OwnerPageState, private_page_root
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
@@ -107,27 +102,7 @@ def fields_of(view) -> dict[str, FieldSpec]:
 
 def private_ltx_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots."""
-    publics = (runtime.outputs_dir.resolve(), runtime.output_dir.resolve())
-    root = (workspace / "ltx-page").resolve()
-    holding = [public for public in publics if root.is_relative_to(public)]
-    if holding:
-        outer = min(holding, key=lambda public: len(public.parts))
-        root = (outer.with_name(f".{outer.name}-ltx-drafts") / root.relative_to(outer)).resolve()
-        if any(root.is_relative_to(public) for public in publics):
-            raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private LTX drafts.")
-    return root
-
-
-def _path_of(value) -> str | None:
-    if isinstance(value, dict):
-        return _path_of(value.get("path") or value.get("video") or value.get("value"))
-    if isinstance(value, (list, tuple)):
-        return _path_of(value[0]) if value else None
-    return str(value) if value else None
-
-
-def _quote(path: str) -> str:
-    return quote(str(path), safe="")
+    return private_page_root(runtime, workspace, "ltx")
 
 
 @dataclass(frozen=True)
@@ -163,47 +138,35 @@ def blank_media() -> dict[str, Any]:
     return {"first_image": None, "middle_image": None, "end_image": None, "references": []}
 
 
-class LtxPageState:
+class LtxPageState(OwnerPageState):
     """Each owner's draft and options, saved as one JSON file."""
 
-    def __init__(self, services: LtxPageServices):
-        self.services = services
-        self.lock = RLock()
-        self.secrets: dict[str, dict[str, str]] = {}
-        self.granted: dict[str, set[str]] = {}
-
-    # Storage ---------------------------------------------------------------
-    def owner_root(self, owner: str) -> Path:
-        folder = self.services.root() / re.sub(r"[^\w-]", "_", owner)
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-
-    def uploads(self, owner: str) -> Path:
-        folder = self.owner_root(owner) / "uploads"
-        folder.mkdir(exist_ok=True)
-        return folder
-
-    def defaults(self) -> dict[str, Any]:
-        return {name: spec.default for name, spec in self.services.fields.items()}
+    @classmethod
+    def from_bootstrap(
+        cls,
+        services,
+        view: Any,
+        handlers: Any,
+        *,
+        library: Callable[[], Any],
+    ) -> LtxPageState:
+        return cls(
+            LtxPageServices(
+                root=lambda: private_ltx_root(services.engine_deps.runtime_config(), JOBS.store.root),
+                fields=fields_of(view),
+                enhance=handlers.enhance_ltx25_prompt,
+                workflows=handlers.ltx25_workflow_status,
+                prepare=handlers.prepare_ltx25_official_workflow,
+                prepare_all=handlers.prepare_all_ltx25_official_models,
+                interrupt=services.interrupt,
+                library=library,
+            )
+        )
 
     def load(self, owner: str) -> dict[str, Any]:
-        saved: dict[str, Any] = {}
-        try:
-            saved = json.loads((self.owner_root(owner) / "settings.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-        saved = saved if isinstance(saved, dict) else {}
-        options = self.defaults()
-        for name, value in (saved.get("options") or {}).items():
-            if name in options:
-                try:
-                    options[name] = coerce(self.services.fields[name], value)
-                except H3Error:
-                    continue
-        writer = writer_defaults()
-        writer.update({name: value for name, value in (saved.get("writer") or {}).items()
-                       if name in writer and name not in SECRET_FIELDS})
-        writer.update(self.secrets.get(owner, {}))
+        saved = self.read_saved(owner)
+        options = self.load_options(saved)
+        writer = self.load_writer(owner, saved)
         uploads = self.owner_root(owner) / "uploads"
         # Only the owner's own copies count; anything else on disk is ignored.
         own = lambda path: str(uploads / Path(path).name) if path and (uploads / Path(path).name).is_file() else None
@@ -218,32 +181,6 @@ class LtxPageState:
             "results": [str(path) for path in saved.get("results") or [] if path and Path(path).is_file()],
             "ui": saved.get("ui") if isinstance(saved.get("ui"), dict) else {},
         }
-
-    def save(self, owner: str, state: dict[str, Any]) -> None:
-        self.secrets[owner] = {name: state["writer"].get(name) or "" for name in SECRET_FIELDS}
-        kept = {**state, "writer": {name: value for name, value in state["writer"].items()
-                                    if name not in SECRET_FIELDS}}
-        target = self.owner_root(owner) / "settings.json"
-        scratch = target.with_suffix(".tmp")
-        scratch.write_text(json.dumps(kept, default=str), encoding="utf-8")
-        scratch.replace(target)
-
-    def may_read(self, owner: str, path) -> bool:
-        if str(path) in self.granted.get(owner, ()):
-            return True
-        return self.owner_root(owner).resolve() in Path(path).resolve().parents
-
-    def grant(self, owner: str, path) -> str:
-        self.granted.setdefault(owner, set()).add(str(path))
-        return str(path)
-
-    def keep(self, owner: str, source, rollback: ExitStack | None = None) -> str:
-        """A copy of ``source`` among the owner's uploads, so the draft outlives where it came from."""
-        target = self.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(source).name}"
-        if rollback is not None:
-            rollback.callback(target.unlink, missing_ok=True)
-        shutil.copy2(source, target)
-        return str(target)
 
     # Edits -----------------------------------------------------------------
     def set_mode(self, state: dict[str, Any], mode: str) -> None:
@@ -405,13 +342,6 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
 
     runs = {kind: Runs(busy=message, lock=lock, blocked=blocked) for kind, message in BUSY.items()}
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
-
     def can_generate() -> bool:
         return gpu and FAMILY in JOBS.callbacks
 
@@ -442,19 +372,7 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
         return {"workflows": rows, "missing": sum(1 for row in rows if row["missing"])}
 
     # The page --------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def ltx_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def ltx_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def ltx_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded
@@ -498,9 +416,7 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
     @guarded
     def change_ui(request: Request, body: dict = Body(...)):
         """What only the page reads: whether Fine-tune is open, and its group."""
-        ui = body.get("ui")
-        if not isinstance(ui, dict) or len(json.dumps(ui)) > UI_LIMIT:
-            raise H3Error("That is too much to remember.")
+        ui = validate_ui_patch(body)
         return edit(request, lambda state: state.update(ui=ui))
 
     # Keyframes and reference pictures ---------------------------------------
@@ -682,14 +598,7 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
         require_gpu()
         owner = owner_of(request)
         run = runs[GENERATE].active(owner, RUN_KEY)
-        if services.interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The run is still starting. Try again in a moment."
-        else:
-            message = services.interrupt(session_of(request), family=FAMILY, job_id=run.job_id)
+        message = interrupt_active_run(request, run, FAMILY, services.interrupt)
         return {"message": message, "runs": run_payloads(owner)}
 
     return pages

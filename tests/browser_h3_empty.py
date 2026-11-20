@@ -38,8 +38,9 @@ def run():
                                                   headers={"Content-Type": "application/json"})
                 request.fulfill(status=response.status_code, body=response.content,
                                 content_type=response.headers.get("content-type", "application/json"))
-            elif path in ("/h3/", "/h3/app.js", "/h3/app.css"):
-                file = static / (Path(path).name if not path.endswith("/") else "index.html")
+            elif path in ("/h3/", "/h3/app.js", "/h3/app.css", "/h3/common.js"):
+                name = Path(path).name if not path.endswith("/") else "index.html"
+                file = (static.parents[1] / "page_static" / "common.js") if name == "common.js" else (static / name)
                 content_type = {".html": "text/html", ".js": "application/javascript", ".css": "text/css"}[file.suffix]
                 request.fulfill(body=file.read_bytes(), content_type=content_type)
             else:

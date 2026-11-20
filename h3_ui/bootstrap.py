@@ -111,50 +111,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
         h3_components = build_h3_view(
             generation_view,
             defaults,
-            H3ViewServices(
-                AUTO_RESOLUTION_MEGAPIXEL_PRESETS=catalog.AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
-                AUTO_SOL_TOKEN_THRESHOLD=catalog.AUTO_SOL_TOKEN_THRESHOLD,
-                DEFAULT_AUTO_RESOLUTION_MEGAPIXELS=catalog.DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-                DEFAULT_GEMINI_PROMPT_MODEL=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-                DEFAULT_INPUT_IMAGE_FRAME_PRESET=catalog.DEFAULT_INPUT_IMAGE_FRAME_PRESET,
-                DEFAULT_LOCAL_PROMPT_BASE_MODEL=catalog.DEFAULT_LOCAL_PROMPT_BASE_MODEL,
-                DEFAULT_LTX25_MODEL=catalog.DEFAULT_LTX25_MODEL,
-                DEFAULT_PROMPT_WRITER_BACKEND=catalog.DEFAULT_PROMPT_WRITER_BACKEND,
-                DEFAULT_UPSCALE_RESOLUTION=catalog.DEFAULT_UPSCALE_RESOLUTION,
-                DEFAULT_VIDEO_BATCH_COUNT=catalog.DEFAULT_VIDEO_BATCH_COUNT,
-                DRAFT_RESOLUTIONS=catalog.DRAFT_RESOLUTIONS,
-                FAST_RESOLUTIONS=catalog.FAST_RESOLUTIONS,
-                GEMINI_PROMPT_MODELS=catalog.GEMINI_PROMPT_MODELS,
-                GENERATION_POSTPROCESS_OPTIONS=catalog.GENERATION_POSTPROCESS_OPTIONS,
-                H3_LATENT_UPSCALE_METHODS=catalog.H3_LATENT_UPSCALE_METHODS,
-                H3_LATENT_UPSCALER_MODEL_CHOICES=catalog.H3_LATENT_UPSCALER_MODEL_CHOICES,
-                H3_TEXT_ENCODER_CHOICES=catalog.H3_TEXT_ENCODER_CHOICES,
-                IMAGE_VAE_CHOICES=catalog.IMAGE_VAE_CHOICES,
-                INPUT_IMAGE_FRAME_PRESETS=catalog.INPUT_IMAGE_FRAME_PRESETS,
-                INPUT_IMAGE_UPSCALE_SLOTS=catalog.INPUT_IMAGE_UPSCALE_SLOTS,
-                LARGE_RESOLUTIONS=catalog.LARGE_RESOLUTIONS,
-                OPENAI_PROMPT_MODEL=catalog.OPENAI_PROMPT_MODEL,
-                LOCAL_PROMPT_BASE_MODELS=catalog.LOCAL_PROMPT_BASE_MODELS,
-                MAX_IMAGE_FRAMES=catalog.MAX_IMAGE_FRAMES,
-                MAX_VIDEO_BATCH_COUNT=catalog.MAX_VIDEO_BATCH_COUNT,
-                MIN_IMAGE_FRAMES=catalog.MIN_IMAGE_FRAMES,
-                MIN_VIDEO_BATCH_COUNT=catalog.MIN_VIDEO_BATCH_COUNT,
-                MODEL_PROFILE_CHOICES=catalog.MODEL_PROFILE_CHOICES,
-                PROMPT_WRITER_BACKENDS=catalog.PROMPT_WRITER_BACKENDS,
-                RESULT_FORMATS=catalog.RESULT_FORMATS,
-                LTX25_MODEL_CHOICES=catalog.LTX25_MODEL_CHOICES,
-                SEEDVR2_MODEL_CHOICES=catalog.SEEDVR2_MODEL_CHOICES,
-                SERVER_ATTENTION_BACKEND=catalog.SERVER_ATTENTION_BACKEND,
-                SERVER_DENSE_ATTENTION_BACKEND=catalog.SERVER_DENSE_ATTENTION_BACKEND,
-                SLA_PRESET_INPUTS=catalog.SLA_PRESET_INPUTS,
-                TURBO_SETTINGS=catalog.TURBO_SETTINGS,
-                UPSCALE_RESOLUTION_PRESETS=catalog.UPSCALE_RESOLUTION_PRESETS,
-                compact_settings_summary=services.compact_settings_summary,
-                generation_readiness_state=services.generation_readiness_state,
-                mode_help=services.mode_help,
-                reference_prompt_help=services.reference_prompt_help,
-                resolution_summary=services.resolution_summary,
-            ),
+            H3ViewServices.from_bootstrap(catalog, services),
             advanced_root=app_views.generation_settings,
         )
         engine_actions = services.drama3_actions
@@ -219,93 +176,34 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
                 triggers=(),
                 interrupt=services.interrupt,
             )
-        from .h3.page import H3PageServices, install_h3_page
+        from .h3.page import H3PageServices, H3PageState, install_h3_page
+        from .image.page import ImagePageState, install_image_page
+        from .ltx.page import LtxPageState, install_ltx_page, media_targets as ltx_media_targets
+        from .song.page import SongPageState, install_song_page
 
+        remake_library = lambda: engine_handlers["remake"].library
         followers = tuple(handlers for handlers in (engine_handlers["remake"], services.storyboard_handlers)
                           if handlers is not None)
-        h3_page_services = H3PageServices(
-            root=lambda: services.engine_deps.runtime_config().outputs_dir / ".h3-page",
-            resolve=services.resolve_request_settings,
-            describe=services.describe_settings,
-            enhance=services.enhance_h3_prompt,
-            interrupt=services.interrupt,
-            compile_trt=services.compile_trt_video_vae,
-            library=lambda: engine_handlers["remake"].library,
-            followers=followers,
-            attention_backend=catalog.SERVER_ATTENTION_BACKEND,
+        h3_page_services = H3PageServices.from_bootstrap(
+            catalog, services, library=remake_library, followers=followers,
         )
         demo.h3_routes = (*demo.h3_routes, partial(install_h3_page, services=h3_page_services))
-        from .h3.page import H3PageState
-        from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root
-        from .page_fields import spec_of
-        from .image_controller import suggest_prompt
-        from h3_app.h3_image import H3_IMAGE_16M_PRESETS
-        from h3_app.gpt_image import GPT_IMAGE_RESOLUTION_PRESETS
-        from h3_app.catalog import H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS
-
         # Reads what the MiniMax H3 page saved: P-H3-Image runs on that page's settings.
         h3_saved = H3PageState(h3_page_services)
-        image_fields = {name: component for name, component in image_controller.fields.items()
-                        if not name.startswith("h3__") and name != "gpt_image__seed"}
-        # Shown with the model's options, though no generation takes them by name.
-        image_fields["qwen__preset"] = engine_views["qwen"].preset
-        image_fields["moss_image__rewrite_mode"] = engine_views["moss_image"].rewrite_mode
-        from h3_app.jobs import JOBS
-
-        image_root = private_image_root(services.engine_deps.runtime_config(), JOBS.store.root)
-        image_pages.append(ImagePageState(ImagePageServices(
-            root=lambda: image_root,
-            fields={name: spec_of(component) for name, component in image_fields.items()},
-            job_fields=tuple(image_controller.fields),
-            presets={
-                **{engine: tuple(tuple(value for _label, value in dropdown.choices) for dropdown in pair)
-                   for engine, pair in {
-                       "qwen": (engine_views["qwen"].output_resolution_1k, engine_views["qwen"].output_resolution_2k),
-                       **{engine: (engine_views[engine].resolution_small, engine_views[engine].resolution_large)
-                          for engine in ("flux3", "moss_image", "fibo2")},
-                   }.items()},
-                "h3": (H3_IMAGE_4M_RESOLUTION_PRESETS, H3_IMAGE_8M_RESOLUTION_PRESETS, H3_IMAGE_16M_PRESETS),
-                "gpt_image": (GPT_IMAGE_RESOLUTION_PRESETS,),
-            },
-            suggest=partial(suggest_prompt, engine_handlers, runtime=services.engine_deps.runtime_config()),
-            h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
-            h3_defaults={name: getattr(component, "value", None)
-                         for name, component in image_controller.h3_fields.items()},
-            interrupt=services.interrupt,
-            library=lambda: engine_handlers["remake"].library,
-            followers=(video_export,),
-        )))
-        demo.h3_routes = (*demo.h3_routes, partial(install_image_page, pages=image_pages[0]))
-        from .song.page import SongPageServices, SongPageState, fields_of, install_song_page, private_song_root
-
-        # The Song page takes each model's options, their defaults and their limits from its unseen Gradio view.
-        song_pages = SongPageState(SongPageServices(
-            root=lambda: private_song_root(services.engine_deps.runtime_config(), JOBS.store.root),
-            fields=fields_of(engine_views),
-            enhance={"music": engine_handlers["music"].enhance_music3_prompt,
-                     "yue2": engine_handlers["yue2"].enhance_yue2_prompt},
-            take_facts={engine: engine_handlers[engine].take_facts for engine in ("music", "yue2")},
-            interrupt=services.interrupt,
-            library=lambda: engine_handlers["remake"].library,
-        ))
-        demo.h3_routes = (*demo.h3_routes, partial(install_song_page, pages=song_pages))
-        from .ltx.page import (
-            LtxPageServices, LtxPageState, fields_of as ltx_fields_of, install_ltx_page, media_targets as ltx_media_targets,
-            private_ltx_root,
+        image_pages.append(
+            ImagePageState.from_bootstrap(
+                services, image_controller, engine_views, engine_handlers,
+                h3_saved=h3_saved, library=remake_library, followers=(video_export,),
+            )
         )
-
-        # The LTX page takes its options, their defaults and their limits from its unseen Gradio view.
-        ltx_handlers = engine_handlers["ltx"]
-        ltx_pages = LtxPageState(LtxPageServices(
-            root=lambda: private_ltx_root(services.engine_deps.runtime_config(), JOBS.store.root),
-            fields=ltx_fields_of(engine_views["ltx"]),
-            enhance=ltx_handlers.enhance_ltx25_prompt,
-            workflows=ltx_handlers.ltx25_workflow_status,
-            prepare=ltx_handlers.prepare_ltx25_official_workflow,
-            prepare_all=ltx_handlers.prepare_all_ltx25_official_models,
-            interrupt=services.interrupt,
-            library=lambda: engine_handlers["remake"].library,
-        ))
+        demo.h3_routes = (*demo.h3_routes, partial(install_image_page, pages=image_pages[0]))
+        song_pages = SongPageState.from_bootstrap(
+            services, engine_views, engine_handlers, library=remake_library,
+        )
+        demo.h3_routes = (*demo.h3_routes, partial(install_song_page, pages=song_pages))
+        ltx_pages = LtxPageState.from_bootstrap(
+            services, engine_views["ltx"], engine_handlers["ltx"], library=remake_library,
+        )
         demo.h3_routes = (*demo.h3_routes, partial(install_ltx_page, pages=ltx_pages))
         gallery_components = build_gallery_view(
             gallery_view,
@@ -380,21 +278,16 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
                           "Song · Visual inspiration": song_pages.receive, **ltx_media_targets(ltx_pages)},
             apply_on=[app_views.create_tab.select] if app_views.create_tab is not None else [],
         )
-        from .media.page import MediaPageServices, MediaPageState, install_media_page
+        from .media.page import MediaPageState, install_media_page
 
         # The Media page browses, annotates, deletes and enhances through the services its Gradio view used.
-        media_pages = MediaPageState(MediaPageServices(
-            controller=SimpleNamespace(**{name: getattr(services, name) for name in (
-                "gallery_media_download_path", "refresh_media_page", "list_media_paths", "import_gallery_media",
-                "delete_selected_gallery_media", "empty_generated_media_gallery")}),
+        media_pages = MediaPageState.from_bootstrap(
+            services,
             index=lambda: gallery_components.search.h3_asset_index,
-            downloads=services.dubbing_actions,
             set_as=lambda: set_as,
-            enhance=True,
-            h3_values=lambda owner: h3_saved.request_values(h3_saved.load(owner)),
-            interrupt=services.interrupt,
+            h3_saved=h3_saved,
             seedvr2_default=defaults["seedvr2_model"],
-        ))
+        )
         demo.h3_routes = (*demo.h3_routes, partial(install_media_page, pages=media_pages))
         for view in (*engine_views.values(), image_workspace):
             with view.output.h3_metadata_root:

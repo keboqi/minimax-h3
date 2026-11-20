@@ -11,18 +11,12 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
 import re
-import shutil
-from threading import RLock
-from types import SimpleNamespace
 from typing import Any, Callable, Mapping
-from urllib.parse import quote
 import uuid
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app import song_brief
 from h3_app.capabilities import engines_for_task
@@ -31,16 +25,16 @@ from h3_app import media_review
 from h3_app.jobs import JOBS
 from h3_app.provenance import render_snapshot
 from h3_app.reference_metadata import describe_reference
-from h3_app.workspace_store import request_owner
 
 from ..engine_readiness import song_issue
-from ..h3.page import plain
 from ..job_admission import execute_accepted
 from ..page_fields import (
-    SECRET_FIELDS, UI_LIMIT, FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
-    spec_of, spool_image, update_value, writer_defaults, writer_rows,
+    FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
+    path_of as _path_of, plain, quote_path as _quote, spec_of, spool_image, update_value, writer_rows,
 )
+from ..page_routes import install_static_page, interrupt_active_run, owner_of, session_of, validate_ui_patch
 from ..page_runs import Run, Runs, guarded
+from ..page_state import OwnerPageState, private_page_root
 from ..song_controls import DURATION_PRESETS, QUICK_FIXES, SECTION_INSERTS, STARTERS, reused_score_lyrics
 from ..song_takes import MAX_TAKES, describe_takes, take_label
 
@@ -132,17 +126,7 @@ def key_of(engine: str, parameter: str) -> str:
 
 def private_song_root(runtime, workspace: Path) -> Path:
     """Keep owner drafts outside the served roots."""
-    publics = (runtime.outputs_dir.resolve(), runtime.output_dir.resolve())
-    root = (workspace / "song-page").resolve()
-    holding = [public for public in publics if root.is_relative_to(public)]
-    if holding:
-        # The outermost served folder that holds the drafts; they move beside it, keeping their own
-        # path inside it so two workspaces never share one drafts folder.
-        outer = min(holding, key=lambda public: len(public.parts))
-        root = (outer.with_name(f".{outer.name}-song-drafts") / root.relative_to(outer)).resolve()
-        if any(root.is_relative_to(public) for public in publics):
-            raise ValueError("Choose an H3_WORKSPACE_DIR outside the output directories for private song drafts.")
-    return root
+    return private_page_root(runtime, workspace, "song")
 
 
 def blank_draft() -> dict[str, Any]:
@@ -166,65 +150,45 @@ def score_and_mode(take: Mapping[str, Any], current_mode: str) -> tuple[str, str
     return value, ("full" if current_mode == "off" else current_mode), words
 
 
-def _path_of(value) -> str | None:
-    if isinstance(value, dict):
-        return _path_of(value.get("path") or value.get("name"))
-    if isinstance(value, (list, tuple)):
-        return _path_of(value[0]) if value else None
-    return str(value) if value else None
-
-
-def _quote(path: str) -> str:
-    return quote(str(path), safe="")
-
-
 def _clock(seconds) -> str:
     seconds = round(float(seconds or 0))
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-class SongPageState:
+class SongPageState(OwnerPageState):
     """Each owner's drafts, options, writer and takes, saved as one JSON file."""
 
+    @classmethod
+    def from_bootstrap(
+        cls,
+        services,
+        engine_views: Mapping[str, Any],
+        engine_handlers: Mapping[str, Any],
+        *,
+        library: Callable[[], Any],
+    ) -> SongPageState:
+        return cls(
+            SongPageServices(
+                root=lambda: private_song_root(services.engine_deps.runtime_config(), JOBS.store.root),
+                fields=fields_of(engine_views),
+                enhance={
+                    "music": engine_handlers["music"].enhance_music3_prompt,
+                    "yue2": engine_handlers["yue2"].enhance_yue2_prompt,
+                },
+                take_facts={engine: engine_handlers[engine].take_facts for engine in ("music", "yue2")},
+                interrupt=services.interrupt,
+                library=library,
+            )
+        )
+
     def __init__(self, services: SongPageServices):
-        self.services = services
-        self.lock = RLock()
-        self.secrets: dict[str, dict[str, str]] = {}
-        self.granted: dict[str, set[str]] = {}
+        super().__init__(services)
         self.labels = {engine.id: engine.label for engine in engines_for_task("Audio / Music")}
 
-    # Storage ---------------------------------------------------------------
-    def owner_root(self, owner: str) -> Path:
-        folder = self.services.root() / re.sub(r"[^\w-]", "_", owner)
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-
-    def uploads(self, owner: str) -> Path:
-        folder = self.owner_root(owner) / "uploads"
-        folder.mkdir(exist_ok=True)
-        return folder
-
-    def defaults(self) -> dict[str, Any]:
-        return {name: spec.default for name, spec in self.services.fields.items()}
-
     def load(self, owner: str) -> dict[str, Any]:
-        saved: dict[str, Any] = {}
-        try:
-            saved = json.loads((self.owner_root(owner) / "settings.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-        saved = saved if isinstance(saved, dict) else {}
-        options = self.defaults()
-        for name, value in (saved.get("options") or {}).items():
-            if name in options:
-                try:
-                    options[name] = coerce(self.services.fields[name], value)
-                except H3Error:
-                    continue
-        writer = writer_defaults()
-        writer.update({name: value for name, value in (saved.get("writer") or {}).items()
-                       if name in writer and name not in SECRET_FIELDS})
-        writer.update(self.secrets.get(owner, {}))
+        saved = self.read_saved(owner)
+        options = self.load_options(saved)
+        writer = self.load_writer(owner, saved)
         uploads = self.owner_root(owner) / "uploads"
         ui = dict(saved["ui"]) if isinstance(saved.get("ui"), dict) else {}
         drafts, takes = {}, {}
@@ -251,31 +215,6 @@ class SongPageState:
                     ui[f"{engine}_{side}"] = moved.get(chosen)
         return {"engine": saved.get("engine") if saved.get("engine") in ENGINES else ENGINES[0],
                 "drafts": drafts, "options": options, "writer": writer, "takes": takes, "ui": ui}
-
-    def save(self, owner: str, state: dict[str, Any]) -> None:
-        self.secrets[owner] = {name: state["writer"].get(name) or "" for name in SECRET_FIELDS}
-        kept = {**state, "writer": {name: value for name, value in state["writer"].items()
-                                    if name not in SECRET_FIELDS}}
-        target = self.owner_root(owner) / "settings.json"
-        scratch = target.with_suffix(".tmp")
-        scratch.write_text(json.dumps(kept, default=str), encoding="utf-8")
-        scratch.replace(target)
-
-    def may_read(self, owner: str, path) -> bool:
-        if str(path) in self.granted.get(owner, ()):
-            return True
-        return self.owner_root(owner).resolve() in Path(path).resolve().parents
-
-    def grant(self, owner: str, path) -> str:
-        self.granted.setdefault(owner, set()).add(str(path))
-        return str(path)
-
-    def keep(self, owner: str, source, rollback: ExitStack | None = None) -> str:
-        target = self.uploads(owner) / f"{uuid.uuid4().hex[:12]}-{Path(source).name}"
-        if rollback is not None:
-            rollback.callback(target.unlink, missing_ok=True)
-        shutil.copy2(source, target)
-        return str(target)
 
     def receive(self, owner: str, path: str) -> str:
         """Media hands over one picture for Music 3's writer to read."""
@@ -484,12 +423,6 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
     services = pages.services
     runs = {kind: Runs(busy=message) for kind, message in BUSY.items()}
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
-
     def can_generate(engine: str) -> bool:
         return gpu and engine in JOBS.callbacks
 
@@ -510,19 +443,7 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
             return answer(owner, state)
 
     # The page --------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def song_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def song_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def song_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded
@@ -585,9 +506,7 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
     @guarded
     def change_ui(request: Request, body: dict = Body(...)):
         """What only the page reads: the open settings group and the takes being compared."""
-        ui = body.get("ui")
-        if not isinstance(ui, dict) or len(json.dumps(ui)) > UI_LIMIT:
-            raise H3Error("That is too much to remember.")
+        ui = validate_ui_patch(body)
         return edit(request, lambda state: state["ui"].update(ui))
 
     # Writer review -----------------------------------------------------------
@@ -870,14 +789,10 @@ def install_song_page(app: FastAPI, pages: SongPageState, *, gpu: bool = True) -
         with pages.lock:
             engine = pages.load(owner)["engine"]
         run = runs[GENERATE].active(owner, TAKE_KEY)
-        if services.interrupt is None:
-            raise H3Error("Nothing can run here.")
-        if run is None:
-            message = "Nothing is running."
-        elif run.job_id is None:
-            message = "The take is still starting. Try again in a moment."
-        else:
-            message = services.interrupt(session_of(request), family=run.engine, job_id=run.job_id)
+        message = interrupt_active_run(
+            request, run, run.engine if run else engine, services.interrupt,
+            starting="The take is still starting. Try again in a moment.",
+        )
         return {"message": message, "runs": run_payloads(owner, engine)}
 
     return pages

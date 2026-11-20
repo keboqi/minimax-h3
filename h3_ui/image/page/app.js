@@ -2,58 +2,15 @@
 // The Image page. The server owns the draft, every model's options and their policy; this draws what it answers.
 (() => {
   const API = "/image/api";
-  const $ = (id) => document.getElementById(id);
-  const h = (tag, props = {}, ...children) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined || value === null || value === false) continue;
-      if (key === "class") node.className = value;
-      else if (key === "text") node.textContent = value;
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
-      else if (key in node && key !== "list") node[key] = value;
-      else node.setAttribute(key, value === true ? "" : value);
-    }
-    node.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
-    return node;
-  };
+  const {$, h, createClient, createToast, seg, multiSeg: sharedMultiSeg, rangeOf, presetText, openStudio: sharedOpenStudio} = globalThis.H3PageCommon;
+  const {request, post} = createClient(API);
+  const {toast, guard} = createToast();
+  const multiSeg = (node, options, current, pick, extra = {}) =>
+    sharedMultiSeg(node, options, current, pick, {...extra, onEmpty: () => toast("Keep at least one model selected.", true)});
+  const openStudio = (task, label) => sharedOpenStudio(task, label, toast);
 
   const app = {boot: null, s: null, runs: {}, progress: [], take: 0, suggestion: null, previous: null,
                enhanceNote: "", polling: false};
-
-  const request = async (method, path, body, {form = false} = {}) => {
-    const options = {method, credentials: "same-origin"};
-    if (form) options.body = body;
-    else if (body !== undefined) {
-      options.headers = {"Content-Type": "application/json"};
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(`${API}${path}`, options);
-    let data = null;
-    try { data = await response.json(); } catch { /* A proxy's error page has no JSON. */ }
-    if (!response.ok) throw new Error(data?.error || data?.detail || `The server answered ${response.status}.`);
-    return data;
-  };
-  const post = (path, body, extra) => request("POST", path, body, extra);
-
-  const visibleBottom = () => {
-    const frame = window.frameElement;
-    if (!frame) return innerHeight;
-    try { return Math.min(innerHeight, window.parent.innerHeight - frame.getBoundingClientRect().top); } catch { return innerHeight; }
-  };
-  let toastTimer;
-  const toast = (message, error = false) => {
-    const node = $("toast");
-    node.textContent = message;
-    node.className = error ? "toast error" : "toast";
-    node.style.bottom = `${Math.max(20, innerHeight - visibleBottom() + 20)}px`;
-    node.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { node.hidden = true; }, error ? 8000 : 4000);
-  };
-  // Every action that can fail reports here instead of leaving the page silent.
-  const guard = (action) => async (...args) => {
-    try { return await action(...args); } catch (error) { toast(error.message, true); return undefined; }
-  };
 
   const take = (answer) => {
     if (!answer) return;
@@ -87,40 +44,7 @@
   const engine = () => app.boot.engines.find((item) => item.id === app.s.engine);
 
   // Controls ----------------------------------------------------------------
-  // The buttons stay in place while their labels do: a redraw that lands between a press and its
-  // release (a poll, a prompt saved as the box loses focus) would otherwise swallow the click.
-  const seg = (node, options, current, pick, {disabled = false} = {}) => {
-    const items = options.map((option) => Array.isArray(option) ? option : [String(option), option]);
-    const kept = node.children.length === items.length && items.every(([label], index) => node.children[index].textContent === label);
-    if (!kept) node.replaceChildren(...items.map(([label]) => h("button", {type: "button", text: label})));
-    items.forEach(([, value], index) => {
-      const button = node.children[index];
-      button.setAttribute("aria-pressed", String(value === current));
-      button.disabled = disabled;
-      button.onclick = () => pick(value);
-    });
-    return node;
-  };
-  const multiSeg = (node, options, current, pick, {disabled = false} = {}) => {
-    const items = options.map((option) => Array.isArray(option) ? option : [String(option), option]);
-    const selected = Array.isArray(current) ? current : [];
-    const kept = node.children.length === items.length && items.every(([label], index) => node.children[index].textContent === label);
-    if (!kept) node.replaceChildren(...items.map(([label]) => h("button", {type: "button", text: label})));
-    items.forEach(([, value], index) => {
-      const button = node.children[index];
-      const pressed = selected.includes(value);
-      button.setAttribute("aria-pressed", String(pressed));
-      button.disabled = disabled;
-      button.onclick = () => {
-        const next = pressed ? selected.filter((item) => item !== value) : [...selected, value];
-        if (!next.length) return toast("Keep at least one model selected.", true);
-        pick(next);
-      };
-    });
-    return node;
-  };
   const commitOf = (field) => (value) => field.store === "writer" ? changeWriter({[field.name]: value}) : change("edit", {[field.name]: value});
-  const rangeOf = (field) => field.minimum === null || field.minimum === undefined ? "" : `${field.minimum} – ${field.maximum}`;
   const control = (field) => {
     const commit = commitOf(field);
     const {kind, label, value, disabled} = field;
@@ -153,11 +77,6 @@
     return [h("input", {class: "field text", type: kind === "password" ? "password" : "text", value: value ?? "", placeholder: field.placeholder, autocomplete: "off",
                         disabled, "aria-label": label, onchange: (event) => commit(event.target.value)})];
   };
-  const presetText = (field) => {
-    if (Array.isArray(field.preset)) return field.preset.join(", ");
-    const found = field.choices?.find(([, choice]) => choice === field.preset);
-    return found ? found[0] : field.preset === true ? "On" : field.preset === false ? "Off" : String(field.preset ?? "blank");
-  };
   const fineRow = (field) => h("div", {class: "fine-row"},
     h("div", {class: "about"},
       h("span", {class: "label"}, field.label,
@@ -167,19 +86,6 @@
     h("div", {class: "control"}, control(field)));
 
   // Fine-tune ---------------------------------------------------------------
-  const openStudio = (task, label) => {
-    try {
-      const page = window.parent.document;
-      const pick = (selector, text) => [...page.querySelectorAll(selector)].find((item) => item.textContent.trim() === text)?.querySelector("input")?.click();
-      if (window.parent === window || !page.querySelector(".h3-task-picker")) throw new Error();
-      pick(".h3-task-picker label", task);
-      const choose = (tries) => {
-        const found = [...page.querySelectorAll(".h3-engine-bar label")].find((item) => item.textContent.trim() === label);
-        if (found) found.querySelector("input")?.click(); else if (tries > 0) setTimeout(() => choose(tries - 1), 100);
-      };
-      setTimeout(() => choose(50), 50);
-    } catch { toast(`Open ${label} from the ${task} task.`); }
-  };
   const groupsShown = () => app.boot.groups.map((group, index) =>
     [index, index === 1 && app.s.engine === "gpt_image" ? ["Size", "Exact width and height."] : group])
     .filter(([index]) => app.s.fields.some((field) => field.group === index));

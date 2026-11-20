@@ -16,13 +16,12 @@ from pathlib import Path
 from threading import RLock
 import shutil
 import time
-from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import quote
 import uuid
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi import Body, FastAPI, File, Request, UploadFile
+from fastapi.responses import Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
@@ -31,10 +30,10 @@ from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMIL
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS, JobCancelled
-from h3_app.workspace_store import request_owner
 
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from ..job_bindings import owned_generation
+from ..page_routes import install_static_page, owner_of, session_of
 from ..page_runs import Runs, guarded
 from ..player_fullscreen import PLAYER_FULLSCREEN_CSS
 from .page_batch import Batches
@@ -269,13 +268,6 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def runtime():
         return handlers._runtime()
 
-    def owner_of(request: Request) -> str:
-        return request_owner(request, JOBS.store)
-
-    def session_of(request: Request):
-        """What outlives ``request`` and names its owner to the job path."""
-        return SimpleNamespace(cookies=dict(request.cookies), session_hash=None, headers=dict(request.headers))
-
     def uploads() -> Path:
         folder = sessions.sessions_dir(runtime()).parent / "dubbing-uploads"
         folder.mkdir(parents=True, exist_ok=True)
@@ -354,14 +346,6 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return {"session": payload(request, load(session_id), include_player=include_player), **extra}
 
     # The page --------------------------------------------------------------
-    @app.get(ROUTE, include_in_schema=False)
-    def dubbing_redirect():
-        return RedirectResponse(f"{ROUTE}/")
-
-    @app.get(f"{ROUTE}/", include_in_schema=False)
-    def dubbing_page():
-        return FileResponse(STATIC / "index.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
-
     @app.get(f"{ROUTE}/player.js", include_in_schema=False)
     def player_script():
         """The result player's script, shared with the share page, as a module the page calls."""
@@ -373,11 +357,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return Response((STATIC / "app.css").read_text(encoding="utf-8") + PLAYER_FULLSCREEN_CSS,
                         media_type="text/css", headers={"Cache-Control": "no-cache"})
 
-    @app.get(ROUTE + "/{name}", include_in_schema=False)
-    def dubbing_asset(name: str):
-        if name not in STATIC_TYPES:
-            raise HTTPException(status_code=404)
-        return FileResponse(STATIC / name, media_type=STATIC_TYPES[name], headers={"Cache-Control": "no-cache"})
+    install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
 
     @app.get(f"{API}/boot", include_in_schema=False)
     @guarded

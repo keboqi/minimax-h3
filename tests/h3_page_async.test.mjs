@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
 
+const commonSource = readFileSync(new URL("../h3_ui/page_static/common.js", import.meta.url), "utf8").replace(/\r/g, "");
 const source = readFileSync(new URL("../h3_ui/h3/page/app.js", import.meta.url), "utf8").replace(/\r/g, "");
 
 function page(send = async () => ({})) {
@@ -34,6 +35,7 @@ function page(send = async () => ({})) {
   bind();
 `);
   assert.notEqual(script, source);
+  vm.runInContext(commonSource, context);
   vm.runInContext(script, context);
   context.page.app.s = {
     values: {mode: "Text to video", width: 1280, height: 768, duration: 6}, media: {},
