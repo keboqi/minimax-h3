@@ -1,5 +1,86 @@
 # Upstream status
 
+## ComfyUI v0.46.0 pin updated — 2026-11-20
+
+Local, Colab and Modal provisioning now share the v0.46.0 pin (`a277b5bf`)
+and frontend 1.59.6. The tagged requirements install workflow templates
+0.11.111 and embedded docs 0.5.17. The release fixes Dynamic VRAM restoring a
+different model's sampling schedule. An H3 A → B → A model-switch run with
+distinct schedules and stage offload still needs GPU verification.
+[Release](https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.46.0) ·
+[Tagged requirements](https://github.com/Comfy-Org/ComfyUI/blob/v0.46.0/requirements.txt)
+
+## Component and LoRA audit — 2026-11-20
+
+Rechecked 19 pinned Git sources, 25 PyPI packages and 34 Hugging Face
+repositories, including every repository in the November 18 LoRA audit.
+Eleven Git pins match their upstream heads. All 38 configured LoRA files are
+listed, including all five files at their exact pinned revisions. Hugging Face
+metadata matches all 19 configured SHA-256 values, and the other 19 catalog
+entries have no configured checksum. The separate prompt-rewriter adapter is
+still listed. Metadata and source comparisons are in
+`.cache/upstream-audit-2026-11-20/`.
+
+### Components
+
+- **ComfyUI v0.46.0 is the first upgrade to qualify.** The repo pins v0.45.0.
+  The new tag (`a277b5bf`) includes the Dynamic VRAM sampling-schedule fix
+  tracked in the last audit and pins frontend 1.59.6 and workflow templates
+  0.11.111. Kitchen 0.2.41 and aimdo 0.6.0 carry over. Test an H3 model switch
+  A → B → A with distinct schedules and stage offload enabled. The H3 model
+  merge node landed on main after the tag.
+  [Release](https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.46.0) ·
+  [Tagged requirements](https://github.com/Comfy-Org/ComfyUI/blob/v0.46.0/requirements.txt) ·
+  [Model merge commit](https://github.com/Comfy-Org/ComfyUI/commit/a286ac2f)
+- **T8 Audio v1.106.3 remains the next compatibility check.** Its head is
+  unchanged since November 18. Exercise `MiniMaxH3AudioConditioningT8` with an
+  FL2VA voice reference on the tagged Core. **KJNodes** added prompt weighting
+  for H3 video editing and first/last-frame conditioning. H3 graphs would need
+  to adopt the new node to use those features.
+  [T8 release](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/releases/tag/v1.106.3) ·
+  [KJNodes changes](https://github.com/kijai/ComfyUI-KJNodes/compare/4d6f027c23991aef33698a5c8c57452111df4cdb...aa2b5ea5e7f61b51f5d26d726f23c1d74e951016)
+- **SGLang-Omni and NeMo Speech moved.** Omni is 73 commits ahead of our pin.
+  The newer changes include a Nemotron encoder CUDA-stream fix. A Drama 3
+  bump still needs the worker-topology and sleep/wake checks from November 18.
+  NeMo Speech is 65 commits ahead, with RNNT streaming and multi-utterance
+  fixes. Their impact on our Nemotron transcription path remains unverified.
+  [Omni changes since November 18](https://github.com/sgl-project/sglang-omni/compare/d5ed77a61465e6effec12474f6958c4521779a0c...7d44a50e5d542dae0a27ebc6d8b0e110ebcd592e) ·
+  [NeMo Speech comparison](https://github.com/NVIDIA-NeMo/Speech/compare/a837f4e588ca778f46e586a8ad1acf5dc9a244a7...16c8a9e6)
+- **PyPI changes.** Frontend moved from 1.59.4 to 1.59.8 and OpenAI from
+  3.55.0 to 3.56.0. The frontend should follow the chosen Core tag. The other
+  23 checked package versions stayed at their November 18 values.
+  [Frontend releases](https://pypi.org/project/comfyui-frontend-package/#history) ·
+  [OpenAI releases](https://pypi.org/project/openai/#history)
+
+### LoRAs
+
+- **Configured weights are unchanged from November 18.** Pruna renamed its
+  H3 Image repository to `P-Image-OSS-Comfy` and renamed its example workflows.
+  The old repository ID still resolves at the catalog's pinned revision, and
+  the 1.956 GB LoRA has the same SHA-256.
+  [Pruna history](https://huggingface.co/PrunaAI/P-Image-OSS-Comfy/commits/main)
+- **ReDiverse is a candidate for four-step FL2VA.** The 433 MB ComfyUI
+  conversion stacks on LightX2V FL2V 4-step v1.0 at strength 1 for the first
+  LCM step. The supplied workflow then runs the remaining three steps with
+  the Turbo adapter alone. The split schedule needs graph work. Compare
+  across seeds for diversity and across matched seeds for prompt adherence
+  and audio sync. [Conversion and workflow](https://huggingface.co/kabachuha/ReDiverse-MiniMax-H3-Comfy)
+- **ModelsLab Turbo V4 + RL is a separate Ref2VA candidate.** Its 1.40 GB
+  BF16 file includes Larry Turbo V4. The author recommends a 10-evaluation
+  Heun-tail schedule and also documents eight-forward Euler. The published
+  comparison changes the sampler and the weights together. Start with the
+  same eight-forward schedule on both weights to isolate the adapter effect.
+  [Model card](https://huggingface.co/ModelsLab/MiniMax-H3-Turbo-RL)
+- **MOSS Tile Control V1 is a restoration candidate.** The 103 MB release
+  uses the MOSS-LLLite loader and apply nodes with MOSS-Image-SFT. The older
+  beta2 is the LoRA variant and uses MOSS-Image-Base with the native
+  color/depth conditioning node.
+  [Weights and workflows](https://huggingface.co/Xabsurd/MOSS-Image-Tile-Control)
+
+This audit used source and metadata checks. Runtime pins and defaults were
+left as configured. GPU compatibility, inference speed and output quality
+for the candidates remain unverified.
+
 ## Component and LoRA audit — 2026-11-18
 
 Checked 19 pinned Git sources, 25 PyPI packages and the 27 LoRA repositories

@@ -39,16 +39,14 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Media's Download from a URL. Sites change often, so yt-dlp keeps only a floor;
 # Deno (from PyPI) runs yt-dlp's YouTube challenge solver without a system runtime.
 VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
-# Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.40.0 fixes Qwen Image low-VRAM caching and adds direct single-latent
-# H3 decoder metadata. Keep frontend and Kitchen aligned with its requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "3a23f333537d9a715aad7ce79af8d9ec891d9ad8"  # v1.104.0 + native Core compatibility
 
-# ComfyUI v0.45.0: official MiniMax H3 Image support (#17655), the video
-# frame-buffer fix, native RelayVSR and adaptive SeedVR2 VAE slices.
-# Frontend 1.58.5 and Kitchen 0.2.41 stay paired; workflow templates 0.11.105.
-COMFY_REF = "989d93d0d968e704c589ce0146bb18c77f6b50cc"
+# ComfyUI v0.46.0 fixes Dynamic VRAM sampling-schedule restore across models (#16491).
+COMFY_REF = "a277b5bf213e8a44fa34817b7770b54f86ef4cea"
+# Keep these versions aligned with the tagged ComfyUI requirements.
+COMFY_KITCHEN_VERSION = "0.2.41"
+COMFY_FRONTEND_VERSION = "1.59.6"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -69,8 +67,6 @@ DRAMA3_HF_REVISION = "78e5ab79e49aa9a25abe8799eff2c4d73a1c3216"
 # 8% slower per request at the same WER (SGLang-Omni's Drama 3 cookbook).
 DRAMA3_INT4_HF_REPO = "fishaudio/drama-3-int4"
 DRAMA3_INT4_HF_REVISION = "a6f588691a13b6607cb09f9800556487ab7aa0fe"
-COMFY_KITCHEN_VERSION = "0.2.41"
-COMFY_FRONTEND_VERSION = "1.58.5"
 WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
@@ -570,10 +566,10 @@ def selftest() -> None:
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
-    assert COMFY_REF == "989d93d0d968e704c589ce0146bb18c77f6b50cc"
+    assert COMFY_REF == "a277b5bf213e8a44fa34817b7770b54f86ef4cea"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.41"
-    assert COMFY_FRONTEND_VERSION == "1.58.5"
+    assert COMFY_FRONTEND_VERSION == "1.59.6"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 13
     with tempfile.TemporaryDirectory() as temp:

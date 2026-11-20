@@ -116,8 +116,8 @@ class ComfyRequirementsTests(unittest.TestCase):
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
         self.assertIn("comfy-aimdo==0.6.0", lines)
-        self.assertIn("comfyui-workflow-templates==0.11.98", lines)
-        self.assertIn("comfyui-embedded-docs==0.5.15", lines)
+        self.assertIn("comfyui-workflow-templates==0.11.111", lines)
+        self.assertIn("comfyui-embedded-docs==0.5.17", lines)
 
 
 @unittest.skipUnless((SOURCES / "comfy-minimax-vae.py").is_file(), "pinned native H3 VAE not downloaded")
@@ -130,6 +130,7 @@ class NativeH3StillDecodeTests(unittest.TestCase):
                 obj = cls()
                 obj.latents_mean = SimpleNamespace(view=lambda *args: tensor(0))
                 obj.latents_std = SimpleNamespace(view=lambda *args: tensor(1))
+                obj.noncausal = False
                 obj.still_frame = still_frame
                 obj.frame_pre_padding, obj.tokens_chunk_size = 3, 5
                 observed = []
