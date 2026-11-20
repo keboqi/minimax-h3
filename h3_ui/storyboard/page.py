@@ -179,7 +179,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def boot(request: Request):
         owner = owner_of(request)
         return {
-            "gpu": gpu,
+            "gpu": gpu and not is_cpu_only(),
             "boards": [{"id": row["id"], "name": row["name"], "generated": bool(row["generated"])}
                        for row in handlers.service.list(owner)],
             "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],

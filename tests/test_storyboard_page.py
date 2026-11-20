@@ -92,6 +92,11 @@ class StoryboardPageTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("The run never finished.")
 
+    def test_cpu_studio_does_not_advertise_storyboard_generation(self):
+        self.assertTrue(self.client.get(f"{API}/boot").json()["gpu"])
+        with patch("h3_ui.storyboard.page.is_cpu_only", return_value=True):
+            self.assertFalse(self.client.get(f"{API}/boot").json()["gpu"])
+
     def test_one_read_carries_every_scene_the_page_will_show(self):
         board = self.create()
         self.assertEqual([scene["prompt"] for scene in board["scenes"]], ["One.", "Two.", "Three."])
