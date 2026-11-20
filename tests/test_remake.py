@@ -979,11 +979,15 @@ class WindowRunTests(unittest.TestCase):
         self.assertEqual(self.handlers.project_rows("local"), [])
         self.assertIsNone(self.project())
 
-    def test_another_owner_cannot_see_a_project(self):
+    def test_another_owner_can_see_and_load_a_saved_project(self):
         self.run_windows(picture=str(self.picture))
-        self.assertEqual(self.handlers.project_rows("someone-else"), [])
-        with self.assertRaises(H3Error):
-            self.handlers.load_project("someone-else", self.project()["key"])
+        key = self.project()["key"]
+        rows = self.handlers.project_rows("someone-else")
+        self.assertEqual([row["key"] for row in rows], [key])
+        loaded = self.handlers.load_project("someone-else", key)
+        self.assertEqual(loaded["key"], key)
+        self.assertTrue(self.handlers.may_read("someone-else", loaded["source"]))
+        self.assertTrue(self.handlers.may_read("someone-else", loaded["windows"][0]["pictures"][0]))
 
     def test_generating_with_an_empty_editor_keeps_an_auto_prompt(self):
         self.run_windows(picture=str(self.picture))

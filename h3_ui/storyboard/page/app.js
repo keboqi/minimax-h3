@@ -940,7 +940,7 @@
     if (next) select(next.id);
   };
   document.addEventListener("keydown", (event) => {
-    if ($("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.defaultPrevented || $("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === "Escape" && state.panel && !$("library").open) {
       closePanel();
       event.preventDefault();
@@ -1113,6 +1113,7 @@
     const mirror = h("div", {className: "prompt-mirror", id: "prompt-mirror", "aria-hidden": "true"});
     mirror.innerHTML = highlightPrompt(item.prompt ?? "");
     const textarea = h("textarea", {
+      id: "scene-prompt",
       rows: 14,
       value: item.prompt ?? "",
       placeholder: "Describe what happens, the camera and the sound.",
@@ -1127,7 +1128,7 @@
         mirror.scrollLeft = event.target.scrollLeft;
       },
     });
-    return h("label", {className: "field"}, "Prompt",
+    return h("div", {className: "field"}, h("label", {htmlFor: "scene-prompt"}, "Prompt"),
       h("div", {className: "prompt-editor"}, mirror, textarea));
   };
 
@@ -1137,24 +1138,48 @@
     const [low, high] = state.boot.seconds;
     const previousPrompt = state.previousPrompts.get(item.id);
     const canUndoPrompt = previousPrompt !== undefined && previousPrompt !== item.prompt;
-    const tab = state.inspectorTab || "prompt";
-    const tabBtn = (id, label) => h("button", {
-      type: "button",
-      role: "tab",
-      className: "inspector-tab",
-      "aria-selected": String(tab === id),
-      onclick: () => { state.inspectorTab = id; renderInspector(); },
-    }, label);
-
+    const tab = state.inspectorTab;
     const refCount = item.mode === "Reference media"
       ? (item.pictures?.length || 0) + (item.ref_videos?.length || 0) + (item.ref_audios?.length || 0)
       : (item.first_image ? 1 : 0) + (item.last_image ? 1 : 0) + (item.ref_audios?.length || 0);
+    const tabs = [
+      ["prompt", "Prompt & Flow"],
+      ["media", item.mode === "Text to video" ? "Media & Cast" : `Media & Cast (${refCount})`],
+      ["timing", "Timing & Seed"],
+    ];
+    const activateTab = (id) => {
+      if (state.inspectorTab !== id) {
+        state.inspectorTab = id;
+        renderInspector();
+      }
+      $(`inspector-tab-${id}`).focus();
+    };
 
     const headerBar = h("div", {className: "inspector-head"},
       h("div", {className: "inspector-tabs", role: "tablist", "aria-label": "Inspector sections"},
-        tabBtn("prompt", "Prompt & Flow"),
-        tabBtn("media", item.mode === "Text to video" ? "Media & Cast" : `Media & Cast (${refCount})`),
-        tabBtn("timing", "Timing & Seed")),
+        tabs.map(([id, label], index) => h("button", {
+          type: "button",
+          id: `inspector-tab-${id}`,
+          role: "tab",
+          className: "inspector-tab",
+          tabIndex: tab === id ? 0 : -1,
+          "aria-selected": String(tab === id),
+          "aria-controls": "inspector-tab-panel",
+          onclick: () => activateTab(id),
+          onkeydown: (event) => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+            let next;
+            switch (event.key) {
+              case "ArrowLeft": next = (index + tabs.length - 1) % tabs.length; break;
+              case "ArrowRight": next = (index + 1) % tabs.length; break;
+              case "Home": next = 0; break;
+              case "End": next = tabs.length - 1; break;
+              default: return;
+            }
+            event.preventDefault();
+            activateTab(tabs[next][0]);
+          },
+        }, label))),
       checklist(item));
 
     const titleField = textField("Scene title", "title", {maxLength: 120});
@@ -1245,7 +1270,8 @@
       generateSceneButton(item, "inspector-generate-scene"));
 
     const body = tab === "media" ? mediaTab : (tab === "timing" ? timingTab : promptTab);
-    return [headerBar, ...body, footer];
+    const panel = h("div", {id: "inspector-tab-panel", role: "tabpanel", "aria-labelledby": `inspector-tab-${tab}`}, body);
+    return [headerBar, panel, footer];
   };
 
   // The ticked cast, first in the prompt's picture order; the scene's own images follow below.

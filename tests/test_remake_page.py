@@ -140,7 +140,8 @@ class RemakePageTests(unittest.TestCase):
         for install in ui.h3_routes:
             install(app)
         client = TestClient(app)
-        client.cookies.update(self.client.cookies)
+        # Workshop and Studio live on different origins, so they have distinct browser owners.
+        client.get(f"{API}/boot")
         return client, handlers
 
     def test_workshop_refuses_gpu_actions_without_submitting_jobs(self):
@@ -160,18 +161,23 @@ class RemakePageTests(unittest.TestCase):
 
     def test_workshop_short_project_reopens_in_studio_and_renders(self):
         client, _ = self.workshop_client()
+        self.assertNotEqual(client.cookies.get("h3_workspace_owner"), self.client.cookies.get("h3_workspace_owner"))
         with self.video.open("rb") as handle:
             source = self.ok(client.post(f"{API}/source", files={"file": ("dance.mp4", handle)}))
-        body = self.editor(source, mode="Edit", smart=False, pinned=False, auto_prompts=False)
+        body = self.editor(source, mode="Edit", smart=False, pinned=False, auto_prompts=False,
+                           slots=[None, None, None, None])
         frame = self.ok(client.post(f"{API}/extract", json={**body, "base": 0, "frame": 12}))
         self.assertEqual(client.get(f"{API}/file", params={"path": frame["path"]}).status_code, 200)
         with Path(self.picture).open("rb") as handle:
             edited = self.ok(client.post(f"{API}/picture", files={"file": ("edited.png", handle)}))["path"]
-        body["slots"][0]["path"] = edited
+        body["slots"][0] = {"path": edited, "pin": 12}
         saved = self.ok(client.post(f"{API}/save", json=body))
         self.assertEqual(len(saved["windows"]), 1)
         Path(source["path"]).unlink()
         Path(edited).unlink()
+        listed = self.ok(self.client.get(f"{API}/projects"))["projects"]
+        self.assertEqual([row["key"] for row in listed], [saved["key"]])
+        self.assertEqual(self.client.get(f"{API}/file", params={"path": listed[0]["thumb"]}).status_code, 200)
         loaded = self.ok(self.client.post(f"{API}/projects/{saved['key']}/load"))
         self.assertEqual(loaded["mode"], "Edit")
         self.assertEqual(loaded["request"], "robot")
@@ -182,6 +188,7 @@ class RemakePageTests(unittest.TestCase):
         self.assertEqual(window["prompt"], SIX_SECTIONS)
         self.assertEqual(window["pins"], [12])
         self.assertTrue(Path(window["pictures"][0]).is_file())
+        self.assertEqual(self.client.get(f"{API}/file", params={"path": loaded["source_info"]["path"]}).status_code, 200)
         body.update(video=loaded["source_info"]["path"], selection=loaded["selection"],
                     slots=[{"path": window["pictures"][0], "pin": 12}, None, None, None])
         selected = self.ok(self.client.post(f"{API}/selection", json=body))
@@ -195,12 +202,18 @@ class RemakePageTests(unittest.TestCase):
 
     def test_workshop_keeps_each_windows_materials(self):
         client, _ = self.workshop_client()
-        source = self.source()
-        body = self.editor(source, selection=self.selection(source, end=12))
+        with self.video.open("rb") as handle:
+            source = self.ok(client.post(f"{API}/source", files={"file": ("dance.mp4", handle)}))
+        with Path(self.picture).open("rb") as handle:
+            edited = self.ok(client.post(f"{API}/picture", files={"file": ("edited.png", handle)}))["path"]
+        body = self.editor(source, selection=self.selection(source, end=12),
+                           slots=[{"path": edited, "pin": 12}, None, None, None])
         first = self.ok(client.post(f"{API}/save", json=body))
         self.assertGreater(len(first["windows"]), 1)
         body.update(window=1, prompt="second window", use_carried=False)
         self.ok(client.post(f"{API}/save", json=body))
+        listed = self.ok(self.client.get(f"{API}/projects"))["projects"]
+        self.assertEqual([row["key"] for row in listed], [first["key"]])
         loaded = self.ok(self.client.post(f"{API}/projects/{first['key']}/load"))
         self.assertEqual(loaded["windows"][0]["prompt"], SIX_SECTIONS)
         self.assertEqual(loaded["windows"][1]["prompt"], "second window")
@@ -331,6 +344,8 @@ class RemakePageTests(unittest.TestCase):
     def test_workshop_quick_edit_uses_gpt_image_without_gpu_services(self):
         from h3_app.jobs import CURRENT_JOB
         client, _ = self.workshop_client()
+        with Path(self.picture).open("rb") as handle:
+            picture = self.ok(client.post(f"{API}/picture", files={"file": ("edit.png", handle)}))["path"]
         requests = []
         result = self.output_dir / "api-edit.png"
         Image.new("RGB", (16, 9), "blue").save(result)
@@ -339,7 +354,7 @@ class RemakePageTests(unittest.TestCase):
             requests.append(request)
             yield GenerationUpdate([str(result)], "Complete")
         with patch("h3_app.generation.gpt_image.generate_gpt_image", generate):
-            self.ok(client.post(f"{API}/quick-edit", json={"picture": self.picture, "prompt": "make it blue"}))
+            self.ok(client.post(f"{API}/quick-edit", json={"picture": picture, "prompt": "make it blue"}))
             for _ in range(100):
                 run = self.ok(client.get(f"{API}/quick-edit/run"))["run"]
                 if not run["active"]:

@@ -43,7 +43,8 @@ def run():
                 with sync_playwright() as playwright:
                     chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
                     browser = playwright.chromium.launch(
-                        headless=True, **({"executable_path": str(chrome)} if chrome.exists() else {}))
+                        headless=True, ignore_default_args=["--hide-scrollbars"],
+                        **({"executable_path": str(chrome)} if chrome.exists() else {}))
                     context = browser.new_context(viewport={"width": 1440, "height": 1000})
                     check(context, url)
                     check_full_preview(context, url)
@@ -114,6 +115,18 @@ def check(context, url):
     page.get_by_role("button", name=re.compile(r"Scene 3, ")).click()
     expect(page.locator("#scene-heading")).to_contain_text("Scene 3")
 
+    stage = page.get_by_role("main")
+    prompt_tab = page.get_by_role("tab", name="Prompt & Flow")
+    media_tab = page.get_by_role("tab", name=re.compile(r"^Media & Cast"))
+    timing_tab = page.get_by_role("tab", name="Timing & Seed")
+    prompt_tab.focus()
+    page.keyboard.press("ArrowRight")
+    expect(media_tab).to_be_focused()
+    expect(media_tab).to_have_attribute("aria-selected", "true")
+    expect(page.locator("#scene-heading")).to_contain_text("Scene 3")
+    page.keyboard.press("Home")
+    expect(prompt_tab).to_be_focused()
+
     # Typing stays local and saves one field, surviving a move to another scene.
     prompt = page.get_by_label("Prompt", exact=True)
     with page.expect_request(lambda request: request.method == "PATCH") as saved:
@@ -136,7 +149,10 @@ def check(context, url):
     page.unroute("**/storyboard/api/boards/*/scenes/*")
 
     # Seed 0 is a seed, not "random".
-    page.get_by_text("More scene options").click()
+    prompt_tab.focus()
+    page.keyboard.press("End")
+    page.keyboard.press("Enter")
+    expect(timing_tab).to_be_focused()
     seed = page.get_by_label("Seed (-1 is random)")
     with page.expect_request(lambda request: request.method == "PATCH") as saved:
         seed.fill("0")
@@ -145,14 +161,14 @@ def check(context, url):
 
     # Choices apply and fix what the checklist asks for.
     page.get_by_role("button", name=re.compile(r"Scene 1, ")).click()
-    page.get_by_role("button", name="Generate this scene").wait_for()
+    prompt_tab.click()
     page.get_by_role("button", name="Text", exact=True).click()
     prompt.fill("A traveler says <d>[English] Hello there.</d>")
     expect(page.locator("#checklist")).to_contain_text("Ready to generate")
 
     # A run goes on while the page is reloaded and fills in the filmstrip.
     assert context.request.post(url + "/test/hold").ok
-    page.get_by_role("button", name="Generate this scene").click()
+    stage.get_by_role("button", name="Generate this scene").click()
     expect(page.locator("#run-status")).to_contain_text("Scene 1", timeout=10000)
     page.get_by_role("button", name=re.compile(r"Scene 5, ")).click()  # Browsing stays free during a run.
     expect(page.locator("#scene-heading")).to_contain_text("Scene 5")
@@ -177,7 +193,7 @@ def check(context, url):
     show_subtitles.uncheck()
     assert page.locator("#preview video").evaluate("(video) => video.textTracks[0].mode") == "disabled"
     scene_two.click()
-    expect(show_subtitles).to_be_hidden()
+    expect(page.locator("#subtitle-status")).to_contain_text("Scene 2 · No subtitles")
     scene_one.click()
     expect(show_subtitles).not_to_be_checked()
     show_subtitles.check()
@@ -187,11 +203,11 @@ def check(context, url):
     scene_two.click()
     page.get_by_role("button", name="Text", exact=True).click()
     expect(page.locator("#checklist")).to_contain_text("Ready to generate")
-    page.get_by_role("button", name="Generate this scene").click()
+    stage.get_by_role("button", name="Generate this scene").click()
     expect(page.locator('#strip [aria-label^="Scene 2,"] .meta')).to_contain_text("Done", timeout=15000)
     page.get_by_role("button", name=re.compile(r"Scene 1, ")).click()
-    page.get_by_role("button", name="Generate another take").click()
-    second_take = page.get_by_role("button", name="Take 2", exact=True)
+    stage.get_by_role("button", name="Generate another take").click()
+    second_take = stage.get_by_role("button", name=re.compile(r"^Take 2\b"))
     expect(second_take).to_be_visible(timeout=15000)
     expect(page.locator("#run-status")).to_have_count(0, timeout=15000)
     second_take.click()
@@ -201,13 +217,15 @@ def check(context, url):
     expect(page.locator('#strip [aria-label^="Scene 2,"] .meta')).to_contain_text("Out of date")
 
     # An unused take can be previewed and deleted, and its seed is shown.
-    first_take = page.get_by_role("button", name="Take 1", exact=True)
+    first_take = stage.get_by_role("button", name=re.compile(r"\bTake 1\b"))
     first_take.click()
+    removed_video = page.locator("#preview video").get_attribute("src")
     expect(page.get_by_role("button", name="Delete take")).to_be_visible()
     page.get_by_role("button", name="Delete take").click()
     expect(page.get_by_role("alertdialog", name="Delete take")).to_contain_text("Scene 2")
     page.get_by_role("button", name="Delete permanently").click()
-    expect(first_take).to_have_count(0)
+    expect(stage.locator(".take-card")).to_have_count(1)
+    expect(page.locator("#preview video")).not_to_have_attribute("src", removed_video)
 
     # Interrupt stops a run and hands the buttons back.
     assert context.request.post(url + "/test/hold").ok
@@ -235,10 +253,28 @@ def check(context, url):
     expect(page.get_by_label("Scene title")).to_be_visible()
     page.get_by_role("button", name=re.compile(r"Scene 7, ")).click()
     page.get_by_role("button", name="References", exact=False).first.click()
+    media_tab.click()
     page.get_by_role("button", name="Mei", exact=True).click()
+    page.get_by_role("button", name="Mei = <Picture 1>", exact=True).click()
     expect(page.locator("#tag-hint")).to_contain_text("Mei = <Picture 1>")
-    page.get_by_role("button", name="+ Mei = <Picture 1>").click()
-    expect(page.get_by_label("Prompt", exact=True)).to_have_value(re.compile(r"<Picture 1>"))
+    expect(prompt).to_have_value(re.compile(r"<Picture 1>"))
+
+    # The tabs fit on a narrow screen, and a scrolling textarea wraps at the same width as its mirror.
+    page.set_viewport_size({"width": 320, "height": 800})
+    assert timing_tab.evaluate("(tab) => tab.getBoundingClientRect().right <= document.documentElement.clientWidth")
+    prompt.fill(("A long prompt line with <Picture 1> and dialogue.\n" * 24).rstrip())
+    page.wait_for_function("""() => {
+      const input = document.getElementById('scene-prompt');
+      const mirror = document.getElementById('prompt-mirror');
+      return input.scrollHeight > input.clientHeight && input.clientWidth === mirror.clientWidth
+        && input.scrollHeight === mirror.scrollHeight;
+    }""")
+    prompt.evaluate("(textarea) => { textarea.scrollTop = textarea.scrollHeight; }")
+    page.wait_for_function("""() => {
+      const input = document.getElementById('scene-prompt');
+      return input.scrollTop > 0 && input.scrollTop === document.getElementById('prompt-mirror').scrollTop;
+    }""")
+    expect(page.locator("#save-state")).to_have_text("All changes saved")
     assert not errors, errors
 
 
@@ -253,60 +289,61 @@ def check_full_preview(context, url):
     page.goto(url + "/storyboard/", wait_until="domcontentloaded")
     page.get_by_label("Storyboard", exact=True).select_option(seeded.json()["id"])
     expect(page.locator("#strip .frame")).to_have_count(3)
-    page.get_by_role("button", name="Settings", exact=True).click()
-    page.get_by_text("Subtitle translation", exact=True).click()
+    toolbar = page.get_by_role("region", name="Subtitles", exact=True)
+    language = toolbar.get_by_role("combobox", name="Translation language", exact=True)
+    expect(language).to_be_visible()
     with page.expect_response(lambda response: response.url.endswith("/subtitle-settings")) as saved:
-        page.get_by_label("Translation language", exact=True).select_option("French")
+        language.select_option("French")
     assert saved.value.ok
     page.reload(wait_until="domcontentloaded")
-    page.get_by_role("button", name="Settings", exact=True).click()
-    page.get_by_text("Subtitle translation", exact=True).click()
-    expect(page.get_by_label("Translation language", exact=True)).to_have_value("French")
-    model = page.get_by_label("Translation model", exact=True)
+    expect(language).to_have_value("French")
+    toolbar.get_by_text("Translation options", exact=True).click()
+    model = toolbar.get_by_role("combobox", name="Translation model", exact=True)
     expect(model).to_have_value("gemma-4-26b-a4b-it")
     model.select_option("gemini-3.5-flash-lite")
-    page.get_by_role("button", name="Director", exact=True).click()
-    status = page.locator("#scene-subtitle-status")
-    expect(status).to_have_text("French translation not generated")
-    scene_translation = page.locator("#preview-subtitles").get_by_role("checkbox", name="Show translation")
-    expect(scene_translation).to_be_hidden()
+    toolbar.get_by_text("Translation options", exact=True).click()
+    status = toolbar.locator("#subtitle-status")
+    expect(status).to_contain_text("Scene 1 · Subtitles available, translation missing")
+    translation = toolbar.get_by_role("checkbox", name="Show translation")
+    expect(translation).to_be_disabled()
     with page.expect_request(lambda request: request.url.endswith("/subtitle-translations")) as generated:
         page.get_by_role("button", name="Translate this take").click()
     assert generated.value.post_data_json["force"] is False
     assert len(generated.value.post_data_json["take_ids"]) == 1
     page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
       ?.cues?.[0]?.text.includes('<c.translation>French Line 1</c>')""")
-    expect(status).to_have_text("French translation saved")
+    expect(status).to_contain_text("Scene 1 · Subtitles available, translation ready")
     with page.expect_request(lambda request: request.url.endswith("/subtitle-translations")) as regenerated:
-        page.locator("#preview-subtitles").get_by_role("button", name="Regenerate translation").click()
+        toolbar.get_by_role("button", name="Regenerate this take").click()
     assert regenerated.value.post_data_json["force"] is True
     assert regenerated.value.post_data_json["model"] == "gemini-3.5-flash-lite"
     expect(page.locator("#translate-scene")).to_be_enabled()
     page.reload(wait_until="domcontentloaded")
-    expect(status).to_have_text("French translation saved")
+    expect(status).to_contain_text("Scene 1 · Subtitles available, translation ready")
     requests = []
     page.on("request", lambda request: requests.append(request.post_data_json)
             if request.url.endswith("/subtitle-translations") else None)
-    scene_translation.check()
+    expect(translation).to_be_checked()
+    translation.uncheck()
+    translation.check()
     page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
       ?.cues?.[0]?.text.includes('<c.translation>French Line 1</c>')""")
     assert not requests, requests
-    scene_translation.uncheck()
+    translation.uncheck()
     page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
       ?.cues?.[0]?.text === 'Line 1'""")
-    page.get_by_role("checkbox", name="Include French translation in export", exact=True).check()
+    toolbar.get_by_role("checkbox", name="Translate on export", exact=True).check()
     page.get_by_role("button", name="Play full video").click()
     preview = page.locator("#full-video")
-    expect(preview.get_by_text("French translation saved for 1 of 3 scenes with subtitles")).to_be_visible()
+    expect(status).to_contain_text("1 of 3 current takes translated")
     assert not requests, requests
     position = preview.get_by_role("status")
-    subtitles = preview.get_by_role("checkbox", name="Show subtitles")
-    translation = preview.get_by_role("checkbox", name="Show translation")
+    subtitles = toolbar.get_by_role("checkbox", name="Show subtitles")
     active = preview.locator("video:not(.standby)")
     expect(position).to_have_text("Scene 1 of 3")
     active.evaluate("video => video.pause()")
-    preview.get_by_role("button", name="Translate missing subtitles").click()
-    expect(preview.get_by_text("French translation saved for 3 of 3 scenes with subtitles", exact=True)).to_be_visible()
+    toolbar.get_by_role("button", name="Translate missing takes (2)", exact=True).click()
+    expect(status).to_contain_text("3 of 3 current takes translated")
     assert len(requests) == 2 and all(len(request["take_ids"]) == 1 and not request["force"] for request in requests)
     page.wait_for_function("""() => {
       const next = document.querySelector('#full-video video.standby');
@@ -319,6 +356,7 @@ def check_full_preview(context, url):
     subtitles.uncheck()
     preview.get_by_role("button", name="Fullscreen", exact=True).click()
     expect(preview.get_by_role("button", name="Exit fullscreen")).to_be_visible()
+    expect(preview.get_by_role("region", name="Subtitles", exact=True)).to_be_visible()
     active.evaluate("video => video.play()")
     expect(position).to_have_text("Scene 2 of 3")
     assert active.evaluate("video => video.currentTime >= 1 && video.textTracks[0].mode === 'disabled'")
@@ -332,6 +370,7 @@ def check_full_preview(context, url):
     expect(preview.get_by_role("button", name="Exit fullscreen")).to_be_visible()
     preview.get_by_role("button", name="Close").click()
     expect(preview.locator("video")).to_have_count(0)
+    expect(language).to_be_visible()
     assert not joins, joins
     assert not errors, errors
     page.close()

@@ -17,8 +17,9 @@ are available in Studio.
 
 Press **Save project** to keep the source, frames, pins, prompts, and project options, including for a
 clip that fits in one window. Reopen the project from Remake's Projects list in Studio to render it.
-Workshop and Studio must use the same data folders and workspace identity. On Modal, stop the GPU
-endpoint before preparing projects in Workshop and restart it afterwards to see the saved files.
+Workshop and Studio share saved Remake projects through the same data folders, just like Storyboards,
+Dubbing projects, and Media. On Modal, stop the GPU endpoint before preparing projects in Workshop and
+restart it afterwards to see the saved files.
 
 The tab opens on a drop area, a choice of **Swap** or **Edit**, and your **Projects** as cards, each with a bar
 coloured by its windows' states. Once a source is in, a viewer sits above a timeline, and the panel

@@ -392,11 +392,27 @@ class RemakeHandlers:
         self.granted.setdefault(owner, set()).add(str(path))
         return str(path)
 
+    def _is_project_file(self, path: Path) -> bool:
+        """True when ``path`` sits inside any saved Remake project folder."""
+        resolved = path.resolve()
+        root = self.runner.projects.root.resolve()
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            return False
+        if len(relative.parts) < 3 or relative.parts[1] == "uploads":
+            return False
+        project_dir = root / relative.parts[0] / relative.parts[1]
+        return (project_dir / "project.json").is_file()
+
     def may_read(self, owner, path) -> bool:
         if str(path) in self.granted.get(owner, ()):
             return True
+        target = Path(path)
         root = self._owner_root(owner).resolve()
-        return root in Path(path).resolve().parents
+        if root in target.resolve().parents:
+            return True
+        return self._is_project_file(target)
 
     def require_readable(self, owner, *paths) -> None:
         """Refuse paths the browser sent that aren't this owner's; empty ones mean nothing is set."""
@@ -498,6 +514,8 @@ class RemakeHandlers:
             raise H3Error("This project's copy of the source is gone.")
         chosen = project["selection"]
         data = project_payload(project)
+        if data.get("output"):
+            self.grant(owner, data["output"])
         data["long"] = needs_windows(chosen["start"], chosen["end"], chosen["max_window"])
         data["source_info"] = self.source_payload(project["source"], chosen["sha"], data["name"])
         data["note"] = ("It keeps its crossfades. Upload the source again for seamless windows."

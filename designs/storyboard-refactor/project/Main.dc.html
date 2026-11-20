@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Director Studio — Storyboard</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+    button, input, textarea, select { font-family: inherit; }
+    a { color: inherit; text-decoration: none; }
+    a:hover { opacity: 0.92; }
+  </style>
+</helmet>
+
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: {{t.bg}}; color: {{t.text}}; font-size: 14px; line-height: 1.45;">
+
+  <!-- Slim 56px Studio Topbar -->
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 20px; background: {{t.surface}}; border-bottom: 1px solid {{t.line}};">
+    <!-- Brand + Board Switcher -->
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="width: 30px; height: 30px; border-radius: 8px; background: {{t.accentSoft}}; border: 1px solid {{t.accentBorder}}; display: flex; align-items: center; justify-content: center; color: {{t.accent}};">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+          <polygon points="10 9 15 12 10 15 10 9"></polygon>
+        </svg>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <label for="board-select" style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: {{t.muted}};">Board</label>
+        <select id="board-select" aria-label="Storyboard" style="height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; font-size: 13.5px; font-weight: 700; cursor: pointer;">
+          <option value="rooftop">Rooftop Chase (Ep. 02)</option>
+          <option value="harbor">Harbor Dawn Monologue</option>
+          <option value="subway">Subway Escape Cut</option>
+        </select>
+      </div>
+      <a href="NewStoryboard.dc.html" style="display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.surface}}; color: {{t.text}}; font-size: 12.5px; font-weight: 600;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+        New
+      </a>
+    </div>
+
+    <!-- Compact Progress & Save Indicator -->
+    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 999px; background: {{t.raised}}; border: 1px solid {{t.line}}; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: {{t.muted}};">
+      <span style="color: {{t.done}}; font-weight: 600;">4/6 done</span>
+      <span style="opacity: 0.4;">·</span>
+      <span>0:38</span>
+      <span style="opacity: 0.4;">·</span>
+      <span style="color: {{t.muted}};">Saved</span>
+    </div>
+
+    <div style="flex: 1 1 auto;"></div>
+
+    <!-- Studio Mode Navigation -->
+    <nav aria-label="Workspace modes" style="display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 9px; background: {{t.raised}}; border: 1px solid {{t.line}};">
+      <a href="Main.dc.html" aria-current="page" style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 6px; background: {{t.accentSoft}}; color: {{t.accent}}; font-size: 12.5px; font-weight: 700;">Director</a>
+      <a href="CastMedia.dc.html" style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 6px; color: {{t.muted}}; font-size: 12.5px; font-weight: 600;">Cast &amp; Media</a>
+      <a href="AutoRender.dc.html" style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 6px; color: {{t.muted}}; font-size: 12.5px; font-weight: 600;">Auto Render</a>
+      <button type="button" onClick="{{ toggleVersions }}" style="display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: {{t.muted}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Versions</button>
+    </nav>
+
+    <!-- Secondary Utility + Primary Playback -->
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button type="button" onClick="{{ toggleSubtitlesDrawer }}" aria-pressed="{{ subtitlesOpen }}" style="display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid {{subBtnBorder}}; background: {{subBtnBg}}; color: {{subBtnColor}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+          <path d="M7 15h4M15 15h2M7 11h2M13 11h4"></path>
+        </svg>
+        Subtitles
+        <span style="padding: 1px 6px; border-radius: 999px; background: {{t.raised}}; color: {{t.muted}}; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px;">EN→ZH</span>
+      </button>
+      <button type="button" onClick="{{ toggleExportToast }}" style="display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.surface}}; color: {{t.text}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">
+        Export
+      </button>
+      <button type="button" onClick="{{ togglePlaying }}" style="display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid {{t.accent}}; background: {{t.accent}}; color: {{t.accentInk}}; font-size: 12.5px; font-weight: 700; cursor: pointer;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+        Play full
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace: Hero Stage (Left) + Scene Inspector (Right) -->
+  <div style="flex: 1 1 auto; display: flex; flex-wrap: wrap; min-height: 0; position: relative;">
+
+    <!-- LEFT: Hero Cinema Stage & Docked Take Rail -->
+    <main style="flex: 1.35 1 600px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 14px 20px;">
+
+      <!-- Compact Scene Header -->
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+          <div style="display: inline-flex; align-items: center; border: 1px solid {{t.line}}; border-radius: 8px; overflow: hidden; background: {{t.surface}};">
+            <button type="button" onClick="{{ prevScene }}" aria-label="Previous scene" style="width: 32px; height: 32px; border: 0; border-right: 1px solid {{t.line}}; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+            </button>
+            <button type="button" onClick="{{ nextScene }}" aria-label="Next scene" style="width: 32px; height: 32px; border: 0; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </button>
+          </div>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 700; color: {{t.accent}}; padding: 3px 7px; border-radius: 6px; background: {{t.accentSoft}};">{{ activeScene.code }}</span>
+          <h1 style="margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: {{t.text}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ activeScene.title }}</h1>
+          <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: {{activeScene.badgeBg}}; color: {{activeScene.badgeFg}}; font-size: 11.5px; font-weight: 600;">{{ activeScene.statusLabel }}</span>
+        </div>
+
+        <!-- Consolidated Scene Actions -->
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 12px; color: {{t.muted}}; margin-right: 4px;">{{ activeScene.runsAs }}</span>
+          <button type="button" style="height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.surface}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">Duplicate</button>
+          <button type="button" style="height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.surface}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">+ After</button>
+          <button type="button" aria-label="Delete scene" style="width: 30px; height: 30px; border-radius: 7px; border: 1px solid {{t.dangerLine}}; background: transparent; color: {{t.danger}}; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 16:9 Cinema Stage Viewport -->
+      <div style="position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 410px; border-radius: 12px; overflow: hidden; border: 1px solid {{t.line}}; background: #070b0a; display: flex; flex-direction: column; justify-content: space-between;">
+        <!-- Stylized Cinema Frame Visual (placeholder for live video stream) -->
+        <div style="position: absolute; inset: 0; background: {{activeScene.frameBg}}; display: flex; align-items: center; justify-content: center;">
+          <div style="width: 72%; height: 64%; border-radius: 10px; border: 1px dashed rgba(238, 244, 241, 0.16); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; text-align: center;">
+            <button type="button" onClick="{{ togglePlaying }}" aria-label="Play or pause preview" style="width: 56px; height: 56px; border-radius: 999px; border: 1px solid rgba(45, 212, 191, 0.45); background: rgba(10, 16, 15, 0.78); color: #eef4f1; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"></polygon></svg>
+            </button>
+            <div style="font-size: 13px; font-weight: 600; color: #eef4f1;">{{ activeScene.frameCaption }}</div>
+            <div style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #9ab0a7;">1280×720 · 24 fps · {{ activeTake.label }} ({{ activeTake.seedText }})</div>
+          </div>
+        </div>
+
+        <!-- Top Viewport HUD -->
+        <div style="position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;">
+          <div style="display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 999px; background: rgba(10, 15, 14, 0.82); border: 1px solid rgba(255,255,255,0.1); color: #eef4f1; font-size: 12px; font-weight: 600;">
+            <span>{{ activeTake.label }}</span>
+            <sc-if value="{{ activeTake.inUse }}" hint-placeholder-val="{{ true }}">
+              <span style="padding: 1px 6px; border-radius: 999px; background: #2dd4bf; color: #07221d; font-size: 10.5px; font-weight: 700;">In use</span>
+            </sc-if>
+          </div>
+          <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(10, 15, 14, 0.82); border: 1px solid rgba(45, 212, 191, 0.35); color: #5eead4; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; font-weight: 600;">
+            Prompt fit {{ activeTake.fit }} · {{ activeTake.fitLabel }}
+          </div>
+        </div>
+
+        <!-- Bottom Subtitle Overlay + Transport Scrubber -->
+        <div style="position: relative; z-index: 2; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; background: rgba(7, 11, 10, 0.78); border-top: 1px solid rgba(255,255,255,0.08);">
+          <sc-if value="{{ showSubs }}" hint-placeholder-val="{{ true }}">
+            <div style="text-align: center; display: flex; flex-direction: column; gap: 2px;">
+              <div style="font-size: 14px; font-weight: 600; color: #eef4f1;">"Hold the roof line — we jump on three."</div>
+              <div style="font-size: 12px; color: #5eead4;">“守住屋顶边缘——数到三就跳。”</div>
+            </div>
+          </sc-if>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button type="button" onClick="{{ togglePlaying }}" aria-label="Toggle playback" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: #eef4f1; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+            </button>
+            <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #eef4f1;">00:02.4</span>
+            <div style="flex: 1 1 auto; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.16); overflow: hidden;">
+              <div style="width: 42%; height: 100%; background: #2dd4bf; border-radius: 999px;"></div>
+            </div>
+            <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: #9ab0a7;">00:06.0</span>
+            <button type="button" onClick="{{ toggleShowSubs }}" aria-pressed="{{ showSubs }}" style="height: 24px; padding: 0 8px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: #eef4f1; font-size: 11px; font-weight: 600; cursor: pointer;">CC</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Docked Take Switcher Rail (directly under viewport) -->
+      <div style="display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 10px; background: {{t.surface}}; border: 1px solid {{t.line}};">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: {{t.muted}};">Takes (3)</span>
+            <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: {{t.muted}};">Seed {{ activeTake.seed }}</span>
+            <button type="button" style="height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">Use seed</button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <sc-if value="{{ canUseTake }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ markInUse }}" style="height: 30px; padding: 0 11px; border-radius: 7px; border: 1px solid {{t.accent}}; background: {{t.accentSoft}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">Use this take</button>
+            </sc-if>
+            <button type="button" style="height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">+ Generate take</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px;">
+          <sc-for list="{{ takes }}" as="tk" hint-placeholder-count="3">
+            <button type="button" onClick="{{ tk.pick }}" aria-pressed="{{ tk.selected }}" style="display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 8px; border: {{tk.border}}; background: {{tk.bg}}; text-align: left; cursor: pointer;">
+              <div style="width: 56px; height: 34px; border-radius: 5px; background: {{tk.thumbBg}}; border: 1px solid {{t.line}}; flex: none; position: relative;">
+                <sc-if value="{{ tk.inUse }}" hint-placeholder-val="{{ true }}">
+                  <span style="position: absolute; top: 2px; right: 2px; width: 7px; height: 7px; border-radius: 999px; background: {{t.accent}};"></span>
+                </sc-if>
+              </div>
+              <div style="min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <strong style="font-size: 12.5px; color: {{t.text}};">{{ tk.label }}</strong>
+                  <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: {{tk.fitColor}};">{{ tk.fit }}</span>
+                </div>
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: {{t.muted}};">{{ tk.seedText }}</span>
+              </div>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT: Focused Scene Inspector -->
+    <aside aria-label="Scene inspector" style="flex: 1 1 420px; max-width: 480px; min-width: 0; display: flex; flex-direction: column; background: {{t.surface}}; border-left: 1px solid {{t.line}};">
+
+      <!-- Inspector Tabs -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid {{t.line}};">
+        <div role="tablist" aria-label="Inspector sections" style="display: flex; gap: 4px; padding: 3px; border-radius: 8px; background: {{t.raised}}; border: 1px solid {{t.line}}; flex: 1 1 auto;">
+          <button type="button" role="tab" aria-selected="{{ isPromptTab }}" onClick="{{ pickPromptTab }}" style="flex: 1 1 0; height: 30px; border: 0; border-radius: 6px; background: {{promptTabBg}}; color: {{promptTabFg}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Prompt &amp; Flow</button>
+          <button type="button" role="tab" aria-selected="{{ isMediaTab }}" onClick="{{ pickMediaTab }}" style="flex: 1 1 0; height: 30px; border: 0; border-radius: 6px; background: {{mediaTabBg}}; color: {{mediaTabFg}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Media &amp; Cast (3)</button>
+          <button type="button" role="tab" aria-selected="{{ isTimingTab }}" onClick="{{ pickTimingTab }}" style="flex: 1 1 0; height: 30px; border: 0; border-radius: 6px; background: {{timingTabBg}}; color: {{timingTabFg}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Timing</button>
+        </div>
+      </div>
+
+      <!-- Inspector Body -->
+      <div style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 14px; padding: 16px; overflow-y: auto;">
+
+        <!-- TAB 1: Prompt & Flow -->
+        <sc-if value="{{ isPromptTab }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <label style="display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: {{t.muted}};">
+              Scene title
+              <input type="text" value="{{ activeScene.title }}" style="height: 36px; padding: 0 11px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-size: 13.5px; font-weight: 500;">
+            </label>
+
+            <!-- Continuity & Conditioning Row -->
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+              <fieldset style="margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 5px;">
+                <legend style="padding: 0; font-size: 12px; font-weight: 600; color: {{t.muted}};">Scene entry</legend>
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 8px; background: {{t.raised}}; border: 1px solid {{t.line}};">
+                  <button type="button" aria-pressed="{{ activeScene.isFlow }}" onClick="{{ setFlow }}" style="height: 30px; border: 0; border-radius: 6px; background: {{flowBtnBg}}; color: {{flowBtnFg}}; font-size: 12px; font-weight: 600; cursor: pointer;">Continue</button>
+                  <button type="button" aria-pressed="{{ activeScene.isCut }}" onClick="{{ setCut }}" style="height: 30px; border: 0; border-radius: 6px; background: {{cutBtnBg}}; color: {{cutBtnFg}}; font-size: 12px; font-weight: 600; cursor: pointer;">Fresh cut</button>
+                </div>
+              </fieldset>
+
+              <fieldset style="margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 5px;">
+                <legend style="padding: 0; font-size: 12px; font-weight: 600; color: {{t.muted}};">Conditioning</legend>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 8px; background: {{t.raised}}; border: 1px solid {{t.line}};">
+                  <button type="button" style="height: 30px; border: 0; border-radius: 6px; background: transparent; color: {{t.muted}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">Text</button>
+                  <button type="button" style="height: 30px; border: 0; border-radius: 6px; background: transparent; color: {{t.muted}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">Frames</button>
+                  <button type="button" aria-pressed="true" style="height: 30px; border: 0; border-radius: 6px; background: {{t.accentSoft}}; color: {{t.accent}}; font-size: 11.5px; font-weight: 700; cursor: pointer;">Refs</button>
+                </div>
+              </fieldset>
+            </div>
+
+            <!-- Inline Quick-Insert Reference Strip (solves tab-jumping!) -->
+            <div style="display: flex; flex-direction: column; gap: 6px; padding: 9px 11px; border-radius: 8px; background: {{t.raised}}; border: 1px solid {{t.line}};">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <span style="font-size: 11.5px; font-weight: 600; color: {{t.muted}};">Active references · click to insert tag</span>
+                <button type="button" onClick="{{ pickMediaTab }}" style="border: 0; background: transparent; color: {{t.accent}}; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 0;">Manage →</button>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid {{t.dash}}; background: {{t.surface}}; color: {{t.text}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">
+                  <span style="color: {{t.accent}}; font-family: 'JetBrains Mono', ui-monospace, monospace;">+ &lt;Picture 1&gt;</span> Mei
+                </button>
+                <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid {{t.dash}}; background: {{t.surface}}; color: {{t.text}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">
+                  <span style="color: {{t.accent}}; font-family: 'JetBrains Mono', ui-monospace, monospace;">+ &lt;Picture 2&gt;</span> Neon Alley
+                </button>
+                <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid {{t.dash}}; background: {{t.surface}}; color: {{t.text}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">
+                  <span style="color: {{t.accent}}; font-family: 'JetBrains Mono', ui-monospace, monospace;">+ &lt;Audio 1&gt;</span> Sirens.wav
+                </button>
+              </div>
+            </div>
+
+            <!-- Prompt Textarea -->
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <label for="scene-prompt" style="font-size: 12px; font-weight: 600; color: {{t.muted}};">Scene prompt</label>
+                <button type="button" style="display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; font-size: 11.5px; font-weight: 600; cursor: pointer;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"></path></svg>
+                  Rewrite with Prompt Writer
+                </button>
+              </div>
+              <textarea id="scene-prompt" rows="7" style="width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-size: 13.5px; line-height: 1.55; resize: vertical;">Tracking side-angle handheld shot continuing from Scene 2. &lt;Picture 1&gt; Mei sprints across wet concrete toward the neon roof edge, leaps across the rain-slick gap above &lt;Picture 2&gt;, and rolls onto the opposite skylight. Distant sirens from &lt;Audio 1&gt; echo beneath heavy rain.</textarea>
+              <div style="font-size: 12px; color: {{t.muted}};">Continues from Scene 2's final 24 frames (1.0s overlap).</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- TAB 2: Media & Cast -->
+        <sc-if value="{{ isMediaTab }}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-size: 12px; font-weight: 600; color: {{t.muted}};">Cast in this scene</span>
+                <a href="CastMedia.dc.html" style="font-size: 12px; font-weight: 600; color: {{t.accent}};">Edit roster →</a>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                <button type="button" aria-pressed="true" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.accent}}; background: {{t.accentSoft}}; color: {{t.text}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Mei · &lt;Picture 1&gt;</button>
+                <button type="button" aria-pressed="false" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.muted}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Detective Ken</button>
+                <button type="button" aria-pressed="false" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.muted}}; font-size: 12.5px; font-weight: 600; cursor: pointer;">Pilot</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 12px; font-weight: 600; color: {{t.muted}};">Reference images</span>
+              <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 10px; border-radius: 8px; border: 1px dashed {{t.dash}}; background: {{t.control}};">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div style="aspect-ratio: 1; border-radius: 6px; background: #1e3a34; border: 1px solid {{t.line}};"></div>
+                  <span style="font-size: 11px; color: {{t.muted}}; font-family: 'JetBrains Mono', ui-monospace, monospace;">&lt;Picture 1&gt;</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div style="aspect-ratio: 1; border-radius: 6px; background: #222e3d; border: 1px solid {{t.line}};"></div>
+                  <span style="font-size: 11px; color: {{t.muted}}; font-family: 'JetBrains Mono', ui-monospace, monospace;">&lt;Picture 2&gt;</span>
+                </div>
+                <button type="button" style="aspect-ratio: 1; border-radius: 6px; border: 1px dashed {{t.dash}}; background: transparent; color: {{t.muted}}; font-size: 12px; font-weight: 600; cursor: pointer;">+ Add</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 12px; font-weight: 600; color: {{t.muted}};">Reference audio (up to 3)</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}};">
+                <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: {{t.accent}};">&lt;Audio 1&gt;</span>
+                <span style="flex: 1 1 auto; font-size: 12.5px; color: {{t.text}};">rain_sirens_loop.wav</span>
+                <button type="button" style="height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid {{t.line}}; background: transparent; color: {{t.muted}}; font-size: 11.5px; cursor: pointer;">Remove</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- TAB 3: Timing & Seed -->
+        <sc-if value="{{ isTimingTab }}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 600; color: {{t.muted}};">
+              Scene length: 6 s (adds 5.0 s after overlap)
+              <input type="range" min="4" max="12" value="6" style="width: 100%; accent-color: {{t.accent}};">
+            </label>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+              <label style="display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: {{t.muted}};">
+                Overlap frames
+                <select style="height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-size: 13px;">
+                  <option>24 frames (1.0s)</option>
+                  <option>16 frames (0.67s)</option>
+                  <option>32 frames (1.33s)</option>
+                </select>
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: {{t.muted}};">
+                Takes per run
+                <select style="height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-size: 13px;">
+                  <option>1 take</option>
+                  <option>2 takes</option>
+                  <option>3 takes</option>
+                </select>
+              </label>
+            </div>
+            <label style="display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: {{t.muted}};">
+              Seed (-1 is random)
+              <input type="number" value="482910" style="height: 36px; padding: 0 11px; border-radius: 8px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px;">
+            </label>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- Pinned Inspector Footer: Readiness + Primary Generate CTA -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid {{t.line}}; background: {{t.raised}};">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 12.5px; font-weight: 700; color: {{t.done}};">✓ Ready to generate</span>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: {{t.muted}};">{{ activeScene.durationText }} · Ref media</span>
+        </div>
+        <button type="button" style="height: 38px; padding: 0 16px; border-radius: 8px; border: 1px solid {{t.accent}}; background: {{t.accent}}; color: {{t.accentInk}}; font-size: 13px; font-weight: 700; cursor: pointer;">Generate another take</button>
+      </div>
+    </aside>
+
+    <!-- Slide-Over Subtitles & Translation Drawer (replaces bloated always-visible bar) -->
+    <sc-if value="{{ subtitlesOpen }}" hint-placeholder-val="{{ false }}">
+      <section aria-label="Subtitles and translation" style="position: absolute; top: 12px; right: 20px; z-index: 10; width: 390px; max-width: calc(100% - 40px); padding: 16px; border-radius: 12px; background: {{t.surface}}; border: 1px solid {{t.accentBorder}}; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <strong style="font-size: 14.5px; color: {{t.text}};">Subtitles &amp; Translation</strong>
+          <button type="button" onClick="{{ toggleSubtitlesDrawer }}" aria-label="Close subtitles panel" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; cursor: pointer;">×</button>
+        </div>
+        <div style="font-size: 12px; color: {{t.muted}}; padding: 8px 10px; border-radius: 8px; background: {{t.raised}};">Scene 3 · Translation ready · 4 of 4 current takes translated</div>
+        <div style="display: flex; align-items: flex-end; gap: 8px;">
+          <label style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: {{t.muted}};">
+            Target language
+            <select style="height: 34px; padding: 0 9px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.control}}; color: {{t.text}}; font-size: 13px;">
+              <option>Chinese (Simplified)</option>
+              <option>Japanese</option>
+              <option>Spanish</option>
+            </select>
+          </label>
+          <button type="button" style="height: 34px; padding: 0 10px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.raised}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">Translate take</button>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;">
+          <label style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: {{t.text}};"><input type="checkbox" checked="checked" style="accent-color: {{t.accent}};"> Show subtitles</label>
+          <label style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: {{t.text}};"><input type="checkbox" checked="checked" style="accent-color: {{t.accent}};"> Show translation</label>
+          <label style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: {{t.text}};"><input type="checkbox" style="accent-color: {{t.accent}};"> Translate on export</label>
+          <label style="display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: {{t.text}};"><input type="checkbox" style="accent-color: {{t.accent}};"> Burn in subtitles</label>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid {{t.line}};">
+          <button type="button" style="height: 32px; padding: 0 11px; border-radius: 7px; border: 1px solid {{t.line}}; background: {{t.surface}}; color: {{t.text}}; font-size: 12px; font-weight: 600; cursor: pointer;">Word-align all takes</button>
+          <button type="button" style="height: 32px; padding: 0 11px; border-radius: 7px; border: 1px solid {{t.accent}}; background: {{t.accentSoft}}; color: {{t.accent}}; font-size: 12px; font-weight: 600; cursor: pointer;">Translate missing (2)</button>
+        </div>
+      </section>
+    </sc-if>
+  </div>
+
+  <!-- BOTTOM: Anchored Compact Filmstrip Timeline -->
+  <section aria-label="Storyboard filmstrip timeline" style="display: flex; flex-direction: column; gap: 8px; padding: 10px 20px 14px 20px; background: {{t.surface}}; border-top: 1px solid {{t.line}};">
+    <!-- Timeline Controls Bar -->
+    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: {{t.muted}};">Timeline · 6 Scenes</span>
+        <span style="font-size: 12px; color: {{t.muted}};">Drag to reorder · click connector pill for Continue vs Cut</span>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{t.muted}}; cursor: pointer;">
+          <input type="checkbox" checked="checked" style="accent-color: {{t.accent}};"> Include outdated
+        </label>
+        <button type="button" style="height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid {{t.accent}}; background: {{t.accent}}; color: {{t.accentInk}}; font-size: 12.5px; font-weight: 700; cursor: pointer;">Generate remaining (2)</button>
+      </div>
+    </div>
+
+    <!-- Horizontal Filmstrip Track -->
+    <div style="display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding-bottom: 2px;">
+      <sc-for list="{{ scenes }}" as="sc" hint-placeholder-count="6">
+        <div style="display: flex; align-items: stretch; gap: 6px; flex: 0 0 auto;">
+          <sc-if value="{{ sc.hasConnector }}" hint-placeholder-val="{{ true }}">
+            <button type="button" onClick="{{ sc.toggleLink }}" aria-label="{{ sc.connectorAria }}" style="width: 26px; align-self: center; height: 54px; padding: 0; border-radius: 999px; border: {{sc.connBorder}}; background: {{sc.connBg}}; color: {{sc.connFg}}; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; writing-mode: vertical-rl;">{{ sc.connText }}</span>
+            </button>
+          </sc-if>
+          <button type="button" onClick="{{ sc.select }}" aria-current="{{ sc.current }}" style="width: 168px; padding: 6px; border-radius: 9px; border: {{sc.cardBorder}}; background: {{sc.cardBg}}; box-shadow: {{sc.cardShadow}}; text-align: left; display: flex; flex-direction: column; gap: 5px; cursor: pointer;">
+            <div style="position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 5px; overflow: hidden; background: {{sc.thumbBg}}; border: 1px solid {{t.line}};">
+              <span style="position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 999px; background: rgba(10, 15, 14, 0.85); color: #eef4f1; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 700;">{{ sc.code }}</span>
+              <span style="position: absolute; bottom: 4px; right: 4px; padding: 1px 6px; border-radius: 999px; background: rgba(10, 15, 14, 0.85); color: #eef4f1; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 600;">{{ sc.durationShort }}</span>
+            </div>
+            <div style="font-size: 12.5px; font-weight: 700; color: {{t.text}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ sc.title }}</div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px;">
+              <span style="padding: 1px 7px; border-radius: 999px; background: {{sc.badgeBg}}; color: {{sc.badgeFg}}; font-size: 10.5px; font-weight: 600;">{{ sc.statusLabel }}</span>
+              <span style="font-size: 11px; color: {{t.muted}};">{{ sc.linkLabel }}</span>
+            </div>
+          </button>
+        </div>
+      </sc-for>
+
+      <!-- End-of-strip Add Actions -->
+      <div style="display: flex; flex-direction: column; gap: 6px; flex: 0 0 116px;">
+        <button type="button" style="flex: 1 1 0; border-radius: 8px; border: 1px dashed {{t.dash}}; background: transparent; color: {{t.muted}}; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer;">+ Add scene</button>
+        <button type="button" style="flex: 1 1 0; border-radius: 8px; border: 1px dashed {{t.dash}}; background: transparent; color: {{t.muted}}; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer;">+ Media clip</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"subtitlesDrawer":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      selectedScene: 2,
+      selectedTake: 1,
+      inUseTake: 1,
+      inspectorTab: 'prompt',
+      subtitlesOpen: null,
+      showSubs: true,
+      links: [false, true, true, false, true, true]
+    };
+  }
+
+  renderVals() {
+    const mode = this.props.theme ?? 'dark';
+    const isDark = mode === 'dark';
+    const t = isDark ? {
+      bg: '#0c100f',
+      surface: '#131a18',
+      raised: '#1a2421',
+      control: '#0e1513',
+      line: '#26342f',
+      dash: '#3c524a',
+      text: '#eef4f1',
+      muted: '#9ab0a7',
+      accent: '#2dd4bf',
+      accentInk: '#07221d',
+      accentSoft: 'rgba(45, 212, 191, 0.14)',
+      accentBorder: 'rgba(45, 212, 191, 0.45)',
+      done: '#5eead4',
+      doneBg: '#11332c',
+      warn: '#fbbf24',
+      warnBg: '#33260e',
+      warnLine: '#b45309',
+      needs: '#fdba74',
+      needsBg: '#432010',
+      danger: '#fca5a5',
+      dangerLine: '#7f1d1d'
+    } : {
+      bg: '#f1f4f2',
+      surface: '#ffffff',
+      raised: '#e8efec',
+      control: '#ffffff',
+      line: '#d4dfda',
+      dash: '#9fb6ac',
+      text: '#182421',
+      muted: '#485a54',
+      accent: '#0b7a67',
+      accentInk: '#ffffff',
+      accentSoft: '#dff2ec',
+      accentBorder: '#0b7a67',
+      done: '#065f51',
+      doneBg: '#d9fbe6',
+      warn: '#8a5600',
+      warnBg: '#fef3c7',
+      warnLine: '#d39a35',
+      needs: '#9a3412',
+      needsBg: '#ffedd5',
+      danger: '#a33a28',
+      dangerLine: '#d9a093'
+    };
+
+    const rawScenes = [
+      { code: '01', title: 'Neon skyline establish', dur: '8s', durLong: '8s', status: 'done', statusLabel: 'Done', runsAs: 'Reference media', thumbBg: '#182b2e', frameBg: 'radial-gradient(circle at 35% 40%, #1d3c42 0%, #0a1214 75%)', frameCaption: 'Wide dusk establish over wet neon rooftops' },
+      { code: '02', title: 'Mei spots patrol drone', dur: '6s (+5s)', durLong: '6s (+5.0s)', status: 'done', statusLabel: 'Done', runsAs: 'Reference media', thumbBg: '#1c312b', frameBg: 'radial-gradient(circle at 60% 35%, #1d3f35 0%, #091210 75%)', frameCaption: 'Medium shot: Mei ducks behind AC unit as searchlight sweeps' },
+      { code: '03', title: 'Leap across neon gap', dur: '6s (+5s)', durLong: '6s (+5.0s)', status: 'done', statusLabel: 'Done', runsAs: 'Reference media', thumbBg: '#18333a', frameBg: 'radial-gradient(circle at 50% 42%, #193e47 0%, #081012 75%)', frameCaption: 'Handheld tracking shot across the rain-slick rooftop gap' },
+      { code: '04', title: 'Hard landing on skylight', dur: '5s', durLong: '5s', status: 'outdated', statusLabel: 'Outdated', runsAs: 'First / last frame', thumbBg: '#2b2416', frameBg: 'radial-gradient(circle at 48% 50%, #3d3017 0%, #0e0c08 75%)', frameCaption: 'Low-angle close-up as Mei rolls across glass skylight' },
+      { code: '05', title: 'Alley siren pursuit', dur: '7s (+6s)', durLong: '7s (+6.0s)', status: 'draft', statusLabel: 'Draft', runsAs: 'Reference media', thumbBg: '#1b2329', frameBg: 'radial-gradient(circle at 40% 45%, #24303a 0%, #0a0d10 75%)', frameCaption: 'Not generated yet — ready to render' },
+      { code: '06', title: 'Subway stair escape', dur: '6s (+5s)', durLong: '6s (+5.0s)', status: 'needs', statusLabel: 'Needs input', runsAs: 'Reference media', thumbBg: '#2b1c15', frameBg: 'radial-gradient(circle at 50% 50%, #3a2318 0%, #0f0a08 75%)', frameCaption: 'Add prompt or reference frame to prepare scene' }
+    ];
+
+    const badgeFor = (st) => {
+      if (st === 'done') return { bg: t.doneBg, fg: t.done };
+      if (st === 'outdated') return { bg: t.warnBg, fg: t.warn };
+      if (st === 'needs') return { bg: t.needsBg, fg: t.needs };
+      return { bg: t.raised, fg: t.muted };
+    };
+
+    const scenes = rawScenes.map((s, idx) => {
+      const isSelected = idx === this.state.selectedScene;
+      const isFlow = this.state.links[idx];
+      const badge = badgeFor(s.status);
+      return {
+        ...s,
+        durationShort: s.dur,
+        durationText: s.durLong,
+        current: String(isSelected),
+        hasConnector: idx > 0,
+        isFlow,
+        isCut: !isFlow,
+        connText: isFlow ? 'CONT' : 'CUT',
+        connBorder: isFlow ? '1px solid ' + t.accent : '1px dashed ' + t.warnLine,
+        connBg: isFlow ? t.accentSoft : t.warnBg,
+        connFg: isFlow ? t.accent : t.warn,
+        connectorAria: isFlow ? 'Continues previous scene. Click to switch to cut.' : 'Fresh cut. Click to continue previous scene.',
+        linkLabel: idx === 0 ? 'Opening' : (isFlow ? 'Continue' : 'Cut'),
+        badgeBg: badge.bg,
+        badgeFg: badge.fg,
+        cardBorder: isSelected ? '2px solid ' + t.accent : '1px solid ' + t.line,
+        cardBg: isSelected ? t.raised : t.control,
+        cardShadow: isSelected ? '0 0 0 3px ' + t.accentSoft : 'none',
+        select: () => this.setState({ selectedScene: idx }),
+        toggleLink: () => {
+          const next = this.state.links.slice();
+          next[idx] = !next[idx];
+          this.setState({ links: next });
+        }
+      };
+    });
+
+    const activeScene = scenes[this.state.selectedScene] || scenes[0];
+
+    const rawTakes = [
+      { label: 'Take 1', seed: 109482, fit: 74, fitLabel: 'Good', thumbBg: '#1b2c2a' },
+      { label: 'Take 2', seed: 482910, fit: 88, fitLabel: 'Strong', thumbBg: '#16373f' },
+      { label: 'Take 3', seed: 774201, fit: 61, fitLabel: 'Fair', thumbBg: '#232833' }
+    ];
+
+    const takes = rawTakes.map((tk, idx) => {
+      const selected = idx === this.state.selectedTake;
+      const inUse = idx === this.state.inUseTake;
+      return {
+        ...tk,
+        seedText: '#' + tk.seed,
+        selected: String(selected),
+        inUse,
+        border: selected ? '2px solid ' + t.accent : '1px solid ' + t.line,
+        bg: selected ? t.accentSoft : t.control,
+        fitColor: tk.fit >= 80 ? t.done : t.muted,
+        pick: () => this.setState({ selectedTake: idx })
+      };
+    });
+
+    const activeTake = takes[this.state.selectedTake] || takes[0];
+    const subtitlesOpen = this.state.subtitlesOpen !== null ? this.state.subtitlesOpen : Boolean(this.props.subtitlesDrawer);
+
+    const tab = this.state.inspectorTab;
+    const isPromptTab = tab === 'prompt';
+    const isMediaTab = tab === 'media';
+    const isTimingTab = tab === 'timing';
+
+    return {
+      t,
+      scenes,
+      activeScene,
+      takes,
+      activeTake,
+      canUseTake: !activeTake.inUse,
+      subtitlesOpen,
+      showSubs: this.state.showSubs,
+      subBtnBorder: subtitlesOpen ? t.accent : t.line,
+      subBtnBg: subtitlesOpen ? t.accentSoft : t.surface,
+      subBtnColor: subtitlesOpen ? t.accent : t.text,
+      isPromptTab,
+      isMediaTab,
+      isTimingTab,
+      promptTabBg: isPromptTab ? t.surface : 'transparent',
+      promptTabFg: isPromptTab ? t.text : t.muted,
+      mediaTabBg: isMediaTab ? t.surface : 'transparent',
+      mediaTabFg: isMediaTab ? t.text : t.muted,
+      timingTabBg: isTimingTab ? t.surface : 'transparent',
+      timingTabFg: isTimingTab ? t.text : t.muted,
+      flowBtnBg: activeScene.isFlow ? t.accentSoft : 'transparent',
+      flowBtnFg: activeScene.isFlow ? t.accent : t.muted,
+      cutBtnBg: activeScene.isCut ? t.accentSoft : 'transparent',
+      cutBtnFg: activeScene.isCut ? t.accent : t.muted,
+      prevScene: () => this.setState({ selectedScene: Math.max(0, this.state.selectedScene - 1) }),
+      nextScene: () => this.setState({ selectedScene: Math.min(scenes.length - 1, this.state.selectedScene + 1) }),
+      markInUse: () => this.setState({ inUseTake: this.state.selectedTake }),
+      pickPromptTab: () => this.setState({ inspectorTab: 'prompt' }),
+      pickMediaTab: () => this.setState({ inspectorTab: 'media' }),
+      pickTimingTab: () => this.setState({ inspectorTab: 'timing' }),
+      setFlow: () => {
+        const next = this.state.links.slice();
+        next[this.state.selectedScene] = true;
+        this.setState({ links: next });
+      },
+      setCut: () => {
+        const next = this.state.links.slice();
+        next[this.state.selectedScene] = false;
+        this.setState({ links: next });
+      },
+      toggleSubtitlesDrawer: () => this.setState({ subtitlesOpen: !subtitlesOpen }),
+      toggleShowSubs: () => this.setState({ showSubs: !this.state.showSubs }),
+      togglePlaying: () => {},
+      toggleExportToast: () => {},
+      toggleVersions: () => {}
+    };
+  }
+}
+</script>
+</body>
+</html>

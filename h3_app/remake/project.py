@@ -41,7 +41,13 @@ def new_window(index: int, plan: dict[str, Any]) -> dict[str, Any]:
 
 
 class Projects:
-    """One folder per owner and selection, so reopening the same selection resumes it."""
+    """Saved Remake projects shared across the workspace, keyed by selection.
+
+    Workshop and Studio run on different origins and therefore have different
+    browser owners, so projects are listed and loaded across owners just like
+    Storyboards, Dubbing projects, and Media. ``owner`` records the creator and
+    keeps existing ``<owner_hash>/<key>`` folders in place.
+    """
 
     def __init__(self, output_dir: Path):
         self.root = Path(output_dir) / FOLDER
@@ -49,21 +55,29 @@ class Projects:
     def folder(self, owner: str, key: str) -> Path:
         return self.root / hashlib.sha256(str(owner).encode("utf-8")).hexdigest()[:16] / key
 
-    def load(self, owner: str, key: str) -> dict[str, Any] | None:
-        path = self.folder(owner, key) / "project.json"
-        if path.is_file():
-            return {**json.loads(path.read_text("utf-8")), "folder": str(path.parent)}
-        return next((project for project in self.list(owner) if key in project.get("aliases", ())), None)
+    def load(self, owner: str | None, key: str) -> dict[str, Any] | None:
+        projects = self.list(owner)
+        match = next((project for project in projects if project.get("key") == key), None)
+        if match is not None:
+            return match
+        return next((project for project in projects if key in project.get("aliases", ())), None)
 
-    def list(self, owner: str) -> list[dict[str, Any]]:
-        """This owner's projects, most recently changed first."""
-        folder = self.folder(owner, "x").parent
-        paths = sorted(folder.glob("*/project.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-        return [{**json.loads(path.read_text("utf-8")), "folder": str(path.parent),
-                 "updated": path.stat().st_mtime} for path in paths]
+    def list(self, owner: str | None = None) -> list[dict[str, Any]]:
+        """Saved projects in this workspace, most recently changed first."""
+        paths = sorted(self.root.glob("*/*/project.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        projects: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for path in paths:
+            data = json.loads(path.read_text("utf-8"))
+            key = data.get("key") or path.parent.name
+            if key in seen:
+                continue
+            seen.add(key)
+            projects.append({**data, "folder": str(path.parent), "updated": path.stat().st_mtime})
+        return projects
 
     def delete(self, project: dict[str, Any]) -> None:
-        folder = self.folder(project["owner"], project["key"])
+        folder = Path(project["folder"]) if project.get("folder") else self.folder(project["owner"], project["key"])
         with _LOCK:
             shutil.rmtree(folder)
 
@@ -82,13 +96,21 @@ class Projects:
     def _write(project: dict[str, Any]) -> None:
         folder = Path(project["folder"])
         partial = folder / f"project.{uuid.uuid4().hex}.tmp"
-        partial.write_text(json.dumps({k: v for k, v in project.items() if k != "folder"}, indent=1), "utf-8")
+        partial.write_text(
+            json.dumps({k: v for k, v in project.items() if k not in {"folder", "updated"}}, indent=1),
+            "utf-8",
+        )
         partial.replace(folder / "project.json")
 
     def edit(self, project: dict[str, Any], change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
         """Apply ``change`` to the saved project: the run and the tab both write while a job runs."""
         with _LOCK:
-            current = self.load(project["owner"], project["key"])
+            folder = Path(project["folder"]) if project.get("folder") else self.folder(project["owner"], project["key"])
+            path = folder / "project.json"
+            if path.is_file():
+                current = {**json.loads(path.read_text("utf-8")), "folder": str(folder)}
+            else:
+                current = self.load(project["owner"], project["key"])
             change(current)
             self._write(current)
             return current
