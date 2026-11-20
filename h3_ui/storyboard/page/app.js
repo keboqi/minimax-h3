@@ -549,6 +549,10 @@
       const durationText = item.flow
         ? `${item.seconds}s (+${Number(item.added_seconds.toFixed(1))}s)`
         : `${item.seconds}s`;
+      const thumbWrap = h("span", {className: "thumb-wrap"},
+        thumb,
+        h("span", {className: "thumb-num mono"}, String(item.number).padStart(2, "0")),
+        h("span", {className: "thumb-dur mono"}, durationText));
       const card = h("button", {
         type: "button", className: "frame", draggable: true,
         "aria-current": String(item.id === state.sceneId), "data-scene": item.id,
@@ -573,12 +577,12 @@
           state.dragSceneId = null;
           document.querySelectorAll("#strip .frame.drag-over").forEach((node) => node.classList.remove("drag-over"));
         },
-      }, thumb,
+      }, thumbWrap,
       isRunning ? h("span", {className: "bar"}, h("i")) : null,
-      h("span", {className: "title"}, `${item.number} · ${item.title || "Untitled scene"}`),
+      h("span", {className: "title"}, item.title || "Untitled scene"),
       h("span", {className: "meta"},
         stateBadge(item, isRunning),
-        h("span", {className: "mono"}, durationText)));
+        h("span", {className: "small muted"}, item.flow ? "Continue" : "Cut")));
       items.push(card);
     });
     items.push(button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "add-frame"));
@@ -917,7 +921,7 @@
       if (field === "title") {
         $("scene-heading").textContent = `Scene ${scene().number} · ${event.target.value || "Untitled scene"}`;
         const title = document.querySelector(`#strip [data-scene="${scene().id}"] .title`);
-        if (title) title.textContent = `${scene().number} · ${event.target.value || "Untitled scene"}`;
+        if (title) title.textContent = event.target.value || "Untitled scene";
       }
     }, ...attributes}));
 
@@ -935,40 +939,26 @@
     const [low, high] = state.boot.seconds;
     const previousPrompt = state.previousPrompts.get(item.id);
     const canUndoPrompt = previousPrompt !== undefined && previousPrompt !== item.prompt;
-    const inputs = [
-      h("p", {className: "small muted"}, item.context),
-      textField("Scene title", "title", {maxLength: 120}),
-      item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
-        h("div", {className: "chip-grid two"},
-          chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
-          chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))),
+    const setupCard = h("div", {className: "column"}, [
+      h("div", {className: "row"},
+        h("span", {className: "small muted"}, item.context),
+        checklist(item)),
+      h("div", {className: "split"},
+        textField("Scene title", "title", {maxLength: 120}),
+        item.number > 1 ? h("fieldset", {}, h("legend", {}, "How does this scene start?"),
+          h("div", {className: "chip-grid two"},
+            chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
+            chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))) : h("div")),
       h("fieldset", {}, h("legend", {}, "Conditioning"),
         h("div", {className: "chip-grid three"},
           chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
           chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
           chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
-      item.mode === "First / last frame" && h("div", {className: "split"},
-        item.flow ? h("p", {className: "small muted"},
-          `No first frame. This scene opens on scene ${item.number - 1}'s last frames. To open on a picture of your own, choose Start fresh.`)
-          : mediaSlot("First frame", "first_image", {optional: true}),
-        mediaSlot(item.flow ? "Last frame (required)" : "Last frame", "last_image", {optional: !item.flow})),
-      item.mode === "Reference media" && [
-        state.board.cast.length ? h("fieldset", {}, h("legend", {}, "Cast in this scene"),
-          h("div", {className: "chips"}, state.board.cast.map((member) => {
-            const on = item.cast.includes(member.name);
-            return chip(member.name, on, () => choose({cast: on ? item.cast.filter((name) => name !== member.name) : [...item.cast, member.name]}));
-          }))) : h("p", {className: "small muted"}, "No cast yet: add people under Cast."),
-        castPictures(item),
-        mediaSlot("Extra images", "ref_images", {multiple: true}),
-        mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true}),
-        tagHintNode(item),
-      ],
-      item.mode !== "Text to video" && mediaSlot(
-        item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
-        "ref_audios", {multiple: true}),
-    ];
-    const writing = [
-      textField("Prompt", "prompt", {rows: 14, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+    ]);
+
+    const promptCard = h("div", {className: "column"}, [
+      item.mode === "Reference media" ? tagHintNode(item) : null,
+      textField("Prompt", "prompt", {rows: 10, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
       h("div", {className: "row"},
         h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
         h("div", {className: "chips"},
@@ -984,7 +974,31 @@
           $("seconds-label").textContent = `Length: ${event.target.value} s`;
         }}),
         h("span", {className: "small muted", id: "added-seconds", style: "font-weight:400"}, item.added)),
-      checklist(item),
+    ]);
+
+    const mediaCard = (item.mode !== "Text to video") ? h("div", {className: "column"}, [
+      item.mode === "First / last frame" && h("div", {className: "split"},
+        item.flow ? h("p", {className: "small muted"},
+          `No first frame. This scene opens on scene ${item.number - 1}'s last frames. To open on a picture of your own, choose Start fresh.`)
+          : mediaSlot("First frame", "first_image", {optional: true}),
+        mediaSlot(item.flow ? "Last frame (required)" : "Last frame", "last_image", {optional: !item.flow})),
+      item.mode === "Reference media" && [
+        state.board.cast.length ? h("fieldset", {}, h("legend", {}, "Cast in this scene"),
+          h("div", {className: "chips"}, state.board.cast.map((member) => {
+            const on = item.cast.includes(member.name);
+            return chip(member.name, on, () => choose({cast: on ? item.cast.filter((name) => name !== member.name) : [...item.cast, member.name]}));
+          }))) : h("p", {className: "small muted"}, "No cast yet: add people under Cast."),
+        castPictures(item),
+        h("div", {className: "split"},
+          mediaSlot("Extra images", "ref_images", {multiple: true}),
+          mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true})),
+      ],
+      mediaSlot(
+        item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
+        "ref_audios", {multiple: true}),
+    ]) : null;
+
+    const optionsCard = h("div", {className: "column"}, [
       h("details", {},
         h("summary", {}, "More scene options"),
         h("div", {className: "details-body"},
@@ -1001,8 +1015,9 @@
                 const seed = Number.parseInt(event.target.value, 10);
                 edit("seed", Number.isNaN(seed) ? -1 : seed);
               }})))),
-    ];
-    return [h("div", {className: "scene-columns"}, h("div", {className: "column"}, inputs), h("div", {className: "column"}, writing))];
+    ]);
+
+    return [setupCard, promptCard, mediaCard, optionsCard];
   };
 
   // The ticked cast, first in the prompt's picture order; the scene's own images follow below.
