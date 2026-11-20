@@ -6,16 +6,17 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .errors import H3Error
 
 GPT_IMAGE_ENGINE = "gpt_image"
 GPT_IMAGE_LABEL = "GPT Image"
-GPT_IMAGE_MODELS = ("gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+GPT_IMAGE_25_MODELS = ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+GPT_IMAGE_MODELS = ("gpt-image-2", *GPT_IMAGE_25_MODELS)
 DEFAULT_GPT_IMAGE_MODEL = "gpt-image-2.5-flare"
 GPT_IMAGE_QUALITY = "low"
-GPT_IMAGE_QUALITIES = ("low",)
+GPT_IMAGE_QUALITIES = ("low", "medium")
 GPT_IMAGE_SIZES = ((1920, 1088), (1088, 1920))
 GPT_IMAGE_RESOLUTION_PRESETS = ("2M · 16:9 · 1920×1088", "2M · 9:16 · 1088×1920")
 GPT_IMAGE_RATE_LIMIT = 2
@@ -243,12 +244,21 @@ def validate_gpt_image_canvas(width: Any, height: Any) -> tuple[int, int]:
     raise H3Error("GPT Image supports only 1920×1088 and 1088×1920.")
 
 
-def validate_gpt_image_quality(quality: Any) -> str:
-    """Validate that GPT Image quality is restricted to low."""
+def gpt_image_quality_choices(models: Sequence[str]) -> tuple[str, ...]:
+    """Return the qualities supported by all selected models."""
+    if models and all(model in GPT_IMAGE_25_MODELS for model in models):
+        return GPT_IMAGE_QUALITIES
+    return (GPT_IMAGE_QUALITY,)
+
+
+def validate_gpt_image_quality(
+    quality: Any, models: Sequence[str] = (DEFAULT_GPT_IMAGE_MODEL,)
+) -> str:
+    """Normalize quality and validate it for the selected models."""
     value = str(quality or "").strip().lower()
-    if value != GPT_IMAGE_QUALITY:
-        raise H3Error("GPT Image supports only low quality (IMAGE_QUALITY=low).")
-    return GPT_IMAGE_QUALITY
+    if value not in gpt_image_quality_choices(models):
+        raise H3Error("Choose low quality or select only GPT Image 2.5 models to use medium quality.")
+    return value
 
 
 def validate_gpt_image_settings(
@@ -274,7 +284,7 @@ def validate_gpt_image_settings(
             "and GPT_IMAGE_API_FAILBACK_KEY in .env or runtime secrets, or turn Failback off."
         )
     normalized_models = normalize_gpt_image_models(models)
-    normalized_quality = validate_gpt_image_quality(quality)
+    normalized_quality = validate_gpt_image_quality(quality, normalized_models)
     canvas_width, canvas_height = validate_gpt_image_canvas(width, height)
     max_concurrency = gpt_image_max_concurrency(
         normalized_models, bool(use_failback), credentials=creds

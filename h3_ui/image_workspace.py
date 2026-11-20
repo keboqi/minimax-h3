@@ -164,7 +164,7 @@ def _build_model_settings(engine_views, h3, labels):
                     )
                     gpt_image_quality = gr.Dropdown(
                         list(GPT_IMAGE_QUALITIES), value=GPT_IMAGE_QUALITY, label="Image quality",
-                        interactive=False, info="GPT Image supports only IMAGE_QUALITY=low.",
+                        interactive=True, info="Medium requires all selected models to be GPT Image 2.5.",
                     )
                 else:
                     for name in OPTION_FIELDS[engine]:

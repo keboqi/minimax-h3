@@ -20,7 +20,7 @@ from fastapi import Body, FastAPI, File, Request, UploadFile
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
 from h3_app.gpt_image import (
     DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, gpt_image_available, gpt_image_credentials,
-    gpt_image_max_concurrency,
+    gpt_image_max_concurrency, gpt_image_quality_choices, validate_gpt_image_quality,
 )
 from h3_app import catalog, media_review
 from h3_app.capabilities import engines_for_task
@@ -85,6 +85,8 @@ def _clamp_gpt_image_options(options: dict[str, Any]) -> None:
         return
     if options.get("gpt_image__width") == options.get("gpt_image__height"):
         options["gpt_image__height"] = 1088 if options["gpt_image__width"] == 1920 else 1920
+    if options.get("gpt_image__quality", GPT_IMAGE_QUALITY) not in gpt_image_quality_choices(options["gpt_image__models"]):
+        options["gpt_image__quality"] = GPT_IMAGE_QUALITY
     max_concurrency = gpt_image_max_concurrency(
         options["gpt_image__models"], bool(options.get("gpt_image__use_failback"))
     )
@@ -321,12 +323,14 @@ class ImagePageState(OwnerPageState):
         else:
             ordered_changes = sorted(
                 changes.items(),
-                key=lambda item: 1 if item[0] == "gpt_image__batch_count" else 0,
+                key=lambda item: item[0] in ("gpt_image__batch_count", "gpt_image__quality"),
             )
             for changed, value in ordered_changes:
                 if changed not in self.services.fields:
                     raise H3Error(f"Unknown setting: {changed}")
                 options[changed] = coerce(self.services.fields[changed], value)
+                if changed == "gpt_image__quality":
+                    validate_gpt_image_quality(options[changed], options["gpt_image__models"])
                 if changed == "gpt_image__batch_count":
                     max_concurrency = gpt_image_max_concurrency(
                         options["gpt_image__models"], bool(options["gpt_image__use_failback"])
@@ -395,11 +399,7 @@ class ImagePageState(OwnerPageState):
                 hidden.add("lightning_strength")
         if engine == "flux3" and not str(value("model_choice")).startswith("Base "):
             hidden.add("cfg")
-        locked = (
-            {"steps", "cfg"} if engine == "fibo2" and value("model_choice") == "Edit Turbo"
-            else {"quality"} if engine == "gpt_image"
-            else set()
-        )
+        locked = {"steps", "cfg"} if engine == "fibo2" and value("model_choice") == "Edit Turbo" else set()
         rows = []
         for name in self.fine_names(engine):
             parameter = name.partition("__")[2]
@@ -408,9 +408,14 @@ class ImagePageState(OwnerPageState):
             group = GROUP_OF[parameter]
             idle = parameter in EDIT_ONLY and not editing
             changed = group != 1 and not idle and options[name] != clean[name]
-            rows.append(self.option(name, options, group=group, disabled=parameter in locked or idle,
-                                    note="applies to edits" if idle else "set by the model" if parameter in locked else "",
-                                    preset=clean[name] if changed else None, changed=changed))
+            row = self.option(name, options, group=group, disabled=parameter in locked or idle,
+                              note="applies to edits" if idle else "set by the model" if parameter in locked else "",
+                              preset=clean[name] if changed else None, changed=changed)
+            if engine == "gpt_image" and parameter == "quality":
+                choices = gpt_image_quality_choices(value("models"))
+                row.update(choices=[[quality, quality] for quality in choices], disabled=len(choices) == 1,
+                           hint="Medium requires all selected models to be GPT Image 2.5.")
+            rows.append(row)
         return rows
 
     def issue(self, state: Mapping[str, Any]) -> str:

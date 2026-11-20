@@ -156,6 +156,8 @@ class WorkshopApiImageTests(unittest.TestCase):
                 self.assertNotIn("gpt_image__seed", boot["state"]["options"])
                 response = client.post("/image/api/settings", json={"action": "engine", "changes": {"engine": "qwen"}})
                 self.assertEqual(response.status_code, 400)
+                response = client.post("/image/api/settings", json={"changes": {"gpt_image__quality": "medium"}})
+                self.assertEqual(response.status_code, 200, response.text)
                 client.post("/image/api/prompt", json={"prompt": "a blue bird"})
                 client.post("/image/api/writer", json={"changes": {"review": False}})
                 target = runtime.output_dir / "result.png"
@@ -182,6 +184,7 @@ class WorkshopApiImageTests(unittest.TestCase):
                         self.assertFalse(run.get("error"), run)
                 self.assertFalse(requests[0].reference_images)
                 self.assertEqual(len(requests[1].reference_images), 1)
+                self.assertEqual([request.quality for request in requests], ["medium", "medium"])
                 self.assertEqual(client.post("/image/api/interrupt").status_code, 200)
 
 

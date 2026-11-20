@@ -148,6 +148,9 @@ class GptImageConfigTests(unittest.TestCase):
             validate_gpt_image_canvas(1920, 1080)
 
         self.assertEqual(validate_gpt_image_quality(GPT_IMAGE_QUALITY), "low")
+        self.assertEqual(validate_gpt_image_quality(" Medium ", GPT_IMAGE_MODELS[1:]), "medium")
+        with self.assertRaises(H3Error):
+            validate_gpt_image_quality("medium", GPT_IMAGE_MODELS)
         with self.assertRaises(H3Error):
             validate_gpt_image_quality("high")
 
@@ -351,7 +354,7 @@ class GptImageGenerationTests(unittest.TestCase):
                 prompt="neon harbor at dusk",
                 models=("gpt-image-2.5-sunburst", "gpt-image-2.5-flare"),
                 use_failback=False,
-                quality="low",
+                quality="medium",
                 width=1920,
                 height=1088,
                 batch_count=4,
@@ -366,7 +369,7 @@ class GptImageGenerationTests(unittest.TestCase):
 
             self.assertEqual(len(calls), 4)
             self.assertTrue(all(call["size"] == "1920x1088" for call in calls))
-            self.assertTrue(all(call["quality"] == "low" for call in calls))
+            self.assertTrue(all(call["quality"] == "medium" for call in calls))
             models_used = {call["model"] for call in calls}
             self.assertEqual(models_used, {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"})
 
@@ -381,7 +384,7 @@ class GptImageGenerationTests(unittest.TestCase):
                 self.assertIsNotNone(snap)
                 self.assertEqual(snap["family"], "GPT Image")
                 self.assertNotIn("seed", snap["settings"])
-                self.assertEqual(snap["settings"]["quality"], "low")
+                self.assertEqual(snap["settings"]["quality"], "medium")
 
     def test_edit_uses_reference_images_and_failback_retries_primary_failure(self):
         creds = GptImageCredentials(
@@ -419,7 +422,7 @@ class GptImageGenerationTests(unittest.TestCase):
                 prompt="combine <image_1> and <image_2>",
                 models=("gpt-image-2.5-flare",),
                 use_failback=True,
-                quality="low",
+                quality="medium",
                 width=1088,
                 height=1920,
                 batch_count=1,
@@ -433,7 +436,7 @@ class GptImageGenerationTests(unittest.TestCase):
             self.assertEqual(calls[0]["base_url"], "https://primary.example/v1")
             self.assertEqual(calls[-1]["base_url"], "https://backup.example/v1")
             self.assertEqual(calls[-1]["size"], "1088x1920")
-            self.assertEqual(calls[-1]["quality"], "low")
+            self.assertTrue(all(call["quality"] == "medium" for call in calls))
             self.assertEqual(len(updates[-1].output), 1)
             self.assertTrue(Path(updates[-1].output[0]).exists())
 

@@ -51,7 +51,7 @@ ENGINES += (
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
     EngineCapability("gpt_image", "GPT Image", ("Image",),
-                     "OpenAI GPT Image (gpt-image-2, gpt-image-2.5-sunburst, gpt-image-2.5-flare) at low quality and 1920×1088 or 1088×1920."),
+                     "OpenAI GPT Image at 1920×1088 or 1088×1920. GPT Image 2.5 Sunburst and Flare support medium quality."),
     EngineCapability("remake", "Remake", ("Remake",),
                      "Edit existing footage with Viggle Remake, running on your MiniMax H3 settings."),
     EngineCapability("storyboard", "Storyboard", ("Storyboard",),

@@ -8,7 +8,8 @@ from h3_app.capabilities import engines_for_task
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
 from h3_app.gpt_image import (
-    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_RESOLUTION_PRESETS, gpt_image_max_concurrency, normalize_gpt_image_models,
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
+    gpt_image_max_concurrency, gpt_image_quality_choices, normalize_gpt_image_models,
 )
 from h3_app.h3_image import H3_IMAGE_OFFICIAL
 from .engines.controls import QUIET, bind_resolution_presets, resolution_preset_values
@@ -100,6 +101,17 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
         outputs=view.batch_counts["gpt_image"],
         trigger_mode="always_last",
         **QUIET,
+    )
+
+    def gpt_quality_options(models, quality):
+        choices = gpt_image_quality_choices(models or ())
+        return gr.update(choices=list(choices), value=quality if quality in choices else GPT_IMAGE_QUALITY,
+                         interactive=len(choices) > 1)
+
+    view.gpt_image_models.change(
+        gpt_quality_options,
+        inputs=[view.gpt_image_models, view.gpt_image_quality], outputs=view.gpt_image_quality,
+        trigger_mode="always_last", **QUIET,
     )
 
     edit_controls = [engine_views[engine].edit_size for engine in ("qwen", "flux3", "fibo2")]

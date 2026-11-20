@@ -6,8 +6,8 @@ from typing import NamedTuple
 
 import gradio as gr
 
-from h3_app.gpt_image import (DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MODELS, GPT_IMAGE_QUALITY,
-                              GPT_IMAGE_MAX_CONCURRENCY, GPT_IMAGE_RESOLUTION_PRESETS)
+from h3_app.gpt_image import (DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MODELS, GPT_IMAGE_QUALITIES,
+                              GPT_IMAGE_QUALITY, GPT_IMAGE_MAX_CONCURRENCY, GPT_IMAGE_RESOLUTION_PRESETS)
 from h3_app.jobs import JOBS
 from .image_controller import ImageGenerationController
 from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root
@@ -26,7 +26,8 @@ def build_api_images(ui, runtime, *, library=None):
         "models": FieldSpec("choices", "Models", [DEFAULT_GPT_IMAGE_MODEL],
                             tuple((model, model) for model in GPT_IMAGE_MODELS)),
         "use_failback": FieldSpec("bool", "Failback", False),
-        "quality": FieldSpec("choice", "Image quality", GPT_IMAGE_QUALITY, (("low", "low"),)),
+        "quality": FieldSpec("choice", "Image quality", GPT_IMAGE_QUALITY,
+                             tuple((quality, quality) for quality in GPT_IMAGE_QUALITIES)),
         "width": FieldSpec("choice", "Width", 1920, (("1920", 1920), ("1088", 1088))),
         "height": FieldSpec("choice", "Height", 1088, (("1088", 1088), ("1920", 1920))),
         "seed": FieldSpec("int", "Seed", -1),  # Input position for retained jobs.
