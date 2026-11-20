@@ -4,31 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Storyboard</title>
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=7">
 </head>
 <body>
 <div id="editor" class="editor" hidden>
   <header class="topbar" id="topbar"></header>
   <div class="note" id="gpu-note" hidden>Scenes are generated on the GPU endpoint. Prepare every scene here, then open the GPU endpoint's Storyboard and press <strong>Generate all remaining scenes</strong>.</div>
-  <section class="filmstrip" aria-label="Filmstrip">
-    <div class="filmstrip-head" id="strip-head"></div>
-    <div class="strip" id="strip"></div>
-    <div class="strip-actions" id="strip-actions"></div>
-    <div id="full-video"></div>
-  </section>
+  <div id="full-video"></div>
   <div class="workarea">
     <main class="stage">
       <div class="stage-head" id="stage-head"></div>
       <div class="preview" id="preview"></div>
-      <div class="caption-actions" id="preview-subtitles">
-        <span class="small muted" id="scene-subtitle-status" aria-live="polite"></span>
-        <div class="chips" id="scene-subtitle-controls" hidden>
-          <label class="check-label"><input type="checkbox" id="show-subtitles" checked> Show subtitles</label>
-          <label class="check-label" id="scene-translation-toggle" hidden><input type="checkbox" id="show-scene-translation"> Show translation</label>
-          <button type="button" class="btn sm" id="translate-scene">Translate this take</button>
-        </div>
-        <span class="small muted" id="scene-translation-status" aria-live="polite"></span>
-      </div>
       <div id="stage-notes"></div>
       <div class="takes-panel" id="takes-panel">
         <div class="take-row" id="take-row"></div>
@@ -37,6 +23,42 @@
     </main>
     <aside class="inspector" id="inspector"></aside>
   </div>
+  <section class="filmstrip" aria-label="Filmstrip">
+    <div class="filmstrip-head" id="strip-head"></div>
+    <div class="strip" id="strip"></div>
+    <div class="strip-footer">
+      <div class="strip-actions" id="strip-actions"></div>
+      <div id="subtitle-toolbar-home">
+        <section class="subtitle-tools" id="subtitle-toolbar" aria-labelledby="subtitle-heading">
+          <div class="subtitle-row">
+            <h2 id="subtitle-heading">Subtitles</h2>
+            <label class="field subtitle-language">Translation language <select id="subtitle-language"></select></label>
+            <button type="button" class="btn sm" id="translate-scene">Translate this take</button>
+            <button type="button" class="btn sm" id="translate-board">Translate missing takes</button>
+            <div class="subtitle-checks">
+              <label class="check-label"><input type="checkbox" id="show-subtitles" checked> Show subtitles</label>
+              <label class="check-label"><input type="checkbox" id="show-translation"> Show translation</label>
+              <label class="check-label" title="Generate any missing translations when exporting">
+                <input type="checkbox" id="export-translation"> Translate on export
+              </label>
+              <label class="check-label"><input type="checkbox" id="burn-subtitles"> Burn in subtitles</label>
+            </div>
+          </div>
+          <div class="subtitle-meta-row">
+            <p class="small muted" id="subtitle-status" aria-live="polite"></p>
+            <details class="subtitle-options">
+              <summary>Translation options</summary>
+              <div class="subtitle-row">
+                <label class="field">Translation model <select id="subtitle-model"></select></label>
+                <label class="field">Gemini API key (optional) <input type="password" id="subtitle-api-key" autocomplete="off"></label>
+              </div>
+              <p class="small muted">The key is shared with Prompt writer. Leave it blank to use the server key.</p>
+            </details>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
 </div>
 <div id="start" class="start" hidden></div>
 <div id="loading" class="loading" role="status">Opening Storyboard…</div>
@@ -44,6 +66,6 @@
 <dialog id="library" class="library" aria-label="Media library"></dialog>
 <input id="file-input" type="file" hidden>
 <script src="common.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

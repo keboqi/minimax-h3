@@ -29,8 +29,8 @@
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
-    includeOutdated: true, showSubtitles: true, showFullSubtitles: true, burnSubtitles: false,
-    showSceneTranslation: false, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
+    includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
+    showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
@@ -202,8 +202,17 @@
       state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
         row.name + (row.generated ? " · Generated" : ""))));
     const brand = h("div", {className: "topbar-brand"},
-      icon("M4 6h16v12H4z M10 9.5l5 2.5-5 2.5z"),
+      h("span", {className: "topbar-brand-icon", "aria-hidden": "true"},
+        icon("M4 6h16v12H4z M10 9.5l5 2.5-5 2.5z")),
       h("strong", {}, "Storyboard"));
+    const subtitleToggle = chip("Subtitles", state.subtitlesOpen, () => {
+      state.subtitlesOpen = !state.subtitlesOpen;
+      const home = $("subtitle-toolbar-home");
+      if (home) home.hidden = !state.subtitlesOpen;
+      renderTopbar();
+    });
+    const home = $("subtitle-toolbar-home");
+    if (home) home.hidden = !state.subtitlesOpen;
     $("topbar").replaceChildren(...[
       brand,
       h("label", {className: "board-picker"}, "Storyboard", select),
@@ -217,6 +226,7 @@
         directorButton,
         state.boot.gpu ? panelButton("auto", "Auto render") : null,
         panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings")),
+      subtitleToggle,
       button("Play full video", playFullVideo, "btn primary sm"),
     ].filter(Boolean));
   };
@@ -230,9 +240,11 @@
     const item = scene();
     const index = scenes().indexOf(item);
     $("stage-head").replaceChildren(
-      button(icon("M15 6l-6 6 6 6"), () => step(-1), "btn icon", {"aria-label": "Previous scene", disabled: index === 0}),
-      button(icon("M9 6l6 6-6 6"), () => step(1), "btn icon",
-        {"aria-label": "Next scene", disabled: index === scenes().length - 1}),
+      h("div", {className: "nav-group"},
+        button(icon("M15 6l-6 6 6 6"), () => step(-1), "btn icon", {"aria-label": "Previous scene", disabled: index === 0}),
+        button(icon("M9 6l6 6-6 6"), () => step(1), "btn icon",
+          {"aria-label": "Next scene", disabled: index === scenes().length - 1})),
+      h("span", {className: "scene-code mono"}, String(item.number).padStart(2, "0")),
       h("h1", {id: "scene-heading"}, `Scene ${item.number} · ${item.title || "Untitled scene"}`),
       stateBadge(item, false, "scene-state"),
       h("span", {className: "small muted"}, `Runs as ${item.runs_as}`),
@@ -309,26 +321,71 @@
     video.load();
   };
 
-  const updatePreviewSubtitles = (video, take) => {
-    const src = take?.missing ? null : take?.subtitles || null;
-    const {language} = translationOptions();
-    const cached = src && savedTranslation(take, language);
-    const pending = src && pendingTranslations.has(translationKey(state.board.id, take, language));
-    $("scene-subtitle-controls").hidden = !src;
-    const status = $("scene-subtitle-status");
-    const text = !src ? `No subtitles available · Translation language: ${language}`
-      : `${language} translation ${cached ? "saved" : "not generated"}`;
+  const bulkTranslations = new Map();
+  let refreshFullSubtitles = null;
+  const subtitleTakes = () => scenes().map((item) => item.takes.find((take) =>
+    take.id === item.in_use && !take.missing && take.subtitles)).filter(Boolean);
+  const bulkTranslationKey = (boardId, language) => JSON.stringify([boardId, language]);
+
+  const renderSubtitleControls = (take) => {
+    const language = subtitleLanguage();
+    if ($("subtitle-language").value !== language) $("subtitle-language").value = language;
+    const boardId = state.board.id;
+    const available = take?.subtitles && !take.missing;
+    const saved = available && savedTranslation(take, language);
+    const pending = available && pendingTranslations.has(translationKey(boardId, take, language));
+    const captioned = subtitleTakes();
+    const ready = captioned.filter((item) => savedTranslation(item, language)).length;
+    const missing = captioned.length - ready;
+    const bulk = bulkTranslations.get(bulkTranslationKey(boardId, language));
+
+    const subtitles = $("show-subtitles");
+    subtitles.checked = state.showSubtitles;
+    subtitles.disabled = !available && !captioned.length;
+    const show = $("show-translation");
+    show.disabled = !state.showSubtitles || (!saved && !ready);
+    show.checked = Boolean(saved || ready) && state.showTranslation;
+
+    const sceneAction = $("translate-scene");
+    sceneAction.disabled = !available || Boolean(pending);
+    sceneAction.textContent = pending ? "Translating this take…" : saved ? "Regenerate this take" : "Translate this take";
+    const boardAction = $("translate-board");
+    boardAction.disabled = !captioned.length || Boolean(bulk?.running);
+    boardAction.textContent = missing ? `Translate missing takes (${missing})`
+      : captioned.length ? "Regenerate all translations" : "Translate missing takes";
+
+    const exportTranslation = $("export-translation");
+    exportTranslation.disabled = !captioned.length || Boolean(state.run?.active);
+    exportTranslation.checked = state.exportTranslation;
+    const burn = $("burn-subtitles");
+    burn.disabled = exportTranslation.disabled;
+    burn.checked = state.burnSubtitles;
+
+    const status = $("subtitle-status");
+    const number = scene().number;
+    const selected = !available ? "No subtitles" : pending ? "Subtitles available, translating…"
+      : saved ? "Subtitles available, translation ready" : "Subtitles available, translation missing";
+    const text = [
+      `Scene ${number} · ${selected}`,
+      captioned.length ? `${ready} of ${captioned.length} current takes translated` : "",
+      bulk?.running && `Processing translations (${bulk.done}/${bulk.total} finished)`,
+      bulk?.error,
+    ].filter(Boolean).join("  ·  ");
     if (status.textContent !== text) status.textContent = text;
-    $("scene-translation-toggle").hidden = !cached;
-    const checkbox = $("show-scene-translation");
-    checkbox.checked = state.showSceneTranslation;
-    const action = $("translate-scene");
-    action.disabled = Boolean(pending);
-    action.textContent = cached ? "Regenerate translation" : "Translate this take";
-    const activity = $("scene-translation-status");
-    const message = pending ? `Translating into ${language}…` : "";
-    if (activity.textContent !== message) activity.textContent = message;
-    if (video) setSubtitleTrack(video, (checkbox.checked && cached) || src, state.showSubtitles);
+  };
+
+  const updatePreviewSubtitles = (video, take) => {
+    renderSubtitleControls(take);
+    const src = take?.missing ? null : take?.subtitles || null;
+    const translated = state.showTranslation && src && savedTranslation(take, subtitleLanguage());
+    if (video) setSubtitleTrack(video, translated || src, state.showSubtitles);
+    refreshFullSubtitles?.();
+  };
+
+  const syncSubtitleVisibility = (visible) => {
+    if (state.showSubtitles === visible) return;
+    state.showSubtitles = visible;
+    renderPreview();
   };
 
   const translateScene = async () => {
@@ -339,11 +396,51 @@
     const pending = requestTakeTranslation(boardId, take, options, force);
     renderPreview();
     const track = await act(() => pending);
-    if (track && state.board?.id === boardId && shownTake()?.id === take.id
-        && translationOptions().language === options.language) {
-      if (!force) state.showSceneTranslation = true;
+    if (track && !force && state.board?.id === boardId && shownTake()?.id === take.id
+        && subtitleLanguage() === options.language) {
+      state.showTranslation = true;
       renderPreview();
     }
+  };
+
+  const translateBoard = async () => {
+    const options = translationOptions(), boardId = state.board.id;
+    const key = bulkTranslationKey(boardId, options.language);
+    if (bulkTranslations.get(key)?.running) return;
+    const captioned = subtitleTakes();
+    const missing = captioned.filter((take) => !savedTranslation(take, options.language));
+    const force = !missing.length;
+    const queue = force ? captioned : missing;
+    if (!queue.length) return;
+
+    const selected = queue.findIndex((take) => take.id === shownTake()?.id);
+    if (selected > 0) queue.unshift(queue.splice(selected, 1)[0]);
+    const progress = {running: true, done: 0, total: queue.length, error: ""};
+    bulkTranslations.set(key, progress);
+    state.showTranslation = true;
+    const refresh = () => {
+      if (state.board?.id === boardId && !$("editor").hidden) renderPreview();
+    };
+    refresh();
+    const translateNext = async () => {
+      while (queue.length) {
+        const take = queue.shift();
+        const pending = requestTakeTranslation(boardId, take, options, force);
+        refresh();
+        try {
+          await pending;
+        } catch (error) {
+          progress.error ||= error.message;
+        }
+        progress.done += 1;
+        refresh();
+      }
+    };
+    // Reserve browser connections for individual take requests while the batch runs.
+    await Promise.all(Array.from({length: Math.min(4, queue.length)}, translateNext));
+    progress.running = false;
+    if (!progress.error) bulkTranslations.delete(key);
+    refresh();
   };
 
   // Rebuilt only when the take changes, so playback survives saves and polls.
@@ -362,21 +459,10 @@
       const video = h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
         "aria-label": `Take ${take.number} of scene ${item.number}`,
         onplay: () => $("full-video").querySelector("video:not(.standby)")?.pause()});
-      const checkbox = $("show-subtitles");
-      $("show-scene-translation").onchange = (event) => {
-        state.showSceneTranslation = event.target.checked;
-        updatePreviewSubtitles(video, shownTake());
-      };
-      $("translate-scene").onclick = translateScene;
-      checkbox.onchange = () => {
-        state.showSubtitles = checkbox.checked;
-        const track = video.querySelector("track");
-        if (track) track.track.mode = state.showSubtitles ? "showing" : "disabled";
-      };
       video.textTracks.addEventListener("change", () => {
         if (!node.contains(video)) return;
         const track = video.querySelector("track");
-        if (track) checkbox.checked = state.showSubtitles = track.track.mode === "showing";
+        if (track) syncSubtitleVisibility(track.track.mode === "showing");
       });
       node.replaceChildren(video);
       updatePreviewSubtitles(video, take);
@@ -656,15 +742,11 @@
     $("strip").replaceChildren(...items);
   };
 
-  const hasExportSubtitles = () => scenes().some((item) =>
-    item.takes.some((take) => take.id === item.in_use && !take.missing && take.subtitles));
-
   const renderStripActions = () => {
     const run = state.run;
     const busy = run?.active;
     const generating = activeGenerate();
     const pending = state.board.pending;
-    const hasSubtitles = hasExportSubtitles();
     const actions = [];
     if (state.boot.gpu) {
       actions.push(generating
@@ -680,16 +762,6 @@
         }));
     }
     actions.push(
-      hasSubtitles && h("label", {className: "check-label", title: "Export generates any missing subtitle translations"},
-        h("input", {type: "checkbox", checked: state.exportTranslation, onchange: (event) => {
-          state.exportTranslation = event.target.checked;
-          stored.set("h3-storyboard-translate-subtitles", String(state.exportTranslation));
-        }}), `Include ${translationOptions().language} translation in export`),
-      h("label", {className: "check-label", title: hasSubtitles ? null : "No subtitles are available in the takes in use"},
-        h("input", {type: "checkbox", checked: hasSubtitles && state.burnSubtitles,
-          disabled: busy || !hasSubtitles,
-          onchange: (event) => { state.burnSubtitles = event.target.checked; }}),
-        "Burn in subtitles"),
       button("Export to Media", exportToMedia, "btn", {disabled: busy}),
       h("label", {className: "check-label"},
         h("input", {type: "checkbox", checked: state.includeOutdated,
@@ -700,11 +772,20 @@
       actions.push(h("div", {className: "run-status", role: "status", id: "run-status"}, run.status));
     }
     $("strip-actions").replaceChildren(...actions);
+    renderSubtitleControls(shownTake());
+  };
+
+  const restoreSubtitleToolbar = () => {
+    const home = $("subtitle-toolbar-home");
+    const toolbar = $("subtitle-toolbar");
+    if (!home.contains(toolbar)) home.append(toolbar);
   };
 
   const closeFullVideo = () => {
     const root = $("full-video");
     const videos = root.querySelectorAll("video");
+    restoreSubtitleToolbar();
+    refreshFullSubtitles = null;
     root.replaceChildren();
     videos.forEach(releaseVideo);
   };
@@ -731,75 +812,14 @@
     let standby = h("video", {preload: "auto", playsInline: true, className: "standby"});
     const videos = [active, standby];
     const takesByVideo = new Map();
-    const boardId = state.board.id;
-    const options = translationOptions();
-    const {language} = options;
-    const captioned = playlist.filter((take) => take.subtitles);
-    const missingTranslations = () => captioned.filter((take) => !savedTranslation(take, language));
-    let showTranslation = captioned.length > missingTranslations().length;
-    let progress = null;
-    let translationError = "";
     let index = 0;
     const position = h("span", {className: "small muted", role: "status"});
-    const translationStatus = h("span", {className: "small muted", "aria-live": "polite"});
-    const action = button("Translate missing subtitles", () => translate(), "btn sm");
-    const translationCheckbox = h("input", {type: "checkbox", checked: showTranslation, onchange: () => {
-      showTranslation = translationCheckbox.checked;
-      videos.forEach(updateSubtitles);
-    }});
-    const checkbox = h("input", {type: "checkbox", checked: state.showFullSubtitles,
-      onchange: () => {
-        state.showFullSubtitles = checkbox.checked;
-        videos.forEach(updateSubtitles);
-      }});
     const updateSubtitles = (video) => {
       const take = takesByVideo.get(video);
-      const translated = showTranslation && savedTranslation(take, language);
-      setSubtitleTrack(video, translated || take?.subtitles || null, state.showFullSubtitles);
-    };
-    const renderTranslationStatus = () => {
-      const missing = missingTranslations().length;
-      const saved = captioned.length - missing;
-      translationCheckbox.checked = showTranslation;
-      translationCheckbox.disabled = !saved;
-      action.disabled = Boolean(progress);
-      action.textContent = missing ? "Translate missing subtitles" : "Regenerate all translations";
-      const availability = captioned.length
-        ? `${language} translation saved for ${saved} of ${captioned.length} scenes with subtitles`
-        : `No subtitles available · Translation language: ${language}`;
-      translationStatus.textContent = [
-        availability,
-        progress && `Translated ${progress.done} of ${progress.total}`,
-        translationError,
-      ].filter(Boolean).join(" · ");
-    };
-    const translate = async () => {
-      const missing = missingTranslations();
-      const force = missing.length === 0;
-      const queue = force ? [...captioned] : missing;
-      progress = {done: 0, total: queue.length};
-      translationError = "";
-      showTranslation = true;
-      renderTranslationStatus();
-      const translateNext = async () => {
-        while (panel.isConnected && queue.length) {
-          const take = queue.shift();
-          try {
-            await requestTakeTranslation(boardId, take, options, force);
-            progress.done += 1;
-          } catch (error) {
-            translationError ||= error.message;
-          }
-          if (panel.isConnected) {
-            videos.forEach(updateSubtitles);
-            renderTranslationStatus();
-          }
-        }
-      };
-      // Leave browser connections available for scene previews and other controls.
-      await Promise.all(Array.from({length: Math.min(4, queue.length)}, translateNext));
-      progress = null;
-      if (panel.isConnected) renderTranslationStatus();
+      const current = take && scenes().flatMap((item) => item.takes).find((item) => item.id === take.id);
+      const source = current || take;
+      const translated = state.showTranslation && savedTranslation(source, subtitleLanguage());
+      setSubtitleTrack(video, translated || source?.subtitles || null, state.showSubtitles);
     };
     const loadClip = (video, take) => {
       takesByVideo.set(video, take);
@@ -856,8 +876,7 @@
         if (video !== active || !video.isConnected) return;
         const track = video.querySelector("track");
         if (!track) return;
-        checkbox.checked = state.showFullSubtitles = track.track.mode === "showing";
-        updateSubtitles(standby);
+        syncSubtitleVisibility(track.track.mode === "showing");
       });
     }
     const fullscreen = button("Fullscreen", () => {
@@ -866,21 +885,20 @@
       change.catch(() => toast("Couldn't change fullscreen mode.", true));
     }, "btn sm");
     const panel = h("div", {className: "full-video-panel", onfullscreenchange: () => {
-      fullscreen.textContent = document.fullscreenElement === panel ? "Exit fullscreen" : "Fullscreen";
+      const expanded = document.fullscreenElement === panel;
+      fullscreen.textContent = expanded ? "Exit fullscreen" : "Fullscreen";
+      if (expanded) panel.prepend($("subtitle-toolbar"));
+      else if (panel.isConnected) restoreSubtitleToolbar();
     }},
       h("div", {className: "full-video-head"},
         h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
-        captioned.length > 0 && h("label", {className: "check-label"}, checkbox, "Show subtitles"),
-        captioned.length > 0 && h("label", {className: "check-label"}, translationCheckbox, "Show translation"),
-        captioned.length > 0 && action,
-        translationStatus,
         document.fullscreenEnabled && fullscreen,
         button("Close", closeFullVideo, "btn sm")),
       h("div", {className: "full-video-viewport"}, videos));
     $("full-video").replaceChildren(panel);
+    refreshFullSubtitles = () => videos.forEach(updateSubtitles);
     loadClip(active, playlist[0]);
     playScene();
-    renderTranslationStatus();
   };
 
   const showJoinedVideo = (run) => {
@@ -946,8 +964,6 @@
 
   // What depends on the server but sits beside fields being typed in.
   const renderInspectorDerived = () => {
-    const language = $("subtitle-language");
-    if (language) language.value = translationOptions().language;
     if (state.panel) return;  // Its inputs may hold what's being typed.
     const item = scene();
     const set = (id, text) => { const node = $(id); if (node) node.textContent = text; };
@@ -1048,24 +1064,22 @@
 
     const promptTab = [
       h("div", {className: "column"}, [
-        h("div", {className: "row"},
-          h("span", {className: "small muted"}, item.context)),
         titleField,
-        item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
-          h("div", {className: "chip-grid two"},
-            chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
-            chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))),
-        h("fieldset", {}, h("legend", {}, "Conditioning"),
-          h("div", {className: "chip-grid three"},
-            chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
-            chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
-            chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
-      ]),
-      h("div", {className: "column"}, [
+        h("div", {className: item.number > 1 ? "split" : ""}, [
+          item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
+            h("div", {className: "segmented two"},
+              chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
+              chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))),
+          h("fieldset", {}, h("legend", {}, "Conditioning"),
+            h("div", {className: "segmented three"},
+              chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
+              chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
+              chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
+        ].filter(Boolean)),
         item.mode === "Reference media" ? tagHintNode(item) : null,
-        textField("Prompt", "prompt", {rows: 10, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+        textField("Prompt", "prompt", {rows: 9, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
         h("div", {className: "row"},
-          h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
+          h("span", {className: "small muted", id: "prompt-hint"}, item.hint || item.context),
           h("div", {className: "chips"},
             canUndoPrompt && button("Undo rewrite", () => {
               state.previousPrompts.delete(item.id);
@@ -1704,14 +1718,48 @@
     try { return JSON.parse(stored.get(WRITER_KEY)) || {}; } catch { return {}; }
   };
   const TRANSLATION_MODEL_KEY = "h3-storyboard-subtitle-model";
-  const translationOptions = () => {
+  const subtitleLanguage = () => {
     const language = state.board.subtitle_language;
+    const supported = state.boot.subtitle_languages;
+    return supported.includes(language) ? language : supported[0];
+  };
+  const translationOptions = () => {
     const model = stored.get(TRANSLATION_MODEL_KEY);
     return {
-      language: state.boot.subtitle_languages.includes(language) ? language : state.boot.subtitle_languages[0],
+      language: subtitleLanguage(),
       model: state.boot.subtitle_models.includes(model) ? model : state.boot.subtitle_models[0],
       gemini_api_key: writerSettings().gemini_api_key || "",
     };
+  };
+  const bindSubtitleControls = () => {
+    const language = $("subtitle-language");
+    language.replaceChildren(...state.boot.subtitle_languages.map((name) => h("option", {value: name}, name)));
+    language.onchange = () => {
+      state.board.subtitle_language = language.value;
+      queueSave("PUT", boardUrl("/subtitle-settings"), "subtitle_language", language.value);
+      renderPreview();
+    };
+    const model = $("subtitle-model");
+    model.replaceChildren(...state.boot.subtitle_models.map((name) => h("option", {value: name}, name)));
+    model.value = state.boot.subtitle_models.includes(stored.get(TRANSLATION_MODEL_KEY))
+      ? stored.get(TRANSLATION_MODEL_KEY) : state.boot.subtitle_models[0];
+    model.onchange = () => stored.set(TRANSLATION_MODEL_KEY, model.value);
+    const key = $("subtitle-api-key");
+    key.closest("details").ontoggle = () => { key.value = writerSettings().gemini_api_key || ""; };
+    key.onchange = () => stored.set(WRITER_KEY, JSON.stringify({...writerSettings(), gemini_api_key: key.value}));
+
+    $("translate-scene").onclick = translateScene;
+    $("translate-board").onclick = translateBoard;
+    $("show-subtitles").onchange = (event) => syncSubtitleVisibility(event.target.checked);
+    $("show-translation").onchange = (event) => {
+      state.showTranslation = event.target.checked;
+      renderPreview();
+    };
+    $("export-translation").onchange = (event) => {
+      state.exportTranslation = event.target.checked;
+      stored.set("h3-storyboard-translate-subtitles", String(state.exportTranslation));
+    };
+    $("burn-subtitles").onchange = (event) => { state.burnSubtitles = event.target.checked; };
   };
   const writerForm = () => {
     const values = writerSettings();
@@ -1767,31 +1815,6 @@
           else { input.checked = !input.checked; input.disabled = false; }
         }}), "Automatically generate word-aligned subtitles after each take"),
       h("p", {className: "small muted"}, "Audio transcription runs on the GPU endpoint. Dialogue tagged in the prompt gets approximate subtitles until audio is analyzed."),
-      h("details", {},
-        h("summary", {}, "Subtitle translation"),
-        h("div", {className: "details-body"},
-          h("label", {className: "field"}, "Translation language",
-            h("select", {id: "subtitle-language", "aria-label": "Translation language", onchange: (event) => {
-              const language = event.target.value;
-              state.board.subtitle_language = language;
-              queueSave("PUT", boardUrl("/subtitle-settings"), "subtitle_language", language);
-              renderPreview();
-              renderStripActions();
-            }}, state.boot.subtitle_languages.map((language) =>
-              h("option", {selected: language === translationOptions().language}, language)))),
-          h("label", {className: "field"}, "Translation model",
-            h("select", {"aria-label": "Translation model", onchange: (event) => {
-              stored.set(TRANSLATION_MODEL_KEY, event.target.value);
-              renderPreview();
-            }}, state.boot.subtitle_models.map((model) =>
-              h("option", {selected: model === translationOptions().model}, model)))),
-          h("label", {className: "field"}, "Gemini API key for subtitle translation (optional)",
-            h("input", {type: "password", autocomplete: "off", value: translationOptions().gemini_api_key,
-              onchange: (event) => {
-                stored.set(WRITER_KEY, JSON.stringify({...writerSettings(), gemini_api_key: event.target.value}));
-                renderPreview();
-              }})),
-          h("p", {className: "small muted"}, "Translation shares the Gemini key with Prompt writer. Leave it blank to use the server key."))),
       state.boot.gpu && [
         button("Use my current MiniMax H3 settings", () => {
           if (state.board.done > 0 && !state.confirmProfile) {
@@ -1845,11 +1868,12 @@
   const exportToMedia = async () => {
     await flush();
     await saves;
+    const hasSubtitles = subtitleTakes().length > 0;
     const data = await act(() => request("POST", boardUrl("/join"), {
       include_outdated: state.includeOutdated,
       export: true,
-      burn_subtitles: state.burnSubtitles && hasExportSubtitles(),
-      ...(state.exportTranslation && hasExportSubtitles() ? {translation: translationOptions()} : {}),
+      burn_subtitles: state.burnSubtitles && hasSubtitles,
+      ...(state.exportTranslation && hasSubtitles ? {translation: translationOptions()} : {}),
     }));
     if (data) followRun(data.run, {started: true});
     renderStripActions();
@@ -2051,11 +2075,15 @@
       previewRoot.replaceChildren(
         h("div", {className: "row"}, h("h2", {}, `${found.length} ${found.length === 1 ? "scene" : "scenes"}`),
           h("span", {className: "mono small muted"}, `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`)),
-        ...found.map(([text, seconds], index) => h("article", {className: "card"},
-          h("div", {className: "card-head"},
-            h("span", {}, `Scene ${index + 1} · ${index === 0 ? "Opening" : connect === "flow" ? "Continues" : "Fresh start"}`),
-            h("span", {className: "mono muted"}, `${seconds ?? usual.value}s`)),
-          h("p", {}, text))));
+        ...found.flatMap(([text, seconds], index) => [
+          index > 0 ? h("span", {className: `start-conn mono ${connect === "cut" ? "cut" : ""}`},
+            connect === "flow" ? "CONTINUE" : "CUT") : null,
+          h("article", {className: "card"},
+            h("div", {className: "card-head"},
+              h("span", {}, `Scene ${index + 1} · ${index === 0 ? "Opening" : connect === "flow" ? "Continues" : "Fresh start"}`),
+              h("span", {className: "mono muted"}, `${seconds ?? usual.value}s`)),
+            h("p", {}, text)),
+        ].filter(Boolean)));
     };
     const rewrite = async (event) => {
       const control = event.currentTarget;
@@ -2087,10 +2115,10 @@
           h("label", {className: "field"}, "Name", name),
           h("label", {className: "field grow"}, "Story", story),
           h("p", {className: "small muted"}, "Enter a full story or short idea, then use Rewrite / extend into scenes. Or separate your own scenes with --- on its own line; ---6--- also makes the scene after it 6 seconds long."),
-          h("label", {className: "field"}, usualLabel, usual),
-          h("div", {className: "chips", style: "align-items:flex-end"},
-            h("label", {className: "field"}, "Scenes to write", count),
-            button("Rewrite / extend into scenes", rewrite),
+          h("div", {className: "start-writer-bar"},
+            h("label", {className: "field grow"}, usualLabel, usual),
+            h("label", {className: "field", style: "width:120px"}, "Scenes to write", count),
+            button("Rewrite / extend into scenes", rewrite, "btn quiet"),
             undoBtn),
           status, writerForm()),
         h("aside", {className: "start-preview", "aria-label": "Scene preview"},
@@ -2192,6 +2220,7 @@
     } catch { /* Framed by another origin. */ }
     try {
       state.boot = await request("GET", `${API}/boot`);
+      bindSubtitleControls();
       $("gpu-note").hidden = state.boot.gpu;
       state.auto = state.boot.auto ?? null;
       if (state.auto?.active) state.autoTimer = setTimeout(pollAuto, AUTO_POLL_MS);
