@@ -983,6 +983,41 @@
     ? h("div", {className: "needs", id: "checklist"}, h("ul", {}, item.issues.map((issue) => h("li", {}, issue))))
     : h("div", {className: "ready", id: "checklist"}, item.kind === "media" ? "Ready to prepare." : "Ready to generate."));
 
+  const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[ch]);
+  const PROMPT_TOKEN = /(<d\b[^>]*>[\s\S]*?<\/d>|<\/?d\b[^>]*>)|(<(?:Picture|Video)\s+\d+>)|(<Audio\s+\d+>)|(<\|[^|]*\|>|<[^>\n]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/gi;
+  const highlightPrompt = (text) => {
+    let out = "";
+    let cursor = 0;
+    for (const match of text.matchAll(PROMPT_TOKEN)) {
+      out += escapeHtml(text.slice(cursor, match.index));
+      const raw = match[0];
+      if (match[1]) {
+        const inner = escapeHtml(raw).replace(/(\[[^\]\n]*\])/g, '<span class="tok-cue">$1</span>');
+        out += `<span class="tok-dialogue">${inner}</span>`;
+      } else if (match[2]) {
+        out += `<span class="tok-ref">${escapeHtml(raw)}</span>`;
+      } else if (match[3]) {
+        out += `<span class="tok-effect">${escapeHtml(raw)}</span>`;
+      } else if (match[4]) {
+        out += `<span class="tok-tag">${escapeHtml(raw)}</span>`;
+      } else if (match[5]) {
+        out += `<span class="tok-cue">${escapeHtml(raw)}</span>`;
+      } else {
+        out += `<span class="tok-effect">${escapeHtml(raw)}</span>`;
+      }
+      cursor = match.index + raw.length;
+    }
+    return out + escapeHtml(text.slice(cursor)) + "\n";
+  };
+
+  const syncPromptMirror = (textarea) => {
+    const mirror = $("prompt-mirror");
+    if (!mirror || !textarea) return;
+    mirror.innerHTML = highlightPrompt(textarea.value ?? "");
+    if (typeof textarea.scrollTop === "number") mirror.scrollTop = textarea.scrollTop;
+    if (typeof textarea.scrollLeft === "number") mirror.scrollLeft = textarea.scrollLeft;
+  };
+
   const insertIntoPrompt = (snippet) => {
     const fromMediaTab = state.inspectorTab === "media";
     if (fromMediaTab) {
@@ -1000,6 +1035,7 @@
     const next = `${before}${padBefore}${snippet}${padAfter}${after}`;
     textarea.value = next;
     edit("prompt", next);
+    syncPromptMirror(textarea);
     textarea.focus();
     const cursor = (before + padBefore + snippet).length;
     textarea.setSelectionRange(cursor, cursor);
@@ -1036,6 +1072,28 @@
     await saves;
     const data = await act(() => request("PATCH", url, fields));
     if (data) applyBoard(data);
+  };
+
+  const promptField = (item) => {
+    const mirror = h("div", {className: "prompt-mirror", id: "prompt-mirror", "aria-hidden": "true"});
+    mirror.innerHTML = highlightPrompt(item.prompt ?? "");
+    const textarea = h("textarea", {
+      rows: 14,
+      value: item.prompt ?? "",
+      placeholder: "Describe what happens, the camera and the sound.",
+      oninput: (event) => {
+        edit("prompt", event.target.value);
+        mirror.innerHTML = highlightPrompt(event.target.value);
+        mirror.scrollTop = event.target.scrollTop;
+        mirror.scrollLeft = event.target.scrollLeft;
+      },
+      onscroll: (event) => {
+        mirror.scrollTop = event.target.scrollTop;
+        mirror.scrollLeft = event.target.scrollLeft;
+      },
+    });
+    return h("label", {className: "field"}, "Prompt",
+      h("div", {className: "prompt-editor"}, mirror, textarea));
   };
 
   const scenePanel = () => {
@@ -1077,7 +1135,7 @@
               chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
         ].filter(Boolean)),
         item.mode === "Reference media" ? tagHintNode(item) : null,
-        textField("Prompt", "prompt", {rows: 9, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+        promptField(item),
         h("div", {className: "row"},
           h("span", {className: "small muted", id: "prompt-hint"}, item.hint || item.context),
           h("div", {className: "chips"},
