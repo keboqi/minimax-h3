@@ -1,12 +1,13 @@
 """The Storyboard page's JSON API: editing, media, take switching, files and GPU runs."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from io import BytesIO
 import json
 from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
-from threading import Event
+from threading import Barrier, Event
 import time
 import unittest
 from unittest.mock import patch
@@ -455,6 +456,69 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(copied.status_code, 200, copied.text)
         self.assertEqual(copied.json()["subtitle_language"], "French")
 
+    def test_subtitle_translation_runs_parallel_batches_and_preserves_caption_order(self):
+        from h3_app.storyboard.subtitles import Translation
+
+        board = self.create("One scene.")
+        url = f"{API}/boards/{board['id']}"
+        scene_id = board["scenes"][0]["id"]
+        self.assertEqual(self.client.post(f"{url}/generate", json={"action": "scene", "scene_id": scene_id}).status_code, 200)
+        self.assertIsNone(self.wait_for_run(board)["error"])
+        take = self.client.get(url).json()["scenes"][0]["takes"][0]
+        owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
+        lines = [{"text": str(index), "start": index / 4, "end": (index + 1) / 4} for index in range(11)]
+        self.service.save_subtitles(owner, board["id"], take["id"], lines)
+
+        first_wave = Barrier(10, timeout=5)
+        last_started = Event()
+
+        def translate(translation, texts):
+            index = int(texts[0])
+            if index < 10:
+                first_wave.wait()
+                if index == 0 and not last_started.wait(timeout=5):
+                    raise AssertionError("The queued batch did not start while the first batch was still running.")
+            else:
+                last_started.set()
+            return [f"Translated {index}"]
+
+        with (patch("h3_app.storyboard.subtitles.TRANSLATION_BATCH", 1),
+              patch.object(Translation, "translate", translate)):
+            document = self.service.load(owner, board["id"])
+            translated = self.service.translate_subtitles(owner, board["id"], list(document["takes"].values()),
+                                                          Translation("French"))
+
+        self.assertEqual(translated[take["id"]], [f"Translated {index}" for index in range(11)])
+
+    def test_scene_translation_can_finish_while_another_take_is_translating(self):
+        from h3_app.storyboard.subtitles import Translation
+
+        board = self.create("<d>First.</d>\n---\n<d>Second.</d>")
+        url = f"{API}/boards/{board['id']}"
+        self.assertEqual(self.client.post(f"{url}/generate", json={"action": "remaining"}).status_code, 200)
+        self.assertIsNone(self.wait_for_run(board)["error"])
+        owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
+        document = self.service.load(owner, board["id"])
+        first, second = [document["takes"][scene["in_use"]] for scene in document["scenes"]]
+        first_started, release_first = Event(), Event()
+
+        def translate(_translation, texts):
+            if texts == ["First."]:
+                first_started.set()
+                release_first.wait(timeout=5)
+            return [f"Translated {text}" for text in texts]
+
+        with patch.object(Translation, "translate", translate), ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(self.service.translate_subtitles, owner, board["id"], [first], Translation("French"))
+            try:
+                self.assertTrue(first_started.wait(timeout=3))
+                other = pool.submit(self.service.translate_subtitles, owner, board["id"], [second], Translation("French"))
+                self.assertEqual(other.result(timeout=3), {second["id"]: ["Translated Second."]})
+                self.assertFalse(pending.done())
+            finally:
+                release_first.set()
+            self.assertEqual(pending.result(timeout=3), {first["id"]: ["Translated First."]})
+
     def test_subtitle_translation_is_reused_for_export_and_refreshed_when_the_source_changes(self):
         board = self.create("A traveler says <d>Original line.</d>")
         url = f"{API}/boards/{board['id']}"
@@ -485,6 +549,7 @@ class StoryboardPageTests(unittest.TestCase):
             self.assertEqual(restored["subtitle_translations"], {"French": french})
             self.assertEqual(translate(), french)
             self.assertEqual(generate.call_count, 1)
+            self.assertEqual(generate.call_args.kwargs["generation_config"]["thinkingConfig"], {"thinkingLevel": "MINIMAL"})
             spanish = translate(language="Spanish")
             self.assertIn("Texto traducido.", self.client.get(spanish).text)
             self.assertEqual(translate(), french)

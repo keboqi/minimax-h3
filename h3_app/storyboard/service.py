@@ -6,7 +6,9 @@ import copy
 import hashlib
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
+from itertools import chain
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import RLock
@@ -25,6 +27,7 @@ TAKE_FOLDER = "h3/.storyboard"
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 # Scene fields a sync sets from the plan; the rest are the storyboard's own (takes, take in use).
 SYNC_FIELDS = ("title", "prompt", "seconds", "link", "mode", "cast", "overlap", "seed", "takes_per_run")
+_TRANSLATION_POOL = ThreadPoolExecutor(max_workers=10, thread_name_prefix="storyboard-translation")
 
 
 def take_files(take: dict[str, Any]) -> set[str]:
@@ -540,8 +543,11 @@ class StoryboardService:
     def translate_subtitles(self, owner, storyboard_id, takes, translation: subtitles.Translation, *, force=False):
         """Translate the supplied take snapshot in board order, reusing its cached caption text."""
         with self.lock:
-            lock = self._translation_locks.setdefault((owner, storyboard_id, translation.language), RLock())
-        with lock:
+            locks = [self._translation_locks.setdefault((storyboard_id, take_id, translation.language), RLock())
+                     for take_id in sorted({take["id"] for take in takes})]
+        with ExitStack() as stack:
+            for lock in locks:
+                stack.enter_context(lock)
             return self._translate_subtitles(owner, storyboard_id, takes, translation, force)
 
     def _translate_subtitles(self, owner, storyboard_id, takes, translation, force):
@@ -562,9 +568,10 @@ class StoryboardService:
         if not pending:
             return results
 
-        translated = []
-        for start in range(0, len(texts), subtitles.TRANSLATION_BATCH):
-            translated.extend(translation.translate(texts[start:start + subtitles.TRANSLATION_BATCH]))
+        batch_size = subtitles.TRANSLATION_BATCH
+        batches = (texts[start:start + batch_size] for start in range(0, len(texts), batch_size))
+        # map returns results in submission order even when requests finish out of order.
+        translated = list(chain.from_iterable(_TRANSLATION_POOL.map(translation.translate, batches)))
 
         def save(board):
             for take_id, (source, start, count) in pending.items():

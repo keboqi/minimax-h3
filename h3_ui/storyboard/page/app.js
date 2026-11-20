@@ -30,7 +30,7 @@
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
     includeOutdated: true, showSubtitles: true, showFullSubtitles: true, burnSubtitles: false,
-    showSceneTranslation: false, translateSubtitles: stored.get("h3-storyboard-translate-subtitles") === "true",
+    showSceneTranslation: false, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
@@ -276,48 +276,31 @@
   };
 
   const pendingTranslations = new Map();
-  const sceneTranslationAttempts = new WeakMap();
   const savedTranslation = (take, language) => take?.subtitle_translations?.[language];
-  const renderSubtitleStatus = () => {
-    const take = shownTake();
-    const language = translationOptions().language;
-    const available = take?.subtitles && !take.missing;
-    const saved = available && savedTranslation(take, language);
-    $("scene-subtitle-controls").hidden = !available;
-    const status = $("scene-subtitle-status");
-    const text =
-      `${available ? "Subtitles available" : "No subtitles available"} · ${language} translation ${saved ? "saved" : "unavailable"}`;
-    if (status.textContent !== text) status.textContent = text;
-  };
-  const requestTranslations = (boardId, takes, options, force) => {
+  const translationKey = (boardId, take, language) => JSON.stringify([boardId, take.id, take.subtitles, language]);
+  const requestTakeTranslation = (boardId, take, options, force = false) => {
     const {language} = options;
-    const cached = {}, missing = [];
-    for (const take of takes) {
-      if (!take.subtitles) continue;
-      const track = force ? null : savedTranslation(take, language);
-      if (track) cached[take.id] = track;
-      else missing.push(take);
-    }
-    if (!missing.length) return Promise.resolve({tracks: cached});
-    const body = {...options, force, take_ids: missing.map((take) => take.id)};
-    const url = API + "/boards/" + boardId + "/subtitle-translations";
-    const key = url + JSON.stringify(body);
-    if (!pendingTranslations.has(key)) {
-      pendingTranslations.set(key, request("POST", url, body).finally(() => pendingTranslations.delete(key)));
-    }
-    return pendingTranslations.get(key).then(({tracks}) => {
-      const remember = (take, track) => { (take.subtitle_translations ??= {})[language] = track; };
-      const current = state.board.id === boardId ? scenes().flatMap((item) => item.takes) : [];
-      for (const take of missing) {
-        const track = tracks[take.id];
-        if (!track) continue;
-        remember(take, track);
-        const latest = current.find((item) => item.id === take.id && item.subtitles === take.subtitles);
-        if (latest && latest !== take) remember(latest, track);
+    const cached = savedTranslation(take, language);
+    if (cached && !force) return Promise.resolve(cached);
+    const key = translationKey(boardId, take, language);
+    if (pendingTranslations.has(key)) return pendingTranslations.get(key);
+    const url = `${API}/boards/${boardId}/subtitle-translations`;
+    const pending = request("POST", url, {...options, force, take_ids: [take.id]}).then(({tracks}) => {
+      const track = tracks[take.id];
+      if (!track) throw new Error("This take has no subtitles to translate.");
+      (take.subtitle_translations ??= {})[language] = track;
+      if (state.board?.id === boardId) {
+        const latest = scenes().flatMap((item) => item.takes)
+          .find((item) => item.id === take.id && item.subtitles === take.subtitles);
+        if (latest) (latest.subtitle_translations ??= {})[language] = track;
       }
-      if (state.board.id === boardId) renderSubtitleStatus();
-      return {tracks: {...cached, ...tracks}};
+      return track;
+    }).finally(() => {
+      pendingTranslations.delete(key);
+      if (state.board?.id === boardId && !$("editor").hidden) renderPreview();
     });
+    pendingTranslations.set(key, pending);
+    return pending;
   };
 
   const releaseVideo = (video) => {
@@ -326,49 +309,41 @@
     video.load();
   };
 
-  const updatePreviewSubtitles = (video, take, {force = false} = {}) => {
+  const updatePreviewSubtitles = (video, take) => {
     const src = take?.missing ? null : take?.subtitles || null;
-    renderSubtitleStatus();
-    const status = $("scene-translation-status");
-    if (!video) {
-      status.textContent = "";
-      return;
-    }
+    const {language} = translationOptions();
+    const cached = src && savedTranslation(take, language);
+    const pending = src && pendingTranslations.has(translationKey(state.board.id, take, language));
+    $("scene-subtitle-controls").hidden = !src;
+    const status = $("scene-subtitle-status");
+    const text = !src ? `No subtitles available · Translation language: ${language}`
+      : `${language} translation ${cached ? "saved" : "not generated"}`;
+    if (status.textContent !== text) status.textContent = text;
+    $("scene-translation-toggle").hidden = !cached;
     const checkbox = $("show-scene-translation");
-    const regenerate = $("regenerate-scene-translation");
     checkbox.checked = state.showSceneTranslation;
-    const options = src && checkbox.checked ? translationOptions() : null;
-    regenerate.hidden = !options;
-    const cached = options && savedTranslation(take, options.language);
-    const key = JSON.stringify([src, options?.language, cached]);
-    const previous = sceneTranslationAttempts.get(video);
-    if (!force && previous?.key === key) return;
-    const attempt = {key};
-    sceneTranslationAttempts.set(video, attempt);
-    if (!force || previous?.key !== key) setSubtitleTrack(video, cached || src, state.showSubtitles);
-    if (cached && !force) {
-      status.textContent = "";
-      regenerate.disabled = false;
-      return;
+    const action = $("translate-scene");
+    action.disabled = Boolean(pending);
+    action.textContent = cached ? "Regenerate translation" : "Translate this take";
+    const activity = $("scene-translation-status");
+    const message = pending ? `Translating into ${language}…` : "";
+    if (activity.textContent !== message) activity.textContent = message;
+    if (video) setSubtitleTrack(video, (checkbox.checked && cached) || src, state.showSubtitles);
+  };
+
+  const translateScene = async () => {
+    const take = shownTake();
+    if (!take?.subtitles || take.missing) return;
+    const options = translationOptions(), boardId = state.board.id;
+    const force = Boolean(savedTranslation(take, options.language));
+    const pending = requestTakeTranslation(boardId, take, options, force);
+    renderPreview();
+    const track = await act(() => pending);
+    if (track && state.board?.id === boardId && shownTake()?.id === take.id
+        && translationOptions().language === options.language) {
+      if (!force) state.showSceneTranslation = true;
+      renderPreview();
     }
-    status.textContent = options ? "Translating subtitles…" : "";
-    regenerate.disabled = Boolean(options);
-    if (!options) return;
-    requestTranslations(state.board.id, [take], options, force).then(({tracks}) => {
-      if (!video.isConnected || sceneTranslationAttempts.get(video) !== attempt) return;
-      setSubtitleTrack(video, tracks[take.id] || src, state.showSubtitles);
-    }).catch((error) => {
-      if (!video.isConnected || sceneTranslationAttempts.get(video) !== attempt) return;
-      if (!force) {
-        checkbox.checked = state.showSceneTranslation = false;
-        regenerate.hidden = true;
-      }
-      toast(error.message, true);
-    }).finally(() => {
-      if (!video.isConnected || sceneTranslationAttempts.get(video) !== attempt) return;
-      status.textContent = "";
-      regenerate.disabled = false;
-    });
   };
 
   // Rebuilt only when the take changes, so playback survives saves and polls.
@@ -392,7 +367,7 @@
         state.showSceneTranslation = event.target.checked;
         updatePreviewSubtitles(video, shownTake());
       };
-      $("regenerate-scene-translation").onclick = () => updatePreviewSubtitles(video, shownTake(), {force: true});
+      $("translate-scene").onclick = translateScene;
       checkbox.onchange = () => {
         state.showSubtitles = checkbox.checked;
         const track = video.querySelector("track");
@@ -705,11 +680,11 @@
         }));
     }
     actions.push(
-      h("label", {className: "check-label"},
-        h("input", {type: "checkbox", checked: state.translateSubtitles, onchange: (event) => {
-          state.translateSubtitles = event.target.checked;
-          stored.set("h3-storyboard-translate-subtitles", String(state.translateSubtitles));
-        }}), "Translate subtitles"),
+      hasSubtitles && h("label", {className: "check-label", title: "Export generates any missing subtitle translations"},
+        h("input", {type: "checkbox", checked: state.exportTranslation, onchange: (event) => {
+          state.exportTranslation = event.target.checked;
+          stored.set("h3-storyboard-translate-subtitles", String(state.exportTranslation));
+        }}), `Include ${translationOptions().language} translation in export`),
       h("label", {className: "check-label", title: hasSubtitles ? null : "No subtitles are available in the takes in use"},
         h("input", {type: "checkbox", checked: hasSubtitles && state.burnSubtitles,
           disabled: busy || !hasSubtitles,
@@ -757,30 +732,20 @@
     const videos = [active, standby];
     const takesByVideo = new Map();
     const boardId = state.board.id;
-    let translatedTracks = {};
-    let translationRequest;
-    let translationLanguage;
-    let showTranslation = state.translateSubtitles;
+    const options = translationOptions();
+    const {language} = options;
+    const captioned = playlist.filter((take) => take.subtitles);
+    const missingTranslations = () => captioned.filter((take) => !savedTranslation(take, language));
+    let showTranslation = captioned.length > missingTranslations().length;
+    let progress = null;
+    let translationError = "";
     let index = 0;
     const position = h("span", {className: "small muted", role: "status"});
     const translationStatus = h("span", {className: "small muted", "aria-live": "polite"});
-    const captioned = playlist.filter((take) => take.subtitles);
-    const showTranslationStatus = () => {
-      const language = translationLanguage || translationOptions().language;
-      const saved = captioned.filter((take) => savedTranslation(take, language)).length;
-      translationStatus.textContent = captioned.length
-        ? `Subtitles in ${captioned.length} of ${playlist.length} scenes · ${language} translation saved for ${saved} of ${captioned.length}`
-        : `No subtitles available · ${language} translation unavailable`;
-    };
-    const regenerate = button("Regenerate translation", () => translate(true), "btn sm", {hidden: !showTranslation});
+    const action = button("Translate missing subtitles", () => translate(), "btn sm");
     const translationCheckbox = h("input", {type: "checkbox", checked: showTranslation, onchange: () => {
       showTranslation = translationCheckbox.checked;
-      regenerate.hidden = !showTranslation;
-      if (showTranslation) translate();
-      else {
-        showTranslationStatus();
-        videos.forEach(updateSubtitles);
-      }
+      videos.forEach(updateSubtitles);
     }});
     const checkbox = h("input", {type: "checkbox", checked: state.showFullSubtitles,
       onchange: () => {
@@ -789,38 +754,52 @@
       }});
     const updateSubtitles = (video) => {
       const take = takesByVideo.get(video);
-      const translated = showTranslation && (translatedTracks[take?.id] || savedTranslation(take, translationLanguage));
+      const translated = showTranslation && savedTranslation(take, language);
       setSubtitleTrack(video, translated || take?.subtitles || null, state.showFullSubtitles);
     };
-    const translate = (force = false) => {
-      const options = translationOptions();
-      if (translationLanguage !== options.language) translatedTracks = {};
-      translationLanguage = options.language;
-      videos.forEach(updateSubtitles);
-      if (force || captioned.some((take) => !savedTranslation(take, options.language))) {
-        translationStatus.textContent = `Translating subtitles into ${options.language}…`;
-      } else showTranslationStatus();
-      regenerate.disabled = true;
-      const pending = requestTranslations(boardId, playlist, options, force);
-      translationRequest = pending;
-      pending.then(({tracks}) => {
-        if (!panel.isConnected || pending !== translationRequest) return;
-        translatedTracks = tracks;
-        videos.forEach(updateSubtitles);
-      }).catch((error) => {
-        if (!panel.isConnected || pending !== translationRequest) return;
-        if (!showTranslation) return;
-        if (!force) {
-          translationCheckbox.checked = showTranslation = false;
-          regenerate.hidden = true;
-          videos.forEach(updateSubtitles);
+    const renderTranslationStatus = () => {
+      const missing = missingTranslations().length;
+      const saved = captioned.length - missing;
+      translationCheckbox.checked = showTranslation;
+      translationCheckbox.disabled = !saved;
+      action.disabled = Boolean(progress);
+      action.textContent = missing ? "Translate missing subtitles" : "Regenerate all translations";
+      const availability = captioned.length
+        ? `${language} translation saved for ${saved} of ${captioned.length} scenes with subtitles`
+        : `No subtitles available · Translation language: ${language}`;
+      translationStatus.textContent = [
+        availability,
+        progress && `Translated ${progress.done} of ${progress.total}`,
+        translationError,
+      ].filter(Boolean).join(" · ");
+    };
+    const translate = async () => {
+      const missing = missingTranslations();
+      const force = missing.length === 0;
+      const queue = force ? [...captioned] : missing;
+      progress = {done: 0, total: queue.length};
+      translationError = "";
+      showTranslation = true;
+      renderTranslationStatus();
+      const translateNext = async () => {
+        while (panel.isConnected && queue.length) {
+          const take = queue.shift();
+          try {
+            await requestTakeTranslation(boardId, take, options, force);
+            progress.done += 1;
+          } catch (error) {
+            translationError ||= error.message;
+          }
+          if (panel.isConnected) {
+            videos.forEach(updateSubtitles);
+            renderTranslationStatus();
+          }
         }
-        toast(error.message, true);
-      }).finally(() => {
-        if (!panel.isConnected || pending !== translationRequest) return;
-        showTranslationStatus();
-        regenerate.disabled = false;
-      });
+      };
+      // Leave browser connections available for scene previews and other controls.
+      await Promise.all(Array.from({length: Math.min(4, queue.length)}, translateNext));
+      progress = null;
+      if (panel.isConnected) renderTranslationStatus();
     };
     const loadClip = (video, take) => {
       takesByVideo.set(video, take);
@@ -893,7 +872,7 @@
         h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
         captioned.length > 0 && h("label", {className: "check-label"}, checkbox, "Show subtitles"),
         captioned.length > 0 && h("label", {className: "check-label"}, translationCheckbox, "Show translation"),
-        captioned.length > 0 && regenerate,
+        captioned.length > 0 && action,
         translationStatus,
         document.fullscreenEnabled && fullscreen,
         button("Close", closeFullVideo, "btn sm")),
@@ -901,8 +880,7 @@
     $("full-video").replaceChildren(panel);
     loadClip(active, playlist[0]);
     playScene();
-    showTranslationStatus();
-    if (showTranslation && captioned.length) translate();
+    renderTranslationStatus();
   };
 
   const showJoinedVideo = (run) => {
@@ -1798,6 +1776,7 @@
               state.board.subtitle_language = language;
               queueSave("PUT", boardUrl("/subtitle-settings"), "subtitle_language", language);
               renderPreview();
+              renderStripActions();
             }}, state.boot.subtitle_languages.map((language) =>
               h("option", {selected: language === translationOptions().language}, language)))),
           h("label", {className: "field"}, "Translation model",
@@ -1870,7 +1849,7 @@
       include_outdated: state.includeOutdated,
       export: true,
       burn_subtitles: state.burnSubtitles && hasExportSubtitles(),
-      ...(state.translateSubtitles && hasExportSubtitles() ? {translation: translationOptions()} : {}),
+      ...(state.exportTranslation && hasExportSubtitles() ? {translation: translationOptions()} : {}),
     }));
     if (data) followRun(data.run, {started: true});
     renderStripActions();
