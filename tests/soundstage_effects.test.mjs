@@ -113,25 +113,30 @@ test("shader IDs cover all overlays", () => {
 });
 
 test("dissolve crossfades outgoing and incoming overlays instead of cutting at shot start", () => {
-  const alphas = [];
   const ops = [];
   const gradient = {addColorStop() {}};
-  let currentAlpha = 1;
-  const ctx = {
-    get globalAlpha() { return currentAlpha; },
-    set globalAlpha(v) { currentAlpha = v; alphas.push(Math.round(v * 100) / 100); },
-    save() { this._saved = currentAlpha; },
-    restore() { currentAlpha = this._saved ?? 1; },
-    clearRect() {},
+  const layer = {
     beginPath() {},
-    moveTo() { ops.push(["moveTo", Math.round(currentAlpha * 100) / 100]); },
+    moveTo() { this.effect = "rain"; },
     lineTo() {},
     stroke() {},
-    fillRect() { ops.push(["fillRect", Math.round(currentAlpha * 100) / 100]); },
+    clearRect() { this.effect = null; },
+    fillRect() { this.effect ??= "vignette"; },
     createRadialGradient() { return gradient; },
     createLinearGradient() { return gradient; },
   };
-  const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx};
+  layer.canvas = {getContext: () => layer};
+  const ctx = {
+    save() {},
+    restore() { this.globalAlpha = 1; this.globalCompositeOperation = "source-over"; },
+    clearRect() {},
+    drawImage(buffer) {
+      assert.equal(buffer, layer.canvas);
+      ops.push([layer.effect, this.globalAlpha, this.globalCompositeOperation]);
+    },
+  };
+  const canvas = {clientWidth: 640, clientHeight: 360, getContext: () => ctx,
+    ownerDocument: {createElement: () => layer.canvas}};
   // Outgoing shot has rain; incoming shot has vignette; 35% through dissolve.
   paintEffects(canvas, ["vignette"], 0.35, null, {
     fading: true,
@@ -141,8 +146,7 @@ test("dissolve crossfades outgoing and incoming overlays instead of cutting at s
     shotIndex: 1,
     backShotIndex: 0,
   });
-  assert.ok(ops.some(([op, a]) => op === "moveTo" && a === 0.65), "outgoing rain fades out at 0.65 alpha");
-  assert.ok(ops.some(([op, a]) => op === "fillRect" && a === 0.35), "incoming vignette fades in at 0.35 alpha");
+  assert.deepEqual(ops, [["rain", 0.65, "lighter"], ["vignette", 0.35, "lighter"]]);
 
   // Outgoing shot has rain; incoming shot has no effects; rain still fades out during dissolve.
   ops.length = 0;
@@ -154,7 +158,7 @@ test("dissolve crossfades outgoing and incoming overlays instead of cutting at s
     backElapsed: 4.25,
   });
   assert.equal(backend, "Canvas 2D");
-  assert.ok(ops.some(([op, a]) => op === "moveTo" && a === 0.75), "outgoing rain continues fading into a clean shot");
+  assert.deepEqual(ops, [["rain", 0.75, "lighter"]]);
 
   ops.length = 0;
   paintEffects(canvas, ["vignette"], 0.25, null, {
@@ -162,7 +166,7 @@ test("dissolve crossfades outgoing and incoming overlays instead of cutting at s
     fadeMix: 0.25,
     backEffects: [],
   });
-  assert.deepEqual(ops, [["fillRect", 0.25]], "incoming vignette fades in from a clean shot");
+  assert.deepEqual(ops, [["vignette", 0.25, "lighter"]]);
 });
 
 test("shot-seeded lightning varies flash timing across shots while keeping shot 0 deterministic", () => {

@@ -364,9 +364,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
           const presets = state.boot.video.effect_presets || {};
           const effects = row.effects || [];
           return h("label", {class: "field"}, h("span", {class: "label"}, label),
-            h("select", {"aria-label": label, "data-effect-kind": kind, disabled: busy,
-              onchange: () => editShot({index: row.index,
-                effects: [...box.querySelectorAll("select[data-effect-kind]")].map((select) => select.value).filter(Boolean)})},
+            h("select", {"aria-label": label, disabled: busy,
+              onchange: (event) => editShot({index: row.index,
+                effect_kind: kind, effect: event.target.value})},
               h("option", {value: "", selected: !effects.some((id) => presets[id]?.kind === kind)}, "None"),
               Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
                 h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));

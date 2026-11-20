@@ -172,7 +172,7 @@ def compile_plan(plan, duration, art_direction, limit, *, orientation="landscape
     return shots
 
 
-def edit_shot(plan, index, *, prompt=None, transition=None, effects=None):
+def edit_shot(plan, index, *, prompt=None, transition=None, effects=None, effect_kind=None, effect=None):
     """Copy a plan with one shot's image prompt, transition or playback effects changed."""
     rows = plan.get("shots") if isinstance(plan, dict) else None
     if not isinstance(rows, list) or not isinstance(index, int) or not 0 <= index < len(rows):
@@ -180,6 +180,14 @@ def edit_shot(plan, index, *, prompt=None, transition=None, effects=None):
     row = dict(rows[index])
     if effects is not None:
         row["effects"] = check_effects(effects)
+    if effect_kind is not None or effect is not None:
+        if (effects is not None or effect_kind not in ("camera", "atmosphere", "lighting")
+                or not isinstance(effect, str)
+                or (effect and EFFECT_PRESETS.get(effect, {}).get("kind") != effect_kind)):
+            raise H3Error("Choose a visual effect from the selected category.")
+        by_kind = {EFFECT_PRESETS[item]["kind"]: item for item in row.get("effects", [])}
+        by_kind[effect_kind] = effect
+        row["effects"] = [by_kind[kind] for kind in ("camera", "atmosphere", "lighting") if by_kind.get(kind)]
     if prompt is not None:
         if not _text(prompt):
             raise H3Error("A shot needs an image prompt.")

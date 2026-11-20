@@ -369,6 +369,20 @@
   };
 
   const activeGenerate = () => (state.run?.active && state.run.kind === "generate" ? state.run : null);
+  const generateSceneLabel = (item) => item.takes.length ? "Generate another take" : "Generate this scene";
+  const generateSceneDisabled = (item) => Boolean(state.run?.active) || item.issues.length > 0;
+  const generateSceneButton = (item, id) => state.boot.gpu && button(generateSceneLabel(item),
+    () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
+    {disabled: generateSceneDisabled(item), id});
+
+  const syncInspectorGenerate = () => {
+    const generate = $("inspector-generate-scene");
+    if (!generate) return;
+    const item = scene();
+    generate.disabled = generateSceneDisabled(item);
+    const label = generateSceneLabel(item);
+    if (generate.textContent !== label) generate.textContent = label;
+  };
 
   const renderTakes = () => {
     const item = scene();
@@ -387,8 +401,6 @@
       return;
     }
     const shown = shownTake();
-    const busy = Boolean(state.run?.active);
-    const blocked = item.issues.length > 0;
     const cards = item.takes.map((take) => {
       const selected = shown?.id === take.id;
       const inUse = take.id === item.in_use;
@@ -433,9 +445,7 @@
         button("Use seed", () => useSeed(shown.seed), "btn sm",
           {title: "Set this scene's seed to this take's seed"})));
     }
-    const generate = state.boot.gpu ? button(item.takes.length ? "Generate another take" : "Generate this scene",
-      () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
-      {disabled: blocked || busy, id: "generate-scene"}) : null;
+    const generate = generateSceneButton(item, "generate-scene");
     $("take-row").replaceChildren(...[
       chips.length ? h("div", {className: "take-chips"}, chips) : null,
       row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
@@ -908,6 +918,7 @@
     set("seconds-label", `Length: ${item.seconds} s`);
     const check = $("checklist");
     if (check) check.replaceWith(checklist(item));
+    syncInspectorGenerate();
     const previews = $("tag-hint");
     if (previews) previews.replaceWith(tagHintNode(item));
     const fit = $("fit-preview");
@@ -919,10 +930,15 @@
     : h("div", {className: "ready", id: "checklist"}, item.kind === "media" ? "Ready to prepare." : "Ready to generate."));
 
   const insertIntoPrompt = (snippet) => {
+    const fromMediaTab = state.inspectorTab === "media";
+    if (fromMediaTab) {
+      state.inspectorTab = "prompt";
+      renderInspector();
+    }
     const textarea = document.querySelector("#inspector textarea");
     if (!textarea) return;
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? textarea.value.length;
+    const start = fromMediaTab ? textarea.value.length : (textarea.selectionStart ?? textarea.value.length);
+    const end = fromMediaTab ? start : (textarea.selectionEnd ?? textarea.value.length);
     const before = textarea.value.slice(0, start);
     const after = textarea.value.slice(end);
     const padBefore = before.length && !/\s$/.test(before) ? " " : "";
@@ -1073,15 +1089,11 @@
       ]),
     ];
 
-    const busy = Boolean(state.run?.active);
-    const blocked = item.issues.length > 0;
     const footer = h("div", {className: "inspector-footer"},
       h("div", {className: "small muted"},
         h("strong", {style: "color:var(--text)"}, `${item.seconds}s`),
         ` · ${item.added || item.runs_as}`),
-      state.boot.gpu ? button(item.takes.length ? "Generate another take" : "Generate this scene",
-        () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
-        {disabled: blocked || busy}) : null);
+      generateSceneButton(item, "inspector-generate-scene"));
 
     const body = tab === "media" ? mediaTab : (tab === "timing" ? timingTab : promptTab);
     return [headerBar, ...body, footer];
@@ -1349,31 +1361,49 @@
     tiles.length ? h("div", {className: field === "ref_audios" ? "audio-list" : "tiles"}, tiles) : null,
     h("div", {className: "slot-actions"},
       button(list.length && !multiple ? "Replace" : "Upload", async () => uploadMedia(field, await pickFiles(ACCEPT[field], multiple)), "btn sm"),
-      pictures && state.boot.library && button("Media library", () => openLibrary((path) => libraryMedia(field, path)), "btn sm")));
+      pictures && state.boot.library && button("Media library", () => openLibrary((path) => libraryMedia(sceneUrl(`/media/${field}`), path)), "btn sm")));
     return h("div", {className: "slot"}, h("div", {className: "slot-head"}, h("span", {}, label),
       optional ? h("span", {className: "muted"}, "Optional") : null), drop);
   };
-  const libraryMedia = async (field, source) => {
-    const data = await act(() => request("PUT", sceneUrl(`/media/${field}`), {source}), "Added.");
+  const libraryMedia = async (url, source) => {
+    const data = await act(() => request("PUT", url, {source}), "Added.");
     if (data) applyBoard(data);
   };
 
-  const openLibrary = (onPick, kind = "image") => {
+  const openLibrary = (onPick, kind = "image", attachLabel = "") => {
     const dialog = $("library");
     let limit = 24;
+    let selectedPath = null;
     const noun = kind === "video" ? "videos" : "images";
     const grid = h("div", {className: "library-grid"});
     const status = h("p", {className: "small muted", role: "status"}, "Loading…");
+    const pick = (path) => { dialog.close(); onPick(path); };
+    const attach = attachLabel ? button(attachLabel, () => pick(selectedPath), "btn primary sm", {disabled: true}) : null;
     const more = button(`Show more ${noun}`, () => { limit += 24; load(); }, "btn sm", {hidden: true});
     const query = h("input", {type: "search", placeholder: "Filename, tags or settings",
       onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); load(); } }});
     const load = async () => {
       const data = await act(() => request("GET", `${API}/library?kind=${kind}&limit=${limit}&query=${encodeURIComponent(query.value)}`));
       if (!data) return;
-      status.textContent = `${data.total} matching ${noun}. Select a thumbnail to use it.`;
+      const hint = attach ? " Select a thumbnail, then confirm the attachment."
+        : onPick ? " Select a thumbnail to use it." : "";
+      status.textContent = `${data.total} matching ${noun}.${hint}`;
       more.hidden = !data.more;
-      grid.replaceChildren(...data.items.map((row) => h("button", {type: "button", "aria-label": row.caption,
-        onclick: () => { dialog.close(); onPick(row.path); }}, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
+      if (attach) {
+        selectedPath = null;
+        attach.disabled = true;
+      }
+      grid.replaceChildren(...data.items.map((row) => {
+        const thumbnail = h("img", {src: row.thumb, alt: onPick ? "" : row.caption, loading: "lazy"});
+        if (!onPick) return thumbnail;
+        return button(thumbnail, (event) => {
+          if (!attach) return pick(row.path);
+          grid.querySelector('[aria-pressed="true"]')?.setAttribute("aria-pressed", "false");
+          event.currentTarget.setAttribute("aria-pressed", "true");
+          selectedPath = row.path;
+          attach.disabled = false;
+        }, "", {"aria-label": row.caption, "aria-pressed": attach ? "false" : null});
+      }));
     };
     const area = visibleArea();
     dialog.style.marginTop = `${area.top + 16}px`;
@@ -1382,9 +1412,16 @@
       h("div", {className: "library-head"},
         h("label", {className: "field grow"}, `Search library ${noun}`, query),
         button("Search", load), button("Close", () => dialog.close())),
-      status, grid, more);
+      attach ? h("div", {className: "row"}, status, attach) : status, grid, more);
     dialog.showModal();
     load();
+  };
+
+  const browseGlobalMedia = () => {
+    const item = scene();
+    if (item.kind === "media" || item.mode !== "Reference media") return openLibrary(null);
+    const url = sceneUrl("/media/ref_images");
+    openLibrary((path) => libraryMedia(url, path), "image", `Add image to Scene ${item.number}`);
   };
 
   // Panels ----------------------------------------------------------------
@@ -1517,7 +1554,7 @@
     const mediaColumn = h("div", {className: "column"}, [
       h("div", {className: "row"},
         h("h3", {}, "Project Media Library"),
-        state.boot.library && button("Browse global Media", () => openLibrary((path) => libraryMedia("ref_images", path)), "btn sm")),
+        state.boot.library && button("Browse global Media", browseGlobalMedia, "btn sm")),
       filterBar,
       h("div", {className: "field"}, libQuery),
       libStatus,
@@ -1883,6 +1920,7 @@
   const followRun = (run, {started = false} = {}) => {
     const changed = run?.id !== state.run?.id;
     state.run = run;
+    syncInspectorGenerate();
     if (changed) state.seenRevision = started || run?.active ? 0 : run?.revision ?? null;
     if (run?.active && !state.pollTimer) state.pollTimer = setTimeout(poll, POLL_MS);
     // A run that ended while this page wasn't watching still reports, once.

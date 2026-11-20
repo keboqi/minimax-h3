@@ -81,6 +81,8 @@ def run(*, webgpu=False):
                                         **({"executable_path": str(chrome)} if chrome.exists() else {}))
             page = browser.new_page(viewport={"width": 1440, "height": 1000}, reduced_motion="no-preference",
                                     device_scale_factor=2 if webgpu else 1)
+            if not webgpu:
+                page.add_init_script("Object.defineProperty(navigator, 'gpu', {value: undefined})")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             def record_console_error(msg):
@@ -175,8 +177,7 @@ def run(*, webgpu=False):
             }
             assert frame["moves"] and frame["seeks"], (frame, errors)
             backend = "WebGPU" if "still-effects-gpu" in c["className"] else "Canvas 2D"
-            if webgpu:
-                assert backend == "WebGPU", (status, frame, errors)
+            assert backend == ("WebGPU" if webgpu else "Canvas 2D"), (status, frame, errors)
             expect(engine).to_have_text(f"Effects engine · {backend}")
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
                 page.get_by_label("Visual effects", exact=True).uncheck()
@@ -187,9 +188,34 @@ def run(*, webgpu=False):
             with page.expect_response(lambda response: response.url.split("?")[0].endswith("/project/video") and response.request.method == "PATCH"):
                 page.get_by_label("Visual effects", exact=True).check()
             page.wait_for_load_state("networkidle")
+            page.evaluate("""() => {
+              const originalFetch = window.fetch;
+              window.effectWrites = [];
+              window.fetch = async (url, options) => {
+                if (url.includes('/project/video/shot') && options?.method === 'PATCH') {
+                  window.effectWrites.push(JSON.parse(options.body));
+                  if (window.effectWrites.length === 1) {
+                    await new Promise(resolve => { window.releaseEffectWrite = resolve; });
+                  }
+                }
+                return originalFetch(url, options);
+              };
+              window.restoreEffectFetch = () => { window.fetch = originalFetch; };
+            }""")
+            page.get_by_label("Atmosphere", exact=True).select_option("snow")
+            page.wait_for_function("window.releaseEffectWrite !== undefined")
+            page.get_by_label("Lighting & framing", exact=True).select_option("lightning")
+            assert page.evaluate("window.effectWrites.length") == 1
+            page.evaluate("window.releaseEffectWrite()")
+            expect(effect).to_have_text("Slow push in · Snow · Lightning")
+            assert page.evaluate("window.effectWrites") == [
+                {"index": 0, "effect_kind": "atmosphere", "effect": "snow"},
+                {"index": 0, "effect_kind": "lighting", "effect": "lightning"},
+            ]
+            page.evaluate("window.restoreEffectFetch()")
             with page.expect_response(lambda response: "/project/video/shot" in response.url and response.request.method == "PATCH"):
-                page.get_by_label("Lighting & framing", exact=True).select_option("lightning")
-            expect(page.get_by_label("Lighting & framing", exact=True)).to_have_value("lightning")
+                page.get_by_label("Atmosphere", exact=True).select_option("rain")
+            expect(effect).to_have_text("Slow push in · Rain · Lightning")
             page.wait_for_load_state("networkidle")
             assert fixture.project()["video"]["plan"]["rows"][0]["effects"] == ["push_in", "rain", "lightning"]
             page.wait_for_load_state("networkidle")
@@ -225,6 +251,23 @@ def run(*, webgpu=False):
             expect(effect).to_have_text("Slow push in · Rain · Lightning")
             if webgpu:
                 check_webgpu_composite(page)
+            if backend == "Canvas 2D":
+                alpha = page.evaluate("""async () => {
+                  const {paintEffects} = await import('/soundstage/effects.js');
+                  const canvas = document.createElement('canvas');
+                  canvas.style.cssText = 'width: 160px; height: 90px';
+                  document.body.append(canvas);
+                  const context = canvas.getContext('2d', {willReadFrequently: true});
+                  const alpha = [0, 0.5, 1].map(fadeMix => {
+                    paintEffects(canvas, ['vignette'], 0, null, {
+                      fading: true, fadeMix, backEffects: ['vignette'],
+                    });
+                    return context.getImageData(0, 0, 1, 1).data[3];
+                  });
+                  canvas.remove();
+                  return alpha;
+                }""")
+                assert min(alpha) > 0 and max(alpha) - min(alpha) <= 1, alpha
             assert not errors, errors
             browser.close()
         print(f"PASS ({backend}): effect controls, persistence, animation, seeking, reduced motion, module loading")

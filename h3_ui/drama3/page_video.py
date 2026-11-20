@@ -323,7 +323,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         return edit_plan(name, lambda plan: edit_shot(
             plan, body.get("index"), prompt=body.get("prompt"),
             transition=str(transition).lower() if transition is not None else None,
-            effects=body.get("effects")))(request)
+            effects=body.get("effects"), effect_kind=body.get("effect_kind"), effect=body.get("effect")))(request)
 
     @app.patch(f"{api}/project/video/subject", include_in_schema=False)
     @guarded

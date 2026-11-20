@@ -398,7 +398,7 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; font-size: 14px; 
 .library-head { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 14px; }
 .library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
 .library-grid button { padding: 0; border: 2px solid transparent; border-radius: 8px; background: none; overflow: hidden; }
-.library-grid button:hover { border-color: var(--accent); }
+.library-grid button:hover, .library-grid button[aria-pressed="true"] { border-color: var(--accent); }
 .library-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; }
 .project-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
 .project-media-card {

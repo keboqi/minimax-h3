@@ -250,13 +250,6 @@ function withComposite(ctx, mode, draw) {
   try { draw(); } finally { ctx.restore(); }
 }
 
-function withLayerAlpha(ctx, alpha, draw) {
-  if (alpha >= 0.999 || !ctx.save || !ctx.restore) return draw();
-  ctx.save();
-  ctx.globalAlpha = (ctx.globalAlpha ?? 1) * clamp01(alpha);
-  try { draw(); } finally { ctx.restore(); }
-}
-
 function sizeCanvas(canvas, w, h) {
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
@@ -283,6 +276,7 @@ function splitEffects(list) {
 
 let lastPaintArgs = null;
 const paintedOverlays = new WeakSet();
+const dissolveCanvases = new WeakMap();
 export function paintEffects(canvas, effects, seconds, showBackend, scene = null) {
   const { atmospheres, lights } = splitEffects(effects);
   const fading = Boolean(scene?.fading && (scene?.fadeMix ?? 1) < 1);
@@ -342,15 +336,25 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
 
   const shotSeed = scene?.shotIndex ?? 0;
   const cam = scene?.cam || null;
-  const fadeMix = fading ? clamp01(scene.fadeMix ?? 1) : 1;
-  if (fading && (backAtmospheres.length || backLights.length)) {
+  if (fading) {
+    let buffer = dissolveCanvases.get(canvas);
+    if (!buffer) {
+      buffer = canvas.ownerDocument.createElement("canvas");
+      dissolveCanvases.set(canvas, buffer);
+    }
+    sizeCanvas(buffer, w, h);
+    const layer = buffer.getContext("2d");
+    const fadeMix = clamp01(scene.fadeMix ?? 1);
     const backT = Math.max(0, scene.backElapsed ?? 0);
     const backCueT = Math.max(0, scene.backCueElapsed ?? backT);
-    const backSeed = scene.backShotIndex ?? 0;
-    paintLayer2D(ctx, backAtmospheres, backLights, backT, backCueT, w, h, 1 - fadeMix, backSeed, scene.backCam || null);
-  }
-  if (atmospheres.length || lights.length) {
-    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, fadeMix, shotSeed, cam);
+    // Add the weighted premultiplied layers so identical effects retain their opacity.
+    withComposite(ctx, "lighter", () => {
+      blendLayer2D(ctx, layer, backAtmospheres, backLights, backT, backCueT, 1 - fadeMix,
+        scene.backShotIndex ?? 0, scene.backCam);
+      blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, fadeMix, shotSeed, cam);
+    });
+  } else {
+    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam);
   }
   showBackend?.("Canvas 2D");
 }
@@ -364,18 +368,25 @@ const ATMO_PAINTERS = {
   fireflies: (_effect, ctx, t, w, h, sx, sy) => paintFireflies(ctx, t, w, h, sx, sy),
 };
 
-function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, alpha, shotSeed, cam) {
-  withLayerAlpha(ctx, alpha, () => {
-    const shiftX = cam ? (cam.tx || 0) * 0.01 * w : 0;
-    const shiftY = cam ? (cam.ty || 0) * 0.01 * h : 0;
-    for (const effect of atmospheres) {
-      const painter = ATMO_PAINTERS[effect] || paintParticles;
-      painter(effect, ctx, t, w, h, shiftX, shiftY);
-    }
-    for (const effect of lights) {
-      paintLight(ctx, effect, t, cueT, w, h, shotSeed, shiftX, shiftY);
-    }
-  });
+function blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, weight, shotSeed, cam) {
+  if (!weight || (!atmospheres.length && !lights.length)) return;
+  const {width, height} = layer.canvas;
+  layer.clearRect(0, 0, width, height);
+  paintLayer2D(layer, atmospheres, lights, t, cueT, width, height, shotSeed, cam);
+  ctx.globalAlpha = weight;
+  ctx.drawImage(layer.canvas, 0, 0);
+}
+
+function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam) {
+  const shiftX = cam ? (cam.tx || 0) * 0.01 * w : 0;
+  const shiftY = cam ? (cam.ty || 0) * 0.01 * h : 0;
+  for (const effect of atmospheres) {
+    const painter = ATMO_PAINTERS[effect] || paintParticles;
+    painter(effect, ctx, t, w, h, shiftX, shiftY);
+  }
+  for (const effect of lights) {
+    paintLight(ctx, effect, t, cueT, w, h, shotSeed, shiftX, shiftY);
+  }
 }
 
 function paintVignette(ctx, _t, _cueT, w, h) {

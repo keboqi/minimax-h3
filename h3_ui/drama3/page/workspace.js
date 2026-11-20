@@ -198,10 +198,14 @@ export function startWorkspace() {
     saves.queue(state.project.name, "video", body, later ? 700 : 0);
   }
   const flushVideo = () => flushEdits();
+  let planEdits = Promise.resolve();
 
   async function videoCall(path, body) {
+    const owner = scope();
     try {
+      await planEdits;
       await flushVideo();
+      if (owner !== scope()) return null;
       const data = await api(named(path), {method: "POST", body: body ?? {}});
       if (data.video_run) state.videoRun = data.video_run;
       if (data.video) state.project.video = data.video;
@@ -224,22 +228,27 @@ export function startWorkspace() {
   const drawPreviews = (presets = "missing") => videoCall("/project/video/preview", {presets});
 
   /** Change the plan (a shot's prompt or transition, or how a subject looks); drawn shots it touches show as changed. */
-  async function editPlan(path, body) {
-    try {
-      await flushVideo();
-      const data = await api(named(path), {method: "PATCH", body});
-      if (data.video) state.project.video = data.video;
-      // Let the step redraw now, even though the field that changed still has focus.
+  function editPlan(path, body) {
+    const owner = scope(), url = named(path);
+    const pending = planEdits.then(async () => {
+      try {
+        await flushVideo();
+        const data = await api(url, {method: "PATCH", body, unscoped: true});
+        if (owner === scope() && data.video) state.project.video = data.video;
+      } catch (error) {
+        if (owner === scope()) toast(error.message);
+      }
+      if (pending !== planEdits || owner !== scope()) return;
+      // Refresh after the queued edits so an earlier reply cannot reset a newer choice.
       document.activeElement?.blur();
       renderVideo();
       renderSteps();
       renderActions();
       renderPlayer();
       sync();
-    } catch (error) {
-      toast(error.message);
-      renderVideo();
-    }
+    }).catch((error) => { if (owner === scope()) toast(error.message); });
+    planEdits = pending;
+    return pending;
   }
   const editShot = (body) => editPlan("/project/video/shot", body);
   const editSubject = (body) => editPlan("/project/video/subject", body);
@@ -685,8 +694,10 @@ export function startWorkspace() {
   }
 
   async function readProject(name, load, keepPick) {
-    let project, revision;
+    let project, revision, edits;
     do {
+      edits = planEdits;
+      await edits;
       await flushEdits();
       if (load !== projectLoad) return;
       revision = saves.revision(name);
@@ -695,7 +706,7 @@ export function startWorkspace() {
       // A save during this read makes its snapshot obsolete, even once edits are clean.
       await flushEdits();
       if (load !== projectLoad) return;
-    } while (revision !== saves.revision(name));
+    } while (edits !== planEdits || revision !== saves.revision(name));
     const switched = state.project?.name !== project.name;
     const changed = switched || state.project?.result?.version !== project.result?.version;
     if (switched) {

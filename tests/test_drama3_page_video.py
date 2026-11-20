@@ -705,6 +705,14 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(edited["stills"], before["stills"])
         self.assertEqual(edited["plan"]["counts"], before["plan"]["counts"])
         self.assertEqual(self.project()["video"]["plan"]["rows"][0]["effects"], ["push_in", "rain"])
+        for kind, effect in (("lighting", "lightning"), ("atmosphere", "snow"), ("camera", "")):
+            edited = self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                              json={"index": 0, "effect_kind": kind, "effect": effect}))["video"]
+        self.assertEqual(edited["plan"]["rows"][0]["effects"], ["snow", "lightning"])
+        self.assertEqual(edited["stills"], before["stills"])
+        invalid = self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                    json={"index": 0, "effect_kind": "camera", "effect": "rain"})
+        self.assertIn("selected category", invalid.json()["error"])
         self.assertEqual(self.client.get("/soundstage/effects.js").status_code, 200)
         self.assertEqual(self.client.get("/soundstage/effects_webgpu.js").status_code, 200)
         self.assertTrue(edited["effects_enabled"])
