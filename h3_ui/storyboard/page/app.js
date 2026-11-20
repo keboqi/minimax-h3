@@ -1429,52 +1429,104 @@
         state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn")),
     ]);
 
-    const libGrid = h("div", {className: "library-grid"});
-    const libStatus = h("p", {className: "small muted"}, state.boot.library ? "Loading media…" : "Media library unavailable.");
-    const libQuery = h("input", {type: "search", placeholder: "Search filename or tags…"});
-    let libKind = "image";
-    const loadLib = async () => {
-      if (!state.boot.library) return;
-      const data = await act(() => request("GET", `${API}/library?kind=${libKind}&limit=24&query=${encodeURIComponent(libQuery.value)}`));
-      if (!data) return;
-      libStatus.textContent = `${data.total} matching ${libKind === "video" ? "videos" : "images"} · Click to assign to Scene ${scene().number}`;
-      libGrid.replaceChildren(...data.items.map((row) => h("button", {
-        type: "button",
-        "aria-label": row.caption,
-        title: `Assign ${row.caption} to Scene ${scene().number}`,
-        onclick: () => libKind === "video" ? libraryVideo(row.path) : libraryMedia("ref_images", row.path),
-      }, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
+    const collectProjectMedia = () => {
+      const byKey = new Map();
+      const addAsset = (kind, media, sceneNum, roleLabel) => {
+        if (!media) return;
+        const key = `${kind}:${media.path || media.url || media.name}`;
+        if (!byKey.has(key)) {
+          byKey.set(key, {
+            kind,
+            name: media.name || "Untitled asset",
+            thumb: media.thumb || media.poster || "",
+            url: media.url || "",
+            path: media.path || "",
+            usages: [],
+          });
+        }
+        const entry = byKey.get(key);
+        const tag = `Scene ${sceneNum} (${roleLabel})`;
+        if (!entry.usages.includes(tag)) entry.usages.push(tag);
+      };
+      scenes().forEach((s) => {
+        if (s.first_image) addAsset("image", s.first_image, s.number, "First frame");
+        if (s.last_image) addAsset("image", s.last_image, s.number, "Last frame");
+        (s.ref_images || []).forEach((m) => addAsset("image", m, s.number, "Ref image"));
+        (s.ref_videos || []).forEach((m) => addAsset("video", m, s.number, "Ref video"));
+        if (s.video?.clip) addAsset("video", s.video.clip, s.number, "Media clip");
+        (s.ref_audios || []).forEach((m) => addAsset("audio", m, s.number, "Audio"));
+      });
+      return [...byKey.values()];
     };
-    libQuery.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); loadLib(); } };
 
-    const imgFilter = chip("Images", true, () => {
-      libKind = "image";
-      imgFilter.setAttribute("aria-pressed", "true");
-      vidFilter.setAttribute("aria-pressed", "false");
-      loadLib();
+    const projectMedia = collectProjectMedia();
+    const libGrid = h("div", {className: "project-media-grid"});
+    const libStatus = h("p", {className: "small muted"});
+    const libQuery = h("input", {type: "search", placeholder: "Filter project media by name or scene…"});
+    let libKind = "all";
+
+    const renderProjectMedia = () => {
+      const q = libQuery.value.trim().toLowerCase();
+      const filtered = projectMedia.filter((item) => {
+        if (libKind !== "all" && item.kind !== libKind) return false;
+        if (!q) return true;
+        return item.name.toLowerCase().includes(q) || item.usages.some((u) => u.toLowerCase().includes(q));
+      });
+      libStatus.textContent = filtered.length
+        ? `${filtered.length} asset(s) in "${state.board.name}"`
+        : "No matching assets in this storyboard.";
+      libGrid.replaceChildren(...filtered.map((item) => {
+        const preview = item.kind === "audio"
+          ? h("div", {className: "project-media-thumb mono small"}, "AUDIO")
+          : item.thumb
+            ? h("img", {src: item.thumb, alt: item.name, loading: "lazy"})
+            : h("div", {className: "project-media-thumb mono small"}, item.kind.toUpperCase());
+        return h("div", {className: "project-media-card"},
+          preview,
+          h("div", {className: "project-media-info"},
+            h("strong", {title: item.name}, item.name),
+            h("span", {className: "small muted"}, item.usages.join(" · "))),
+          item.kind === "audio" && item.url
+            ? h("audio", {src: item.url, controls: true, preload: "none", style: "width:100%;height:32px"})
+            : null);
+      }).filter(Boolean));
+    };
+
+    libQuery.oninput = renderProjectMedia;
+    const filterChip = (kind, label) => chip(label, libKind === kind, () => {
+      libKind = kind;
+      filterBar.querySelectorAll(".chip").forEach((c, idx) => {
+        const keys = ["all", "image", "video", "audio"];
+        c.setAttribute("aria-pressed", String(keys[idx] === libKind));
+      });
+      renderProjectMedia();
     });
-    const vidFilter = chip("Video Clips", false, () => {
-      libKind = "video";
-      imgFilter.setAttribute("aria-pressed", "false");
-      vidFilter.setAttribute("aria-pressed", "true");
-      loadLib();
-    });
-    if (state.boot.library) queueMicrotask(loadLib);
+    const counts = {
+      all: projectMedia.length,
+      image: projectMedia.filter((x) => x.kind === "image").length,
+      video: projectMedia.filter((x) => x.kind === "video").length,
+      audio: projectMedia.filter((x) => x.kind === "audio").length,
+    };
+    const filterBar = h("div", {className: "chips"},
+      filterChip("all", `All (${counts.all})`),
+      filterChip("image", `Images (${counts.image})`),
+      filterChip("video", `Video Clips (${counts.video})`),
+      filterChip("audio", `Audio (${counts.audio})`));
+    renderProjectMedia();
 
     const mediaColumn = h("div", {className: "column"}, [
       h("div", {className: "row"},
         h("h3", {}, "Project Media Library"),
-        h("div", {className: "chips"}, imgFilter, vidFilter)),
-      h("div", {className: "row"},
-        h("div", {className: "grow field"}, libQuery),
-        button("Search", loadLib, "btn sm")),
+        state.boot.library && button("Browse global Media", () => openLibrary((path) => libraryMedia("ref_images", path)), "btn sm")),
+      filterBar,
+      h("div", {className: "field"}, libQuery),
       libStatus,
       libGrid,
     ]);
 
     return [
       panelHead("Cast & Media Library"),
-      h("div", {className: "scene-columns"}, castColumn, state.boot.library ? mediaColumn : null),
+      h("div", {className: "scene-columns"}, castColumn, mediaColumn),
     ];
   };
 

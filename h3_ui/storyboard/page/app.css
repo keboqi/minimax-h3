@@ -400,6 +400,18 @@ summary { min-height: 32px; cursor: pointer; font-weight: 600; font-size: 14px; 
 .library-grid button { padding: 0; border: 2px solid transparent; border-radius: 8px; background: none; overflow: hidden; }
 .library-grid button:hover { border-color: var(--accent); }
 .library-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; }
+.project-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+.project-media-card {
+  padding: 8px; border-radius: 9px; border: 1px solid var(--line); background: var(--control);
+  display: flex; flex-direction: column; gap: 7px; min-width: 0;
+}
+.project-media-card img, .project-media-thumb {
+  display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--line);
+}
+.project-media-thumb { display: flex; align-items: center; justify-content: center; color: var(--muted); font-weight: 700; }
+.project-media-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.project-media-info strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .column { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .scene-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
