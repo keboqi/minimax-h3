@@ -100,8 +100,22 @@ even while the storyboard is incomplete. It reuses completed analyses and can re
 had a problem. If speech can only be timed as whole lines, those lines are kept.
 
 The full storyboard preview uses the selected takes' subtitles. **Show subtitles** controls
-them across the entire preview.
-MP4 exports include a toggleable subtitle track with line timings.
+them across the entire preview. In **Storyboard settings → Subtitle translation**, choose a
+target language and model. The default is **Gemma 4 26B A4B IT**, with **Gemma 4 31B IT** and
+**Gemini 3.5 Flash-Lite** also available. All three use the Gemini API key shared with Prompt
+writer. Leave the key blank to use the server's Gemini API key.
+
+**Show translation** adds a smaller, line-timed row under the original captions in either the
+scene take player or the full preview. **Translate subtitles** on the filmstrip turns it on by
+default for the full preview and includes it in **Export to Media**. Scene playback translates
+only the take being previewed. Full playback and export translate missing captions in storyboard
+order and reuse translations saved for the same take and language, even after you select a
+different model. **Regenerate translation** replaces the saved translation using the selected
+model. If the original caption text changes, its translation is generated again.
+
+With **Burn in subtitles**, the export draws both rows into the picture when translation is
+enabled. Otherwise, a translated MP4 has separately selectable original and bilingual subtitle
+tracks with line timings. The MP4 player controls how embedded subtitles are styled.
 
 ## Starting from a video
 

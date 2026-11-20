@@ -44,6 +44,7 @@ from h3_app.provenance import read_snapshot, write_snapshot
 
 from . import gemini, moss, nemotron, refinement, segments as segment_tools, session as sessions, tools, tools_worker
 from .results import DUB_FAMILY, PLAYER_DIR, Player, load_player, prune_players as _prune_players, save_player
+from .segments import TARGET_LANGUAGES as TARGET_LANGUAGES
 from .text import (
     DEFAULT_REWRITE_STYLE, DEFAULT_STYLE, REWRITE_STYLES, SAME_LANGUAGE, SUBTITLE_MODES,
     TAKE_PROBLEMS, TIMING_PROBLEMS, TRANSLATION_STYLES,
@@ -82,8 +83,6 @@ SEPARATOR_MODELS = tuple(tools.layout.SEPARATOR_MODELS)
 SOURCE_LANGUAGES = ("Auto-detect", "English", "Chinese", "Cantonese", "Japanese", "Korean", "French", "German",
                     "Spanish", "Portuguese", "Italian", "Russian", "Arabic", "Hindi", "Indonesian", "Thai",
                     "Vietnamese", "Turkish", "Malay", "Dutch")
-TARGET_LANGUAGES = ("English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese",
-                    "Italian", "Russian", "Arabic", "Indonesian", "Vietnamese", "Thai", "Cantonese")
 # Drama 3 sampling (temperature, top_p, top_k); Soundstage offers the same three.
 VOICE_PRESETS = {"Strict": (0.7, 0.7, 30), "Balance": (1.0, 0.9, 0), "Expressive": (2.0, 1.0, 30)}
 # Why a line keeps its original voice; the server does not identify the underlying cause.

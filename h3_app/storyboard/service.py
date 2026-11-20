@@ -11,8 +11,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import RLock
 from typing import Any, Callable
+from weakref import WeakValueDictionary
 
-from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
+from h3_app.burned_subtitles import Line, ass_subtitles, font_size, word_pieces
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.media_review import review_path
@@ -100,6 +101,7 @@ class StoryboardService:
         # One process edits a storyboard at a time; each change is read-modify-write.
         self.lock = RLock()
         self._export_media: dict[int, set[str]] = {}
+        self._translation_locks = WeakValueDictionary()
 
     # Paths -----------------------------------------------------------------
     def cast_dir(self, storyboard_id: str) -> Path:
@@ -532,6 +534,48 @@ class StoryboardService:
             take["subtitle_error"] = error
         self.change(owner, storyboard_id, edit)
 
+    def translate_subtitles(self, owner, storyboard_id, takes, translation: subtitles.Translation, *, force=False):
+        """Translate the supplied take snapshot in board order, reusing its cached caption text."""
+        with self.lock:
+            lock = self._translation_locks.setdefault((owner, storyboard_id, translation.language), RLock())
+        with lock:
+            return self._translate_subtitles(owner, storyboard_id, takes, translation, force)
+
+    def _translate_subtitles(self, owner, storyboard_id, takes, translation, force):
+        # Another scene preview or export may have saved these captions while we waited.
+        current = self.load(owner, storyboard_id)["takes"]
+        results, pending, texts = {}, {}, []
+        for take in takes:
+            lines = subtitles.take_lines(take)
+            if not lines:
+                continue
+            take_id = take["id"]
+            cached = None if force else subtitles.cached_translation(current.get(take_id, take), translation.language, lines)
+            if cached is not None:
+                results[take_id] = cached
+                continue
+            pending[take_id] = (subtitles.source_digest(lines), len(texts), len(lines))
+            texts.extend(line["text"] for line in lines)
+        if not pending:
+            return results
+
+        translated = []
+        for start in range(0, len(texts), subtitles.TRANSLATION_BATCH):
+            translated.extend(translation.translate(texts[start:start + subtitles.TRANSLATION_BATCH]))
+
+        def save(board):
+            for take_id, (source, start, count) in pending.items():
+                lines = translated[start:start + count]
+                results[take_id] = lines
+                take = board["takes"].get(take_id)
+                if take is None or subtitles.source_digest(subtitles.take_lines(take)) != source:
+                    continue
+                cache = take.setdefault("subtitle_translations", {})
+                cache[translation.language] = {"source": source, "texts": lines, "model": translation.model}
+
+        self.change(owner, storyboard_id, save)
+        return results
+
     def delete_take(self, owner, storyboard_id, scene_id, take_id):
         with self.lock:
             board = self.load(owner, storyboard_id)
@@ -699,7 +743,8 @@ class StoryboardService:
         return clips
 
     def render(self, board, destination: Path, *, include_outdated=True, timeout=3600,
-               subtitle_preview: Path | None = None, burn_subtitles: bool = False) -> Path:
+               subtitle_preview: Path | None = None, burn_subtitles: bool = False,
+               translations: dict[str, list[str]] | None = None, translation_language: str = "") -> Path:
         """Join the takes, trimming repeated overlap and optionally burning captions into the picture."""
         clips = self.clips(board, include_outdated=include_outdated)
         # A video from Media is fitted to the canvas, which a generated take's size may differ from.
@@ -708,7 +753,10 @@ class StoryboardService:
         fit = f",scale={width}:{height}:flags=lanczos,setsar=1" if mixed else ""
         sound = f",aresample={clip.AUDIO_RATE},aformat=channel_layouts=stereo" if mixed else ""
         arguments, chains, videos, sounds = [], [], "", ""
-        take_lines = [subtitles.take_lines(board["takes"][scene["in_use"]]) for scene in board["scenes"]]
+        translations = translations or {}
+        take_lines = [subtitles.with_translation(subtitles.take_lines(board["takes"][scene["in_use"]]),
+                                                 translations.get(scene["in_use"]))
+                      for scene in board["scenes"]]
         with_subtitles = any(take_lines)
         captions = []
         elapsed_frames = 0
@@ -752,6 +800,7 @@ class StoryboardService:
         graph = (";".join(chains) + f";{videos}concat=n={count}:v=1:a=0[v]"
                  f";{sounds}concat=n={len(clips)}:v=0:a=1[a]")
         srt_text = subtitles.subtitle_text(captions, web=False)
+        has_translations = any(line.get("translation") for line in captions)
         if burn_subtitles and not srt_text:
             raise H3Error("The takes in use have no subtitles to burn in.")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -764,7 +813,9 @@ class StoryboardService:
                 cwd = temporary.enter_context(TemporaryDirectory(prefix="h3-storyboard-captions-"))
                 lines = [Line(None, line["text"], line["start"], line["end"],
                               word_pieces(line["text"], line.get("words"))) for line in captions]
-                script = ass_subtitles(lines, width=width, height=height, linger=0)
+                below = [Line(None, line["translation"], line["start"], line["end"])
+                         for line in captions if line.get("translation")]
+                script = ass_subtitles(lines, width=width, height=height, below=below, linger=0)
                 (Path(cwd) / "subtitles.ass").write_text(script, encoding="utf-8")
                 graph += ";[v]ass=subtitles.ass[burned]"
             elif srt_text:
@@ -773,6 +824,16 @@ class StoryboardService:
                 srt.write_text(srt_text, encoding="utf-8")
                 arguments += ["-i", str(srt)]
                 tracks = ["-map", f"{len(clips)}:s:0", "-c:s", "mov_text", "-disposition:s:0", "0"]
+                if has_translations:
+                    bilingual = Path(folder) / "bilingual.srt"
+                    size = font_size(100, width)
+                    bilingual.write_text(subtitles.subtitle_text(
+                        captions, web=False, translation_size=(size, round(size * 0.75))),
+                        encoding="utf-8")
+                    arguments += ["-i", str(bilingual)]
+                    tracks += ["-map", f"{len(clips) + 1}:s:0", "-disposition:s:1", "0",
+                               "-metadata:s:s:0", "handler_name=Original subtitles",
+                               "-metadata:s:s:1", f"handler_name=Original + {translation_language}"]
             process = run_media_process(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
                  "-filter_complex", graph, "-map", "[burned]" if burn_subtitles else "[v]", "-map", "[a]", *tracks,

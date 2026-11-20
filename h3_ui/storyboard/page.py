@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from urllib.parse import urlencode
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -124,11 +125,15 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
         return runs.start(Run(owner, storyboard_id, "subtitles" if action == GENERATE_SUBTITLES else "generate"), work)
 
-    def start_join(owner, storyboard_id, include, export, *, burn_subtitles=False) -> Run:
+    def start_join(owner, storyboard_id, include, export, *, burn_subtitles=False, translation=None) -> Run:
         def work(run):
             run.status = "Exporting to Media…" if export else "Joining the takes…"
             if export:
-                path = handlers.export(owner, storyboard_id, include, burn_subtitles=burn_subtitles)
+                def report(status):
+                    run.status = status
+
+                options = {"translation": translation, "report": report} if translation is not None else {}
+                path = handlers.export(owner, storyboard_id, include, burn_subtitles=burn_subtitles, **options)
                 run.message = f"Exported {path.name} to Media and saved a version."
             else:
                 path = handlers.play_all(owner, storyboard_id, include)
@@ -185,6 +190,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             "enhance": handlers.services.enhance_prompt is not None,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_default": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS)},
+            "subtitle_languages": subtitles.TARGET_LANGUAGES,
+            "subtitle_models": subtitles.TRANSLATION_MODELS,
         }
 
     # Storyboards -----------------------------------------------------------
@@ -527,14 +534,38 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                             headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get(f"{api}/boards/{{storyboard_id}}/takes/{{take_id}}/subtitles.vtt", include_in_schema=False)
-    def take_subtitles(storyboard_id: str, take_id: str, request: Request):
+    def take_subtitles(storyboard_id: str, take_id: str, request: Request, translation: str = ""):
         try:
             board = handlers.service.load(owner_of(request), storyboard_id)
             take = board["takes"][take_id]
         except (H3Error, ValueError, KeyError) as exc:
             raise HTTPException(status_code=404, detail="Take not found") from exc
-        return Response(subtitles.subtitle_text(subtitles.take_lines(take), web=True), media_type="text/vtt",
+        lines = subtitles.take_lines(take)
+        if translation:
+            lines = subtitles.with_translation(lines, subtitles.cached_translation(take, translation, lines))
+        return Response(subtitles.subtitle_text(lines, web=True), media_type="text/vtt",
                         headers={"Cache-Control": "private, no-cache"})
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/subtitle-translations", include_in_schema=False)
+    @guarded
+    def translate_subtitles(storyboard_id: str, request: Request, body: dict = Body(...)):
+        translation = subtitles.Translation.from_request(body)
+        force = body.get("force", False)
+        if not isinstance(force, bool):
+            raise H3Error("Choose whether to regenerate the subtitle translation.")
+        take_ids = body.get("take_ids")
+        if not isinstance(take_ids, list) or not take_ids or any(not isinstance(item, str) for item in take_ids):
+            raise H3Error("Choose takes with subtitles to translate.")
+        owner = owner_of(request)
+        service = handlers.service
+        board = service.load(owner, storyboard_id)
+        if any(take_id not in board["takes"] for take_id in take_ids):
+            raise H3Error("A take is no longer available in this storyboard.")
+        takes = [board["takes"][take_id] for take_id in dict.fromkeys(take_ids)]
+        translated = service.translate_subtitles(owner, storyboard_id, takes, translation, force=force)
+        return {"tracks": {take_id: f"{api}/boards/{storyboard_id}/takes/{take_id}/subtitles.vtt?"
+                            + urlencode({"translation": translation.language, "v": subtitles.translation_revision(texts)})
+                           for take_id, texts in translated.items()}}
 
     @app.get(f"{api}/boards/{{storyboard_id}}/thumb", include_in_schema=False)
     def storyboard_thumb(storyboard_id: str, path: str, request: Request):
@@ -598,7 +629,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         burn_subtitles = body.get("burn_subtitles", False)
         if not isinstance(burn_subtitles, bool):
             raise H3Error("Choose whether to burn subtitles into the export.")
-        start_join(owner, storyboard_id, include, export, burn_subtitles=burn_subtitles)
+        translation = subtitles.Translation.from_request(body.get("translation")) if export else None
+        start_join(owner, storyboard_id, include, export, burn_subtitles=burn_subtitles, translation=translation)
         return {"run": run_payload(owner, storyboard_id)}
 
     # Auto render -----------------------------------------------------------

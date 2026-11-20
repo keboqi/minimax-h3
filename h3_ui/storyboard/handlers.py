@@ -204,14 +204,28 @@ class StoryboardHandlers(StoryboardApiHandlers):
         return self.service.render(board, path, include_outdated=bool(include_outdated),
                                    subtitle_preview=path.with_suffix(".vtt"))
 
-    def export(self, owner, storyboard_id, include_outdated, *, burn_subtitles=False) -> Path:
+    def export(self, owner, storyboard_id, include_outdated, *, burn_subtitles=False,
+               translation: subtitles.Translation | None = None, report=None) -> Path:
         service = self.service
         with service.export_source(owner, storyboard_id) as board:
+            translation_args = {}
+            if translation is not None:
+                service.clips(board, include_outdated=bool(include_outdated))
+                if report:
+                    report("Translating subtitles…")
+                takes = [board["takes"][scene["in_use"]] for scene in board["scenes"]]
+                translated = service.translate_subtitles(owner, storyboard_id, takes, translation)
+                if translated:
+                    translation_args = {"translations": translated, "translation_language": translation.language}
+                if report:
+                    report("Exporting to Media…")
             path = service.render(board, service.export_path(board, burn_subtitles=burn_subtitles),
-                                  include_outdated=bool(include_outdated), burn_subtitles=burn_subtitles)
+                                  include_outdated=bool(include_outdated), burn_subtitles=burn_subtitles,
+                                  **translation_args)
             self.services.publish(path, {
                 "storyboard": {"id": storyboard_id, "name": board["name"], "scenes": len(board["scenes"])},
-                "settings": {**board["profile"], "burned_subtitles": burn_subtitles},
+                "settings": {**board["profile"], "burned_subtitles": burn_subtitles,
+                             **({"subtitle_language": translation.language} if translation_args else {})},
             })
             service.save_version(owner, storyboard_id, f"Exported {path.name}", source=board)
         return path

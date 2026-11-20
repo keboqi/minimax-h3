@@ -17,6 +17,8 @@ TABLE_TYPES = ["number", "str", "str", "str", "str", "str", "bool"]
 DEFAULT_SPEAKER = "speaker1"
 # "Dub into" this to keep the spoken language and fix or rewrite lines instead of translating them.
 SAME_LANGUAGE = "Same as spoken"
+TARGET_LANGUAGES = ("English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese",
+                    "Italian", "Russian", "Arabic", "Indonesian", "Vietnamese", "Thai", "Cantonese")
 MIN_SEGMENT_SECONDS = 0.05
 
 

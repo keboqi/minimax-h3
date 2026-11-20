@@ -438,6 +438,64 @@ class StoryboardPageTests(unittest.TestCase):
             takes = self.client.get(url).json()["scenes"][0]["takes"]
             self.assertIn("<c>Spoken", self.client.get(takes[1]["subtitles"]).text)
 
+    def test_subtitle_translation_is_reused_for_export_and_refreshed_when_the_source_changes(self):
+        board = self.create("A traveler says <d>Original line.</d>")
+        url = f"{API}/boards/{board['id']}"
+        scene_id = board["scenes"][0]["id"]
+        self.assertEqual(self.client.post(f"{url}/generate", json={"action": "scene", "scene_id": scene_id}).status_code, 200)
+        self.assertIsNone(self.wait_for_run(board)["error"])
+        take = self.client.get(url).json()["scenes"][0]["takes"][0]
+        options = {"language": "French", "gemini_api_key": "test-key"}
+
+        def translate(**overrides):
+            response = self.client.post(f"{url}/subtitle-translations",
+                                        json={**options, "take_ids": [take["id"]], **overrides})
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()["tracks"][take["id"]]
+
+        def reply(text):
+            return {"candidates": [{"content": {"parts": [{"text": json.dumps([text])}]}}]}
+
+        with patch("h3_app.storyboard.subtitles.gemini.Session") as session:
+            generate = session.return_value.__enter__.return_value.generate
+            generate.side_effect = [reply("Texte traduit."), reply("Texto traducido."), reply("Autre modèle."),
+                                    reply("Flash Lite."), reply("Nouveau texte.")]
+            french = translate()
+            self.assertIn("Original line.\n<c.translation>Texte traduit.</c>", self.client.get(french).text)
+            self.assertNotIn("Texte traduit.", self.client.get(take["subtitles"]).text)
+            self.assertEqual(translate(), french)
+            spanish = translate(language="Spanish")
+            self.assertIn("Texto traducido.", self.client.get(spanish).text)
+            self.assertEqual(translate(), french)
+            self.assertEqual(generate.call_count, 2)
+            self.assertEqual(generate.call_args.args[0], "gemma-4-26b-a4b-it")
+            self.assertEqual(translate(model="gemma-4-31b-it"), french)
+            self.assertEqual(generate.call_count, 2)
+            other = translate(model="gemma-4-31b-it", force=True)
+            self.assertNotEqual(other, french)
+            self.assertIn("Autre modèle.", self.client.get(other).text)
+            self.assertEqual(generate.call_args.args[0], "gemma-4-31b-it")
+            flash = translate(model="gemini-3.5-flash-lite", force=True)
+            self.assertIn("Flash Lite.", self.client.get(flash).text)
+            self.assertEqual(generate.call_args.args[0], "gemini-3.5-flash-lite")
+            self.assertEqual(translate(), flash)
+            self.assertEqual(generate.call_count, 4)
+
+            with patch.object(self.service, "render", return_value=self.root / "export.mp4") as render:
+                self.assertEqual(self.client.post(f"{url}/join", json={"export": True, "translation": options}).status_code, 200)
+                self.assertIsNone(self.wait_for_run(board)["error"])
+                self.assertEqual(render.call_args.kwargs["translations"], {take["id"]: ["Flash Lite."]})
+                self.assertEqual(render.call_args.kwargs["translation_language"], "French")
+            self.assertEqual(generate.call_count, 4)
+
+            owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
+            self.service.save_subtitles(owner, board["id"], take["id"],
+                                        [{"text": "Edited.", "start": 0, "end": 1}])
+            self.assertNotIn("Flash Lite.", self.client.get(flash).text)
+            self.assertIn("Edited.\n<c.translation>Nouveau texte.</c>", self.client.get(translate()).text)
+            self.assertEqual(generate.call_count, 5)
+            self.assertNotIn("test-key", json.dumps(self.service.load(owner, board["id"])))
+
     def wait_for_auto(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:

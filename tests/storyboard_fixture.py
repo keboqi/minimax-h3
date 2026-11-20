@@ -5,6 +5,7 @@ import struct
 import subprocess
 import sys
 import threading
+from unittest.mock import patch
 import wave
 
 import gradio as gr
@@ -18,6 +19,7 @@ from h3_app.config import RuntimeConfig
 from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.server import ServerConfig, build_server
+from h3_app.storyboard.subtitles import Translation
 from h3_app.workspace_store import COOKIE, WorkspaceStore
 from h3_ui.storyboard.handlers import StoryboardHandlers, StoryboardServices
 from h3_ui.storyboard.tab import build_storyboard_tab
@@ -137,4 +139,5 @@ def ready():
 
 
 server.router.routes.sort(key=lambda route: isinstance(route, Mount))
-uvicorn.run(server, host="127.0.0.1", port=int(sys.argv[1]), log_level="warning")
+with patch.object(Translation, "translate", lambda self, texts: [f"{self.language} {text}" for text in texts]):
+    uvicorn.run(server, host="127.0.0.1", port=int(sys.argv[1]), log_level="warning")

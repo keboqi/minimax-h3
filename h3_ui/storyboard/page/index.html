@@ -19,9 +19,12 @@
     <main class="stage">
       <div class="stage-head" id="stage-head"></div>
       <div class="preview" id="preview"></div>
-      <label class="check-label" id="preview-subtitles" hidden>
-        <input type="checkbox" id="show-subtitles" checked> Show subtitles
-      </label>
+      <div class="caption-actions" id="preview-subtitles" hidden>
+        <label class="check-label"><input type="checkbox" id="show-subtitles" checked> Show subtitles</label>
+        <label class="check-label"><input type="checkbox" id="show-scene-translation"> Show translation</label>
+        <button type="button" class="btn sm" id="regenerate-scene-translation" hidden>Regenerate translation</button>
+        <span class="small muted" id="scene-translation-status" aria-live="polite"></span>
+      </div>
       <div id="stage-notes"></div>
       <div class="takes-panel" id="takes-panel">
         <div class="take-row" id="take-row"></div>

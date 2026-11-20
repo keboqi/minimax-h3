@@ -169,7 +169,7 @@ def ass_subtitles(lines: list[Line], *, width: int = 1280, height: int = 720, si
     raised = 0
     events = []
     if below:
-        under = font_size(size, width, below_row.share)
+        under = min(font_size(size, width, below_row.share), round(points * 0.85))
         style("Below", under, below_row.colour, 0)
         events += _events(below, "Below", linger)
         # One row of the smaller text and its box, then a small gap: a wrapped row underneath

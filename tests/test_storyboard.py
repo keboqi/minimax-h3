@@ -3,6 +3,7 @@
 from contextlib import closing
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import struct
@@ -355,23 +356,36 @@ class StoryboardServiceTests(unittest.TestCase):
             {"text": "words", "start": 1.8, "end": 1.95},
         ]}]
         track = self.root / "joined.vtt"
-        target = self.service.render(document, self.root / "joined.mp4", subtitle_preview=track)
+        translations = {document["scenes"][1]["in_use"]: ["Deux mots"]}
+        target = self.service.render(document, self.root / "joined.mp4", subtitle_preview=track,
+                                     translations=translations, translation_language="French")
         vtt = track.read_text(encoding="utf-8")
         self.assertIn("00:00:02.000 --> 00:00:02.325", vtt)
         self.assertIn("<00:00:02.175><c>words</c>", vtt)
+        self.assertIn("<c>words</c>\n<c.translation>Deux mots</c>", vtt)
         self.assertNotIn("old", vtt)
         embedded = subprocess.run(
             ["ffmpeg", "-loglevel", "error", "-i", str(target), "-map", "0:s:0", "-f", "srt", "-"],
             capture_output=True, text=True, check=True,
         ).stdout
         self.assertIn("two words", embedded)
+        self.assertNotIn("Deux mots", embedded)
+        bilingual = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-i", str(target), "-map", "0:s:1", "-f", "srt", "-"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        original_size, translated_size = re.search(
+            r'<font size="(\d+)">two words[^\n]*\n(?:</font>)?<font size="(\d+)">Deux mots', bilingual,
+        ).groups()
+        self.assertGreater(int(original_size), int(translated_size))
         frames = subprocess.run(
             ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
              "stream=nb_read_frames", "-of", "csv=p=0", str(target)],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         self.assertEqual(int(frames), 3 * 48 - 39)
-        burned = self.service.render(document, self.root / "burned.mp4", burn_subtitles=True)
+        burned = self.service.render(document, self.root / "burned.mp4", burn_subtitles=True,
+                                     translations=translations, translation_language="French")
 
         def teal_pixels(at):
             pixels = subprocess.run(
