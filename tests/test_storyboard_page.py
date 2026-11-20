@@ -385,6 +385,21 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(joined, [False])
         self.assertEqual(self.client.get(run["result_url"]).content, b"mp4")
 
+    def test_export_burns_subtitles_when_requested(self):
+        board = self.create()
+        url = f"{API}/boards/{board['id']}/join"
+        self.assertEqual(self.client.post(url, json={"export": True, "burn_subtitles": "false"}).status_code, 400)
+        published = []
+        self.handlers.services = replace(self.handlers.services,
+                                         publish=lambda path, metadata: published.append((path, metadata)))
+        with patch.object(self.service, "render", side_effect=self.fake_render) as render:
+            self.assertEqual(self.client.post(url, json={"export": True, "burn_subtitles": True}).status_code, 200)
+            self.assertIsNone(self.wait_for_run(board)["error"])
+        self.assertIs(render.call_args.kwargs["burn_subtitles"], True)
+        path, metadata = published[0]
+        self.assertTrue(path.name.endswith("_subtitled.mp4"))
+        self.assertIs(metadata["settings"]["burned_subtitles"], True)
+
     def test_subtitle_setting_and_project_action(self):
         board = self.create("A traveler says <d>[English] Scripted line.</d>")
         url = f"{API}/boards/{board['id']}"
@@ -432,7 +447,7 @@ class StoryboardPageTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("Auto render never finished.")
 
-    def fake_render(self, document, destination, *, include_outdated=True):
+    def fake_render(self, document, destination, *, include_outdated=True, burn_subtitles=False):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"mp4")
         return destination

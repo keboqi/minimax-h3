@@ -204,13 +204,14 @@ class StoryboardHandlers(StoryboardApiHandlers):
         return self.service.render(board, path, include_outdated=bool(include_outdated),
                                    subtitle_preview=path.with_suffix(".vtt"))
 
-    def export(self, owner, storyboard_id, include_outdated) -> Path:
+    def export(self, owner, storyboard_id, include_outdated, *, burn_subtitles=False) -> Path:
         service = self.service
         with service.export_source(owner, storyboard_id) as board:
-            path = service.render(board, service.export_path(board), include_outdated=bool(include_outdated))
+            path = service.render(board, service.export_path(board, burn_subtitles=burn_subtitles),
+                                  include_outdated=bool(include_outdated), burn_subtitles=burn_subtitles)
             self.services.publish(path, {
                 "storyboard": {"id": storyboard_id, "name": board["name"], "scenes": len(board["scenes"])},
-                "settings": board["profile"],
+                "settings": {**board["profile"], "burned_subtitles": burn_subtitles},
             })
             service.save_version(owner, storyboard_id, f"Exported {path.name}", source=board)
         return path

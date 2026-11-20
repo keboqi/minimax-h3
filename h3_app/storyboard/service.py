@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from threading import RLock
 from typing import Any, Callable
 
+from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.media_review import review_path
@@ -698,8 +699,8 @@ class StoryboardService:
         return clips
 
     def render(self, board, destination: Path, *, include_outdated=True, timeout=3600,
-               subtitle_preview: Path | None = None) -> Path:
-        """Join the takes: flows drop their repeated overlap, cuts join hard."""
+               subtitle_preview: Path | None = None, burn_subtitles: bool = False) -> Path:
+        """Join the takes, trimming repeated overlap and optionally burning captions into the picture."""
         clips = self.clips(board, include_outdated=include_outdated)
         # A video from Media is fitted to the canvas, which a generated take's size may differ from.
         width, height = model.canvas(board["profile"])
@@ -717,7 +718,8 @@ class StoryboardService:
             return f"{label}trim=start_frame={start}{until},setpts=PTS-STARTPTS{fit},format=yuv420p[{output}]"
 
         for index, item in enumerate(clips):
-            arguments += ["-i", item["video"]]
+            video = Path(item["video"]).resolve() if burn_subtitles else item["video"]
+            arguments += ["-i", str(video)]
             start = int(item["trim_frames"])
             following = clips[index + 1] if index + 1 < len(clips) else None
             hand_off = int(following["trim_frames"]) if following and following.get("blend") else 0
@@ -749,12 +751,23 @@ class StoryboardService:
         count = videos.count("[")
         graph = (";".join(chains) + f";{videos}concat=n={count}:v=1:a=0[v]"
                  f";{sounds}concat=n={len(clips)}:v=0:a=1[a]")
+        srt_text = subtitles.subtitle_text(captions, web=False)
+        if burn_subtitles and not srt_text:
+            raise H3Error("The takes in use have no subtitles to burn in.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_name(f"{destination.stem}.{model.new_id()[:8]}.partial{destination.suffix}")
-        srt_text = subtitles.subtitle_text(captions, web=False)
         with ExitStack() as temporary:
             tracks = []
-            if srt_text:
+            cwd = None
+            if burn_subtitles:
+                # A relative filter path works on Windows as well as Unix.
+                cwd = temporary.enter_context(TemporaryDirectory(prefix="h3-storyboard-captions-"))
+                lines = [Line(None, line["text"], line["start"], line["end"],
+                              word_pieces(line["text"], line.get("words"))) for line in captions]
+                script = ass_subtitles(lines, width=width, height=height, linger=0)
+                (Path(cwd) / "subtitles.ass").write_text(script, encoding="utf-8")
+                graph += ";[v]ass=subtitles.ass[burned]"
+            elif srt_text:
                 folder = temporary.enter_context(TemporaryDirectory(prefix="h3-storyboard-captions-"))
                 srt = Path(folder) / "storyboard.srt"
                 srt.write_text(srt_text, encoding="utf-8")
@@ -762,10 +775,10 @@ class StoryboardService:
                 tracks = ["-map", f"{len(clips)}:s:0", "-c:s", "mov_text", "-disposition:s:0", "0"]
             process = run_media_process(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
-                 "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tracks,
+                 "-filter_complex", graph, "-map", "[burned]" if burn_subtitles else "[v]", "-map", "[a]", *tracks,
                  "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial)],
-                timeout=timeout, partial_outputs=(partial,),
+                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial.resolve())],
+                timeout=timeout, partial_outputs=(partial,), cwd=cwd,
             )
         if process.returncode != 0 or not partial.is_file() or partial.stat().st_size == 0:
             partial.unlink(missing_ok=True)
@@ -785,6 +798,7 @@ class StoryboardService:
     def preview_path(self, storyboard_id) -> Path:
         return self.output_path(f"{TAKE_FOLDER}/{storyboard_id}/preview.mp4")
 
-    def export_path(self, board) -> Path:
+    def export_path(self, board, *, burn_subtitles=False) -> Path:
         stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in board["name"])[:60] or "storyboard"
-        return self.output_path(f"h3/storyboard_{stem}_{time.strftime('%Y%m%d_%H%M%S')}.mp4")
+        suffix = "_subtitled" if burn_subtitles else ""
+        return self.output_path(f"h3/storyboard_{stem}_{time.strftime('%Y%m%d_%H%M%S')}{suffix}.mp4")

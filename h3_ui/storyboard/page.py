@@ -132,11 +132,11 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
 
         return runs.start(Run(owner, storyboard_id, "subtitles" if action == GENERATE_SUBTITLES else "generate"), work)
 
-    def start_join(owner, storyboard_id, include, export) -> Run:
+    def start_join(owner, storyboard_id, include, export, *, burn_subtitles=False) -> Run:
         def work(run):
             run.status = "Exporting to Media…" if export else "Joining the takes…"
             if export:
-                path = handlers.export(owner, storyboard_id, include)
+                path = handlers.export(owner, storyboard_id, include, burn_subtitles=burn_subtitles)
                 run.message = f"Exported {path.name} to Media and saved a version."
             else:
                 path = handlers.play_all(owner, storyboard_id, include)
@@ -628,7 +628,10 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         owner = owner_of(request)
         include = bool(body.get("include_outdated", True))
         export = bool(body.get("export"))
-        start_join(owner, storyboard_id, include, export)
+        burn_subtitles = body.get("burn_subtitles", False)
+        if not isinstance(burn_subtitles, bool):
+            raise H3Error("Choose whether to burn subtitles into the export.")
+        start_join(owner, storyboard_id, include, export, burn_subtitles=burn_subtitles)
         return {"run": run_payload(owner, storyboard_id)}
 
     # Auto render -----------------------------------------------------------

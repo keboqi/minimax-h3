@@ -146,6 +146,7 @@ def check(context, url):
     page.get_by_role("button", name=re.compile(r"Scene 1, ")).click()
     page.get_by_role("button", name="Generate this scene").wait_for()
     page.get_by_role("button", name="Text", exact=True).click()
+    prompt.fill("A traveler says <d>[English] Hello there.</d>")
     expect(page.locator("#checklist")).to_contain_text("Ready to generate")
 
     # A run goes on while the page is reloaded and fills in the filmstrip.
@@ -161,8 +162,28 @@ def check(context, url):
     expect(page.locator('#strip [aria-label^="Scene 1,"] .meta')).to_contain_text("Done", timeout=15000)
     expect(subtitles).to_be_enabled()
 
+    # The scene toggle controls the actual text track and remembers the choice across scene switches.
+    scene_one = page.get_by_role("button", name=re.compile(r"Scene 1, "))
+    scene_two = page.get_by_role("button", name=re.compile(r"Scene 2, "))
+    show_subtitles = page.get_by_role("checkbox", name="Show subtitles")
+    burn_subtitles = page.get_by_role("checkbox", name="Burn in subtitles")
+    scene_one.click()
+    expect(show_subtitles).to_be_checked()
+    expect(burn_subtitles).to_be_enabled()
+    expect(burn_subtitles).not_to_be_checked()
+    page.wait_for_function("""() => document.querySelector('#preview video')
+      .textTracks[0]?.cues?.[0]?.text === 'Hello there.'""")
+    show_subtitles.uncheck()
+    assert page.locator("#preview video").evaluate("(video) => video.textTracks[0].mode") == "disabled"
+    scene_two.click()
+    expect(show_subtitles).to_be_hidden()
+    scene_one.click()
+    expect(show_subtitles).not_to_be_checked()
+    show_subtitles.check()
+    assert page.locator("#preview video").evaluate("(video) => video.textTracks[0].mode") == "showing"
+
     # A second take asks before it changes the scene that continues from the first.
-    page.get_by_role("button", name=re.compile(r"Scene 2, ")).click()
+    scene_two.click()
     page.get_by_role("button", name="Text", exact=True).click()
     expect(page.locator("#checklist")).to_contain_text("Ready to generate")
     page.get_by_role("button", name="Generate this scene").click()

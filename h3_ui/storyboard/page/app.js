@@ -40,7 +40,7 @@
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
-    includeOutdated: true, fullVideo: null, saveLabel: "All changes saved",
+    includeOutdated: true, showSubtitles: true, burnSubtitles: false, fullVideo: null, saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
   };
@@ -274,25 +274,28 @@
 
   const subtitleTrack = (src) => src && h("track", {src, kind: "subtitles", srclang: "und", label: "Subtitles"});
 
+  const updatePreviewSubtitles = (video, src) => {
+    $("preview-subtitles").hidden = !src;
+    if (!video) return;
+    const track = video.querySelector("track");
+    if (src === (track?.getAttribute("src") ?? null)) return;
+    track?.remove();
+    if (src) {
+      const replacement = subtitleTrack(src);
+      video.append(replacement);
+      replacement.track.mode = state.showSubtitles ? "showing" : "disabled";
+    }
+  };
+
   // Rebuilt only when the take changes, so playback survives saves and polls.
   const renderPreview = () => {
     const item = scene();
     const take = shownTake();
     const key = take ? take.id : `empty:${item.id}`;
     const node = $("preview");
+    const src = take?.missing ? null : take?.subtitles || null;
     if (key === state.previewKey) {
-      const video = node.querySelector("video");
-      const track = video?.querySelector("track");
-      const src = take?.subtitles || null;
-      if (video && src !== (track?.getAttribute("src") ?? null)) {
-        const showing = track?.track.mode === "showing";
-        track?.remove();
-        if (src) {
-          const replacement = subtitleTrack(src);
-          video.append(replacement);
-          if (showing) replacement.track.mode = "showing";
-        }
-      }
+      updatePreviewSubtitles(node.querySelector("video"), src);
       return;
     }
     state.previewKey = key;
@@ -302,9 +305,23 @@
       video.load();
     });
     if (take && !take.missing) {
-      node.replaceChildren(h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
-        "aria-label": `Take ${take.number} of scene ${item.number}`}, subtitleTrack(take.subtitles)));
+      const video = h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
+        "aria-label": `Take ${take.number} of scene ${item.number}`});
+      const checkbox = $("show-subtitles");
+      checkbox.onchange = () => {
+        state.showSubtitles = checkbox.checked;
+        const track = video.querySelector("track");
+        if (track) track.track.mode = state.showSubtitles ? "showing" : "disabled";
+      };
+      video.textTracks.addEventListener("change", () => {
+        if (!node.contains(video)) return;
+        const track = video.querySelector("track");
+        if (track) checkbox.checked = state.showSubtitles = track.track.mode === "showing";
+      });
+      node.replaceChildren(video);
+      updatePreviewSubtitles(video, src);
     } else {
+      updatePreviewSubtitles(null, null);
       node.replaceChildren(h("div", {className: "empty"},
         h("strong", {}, take ? "This take is missing from disk" : item.kind === "media" ? "Not prepared yet" : "No take yet"),
         h("span", {className: "muted"}, item.kind === "media"
@@ -540,11 +557,15 @@
     $("strip").replaceChildren(...items);
   };
 
+  const hasExportSubtitles = () => scenes().some((item) =>
+    item.takes.some((take) => take.id === item.in_use && !take.missing && take.subtitles));
+
   const renderStripActions = () => {
     const run = state.run;
     const busy = run?.active;
     const generating = activeGenerate();
     const pending = state.board.pending;
+    const hasSubtitles = hasExportSubtitles();
     const actions = [];
     if (state.boot.gpu) {
       actions.push(generating
@@ -561,6 +582,11 @@
     }
     actions.push(
       button("Play full video", () => startJoin(false), "btn", {disabled: busy}),
+      h("label", {className: "check-label", title: hasSubtitles ? null : "No subtitles are available in the takes in use"},
+        h("input", {type: "checkbox", checked: hasSubtitles && state.burnSubtitles,
+          disabled: busy || !hasSubtitles,
+          onchange: (event) => { state.burnSubtitles = event.target.checked; }}),
+        "Burn in subtitles"),
       button("Export to Media", () => startJoin(true), "btn", {disabled: busy}),
       h("label", {className: "check-label"},
         h("input", {type: "checkbox", checked: state.includeOutdated,
@@ -1317,7 +1343,11 @@
   const startJoin = async (exporting) => {
     await flush();
     await saves;
-    const data = await act(() => request("POST", boardUrl("/join"), {include_outdated: state.includeOutdated, export: exporting}));
+    const data = await act(() => request("POST", boardUrl("/join"), {
+      include_outdated: state.includeOutdated,
+      export: exporting,
+      burn_subtitles: exporting && state.burnSubtitles && hasExportSubtitles(),
+    }));
     if (data) followRun(data.run, {started: true});
     renderStripActions();
   };

@@ -341,9 +341,10 @@ class StoryboardServiceTests(unittest.TestCase):
         document = board("flow", "cut")
         clips = self.root / "clips"
         clips.mkdir()
+        width, height = sb.model.canvas(document["profile"])
         for index, scene in enumerate(document["scenes"]):
             path = clips / f"{index}.mp4"
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=24",
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=black:size={width}x{height}:rate=24",
                             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2",
                             "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
             document["takes"][scene["in_use"]]["video"] = str(path)
@@ -370,6 +371,20 @@ class StoryboardServiceTests(unittest.TestCase):
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         self.assertEqual(int(frames), 3 * 48 - 39)
+        burned = self.service.render(document, self.root / "burned.mp4", burn_subtitles=True)
+
+        def teal_pixels(at):
+            pixels = subprocess.run(
+                ["ffmpeg", "-v", "error", "-ss", str(at), "-i", str(burned), "-frames:v", "1",
+                 "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                capture_output=True, check=True,
+            ).stdout
+            return sum(g > r + 25 and b > r + 25 for r, g, b in zip(pixels[::3], pixels[1::3], pixels[2::3]))
+
+        self.assertEqual(teal_pixels(1.9), 0)
+        self.assertGreater(teal_pixels(2.08), 0)
+        self.assertGreater(teal_pixels(2.25), teal_pixels(2.08))
+        self.assertEqual(teal_pixels(2.4), 0)
         self.assertFalse(any(item["blend"] for item in self.service.clips(document)))
         document["scenes"][1]["prompt"] = "changed"
         with self.assertRaisesRegex(H3Error, "outdated"):
