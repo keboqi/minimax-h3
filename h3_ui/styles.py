@@ -186,10 +186,10 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .gradio-container:has(.h3-workspace) .main.app { padding: 8px clamp(0px, 1vw, 16px); }
 :is(.dark body, body.dark):has(.h3-workspace), .dark .gradio-container:has(.h3-workspace) { background: #111b18; }
 /* Top bar: the header row and the main tab row share the workspace grid's first row.
-   Brand, Create tasks, the other main tabs, status, then the engine switcher when shown;
-   the Create tab itself is hidden because the tasks open it. */
+   Brand, Create tasks, the other main tabs, then status; the Create tab itself is
+   hidden because the tasks open it, and the engine bridge stays out of sight because
+   each multi-engine page renders its own engine switcher on the mode line. */
 div.h3-workspace.column { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; column-gap: 12px; row-gap: var(--layout-gap); align-content: start; }
-div.h3-workspace.column:where(:has(.h3-workspace-header > .h3-engine-bar fieldset):not(:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]))) { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
 .h3-workspace > *, .h3-workspace #h3-main-tabs > * { grid-column: 1 / -1; min-width: 0; }
 .h3-workspace::before { content: ""; grid-row: 1; grid-column: 1 / -1; margin: -12px -16px 4px; background: var(--h3-surface); border-bottom: 1px solid var(--h3-border); }
 .h3-workspace .h3-workspace-header, .h3-workspace #h3-main-tabs { display: contents !important; }
@@ -199,10 +199,7 @@ div.h3-workspace.column:where(:has(.h3-workspace-header > .h3-engine-bar fieldse
 .h3-workspace #h3-main-tabs > .tab-wrapper { grid-column: 3; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
 .h3-workspace #h3-main-tabs > .tab-wrapper::-webkit-scrollbar { display: none; }
 .h3-workspace .h3-workspace-header > .h3-header-status { grid-column: 4; flex-direction: column; align-items: flex-end; justify-content: center; gap: 2px; font-size: 12px; }
-.h3-workspace .h3-workspace-header > .h3-engine-bar { grid-column: 5; flex-direction: row; align-items: center; justify-content: flex-end; gap: 0; }
-.h3-workspace .h3-workspace-header > .h3-engine-bar::before { content: ""; flex: 0 0 auto; width: 1px; height: 24px; margin-right: 9px; background: var(--h3-border); }
-.h3-workspace .h3-workspace-header > .h3-engine-bar:not(:has(fieldset)),
-.h3-workspace:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]) .h3-workspace-header > .h3-engine-bar { display: none !important; }
+.h3-workspace .h3-workspace-header > .h3-engine-bar { display: none !important; }
 .h3-workspace .h3-hero { display: flex; align-items: center; gap: 10px; padding: 0; }
 .h3-workspace .h3-brand-mark { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: #087f6c; color: white; font-size: 13px; font-weight: 750; letter-spacing: -.04em; }
 .h3-workspace .h3-hero h1 { font-size: 16px; line-height: 1.2; letter-spacing: -.02em; margin: 0; white-space: nowrap; }
@@ -743,9 +740,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"])) #h3-main-tabs > .tab-wrapper { grid-column: 2; overflow-x: auto; }
   .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"])) .h3-workspace-header > .h3-header-status { grid-column: 3; }
   .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"])) .h3-workspace-header > .h3-task-picker { grid-row: 2; grid-column: 1 / -1; margin: 0 0 4px; min-height: 48px; overflow-x: auto; }
-  .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"]):has(.h3-workspace-header > .h3-engine-bar fieldset):not(:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]))) .h3-workspace-header > .h3-task-picker { grid-column: 1 / 3; }
-  .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"])) .h3-workspace-header > .h3-engine-bar { grid-row: 2; grid-column: 3; margin: 0 0 4px; min-height: 48px; }
-  .h3-workspace:where(:has(#h3-main-tabs [data-tab-id="models"])) .h3-workspace-header > .h3-engine-bar::before { display: none; }
 }
 @media (max-width: 1380px) {
   div.h3-workspace.column { grid-template-columns: auto minmax(0, 1fr) auto; }
@@ -753,14 +747,10 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace #h3-main-tabs > .tab-wrapper { grid-column: 2; overflow-x: auto; }
   .h3-workspace .h3-workspace-header > .h3-header-status { grid-column: 3; }
   .h3-workspace .h3-workspace-header > .h3-task-picker { grid-row: 2; grid-column: 1 / -1; margin: 0 0 4px; min-height: 48px; overflow-x: auto; }
-  .h3-workspace:where(:has(.h3-workspace-header > .h3-engine-bar fieldset):not(:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]))) .h3-workspace-header > .h3-task-picker { grid-column: 1 / 3; }
-  .h3-workspace .h3-workspace-header > .h3-engine-bar { grid-row: 2; grid-column: 3; margin: 0 0 4px; min-height: 48px; }
-  .h3-workspace .h3-workspace-header > .h3-engine-bar::before { display: none; }
 }
 @media (max-width: 767px) {
   div.h3-workspace.column { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .h3-workspace::before { grid-row: 1 / span 3; margin: -12px -6px 4px; }
-  .h3-workspace:where(:has(.h3-workspace-header > .h3-engine-bar fieldset):not(:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"])))::before { grid-row: 1 / span 4; }
   .h3-workspace .h3-workspace-header > *, .h3-workspace #h3-main-tabs > .tab-wrapper { margin: 0; min-height: 44px; }
   .h3-workspace .h3-workspace-header > .block:has(.h3-hero) { grid-row: 1; grid-column: 1; margin-top: -12px; min-height: 56px; }
   .h3-workspace .h3-workspace-header > .h3-header-status { grid-row: 1; grid-column: 2; margin-top: -12px; min-height: 56px; max-width: 180px; font-size: 11px; }
@@ -768,8 +758,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace #h3-main-tabs > .tab-wrapper { grid-row: 2; grid-column: 1 / -1; }
   .h3-workspace #h3-main-tabs > .tab-wrapper::before { display: none; }
   .h3-workspace .h3-workspace-header > .h3-task-picker { grid-row: 3; grid-column: 1 / -1; margin: 0; min-height: 44px; }
-  .h3-workspace .h3-workspace-header > .h3-engine-bar { grid-row: 4; grid-column: 1 / -1; justify-content: flex-end; margin: 0 0 4px; min-height: 44px; overflow-x: auto; }
-  .h3-workspace .h3-workspace-header > .h3-engine-bar::before { display: none; }
 }
 .h3-workspace .h3-mobile-nav { display: none; }
 .h3-workspace .h3-mobile-nav a { border-radius: 8px; text-decoration: none; }

@@ -2,7 +2,7 @@
 // The LTX 2.5 page. The server owns the draft, the options and their policy; this draws what it answers.
 (() => {
   const API = "/ltx/api";
-  const {$, h, createClient, createToast, seg, rangeOf, presetText: sharedPresetText} = globalThis.H3PageCommon;
+  const {$, h, createClient, createToast, seg, rangeOf, presetText: sharedPresetText, openStudio} = globalThis.H3PageCommon;
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
 
@@ -428,10 +428,22 @@
     $("summary-chips").replaceChildren(...chips.filter(Boolean).map((text, index) => h("span", {class: index ? "chip" : "chip good", text})));
   };
 
+  const VIDEO_ENGINES = [["MiniMax H3", "h3"], ["LTX 2.5", "ltx"]];
+  const switchEngine = guard(async (value) => {
+    if (value === "ltx") return;
+    await saveDraft();
+    const item = (app.boot?.engines || []).find((candidate) => candidate.id === value);
+    const label = item?.label || (value === "h3" ? "MiniMax H3" : value);
+    const route = value === "h3" ? "/h3/" : `/${value}/`;
+    openStudio("Video", label, () => window.location.assign(route));
+  });
   const render = () => {
     if (!app.s) return;
     seg($("mode"), app.boot.modes, app.s.mode, (value) => change("mode", {mode: value}));
-    $("mode-help").textContent = app.s.mode_help;
+    const engines = (app.boot.engines || []).length
+      ? app.boot.engines.map((item) => [item.label, item.id])
+      : VIDEO_ENGINES;
+    seg($("models"), engines, "ltx", switchEngine);
     $("keyframes").hidden = app.s.mode !== "Image to video";
     $("references").hidden = app.s.mode !== "Reference images";
     // Typing in a Fine-tune box must not lose the box to a redraw from another answer.

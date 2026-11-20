@@ -112,14 +112,19 @@
   const openStudio = (task, label, onFallback) => {
     try {
       const page = window.parent.document;
-      const pick = (selector, text) => [...page.querySelectorAll(selector)].find((item) => item.textContent.trim() === text)?.querySelector("input")?.click();
+      const find = (selector, text) => [...page.querySelectorAll(selector)].find((item) => item.textContent.trim() === text)?.querySelector("input");
       if (window.parent === window || !page.querySelector(".h3-task-picker")) throw new Error();
-      pick(".h3-task-picker label", task);
+      const taskInput = find(".h3-task-picker label", task);
+      const create = page.querySelector('#h3-main-tabs [role="tab"][data-tab-id="create"]');
+      const needsTask = Boolean(taskInput && (!taskInput.checked || (create && create.getAttribute("aria-selected") !== "true")));
+      if (needsTask) taskInput.click();
       const choose = (tries) => {
-        const found = [...page.querySelectorAll(".h3-engine-bar label")].find((item) => item.textContent.trim() === label);
-        if (found) found.querySelector("input")?.click(); else if (tries > 0) setTimeout(() => choose(tries - 1), 100);
+        const found = find(".h3-engine-bar label", label);
+        if (found) { if (!found.checked) found.click(); }
+        else if (tries > 0) setTimeout(() => choose(tries - 1), 100);
       };
-      setTimeout(() => choose(50), 50);
+      if (needsTask) setTimeout(() => choose(50), 50);
+      else choose(50);
     } catch {
       onFallback?.(`Open ${label} from the ${task} task.`);
     }

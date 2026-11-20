@@ -1,6 +1,7 @@
 """Check the Video Empty button against the real page API, including autosave."""
 
 from pathlib import Path
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -19,6 +20,36 @@ def run():
         fixture.upload("first_image", "first.png")
         fixture.client.post("/h3/api/prompt", json={"prompt": "Animate <Picture 1>"})
         static = Path(__file__).resolve().parents[1] / "h3_ui/h3/page"
+        ltx_static = Path(__file__).resolve().parents[1] / "h3_ui/ltx/page"
+        ltx_boot = {
+            "gpu": True,
+            "modes": ["Text to video", "Image to video", "Reference images"],
+            "engines": [{"id": "h3", "label": "MiniMax H3"}, {"id": "ltx", "label": "LTX 2.5"}],
+            "groups": [["Sampling", "Fixture"], ["Timing & exact size", "Fixture"]],
+            "workflow_group": 4,
+            "workflows": [],
+            "missing": 0,
+            "sizes": {"16:9": [["Small", 768, 448], ["Medium", 960, 544], ["Large", 1280, 704]]},
+            "state": {
+                "mode": "Text to video", "mode_help": "", "locked": False, "prompt": "", "ui": {},
+                "options": {"fps": 24, "duration": 5, "model_choice": "INT8 ConvRot", "cfg": 1.0, "seed": -1, "negative_prompt": ""},
+                "keyframes": {"first_image": None, "middle_image": None, "end_image": None},
+                "references": [], "reference_limit": 9, "fields": [], "changed": {},
+                "compose": {
+                    "duration": {"minimum": 1, "maximum": 20, "step": 1, "value": 5},
+                    "negative_prompt": {"value": "", "placeholder": ""},
+                    "image_strength": {"minimum": 0, "maximum": 1, "step": 0.05, "value": 1},
+                    "middle_time": {"minimum": 0.1, "maximum": 19.9, "step": 0.1, "value": 2.5},
+                    "middle_strength": {"minimum": 0, "maximum": 1, "step": 0.05, "value": 1},
+                    "end_strength": {"minimum": 0, "maximum": 1, "step": 0.05, "value": 1},
+                },
+                "width": 960, "height": 544, "ratio": "16:9", "tier": "Medium", "frames": 121,
+                "readiness": {"ready": False, "message": "Write a video prompt to start."},
+                "writer": "Gemini",
+                "results": {"videos": [], "settings": ""},
+            },
+            "runs": {},
+        }
         held_prompts = []
         delay_prompt = False
         writes = []
@@ -38,9 +69,16 @@ def run():
                                                   headers={"Content-Type": "application/json"})
                 request.fulfill(status=response.status_code, body=response.content,
                                 content_type=response.headers.get("content-type", "application/json"))
+            elif path in ("/ltx/api/boot", "/ltx/api/prompt"):
+                request.fulfill(status=200, body=json.dumps(ltx_boot), content_type="application/json")
             elif path in ("/h3/", "/h3/app.js", "/h3/app.css", "/h3/common.js"):
                 name = Path(path).name if not path.endswith("/") else "index.html"
                 file = (static.parents[1] / "page_static" / "common.js") if name == "common.js" else (static / name)
+                content_type = {".html": "text/html", ".js": "application/javascript", ".css": "text/css"}[file.suffix]
+                request.fulfill(body=file.read_bytes(), content_type=content_type)
+            elif path in ("/ltx/", "/ltx/app.js", "/ltx/app.css", "/ltx/common.js"):
+                name = Path(path).name if not path.endswith("/") else "index.html"
+                file = (ltx_static.parents[1] / "page_static" / "common.js") if name == "common.js" else (ltx_static / name)
                 content_type = {".html": "text/html", ".js": "application/javascript", ".css": "text/css"}[file.suffix]
                 request.fulfill(body=file.read_bytes(), content_type=content_type)
             else:
@@ -49,11 +87,28 @@ def run():
         with sync_playwright() as playwright:
             chrome = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
             browser = playwright.chromium.launch(executable_path=str(chrome) if chrome.exists() else None)
-            page = browser.new_page()
+            page = browser.new_page(viewport={"width": 1280, "height": 800})
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.route("**/*", route)
             page.goto("http://test.local/h3/")
+            toolbar = page.get_by_role("region", name="MiniMax H3 run")
+            expect(toolbar.get_by_role("button")).to_have_count(7)
+            expect(page.locator("#models").get_by_role("button", name="MiniMax H3", exact=True)).to_have_attribute("aria-pressed", "true")
+            expect(page.locator("#models").get_by_role("button", name="LTX 2.5", exact=True)).to_have_attribute("aria-pressed", "false")
+            for width in (1280, 390):
+                page.set_viewport_size({"width": width, "height": 800})
+                toolbar_width, content_width, centers = toolbar.evaluate("""bar => [
+                    bar.clientWidth, bar.scrollWidth,
+                    [...bar.querySelectorAll('#mode button, #models button, #steps, #readiness, #refresh, #run')]
+                        .map(control => {
+                            const {top, height} = control.getBoundingClientRect();
+                            return top + height / 2;
+                        })
+                ]""")
+                assert max(centers) - min(centers) <= 1, centers
+                assert (content_width > toolbar_width) == (width == 390), (width, toolbar_width, content_width)
+            page.set_viewport_size({"width": 1280, "height": 800})
             expect(page.locator("#prompt")).to_have_value("Animate <Picture 1>")
             expect(page.locator("#run")).to_be_disabled()
             expect(page.locator("#readiness")).to_contain_text("Confirm the replaced reference")
@@ -124,6 +179,27 @@ def run():
             page.locator("#refresh").click()
             page.locator("#accept").click()
             expect(page.locator("#prompt")).to_have_value("Animate this In golden light.")
+            page.locator("#models").get_by_role("button", name="LTX 2.5", exact=True).click()
+            expect(page).to_have_url("http://test.local/ltx/")
+            ltx_toolbar = page.get_by_role("region", name="LTX 2.5 run")
+            expect(ltx_toolbar.get_by_role("button")).to_have_count(7)
+            expect(page.locator("#models").get_by_role("button", name="LTX 2.5", exact=True)).to_have_attribute("aria-pressed", "true")
+            expect(page.locator("#models").get_by_role("button", name="MiniMax H3", exact=True)).to_have_attribute("aria-pressed", "false")
+            for width in (1280, 390):
+                page.set_viewport_size({"width": width, "height": 800})
+                toolbar_width, content_width, centers = ltx_toolbar.evaluate("""bar => [
+                    bar.clientWidth, bar.scrollWidth,
+                    [...bar.querySelectorAll('#mode button, #models button, #steps, #readiness, #refresh, #run')]
+                        .map(control => {
+                            const {top, height} = control.getBoundingClientRect();
+                            return top + height / 2;
+                        })
+                ]""")
+                assert max(centers) - min(centers) <= 1, centers
+                assert (content_width > toolbar_width) == (width == 390), (width, toolbar_width, content_width)
+            page.set_viewport_size({"width": 1280, "height": 800})
+            page.locator("#models").get_by_role("button", name="MiniMax H3", exact=True).click()
+            expect(page).to_have_url("http://test.local/h3/")
             assert not errors, errors
             browser.close()
         print("Video checks passed: mode readiness, autosave/confirmation ordering, frame/mode suggestion invalidation, inactive inputs, Empty and reload.")

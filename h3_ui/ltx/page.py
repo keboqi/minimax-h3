@@ -19,6 +19,7 @@ import uuid
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile
 
 from h3_app import media_review
+from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
 from h3_app.policy import ltx25_frame_length, validate_resolution
@@ -382,6 +383,10 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
             described = answer(owner, pages.load(owner))
         return {
             **described, **workflows(), "gpu": can_generate(),
+            "engines": [
+                {"id": engine.id, "label": engine.label, "description": engine.description}
+                for engine in engines_for_task("Video")
+            ],
             "modes": list(MODES), "groups": [list(group) for group in GROUPS], "workflow_group": WORKFLOW_GROUP,
             "sizes": {ratio: [[tier, *tiers[tier]] for tier in TIERS] for ratio, tiers in SIZES.items()},
             "reference_lock": REFERENCE_LOCK,

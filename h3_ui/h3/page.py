@@ -18,6 +18,7 @@ import uuid
 from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app import catalog
+from h3_app.capabilities import engines_for_task
 from h3_models import (
     H3_LATENT_UPSCALER_MODEL_CHOICES, H3_TEXT_ENCODER_CHOICES, LTX25_MODEL_CHOICES, SEEDVR2_MODEL_CHOICES,
 )
@@ -409,6 +410,10 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
             local_models = ()
         return {
             **described, "gpu": gpu, "defaults": setting_defaults(),
+            "engines": [
+                {"id": engine.id, "label": engine.label, "description": engine.description}
+                for engine in engines_for_task("Video")
+            ],
             "choices": {
                 "preset": ["Singularity", "Quality", "Balanced", "Fast"],
                 "mode": ["Text to video", "First / last frame", "Reference media"],

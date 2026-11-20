@@ -2,7 +2,7 @@
 // The MiniMax H3 page. The server owns every setting and its policy; this draws what it answers.
 (() => {
   const API = "/h3/api";
-  const {$, h, createClient, createToast, seg} = globalThis.H3PageCommon;
+  const {$, h, createClient, createToast, seg, openStudio} = globalThis.H3PageCommon;
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
 
@@ -572,16 +572,23 @@
     if ($("settings-used").dataset.html !== used) { $("settings-used").innerHTML = used; $("settings-used").dataset.html = used; }
   };
 
-  const HELP = {
-    "Text to video": "Prompt-only generation with native stereo audio.",
-    "First / last frame": "Upload a first frame, a last frame, or both.",
-    "Reference media": "Tag references in the prompt: <Picture 1–9>, <Video 1–3>, <Audio 1–3>.",
-  };
+  const VIDEO_ENGINES = [["MiniMax H3", "h3"], ["LTX 2.5", "ltx"]];
+  const switchEngine = guard(async (value) => {
+    if (value === "h3") return;
+    await savePrompt();
+    const item = (app.boot?.engines || []).find((candidate) => candidate.id === value);
+    const label = item?.label || (value === "ltx" ? "LTX 2.5" : value);
+    const route = value === "ltx" ? "/ltx/" : `/${value}/`;
+    openStudio("Video", label, () => window.location.assign(route));
+  });
   const render = () => {
     if (!app.s) return;
     const mode = v("mode");
     seg($("mode"), app.boot.choices.mode, mode, (value) => change("mode", {mode: value}));
-    $("mode-help").textContent = HELP[mode] || "";
+    const engines = (app.boot.engines || []).length
+      ? app.boot.engines.map((item) => [item.label, item.id])
+      : VIDEO_ENGINES;
+    seg($("models"), engines, "h3", switchEngine);
     $("references").hidden = mode !== "Reference media";
     $("frames").hidden = mode !== "First / last frame";
     if (mode === "Reference media") renderReferences();

@@ -129,6 +129,7 @@ class LtxPageTests(unittest.TestCase):
         self.assertFalse(state["readiness"]["ready"])
         self.assertEqual(self.boot["missing"], 1)
         self.assertEqual(self.boot["modes"], ["Text to video", "Image to video", "Reference images"])
+        self.assertEqual([engine["id"] for engine in self.boot["engines"]], ["h3", "ltx"])
         self.assertTrue(self.boot["gpu"])
 
     def test_modes_need_their_media_and_reference_locks_the_size(self):

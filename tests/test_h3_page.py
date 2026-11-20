@@ -91,6 +91,7 @@ class H3PageTests(unittest.TestCase):
         self.assertEqual({*SETTING_FIELDS, *MEDIA_FIELDS, "prompt"}, {*GENERATION_FIELDS, "preset", "batch_count"})
         self.assertEqual(self.boot["state"]["values"], defaults)
         self.assertEqual(self.boot["state"]["values"]["result_format"], "Video")
+        self.assertEqual([engine["id"] for engine in self.boot["engines"]], ["h3", "ltx"])
 
     def test_empty_clears_prompt_and_all_media_and_persists(self):
         self.change("mode", mode="Reference media")
