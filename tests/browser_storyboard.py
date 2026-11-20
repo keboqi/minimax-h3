@@ -48,6 +48,7 @@ def run():
                     context = browser.new_context(viewport={"width": 1440, "height": 1000})
                     check(context, url)
                     check_full_preview(context, url)
+                    check_workshop_auto(context, url)
                     browser.close()
                 print("PASS: scene switching, saves, generation, takes, interrupt, cast and full preview")
             except BaseException:
@@ -89,7 +90,10 @@ def check(context, url):
     picker = page.get_by_label("Storyboard", exact=True)
     picker.select_option(label="Board 0")
     expect(page.locator("#strip .frame")).to_have_count(8)
-    assert page.locator("main").bounding_box()["y"] < page.get_by_role("region", name="Filmstrip").bounding_box()["y"]
+    stage_top = page.locator("main").bounding_box()["y"]
+    for region in ("Filmstrip", "Subtitles"):
+        bounds = page.get_by_role("region", name=region, exact=True).bounding_box()
+        assert bounds["y"] + bounds["height"] <= stage_top
     actions = page.get_by_text("Scene actions", exact=True)
     duplicate = page.get_by_role("button", name="Duplicate scene")
     expect(duplicate).to_be_hidden()
@@ -194,9 +198,11 @@ def check(context, url):
     show_subtitles = page.get_by_role("checkbox", name="Show subtitles")
     burn_subtitles = page.get_by_role("checkbox", name="Burn in subtitles")
     scene_one.click()
-    subtitle_drawer = page.get_by_role("region", name="Subtitles", exact=True)
+    subtitle_controls = page.get_by_role("region", name="Subtitles", exact=True)
     subtitle_toggle = page.get_by_role("button", name="Subtitles", exact=True)
-    expect(subtitle_drawer).to_be_hidden()
+    expect(subtitle_controls).to_be_visible()
+    subtitle_toggle.click()
+    expect(subtitle_controls).to_be_hidden()
     subtitle_toggle.click()
     expect(subtitle_toggle).to_have_attribute("aria-expanded", "true")
     expect(show_subtitles).to_be_checked()
@@ -213,7 +219,7 @@ def check(context, url):
     show_subtitles.check()
     assert page.locator("#preview video").evaluate("(video) => video.textTracks[0].mode") == "showing"
     page.keyboard.press("Escape")
-    expect(subtitle_drawer).to_be_hidden()
+    expect(subtitle_controls).to_be_hidden()
     expect(subtitle_toggle).to_be_focused()
 
     # A second take asks before it changes the scene that continues from the first.
@@ -261,7 +267,7 @@ def check(context, url):
 
     # Cast pictures upload, Escape returns to the scene, and clicking a tag chip inserts into the prompt.
     page.get_by_role("button", name="Cast", exact=True).click()
-    expect(page.get_by_role("region", name="Filmstrip")).to_be_hidden()
+    expect(page.get_by_role("region", name="Filmstrip")).to_be_visible()
     page.get_by_label("Name", exact=True).fill("Mei")
     with page.expect_file_chooser() as chooser:
         page.get_by_role("button", name="Upload picture").click()
@@ -319,15 +325,12 @@ def check_full_preview(context, url):
     page.get_by_label("Storyboard", exact=True).select_option(seeded.json()["id"])
     expect(page.locator("#strip .frame")).to_have_count(3)
     toolbar = page.get_by_role("region", name="Subtitles", exact=True)
-    subtitle_toggle = page.get_by_role("button", name="Subtitles", exact=True)
     language = toolbar.get_by_role("combobox", name="Translation language", exact=True)
-    subtitle_toggle.click()
     expect(language).to_be_visible()
     with page.expect_response(lambda response: response.url.endswith("/subtitle-settings")) as saved:
         language.select_option("French")
     assert saved.value.ok
     page.reload(wait_until="domcontentloaded")
-    subtitle_toggle.click()
     expect(language).to_have_value("French")
     toolbar.get_by_text("Translation options", exact=True).click()
     model = toolbar.get_by_role("combobox", name="Translation model", exact=True)
@@ -351,7 +354,6 @@ def check_full_preview(context, url):
     assert regenerated.value.post_data_json["model"] == "gemini-3.5-flash-lite"
     expect(page.locator("#translate-scene")).to_be_enabled()
     page.reload(wait_until="domcontentloaded")
-    subtitle_toggle.click()
     expect(status).to_contain_text("Scene 1 · Subtitles available, translation ready")
     requests = []
     page.on("request", lambda request: requests.append(request.post_data_json)
@@ -406,6 +408,24 @@ def check_full_preview(context, url):
     expect(language).to_be_visible()
     assert not joins, joins
     assert not errors, errors
+    page.close()
+
+
+def check_workshop_auto(context, url):
+    page = context.new_page()
+    auto_requests = []
+
+    def workshop_boot(route):
+        response = route.fetch()
+        route.fulfill(response=response, json={**response.json(), "gpu": False, "auto": None})
+
+    page.route("**/storyboard/api/boot", workshop_boot)
+    page.on("request", lambda request: auto_requests.append(request.url) if "/storyboard/api/auto" in request.url else None)
+    page.goto(url + "/storyboard/", wait_until="domcontentloaded")
+    page.get_by_role("button", name="Auto render", exact=True).click()
+    expect(page.get_by_text("Open Storyboard on a GPU Studio endpoint", exact=False)).to_be_visible()
+    expect(page.get_by_role("heading", name="Queue storyboards")).to_have_count(0)
+    assert not auto_requests, auto_requests
     page.close()
 
 

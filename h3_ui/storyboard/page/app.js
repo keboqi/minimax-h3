@@ -29,7 +29,7 @@
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
-    includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: false,
+    includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
     showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
@@ -186,12 +186,10 @@
     renderInspector();
   };
 
-  const toggleSubtitleDrawer = (open) => {
+  const toggleSubtitleToolbar = (open) => {
     state.subtitlesOpen = open;
-    placeSubtitleToolbar();
-    const toggle = $("toggle-subtitles");
-    toggle.setAttribute("aria-expanded", String(open));
-    (open ? $("close-subtitles") : toggle).focus();
+    $("subtitle-toolbar-home").hidden = !open;
+    $("toggle-subtitles").setAttribute("aria-expanded", String(open));
   };
 
   const renderTopbar = () => {
@@ -200,7 +198,7 @@
       state.confirmProfile = false;
       renderTopbar();
       renderInspector();
-      if (state.panel === "auto") loadAuto();
+      if (state.panel === "auto" && state.boot.gpu) loadAuto();
     });
     const directorButton = chip("Director", state.panel === null, () => {
       state.panel = null;
@@ -215,7 +213,7 @@
       h("span", {className: "topbar-brand-icon", "aria-hidden": "true"},
         icon("M4 6h16v12H4z M10 9.5l5 2.5-5 2.5z")),
       h("strong", {}, "Storyboard"));
-    const subtitleToggle = button("Subtitles", () => toggleSubtitleDrawer(!state.subtitlesOpen), "btn sm", {
+    const subtitleToggle = button("Subtitles", () => toggleSubtitleToolbar(!state.subtitlesOpen), "btn sm", {
       id: "toggle-subtitles", "aria-controls": "subtitle-toolbar", "aria-expanded": String(state.subtitlesOpen),
     });
     $("topbar").replaceChildren(...[
@@ -229,7 +227,7 @@
       state.auto?.active ? h("div", {className: "small muted", id: "auto-state", role: "status"}, autoSummary()) : null,
       h("nav", {className: "chips topbar-nav", role: "group", "aria-label": "Panels"},
         directorButton,
-        state.boot.gpu ? panelButton("auto", "Auto render") : null,
+        panelButton("auto", "Auto render"),
         panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings")),
       subtitleToggle,
       button("Play full video", playFullVideo, "btn primary sm"),
@@ -783,19 +781,17 @@
     renderSubtitleControls(shownTake());
   };
 
-  const placeSubtitleToolbar = (panel = $("full-video").firstElementChild) => {
+  const placeSubtitleToolbar = (fullscreenPanel = null) => {
     const home = $("subtitle-toolbar-home");
     const toolbar = $("subtitle-toolbar");
-    const docked = panel && (state.subtitlesOpen || document.fullscreenElement === panel);
-    if (docked && toolbar.parentElement !== panel) panel.querySelector(".full-video-head").after(toolbar);
-    if (!docked && toolbar.parentElement !== home) home.append(toolbar);
-    home.hidden = docked || !state.subtitlesOpen;
+    if (fullscreenPanel) fullscreenPanel.querySelector(".full-video-head").after(toolbar);
+    else if (toolbar.parentElement !== home) home.append(toolbar);
   };
 
   const closeFullVideo = () => {
     const root = $("full-video");
     const videos = root.querySelectorAll("video");
-    placeSubtitleToolbar(null);
+    placeSubtitleToolbar();
     refreshFullSubtitles = null;
     root.replaceChildren();
     videos.forEach(releaseVideo);
@@ -898,7 +894,7 @@
     const panel = h("div", {className: "full-video-panel", onfullscreenchange: () => {
       const expanded = document.fullscreenElement === panel;
       fullscreen.textContent = expanded ? "Exit fullscreen" : "Fullscreen";
-      if (panel.isConnected) placeSubtitleToolbar(panel);
+      if (panel.isConnected) placeSubtitleToolbar(expanded ? panel : null);
     }},
       h("div", {className: "full-video-head"},
         h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
@@ -906,7 +902,6 @@
         button("Close", closeFullVideo, "btn sm")),
       h("div", {className: "full-video-viewport"}, videos));
     $("full-video").replaceChildren(panel);
-    placeSubtitleToolbar(panel);
     refreshFullSubtitles = () => videos.forEach(updateSubtitles);
     loadClip(active, playlist[0]);
     playScene();
@@ -925,7 +920,6 @@
         button("Close", closeFullVideo, "btn sm")),
       h("video", {src: run.result_url, controls: true, preload: "metadata", "aria-label": "Full video"},
         subtitleTrack(run.subtitles_url))));
-    placeSubtitleToolbar();
   };
 
   // Moving between scenes -------------------------------------------------
@@ -957,8 +951,10 @@
     if (event.defaultPrevented || $("editor").hidden || event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === "Escape" && !$("library").open && !document.fullscreenElement) {
       const actions = $("scene-actions");
-      if (state.subtitlesOpen) toggleSubtitleDrawer(false);
-      else if (state.panel) closePanel();
+      if (state.subtitlesOpen && event.target.closest("#subtitle-toolbar, #toggle-subtitles")) {
+        toggleSubtitleToolbar(false);
+        $("toggle-subtitles").focus();
+      } else if (state.panel) closePanel();
       else if (actions?.open) {
         actions.open = false;
         actions.querySelector("summary").focus();
@@ -977,8 +973,6 @@
     const isPanel = Boolean(panels[state.panel]);
     const workarea = document.querySelector(".workarea");
     if (workarea) workarea.classList.toggle("panel-open", isPanel);
-    const filmstrip = $("filmstrip");
-    if (filmstrip) filmstrip.hidden = isPanel;
     const nodes = (panels[state.panel] || scenePanel)();
     $("inspector").classList.toggle("scene-mode", !isPanel);
     $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
@@ -1885,8 +1879,10 @@
 
   const autoPanel = () => [
     panelHead("Auto render"),
-    h("p", {className: "small muted"}, "Auto render exports each completed storyboard to Media. The batch runs on the server, and you can follow each storyboard in Jobs."),
-    h("div", {className: "scene-columns"}, autoMonitor(), autoQueue()),
+    state.boot.gpu ? [
+      h("p", {className: "small muted"}, "Auto render exports each completed storyboard to Media. The batch runs on the server, and you can follow each storyboard in Jobs."),
+      h("div", {className: "scene-columns"}, autoMonitor(), autoQueue()),
+    ] : h("p", {className: "note"}, "Open Storyboard on a GPU Studio endpoint and select Auto render there. Your saved storyboards are shared between Workshop and Studio."),
   ];
 
   const WRITER_KEY = "h3-storyboard-writer";
@@ -1908,7 +1904,6 @@
     };
   };
   const bindSubtitleControls = () => {
-    $("close-subtitles").addEventListener("click", () => toggleSubtitleDrawer(false));
     const language = $("subtitle-language");
     language.replaceChildren(...state.boot.subtitle_languages.map((name) => h("option", {value: name}, name)));
     language.onchange = () => {

@@ -4,8 +4,7 @@ The **Storyboard** task makes a long video from a list of scenes. Each scene is 
 MiniMax H3 clip. A scene either **continues** the one before it, so motion and sound
 carry on, or **starts fresh** as a new shot. The scenes are joined into one video at
 the end. It sits in Create between Remake and Soundstage. Background and decisions are
-in the [plan](../plans/long-video-storyboard.md). The current layouts are in the
-[Storyboard design files](../../designs/storyboard-refactor/project/).
+in the [plan](../plans/long-video-storyboard.md).
 
 Storyboard is a page of its own at `/storyboard/`, outside Gradio; the tab shows it in a
 frame. The browser holds the whole storyboard, so moving between scenes (the filmstrip,
@@ -50,7 +49,7 @@ The storyboard picker marks a project **Generated** as soon as it has a recorded
 
 ## A scene
 
-The timeline below the preview and inspector shows each scene's picture, number, title, length and a
+The timeline above the preview and inspector shows each scene's picture, number, title, length and a
 status: Done, Out of date, Not generated or Needs input. A line between two scenes marks
 a fresh start (a cut). Click a scene to edit it. Use **Add scene** at the end of the
 timeline or **Scene actions** above the preview to insert, duplicate, move, or delete a scene.
@@ -93,8 +92,8 @@ starts stop changes from rippling further.
 ## Subtitles
 
 Dialogue and lyrics inside `<d>` tags in a take's prompt appear as optional subtitles
-with estimated timing. Use the player's subtitle control or open **Subtitles** in the
-top bar to change their visibility.
+with estimated timing. Use the player's subtitle control or **Show subtitles** below the
+timeline to change their visibility. The top bar's **Subtitles** button shows or hides the controls.
 In **Storyboard settings**, turn on **Automatically generate word-aligned subtitles after each take**
 to transcribe and time the generated audio as each take finishes. This setting is off by default.
 In Studio, **Generate word-aligned subtitles** analyzes the generated takes currently in use,
@@ -102,7 +101,7 @@ even while the storyboard is incomplete. It reuses completed analyses and can re
 had a problem. If speech can only be timed as whole lines, those lines are kept.
 
 The full storyboard preview uses the selected takes' subtitles. **Show subtitles** controls
-them across the entire preview. In the **Subtitles** drawer, choose a
+them across the entire preview. In the subtitle controls below the timeline, choose a
 target language and model. The default is **Gemma 4 26B A4B IT**, with **Gemma 4 31B IT** and
 **Gemini 3.5 Flash-Lite** also available. All three use the Gemini API key shared with Prompt
 writer. Leave the key blank to use the server's Gemini API key.
@@ -166,8 +165,8 @@ come back to or branch.
 
 ## Auto render
 
-**Auto render** in the top bar (GPU endpoint only) renders several storyboards
-unattended. Tick the storyboards, each listed with how many scenes it has left and any
+**Auto render** is in the top bar. On a GPU Studio endpoint it renders several storyboards
+unattended. Workshop shows where to open the queue in Studio. Tick the storyboards, each listed with how many scenes it has left and any
 scene that still needs input, then **Render and export**. **Select all with scenes left**
 ticks the storyboards with a scene it can make now. They run in the order listed:
 each storyboard generates its remaining scenes exactly as **Generate all remaining

@@ -118,7 +118,7 @@ New `h3_ui/storyboard/` package following the `h3_ui/drama3/` layout (`view.py`,
 
 ## Implementation notes
 
-The page was rebuilt after first use to the [Storyboard Redesign canvas](https://claude.ai/artifact/WAJ39BupkHrpvdoJXLQ4zK): every scene is a MiniMax H3 clip with its own mode (Text to video, First / last frame, Reference media) and prompt writer, plus how it starts. A continuing scene can't take a first frame; its frames mode is Last frame only. The UI section above describes the first version. The [user guide](../features/storyboard.md) describes the current page.
+The page was rebuilt after first use. Every scene is a MiniMax H3 clip with its own mode (Text to video, First / last frame, Reference media), prompt writer, and way of starting. A continuing scene in frames mode accepts only a last frame. The UI section above describes the first version. The [user guide](../features/storyboard.md) describes the current page.
 
 Where the build differs from the plan above:
 

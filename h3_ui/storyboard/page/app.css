@@ -191,13 +191,11 @@ legend { padding: 0 0 5px; font-size: 12px; font-weight: 600; color: var(--muted
 :root[data-framed] .editor, :root[data-framed] .start { min-height: 0; }
 
 /* Slim Sticky Studio Topbar */
-.studio-header { position: sticky; top: 0; z-index: 20; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 9px 20px;
   background: var(--surface); border-bottom: 1px solid var(--line); box-shadow: var(--shadow-sm);
 }
-.studio-header .topbar { position: static; }
 .topbar-brand { display: flex; align-items: center; gap: 8px; flex: none; color: var(--text); }
 .topbar-brand-icon {
   width: 30px; height: 30px; border-radius: 8px; background: var(--accent-soft);
@@ -338,7 +336,7 @@ summary { min-height: 28px; cursor: pointer; font-weight: 600; font-size: 13px; 
 /* Filmstrip Timeline */
 .filmstrip {
   display: flex; flex-direction: column; gap: 9px; padding: 11px 20px 12px;
-  background: var(--surface); border-top: 1px solid var(--line);
+  background: var(--surface); border-bottom: 1px solid var(--line);
 }
 .filmstrip-head {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
@@ -402,15 +400,7 @@ span.link-toggle { cursor: default; }
 .strip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 
 /* Subtitle Controls */
-.subtitle-drawer {
-  position: absolute; inset: 100% 0 auto auto; width: min(100%, 420px);
-  max-height: 65vh; overflow-y: auto;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 0 0 10px 10px; box-shadow: var(--shadow-md);
-}
-.subtitle-drawer .subtitle-tools { padding: 14px; border: 0; background: var(--surface); }
-.subtitle-drawer .subtitle-checks { margin-left: 0; }
-.full-video-panel:fullscreen #close-subtitles { display: none; }
-#full-video:not(:empty) { padding: 12px 20px 0; }
+#full-video:empty { display: none; }
 .subtitle-tools {
   display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-radius: 9px;
   background: var(--raised); border: 1px solid var(--line);
