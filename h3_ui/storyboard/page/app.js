@@ -27,7 +27,7 @@
   };
 
   const state = {
-    boot: null, board: null, sceneId: null, previewTake: null, panel: null, question: null,
+    boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
     confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
     includeOutdated: true, showSubtitles: true, showFullSubtitles: true, burnSubtitles: false,
     showSceneTranslation: false, translateSubtitles: stored.get("h3-storyboard-translate-subtitles") === "true",
@@ -186,6 +186,12 @@
       renderInspector();
       if (state.panel === "auto") loadAuto();
     });
+    const directorButton = chip("Director", state.panel === null, () => {
+      state.panel = null;
+      state.confirmProfile = false;
+      renderTopbar();
+      renderInspector();
+    });
     const select = h("select", {"aria-label": "Storyboard", onchange: (event) => openBoard(event.target.value)},
       state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
         row.name + (row.generated ? " · Generated" : ""))));
@@ -195,13 +201,14 @@
     $("topbar").replaceChildren(...[
       brand,
       h("label", {className: "board-picker"}, "Storyboard", select),
-      button("New storyboard", showStart),
+      button("New storyboard", showStart, "btn sm"),
       h("div", {className: "stat-pill mono small"},
         `${scenes().length} scenes · ${state.board.total} · ${state.board.done} done`),
       h("div", {className: "small muted", id: "save-state", role: "status"}, state.saveLabel),
       h("div", {className: "grow"}),
       state.auto?.active ? h("div", {className: "small muted", id: "auto-state", role: "status"}, autoSummary()) : null,
-      h("div", {className: "chips", role: "group", "aria-label": "Panels"},
+      h("nav", {className: "chips topbar-nav", role: "group", "aria-label": "Panels"},
+        directorButton,
         state.boot.gpu ? panelButton("auto", "Auto render") : null,
         panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings")),
     ].filter(Boolean));
@@ -526,7 +533,8 @@
     scenes().forEach((item, index) => {
       if (index > 0 && item.kind === "media") {
         items.push(h("span", {className: "link-toggle cut", title: `Scene ${item.number} plays a video, so it always starts fresh.`,
-          "aria-label": `Transition to scene ${item.number}: fresh start, a video from Media.`}, icon(CUT_ICON)));
+          "aria-label": `Transition to scene ${item.number}: fresh start, a video from Media.`},
+          h("span", {className: "link-pill-text"}, "CLIP")));
       } else if (index > 0) {
         items.push(h("button", {
           type: "button",
@@ -538,7 +546,7 @@
             ? `Transition to scene ${item.number}: continues scene ${item.number - 1}. Click to switch to fresh start.`
             : `Transition to scene ${item.number}: fresh start. Click to switch to continue scene ${item.number - 1}.`,
           onclick: () => toggleSceneLink(item),
-        }, icon(item.flow ? FLOW_ICON : CUT_ICON)));
+        }, h("span", {className: "link-pill-text"}, item.flow ? "CONT" : "CUT")));
       }
       const thumb = item.thumb
         ? h("img", {className: "thumb", alt: "", decoding: "async",
@@ -858,8 +866,11 @@
   // The inspector ---------------------------------------------------------
   const renderInspector = () => {
     const panels = {cast: castPanel, versions: versionsPanel, settings: settingsPanel, auto: autoPanel};
+    const isPanel = Boolean(panels[state.panel]);
+    const workarea = document.querySelector(".workarea");
+    if (workarea) workarea.classList.toggle("panel-open", isPanel);
     const nodes = (panels[state.panel] || scenePanel)();
-    $("inspector").classList.toggle("scene-mode", !panels[state.panel]);
+    $("inspector").classList.toggle("scene-mode", !isPanel);
     $("inspector").replaceChildren(...nodes.flat().filter(Boolean));
   };
 
@@ -939,85 +950,117 @@
     const [low, high] = state.boot.seconds;
     const previousPrompt = state.previousPrompts.get(item.id);
     const canUndoPrompt = previousPrompt !== undefined && previousPrompt !== item.prompt;
-    const setupCard = h("div", {className: "column"}, [
-      h("div", {className: "row"},
-        h("span", {className: "small muted"}, item.context),
-        checklist(item)),
-      h("div", {className: "split"},
-        textField("Scene title", "title", {maxLength: 120}),
-        item.number > 1 ? h("fieldset", {}, h("legend", {}, "How does this scene start?"),
+    const tab = state.inspectorTab || "prompt";
+    const tabBtn = (id, label) => h("button", {
+      type: "button",
+      role: "tab",
+      className: "inspector-tab",
+      "aria-selected": String(tab === id),
+      onclick: () => { state.inspectorTab = id; renderInspector(); },
+    }, label);
+
+    const headerBar = h("div", {className: "inspector-head"},
+      h("div", {className: "inspector-tabs", role: "tablist", "aria-label": "Inspector sections"},
+        tabBtn("prompt", "Prompt & Flow"),
+        tabBtn("media", item.mode === "Text to video" ? "Media & Cast" : `Media & Cast (${item.pictures.length})`),
+        tabBtn("timing", "Timing & Seed")),
+      checklist(item));
+
+    const titleField = textField("Scene title", "title", {maxLength: 120});
+
+    const promptTab = [
+      h("div", {className: "column"}, [
+        h("div", {className: "row"},
+          h("span", {className: "small muted"}, item.context)),
+        titleField,
+        item.number > 1 && h("fieldset", {}, h("legend", {}, "How does this scene start?"),
           h("div", {className: "chip-grid two"},
             chip(`Continue scene ${item.number - 1}`, item.link === "flow", () => choose({link: "flow"})),
-            chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))) : h("div")),
-      h("fieldset", {}, h("legend", {}, "Conditioning"),
-        h("div", {className: "chip-grid three"},
-          chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
-          chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
-          chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
-    ]);
+            chip("Start fresh", item.link === "cut", () => choose({link: "cut"})))),
+        h("fieldset", {}, h("legend", {}, "Conditioning"),
+          h("div", {className: "chip-grid three"},
+            chip("Text", item.mode === "Text to video", () => choose({mode: "Text to video"})),
+            chip(item.flow ? "Last frame" : "Frames", item.mode === "First / last frame", () => choose({mode: "First / last frame"})),
+            chip(item.flow ? "References (recommended)" : "References", item.mode === "Reference media", () => choose({mode: "Reference media"})))),
+      ]),
+      h("div", {className: "column"}, [
+        item.mode === "Reference media" ? tagHintNode(item) : null,
+        textField("Prompt", "prompt", {rows: 10, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
+        h("div", {className: "row"},
+          h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
+          h("div", {className: "chips"},
+            canUndoPrompt && button("Undo rewrite", () => {
+              state.previousPrompts.delete(item.id);
+              edit("prompt", previousPrompt);
+              renderInspector();
+            }, "btn sm"),
+            state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm"))),
+      ]),
+    ];
 
-    const promptCard = h("div", {className: "column"}, [
-      item.mode === "Reference media" ? tagHintNode(item) : null,
-      textField("Prompt", "prompt", {rows: 10, placeholder: "Describe what happens, the camera and the sound."}, "textarea"),
-      h("div", {className: "row"},
-        h("span", {className: "small muted", id: "prompt-hint"}, item.hint),
-        h("div", {className: "chips"},
-          canUndoPrompt && button("Undo rewrite", () => {
-            state.previousPrompts.delete(item.id);
-            edit("prompt", previousPrompt);
-            renderInspector();
-          }, "btn sm"),
-          state.boot.enhance && button("Improve with the prompt writer", enhance, "btn sm"))),
-      h("label", {className: "field"}, h("span", {id: "seconds-label"}, `Length: ${item.seconds} s`),
-        h("input", {type: "range", min: low, max: high, step: 1, value: item.seconds, oninput: (event) => {
-          edit("seconds", Number(event.target.value));
-          $("seconds-label").textContent = `Length: ${event.target.value} s`;
-        }}),
-        h("span", {className: "small muted", id: "added-seconds", style: "font-weight:400"}, item.added)),
-    ]);
-
-    const mediaCard = (item.mode !== "Text to video") ? h("div", {className: "column"}, [
-      item.mode === "First / last frame" && h("div", {className: "split"},
-        item.flow ? h("p", {className: "small muted"},
-          `No first frame. This scene opens on scene ${item.number - 1}'s last frames. To open on a picture of your own, choose Start fresh.`)
-          : mediaSlot("First frame", "first_image", {optional: true}),
-        mediaSlot(item.flow ? "Last frame (required)" : "Last frame", "last_image", {optional: !item.flow})),
-      item.mode === "Reference media" && [
-        state.board.cast.length ? h("fieldset", {}, h("legend", {}, "Cast in this scene"),
-          h("div", {className: "chips"}, state.board.cast.map((member) => {
-            const on = item.cast.includes(member.name);
-            return chip(member.name, on, () => choose({cast: on ? item.cast.filter((name) => name !== member.name) : [...item.cast, member.name]}));
-          }))) : h("p", {className: "small muted"}, "No cast yet: add people under Cast."),
-        castPictures(item),
-        h("div", {className: "split"},
-          mediaSlot("Extra images", "ref_images", {multiple: true}),
-          mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true})),
-      ],
-      mediaSlot(
-        item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
-        "ref_audios", {multiple: true}),
-    ]) : null;
-
-    const optionsCard = h("div", {className: "column"}, [
-      h("details", {},
-        h("summary", {}, "More scene options"),
-        h("div", {className: "details-body"},
+    const mediaTab = [
+      h("div", {className: "column"}, [
+        item.mode === "Text to video"
+          ? h("p", {className: "small muted"}, "Switch Conditioning to Frames or References under Prompt & Flow to attach images, cast, or audio.")
+          : null,
+        item.mode === "First / last frame" && h("div", {className: "split"},
+          item.flow ? h("p", {className: "small muted"},
+            `No first frame. This scene opens on scene ${item.number - 1}'s last frames. To open on a picture of your own, choose Start fresh.`)
+            : mediaSlot("First frame", "first_image", {optional: true}),
+          mediaSlot(item.flow ? "Last frame (required)" : "Last frame", "last_image", {optional: !item.flow})),
+        item.mode === "Reference media" && [
+          state.board.cast.length ? h("fieldset", {}, h("legend", {}, "Cast in this scene"),
+            h("div", {className: "chips"}, state.board.cast.map((member) => {
+              const on = item.cast.includes(member.name);
+              return chip(member.name, on, () => choose({cast: on ? item.cast.filter((name) => name !== member.name) : [...item.cast, member.name]}));
+            }))) : h("p", {className: "small muted"}, "No cast yet: add people under Cast."),
+          castPictures(item),
           h("div", {className: "split"},
-            h("label", {className: "field"}, "Frames shared with the previous scene",
-              h("select", {disabled: !item.flow, onchange: (event) => edit("overlap", Number(event.target.value))},
-                state.boot.overlaps.map((frames) => h("option", {value: frames, selected: frames === item.overlap}, `${frames} frames`)))),
-            h("label", {className: "field"}, "Takes per click",
-              h("select", {onchange: (event) => edit("takes_per_run", Number(event.target.value))},
-                Array.from({length: state.boot.max_takes}, (_, i) => h("option", {value: i + 1, selected: i + 1 === item.takes_per_run}, String(i + 1)))))),
-          h("label", {className: "field"}, "Seed (-1 is random)",
-            h("input", {type: "number", step: 1, id: "scene-seed", value: item.seed,
-              onchange: (event) => {
-                const seed = Number.parseInt(event.target.value, 10);
-                edit("seed", Number.isNaN(seed) ? -1 : seed);
-              }})))),
-    ]);
+            mediaSlot("Extra images", "ref_images", {multiple: true}),
+            mediaSlot("Reference videos (up to 3)", "ref_videos", {multiple: true})),
+        ],
+        item.mode !== "Text to video" && mediaSlot(
+          item.mode === "First / last frame" ? "Voices (up to 3): <Audio 1> to <Audio 3>" : "Reference audio (up to 3)",
+          "ref_audios", {multiple: true}),
+      ]),
+    ];
 
-    return [setupCard, promptCard, mediaCard, optionsCard];
+    const timingTab = [
+      h("div", {className: "column"}, [
+        h("label", {className: "field"}, h("span", {id: "seconds-label"}, `Length: ${item.seconds} s`),
+          h("input", {type: "range", min: low, max: high, step: 1, value: item.seconds, oninput: (event) => {
+            edit("seconds", Number(event.target.value));
+            $("seconds-label").textContent = `Length: ${event.target.value} s`;
+          }}),
+          h("span", {className: "small muted", id: "added-seconds", style: "font-weight:400"}, item.added)),
+        h("div", {className: "split"},
+          h("label", {className: "field"}, "Frames shared with the previous scene",
+            h("select", {disabled: !item.flow, onchange: (event) => edit("overlap", Number(event.target.value))},
+              state.boot.overlaps.map((frames) => h("option", {value: frames, selected: frames === item.overlap}, `${frames} frames`)))),
+          h("label", {className: "field"}, "Takes per click",
+            h("select", {onchange: (event) => edit("takes_per_run", Number(event.target.value))},
+              Array.from({length: state.boot.max_takes}, (_, i) => h("option", {value: i + 1, selected: i + 1 === item.takes_per_run}, String(i + 1)))))),
+        h("label", {className: "field"}, "Seed (-1 is random)",
+          h("input", {type: "number", step: 1, id: "scene-seed", value: item.seed,
+            onchange: (event) => {
+              const seed = Number.parseInt(event.target.value, 10);
+              edit("seed", Number.isNaN(seed) ? -1 : seed);
+            }})),
+      ]),
+    ];
+
+    const busy = Boolean(state.run?.active);
+    const blocked = item.issues.length > 0;
+    const footer = h("div", {className: "inspector-footer"},
+      h("div", {className: "small muted"},
+        h("strong", {style: "color:var(--text)"}, `${item.seconds}s`),
+        ` · ${item.added || item.runs_as}`),
+      state.boot.gpu ? button(item.takes.length ? "Generate another take" : "Generate this scene",
+        () => startGeneration({action: "scene", scene_id: item.id}), "btn primary",
+        {disabled: blocked || busy}) : null);
+
+    const body = tab === "media" ? mediaTab : (tab === "timing" ? timingTab : promptTab);
+    return [headerBar, ...body, footer];
   };
 
   // The ticked cast, first in the prompt's picture order; the scene's own images follow below.
