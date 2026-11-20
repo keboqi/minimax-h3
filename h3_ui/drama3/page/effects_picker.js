@@ -46,7 +46,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   const hint = h("p", {class: "muted small effect-preview-hint"});
   const sourceStatus = h("p", {class: "muted small effect-preview-hint", role: "status"});
   const grid = h("div", {class: "effect-picker-grid", role: "group"});
-  const hoverToggle = h("input", {type: "checkbox", checked: !motion?.matches,
+  const hoverToggle = h("input", {type: "checkbox", checked: true,
     onchange: () => { if (!hoverToggle.checked) stopHover(); }});
   const tabs = CATEGORIES.map((option) => h("button", {type: "button", "data-kind": option.id,
     onclick: () => {
@@ -257,12 +257,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
         grid)),
     h("div", {class: "drawn-foot"}, error, h("span", {class: "spacer"}), cancel, apply));
   dialog.oncancel = (event) => { if (saving) event.preventDefault(); };
-  const updateMotion = (event) => {
-    hoverToggle.checked = !event.matches;
-    if (!event.matches) return;
-    stopPreview();
-    stopHover();
-  };
+  const updateMotion = (event) => { if (event.matches) stopPreview(); };
   motion?.addEventListener("change", updateMotion);
   dialog.onclose = () => {
     stopPreview();
