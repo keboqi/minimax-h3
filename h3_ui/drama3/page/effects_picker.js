@@ -24,8 +24,10 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   let category = CATEGORIES.find(({id}) => selected.has(id)) || CATEGORIES[0];
   let saving = false;
   let frame = null;
+  let hover = null;
   let sourceReady = false;
   let sourceRequest = 0;
+  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 
   const title = h("h2", {id: "effects-title"}, `Visual effects · Shot ${row.index + 1}`);
   const close = h("button", {type: "button", class: "btn btn-icon", "aria-label": "Close",
@@ -146,7 +148,38 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     }
   }
 
+  function stopHover() {
+    if (!hover) return;
+    cancelAnimationFrame(hover.frame);
+    hover.paint(hover.posterTime);
+    hover = null;
+  }
+
+  async function playHover(event, still, paint, posterTime, continuous) {
+    if (event.pointerType !== "mouse" || motion?.matches || saving) return;
+    stopHover();
+    const preview = {paint, posterTime, frame: 0};
+    hover = preview;
+    try {
+      await still.decode();
+    } catch {
+      if (hover === preview) stopHover();
+      return;
+    }
+    if (hover !== preview) return;
+
+    const started = performance.now();
+    const tick = (now) => {
+      const elapsed = Math.max(0, (now - started) / 1000);
+      paint(continuous ? elapsed : Math.min(DURATION, elapsed));
+      if (continuous || elapsed < DURATION) preview.frame = requestAnimationFrame(tick);
+    };
+    paint(0);
+    preview.frame = requestAnimationFrame(tick);
+  }
+
   function renderChoices() {
+    stopHover();
     const {id: kind, label} = category;
     const scene = demo(kind);
     for (const tab of tabs) tab.setAttribute("aria-pressed", String(tab.dataset.kind === kind));
@@ -156,9 +189,17 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     grid.replaceChildren(...options.map(([id, preset]) => {
       const still = h("img", {src: scene, alt: "", loading: "lazy"});
       const overlay = h("canvas", {width: 256, height: 144, "aria-hidden": "true"});
-      if (id) paintEffectPreview(overlay, still, [id], previewTime([id]), DURATION);
+      const effect = id ? [id] : [];
+      const posterTime = previewTime(effect);
+      const paint = (time) => paintEffectPreview(overlay, still, effect, time, DURATION);
+      const continuous = kind !== "camera" && !FLASHING.has(id);
+      if (id) paint(posterTime);
       return h("button", {type: "button", class: "style-card effect-choice", "data-effect": id,
-        "aria-label": preset.label, "aria-description": preset.description, onclick: () => {
+        "aria-label": preset.label, "aria-description": preset.description,
+        onpointerenter: id ? (event) => playHover(event, still, paint, posterTime, continuous) : null,
+        onpointerleave: id ? stopHover : null,
+        onpointercancel: id ? stopHover : null,
+        onclick: () => {
           if (saving || (selected.get(kind) || "") === id) return;
           if (id) selected.set(kind, id);
           else selected.delete(kind);
@@ -174,6 +215,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
 
   function setSaving(value) {
     stopPreview();
+    stopHover();
     saving = value;
     for (const control of dialog.querySelectorAll("button, select")) control.disabled = value;
     apply.textContent = value ? "Saving…" : "Apply effects";
@@ -203,11 +245,15 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
         h("div", {class: "seg effect-categories", role: "group", "aria-label": "Effect categories"}, ...tabs), grid)),
     h("div", {class: "drawn-foot"}, error, h("span", {class: "spacer"}), cancel, apply));
   dialog.oncancel = (event) => { if (saving) event.preventDefault(); };
-  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-  const pauseForReducedMotion = (event) => { if (event.matches) stopPreview(); };
+  const pauseForReducedMotion = (event) => {
+    if (!event.matches) return;
+    stopPreview();
+    stopHover();
+  };
   motion?.addEventListener("change", pauseForReducedMotion);
   dialog.onclose = () => {
     stopPreview();
+    stopHover();
     sourceRequest++;
     motion?.removeEventListener("change", pauseForReducedMotion);
     restoreFocus();

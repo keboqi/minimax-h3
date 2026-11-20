@@ -161,13 +161,46 @@ def run(*, webgpu=False):
             expect(preview_image).to_have_attribute("src", first_shot["image"])
             preview_image.evaluate("image => image.decode()")
             push = dialog.get_by_role("button", name="Slow push in", exact=True)
+            close_picker = dialog.get_by_role("button", name="Close", exact=True)
+            close_picker.hover()
+            push_image = push.locator("img")
+            push_poster = push_image.get_attribute("style")
+            push.hover()
+            page.wait_for_function("""poster => document.querySelector(
+                '#effects-dialog [data-effect="push_in"] img').getAttribute('style') !== poster""", arg=push_poster)
+            expect(push).to_have_attribute("aria-pressed", "false")
+            expect(apply).to_be_disabled()
+            page.emulate_media(reduced_motion="reduce")
+            expect(push_image).to_have_attribute("style", push_poster)
+            close_picker.hover()
+            push.hover()
+            assert push_image.evaluate("""async image => {
+                const poster = image.getAttribute('style');
+                for (let i = 0; i < 8; i++) {
+                  await new Promise(requestAnimationFrame);
+                  if (image.getAttribute('style') !== poster) return false;
+                }
+                return true;
+            }""")
+            page.emulate_media(reduced_motion="no-preference")
+            close_picker.hover()
             push.click()
             expect(push).to_have_attribute("aria-pressed", "true")
             for demo in ("camera", "atmosphere", "lighting"):
                 source.select_option(demo)
                 expect(preview_image).to_have_attribute("src", f"{url}effect-demo-{demo}.webp")
                 preview_image.evaluate("image => image.decode()")
-            dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+            atmosphere = dialog.get_by_role("button", name="Atmosphere", exact=True)
+            atmosphere.click()
+            rain = dialog.get_by_role("button", name="Rain", exact=True)
+            rain_canvas = rain.locator("canvas")
+            rain_poster = rain_canvas.evaluate("canvas => canvas.toDataURL()")
+            rain.hover()
+            page.wait_for_function("""poster => document.querySelector(
+                '#effects-dialog [data-effect="rain"] canvas').toDataURL() !== poster""", arg=rain_poster)
+            expect(rain).to_have_attribute("aria-pressed", "false")
+            atmosphere.hover()
+            assert rain_canvas.evaluate("canvas => canvas.toDataURL()") == rain_poster
             expect(source).to_have_value("lighting")
             expect(dialog.locator(".effect-summary-chips")).to_have_text("Slow push in")
             source.select_option("shot")

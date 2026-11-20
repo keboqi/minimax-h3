@@ -235,7 +235,8 @@ both are saved with the project. The timeline and lines follow Video as they fol
 
 The shot planner can choose one camera move, one atmosphere, and one lighting effect per shot.
 The shot inspector lists the selected effects. Open **Visual effects** there to browse preview
-cards for **Camera movement**, **Atmosphere**, and **Lighting & framing**. **Play preview** shows
+cards for **Camera movement**, **Atmosphere**, and **Lighting & framing**. Hover over a card to
+play its effect on the card. **Play preview** shows
 the combination on the selected shot's image. Use **Preview source** to switch to a demo scene.
 Shots without an image open on a demo. **Apply effects** saves your choices without redrawing.
 Impact shake and flash can follow one-shot sound cues as well as the start of the shot.
