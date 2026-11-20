@@ -20,8 +20,8 @@ test("camera moves follow the displayed stills across an undrawn shot and a diss
       {index: 2, start: 8, image: "shot-c.png", effects: ["pull_out"]},
     ]},
     stills: {shots: [
-      {start: 0, end: 4, fade: 0, url: "shot-a.png"},
-      {start: 8, end: 12, fade: 1, url: "shot-c.png"},
+      {index: 0, start: 0, end: 4, fade: 0, url: "shot-a.png", effects: ["push_in"]},
+      {index: 2, start: 8, end: 12, fade: 1, url: "shot-c.png", effects: ["pull_out"]},
     ]},
   }}};
   const {paintStills} = createVideo({state, $});
@@ -235,8 +235,8 @@ test("one-shot sound cues inside a shot deterministically trigger impact_shake a
         {index: 1, start: 4, image: "shot-b.png", effects: ["impact_shake", "flash"]},
       ]},
       stills: {shots: [
-        {start: 0, end: 4, fade: 0, url: "shot-a.png"},
-        {start: 4, end: 8, fade: 0, url: "shot-b.png"},
+        {index: 0, start: 0, end: 4, fade: 0, url: "shot-a.png", effects: []},
+        {index: 1, start: 4, end: 8, fade: 0, url: "shot-b.png", effects: ["impact_shake", "flash"]},
       ]},
     },
   }};
@@ -278,7 +278,7 @@ test("dense cues retrigger shake and space flashes across a cut", () => {
   assert.equal(cueElapsed(second.flash, 1.25), 0);
 });
 
-test("reused still URLs resolve effects for the matching shot start time", (t) => {
+test("reused still URLs can have different effects on each shot", (t) => {
   const globals = {window: {}, document: {querySelectorAll: () => []}, Image: class {}};
   for (const [name, value] of Object.entries(globals)) {
     const previous = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -293,8 +293,8 @@ test("reused still URLs resolve effects for the matching shot start time", (t) =
       {index: 1, start: 4, image: "shared.png", effects: ["pull_out"]},
     ]},
     stills: {shots: [
-      {start: 0, end: 4, fade: 0, url: "shared.png"},
-      {start: 4, end: 8, fade: 0, url: "shared.png"},
+      {index: 0, start: 0, end: 4, fade: 0, url: "shared.png", effects: ["push_in"]},
+      {index: 1, start: 4, end: 8, fade: 0, url: "shared.png", effects: ["pull_out"]},
     ]},
   }}};
   const {paintStills} = createVideo({state, $});

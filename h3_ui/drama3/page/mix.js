@@ -1,3 +1,4 @@
+import {stageLayers} from "./stage.js";
 import {effectsEnabled} from "./effects.js";
 import {bindFullscreen} from "./fullscreen.js";
 import {readPref, writePref} from "./layout.js";
@@ -95,7 +96,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         sizeButton(1, "Larger subtitles", "A+")),
       visualSource() === "stills" ? h("label", {class: "check", title: motionPaused
         ? "Your system requests reduced motion. Turn this on to play effects for this project."
-        : "Play the shot plan's visual effects on this page"},
+        : "Include visual effects in playback and saved videos"},
         h("input", {type: "checkbox", id: "effects-on", checked: effectsOn,
           onchange: (event) => {
             video.effects_enabled = event.target.checked;
@@ -158,9 +159,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       // The stills slide along the mix's audio; an older mix with only a rendered video plays that.
       const picture = stills
         ? h("div", {class: "stills", onclick: playing},
-            h("img", {class: "still", id: "still-back", alt: "", onload: sync}),
-            h("img", {class: "still", id: "still-front", alt: "", onload: sync}),
-            h("canvas", {class: "still-effects", id: "still-effects", "aria-hidden": "true"}))
+            Object.values(stageLayers(sync)))
         : mixVideo;
       mixVideo.hidden = stills;
       if (stills) document.body.append(mixVideo);

@@ -151,6 +151,7 @@ from h3_requirements import (  # noqa: E402
     NEMOTRON_READY_MARKER,
     nemotron_fingerprint,
     nemotron_install_commands,
+    PLAYWRIGHT_REQUIREMENT,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
@@ -758,6 +759,9 @@ image = (
     # Soundstage burns subtitles into its videos; Noto CJK covers Chinese, Japanese and Korean
     # (and Latin). After the expensive layers, so adding it reuses those builds.
     .apt_install("fonts-noto-cjk", "fontconfig")
+    .uv_pip_install(PLAYWRIGHT_REQUIREMENT)
+    .env({"PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright"})
+    .run_commands("python -m playwright install --with-deps --only-shell chromium")
 )
 
 # Local bytecode is rewritten by every test run or import. Mounting it changes the
@@ -799,13 +803,16 @@ console_image = (
     modal.Image.debian_slim(python_version="3.12")
     # ffmpeg/ffprobe: media library posters and video metadata.
     .apt_install("ffmpeg")
+    .env({"PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright"})
 )
 if IS_LOCAL:
     # Image recipes are resolved by the local deploy process. The GPU build's
     # remote module import must not need this CPU-only dependency module.
     from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
 
-    console_image = console_image.uv_pip_install(*WORKSHOP_REQUIREMENTS)
+    console_image = console_image.uv_pip_install(*WORKSHOP_REQUIREMENTS).run_commands(
+        "python -m playwright install --with-deps --only-shell chromium",
+    )
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (

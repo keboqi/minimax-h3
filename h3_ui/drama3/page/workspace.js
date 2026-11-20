@@ -252,8 +252,8 @@ export function startWorkspace() {
   }
   const editShot = (body) => editPlan("/project/video/shot", body);
   const editSubject = (body) => editPlan("/project/video/subject", body);
-  async function saveVideoToMedia() {
-    await videoCall("/project/video/save");
+  async function saveVideoToMedia(includeEffects) {
+    await videoCall("/project/video/save", {include_effects: includeEffects});
     renderPlayer();
     sync();  // A new player shows nothing until it is painted at the playhead.
   }

@@ -2,6 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
+test("the video file button follows the current effects and reduced motion", (t) => {
+  const oldWindow = globalThis.window;
+  const motion = {matches: false, addEventListener() {}};
+  globalThis.window = {matchMedia: () => motion};
+  t.after(() => oldWindow === undefined ? delete globalThis.window : globalThis.window = oldWindow);
+  const video = {subtitles: true, subtitle_size: 100, stills: {}, effects_revision: "new",
+    latest: {current: true, subtitles: 100, effects_revision: "old"}};
+  const requested = [];
+  const {videoFileButton} = createVideo({state: {project: {video}},
+    h: (tag, attrs) => ({tag, ...attrs}), saveVideoToMedia: (enabled) => requested.push(enabled)});
+
+  videoFileButton().onclick();
+  video.latest.effects_revision = "new";
+  assert.equal(videoFileButton().tag, "a");
+  motion.matches = true;
+  videoFileButton().onclick();
+  video.latest.effects_revision = null;
+  assert.equal(videoFileButton().tag, "a");
+  assert.deepEqual(requested, [true, false]);
+});
+
 test("Illustrate reloads untimed project plans and returns from Characters & places before speech", () => {
   const oldWindow = globalThis.window, oldDocument = globalThis.document;
   globalThis.window = {};

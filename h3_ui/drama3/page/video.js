@@ -1,4 +1,5 @@
-import {cameraFrame, cueElapsed, effectCues, effectsEnabled, effectTrack, lastAtOrBefore, paintEffects} from "./effects.js";
+import {effectsEnabled, effectTrack, lastAtOrBefore} from "./effects.js";
+import {paintStage, showStageStills, stageFrame, stageTimeline} from "./stage.js";
 
 const EMPTY = Object.freeze([]);
 const startOf = (shot) => shot.start;
@@ -41,20 +42,22 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     sync();
   }
 
-  /** The header's video file: download the saved one, or render it from the stills for Media.
-   *  The saved one is current when it was made from these stills with the subtitles shown now. */
+  /** The header's video file reflects the current stills, subtitles and visual effects. */
   function videoFileButton() {
     const video = state.project.video;
     const saving = videoRunning("save");
     const subtitles = video.subtitles ? video.subtitle_size : 0;
-    const current = video.latest?.current && (video.latest.subtitles ?? 0) === subtitles;
+    const includeEffects = effectsEnabled(video, reducedMotion?.matches);
+    const effects = includeEffects ? video.effects_revision : null;
+    const current = video.latest?.current && (video.latest.subtitles ?? 0) === subtitles
+      && (video.latest.effects_revision ?? null) === (effects ?? null);
     if (video.latest && (current || !video.stills)) {
       return h("a", {class: "btn btn-small", id: "video-file", href: video.latest.url, download: video.latest.file,
                      title: "This video is in Media too."}, "Download video");
     }
     return h("button", {type: "button", class: "btn btn-small", id: "video-file", disabled: saving || videoRunning("draw"),
-                        title: "Render a 720p video with the mix from these images, with the subtitles as shown, and add it to Media",
-                        onclick: saveVideoToMedia}, saving ? "Saving to Media…" : "Save to Media");
+                        title: "Render a 720p video with the mix from these images, with the selected visual effects and subtitles, and add it to Media",
+                        onclick: () => saveVideoToMedia(includeEffects)}, saving ? "Saving to Media…" : "Save to Media");
   }
 
   const rowsOf = () => state.project.video?.plan?.rows || EMPTY;
@@ -104,33 +107,11 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     }
   }
 
-  function playbackShots(rows, stills, sounds) {
-    if (timeline?.rows === rows && timeline.stills === stills && timeline.sounds === sounds) return timeline.shots;
-    const rowsByTime = new Map(), rowsByImage = new Map();
-    for (const row of rows) {
-      if (!row.image) continue;
-      rowsByTime.set(row.start, row);
-      if (!rowsByImage.has(row.image)) rowsByImage.set(row.image, row);
-    }
-    const shots = stills.map((still, index) => {
-      // A plan can reuse an image. Prefer the row with the same time and image.
-      const timed = rowsByTime.get(still.start);
-      const row = timed?.image === still.url ? timed : rowsByImage.get(still.url);
-      return {...still, index: row?.index ?? index, effects: row?.effects || EMPTY};
-    });
-    const cues = effectCues(shots, sounds);
-    shots.forEach((shot, index) => { shot.cues = cues[index]; });
-    timeline = {rows, stills, sounds, shots};
+  function playbackShots(stills, sounds) {
+    if (timeline?.stills === stills && timeline.sounds === sounds) return timeline.shots;
+    const shots = stageTimeline(stills, sounds);
+    timeline = {stills, sounds, shots};
     return shots;
-  }
-
-  function paintCamera(image, shot, effects, time) {
-    const elapsed = Math.max(0, Math.min(time, shot.end) - shot.start);
-    const progress = elapsed / Math.max(0.001, shot.end - shot.start);
-    const frame = cameraFrame(effects, progress, elapsed, cueElapsed(shot.cues.shake, time));
-    if (image.style.transform !== frame.css) image.style.transform = frame.css;
-    if (image.style.filter !== frame.filter && (image.style.filter || frame.filter !== "none")) image.style.filter = frame.filter;
-    return frame;
   }
 
   function paintStills(time) {
@@ -145,48 +126,21 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     }
     const video = state.project.video, stills = video?.stills?.shots;
     if (!back || !front || !stills?.length) return;
-    const shots = playbackShots(rows, stills, state.project.result?.sounds);
-    const index = Math.max(0, lastAtOrBefore(shots, time, startOf));
-    const shot = shots[index];
-    const fading = index > 0 && shot.fade > 0 && time < shot.start + shot.fade;
-    const background = fading ? shots[index - 1] : shot;
-    const show = (image, url) => { if (image.dataset.src !== url) { image.dataset.src = url; image.src = url; } };
-    show(back, background.url);
-    if (fading) show(front, shot.url);
-    const elapsed = time - shot.start;
-    const fadeMix = fading ? elapsed / shot.fade : 1;
-    const opacity = fading ? String(fadeMix) : "0";
-    if (front.style.opacity !== opacity) front.style.opacity = opacity;
+    const shots = playbackShots(stills, state.project.result?.sounds);
     const enabled = effectsEnabled(video, reducedMotion?.matches);
-    const effects = enabled && elapsed >= 0 ? shot.effects : EMPTY;
-    const backEffects = enabled && fading ? background.effects : EMPTY;
-    const backCam = paintCamera(back, background, fading ? backEffects : effects, time);
-    const cam = fading ? paintCamera(front, shot, effects, time) : backCam;
-    if (overlay) {
-      const engine = $("effects-engine");
-      paintEffects(overlay, effects, elapsed, (backend) => {
-        if (!engine) return;
-        const inactive = video.effects_enabled === false ? "Off" : !enabled ? "Paused"
-          : (effects.length || backEffects.length) ? "Camera only" : "Idle";
-        const label = `Effects engine · ${backend ?? inactive}`;
-        if (engine.textContent !== label) engine.textContent = label;
-      }, {
-        shotIndex: shot.index,
-        cam,
-        stillBack: back,
-        stillFront: front,
-        fading,
-        fadeMix,
-        cueElapsed: cueElapsed(shot.cues.flash, time),
-        backEffects,
-        backElapsed: fading ? time - background.start : 0,
-        backCueElapsed: cueElapsed(background.cues.flash, time),
-        backShotIndex: background.index,
-        backCam,
-      });
-    }
+    const engine = $("effects-engine");
+    const layers = {back, front, overlay};
+    const frame = stageFrame(shots, time);
+    showStageStills(layers, frame);
+    paintStage(layers, frame, enabled, (backend, hasEffects) => {
+      if (!engine) return;
+      const inactive = video.effects_enabled === false ? "Off" : !enabled ? "Paused"
+        : hasEffects ? "Camera only" : "Idle";
+      const label = `Effects engine · ${backend ?? inactive}`;
+      if (engine.textContent !== label) engine.textContent = label;
+    });
     // Fetch the next images before they are due, so a cut never waits on the network.
-    for (let i = index + 1; i < Math.min(shots.length, index + 3); i++) {
+    for (let i = frame.index + 1; i < Math.min(shots.length, frame.index + 3); i++) {
       const {url} = shots[i];
       if (!preloaded.has(url)) { preloaded.add(url); new Image().src = url; }
     }
@@ -371,7 +325,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
               Object.entries(presets).filter(([, preset]) => preset.kind === kind).map(([id, preset]) =>
                 h("option", {value: id, selected: effects.includes(id), title: preset.description}, preset.label))));
         }),
-        h("p", {class: "muted small"}, "Effects play on this page without redrawing. Video exports currently contain still images and transitions only. Reduced motion pauses effects unless you explicitly turn Visual effects on.")),
+        h("p", {class: "muted small"}, "Visual effects play without redrawing and are included in saved videos when enabled. Reduced motion pauses effects in the player unless you explicitly turn Visual effects on.")),
       h("div", {class: "shot-inspector-foot"},
         h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
                      onclick: () => drawImages([row.index])}, draw)));

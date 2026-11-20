@@ -29,7 +29,9 @@ from h3_app.provenance import read_snapshot
 
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
-from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, value, writer_service
+from .effects_export import EffectScene
+from .page_common import (PageRun, apply_fields, file_response, found, not_found, run_job, timeline_payload,
+                          value, writer_service)
 from .page_store import editing
 from .stage_video import latest_export
 from . import visuals
@@ -82,20 +84,34 @@ def video_settings(data: dict, engines: list) -> dict:
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
-def stills_payload(name: str, record: dict | None) -> dict | None:
+def stills_payload(name: str, record: dict | None, rows=()) -> dict | None:
     """The stills the page slides along the mix: each image's time and the seconds it dissolves in."""
     if not record:
         return None
     fps = float(record.get("fps") or visuals.FPS)
+    rows_by_time, rows_by_image = {}, {}
+    for row in rows:
+        if row["image"]:
+            rows_by_time[row["start"]] = row
+            rows_by_image.setdefault(row["image"], row)
     shots = []
-    for item in record["shots"]:
+    for index, item in enumerate(sorted(record["shots"], key=lambda shot: int(shot["first_frame"]))):
         first, frames = int(item["first_frame"]), int(item["frames"])
         fade = min(12, frames - 1) / fps if item.get("dissolve") and frames > 1 else 0.0
-        shots.append({"start": round(first / fps, 3), "end": round((first + frames) / fps, 3),
-                      "fade": round(fade, 3), "beat": item.get("beat") or "",
-                      "url": still_url(name, item["image"])})
+        url = still_url(name, item["image"])
+        timed = rows_by_time.get(round(first / fps, 3), {})
+        row = timed if timed.get("image") == url else rows_by_image.get(url, {})
+        shots.append({"start": first / fps, "end": (first + frames) / fps, "fade": fade,
+                      "beat": item.get("beat") or "", "url": url, "index": row.get("index", index),
+                      "effects": row.get("effects", [])})
     return {"revision": record["revision"], "shots": shots,
             "orientation": visuals.orientation_of(record.get("orientation"))}
+
+
+def effect_scene(stills, mix_settings):
+    if stills and any(shot["effects"] for shot in stills["shots"]):
+        return EffectScene(stills["revision"], stills["shots"], timeline_payload(mix_settings)["sounds"])
+    return None
 
 
 def still_url(name: str, file: str) -> str:
@@ -112,17 +128,13 @@ def _voice_for(key: str, anchor: str, voices: dict[str, str]) -> tuple[str, str]
     return None
 
 
-def plan_payload(name: str, current: dict | None, duration: float, record: dict | None, voices: dict[str, str],
-                 root, audio, settings: dict) -> dict:
-    """The plan drawing would use, in the chosen style and frame: each shot with its status and image,
-    and the characters, props and places it mentions with their looks (and, for a character, their
-    Cast voice). A shot drawn in another style or frame shows as changed."""
+def plan_rows(name, current, duration, record, settings):
     if not current or not duration:
-        return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
+        return []
     try:
         shots = visuals.plan_shots_for(current, duration, settings["style"], settings["orientation"])
     except H3Error:
-        return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
+        return []
     plan = current["plan"]
     keys = mentions(plan)
     rows = []
@@ -135,12 +147,22 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
                      "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
                      "effects": row.get("effects", []),
                      "image": still_url(name, still["image"]) if still else None})
+    return rows
+
+
+def plan_payload(name: str, current: dict | None, duration: float, record: dict | None, voices: dict[str, str],
+                 root, audio, settings: dict) -> dict:
+    """The plan drawing would use, with the shot statuses and each subject's looks and Cast voice."""
+    rows = plan_rows(name, current, duration, record, settings)
+    if not rows:
+        return {"rows": [], "subjects": [], "art_style": "", "counts": {}}
+    plan = current["plan"]
     portraits = visuals.kept_portraits(record, root, audio)
     current_keys = visuals.portrait_keys(current, settings["style"])
     found = []
     for key, (kind, anchor) in subjects(plan).items():
         entry = {"kind": kind, "key": key, "anchor": anchor,
-                 "uses": sum(key in mentioned for mentioned in keys), "portrait": None}
+                 "uses": sum(key in row["subjects"] for row in rows), "portrait": None}
         if kind == "characters":
             voice = _voice_for(key, anchor, voices)
             if voice:
@@ -162,7 +184,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
     plan = {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None}
     latest = None
     stills = None
-    timing_error = None
+    scene = None
     if result or data.get("visual_plan"):
         try:
             audio, mix_settings = planning_mix(name, data, result, export, store=store, result_snapshot=result_snapshot)
@@ -184,19 +206,21 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
                 "saved_settings": {"limit": saved.get("limit")} if stale else None}
         if timing_error:
             plan.update(rows=[], subjects=[], counts={}, error=timing_error)
-        stills = stills_payload(name, record)
+        stills = stills_payload(name, record, plan["rows"])
+        scene = effect_scene(stills, mix_settings)
         video = latest_export(audio)
         if video is not None:
             made = (read_snapshot(video) or {}).get("settings") or {}
             latest = {"url": f"/soundstage/api/video?name={quote(name)}&v={video.stat().st_mtime_ns}",
                       "file": video.name,
-                      # Saved from the stills shown now, so saving again would make the same video,
-                      # unless the subtitles changed: the page compares ``subtitles`` (size, 0 for none).
+                      # The page also compares the selected subtitle size and effects revision.
                       "current": bool(record) and made.get("stills") == record["revision"],
-                      "subtitles": int(made.get("subtitles") or 0)}
+                      "subtitles": int(made.get("subtitles") or 0),
+                      "effects_revision": made.get("effects_revision")}
     previews = {preset: preview_url(settings["engine"], file)
                 for preset, file in visuals.preview_images(root, settings["engine"]).items()}
-    return {**settings, **({"timing_pending": True} if not result else {}), "plan": plan, "stills": stills, "latest": latest, "previews": previews}
+    return {**settings, **({"timing_pending": True} if not result else {}), "plan": plan, "stills": stills,
+            "latest": latest, "previews": previews, "effects_revision": scene.revision if scene else None}
 
 
 def preview_url(engine: str, file: str) -> str:
@@ -469,30 +493,39 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
 
     @app.post(f"{api}/project/video/save", include_in_schema=False)
     @guarded
-    def save(name: str, request: Request):
-        """Render the video from the mix's stills and add it to Media; it needs FFmpeg, not the GPU.
-
-        The subtitles are burned in as the page shows them: on or off, at the chosen size.
-        """
+    def save(name: str, request: Request, body: dict = Body(default={})):
+        """Render the current stage, mix and chosen subtitles into a video in Media."""
         owner = owner_of(request)
-        data, result = project(name)
-        if not result:
-            raise H3Error("Speak the project first: the video is drawn from its mix.")
         root = export.deps.runtime_config().output_dir
-        if visuals.read_stills(result, root) is None:
-            raise H3Error("Draw the images first: the video is rendered from them.")
-        settings = video_settings(data, export.engines)
-        subtitles = settings["subtitle_size"] if settings["subtitles"] else 0
+        run = VideoRun(owner, name, SAVE)
+        run.status = "Rendering the video for Media…"
+
+        def progress(frame, total):
+            run.status = f"Rendering visual effects for Media… {frame * 100 // total}%"
 
         def work(run):
-            video = visuals.render_stills(result, root, subtitles=subtitles)
+            video = visuals.render_stills(result, root, subtitles=subtitles, scene=scene, progress=progress)
             run.status = f"Saved {video.name} to Media."
             run.revision += 1
 
-        run = VideoRun(owner, name, SAVE)
-        run.status = "Rendering the video for Media…"
         with runs.lock:
             check_available(owner, name)
+            data, result = project(name)
+            if not result:
+                raise H3Error("Speak the project first: the video is drawn from its mix.")
+            settings = video_settings(data, export.engines)
+            mix_settings = None
+            if settings["effects_enabled"] and body.get("include_effects") is not False:
+                _, mix_settings = planning_mix(name, data, result, export, store=store)
+            record = visuals.read_stills(result, root)
+            if record is None:
+                raise H3Error("Draw the images first: the video is rendered from them.")
+            subtitles = settings["subtitle_size"] if settings["subtitles"] else 0
+            scene = None
+            if mix_settings and not mix_settings.get("visual_timing_error"):
+                saved = visuals.read_plan(result, settings["limit"])
+                rows = plan_rows(name, saved, float(mix_settings.get("duration") or 0), record, settings)
+                scene = effect_scene(stills_payload(name, record, rows), mix_settings)
             runs.start(run, work)
         return {"video_run": run.public(None)}
 

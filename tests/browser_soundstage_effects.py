@@ -4,15 +4,20 @@ import json
 from io import BytesIO
 from pathlib import Path
 import socket
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from threading import Thread
 import time
+from unittest.mock import patch
 import wave
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
+from h3_app.drama3.visuals import FPS, Shot, render_video
+from h3_ui.drama3 import effects_export
 from tests.test_drama3_page_video import API, NAME, PLAN, Drama3PageVideoTests
 
 
@@ -279,5 +284,44 @@ def run(*, webgpu=False):
         fixture.doCleanups()
 
 
+def run_export():
+    with TemporaryDirectory() as temp:
+        folder = Path(temp)
+        size = (160, 90)
+        images = [folder / "before.png", folder / "after.png"]
+        Image.new("RGB", size, (48, 48, 48)).save(images[0])
+        Image.new("RGB", size, (192, 48, 32)).save(images[1])
+        audio = folder / "mix.wav"
+        with wave.open(str(audio), "wb") as wav:
+            wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            wav.writeframes(bytes(8000 * 2 * 2))
+        shots = [Shot(0, FPS, False, ""), Shot(FPS, FPS, True, "")]
+        timeline = [{"index": 0, "start": 0, "end": 1, "fade": 0, "effects": ["push_in", "flash"]},
+                    {"index": 1, "start": 1, "end": 2, "fade": 0.5, "effects": []}]
+        sounds = [{"name": "Impact", "start": 0.75, "end": 0.8, "loop": False}]
+
+        def capture(workspace):
+            return effects_export.capture_frames(workspace, timeline, sounds, images, size, FPS * 2)
+
+        with patch.object(effects_export, "BATCH_FRAMES", 12):
+            video = render_video(audio, shots, images, folder, size=size, frame_batches=capture)
+        streams = json.loads(subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(video)]))["streams"]
+        visual, sound = streams
+        assert (visual["width"], visual["height"], int(visual["nb_frames"])) == (*size, FPS * 2)
+        assert sound["codec_name"] == "aac" and abs(float(sound["duration"]) - 2) < 1 / FPS
+        pixels = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(video), "-an",
+                                          "-vf", "crop=2:2:80:44,scale=1:1", "-pix_fmt", "rgb24",
+                                          "-f", "rawvideo", "-"])
+        def red(frame):
+            return pixels[frame * 3]
+
+        assert red(19) > red(17) + 30, (red(17), red(19))
+        assert red(24) < red(30) < red(36) - 25, (red(24), red(30), red(36))
+        assert red(42) > 170, red(42)
+    print("PASS: MP4 frame count, soundtrack, sound-cued flash, and dissolve")
+
+
 if __name__ == "__main__":
     run(webgpu="--webgpu" in sys.argv)
+    run_export()

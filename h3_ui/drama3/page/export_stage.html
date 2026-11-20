@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { margin: 0; background: #000; }
+  #video-stage { width: 100vw; height: 100vh; max-height: none; border-radius: 0; }
+</style>
+<div id="video-stage" class="video-stage"><div class="stills"></div></div>
+<script type="module">
+  import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} from "./stage.js";
+  import {probeWebGPU} from "./effects_webgpu.js";
+
+  const layers = stageLayers();
+  document.querySelector(".stills").append(...Object.values(layers));
+  let timeline;
+  window.prepareStage = async ({shots, sounds}) => {
+    timeline = stageTimeline(shots, sounds);
+    await probeWebGPU();
+  };
+  window.paintFrame = async (time) => {
+    const frame = stageFrame(timeline, time);
+    const changed = showStageStills(layers, frame);
+    if (changed.length) await Promise.all(changed.map(image => image.decode()));
+    paintStage(layers, frame, true);
+  };
+</script>

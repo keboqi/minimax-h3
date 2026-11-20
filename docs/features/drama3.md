@@ -242,16 +242,19 @@ follow the audio clock when playing, pausing and seeking. The browser's reduced-
 pauses them by default, with an unchecked
 Visual effects control and an explanation. Explicitly turning Visual effects on overrides reduced
 motion for that project; turning it off clears the override. Existing plans stay still until
-effects are added or the shots are planned again. Effects currently play only on this page;
-MP4 exports keep the still images and transitions without these effects.
+effects are added or the shots are planned again.
 
-**Save to Media** renders the stills with the finished soundtrack into a 720p MP4 beside the mix
-(1280x720, or 720x1280 when the stills were drawn in Portrait 9:16, which the player then shows in a
-tall frame)
-(it needs FFmpeg, not the GPU, so it works in the CPU Workshop too) and adds it to Media, where a
-selected mix with an illustrated video offers the same Audio/Video switch. Once saved, the button
-becomes **Download video** until the images are drawn again. The subtitles are burned in as the
-player shows them, on or off and at their size; changing them asks for a new video.
+**Save to Media** renders the stage and the finished soundtrack into a 720p MP4 beside the mix
+(1280x720, or 720x1280 for Portrait 9:16). It includes visual effects when the player's
+**Visual effects** control is checked and burns in subtitles at the chosen size when enabled.
+Once saved, **Download video** stays available until the stills, enabled effects, or subtitle settings
+change. In Media, the mix offers the same Audio/Video switch.
+
+Export uses FFmpeg and works in CPU Workshop. With visual effects enabled, it also captures frames
+in headless Chromium using the player's renderer and its available WebGPU or Canvas 2D backend.
+The Modal images include Chromium. On a local server with Playwright installed, use the existing
+Chrome or Edge installation or run `python -m playwright install chromium`. On Linux servers
+without browser system libraries, use `python -m playwright install --with-deps chromium`.
 
 ## Scripts, takes and timings
 

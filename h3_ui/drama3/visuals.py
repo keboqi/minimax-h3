@@ -30,6 +30,7 @@ from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, plan_art_styl
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, write_snapshot
+from h3_ui.drama3.effects_export import EffectScene, capture_frames
 from h3_ui.drama3.result_view import timeline_data
 from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY
 from h3_ui.drama3.visual_styles import (CUSTOM_STYLE, DEFAULT_STYLE, SETTING_DETAIL, SLIDE_STYLES,
@@ -679,27 +680,37 @@ def burned_subtitles(audio, size, orientation="landscape") -> str | None:
     return ass_subtitles(lines, width=width, height=height, size=size) if lines else None
 
 
-def render_stills(audio, root, subtitles: int = 0):
+def render_stills(audio, root, subtitles: int = 0, *, scene: EffectScene | None = None, progress=None):
     """Render the video from the mix's stills, beside the mix, and record it so it shows in Media.
 
-    ``subtitles`` is the burned-in subtitles' size in percent, or 0 for none. The video's record
-    keeps it, so the page can tell a video made with other subtitles from the one asked for now.
+    ``subtitles`` is the burned-in subtitles' size in percent, or 0 for none. ``scene`` provides
+    the player's stills and cues when effects are enabled.
     """
     audio = Path(audio)
     record = read_stills(audio, root)
     if record is None:
         raise H3Error("Draw the images first: the video is rendered from them.")
+    if scene is not None and scene.stills_revision != record["revision"]:
+        raise H3Error("The stills changed while preparing the video. Save to Media again.")
     if which("ffmpeg") is None:
         raise H3Error("Install FFmpeg to render an illustrated video.")
     shots, names = stills_shots(record)
     folder = stills_dir(audio, root)
     orientation = orientation_of(record.get("orientation"))
     script = burned_subtitles(audio, subtitles, orientation) if subtitles else None
-    video = render_video(audio, shots, [folder / name for name in names], audio.parent, subtitles=script,
-                         size=VIDEO_SIZES[orientation])
+    size = VIDEO_SIZES[orientation]
+    images = [folder / name for name in names]
+    options = {}
+    if scene is not None:
+        def frame_batches(workspace):
+            return capture_frames(workspace, scene.shots, scene.sounds, images, size,
+                                  sum(shot.frames for shot in shots), progress)
+
+        options["frame_batches"] = frame_batches
+    video = render_video(audio, shots, images, audio.parent, subtitles=script, size=size, **options)
     write_snapshot(video, {"family": ILLUSTRATED_FAMILY, "settings": {
         **(record.get("details") or {}), "source": audio.name, "stills": record["revision"],
-        "subtitles": subtitles}})
+        "subtitles": subtitles, "effects_revision": scene.revision if scene else None}})
     return video
 
 

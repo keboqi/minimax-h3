@@ -702,14 +702,18 @@ class Drama3PageVideoTests(unittest.TestCase):
         edited = self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
                                           json={"index": 0, "effects": ["push_in", "rain"]}))["video"]
         self.assertEqual(edited["plan"]["rows"][0]["effects"], ["push_in", "rain"])
-        self.assertEqual(edited["stills"], before["stills"])
+        self.assertEqual(edited["stills"]["shots"][0]["effects"], ["push_in", "rain"])
+        self.assertEqual(edited["stills"]["revision"], before["stills"]["revision"])
+        first_effects = edited["effects_revision"]
+        self.assertNotEqual(first_effects, before["effects_revision"])
         self.assertEqual(edited["plan"]["counts"], before["plan"]["counts"])
         self.assertEqual(self.project()["video"]["plan"]["rows"][0]["effects"], ["push_in", "rain"])
         for kind, effect in (("lighting", "lightning"), ("atmosphere", "snow"), ("camera", "")):
             edited = self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
                                               json={"index": 0, "effect_kind": kind, "effect": effect}))["video"]
         self.assertEqual(edited["plan"]["rows"][0]["effects"], ["snow", "lightning"])
-        self.assertEqual(edited["stills"], before["stills"])
+        self.assertEqual(edited["stills"]["revision"], before["stills"]["revision"])
+        self.assertNotEqual(edited["effects_revision"], first_effects)
         invalid = self.client.patch(f"{API}/project/video/shot", params=NAME,
                                     json={"index": 0, "effect_kind": "camera", "effect": "rain"})
         self.assertIn("selected category", invalid.json()["error"])
@@ -722,6 +726,35 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.ok(self.client.patch(f"{API}/project/video", params=NAME,
                                  json={"video_effects": True, "video_effects_override_reduced_motion": True}))
         self.assertTrue(self.project()["video"]["effects_override_reduced_motion"])
+
+    def test_save_snapshots_visual_effects_and_respects_the_player_toggle(self):
+        self.draw()
+        self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                  json={"index": 1, "effects": ["flash"]}))
+        expected = self.project()["video"]
+
+        def fake_render(audio, shots, images, output_dir, **options):
+            video = output_dir / f"{audio.stem}_illustrated_{uuid.uuid4().hex[:8]}.mp4"
+            video.write_bytes(b"MP4")
+            return video
+
+        with patch.object(visuals, "render_video", side_effect=fake_render) as encode, patch.object(visuals, "which"):
+            self.ok(self.client.post(f"{API}/project/video/save", params=NAME))
+            self.assertIsNone(self.wait()["error"])
+            self.assertIn("frame_batches", encode.call_args.kwargs)
+            latest = self.project()["video"]["latest"]
+            self.assertEqual(latest["effects_revision"], expected["effects_revision"])
+
+            self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME,
+                                      json={"index": 1, "effects": ["vignette"]}))
+            changed = self.project()["video"]
+            self.assertEqual(changed["stills"]["revision"], expected["stills"]["revision"])
+            self.assertNotEqual(changed["effects_revision"], latest["effects_revision"])
+
+            self.ok(self.client.post(f"{API}/project/video/save", params=NAME, json={"include_effects": False}))
+            self.assertIsNone(self.wait()["error"])
+            self.assertNotIn("frame_batches", encode.call_args.kwargs)
+            self.assertIsNone(self.project()["video"]["latest"]["effects_revision"])
 
     def test_script_effects_follow_the_spoken_or_estimated_clock(self):
         from h3_app.drama3.results import result_settings, script_fingerprint

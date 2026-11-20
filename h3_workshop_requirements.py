@@ -6,6 +6,7 @@ module while building its image: Workshop-only edits should reuse that cache.
 from h3_requirements import (
     GRADIO_VERSION,
     HUGGINGFACE_HUB_REQUIREMENT,
+    PLAYWRIGHT_REQUIREMENT,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     WSPROTO_VERSION,
 )
@@ -13,6 +14,7 @@ from h3_requirements import (
 
 WORKSHOP_REQUIREMENTS = (
     *VIDEO_DOWNLOAD_REQUIREMENTS,
+    PLAYWRIGHT_REQUIREMENT,
     # requests: the Drama 3 SGLang-Omni downloader module imports it.
     f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
     "openai>=3.16.2,<4",  # Workshop's OpenAI-compatible prompt writer.

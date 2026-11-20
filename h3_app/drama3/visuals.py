@@ -1,5 +1,6 @@
 """Plan illustrated shots on the finished mix and render them on its clock."""
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,9 +33,11 @@ def _encode(arguments, cwd=None):
         raise H3Error(f"Illustrated video export failed: {result.stderr.strip()[-600:]}")
 
 
-def render_video(audio, shots, images, output_dir, subtitles: str | None = None, size=(1280, 720)):
-    """Encode one bounded filter graph per shot, then mux the uninterrupted mix.
+def render_video(audio, shots, images, output_dir, subtitles: str | None = None, size=(1280, 720),
+                 *, frame_batches=None):
+    """Encode stills or batches of composited JPEG frames, then mux the uninterrupted mix.
 
+    ``frame_batches`` produces (JPEG stream, frame count) pairs in the temporary workspace.
     ``subtitles``, an ASS script (``h3_app.burned_subtitles``), is burned in over the joined
     shots, which then encode once more instead of being copied. ``size`` is the video's width and
     height: 720x1280 for a portrait video.
@@ -46,22 +49,19 @@ def render_video(audio, shots, images, output_dir, subtitles: str | None = None,
     # Scale the still once, then repeat that frame until the shot ends.
     canvas = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
               f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop=-1")
-    with TemporaryDirectory(dir=output_dir, prefix=".illustrated-") as temp:
+    with TemporaryDirectory(dir=output_dir, prefix=".illustrated-") as temp, ExitStack() as stack:
         folder = Path(temp)
         entries = []
-        for i, (shot, image) in enumerate(zip(shots, images, strict=True)):
-            segment = folder / f"shot-{i}.mp4"
-            still_input = ["-framerate", str(FPS), "-i"]
-            args = [*still_input, str(image)]
-            if shot.dissolve and shot.frames > 1:
-                # The first frame belongs to the outgoing still. Leave a full incoming frame.
-                seconds = min(12, shot.frames - 1) / FPS
-                args += [*still_input, str(images[i - 1]), "-filter_complex_threads", "1", "-filter_complex",
-                         f"[1:v]{canvas}[prev];[0:v]{canvas}[next];"
-                         f"[prev][next]xfade=duration={seconds}:offset=0"]
-            else:
-                args += ["-vf", canvas]
-            _encode([*args, "-frames:v", str(shot.frames), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        if frame_batches is None:
+            inputs = _still_segments(shots, images, canvas)
+        else:
+            batches = frame_batches(folder)
+            stack.callback(batches.close)
+            inputs = ((["-f", "image2pipe", "-framerate", str(FPS), "-c:v", "mjpeg", "-i", str(file)], frames)
+                      for file, frames in batches)
+        for i, (args, frames) in enumerate(inputs):
+            segment = folder / f"segment-{i}.mp4"
+            _encode([*args, "-frames:v", str(frames), "-c:v", "libx264", "-pix_fmt", "yuv420p",
                      "-preset", "veryfast", str(segment)])
             entries.append(f"file '{segment.name}'")
         playlist = folder / "shots.txt"
@@ -77,3 +77,18 @@ def render_video(audio, shots, images, output_dir, subtitles: str | None = None,
         output = output_dir / f"{audio.stem}_illustrated_{uuid4().hex[:8]}.mp4"
         partial.replace(output)
     return output
+
+
+def _still_segments(shots, images, canvas):
+    still_input = ["-framerate", str(FPS), "-i"]
+    for i, (shot, image) in enumerate(zip(shots, images, strict=True)):
+        args = [*still_input, str(image)]
+        if shot.dissolve and shot.frames > 1:
+            # The first frame belongs to the outgoing still. Leave a full incoming frame.
+            seconds = min(12, shot.frames - 1) / FPS
+            args += [*still_input, str(images[i - 1]), "-filter_complex_threads", "1", "-filter_complex",
+                     f"[1:v]{canvas}[prev];[0:v]{canvas}[next];"
+                     f"[prev][next]xfade=duration={seconds}:offset=0"]
+        else:
+            args += ["-vf", canvas]
+        yield args, shot.frames

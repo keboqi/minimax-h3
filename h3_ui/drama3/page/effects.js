@@ -318,6 +318,10 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     lights.length <= 1 &&
     backAtmospheres.length <= 1 &&
     backLights.length <= 1 &&
+    (!atmospheres.length || atmoId) &&
+    (!lights.length || lightId) &&
+    (!backAtmospheres.length || backAtmoId) &&
+    (!backLights.length || backLightId) &&
     renderWebGPU(canvas, atmoId, lightId, t, width, height, gpuScene)
   ) {
     showBackend?.("WebGPU");
