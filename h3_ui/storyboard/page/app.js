@@ -211,6 +211,7 @@
         directorButton,
         state.boot.gpu ? panelButton("auto", "Auto render") : null,
         panelButton("cast", "Cast"), panelButton("versions", "Versions"), panelButton("settings", "Settings")),
+      button("Play full video", playFullVideo, "btn primary sm"),
     ].filter(Boolean));
   };
 
@@ -388,11 +389,24 @@
     const shown = shownTake();
     const busy = Boolean(state.run?.active);
     const blocked = item.issues.length > 0;
-    const chips = item.takes.map((take) => chip(
-      `Take ${take.number}${take.id === item.in_use ? " · in use" : ""}`,
-      shown?.id === take.id,
-      () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
-    ));
+    const cards = item.takes.map((take) => {
+      const selected = shown?.id === take.id;
+      const inUse = take.id === item.in_use;
+      const thumbSrc = take.poster || item.thumb;
+      return h("button", {
+        type: "button",
+        className: "take-card",
+        "aria-pressed": String(selected),
+        onclick: () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
+      },
+      h("span", {className: "take-card-thumb"},
+        thumbSrc ? h("img", {src: thumbSrc, alt: "", loading: "lazy"}) : null,
+        inUse ? h("span", {className: "take-in-use"}, "In use") : null),
+      h("span", {className: "take-card-meta"},
+        h("strong", {}, `Take ${take.number}`),
+        h("span", {className: "mono small muted"}, take.seed !== undefined ? `#${take.seed}` : "")));
+    });
+    const chips = cards;
     const row = [];
     if (shown?.subtitle_error) row.push(h("span", {className: "small muted"}, shown.subtitle_error));
     const choices = [];
@@ -528,6 +542,17 @@
   const VIDEO_ICON = "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM10 9l5 3-5 3z";
 
   const renderStrip = () => {
+    const stripHead = $("strip-head");
+    if (stripHead) {
+      stripHead.replaceChildren(
+        h("div", {className: "filmstrip-head-left"},
+          h("span", {className: "filmstrip-label"}, `Timeline · ${scenes().length} Scenes`),
+          h("span", {className: "small muted"}, "Click connector pill to toggle Continue vs Cut")),
+        h("div", {className: "chips"},
+          button([icon("M12 5v14M5 12h14"), "Add scene"], () => addScene(), "btn sm"),
+          button([icon(VIDEO_ICON), "Add video from Media"], () => addScene(null, "media"), "btn sm",
+            {title: "A scene that plays a video from Media; the next scene can continue it"})));
+    }
     const running = activeGenerate()?.scene_id;
     const items = [];
     scenes().forEach((item, index) => {
@@ -623,7 +648,6 @@
         }));
     }
     actions.push(
-      button("Play full video", playFullVideo),
       h("label", {className: "check-label"},
         h("input", {type: "checkbox", checked: state.translateSubtitles, onchange: (event) => {
           state.translateSubtitles = event.target.checked;
@@ -1378,16 +1402,24 @@
       const data = await act(() => request("POST", boardUrl("/cast"), form, {form: true}), "Added to the cast.");
       if (data) applyBoard(data);
     };
-    return [
-      panelHead("Cast"),
-      h("p", {className: "small muted"}, "Add a picture of each person. Scenes using Reference media can then tick them, so they look the same in every scene."),
-      state.board.cast.length ? state.board.cast.map((member) => h("div", {className: "list-row"},
+
+    const castRows = state.board.cast.length ? state.board.cast.map((member) => {
+      const usedIn = scenes().filter((s) => (s.cast || []).includes(member.name)).map((s) => `Scene ${s.number}`);
+      return h("div", {className: "list-row"},
         h("img", {src: member.thumb, alt: "", loading: "lazy"}),
-        h("div", {className: "grow"}, member.name),
+        h("div", {className: "grow"},
+          h("strong", {}, member.name),
+          h("div", {className: "small muted"}, usedIn.length ? `Used in ${usedIn.join(", ")}` : "Not yet assigned to a scene")),
         button("Remove", async () => {
           const data = await act(() => request("DELETE", boardUrl(`/cast/${encodeURIComponent(member.name)}`)), "Removed from the cast.");
           if (data) applyBoard(data);
-        }, "btn sm"))) : h("p", {className: "muted"}, "No cast yet."),
+        }, "btn sm danger"));
+    }) : [h("p", {className: "muted"}, "No cast yet.")];
+
+    const castColumn = h("div", {className: "column"}, [
+      h("h3", {}, "Cast Roster"),
+      h("p", {className: "small muted"}, "Add a picture of each person. Scenes using Reference media can then tick them, so they look the same in every scene."),
+      ...castRows,
       h("label", {className: "field"}, "Name", name),
       h("div", {className: "chips"},
         button("Upload picture", async () => {
@@ -1395,6 +1427,54 @@
           if (file) add((form) => form.append("file", file));
         }, "btn quiet"),
         state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn")),
+    ]);
+
+    const libGrid = h("div", {className: "library-grid"});
+    const libStatus = h("p", {className: "small muted"}, state.boot.library ? "Loading media…" : "Media library unavailable.");
+    const libQuery = h("input", {type: "search", placeholder: "Search filename or tags…"});
+    let libKind = "image";
+    const loadLib = async () => {
+      if (!state.boot.library) return;
+      const data = await act(() => request("GET", `${API}/library?kind=${libKind}&limit=24&query=${encodeURIComponent(libQuery.value)}`));
+      if (!data) return;
+      libStatus.textContent = `${data.total} matching ${libKind === "video" ? "videos" : "images"} · Click to assign to Scene ${scene().number}`;
+      libGrid.replaceChildren(...data.items.map((row) => h("button", {
+        type: "button",
+        "aria-label": row.caption,
+        title: `Assign ${row.caption} to Scene ${scene().number}`,
+        onclick: () => libKind === "video" ? libraryVideo(row.path) : libraryMedia("ref_images", row.path),
+      }, h("img", {src: row.thumb, alt: "", loading: "lazy"}))));
+    };
+    libQuery.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); loadLib(); } };
+
+    const imgFilter = chip("Images", true, () => {
+      libKind = "image";
+      imgFilter.setAttribute("aria-pressed", "true");
+      vidFilter.setAttribute("aria-pressed", "false");
+      loadLib();
+    });
+    const vidFilter = chip("Video Clips", false, () => {
+      libKind = "video";
+      imgFilter.setAttribute("aria-pressed", "false");
+      vidFilter.setAttribute("aria-pressed", "true");
+      loadLib();
+    });
+    if (state.boot.library) queueMicrotask(loadLib);
+
+    const mediaColumn = h("div", {className: "column"}, [
+      h("div", {className: "row"},
+        h("h3", {}, "Project Media Library"),
+        h("div", {className: "chips"}, imgFilter, vidFilter)),
+      h("div", {className: "row"},
+        h("div", {className: "grow field"}, libQuery),
+        button("Search", loadLib, "btn sm")),
+      libStatus,
+      libGrid,
+    ]);
+
+    return [
+      panelHead("Cast & Media Library"),
+      h("div", {className: "scene-columns"}, castColumn, state.boot.library ? mediaColumn : null),
     ];
   };
 

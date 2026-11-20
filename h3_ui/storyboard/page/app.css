@@ -157,6 +157,13 @@ legend { padding: 0 0 6px; font-size: 13.5px; font-weight: 600; color: var(--mut
   display: flex; flex-direction: column; gap: 10px; padding: 12px 20px;
   background: var(--surface); border-bottom: 1px solid var(--line);
 }
+.filmstrip-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+}
+.filmstrip-head-left { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.filmstrip-label {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+}
 .strip { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 2px 2px 6px; }
 .link-toggle {
   flex: 0 0 32px; align-self: center; height: 60px; padding: 0; border: 1px solid var(--accent); border-radius: 999px;
@@ -242,6 +249,25 @@ video::cue(c.translation), video::cue(c.translation:past) { font-size: 0.78em; c
 }
 .take-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 8px; }
 .take-chips, .take-detail, .take-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.take-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.take-card {
+  padding: 7px; border-radius: 9px; border: 1px solid var(--line); background: var(--control);
+  text-align: left; display: flex; flex-direction: column; gap: 6px;
+}
+.take-card:hover { border-color: var(--dash); }
+.take-card[aria-pressed="true"] {
+  border: 2px solid var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.take-card-thumb {
+  position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 6px;
+  overflow: hidden; background: #070b0a; border: 1px solid var(--line);
+}
+.take-card-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.take-in-use {
+  position: absolute; top: 5px; right: 5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink); font-size: 10.5px; font-weight: 700;
+}
+.take-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12.5px; }
 .take-chips + .take-detail { padding-top: 10px; border-top: 1px solid var(--line); }
 .take-foot { justify-content: flex-end; padding-top: 4px; }
 .take-meta { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }

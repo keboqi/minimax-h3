@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Storyboard</title>
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=3">
 </head>
 <body>
 <div id="editor" class="editor" hidden>
   <header class="topbar" id="topbar"></header>
   <div class="note" id="gpu-note" hidden>Scenes are generated on the GPU endpoint. Prepare every scene here, then open the GPU endpoint's Storyboard and press <strong>Generate all remaining scenes</strong>.</div>
   <section class="filmstrip" aria-label="Filmstrip">
+    <div class="filmstrip-head" id="strip-head"></div>
     <div class="strip" id="strip"></div>
     <div class="strip-actions" id="strip-actions"></div>
     <div id="full-video"></div>
@@ -40,6 +41,6 @@
 <dialog id="library" class="library" aria-label="Media library"></dialog>
 <input id="file-input" type="file" hidden>
 <script src="common.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
