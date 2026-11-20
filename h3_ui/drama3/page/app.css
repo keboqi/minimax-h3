@@ -666,11 +666,14 @@ button.step:hover { background: var(--surface); }
 .effect-preview-shot img { object-fit: contain; }
 .effect-preview > .effect-preview-portrait { aspect-ratio: 9 / 16; max-width: 180px; justify-self: center; }
 .effect-options { display: grid; align-content: start; gap: 12px; min-width: 0; }
-.effect-categories { justify-self: start; flex-wrap: wrap; }
+.effect-options-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.effect-options-controls .check { flex: none; }
 .effect-picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 175px), 1fr)); gap: 10px; }
 .effect-choice { flex-direction: column; align-items: start; gap: 5px; background: var(--surface);
   color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .effect-choice[aria-pressed="true"] { border-color: var(--accent); background: var(--selected); box-shadow: inset 0 0 0 1px var(--accent); }
+.effect-choice[data-playing] .effect-preview-frame::after { content: "Playing"; position: absolute; right: 6px; bottom: 6px;
+  padding: 2px 6px; border-radius: 4px; background: rgba(0, 0, 0, .72); color: #fff; font-size: 11px; }
 .effect-choice .small { font-size: 12px; line-height: 1.4; }
 .effects-picker .drawn-foot .error:empty { display: none; }
 @media (max-width: 720px) {

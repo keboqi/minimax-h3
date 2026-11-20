@@ -46,6 +46,8 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   const hint = h("p", {class: "muted small effect-preview-hint"});
   const sourceStatus = h("p", {class: "muted small effect-preview-hint", role: "status"});
   const grid = h("div", {class: "effect-picker-grid", role: "group"});
+  const hoverToggle = h("input", {type: "checkbox", checked: !motion?.matches,
+    onchange: () => { if (!hoverToggle.checked) stopHover(); }});
   const tabs = CATEGORIES.map((option) => h("button", {type: "button", "data-kind": option.id,
     onclick: () => {
       if (category === option) return;
@@ -151,17 +153,18 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   function stopHover() {
     if (!hover) return;
     cancelAnimationFrame(hover.frame);
+    hover.card.removeAttribute("data-playing");
     hover.paint(hover.posterTime);
     hover = null;
   }
 
-  async function playHover(event, still, paint, posterTime, continuous) {
-    if (event.pointerType !== "mouse" || motion?.matches || saving) return;
+  async function playHover(event, still, paint, posterTime, {loops, once}) {
+    if (event.pointerType === "touch" || !hoverToggle.checked || saving) return;
     stopHover();
-    const preview = {paint, posterTime, frame: 0};
+    const preview = {card: event.currentTarget, paint, posterTime, frame: 0};
     hover = preview;
     try {
-      await still.decode();
+      if (!still.complete || !still.naturalWidth) await still.decode();
     } catch {
       if (hover === preview) stopHover();
       return;
@@ -171,9 +174,12 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     const started = performance.now();
     const tick = (now) => {
       const elapsed = Math.max(0, (now - started) / 1000);
-      paint(continuous ? elapsed : Math.min(DURATION, elapsed));
-      if (continuous || elapsed < DURATION) preview.frame = requestAnimationFrame(tick);
+      const time = loops ? elapsed % DURATION : elapsed;
+      paint(once ? Math.min(DURATION, time) : time);
+      if (!once || elapsed < DURATION) preview.frame = requestAnimationFrame(tick);
+      else preview.card.removeAttribute("data-playing");
     };
+    preview.card.setAttribute("data-playing", "");
     paint(0);
     preview.frame = requestAnimationFrame(tick);
   }
@@ -191,12 +197,15 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
       const overlay = h("canvas", {width: 256, height: 144, "aria-hidden": "true"});
       const effect = id ? [id] : [];
       const posterTime = previewTime(effect);
-      const paint = (time) => paintEffectPreview(overlay, still, effect, time, DURATION);
-      const continuous = kind !== "camera" && !FLASHING.has(id);
+      const paint = (time) => {
+        paintEffectPreview(overlay, still, effect, time, DURATION);
+        if (id === "vignette") overlay.style.opacity = String(Math.min(1, time / 0.6));
+      };
+      const playback = {loops: (kind === "camera" && id !== "subtle_sway") || id === "vignette", once: FLASHING.has(id)};
       if (id) paint(posterTime);
       return h("button", {type: "button", class: "style-card effect-choice", "data-effect": id,
         "aria-label": preset.label, "aria-description": preset.description,
-        onpointerenter: id ? (event) => playHover(event, still, paint, posterTime, continuous) : null,
+        onpointerenter: id ? (event) => playHover(event, still, paint, posterTime, playback) : null,
         onpointerleave: id ? stopHover : null,
         onpointercancel: id ? stopHover : null,
         onclick: () => {
@@ -217,7 +226,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     stopPreview();
     stopHover();
     saving = value;
-    for (const control of dialog.querySelectorAll("button, select")) control.disabled = value;
+    for (const control of dialog.querySelectorAll("button, select, input")) control.disabled = value;
     apply.textContent = value ? "Saving…" : "Apply effects";
     updateControls();
   }
@@ -242,20 +251,24 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
           h("label", {class: "field"}, h("span", {class: "label"}, "Preview source"), source), play),
         stage, chips, sourceStatus, hint),
       h("section", {class: "effect-options", "aria-label": "Effect options"},
-        h("div", {class: "seg effect-categories", role: "group", "aria-label": "Effect categories"}, ...tabs), grid)),
+        h("div", {class: "effect-options-controls"},
+          h("div", {class: "seg effect-categories", role: "group", "aria-label": "Effect categories"}, ...tabs),
+          h("label", {class: "check"}, hoverToggle, "Hover previews")),
+        grid)),
     h("div", {class: "drawn-foot"}, error, h("span", {class: "spacer"}), cancel, apply));
   dialog.oncancel = (event) => { if (saving) event.preventDefault(); };
-  const pauseForReducedMotion = (event) => {
+  const updateMotion = (event) => {
+    hoverToggle.checked = !event.matches;
     if (!event.matches) return;
     stopPreview();
     stopHover();
   };
-  motion?.addEventListener("change", pauseForReducedMotion);
+  motion?.addEventListener("change", updateMotion);
   dialog.onclose = () => {
     stopPreview();
     stopHover();
     sourceRequest++;
-    motion?.removeEventListener("change", pauseForReducedMotion);
+    motion?.removeEventListener("change", updateMotion);
     restoreFocus();
   };
   renderChoices();
