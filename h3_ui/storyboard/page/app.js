@@ -984,7 +984,7 @@
     : h("div", {className: "ready", id: "checklist"}, item.kind === "media" ? "Ready to prepare." : "Ready to generate."));
 
   const escapeHtml = (text) => text.replace(/[&<>"]/g, (ch) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[ch]);
-  const PROMPT_TOKEN = /(<d\b[^>]*>[\s\S]*?<\/d>|<\/?d\b[^>]*>)|(<(?:Picture|Video)\s+\d+>)|(<Audio\s+\d+>)|(<\|[^|]*\|>|<[^>\n]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/gi;
+  const PROMPT_TOKEN = /(<d\b[^>]*>[\s\S]*?<\/d>|<\/?d\b[^>]*>)|(^[\t ]*[^\s:：<>[\]{}|][^:：<>[\]{}|\n]{0,47}?[\t ]*[:：])|(<(?:Picture|Video)\s+\d+>)|(<Audio\s+\d+>)|(<\|[^|]*\|>|<[^>\n]*>)|(\[[^\]\n]*\])|(\{[^{}\n]*\})/gim;
   const highlightPrompt = (text) => {
     let out = "";
     let cursor = 0;
@@ -995,12 +995,15 @@
         const inner = escapeHtml(raw).replace(/(\[[^\]\n]*\])/g, '<span class="tok-cue">$1</span>');
         out += `<span class="tok-dialogue">${inner}</span>`;
       } else if (match[2]) {
-        out += `<span class="tok-ref">${escapeHtml(raw)}</span>`;
+        const lead = raw.match(/^[\t ]*/)[0];
+        out += `${escapeHtml(lead)}<span class="tok-key">${escapeHtml(raw.slice(lead.length))}</span>`;
       } else if (match[3]) {
-        out += `<span class="tok-effect">${escapeHtml(raw)}</span>`;
+        out += `<span class="tok-ref">${escapeHtml(raw)}</span>`;
       } else if (match[4]) {
-        out += `<span class="tok-tag">${escapeHtml(raw)}</span>`;
+        out += `<span class="tok-effect">${escapeHtml(raw)}</span>`;
       } else if (match[5]) {
+        out += `<span class="tok-tag">${escapeHtml(raw)}</span>`;
+      } else if (match[6]) {
         out += `<span class="tok-cue">${escapeHtml(raw)}</span>`;
       } else {
         out += `<span class="tok-effect">${escapeHtml(raw)}</span>`;
@@ -1045,10 +1048,15 @@
     if (!item.tags.length) {
       return h("p", {className: "small muted", id: "tag-hint"}, "Tick cast or add an image, video or audio.");
     }
-    const chips = item.tags.map((entry) => {
+    const thumbByTag = new Map((item.pictures || []).map((pic) => [pic.tag, pic.thumb]));
+    const chips = item.tags.map((entry, idx) => {
       const match = entry.match(/<Picture \d+>/);
       const tag = match ? match[0] : entry;
-      return button(`+ ${entry}`, () => insertIntoPrompt(tag), "tag-chip",
+      const thumb = thumbByTag.get(entry) || item.pictures?.[idx]?.thumb;
+      const content = thumb
+        ? [h("img", {className: "tag-thumb", src: thumb, alt: "", loading: "lazy"}), `+ ${entry}`]
+        : `+ ${entry}`;
+      return button(content, () => insertIntoPrompt(tag), thumb ? "tag-chip with-thumb" : "tag-chip",
         {title: `Insert ${tag} into prompt`});
     });
     return h("div", {className: "tag-bar", id: "tag-hint"},
