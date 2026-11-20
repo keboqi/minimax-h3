@@ -123,7 +123,7 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
          "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
          "preview_start": sb.model.overlap_seconds(board["takes"][take_id]["prefix_frames"]) if flow else 0,
          "poster": poster_url(board["takes"][take_id]["video"]),
-         "subtitles": _subtitle_track(storyboard_id, board["takes"][take_id]),
+         **_subtitle_tracks(storyboard_id, board["takes"][take_id]),
          "subtitle_error": board["takes"][take_id].get("subtitle_error"),
          "missing": not Path(board["takes"][take_id]["video"]).is_file(),
          "continued_by": continuations.get(take_id, []),
@@ -156,11 +156,25 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
     }
 
 
-def _subtitle_track(storyboard_id, take):
-    if subtitles.take_lines(take):
-        return (f"/storyboard/api/boards/{storyboard_id}/takes/{take['id']}/subtitles.vtt"
-                f"?v={take.get('subtitle_revision', 0)}")
-    return None
+def translation_track_url(storyboard_id, take, language, texts):
+    revision = f"{take.get('subtitle_revision', 0)}-{subtitles.translation_revision(texts)}"
+    return (f"/storyboard/api/boards/{storyboard_id}/takes/{take['id']}/subtitles.vtt?"
+            + urlencode({"translation": language, "v": revision}))
+
+
+def _subtitle_tracks(storyboard_id, take):
+    lines = subtitles.take_lines(take)
+    if not lines:
+        return {"subtitles": None, "subtitle_translations": {}}
+    track = (f"/storyboard/api/boards/{storyboard_id}/takes/{take['id']}/subtitles.vtt"
+             f"?v={take.get('subtitle_revision', 0)}")
+    source = subtitles.source_digest(lines)
+    translations = {
+        language: translation_track_url(storyboard_id, take, language, record["texts"])
+        for language, record in take.get("subtitle_translations", {}).items()
+        if record["source"] == source
+    }
+    return {"subtitles": track, "subtitle_translations": translations}
 
 
 def _video(storyboard_id, board, index) -> dict[str, Any] | None:
@@ -196,6 +210,7 @@ def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": storyboard_id, "name": board["name"], "settings": sb.profile_summary(board["profile"]),
         "auto_subtitles": board.get("auto_subtitles", False),
+        "subtitle_language": board.get("subtitle_language", subtitles.TARGET_LANGUAGES[0]),
         "total": clock(sb.total_seconds(board)), "done": done, "pending": len(states) - done,
         "queue": list(board["queue"]), "scenes": scenes, "generated": bool(board["takes"]),
         "cast": [{**_media(storyboard_id, member["image"], picture=True), "name": member["name"]}

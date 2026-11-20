@@ -70,7 +70,7 @@
   };
 
   // Saving ----------------------------------------------------------------
-  const dirty = new Map();  // Waiting for their turn, by scene.
+  const dirty = new Map();  // Waiting for their turn, by URL.
   const sending = new Map();  // The one request under way.
   let saveTimer = null;
   let saves = Promise.resolve();
@@ -84,28 +84,30 @@
   const edit = (field, value) => {
     const item = scene();
     item[field] = value;
-    const entry = dirty.get(item.id) || {boardId: state.board.id, fields: {}};
+    queueSave("PATCH", boardUrl(`/scenes/${item.id}`), field, value, item.id);
+  };
+  const queueSave = (method, url, field, value, sceneId = null) => {
+    const entry = dirty.get(url) || {method, boardId: state.board.id, sceneId, fields: {}};
     entry.fields[field] = value;
-    dirty.set(item.id, entry);
+    dirty.set(url, entry);
     setSaveLabel("Saving…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flush, SAVE_DELAY_MS);
   };
-  const saveUrl = (boardId, sceneId) => `${API}/boards/${boardId}/scenes/${sceneId}`;
-  const saveScene = async (sceneId) => {
-    const entry = dirty.get(sceneId);
+  const saveEdit = async (url) => {
+    const entry = dirty.get(url);
     if (!entry) return;
-    const {boardId, fields} = entry;
-    dirty.delete(sceneId);
-    sending.set(sceneId, entry);
+    const {method, boardId, fields} = entry;
+    dirty.delete(url);
+    sending.set(url, entry);
     try {
-      const data = await request("PATCH", saveUrl(boardId, sceneId), fields, {keepalive: true});
-      sending.delete(sceneId);
+      const data = await request(method, url, fields, {keepalive: true});
+      sending.delete(url);
       savesFinished += 1;
       if (state.board?.id === boardId) applyBoard(data, {keepInspector: true});
       if (!dirty.size) setSaveLabel("All changes saved");
     } catch (error) {
-      sending.delete(sceneId);
+      sending.delete(url);
       if (error.refused) {
         setSaveLabel("Couldn't save");
         toast(error.message, true);
@@ -113,8 +115,8 @@
         return;
       }
       // A lost connection loses nothing: the edit waits for the next try, under anything newer.
-      const newer = dirty.get(sceneId);
-      dirty.set(sceneId, {boardId, fields: {...fields, ...newer?.fields}});
+      const newer = dirty.get(url);
+      dirty.set(url, {...entry, fields: {...fields, ...newer?.fields}});
       setSaveLabel("Connection lost, retrying…");
       clearTimeout(saveTimer);
       saveTimer = setTimeout(flush, SAVE_RETRY_MS);
@@ -122,15 +124,15 @@
   };
   const flush = () => {
     clearTimeout(saveTimer);
-    for (const sceneId of dirty.keys()) saves = saves.then(() => saveScene(sceneId));
+    for (const url of dirty.keys()) saves = saves.then(() => saveEdit(url));
     return saves;
   };
   // The page is closing, so what's waiting can't take its turn behind the request under way.
   const flushNow = () => {
     clearTimeout(saveTimer);
-    for (const [sceneId, {boardId, fields}] of dirty) {
+    for (const [url, {method, fields}] of dirty) {
       // Keepalive lets the request finish after the page has gone.
-      request("PATCH", saveUrl(boardId, sceneId), fields, {keepalive: true}).catch(() => {});
+      request(method, url, fields, {keepalive: true}).catch(() => {});
     }
     dirty.clear();
   };
@@ -147,7 +149,11 @@
     // An upload or writer reply may arrive after the user opens another storyboard.
     if (data.id !== state.board?.id) return;
     for (const edits of [sending, dirty]) {
-      for (const [id, {fields}] of edits) Object.assign(data.scenes.find((item) => item.id === id) || {}, fields);
+      for (const {boardId, sceneId, fields} of edits.values()) {
+        if (boardId !== data.id) continue;
+        const target = sceneId ? data.scenes.find((item) => item.id === sceneId) : data;
+        if (target) Object.assign(target, fields);
+      }
     }
     state.board = data;
     const row = state.boot.boards.find((item) => item.id === data.id);
@@ -271,15 +277,47 @@
 
   const pendingTranslations = new Map();
   const sceneTranslationAttempts = new WeakMap();
+  const savedTranslation = (take, language) => take?.subtitle_translations?.[language];
+  const renderSubtitleStatus = () => {
+    const take = shownTake();
+    const language = translationOptions().language;
+    const available = take?.subtitles && !take.missing;
+    const saved = available && savedTranslation(take, language);
+    $("scene-subtitle-controls").hidden = !available;
+    const status = $("scene-subtitle-status");
+    const text =
+      `${available ? "Subtitles available" : "No subtitles available"} · ${language} translation ${saved ? "saved" : "unavailable"}`;
+    if (status.textContent !== text) status.textContent = text;
+  };
   const requestTranslations = (boardId, takes, options, force) => {
-    const body = {...options, force, take_ids: takes.filter((take) => take.subtitles).map((take) => take.id)};
-    if (!body.take_ids.length) return Promise.resolve({tracks: {}});
+    const {language} = options;
+    const cached = {}, missing = [];
+    for (const take of takes) {
+      if (!take.subtitles) continue;
+      const track = force ? null : savedTranslation(take, language);
+      if (track) cached[take.id] = track;
+      else missing.push(take);
+    }
+    if (!missing.length) return Promise.resolve({tracks: cached});
+    const body = {...options, force, take_ids: missing.map((take) => take.id)};
     const url = API + "/boards/" + boardId + "/subtitle-translations";
     const key = url + JSON.stringify(body);
     if (!pendingTranslations.has(key)) {
       pendingTranslations.set(key, request("POST", url, body).finally(() => pendingTranslations.delete(key)));
     }
-    return pendingTranslations.get(key);
+    return pendingTranslations.get(key).then(({tracks}) => {
+      const remember = (take, track) => { (take.subtitle_translations ??= {})[language] = track; };
+      const current = state.board.id === boardId ? scenes().flatMap((item) => item.takes) : [];
+      for (const take of missing) {
+        const track = tracks[take.id];
+        if (!track) continue;
+        remember(take, track);
+        const latest = current.find((item) => item.id === take.id && item.subtitles === take.subtitles);
+        if (latest && latest !== take) remember(latest, track);
+      }
+      if (state.board.id === boardId) renderSubtitleStatus();
+      return {tracks: {...cached, ...tracks}};
+    });
   };
 
   const releaseVideo = (video) => {
@@ -290,20 +328,29 @@
 
   const updatePreviewSubtitles = (video, take, {force = false} = {}) => {
     const src = take?.missing ? null : take?.subtitles || null;
-    $("preview-subtitles").hidden = !src;
-    if (!video) return;
-    const checkbox = $("show-scene-translation");
+    renderSubtitleStatus();
     const status = $("scene-translation-status");
+    if (!video) {
+      status.textContent = "";
+      return;
+    }
+    const checkbox = $("show-scene-translation");
     const regenerate = $("regenerate-scene-translation");
     checkbox.checked = state.showSceneTranslation;
     const options = src && checkbox.checked ? translationOptions() : null;
     regenerate.hidden = !options;
-    const key = JSON.stringify([src, options?.language]);
+    const cached = options && savedTranslation(take, options.language);
+    const key = JSON.stringify([src, options?.language, cached]);
     const previous = sceneTranslationAttempts.get(video);
     if (!force && previous?.key === key) return;
     const attempt = {key};
     sceneTranslationAttempts.set(video, attempt);
-    if (!force || previous?.key !== key) setSubtitleTrack(video, src, state.showSubtitles);
+    if (!force || previous?.key !== key) setSubtitleTrack(video, cached || src, state.showSubtitles);
+    if (cached && !force) {
+      status.textContent = "";
+      regenerate.disabled = false;
+      return;
+    }
     status.textContent = options ? "Translating subtitles…" : "";
     regenerate.disabled = Boolean(options);
     if (!options) return;
@@ -717,13 +764,21 @@
     let index = 0;
     const position = h("span", {className: "small muted", role: "status"});
     const translationStatus = h("span", {className: "small muted", "aria-live": "polite"});
+    const captioned = playlist.filter((take) => take.subtitles);
+    const showTranslationStatus = () => {
+      const language = translationLanguage || translationOptions().language;
+      const saved = captioned.filter((take) => savedTranslation(take, language)).length;
+      translationStatus.textContent = captioned.length
+        ? `Subtitles in ${captioned.length} of ${playlist.length} scenes · ${language} translation saved for ${saved} of ${captioned.length}`
+        : `No subtitles available · ${language} translation unavailable`;
+    };
     const regenerate = button("Regenerate translation", () => translate(true), "btn sm", {hidden: !showTranslation});
     const translationCheckbox = h("input", {type: "checkbox", checked: showTranslation, onchange: () => {
       showTranslation = translationCheckbox.checked;
       regenerate.hidden = !showTranslation;
       if (showTranslation) translate();
       else {
-        translationStatus.textContent = "";
+        showTranslationStatus();
         videos.forEach(updateSubtitles);
       }
     }});
@@ -734,7 +789,7 @@
       }});
     const updateSubtitles = (video) => {
       const take = takesByVideo.get(video);
-      const translated = showTranslation && translatedTracks[take?.id];
+      const translated = showTranslation && (translatedTracks[take?.id] || savedTranslation(take, translationLanguage));
       setSubtitleTrack(video, translated || take?.subtitles || null, state.showFullSubtitles);
     };
     const translate = (force = false) => {
@@ -742,7 +797,9 @@
       if (translationLanguage !== options.language) translatedTracks = {};
       translationLanguage = options.language;
       videos.forEach(updateSubtitles);
-      translationStatus.textContent = "Translating subtitles…";
+      if (force || captioned.some((take) => !savedTranslation(take, options.language))) {
+        translationStatus.textContent = `Translating subtitles into ${options.language}…`;
+      } else showTranslationStatus();
       regenerate.disabled = true;
       const pending = requestTranslations(boardId, playlist, options, force);
       translationRequest = pending;
@@ -761,7 +818,7 @@
         toast(error.message, true);
       }).finally(() => {
         if (!panel.isConnected || pending !== translationRequest) return;
-        translationStatus.textContent = "";
+        showTranslationStatus();
         regenerate.disabled = false;
       });
     };
@@ -834,9 +891,9 @@
     }},
       h("div", {className: "full-video-head"},
         h("strong", {className: "small"}, "Full storyboard preview"), position, h("div", {className: "grow"}),
-        playlist.some((take) => take.subtitles) && h("label", {className: "check-label"}, checkbox, "Show subtitles"),
-        playlist.some((take) => take.subtitles) && h("label", {className: "check-label"}, translationCheckbox, "Show translation"),
-        playlist.some((take) => take.subtitles) && regenerate,
+        captioned.length > 0 && h("label", {className: "check-label"}, checkbox, "Show subtitles"),
+        captioned.length > 0 && h("label", {className: "check-label"}, translationCheckbox, "Show translation"),
+        captioned.length > 0 && regenerate,
         translationStatus,
         document.fullscreenEnabled && fullscreen,
         button("Close", closeFullVideo, "btn sm")),
@@ -844,7 +901,8 @@
     $("full-video").replaceChildren(panel);
     loadClip(active, playlist[0]);
     playScene();
-    if (showTranslation && playlist.some((take) => take.subtitles)) translate();
+    showTranslationStatus();
+    if (showTranslation && captioned.length) translate();
   };
 
   const showJoinedVideo = (run) => {
@@ -910,6 +968,8 @@
 
   // What depends on the server but sits beside fields being typed in.
   const renderInspectorDerived = () => {
+    const language = $("subtitle-language");
+    if (language) language.value = translationOptions().language;
     if (state.panel) return;  // Its inputs may hold what's being typed.
     const item = scene();
     const set = (id, text) => { const node = $(id); if (node) node.textContent = text; };
@@ -1273,7 +1333,7 @@
   };
   const deleteScene = async () => {
     if (!confirm(`Delete scene ${scene().number}?`)) return;
-    dirty.delete(state.sceneId);
+    dirty.delete(sceneUrl());
     const data = await act(() => request("DELETE", sceneUrl()), "Scene deleted.");
     if (data) applyBoard(data);
   };
@@ -1665,10 +1725,9 @@
   const writerSettings = () => {
     try { return JSON.parse(stored.get(WRITER_KEY)) || {}; } catch { return {}; }
   };
-  const TRANSLATION_LANGUAGE_KEY = "h3-storyboard-subtitle-language";
   const TRANSLATION_MODEL_KEY = "h3-storyboard-subtitle-model";
   const translationOptions = () => {
-    const language = stored.get(TRANSLATION_LANGUAGE_KEY);
+    const language = state.board.subtitle_language;
     const model = stored.get(TRANSLATION_MODEL_KEY);
     return {
       language: state.boot.subtitle_languages.includes(language) ? language : state.boot.subtitle_languages[0],
@@ -1734,8 +1793,10 @@
         h("summary", {}, "Subtitle translation"),
         h("div", {className: "details-body"},
           h("label", {className: "field"}, "Translation language",
-            h("select", {"aria-label": "Translation language", onchange: (event) => {
-              stored.set(TRANSLATION_LANGUAGE_KEY, event.target.value);
+            h("select", {id: "subtitle-language", "aria-label": "Translation language", onchange: (event) => {
+              const language = event.target.value;
+              state.board.subtitle_language = language;
+              queueSave("PUT", boardUrl("/subtitle-settings"), "subtitle_language", language);
               renderPreview();
             }}, state.boot.subtitle_languages.map((language) =>
               h("option", {selected: language === translationOptions().language}, language)))),

@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.parse import urlencode
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -37,7 +36,7 @@ from .auto import WAITING, AutoRenders
 from .handlers import (
     GENERATE_REMAINING, GENERATE_SCENE, GENERATE_SUBTITLES, SWITCH_AND_REGENERATE, StoryboardHandlers,
 )
-from .payload import board_payload, file_url, referenced_paths
+from .payload import board_payload, file_url, referenced_paths, translation_track_url
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
@@ -238,10 +237,13 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def subtitle_settings(storyboard_id: str, request: Request, body: dict = Body(...)):
         enabled = body.get("auto_subtitles")
-        if not isinstance(enabled, bool):
+        language = body.get("subtitle_language")
+        if ("auto_subtitles" in body or "subtitle_language" not in body) and not isinstance(enabled, bool):
             raise H3Error("Choose whether subtitles should be generated automatically.")
+        if "subtitle_language" in body and language not in subtitles.TARGET_LANGUAGES:
+            raise H3Error("Choose a subtitle translation language.")
         owner = owner_of(request)
-        handlers.service.set_auto_subtitles(owner, storyboard_id, enabled)
+        handlers.service.set_subtitle_settings(owner, storyboard_id, auto_subtitles=enabled, subtitle_language=language)
         return payload(owner, storyboard_id)
 
     @app.delete(f"{api}/boards/{{storyboard_id}}", include_in_schema=False)
@@ -563,8 +565,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             raise H3Error("A take is no longer available in this storyboard.")
         takes = [board["takes"][take_id] for take_id in dict.fromkeys(take_ids)]
         translated = service.translate_subtitles(owner, storyboard_id, takes, translation, force=force)
-        return {"tracks": {take_id: f"{api}/boards/{storyboard_id}/takes/{take_id}/subtitles.vtt?"
-                            + urlencode({"translation": translation.language, "v": subtitles.translation_revision(texts)})
+        return {"tracks": {take_id: translation_track_url(storyboard_id, board["takes"][take_id], translation.language, texts)
                            for take_id, texts in translated.items()}}
 
     @app.get(f"{api}/boards/{{storyboard_id}}/thumb", include_in_schema=False)

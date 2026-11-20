@@ -20,10 +20,13 @@
     <main class="stage">
       <div class="stage-head" id="stage-head"></div>
       <div class="preview" id="preview"></div>
-      <div class="caption-actions" id="preview-subtitles" hidden>
-        <label class="check-label"><input type="checkbox" id="show-subtitles" checked> Show subtitles</label>
-        <label class="check-label"><input type="checkbox" id="show-scene-translation"> Show translation</label>
-        <button type="button" class="btn sm" id="regenerate-scene-translation" hidden>Regenerate translation</button>
+      <div class="caption-actions" id="preview-subtitles">
+        <span class="small muted" id="scene-subtitle-status" aria-live="polite"></span>
+        <div class="chips" id="scene-subtitle-controls" hidden>
+          <label class="check-label"><input type="checkbox" id="show-subtitles" checked> Show subtitles</label>
+          <label class="check-label"><input type="checkbox" id="show-scene-translation"> Show translation</label>
+          <button type="button" class="btn sm" id="regenerate-scene-translation" hidden>Regenerate translation</button>
+        </div>
         <span class="small muted" id="scene-translation-status" aria-live="polite"></span>
       </div>
       <div id="stage-notes"></div>
@@ -41,6 +44,6 @@
 <dialog id="library" class="library" aria-label="Media library"></dialog>
 <input id="file-input" type="file" hidden>
 <script src="common.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

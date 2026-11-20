@@ -438,6 +438,23 @@ class StoryboardPageTests(unittest.TestCase):
             takes = self.client.get(url).json()["scenes"][0]["takes"]
             self.assertIn("<c>Spoken", self.client.get(takes[1]["subtitles"]).text)
 
+    def test_subtitle_language_is_saved_per_storyboard(self):
+        board, other = self.create(), self.create()
+        url = f"{API}/boards/{board['id']}"
+        settings = f"{url}/subtitle-settings"
+        default = self.client.get(f"{API}/boot").json()["subtitle_languages"][0]
+        self.assertEqual(board["subtitle_language"], default)
+        self.assertEqual(self.client.put(settings, json={"auto_subtitles": True}).status_code, 200)
+        updated = self.client.put(settings, json={"subtitle_language": "French"})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertTrue(updated.json()["auto_subtitles"])
+        self.assertEqual(self.client.put(settings, json={"subtitle_language": "Klingon"}).status_code, 400)
+        self.assertEqual(self.client.get(url).json()["subtitle_language"], "French")
+        self.assertEqual(self.client.get(f"{API}/boards/{other['id']}").json()["subtitle_language"], default)
+        copied = self.client.post(f"{url}/duplicate")
+        self.assertEqual(copied.status_code, 200, copied.text)
+        self.assertEqual(copied.json()["subtitle_language"], "French")
+
     def test_subtitle_translation_is_reused_for_export_and_refreshed_when_the_source_changes(self):
         board = self.create("A traveler says <d>Original line.</d>")
         url = f"{API}/boards/{board['id']}"
@@ -463,7 +480,11 @@ class StoryboardPageTests(unittest.TestCase):
             french = translate()
             self.assertIn("Original line.\n<c.translation>Texte traduit.</c>", self.client.get(french).text)
             self.assertNotIn("Texte traduit.", self.client.get(take["subtitles"]).text)
+            self.service = sb.StoryboardService(WorkspaceStore(self.store.root), lambda: self.runtime)
+            restored = self.client.get(url).json()["scenes"][0]["takes"][0]
+            self.assertEqual(restored["subtitle_translations"], {"French": french})
             self.assertEqual(translate(), french)
+            self.assertEqual(generate.call_count, 1)
             spanish = translate(language="Spanish")
             self.assertIn("Texto traducido.", self.client.get(spanish).text)
             self.assertEqual(translate(), french)
@@ -491,6 +512,7 @@ class StoryboardPageTests(unittest.TestCase):
             owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
             self.service.save_subtitles(owner, board["id"], take["id"],
                                         [{"text": "Edited.", "start": 0, "end": 1}])
+            self.assertEqual(self.client.get(url).json()["scenes"][0]["takes"][0]["subtitle_translations"], {})
             self.assertNotIn("Flash Lite.", self.client.get(flash).text)
             self.assertIn("Edited.\n<c.translation>Nouveau texte.</c>", self.client.get(translate()).text)
             self.assertEqual(generate.call_count, 5)

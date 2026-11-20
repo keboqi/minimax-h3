@@ -190,9 +190,12 @@ class StoryboardService:
             board["name"] = (str(name).strip() or board["name"])[:120]
         return self.change(owner, storyboard_id, edit)[0]
 
-    def set_auto_subtitles(self, owner, storyboard_id, enabled: bool):
+    def set_subtitle_settings(self, owner, storyboard_id, *, auto_subtitles=None, subtitle_language=None):
         def edit(board):
-            board["auto_subtitles"] = enabled
+            if auto_subtitles is not None:
+                board["auto_subtitles"] = auto_subtitles
+            if subtitle_language is not None:
+                board["subtitle_language"] = subtitle_language
         return self.change(owner, storyboard_id, edit)[0]
 
     def apply_profile(self, owner, storyboard_id, profile):
@@ -646,6 +649,8 @@ class StoryboardService:
                                         copy.deepcopy(source["scenes"]))
         branched["takes"] = copy.deepcopy(board["takes"])
         branched["auto_subtitles"] = board.get("auto_subtitles", False)
+        if "subtitle_language" in board:
+            branched["subtitle_language"] = board["subtitle_language"]
         for member in source["cast"]:
             branched["cast"].append(self._copy_cast(branch_id, member["name"], member["image"], from_branch_source=True))
         self.save(owner, branch_id, branched)

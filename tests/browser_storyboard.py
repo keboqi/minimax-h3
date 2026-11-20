@@ -255,24 +255,44 @@ def check_full_preview(context, url):
     expect(page.locator("#strip .frame")).to_have_count(3)
     page.get_by_role("button", name="Settings", exact=True).click()
     page.get_by_text("Subtitle translation", exact=True).click()
-    page.get_by_label("Translation language", exact=True).select_option("French")
+    with page.expect_response(lambda response: response.url.endswith("/subtitle-settings")) as saved:
+        page.get_by_label("Translation language", exact=True).select_option("French")
+    assert saved.value.ok
+    page.reload(wait_until="domcontentloaded")
+    page.get_by_role("button", name="Settings", exact=True).click()
+    page.get_by_text("Subtitle translation", exact=True).click()
+    expect(page.get_by_label("Translation language", exact=True)).to_have_value("French")
     model = page.get_by_label("Translation model", exact=True)
     expect(model).to_have_value("gemma-4-26b-a4b-it")
     model.select_option("gemini-3.5-flash-lite")
+    page.get_by_role("button", name="Director", exact=True).click()
+    status = page.locator("#scene-subtitle-status")
+    expect(status).to_have_text("Subtitles available · French translation unavailable")
     scene_translation = page.locator("#preview-subtitles").get_by_role("checkbox", name="Show translation")
     scene_translation.check()
     page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
       ?.cues?.[0]?.text.includes('<c.translation>French Line 1</c>')""")
+    expect(status).to_have_text("Subtitles available · French translation saved")
     with page.expect_request(lambda request: request.url.endswith("/subtitle-translations")) as regenerated:
         page.locator("#preview-subtitles").get_by_role("button", name="Regenerate translation").click()
     assert regenerated.value.post_data_json["force"] is True
     assert regenerated.value.post_data_json["model"] == "gemini-3.5-flash-lite"
+    expect(page.locator("#regenerate-scene-translation")).to_be_enabled()
+    page.reload(wait_until="domcontentloaded")
+    expect(status).to_have_text("Subtitles available · French translation saved")
+    requests = []
+    page.on("request", lambda request: requests.append(request.url) if request.url.endswith("/subtitle-translations") else None)
+    scene_translation.check()
+    page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
+      ?.cues?.[0]?.text.includes('<c.translation>French Line 1</c>')""")
+    assert not requests, requests
     scene_translation.uncheck()
     page.wait_for_function("""() => document.querySelector('#preview video').textTracks[0]
       ?.cues?.[0]?.text === 'Line 1'""")
     page.get_by_role("checkbox", name="Translate subtitles", exact=True).check()
     page.get_by_role("button", name="Play full video").click()
     preview = page.locator("#full-video")
+    expect(preview.get_by_text("Subtitles in 3 of 3 scenes · French translation saved for 3 of 3")).to_be_visible()
     position = preview.get_by_role("status")
     subtitles = preview.get_by_role("checkbox", name="Show subtitles")
     translation = preview.get_by_role("checkbox", name="Show translation")
