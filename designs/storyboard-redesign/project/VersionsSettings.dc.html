@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Storyboard — Versions &amp; Settings</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
+    a { color: inherit; text-decoration: none; }
+    a:hover { opacity: 0.92; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+  </style>
+</helmet>
+
+<div style="width: 100%; min-height: 100vh; display: flex; flex-direction: column; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+
+  <!-- TOP STUDIO CHROME -->
+  <header style="position: sticky; top: 0; z-index: 20; min-height: 58px; padding: 8px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}};">
+    <div style="display: flex; align-items: center; gap: 10px; flex: none;">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="7" fill="{{accentSoft}}" stroke="{{accent}}" stroke-width="1.5"></rect>
+        <rect x="6" y="8" width="16" height="12" rx="2" fill="none" stroke="{{accent}}" stroke-width="1.8"></rect>
+        <path d="M12 11.5l5 2.5-5 2.5z" fill="{{accent}}"></path>
+      </svg>
+      <strong style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: -0.02em;">Storyboard</strong>
+    </div>
+
+    <div style="width: 1px; height: 22px; background: {{line}}; flex: none;"></div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <label style="display: flex; align-items: center;">
+        <select aria-label="Active storyboard" style="min-height: 36px; max-width: 220px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <option>Midnight Platform (4 scenes)</option>
+          <option>Harbor Rain Teaser · Generated</option>
+        </select>
+      </label>
+    </div>
+
+    <nav aria-label="Storyboard workspace" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex-wrap: wrap;">
+      <a href="Main.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">Director</a>
+      <a href="CastMedia.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">Cast &amp; Media</a>
+      <a href="AutoRender.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">Auto Render &amp; Full Cut</a>
+      <a href="VersionsSettings.dc.html" aria-current="page" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 8px; background: {{accentSoft}}; border: 1px solid {{accent}}; color: {{accent}}; font-size: 13px; font-weight: 700; white-space: nowrap;">Versions &amp; Settings</a>
+    </nav>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <a href="Main.dc.html" style="min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 8px; border: 1px solid {{line}}; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">← Back to Director</a>
+    </div>
+  </header>
+
+  <!-- TWO-COLUMN VERSIONS + SETTINGS -->
+  <div style="flex: 1; display: flex; flex-wrap: wrap; align-items: stretch;">
+
+    <!-- LEFT: VERSIONS & BRANCHING -->
+    <section aria-label="Storyboard versions" style="flex: 1 1 500px; min-width: 0; padding: 24px; border-right: 1px solid {{line}}; display: flex; flex-direction: column; gap: 18px;">
+      <div>
+        <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 700;">Versions &amp; Branching</h1>
+        <p style="margin: 4px 0 0; font-size: 13.5px; color: {{muted}};">Save the current scene list to return to later, or branch any snapshot into a new storyboard.</p>
+      </div>
+
+      <div style="padding: 14px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;">
+        <label style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: {{muted}};">
+          Version name
+          <input type="text" placeholder="e.g. Pre-train cut v2" style="min-height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{text}};">
+        </label>
+        <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: {{accent}}; color: {{accentInk}}; font-size: 13px; font-weight: 700;">Save version</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <sc-for list="{{versions}}" as="ver" hint-placeholder-count="3">
+          <div style="padding: 14px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <strong style="font-size: 14.5px;">{{ver.label}}</strong>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">{{ver.meta}}</span>
+            </div>
+            <button type="button" style="min-height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid {{line}}; background: {{raised}}; font-size: 13px; font-weight: 600;">Branch</button>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- RIGHT: STORYBOARD, SUBTITLE, H3 PROFILE & PROMPT WRITER SETTINGS -->
+    <section aria-label="Storyboard settings" style="flex: 1.25 1 580px; min-width: 0; padding: 24px; display: flex; flex-direction: column; gap: 18px;">
+      <div>
+        <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 700;">Storyboard Settings</h2>
+        <p style="margin: 4px 0 0; font-size: 13.5px; color: {{muted}};">Uses: 1280×720 · 24fps · MiniMax H3 Standard</p>
+      </div>
+
+      <!-- Board Identity & Lifecycle -->
+      <div style="padding: 16px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;">
+          <label style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: {{muted}};">
+            Storyboard name
+            <input type="text" value="Midnight Platform" style="min-height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{text}};">
+          </label>
+          <button type="button" style="min-height: 40px; padding: 0 14px; border-radius: 8px; border: 1px solid {{line}}; background: {{raised}}; font-size: 13px; font-weight: 600;">Rename</button>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid {{line}};">
+          <button type="button" style="min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid {{line}}; background: {{raised}}; font-size: 13px; font-weight: 600;">Use my current MiniMax H3 settings</button>
+          <button type="button" style="min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid {{line}}; background: {{raised}}; font-size: 13px; font-weight: 600;">Duplicate storyboard</button>
+          <button type="button" style="min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid {{line}}; background: transparent; color: {{danger}}; font-size: 13px; font-weight: 600;">Delete storyboard</button>
+        </div>
+      </div>
+
+      <!-- Subtitles & Translation -->
+      <div style="padding: 16px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-direction: column; gap: 12px;">
+        <strong style="font-size: 14px;">Subtitles &amp; Translation</strong>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13.5px;">
+          <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: {{accent}};"> Automatically generate word-aligned subtitles after each take
+        </label>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+          <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: {{muted}};">
+            Translation language
+            <select style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; color: {{text}};">
+              <option>English</option>
+              <option>Japanese</option>
+              <option>Spanish</option>
+            </select>
+          </label>
+          <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: {{muted}};">
+            Translation model
+            <select style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; color: {{text}};">
+              <option>gemini-2.5-flash</option>
+              <option>gemini-2.5-pro</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <!-- Prompt Writer -->
+      <div style="padding: 16px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-direction: column; gap: 10px;">
+        <strong style="font-size: 14px;">Prompt Writer</strong>
+        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: {{muted}};">
+          Gemini API key (shared with subtitle translation, optional)
+          <input type="password" placeholder="Leave blank to use server key" style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; color: {{text}};">
+        </label>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2dd4bf","options":["#2dd4bf","#38bdf8","#f59e0b","#a78bfa"]},"$preview":{"width":1440,"height":1020}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#2dd4bf';
+    const bg = '#0e1312';
+    const surface = '#151c1a';
+    const raised = '#1c2623';
+    const control = '#101715';
+    const line = '#283631';
+    const text = '#eef4f1';
+    const muted = '#9ab0a7';
+    const accentInk = '#07221d';
+    const accentSoft = 'rgba(45, 212, 191, 0.14)';
+    const danger = '#fca5a5';
+
+    const versions = [
+      { label: 'v2 · Rainy Platform Dialogue', meta: '4 scenes · 22.0s · Saved today 11:12' },
+      { label: 'v1 · Initial Beat Sheet', meta: '3 scenes · 16.5s · Saved yesterday' },
+      { label: 'Pilot Cut · Before Media Clip', meta: '3 scenes · 15.0s · Saved Nov 18' }
+    ];
+
+    return {
+      bg, surface, raised, control, line, text, muted, accent, accentInk, accentSoft, danger,
+      versions
+    };
+  }
+}
+</script>
+</body>
+</html>

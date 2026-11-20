@@ -1,0 +1,76 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-20T11:32:00Z"
+  },
+  "title": "Storyboard UI/UX Redesign",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1020,
+      "title": "1 · Director Workspace",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "CastMedia.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 1020,
+      "title": "2 · Cast & Media Library",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "AutoRender.dc.html": {
+      "x": 0,
+      "y": 1140,
+      "w": 1440,
+      "h": 1020,
+      "title": "3 · Auto Render & Full Cut",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "StartScript.dc.html": {
+      "x": 1520,
+      "y": 1140,
+      "w": 1440,
+      "h": 1020,
+      "title": "4 · Script-to-Storyboard",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "VersionsSettings.dc.html": {
+      "x": 0,
+      "y": 2280,
+      "w": 1440,
+      "h": 1020,
+      "title": "5 · Versions & Settings",
+      "expand": "fill",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "CastMedia.dc.html",
+    "AutoRender.dc.html",
+    "StartScript.dc.html",
+    "VersionsSettings.dc.html"
+  ],
+  "notes": {
+    "hero-title": {
+      "x": 0,
+      "y": -250,
+      "text": "Storyboard — Editorial Screening Room Redesign",
+      "kind": "title1",
+      "maxW": 2960
+    }
+  },
+  "designSystems": []
+}

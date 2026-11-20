@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Storyboard — Auto Render &amp; Full Cut</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
+    a { color: inherit; text-decoration: none; }
+    a:hover { opacity: 0.92; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+  </style>
+</helmet>
+
+<div style="width: 100%; min-height: 100vh; display: flex; flex-direction: column; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+
+  <!-- TOP STUDIO CHROME -->
+  <header style="position: sticky; top: 0; z-index: 20; min-height: 58px; padding: 8px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}};">
+    <div style="display: flex; align-items: center; gap: 10px; flex: none;">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="7" fill="{{accentSoft}}" stroke="{{accent}}" stroke-width="1.5"></rect>
+        <rect x="6" y="8" width="16" height="12" rx="2" fill="none" stroke="{{accent}}" stroke-width="1.8"></rect>
+        <path d="M12 11.5l5 2.5-5 2.5z" fill="{{accent}}"></path>
+      </svg>
+      <strong style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: -0.02em;">Storyboard</strong>
+    </div>
+
+    <div style="width: 1px; height: 22px; background: {{line}}; flex: none;"></div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <label style="display: flex; align-items: center;">
+        <select aria-label="Active storyboard" style="min-height: 36px; max-width: 230px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <option>Midnight Platform (4 scenes)</option>
+          <option>Harbor Rain Teaser</option>
+        </select>
+      </label>
+      <span style="padding: 4px 10px; border-radius: 999px; background: {{raised}}; border: 1px solid {{line}}; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">22.0s total · 2/4 rendered</span>
+    </div>
+
+    <nav aria-label="Storyboard workspace" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0;">
+      <a href="Main.dc.html" style="min-height: 36px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Director</span>
+      </a>
+      <a href="CastMedia.dc.html" style="min-height: 36px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Cast &amp; Media</span>
+      </a>
+      <a href="AutoRender.dc.html" aria-current="page" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; background: {{accentSoft}}; border: 1px solid {{accent}}; color: {{accent}}; font-size: 13px; font-weight: 700; white-space: nowrap;">
+        <span>Auto Render &amp; Full Cut</span>
+      </a>
+      <a href="VersionsSettings.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Versions &amp; Settings</span>
+      </a>
+    </nav>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <a href="Main.dc.html" style="min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; border: 1px solid {{line}}; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">← Back to Director</a>
+    </div>
+  </header>
+
+  <!-- SCREENING + BATCH PIPELINE -->
+  <div style="flex: 1; display: flex; flex-wrap: wrap; align-items: stretch;">
+
+    <!-- LEFT: FULL CUT SCREENING PLAYER -->
+    <main style="flex: 1.35 1 620px; min-width: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+        <div>
+          <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 700;">Full Cut Screening</h1>
+          <p style="margin: 4px 0 0; font-size: 13.5px; color: {{muted}};">Stitched playback across all active takes with word-aligned subtitles.</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" style="min-height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid {{line}}; background: {{surface}}; font-size: 13px; font-weight: 600;">Export SRT</button>
+          <button type="button" style="min-height: 38px; padding: 0 14px; border-radius: 8px; border: 0; background: {{accent}}; color: {{accentInk}}; font-size: 13px; font-weight: 700;">Export Full MP4</button>
+        </div>
+      </div>
+
+      <!-- 16:9 Master Screening Monitor -->
+      <div style="width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; border: 1px solid {{line}}; background: #070b0a; padding: 18px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="padding: 4px 10px; border-radius: 6px; background: rgba(20,27,25,0.85); border: 1px solid rgba(255,255,255,0.1); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #eef4f1;">MASTER CUT · 1280×720</span>
+          <span style="padding: 4px 10px; border-radius: 6px; background: rgba(20,27,25,0.85); border: 1px solid rgba(255,255,255,0.1); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{accent}};">SCENE 01 / 04</span>
+        </div>
+
+        <div style="align-self: center; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+          <button type="button" aria-label="Play full cut" style="width: 64px; height: 64px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.24); background: rgba(45,212,191,0.2); color: #eef4f1; display: inline-flex; align-items: center; justify-content: center;">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+          </button>
+          <span style="font-size: 13px; color: #c7d6d0;">Seamless assembly · 22.0s total duration</span>
+        </div>
+
+        <!-- Stitched Timeline Bar -->
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: grid; grid-template-columns: 5fr 6fr 5.5fr 5.5fr; gap: 4px;">
+            <div style="height: 8px; border-radius: 4px; background: {{accent}};"></div>
+            <div style="height: 8px; border-radius: 4px; background: {{warn}};"></div>
+            <div style="height: 8px; border-radius: 4px; background: rgba(255,255,255,0.16);"></div>
+            <div style="height: 8px; border-radius: 4px; background: rgba(255,255,255,0.16);"></div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9ab0a7;">
+            <span>00:00.0</span>
+            <span>00:22.0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subtitle Options -->
+      <div style="padding: 12px 14px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+          <label style="display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 500;">
+            <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: {{accent}};"> Burn-in word-aligned subtitles
+          </label>
+          <label style="display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 500;">
+            <input type="checkbox" style="width: 16px; height: 16px; accent-color: {{accent}};"> Translate subtitles (English)
+          </label>
+        </div>
+        <button type="button" style="min-height: 34px; padding: 0 12px; border-radius: 7px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12.5px; font-weight: 600;">Generate Subtitles</button>
+      </div>
+    </main>
+
+    <!-- RIGHT: AUTO RENDER QUEUE -->
+    <aside aria-label="Auto render queue" style="flex: 1 1 440px; min-width: 0; padding: 24px; background: {{surface}}; border-left: 1px solid {{line}}; display: flex; flex-direction: column; gap: 18px;">
+      <div>
+        <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 700;">Auto Render Queue</h2>
+        <p style="margin: 4px 0 0; font-size: 13px; color: {{muted}};">Automatically generate remaining or outdated scenes in sequence, then assemble the full cut.</p>
+      </div>
+
+      <!-- Queue List -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <sc-for list="{{queue}}" as="q" hint-placeholder-count="4">
+          <div style="padding: 12px; border-radius: 10px; border: 1px solid {{line}}; background: {{raised}}; display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: {{muted}};">0{{q.num}}</span>
+              <div style="display: flex; flex-direction: column; min-width: 0;">
+                <strong style="font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{q.title}}</strong>
+                <span style="font-size: 12px; color: {{muted}};">{{q.detail}}</span>
+              </div>
+            </div>
+            <span style="padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: {{q.badgeBg}}; color: {{q.badgeColor}}; white-space: nowrap;">{{q.status}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- Batch Options -->
+      <div style="padding: 14px; border-radius: 10px; border: 1px solid {{line}}; background: {{bg}}; display: flex; flex-direction: column; gap: 10px;">
+        <strong style="font-size: 13px;">Batch options</strong>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+          <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: {{accent}};"> Re-render outdated scenes automatically
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+          <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: {{accent}};"> Generate word-aligned subtitles after render
+        </label>
+      </div>
+
+      <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" onClick="{{toggleRun}}" style="min-height: 46px; width: 100%; border-radius: 9px; border: 0; background: {{runBg}}; color: {{runColor}}; font-size: 14px; font-weight: 700;">{{runLabel}}</button>
+        <span style="text-align: center; font-size: 12px; color: {{muted}};">Estimated GPU time: ~3m 20s for 3 scenes</span>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2dd4bf","options":["#2dd4bf","#38bdf8","#f59e0b","#a78bfa"]},"$preview":{"width":1440,"height":1020}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { running: false };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#2dd4bf';
+    const bg = '#0e1312';
+    const surface = '#151c1a';
+    const raised = '#1c2623';
+    const line = '#283631';
+    const text = '#eef4f1';
+    const muted = '#9ab0a7';
+    const accentInk = '#07221d';
+    const accentSoft = 'rgba(45, 212, 191, 0.14)';
+    const done = '#5eead4';
+    const doneBg = '#11332c';
+    const warn = '#fbbf24';
+    const warnBg = '#33260e';
+    const danger = '#fca5a5';
+    const dangerBg = '#3b1515';
+
+    const queue = [
+      { num: 1, title: 'Subway Entrance', detail: '5.0s · Take 1 selected', status: 'Done', badgeBg: doneBg, badgeColor: done },
+      { num: 2, title: 'Rain on the Platform', detail: '6.0s · Prompt updated', status: 'Queued (Outdated)', badgeBg: warnBg, badgeColor: warn },
+      { num: 3, title: 'Train Headlights', detail: '5.5s · Needs last frame', status: 'Blocked', badgeBg: dangerBg, badgeColor: danger },
+      { num: 4, title: 'Empty Bench', detail: '5.5s · Ready to generate', status: 'Queued', badgeBg: surface, badgeColor: muted }
+    ];
+
+    const r = this.state.running;
+    return {
+      bg, surface, raised, line, text, muted, accent, accentInk, accentSoft,
+      queue,
+      toggleRun: () => this.setState({ running: !this.state.running }),
+      runLabel: r ? 'Interrupt Auto Render' : 'Generate All Remaining Scenes (2)',
+      runBg: r ? dangerBg : accent,
+      runColor: r ? danger : accentInk
+    };
+  }
+}
+</script>
+</body>
+</html>

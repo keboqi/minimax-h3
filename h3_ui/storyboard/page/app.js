@@ -189,7 +189,11 @@
     const select = h("select", {"aria-label": "Storyboard", onchange: (event) => openBoard(event.target.value)},
       state.boot.boards.map((row) => h("option", {value: row.id, selected: row.id === state.board.id},
         row.name + (row.generated ? " · Generated" : ""))));
+    const brand = h("div", {className: "topbar-brand"},
+      icon("M4 6h16v12H4z M10 9.5l5 2.5-5 2.5z"),
+      h("strong", {}, "Storyboard"));
     $("topbar").replaceChildren(...[
+      brand,
       h("label", {className: "board-picker"}, "Storyboard", select),
       button("New storyboard", showStart),
       h("div", {className: "stat-pill mono small"},

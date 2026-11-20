@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Storyboard — Director Workspace</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; }
+    a { color: inherit; text-decoration: none; }
+    a:hover { opacity: 0.92; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+  </style>
+</helmet>
+
+<div style="width: 100%; min-height: 100vh; display: flex; flex-direction: column; background: {{bg}}; color: {{text}}; font-size: 14px; line-height: 1.45;">
+
+  <!-- TOP STUDIO CHROME -->
+  <header style="position: sticky; top: 0; z-index: 20; min-height: 58px; padding: 8px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: {{surface}}; border-bottom: 1px solid {{line}};">
+    <div style="display: flex; align-items: center; gap: 10px; flex: none;">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="7" fill="{{accentSoft}}" stroke="{{accent}}" stroke-width="1.5"></rect>
+        <rect x="6" y="8" width="16" height="12" rx="2" fill="none" stroke="{{accent}}" stroke-width="1.8"></rect>
+        <path d="M12 11.5l5 2.5-5 2.5z" fill="{{accent}}"></path>
+      </svg>
+      <strong style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 16px; font-weight: 700; letter-spacing: -0.02em;">Storyboard</strong>
+    </div>
+
+    <div style="width: 1px; height: 22px; background: {{line}}; flex: none;"></div>
+
+    <!-- Board Switcher + Progress -->
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <label style="display: flex; align-items: center;">
+        <select aria-label="Active storyboard" style="min-height: 36px; max-width: 220px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <option>Midnight Platform (4 scenes)</option>
+          <option>Harbor Rain Teaser · Generated</option>
+          <option>Product Launch · Cut B</option>
+        </select>
+      </label>
+      <a href="StartScript.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid {{line}}; border-radius: 8px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+        <span>New</span>
+      </a>
+      <span style="padding: 4px 10px; border-radius: 999px; background: {{raised}}; border: 1px solid {{line}}; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">22.0s · 2/4 done</span>
+      <span style="font-size: 12px; font-weight: 600; color: {{done}}; padding: 3px 8px; border-radius: 999px; background: {{doneBg}};">Saved</span>
+    </div>
+
+    <!-- Workspace Navigation (Preserves all 4 original topbar panels + Start) -->
+    <nav aria-label="Storyboard workspace" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 0; flex-wrap: wrap;">
+      <a href="Main.dc.html" aria-current="page" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; background: {{accentSoft}}; border: 1px solid {{accent}}; color: {{accent}}; font-size: 13px; font-weight: 700; white-space: nowrap;">
+        <span>Director</span>
+      </a>
+      <a href="CastMedia.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Cast &amp; Media</span>
+        <span style="font-size: 11px; padding: 1px 6px; border-radius: 999px; background: {{raised}}; color: {{text}};">3</span>
+      </a>
+      <a href="AutoRender.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Auto Render &amp; Full Cut</span>
+        <span style="font-size: 11px; padding: 1px 6px; border-radius: 999px; background: {{warnBg}}; color: {{warn}};">2 left</span>
+      </a>
+      <a href="VersionsSettings.dc.html" style="min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; background: transparent; color: {{muted}}; font-size: 13px; font-weight: 600; white-space: nowrap;">
+        <span>Versions &amp; Settings</span>
+      </a>
+    </nav>
+
+    <!-- Right Global CTA -->
+    <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+      <a href="AutoRender.dc.html" style="min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; background: {{accent}}; color: {{accentInk}}; font-size: 13px; font-weight: 700; white-space: nowrap;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+        <span>Play Full Video</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- FILMSTRIP TIMELINE -->
+  <section aria-label="Scene filmstrip" style="padding: 12px 20px; background: {{surface}}; border-bottom: 1px solid {{line}}; display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: {{muted}};">Timeline · 4 Scenes</span>
+        <span style="font-size: 12px; color: {{muted}};">Drag to reorder · Click connector to toggle <strong style="color: {{accent}};">Continue</strong> vs <strong style="color: {{warn}};">Cut</strong></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <button type="button" style="min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          <span>Add Scene</span>
+        </button>
+        <button type="button" style="min-height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid {{line}}; border-radius: 7px; background: {{raised}}; color: {{text}}; font-size: 13px; font-weight: 600;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"></rect><path d="M17 10l4-2v8l-4-2z"></path></svg>
+          <span>Add Video from Media</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Horizontal Strip -->
+    <div style="display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding-bottom: 4px;">
+      <sc-for list="{{scenes}}" as="sc" hint-placeholder-count="4">
+        <sc-if value="{{sc.hasConnector}}" hint-placeholder-val="{{true}}">
+          <button type="button" onClick="{{sc.toggleLink}}" aria-label="{{sc.linkAria}}" style="flex: 0 0 34px; align-self: center; height: 64px; padding: 0; border-radius: 999px; border: {{sc.connectorBorder}}; background: {{sc.connectorBg}}; color: {{sc.connectorColor}}; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+            <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.03em; writing-mode: vertical-rl; text-orientation: mixed;">{{sc.linkLabel}}</span>
+          </button>
+        </sc-if>
+
+        <button type="button" onClick="{{sc.select}}" aria-current="{{sc.isCurrent}}" style="flex: 1 0 210px; max-width: 260px; padding: 8px; border-radius: 10px; border: {{sc.cardBorder}}; background: {{sc.cardBg}}; box-shadow: {{sc.cardShadow}}; text-align: left; display: flex; flex-direction: column; gap: 6px;">
+          <div style="width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; background: {{sc.thumbBg}}; border: 1px solid {{line}}; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: {{muted}};">{{sc.thumbLabel}}</span>
+            <span style="position: absolute; top: 6px; left: 6px; padding: 2px 7px; border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; background: rgba(14,19,18,0.82); color: #eef4f1;">0{{sc.num}}</span>
+            <span style="position: absolute; bottom: 6px; right: 6px; padding: 2px 7px; border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; background: rgba(14,19,18,0.82); color: #eef4f1;">{{sc.dur}}</span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+            <span style="font-size: 13px; font-weight: 700; color: {{text}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{sc.title}}</span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+            <span style="padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: {{sc.badgeBg}}; color: {{sc.badgeColor}};">{{sc.stateLabel}}</span>
+            <span style="font-size: 11px; color: {{muted}};">{{sc.modeShort}}</span>
+          </div>
+        </button>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- MAIN WORKAREA: SCREENING STAGE (LEFT) + STRUCTURED INSPECTOR (RIGHT) -->
+  <div style="flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: stretch;">
+
+    <!-- LEFT: SCREENING STAGE -->
+    <main style="flex: 1.25 1 580px; min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+
+      <!-- Stage Header + All Original Scene Actions -->
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap;">
+          <button type="button" onClick="{{prevScene}}" aria-label="Previous scene" style="width: 36px; height: 36px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; display: inline-flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          </button>
+          <button type="button" onClick="{{nextScene}}" aria-label="Next scene" style="width: 36px; height: 36px; border: 1px solid {{line}}; border-radius: 8px; background: {{surface}}; display: inline-flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          </button>
+          <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 700; letter-spacing: -0.01em;">Scene 0{{active.num}} · {{active.title}}</h1>
+          <span style="padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: {{active.badgeBg}}; color: {{active.badgeColor}};">{{active.stateLabel}}</span>
+        </div>
+
+        <!-- Complete Scene Action Bar (Insert scene/video, Duplicate, Move earlier/later, Delete) -->
+        <div role="group" aria-label="Scene actions" style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap;">
+          <button type="button" style="min-height: 34px; padding: 0 9px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600;">+ Scene after</button>
+          <button type="button" style="min-height: 34px; padding: 0 9px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600;">+ Video after</button>
+          <button type="button" style="min-height: 34px; padding: 0 9px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600;">Duplicate</button>
+          <button type="button" aria-label="Move scene earlier" style="min-height: 34px; padding: 0 8px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600;">← Move</button>
+          <button type="button" aria-label="Move scene later" style="min-height: 34px; padding: 0 8px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600;">Move →</button>
+          <button type="button" style="min-height: 34px; padding: 0 9px; border: 1px solid {{line}}; border-radius: 7px; background: {{surface}}; font-size: 12px; font-weight: 600; color: {{danger}};">Delete</button>
+        </div>
+      </div>
+
+      <!-- 16:9 Screening Monitor -->
+      <div style="position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 12px; border: 1px solid {{line}}; background: #070b0a; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; padding: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <span style="padding: 4px 10px; border-radius: 6px; background: rgba(20, 27, 25, 0.85); border: 1px solid rgba(255,255,255,0.1); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #eef4f1;">{{active.runsAs}}</span>
+          <span style="padding: 4px 10px; border-radius: 6px; background: rgba(20, 27, 25, 0.85); border: 1px solid rgba(255,255,255,0.1); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{accent}};">{{active.takeLabel}} · 1280×720</span>
+        </div>
+
+        <div style="align-self: center; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+          <button type="button" aria-label="Play scene preview" style="width: 60px; height: 60px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.22); background: rgba(45, 212, 191, 0.18); color: #eef4f1; display: inline-flex; align-items: center; justify-content: center;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+          </button>
+          <span style="font-size: 13px; color: #c7d6d0;">{{active.summary}}</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="align-self: center; padding: 5px 12px; border-radius: 6px; background: rgba(7, 11, 10, 0.85); color: #eef4f1; font-size: 14px; font-weight: 500;">
+            "The last train leaves in two minutes — don't look back."
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9ab0a7;">00:02.4</span>
+            <div style="flex: 1; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.14); overflow: hidden;">
+              <div style="width: 42%; height: 100%; background: {{accent}};"></div>
+            </div>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #9ab0a7;">00:{{active.dur}}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subtitle & Translation Strip -->
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 8px; background: {{surface}}; border: 1px solid {{line}};">
+        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+          <label style="display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; min-height: 32px;">
+            <input type="checkbox" checked style="width: 16px; height: 16px; accent-color: {{accent}};"> Show subtitles
+          </label>
+          <label style="display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; min-height: 32px;">
+            <input type="checkbox" style="width: 16px; height: 16px; accent-color: {{accent}};"> Show translation
+          </label>
+        </div>
+        <button type="button" style="min-height: 32px; padding: 0 10px; border: 1px solid {{line}}; border-radius: 6px; background: {{raised}}; font-size: 12px; font-weight: 600;">Regenerate translation</button>
+      </div>
+
+      <!-- Outdated / Readiness Banner (Conditional) -->
+      <sc-if value="{{active.isOutdated}}" hint-placeholder-val="{{true}}">
+        <div role="status" style="padding: 10px 14px; border-radius: 9px; border: 1px solid {{warnLine}}; background: {{warnBg}}; color: {{warn}}; font-size: 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+          <span><strong>Out of date:</strong> Scene 01 or this prompt changed since Take 2 was generated.</span>
+          <button type="button" style="min-height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid {{warnLine}}; background: {{surface}}; color: {{warn}}; font-size: 12.5px; font-weight: 700; white-space: nowrap;">Re-generate</button>
+        </div>
+      </sc-if>
+
+      <!-- VISUAL TAKES PANEL (Preserves Prompt Fit Score, Use Seed, Use Take, Delete Take) -->
+      <section aria-label="Takes" style="padding: 14px; border-radius: 10px; border: 1px solid {{line}}; background: {{surface}}; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <h2 style="margin: 0; font-size: 14px; font-weight: 700;">Takes for Scene 0{{active.num}}</h2>
+            <span style="padding: 2px 9px; border-radius: 999px; border: 1px solid {{accent}}; font-size: 12px; font-weight: 600; color: {{text}};">Prompt fit 88 · Strong match</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">Seed {{selectedTake.seed}}</span>
+            <button type="button" style="min-height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">Use seed</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+          <sc-for list="{{takes}}" as="tk" hint-placeholder-count="3">
+            <button type="button" onClick="{{tk.pick}}" style="padding: 8px; border-radius: 8px; border: {{tk.border}}; background: {{tk.bg}}; text-align: left; display: flex; flex-direction: column; gap: 6px;">
+              <div style="width: 100%; aspect-ratio: 16 / 9; border-radius: 5px; background: #0b1110; border: 1px solid {{line}}; display: flex; align-items: center; justify-content: center; position: relative;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {{muted}};">{{tk.label}}</span>
+                <sc-if value="{{tk.inUse}}" hint-placeholder-val="{{true}}">
+                  <span style="position: absolute; top: 5px; right: 5px; padding: 1px 6px; border-radius: 999px; background: {{accent}}; color: {{accentInk}}; font-size: 10px; font-weight: 700;">In use</span>
+                </sc-if>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; font-size: 12px;">
+                <strong style="color: {{text}};">{{tk.label}}</strong>
+                <span style="font-family: 'JetBrains Mono', monospace; color: {{muted}};">{{tk.meta}}</span>
+              </div>
+            </button>
+          </sc-for>
+        </div>
+
+        <!-- Take Actions Row -->
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid {{line}};">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button type="button" style="min-height: 34px; padding: 0 12px; border-radius: 7px; border: 1px solid {{accent}}; background: {{accentSoft}}; color: {{text}}; font-size: 12.5px; font-weight: 600;">Use this take</button>
+            <button type="button" style="min-height: 34px; padding: 0 12px; border-radius: 7px; border: 1px solid {{line}}; background: transparent; color: {{danger}}; font-size: 12.5px; font-weight: 600;">Delete take</button>
+          </div>
+          <button type="button" style="min-height: 36px; padding: 0 14px; border-radius: 7px; border: 0; background: {{accent}}; color: {{accentInk}}; font-size: 13px; font-weight: 700;">Generate another take</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- RIGHT: STRUCTURED SCENE INSPECTOR (Supports both AI Scene & Media Clip Scene) -->
+    <aside aria-label="Scene inspector" style="flex: 1 1 460px; min-width: 0; background: {{surface}}; border-left: 1px solid {{line}}; display: flex; flex-direction: column;">
+
+      <!-- Inspector Sub-Tabs -->
+      <div style="padding: 12px 20px; border-bottom: 1px solid {{line}}; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+        <div role="tablist" aria-label="Inspector sections" style="display: inline-flex; padding: 3px; gap: 3px; border-radius: 9px; background: {{raised}}; border: 1px solid {{line}};">
+          <button type="button" onClick="{{tabPrompt}}" role="tab" aria-selected="{{isTabPrompt}}" style="min-height: 34px; padding: 0 12px; border: 0; border-radius: 6px; background: {{tabPromptBg}}; color: {{tabPromptColor}}; font-size: 13px; font-weight: 600;">Prompt &amp; Flow</button>
+          <button type="button" onClick="{{tabMedia}}" role="tab" aria-selected="{{isTabMedia}}" style="min-height: 34px; padding: 0 12px; border: 0; border-radius: 6px; background: {{tabMediaBg}}; color: {{tabMediaColor}}; font-size: 13px; font-weight: 600;">Media &amp; Cast</button>
+          <button type="button" onClick="{{tabTiming}}" role="tab" aria-selected="{{isTabTiming}}" style="min-height: 34px; padding: 0 12px; border: 0; border-radius: 6px; background: {{tabTimingBg}}; color: {{tabTimingColor}}; font-size: 13px; font-weight: 600;">Timing &amp; Seed</button>
+        </div>
+        <span style="font-size: 12px; font-weight: 600; color: {{active.badgeColor}}; background: {{active.badgeBg}}; padding: 3px 9px; border-radius: 999px;">{{active.readyLabel}}</span>
+      </div>
+
+      <!-- Inspector Body -->
+      <div style="flex: 1; padding: 18px 20px; display: flex; flex-direction: column; gap: 16px;">
+
+        <!-- Title Field (Always Visible) -->
+        <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: {{muted}};">
+          Scene title
+          <input type="text" value="{{active.title}}" style="min-height: 40px; padding: 0 12px; border: 1px solid {{line}}; border-radius: 8px; background: {{control}}; color: {{text}}; font-size: 15px; font-weight: 600;">
+        </label>
+
+        <!-- MEDIA CLIP SCENE INSPECTOR (Shown when Scene 03 Media Clip is selected) -->
+        <sc-if value="{{active.isMediaClip}}" hint-placeholder-val="{{false}}">
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="padding: 12px; border-radius: 8px; border: 1px dashed {{dash}}; background: {{control}}; display: flex; flex-direction: column; gap: 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <strong style="font-size: 13px;">Source video · express_train_pass.mp4</strong>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">Replace</button>
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">Media library</button>
+                </div>
+              </div>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{muted}};">1920×1080 · 8.4s · Audio present</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+              <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">
+                In (seconds)
+                <input type="number" value="1.2" style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; font-family: 'JetBrains Mono', monospace;">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">
+                Out (seconds)
+                <input type="number" value="6.7" style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; font-family: 'JetBrains Mono', monospace;">
+              </label>
+            </div>
+
+            <fieldset style="margin: 0; padding: 0; border: 0;">
+              <legend style="padding: 0 0 6px; font-size: 13px; font-weight: 600; color: {{muted}};">Fit to the storyboard</legend>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+                <button type="button" style="min-height: 40px; border-radius: 8px; border: 1px solid {{accent}}; background: {{accentSoft}}; font-size: 13px; font-weight: 700;">Crop to fill</button>
+                <button type="button" style="min-height: 40px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{muted}}; font-size: 13px; font-weight: 600;">Resize to fit</button>
+              </div>
+            </fieldset>
+
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+              <div style="aspect-ratio: 16 / 9; border-radius: 6px; border: 1px dashed {{dash}}; background: #070b0a; display: flex; align-items: center; justify-content: center; font-size: 11px; color: {{muted}};">First frame preview</div>
+              <div style="aspect-ratio: 16 / 9; border-radius: 6px; border: 1px dashed {{dash}}; background: #070b0a; display: flex; align-items: center; justify-content: center; font-size: 11px; color: {{muted}};">Last frame preview</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- AI SCENE INSPECTOR -->
+        <sc-if value="{{active.isAIScene}}" hint-placeholder-val="{{true}}">
+          <!-- TAB 1: PROMPT & FLOW -->
+          <sc-if value="{{isTabPrompt}}" hint-placeholder-val="{{true}}">
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <fieldset style="margin: 0; padding: 0; border: 0;">
+                <legend style="padding: 0 0 6px; font-size: 13px; font-weight: 600; color: {{muted}};">How this scene starts</legend>
+                <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+                  <button type="button" style="min-height: 44px; padding: 6px 10px; border-radius: 8px; border: 1px solid {{accent}}; background: {{accentSoft}}; color: {{text}}; font-size: 13px; font-weight: 600; text-align: left;">
+                    Continue previous scene
+                    <span style="display: block; font-size: 11px; font-weight: 400; color: {{muted}};">Seamless motion from last frames</span>
+                  </button>
+                  <button type="button" style="min-height: 44px; padding: 6px 10px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{muted}}; font-size: 13px; font-weight: 600; text-align: left;">
+                    Start fresh (Cut)
+                    <span style="display: block; font-size: 11px; font-weight: 400; color: {{muted}};">Independent camera angle</span>
+                  </button>
+                </div>
+              </fieldset>
+
+              <fieldset style="margin: 0; padding: 0; border: 0;">
+                <legend style="padding: 0 0 6px; font-size: 13px; font-weight: 600; color: {{muted}};">Conditioning mode</legend>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                  <button type="button" style="min-height: 38px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{muted}}; font-size: 13px; font-weight: 600;">Text</button>
+                  <button type="button" style="min-height: 38px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{muted}}; font-size: 13px; font-weight: 600;">Last frame</button>
+                  <button type="button" style="min-height: 38px; border-radius: 8px; border: 1px solid {{accent}}; background: {{accentSoft}}; color: {{text}}; font-size: 13px; font-weight: 700;">References</button>
+                </div>
+              </fieldset>
+
+              <!-- Clickable Token Insertion Bar -->
+              <div style="padding: 10px 12px; border-radius: 8px; background: {{raised}}; border: 1px solid {{line}}; display: flex; flex-direction: column; gap: 8px;">
+                <span style="font-size: 12px; font-weight: 600; color: {{muted}};">Click to insert reference token into prompt:</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid {{dash}}; background: {{surface}}; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;">+ &lt;Picture 1&gt; Lin</button>
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid {{dash}}; background: {{surface}}; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;">+ &lt;Picture 2&gt; Platform</button>
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid {{dash}}; background: {{surface}}; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;">+ &lt;Audio 1&gt; Rain</button>
+                </div>
+              </div>
+
+              <!-- Prompt Editor -->
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                  <label style="font-size: 13px; font-weight: 600; color: {{muted}};">Scene prompt</label>
+                  <div style="display: flex; gap: 6px;">
+                    <button type="button" style="min-height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">Rewrite</button>
+                    <button type="button" style="min-height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid {{line}}; background: transparent; color: {{muted}}; font-size: 12px; font-weight: 600;">Undo</button>
+                  </div>
+                </div>
+                <textarea rows="5" style="width: 100%; padding: 10px 12px; border: 1px solid {{line}}; border-radius: 8px; background: {{control}}; color: {{text}}; font-size: 14px; line-height: 1.5; resize: vertical;">Medium tracking shot following &lt;Picture 1&gt; along &lt;Picture 2&gt; in steady night rain. Cool sodium lamps reflect on wet concrete as she checks her watch and speaks softly: "The last train leaves in two minutes — don't look back."</textarea>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- TAB 2: MEDIA & CAST -->
+          <sc-if value="{{isTabMedia}}" hint-placeholder-val="{{false}}">
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div>
+                <div style="font-size: 13px; font-weight: 600; color: {{muted}}; margin-bottom: 8px;">Cast in this scene</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <button type="button" style="min-height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid {{accent}}; background: {{accentSoft}}; font-size: 13px; font-weight: 700;">Lin · &lt;Picture 1&gt;</button>
+                  <button type="button" style="min-height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid {{line}}; background: {{control}}; color: {{muted}}; font-size: 13px; font-weight: 600;">Kenji</button>
+                  <a href="CastMedia.dc.html" style="min-height: 38px; padding: 0 12px; border-radius: 8px; border: 1px dashed {{dash}}; display: inline-flex; align-items: center; font-size: 13px; color: {{accent}}; font-weight: 600;">Manage Cast →</a>
+                </div>
+              </div>
+              <div style="padding: 12px; border-radius: 8px; border: 1px dashed {{dash}}; background: {{control}}; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 13px; font-weight: 600;">Extra reference images</span>
+                  <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">+ Upload / Library</button>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                  <div style="aspect-ratio: 1; border-radius: 6px; background: {{raised}}; border: 1px solid {{line}}; display: flex; align-items: center; justify-content: center; font-size: 11px; color: {{muted}};">&lt;Picture 2&gt; Platform</div>
+                  <div style="aspect-ratio: 1; border-radius: 6px; border: 1px dashed {{dash}}; display: flex; align-items: center; justify-content: center; font-size: 12px; color: {{muted}};">Drop image</div>
+                </div>
+              </div>
+              <div style="padding: 12px; border-radius: 8px; border: 1px dashed {{dash}}; background: {{control}}; display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-size: 13px; font-weight: 600;">Reference videos (up to 3) &amp; Audio</span>
+                <button type="button" style="min-height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid {{line}}; background: {{raised}}; font-size: 12px; font-weight: 600;">+ Attach clip / audio</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- TAB 3: TIMING & SEED -->
+          <sc-if value="{{isTabTiming}}" hint-placeholder-val="{{false}}">
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600;">
+                <span>Length: 6 s (adds +4.5 s to storyboard)</span>
+                <input type="range" min="2" max="10" value="6" style="width: 100%; accent-color: {{accent}};">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600;">
+                <span>Continuation overlap: 1.5 s (when continuing previous scene)</span>
+                <input type="range" min="0.5" max="2.5" step="0.5" value="1.5" style="width: 100%; accent-color: {{accent}};">
+              </label>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">
+                  Takes per run
+                  <select style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}};">
+                    <option>1 take</option>
+                    <option selected>2 takes</option>
+                    <option>3 takes</option>
+                  </select>
+                </label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">
+                  Seed (-1 = random)
+                  <input type="number" value="482910" style="min-height: 38px; padding: 0 10px; border-radius: 7px; border: 1px solid {{line}}; background: {{control}}; font-family: 'JetBrains Mono', monospace;">
+                </label>
+              </div>
+            </div>
+          </sc-if>
+        </sc-if>
+      </div>
+
+      <!-- Sticky Inspector Footer -->
+      <div style="padding: 14px 20px; border-top: 1px solid {{line}}; background: {{raised}}; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="display: flex; flex-direction: column;">
+          <span style="font-size: 12px; color: {{muted}};">Length · {{active.dur}}</span>
+          <span style="font-size: 13px; font-weight: 600; color: {{done}};">{{active.checklistText}}</span>
+        </div>
+        <button type="button" style="min-height: 44px; padding: 0 20px; border-radius: 9px; border: 0; background: {{accent}}; color: {{accentInk}}; font-size: 14px; font-weight: 700;">{{active.ctaLabel}}</button>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2dd4bf","options":["#2dd4bf","#38bdf8","#f59e0b","#a78bfa"]},"$preview":{"width":1440,"height":1020}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      activeNum: 2,
+      selectedTakeId: 2,
+      tab: 'prompt',
+      links: { 2: true, 3: false, 4: true }
+    };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#2dd4bf';
+    const bg = '#0e1312';
+    const surface = '#151c1a';
+    const raised = '#1c2623';
+    const control = '#101715';
+    const line = '#283631';
+    const dash = '#3c524a';
+    const text = '#eef4f1';
+    const muted = '#9ab0a7';
+    const accentInk = '#07221d';
+    const accentSoft = 'rgba(45, 212, 191, 0.14)';
+    const done = '#5eead4';
+    const doneBg = '#11332c';
+    const warn = '#fbbf24';
+    const warnBg = '#33260e';
+    const warnLine = '#b45309';
+    const danger = '#fca5a5';
+
+    const rawScenes = [
+      { num: 1, kind: 'ai', title: 'Subway Entrance', dur: '5.0s', stateLabel: 'Done', tone: 'done', modeShort: 'Text + Ref', runsAs: '5s · Text + Ref', takeLabel: 'Take 1', summary: 'Lin steps down the tiled stairs into the neon-lit station.' },
+      { num: 2, kind: 'ai', title: 'Rain on the Platform', dur: '6.0s', stateLabel: 'Outdated', tone: 'warn', modeShort: 'Continue · Ref', runsAs: '6s · Reference media', takeLabel: 'Take 2', summary: 'Tracking shot along the wet platform as Lin checks her watch.' },
+      { num: 3, kind: 'media', title: 'Train Headlights', dur: '5.5s', stateLabel: 'Media clip', tone: 'done', modeShort: 'Clip · Crop', runsAs: '5.5s · Media clip', takeLabel: 'Prepared', summary: 'Express train headlights sweep across the tiled pillar.' },
+      { num: 4, kind: 'ai', title: 'Empty Bench', dur: '5.5s', stateLabel: 'Draft', tone: 'muted', modeShort: 'Continue · Text', runsAs: '5.5s · Text to video', takeLabel: 'No take', summary: 'Camera lingers on the rain-slicked bench as tail lights fade.' }
+    ];
+
+    const scenes = rawScenes.map((s) => {
+      const isCurrent = this.state.activeNum === s.num;
+      const isFlow = s.num > 1 && s.kind !== 'media' ? !!this.state.links[s.num] : false;
+      const badgeBg = s.tone === 'done' ? doneBg : (s.tone === 'warn' ? warnBg : raised);
+      const badgeColor = s.tone === 'done' ? done : (s.tone === 'warn' ? warn : muted);
+      return {
+        ...s,
+        hasConnector: s.num > 1,
+        linkLabel: s.kind === 'media' ? 'CLIP' : (isFlow ? 'CONT' : 'CUT'),
+        linkAria: s.kind === 'media' ? 'Media clip always starts fresh.' : (isFlow ? 'Continues previous scene. Click to switch to cut.' : 'Fresh cut. Click to continue previous scene.'),
+        connectorBorder: isFlow ? '1px solid ' + accent : '1px dashed ' + warnLine,
+        connectorBg: isFlow ? accentSoft : warnBg,
+        connectorColor: isFlow ? accent : warn,
+        toggleLink: () => {
+          if (s.kind === 'media') return;
+          const next = Object.assign({}, this.state.links);
+          next[s.num] = !next[s.num];
+          this.setState({ links: next });
+        },
+        select: () => this.setState({ activeNum: s.num }),
+        isCurrent: isCurrent ? 'true' : 'false',
+        cardBorder: isCurrent ? '2px solid ' + accent : '1px solid ' + line,
+        cardBg: isCurrent ? raised : control,
+        cardShadow: isCurrent ? '0 0 0 3px ' + accentSoft : 'none',
+        thumbBg: s.tone === 'done' ? '#132622' : '#0b100f',
+        thumbLabel: s.kind === 'media' ? 'MEDIA CLIP' : (s.tone === 'done' ? 'FRAME READY' : (s.tone === 'warn' ? 'NEEDS UPDATE' : 'DRAFT')),
+        badgeBg,
+        badgeColor
+      };
+    });
+
+    const active = scenes.find((s) => s.num === this.state.activeNum) || scenes[1];
+    const takes = [
+      { id: 1, label: 'Take 1', meta: '6.0s · 11:14', seed: 482901, inUse: false },
+      { id: 2, label: 'Take 2', meta: '6.0s · 11:18', seed: 482910, inUse: true },
+      { id: 3, label: 'Take 3', meta: '6.0s · 11:22', seed: 482944, inUse: false }
+    ].map((tk) => ({
+      ...tk,
+      border: this.state.selectedTakeId === tk.id ? '2px solid ' + accent : '1px solid ' + line,
+      bg: this.state.selectedTakeId === tk.id ? accentSoft : control,
+      pick: () => this.setState({ selectedTakeId: tk.id })
+    }));
+    const selectedTake = takes.find((tk) => tk.id === this.state.selectedTakeId) || takes[1];
+
+    const t = this.state.tab;
+    return {
+      bg, surface, raised, control, line, dash, text, muted, accent, accentInk, accentSoft,
+      done, doneBg, warn, warnBg, warnLine, danger,
+      scenes,
+      active: {
+        ...active,
+        isOutdated: active.tone === 'warn',
+        isMediaClip: active.kind === 'media',
+        isAIScene: active.kind !== 'media',
+        readyLabel: active.kind === 'media' ? 'Prepared' : 'Ready',
+        checklistText: active.kind === 'media' ? 'Ready to prepare.' : 'Ready to generate.',
+        ctaLabel: active.kind === 'media' ? 'Prepare Clip' : 'Generate Scene 0' + active.num
+      },
+      takes,
+      selectedTake,
+      prevScene: () => this.setState({ activeNum: Math.max(1, this.state.activeNum - 1) }),
+      nextScene: () => this.setState({ activeNum: Math.min(4, this.state.activeNum + 1) }),
+      tabPrompt: () => this.setState({ tab: 'prompt' }),
+      tabMedia: () => this.setState({ tab: 'media' }),
+      tabTiming: () => this.setState({ tab: 'timing' }),
+      isTabPrompt: t === 'prompt',
+      isTabMedia: t === 'media',
+      isTabTiming: t === 'timing',
+      tabPromptBg: t === 'prompt' ? surface : 'transparent',
+      tabPromptColor: t === 'prompt' ? text : muted,
+      tabMediaBg: t === 'media' ? surface : 'transparent',
+      tabMediaColor: t === 'media' ? text : muted,
+      tabTimingBg: t === 'timing' ? surface : 'transparent',
+      tabTimingColor: t === 'timing' ? text : muted
+    };
+  }
+}
+</script>
+</body>
+</html>
