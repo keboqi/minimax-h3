@@ -450,27 +450,34 @@ def _mouth_aspect_ratio(crop_rgb, face_mesh) -> float | None:
     return math.hypot(bot.x - top.x, bot.y - top.y) / width
 
 
-def _score_motion_series(values: list[float | None]) -> list[float]:
-    """Convert a per-frame MAR or mouth-motion series into speaking scores centered around 0."""
+def _score_motion_series(
+    values: Sequence[float | None],
+    diff_values: Sequence[float | None] | None = None,
+) -> list[float]:
+    """Convert per-frame MAR positions and/or fallback mouth-motion diffs into speaking scores centered around 0."""
     n = len(values)
     if n == 0:
         return []
-    deltas = [0.0] * n
+    deltas: list[float | None] = [None] * n
     prev_val: float | None = None
     for i, val in enumerate(values):
-        if val is not None and prev_val is not None:
-            deltas[i] = abs(val - prev_val)
         if val is not None:
+            if prev_val is not None:
+                deltas[i] = abs(val - prev_val)
             prev_val = val
+        else:
+            prev_val = None
+            if diff_values is not None and i < len(diff_values) and diff_values[i] is not None:
+                deltas[i] = float(diff_values[i])
     scores: list[float] = []
     for i in range(n):
         lo, hi = max(0, i - 2), min(n, i + 3)
-        window = [deltas[j] for j in range(lo, hi) if values[j] is not None]
+        window = [deltas[j] for j in range(lo, hi) if deltas[j] is not None]
         if not window:
             scores.append(0.0)
             continue
         activity = sum(window) / len(window)
-        # Typical quiet MAR delta is ~0.005-0.015; active speaking is ~0.04-0.18+.
+        # Typical quiet MAR/mouth motion is ~0.005-0.015; active speaking is ~0.04-0.18+.
         scores.append(round(max(-1.0, min(2.0, (activity - 0.028) * 18.0)), 4))
     return scores
 
@@ -584,7 +591,10 @@ def run_yolo_mediapipe_scan(
                     tr = active[best_idx]
                     matched_tracks.add(best_idx)
                 else:
-                    tr = {"track_id": next_track_id, "obs": [], "mar": [], "prev_mouth": None, "last_t": t, "last_box": box}
+                    tr = {
+                        "track_id": next_track_id, "obs": [], "mar": [], "gray_diff": [],
+                        "prev_mouth": None, "last_t": t, "last_box": box,
+                    }
                     next_track_id += 1
                     active.append(tr)
                     matched_tracks.add(len(active) - 1)
@@ -598,22 +608,28 @@ def run_yolo_mediapipe_scan(
                 cy1 = max(0, int((by - bh * pad) * fh))
                 cx2 = min(fw, int((bx + bw * (1.0 + pad)) * fw))
                 cy2 = min(fh, int((by + bh * (1.0 + pad)) * fh))
-                metric: float | None = None
+                mar_val: float | None = None
+                gray_diff: float | None = None
                 if cx2 > cx1 + 8 and cy2 > cy1 + 8:
                     crop_bgr = frame_bgr[cy1:cy2, cx1:cx2]
                     if face_mesh is not None:
                         crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-                        metric = _mouth_aspect_ratio(crop_rgb, face_mesh)
-                    if metric is None:
+                        mar_val = _mouth_aspect_ratio(crop_rgb, face_mesh)
+                    if mar_val is not None:
+                        tr["prev_mouth"] = None
+                    else:
                         # Lightweight lower-face grayscale mean diff fallback.
                         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
                         lh = gray.shape[0]
                         mouth_patch = cv2.resize(gray[int(lh * 0.55):, :], (32, 16)).astype(np.float32) / 255.0
                         if tr["prev_mouth"] is not None:
-                            metric = float(np.mean(np.abs(mouth_patch - tr["prev_mouth"])))
+                            gray_diff = float(np.mean(np.abs(mouth_patch - tr["prev_mouth"])))
                         tr["prev_mouth"] = mouth_patch
+                else:
+                    tr["prev_mouth"] = None
                 tr["obs"].append((t, box))
-                tr["mar"].append(metric)
+                tr["mar"].append(mar_val)
+                tr["gray_diff"].append(gray_diff)
     finally:
         cap.release()
         if face_mesh is not None:
@@ -628,7 +644,7 @@ def run_yolo_mediapipe_scan(
         for tr in raw_tracks:
             if not tr["obs"]:
                 continue
-            scores = _score_motion_series(tr["mar"])
+            scores = _score_motion_series(tr["mar"], tr["gray_diff"])
             observations = tuple(
                 TrackObservation(time=t, box=box, score=score)
                 for (t, box), score in zip(tr["obs"], scores)
@@ -658,7 +674,6 @@ def get_or_scan_source(
 ) -> SourceScan:
     """Return a cached SourceScan when available, otherwise scan and persist it."""
     fp = video_fingerprint(video)
-    expected_cuts = tuple(sorted(c for c in cuts if 0.0 < c < probe_video_metadata(video).duration)) if force_rescan else None
     if cache_dir is not None and not force_rescan:
         cached = load_source_scan(cache_dir, fp)
         if cached is not None and cached.cuts == tuple(sorted(c for c in cuts if 0.0 < c < cached.duration)):

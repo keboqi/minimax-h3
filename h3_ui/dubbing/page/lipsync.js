@@ -171,12 +171,12 @@ export function renderLipSync(app) {
             <button type="button" class="btn btn-small" data-ls-action="to-result">Skip to Result →</button>
           </div>
         </div>
-        <div class="run-status top-gap" data-run="lip-sync-detect" hidden>
+        <div class="run-status top-gap" data-run="lip-sync-detect" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span>
           <button type="button" class="btn btn-small" data-ls-action="interrupt" data-kind="lip-sync-detect">Interrupt</button>
         </div>
-        <div class="run-status top-gap" data-run="lip-sync" hidden>
+        <div class="run-status top-gap" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span>
           <button type="button" class="btn btn-small" data-ls-action="interrupt" data-kind="lip-sync">Interrupt</button>
@@ -329,7 +329,7 @@ function drawOverlay(app) {
     }
   }
   if (!shot) {
-    overlay.innerHTML = "";
+    if (overlay.childElementCount) overlay.textContent = "";
     return;
   }
 
@@ -339,7 +339,12 @@ function drawOverlay(app) {
   const activeAssign = activeSpeaker ? aMap.get(`${shot.index}:${activeSpeaker}`) : null;
   const activeTrackId = activeAssign && activeAssign.status !== "off_screen" ? activeAssign.track_id : null;
 
-  const boxes = [];
+  // Reuse existing box buttons keyed by shot/track so clicks complete across animation frames.
+  const existing = new Map();
+  for (const child of overlay.children) {
+    if (child.dataset?.boxId) existing.set(child.dataset.boxId, child);
+  }
+  const seen = new Set();
   (shot.tracks || []).forEach((track, idx) => {
     const b = boxAtTime(track, t);
     if (!b) return;
@@ -349,15 +354,38 @@ function drawOverlay(app) {
       ? `${speakerLabel(activeSpeaker)} · Speaking`
       : `Face #${idx + 1}`;
     const assignKey = activeSpeaker ? `${shot.index}:${activeSpeaker}` : "";
-    boxes.push(`
-      <button type="button" class="ls-face-box ${isSpeaking ? "speaking" : ""}"
-        style="left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%"
-        ${assignKey ? `data-ls-assign="${esc(assignKey)}" data-track-id="${track.track_id}"` : ""}
-        title="Click to assign ${esc(speakerLabel(activeSpeaker))} to Face #${idx + 1}">
-        <span class="ls-face-tag">${esc(label)}</span>
-      </button>`);
+    const boxId = `${shot.index}:${track.track_id}`;
+    seen.add(boxId);
+    let btn = existing.get(boxId);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ls-face-box";
+      btn.dataset.boxId = boxId;
+      const tag = document.createElement("span");
+      tag.className = "ls-face-tag";
+      btn.appendChild(tag);
+      overlay.appendChild(btn);
+    }
+    btn.classList.toggle("speaking", isSpeaking);
+    btn.style.left = `${(x * 100).toFixed(2)}%`;
+    btn.style.top = `${(y * 100).toFixed(2)}%`;
+    btn.style.width = `${(w * 100).toFixed(2)}%`;
+    btn.style.height = `${(h * 100).toFixed(2)}%`;
+    if (assignKey) {
+      btn.dataset.lsAssign = assignKey;
+      btn.dataset.trackId = String(track.track_id);
+    } else {
+      delete btn.dataset.lsAssign;
+      delete btn.dataset.trackId;
+    }
+    btn.title = `Click to assign ${speakerLabel(activeSpeaker)} to Face #${idx + 1}`;
+    const tag = btn.firstElementChild;
+    if (tag && tag.textContent !== label) tag.textContent = label;
   });
-  overlay.innerHTML = boxes.join("");
+  for (const [boxId, node] of existing) {
+    if (!seen.has(boxId)) node.remove();
+  }
 }
 
 export function afterLipSync(app) {
@@ -418,11 +446,13 @@ async function saveOverride(app, key, trackId) {
     app.render();
     const nextVideo = document.getElementById("ls-video");
     if (nextVideo && savedTime !== null) {
-      nextVideo.addEventListener("loadedmetadata", () => {
+      const restore = () => {
         nextVideo.currentTime = savedTime;
         if (!wasPaused) nextVideo.play().catch(() => {});
         drawOverlay(app);
-      }, {once: true});
+      };
+      if (nextVideo.readyState >= 1) restore();
+      else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
     }
     toast(trackId === null ? `Shot ${shotIndex + 1} marked off-screen.` : `Shot ${shotIndex + 1} aligned to Face.`);
   } catch (error) {

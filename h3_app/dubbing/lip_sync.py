@@ -1031,7 +1031,7 @@ def render_dub_lip_sync(
                 "_source_duration": window.render_frames / FPS,
                 "_feather": int(feather),
             }
-            window_seed = seed + index - 1
+            window_seed = seed + window.first_frame
             cache_path = None
             if use_cache:
                 key = window_cache_key(

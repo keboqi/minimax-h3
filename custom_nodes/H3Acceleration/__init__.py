@@ -2667,7 +2667,7 @@ _LOWER_FACE_LANDMARKS = (
 )
 
 
-def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh):
+def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh, target_center=(0.5, 0.5)):
     """Return a binary (H, W) float32 polygon mask over the real mouth/jaw landmarks, or None."""
     try:
         import cv2
@@ -2678,10 +2678,11 @@ def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh):
     faces = getattr(result, "multi_face_landmarks", None)
     if not faces:
         return None
-    # Pick the face closest to crop center (crops are centered on the tracked face).
+    # Pick the face closest to the tracked face_rect center.
+    tx, ty = target_center
     best = min(
         faces,
-        key=lambda f: (f.landmark[1].x - 0.5) ** 2 + (f.landmark[1].y - 0.5) ** 2,
+        key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2,
     )
     pts = np.array(
         [[best.landmark[i].x * width, best.landmark[i].y * height] for i in _LOWER_FACE_LANDMARKS],
@@ -2777,7 +2778,8 @@ class H3LowerFaceMask:
                 if face_mesh is not None:
                     try:
                         frame_np = (crops[index, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
-                        poly_mask = _mediapipe_mouth_polygon(frame_np, width, height, face_mesh)
+                        target_center = ((fx + 0.5 * fw) / width, (fy + 0.5 * fh) / height)
+                        poly_mask = _mediapipe_mouth_polygon(frame_np, width, height, face_mesh, target_center)
                     except Exception:
                         poly_mask = None
 

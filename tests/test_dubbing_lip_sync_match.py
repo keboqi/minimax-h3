@@ -19,6 +19,7 @@ from h3_app.dubbing.lip_sync_match import (
     Shot,
     SourceScan,
     TrackObservation,
+    _score_motion_series,
     assign_speakers_to_shots,
     estimate_decision_snippet_tokens,
     get_or_scan_source,
@@ -457,3 +458,26 @@ class LipSyncMatchTests(unittest.TestCase):
                     api_key="test-key", cache_dir=None, decide_fn=fail_429,
                 )
                 self.assertEqual(fallback, initial)
+
+    def test_score_motion_series_keeps_fallback_diffs_separate_from_mar(self):
+        # Steady fallback grayscale diffs (~0.08) represent active speaking and must not be double-differenced to 0.
+        fallback_scores = _score_motion_series([None, None, None, None], [None, 0.08, 0.08, 0.08])
+        self.assertTrue(all(score > 0.8 for score in fallback_scores))
+
+        # Quiet MAR interleaved with a quiet fallback frame must stay negative (no cross-unit jump spike).
+        mixed_scores = _score_motion_series([0.25, 0.255, None, 0.25], [None, None, 0.01, None])
+        self.assertTrue(all(score < 0.0 for score in mixed_scores))
+
+    def test_get_or_scan_source_force_rescan_skips_extra_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "clip.mp4"
+            video.write_bytes(b"fake-mp4")
+            expected = SourceScan("fp", 2.0, 320, 240, 24.0, (), (Shot(0, 0.0, 2.0),), "test")
+            with patch("h3_app.dubbing.lip_sync_match.probe_video_metadata") as probe:
+                scan = get_or_scan_source(
+                    video, (), cache_dir=root / "cache", scanner=lambda _v, _c: expected, force_rescan=True,
+                )
+                self.assertEqual(scan, expected)
+                probe.assert_not_called()
+
