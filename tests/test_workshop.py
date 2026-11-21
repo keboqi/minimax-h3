@@ -323,17 +323,25 @@ class ModelManagerTests(unittest.TestCase):
             with self.assertLogs("h3_workshop", level="WARNING"):
                 self.assertEqual(client.post(f"{api}/reload-volume").status_code, 503)
             self.volume.reload.side_effect = load_studio_commit
-            self.assertEqual(client.post(f"{api}/reload-volume").json(), {"reloaded": True})
+            browser = {"origin": "http://testserver"}
+            with (
+                client.websocket_connect("/gradio_api/heartbeat/workshop-browser", headers=browser) as heartbeat,
+                client.websocket_connect("/gradio_api/queue/data?session_hash=workshop-browser", headers=browser),
+            ):
+                heartbeat.send_json({})
+                self.assertEqual(heartbeat.receive_json()["status"], 200)
+                self.assertIn(b"ALIVE", heartbeat.receive_bytes())
+                self.assertEqual(client.post(f"{api}/reload-volume").json(), {"reloaded": True})
 
-            recent, = client.get(f"{api}/recent").json()["sessions"]
-            project = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
-            session = project["session"]
-            self.assertNotEqual(session["id"], draft.id)
-            self.assertEqual(session["id"], recent["id"])
-            self.assertEqual(session["board"]["lines"][0]["translation"], "Bonjour")
-            self.assertEqual(session["readiness"]["voiced"], 1)
-            result, = session["result"]["files"]
-            self.assertEqual(client.get(result["url"]).content, b"dub")
+                recent, = client.get(f"{api}/recent").json()["sessions"]
+                project = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
+                session = project["session"]
+                self.assertNotEqual(session["id"], draft.id)
+                self.assertEqual(session["id"], recent["id"])
+                self.assertEqual(session["board"]["lines"][0]["translation"], "Bonjour")
+                self.assertEqual(session["readiness"]["voiced"], 1)
+                result, = session["result"]["files"]
+                self.assertEqual(client.get(result["url"]).content, b"dub")
 
     def test_launcher_starts_workshop_before_studio_setup(self):
         source = (Path(__file__).resolve().parents[1] / "run_h3.sh").read_text(encoding="utf-8")

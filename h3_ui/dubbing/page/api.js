@@ -22,7 +22,8 @@ async function call(method, path, body, query) {
     data = null;
   }
   if (!response.ok || (data && data.error)) {
-    throw new Error((data && (data.error || data.detail)) || `Request failed (${response.status}).`);
+    const message = (data && (data.error || data.detail)) || `Request failed (${response.status}).`;
+    throw Object.assign(new Error(message), {status: response.status});
   }
   return data;
 }

@@ -185,7 +185,7 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
   app.picks = new Set([...app.picks].filter((index) => index < count));
 }
 
-export async function refresh({includePlayer = true, followProject = false} = {}) {
+export async function refresh({includePlayer = true, followProject = false, preserveSession = false} = {}) {
   if (!app.sessionId) return;
   try {
     const project = app.project;
@@ -197,6 +197,7 @@ export async function refresh({includePlayer = true, followProject = false} = {}
       setSession((await api.get("session", {id: app.sessionId, include_player: includePlayer})).session);
     }
   } catch (error) {
+    if (preserveSession) throw error;
     toast(error.message, {error: true});
     app.session = null;
     app.sessionId = null;
@@ -402,30 +403,83 @@ function askName() {
   input.select();
 }
 
-function bindChrome() {
-  bindBatch(app);
-  const reloadStudio = document.getElementById("reload-studio");
-  reloadStudio.hidden = !app.boot.reload_volume;
-  reloadStudio.addEventListener("click", async () => {
-    reloadStudio.disabled = true;
+let studioSyncInFlight = false;
+
+async function syncFromStudio({opening = false, showRecent = false} = {}) {
+  if (studioSyncInFlight) return;
+  studioSyncInFlight = true;
+  const retry = document.getElementById("reload-studio");
+  retry.disabled = true;
+  const refreshOptions = {includePlayer: app.screen === "result", followProject: true, preserveSession: true};
+  try {
     try {
       await api.post("reload-volume");
-      app.projects = (await api.get("projects")).projects;
-      app.recentLoaded = false;
-      const hadLines = app.session?.board.lines.length;
-      if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: true});
-      if (!app.sessionId) {
-        app.sourceTab = "sessions";
-        go("source");
-      } else if (app.screen === "source" && !hadLines && app.session?.board.lines.length) {
+    } catch (error) {
+      if (error.status !== 409 && error.status !== 503) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await api.post("reload-volume");
+    }
+    app.projects = (await api.get("projects")).projects;
+    app.recentLoaded = false;
+    if (app.sessionId) {
+      const previousId = app.sessionId;
+      const wasEmpty = app.session?.board.lines.length === 0;
+      await refresh(refreshOptions);
+      if (app.screen === "source" && app.session?.board.lines.length && (wasEmpty || app.sessionId !== previousId)) {
         go("review");
       }
-    } catch (error) {
-      toast(error.message, {error: true});
-    } finally {
-      reloadStudio.disabled = false;
+    } else {
+      if (showRecent && !app.source) {
+        app.recent = (await api.get("recent")).sessions;
+        app.recentLoaded = true;
+        if (app.recent.length) app.sourceTab = "sessions";
+      }
+      render();
     }
-  });
+    retry.hidden = true;
+  } catch (error) {
+    retry.hidden = false;
+    if (opening) {
+      try {
+        if (app.sessionId) await refresh(refreshOptions);
+        else render();
+      } catch (_) {
+        // The current mount may not contain the remembered session yet.
+        render();
+      }
+    }
+    toast(error.message, {error: true});
+  } finally {
+    studioSyncInFlight = false;
+    retry.disabled = false;
+  }
+}
+
+function watchWorkshop(showRecent) {
+  const frame = window.frameElement;
+  let visible = false;
+  let opened = false;
+  const check = () => {
+    const shown = !document.hidden && (!frame || frame.getClientRects().length > 0);
+    const entered = shown && !visible;
+    visible = shown;
+    if (!entered) return;
+    const opening = !opened;
+    opened = true;
+    syncFromStudio({opening, showRecent: opening && showRecent}).then(() => {
+      if (opening) poll();
+    });
+  };
+  if (frame) new window.parent.ResizeObserver(check).observe(frame);
+  document.addEventListener("visibilitychange", check);
+  check();
+}
+
+function bindChrome() {
+  bindBatch(app);
+  document.getElementById("reload-studio").addEventListener("click", () => syncFromStudio({
+    showRecent: !app.sessionId && !app.source && app.sourceTab === "sessions",
+  }));
   document.getElementById("auto-dub").addEventListener("click", () => {
     const body = autoBody(app);
     if (app.screen !== "source" && app.sessionId) body.session = app.sessionId;
@@ -445,7 +499,7 @@ function bindChrome() {
         && !window.confirm("Leave this unsaved draft and start a new project?")) return;
     try {
       localStorage.removeItem(STORE);
-      localStorage.setItem(STORE, JSON.stringify({completedAuto: app.runs.auto?.id || app.completedAuto}));
+      localStorage.setItem(STORE, JSON.stringify({sourceTab: "upload", completedAuto: app.runs.auto?.id || app.completedAuto}));
     } catch (_) { /* Storage can be unavailable in private windows. */ }
     window.location.reload();
   });
@@ -514,9 +568,13 @@ async function start() {
   app.sessionId = saved.sessionId || null;
   app.screen = saved.screen || "source";
   bindChrome();
-  if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: !app.boot.gpu});
-  else render();
-  poll();
+  if (app.boot.reload_volume) {
+    watchWorkshop(!saved.sourceTab);
+  } else {
+    if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: !app.boot.gpu});
+    else render();
+    poll();
+  }
   document.title = `Dubbing${app.project ? ` · ${app.project.name}` : ""}`;
 }
 

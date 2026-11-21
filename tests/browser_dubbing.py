@@ -17,7 +17,7 @@ from tests.test_dub_page import PageTests
 class DubbingBrowserTests(PageTests):
     gpu = True
 
-    def test_workshop_reloads_the_open_project_and_shows_its_studio_dub(self):
+    def test_workshop_automatically_loads_the_open_project_and_studio_dub(self):
         draft = self.client.post("/dubbing/api/project/save", json={
             "name": "Interview", "source": str(self.media), "settings": {"target_language": "French"},
         }).json()["project"]
@@ -28,9 +28,23 @@ class DubbingBrowserTests(PageTests):
         output.write_bytes(b"dub")
         sessions.modify(analyzed, lambda session: session.data.update(last_output=str(output)))
 
+        reloads = []
+
         def reload_from_studio(route):
-            self.assertTrue(projects.attach(self.runtime, "Interview", analyzed.id,
-                                            expected_session=draft["session"]))
+            reloads.append(route.request.url)
+            if len(reloads) == 1:
+                route.fulfill(status=409, json={"detail": "Workshop is using the shared volume."})
+                return
+            if len(reloads) == 2:
+                self.assertTrue(projects.attach(self.runtime, "Interview", analyzed.id,
+                                                expected_session=draft["session"]))
+            else:
+                def update_translation(session):
+                    lines = session.segments
+                    lines[0]["translation"] = "Salut"
+                    session.segments = lines
+
+                sessions.modify(analyzed, update_translation)
             route.fulfill(json={"reloaded": True})
 
         boot = self.client.get("/dubbing/api/boot").json()
@@ -44,15 +58,28 @@ class DubbingBrowserTests(PageTests):
             page.route("**/api/boot", lambda route: route.fulfill(json=boot))
             page.route("**/api/reload-volume", reload_from_studio)
             page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
-            page.goto("http://dubbing.test/dubbing/")
-            expect(page.get_by_role("button", name="Analyze source", exact=True)).to_be_visible()
-            page.get_by_role("button", name="Reload from Studio").click()
-            expect(page.locator(".line-row.selected")).to_contain_text("Bonjour")
-            page.get_by_role("button", name="Dub", exact=True).click()
-            expect(page.locator(".latest")).to_contain_text("Latest dub")
-            page.reload()
-            page.get_by_role("button", name="Review lines", exact=True).click()
-            expect(page.locator(".line-row.selected")).to_contain_text("Bonjour")
+            page.route("**/workshop-test", lambda route: route.fulfill(
+                content_type="text/html", body='<iframe id="dub" src="/dubbing/" hidden></iframe>',
+            ))
+            page.goto("http://dubbing.test/workshop-test")
+            frame = page.frame_locator("#dub")
+            self.assertEqual(reloads, [])
+            page.locator("#dub").evaluate("(frame) => { frame.hidden = false; }")
+            expect(frame.locator(".line-row.selected")).to_contain_text("Bonjour")
+            expect(frame.get_by_role("button", name="Retry Studio sync")).to_be_hidden()
+            self.assertEqual(len(reloads), 2)
+            frame.get_by_role("button", name="Dub", exact=True).click()
+            expect(frame.locator(".latest")).to_contain_text("Latest dub")
+
+            page.locator("#dub").evaluate(
+                "(frame) => new Promise(resolve => { frame.hidden = true; "
+                "requestAnimationFrame(() => requestAnimationFrame(resolve)); })"
+            )
+            with page.expect_response("**/api/reload-volume"):
+                page.locator("#dub").evaluate("(frame) => { frame.hidden = false; }")
+            self.assertEqual(len(reloads), 3)
+            frame.get_by_role("button", name="Review lines", exact=True).click()
+            expect(frame.locator(".line-row.selected")).to_contain_text("Salut")
             browser.close()
 
     def test_language_change_and_new_takes_apply_to_all_requested_lines(self):

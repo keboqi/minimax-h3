@@ -473,7 +473,7 @@ def _build_models(ui, manager: ModelManager):
 
 def _install_dubbing_reload(app, queue, volume) -> None:
     """Refresh the Modal mount while no Workshop request or task is using it."""
-    from asyncio import Event
+    from asyncio import Event, wait_for
     from logging import getLogger
 
     from fastapi import HTTPException
@@ -482,6 +482,8 @@ def _install_dubbing_reload(app, queue, volume) -> None:
     from h3_app.workspace_activity import idle_workspace
 
     active_requests = 0
+    drained = Event()
+    drained.set()
     ready = Event()
     ready.set()
     busy = "Workshop is using the shared volume. Try refreshing when the current work finishes."
@@ -495,11 +497,22 @@ def _install_dubbing_reload(app, queue, volume) -> None:
             if scope["type"] not in ("http", "websocket"):
                 return await self.app(scope, receive, send)
             await ready.wait()
+            path = scope.get("path", "")
+            # The queue relay can keep an idle heartbeat or spare socket open for
+            # the life of the page. Queued work is checked separately below.
+            if (scope["type"] == "websocket" or scope.get("method") == "GET") and (
+                path == "/gradio_api/queue/data" or path.startswith("/gradio_api/heartbeat/")
+            ):
+                return await self.app(scope, receive, send)
             active_requests += 1
+            if active_requests > 1:
+                drained.clear()
             try:
                 await self.app(scope, receive, send)
             finally:
                 active_requests -= 1
+                if active_requests <= 1:
+                    drained.set()
 
     def reload_if_idle():
         with idle_workspace() as idle:
@@ -515,10 +528,17 @@ def _install_dubbing_reload(app, queue, volume) -> None:
 
     @app.post("/dubbing/api/reload-volume", include_in_schema=False)
     async def reload_volume():
-        if active_requests != 1 or len(queue) or any(queue.active_jobs):
+        if not ready.is_set() or len(queue) or any(queue.active_jobs):
             raise HTTPException(status_code=409, detail=busy)
         ready.clear()
         try:
+            try:
+                await wait_for(drained.wait(), timeout=2)
+            except TimeoutError as exc:
+                raise HTTPException(status_code=409, detail=busy) from exc
+            # A request completing during the drain may have submitted work.
+            if len(queue) or any(queue.active_jobs):
+                raise HTTPException(status_code=409, detail=busy)
             await run_in_threadpool(reload_if_idle)
         finally:
             ready.set()
