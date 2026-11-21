@@ -433,8 +433,13 @@ export function startWorkspace() {
   function renderBackgroundMusic() {
     const project = state.project;
     const settings = project.music_settings;
+    const available = Boolean(state.boot.background_music || project.background_music);
+    const unavailable = !state.boot.gpu
+      ? "Open Soundstage in Studio to generate background music."
+      : "Music 3 is unavailable here.";
     const enabled = $("music-enabled");
     enabled.checked = settings.music_enabled;
+    enabled.disabled = !available && !settings.music_enabled;
     $("music-controls").hidden = !settings.music_enabled;
     if (settings.music_enabled) {
       const volume = $("music-volume");
@@ -444,13 +449,14 @@ export function startWorkspace() {
       ducking.checked = settings.music_ducking;
     }
     const status = $("background-music-status");
-    status.hidden = !project.music_pending && !settings.music_enabled;
-    status.textContent = project.music_pending ? "Remix to apply the changes."
+    status.hidden = available && !project.music_pending && !settings.music_enabled;
+    status.textContent = !available ? unavailable
+      : project.music_pending ? "Remix to apply the changes."
       : !settings.music_volume ? "Background music is muted."
       : project.result ? "Loops under the full timeline." : "Applied when you speak the project.";
     const remix = $("remix-background-music");
     remix.hidden = !project.music_pending;
-    remix.disabled = !state.boot.gpu || isRunning() || videoRunning();
+    remix.disabled = !state.boot.gpu || isRunning() || videoRunning() || (!available && settings.music_enabled);
   }
 
   function renderActions() {

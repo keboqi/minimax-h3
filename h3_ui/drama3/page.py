@@ -29,7 +29,7 @@ from .page_cast import boot_payload as cast_boot_payload, cast_settings, install
 from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, speech_value, timeline_payload, value
 from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
 from .page_library import install_library_routes
-from .page_music import (MUSIC_FIELD, applied_music, desired_music, generate_track, mixed_audio,
+from .page_music import (MUSIC_FIELD, applied_music, desired_music, generate_track, mixed_audio, music_clip,
                          music_mix_id, music_settings, music_track, needs_music_clip, publish_mix, remember_applied_music)
 from .page_store import editing, project_lock
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
@@ -283,7 +283,17 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             owner_of(request)
             with project_lock(name):
                 data, result = project(name)
-                path = mixed_audio(result, applied_music(data), clips) if result else None
+                if result:
+                    soundtrack = applied_music(data)
+                    try:
+                        path = mixed_audio(result, soundtrack, clips)
+                    except H3Error:
+                        if music_clip(clips, soundtrack) is None:
+                            path = Path(result)
+                        else:
+                            raise
+                else:
+                    path = None
         return file_response(path, cache="private, no-cache")
 
     @app.get(f"{api}/take", include_in_schema=False)
@@ -303,12 +313,16 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def read_run(name: str, request: Request):
         return {"run": run_payload(owner_of(request), name)}
 
+    def require_music() -> None:
+        if generate_music is None:
+            raise H3Error("Open Soundstage in Studio to generate background music."
+                          if not gpu else "Music 3 is unavailable here.")
+
     @app.post(f"{api}/project/music", include_in_schema=False)
     @guarded
     def start_music(name: str, request: Request, body: dict = Body(default={})):
         owner = owner_of(request)
-        if generate_music is None:
-            raise H3Error("Open Soundstage in Studio to generate background music.")
+        require_music()
         data, _ = project(name)
         if not (data.get("text") or "").strip():
             raise H3Error("Write or paste some text on Script first.")
@@ -351,8 +365,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         data, previous_result = project(name)
         soundtrack = desired_music(data) if action != REGENERATE else applied_music(data)
         if action != REGENERATE and needs_music_clip(clips, soundtrack):
-            if generate_music is None:
-                raise H3Error("Open Soundstage in Studio to generate background music.")
+            require_music()
             run.stage, run.job_id = "music", None
             track = generate_track(run, owner, session, name, data, body or {}, write=music.enhance_music3_prompt,
                                    generate=generate_music, store=store, clips=clips)
@@ -385,7 +398,6 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             output = value(progress.output)
             if isinstance(output, (str, Path)) and output:
                 result = output
-                run.revision += 1
         if run.error is not None:
             return
         if run.stop_requested:
@@ -396,6 +408,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if music_mix_id(soundtrack):
             run.status = "Mixing background music…"
         publish_mix(store, name, result, soundtrack, clips, stopped=lambda: run.stop_requested)
+        run.revision += 1
         if video_export is not None:
             try:
                 carry_project_stills(store, name, previous_result, result, video_export)

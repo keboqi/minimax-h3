@@ -286,6 +286,64 @@ class Drama3PageTests(unittest.TestCase):
         self.assertTrue(muted["background_music"])
         self.assertEqual(self.client.get(f"{API}/audio", params=params).content, self.result.read_bytes())
 
+    def test_generating_music_reenables_background_music_after_disabling(self):
+        self.save_project(music_enabled=False)
+        self.music_clip = self.root / "fresh.wav"
+        self.music_clip.write_bytes(b"RIFF")
+        params = {"name": "Night Market"}
+
+        self.ok(self.client.post(f"{API}/project/music", params=params, json={}))
+        self.assertIsNone(self.wait()["error"])
+        project = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertTrue(project["background_music"])
+        self.assertTrue(project["music_settings"]["music_enabled"])
+        self.assertTrue(project["music_pending"])
+
+    def test_missing_music_clip_falls_back_to_speech_audio(self):
+        self.save_project(background_music="missing.wav", music_enabled=True,
+                          applied_music={"background_music": "missing.wav", "music_enabled": True,
+                                         "music_volume": 18, "music_ducking": True})
+        params = {"name": "Night Market"}
+        response = self.client.get(f"{API}/audio", params=params)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, self.result.read_bytes())
+
+    def test_music_unavailable_messages_distinguish_cpu_and_missing_engine(self):
+        self.save_project()
+        actions = SimpleNamespace(generate_drama3=self.generate, remix_drama3=self.remix,
+                                  regenerate_drama3_line=self.regenerate)
+        for gpu, expected in ((False, "Open Soundstage in Studio to generate background music."),
+                              (True, "Music 3 is unavailable here.")):
+            with self.subTest(gpu=gpu):
+                app = FastAPI()
+                install_owner_cookie(app, self.store)
+                install_soundstage_page(app, actions, store=self.store, output_dir=self.output_dir,
+                                        takes_dir=lambda: self.takes, gpu=gpu, music=None)
+                client = TestClient(app)
+                boot = self.ok(client.get(f"{API}/boot"))
+                self.assertFalse(boot["background_music"])
+                refused = client.post(f"{API}/project/music", params={"name": "Night Market"}, json={})
+                self.assertEqual(refused.status_code, 400)
+                self.assertEqual(refused.json()["error"], expected)
+
+    def test_run_revision_waits_until_publish_mix_finishes(self):
+        self.save_project(generated=False)
+        params = {"name": "Night Market"}
+        observed = []
+
+        def publish_spy(store, name, result, soundtrack, clips, *, stopped):
+            run = self.ok(self.client.get(f"{API}/run", params=params))["run"]
+            observed.append(("before", run["revision"]))
+            from h3_ui.drama3.page_music import publish_mix
+            publish_mix(store, name, result, soundtrack, clips, stopped=stopped)
+
+        with patch("h3_ui.drama3.page.publish_mix", side_effect=publish_spy):
+            self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "generate"}))
+            done = self.wait()
+        self.assertIsNone(done["error"])
+        self.assertEqual(observed, [("before", 0)])
+        self.assertGreater(done["revision"], 0)
+
     def test_generation_values_follow_the_speak_steps_input_order(self):
         data = self.save_project(generated=False)
         values = generation_values("Night Market", data, self.clips)

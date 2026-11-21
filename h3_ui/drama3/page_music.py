@@ -186,6 +186,7 @@ def generate_track(run, owner, session, name, data, body, *, write, generate, st
                 raise H3Error("The script or music changed while generating. Try again for the current project.")
             remember_applied_music(project)
             project[MUSIC_FIELD] = track.name
+            project["music_enabled"] = True
         saved = True
     finally:
         if not saved:
