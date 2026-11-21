@@ -185,10 +185,17 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
   app.picks = new Set([...app.picks].filter((index) => index < count));
 }
 
-export async function refresh({includePlayer = true} = {}) {
+export async function refresh({includePlayer = true, followProject = false} = {}) {
   if (!app.sessionId) return;
   try {
-    setSession((await api.get("session", {id: app.sessionId, include_player: includePlayer})).session);
+    const project = app.project;
+    if (followProject && project?.session === app.sessionId && app.projects.includes(project.name)) {
+      const data = await api.post("project/load", {name: project.name, include_player: includePlayer});
+      if (data.session.id !== app.sessionId) applyProject(data, {keepSettings: true});
+      else setSession(data.session, {keepSettings: true});
+    } else {
+      setSession((await api.get("session", {id: app.sessionId, include_player: includePlayer})).session);
+    }
   } catch (error) {
     toast(error.message, {error: true});
     app.session = null;
@@ -397,6 +404,28 @@ function askName() {
 
 function bindChrome() {
   bindBatch(app);
+  const reloadStudio = document.getElementById("reload-studio");
+  reloadStudio.hidden = !app.boot.reload_volume;
+  reloadStudio.addEventListener("click", async () => {
+    reloadStudio.disabled = true;
+    try {
+      await api.post("reload-volume");
+      app.projects = (await api.get("projects")).projects;
+      app.recentLoaded = false;
+      const hadLines = app.session?.board.lines.length;
+      if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: true});
+      if (!app.sessionId) {
+        app.sourceTab = "sessions";
+        go("source");
+      } else if (app.screen === "source" && !hadLines && app.session?.board.lines.length) {
+        go("review");
+      }
+    } catch (error) {
+      toast(error.message, {error: true});
+    } finally {
+      reloadStudio.disabled = false;
+    }
+  });
   document.getElementById("auto-dub").addEventListener("click", () => {
     const body = autoBody(app);
     if (app.screen !== "source" && app.sessionId) body.session = app.sessionId;
@@ -485,7 +514,8 @@ async function start() {
   app.sessionId = saved.sessionId || null;
   app.screen = saved.screen || "source";
   bindChrome();
-  if (app.sessionId) await refresh({includePlayer: app.screen === "result"}); else render();
+  if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: !app.boot.gpu});
+  else render();
   poll();
   document.title = `Dubbing${app.project ? ` · ${app.project.name}` : ""}`;
 }

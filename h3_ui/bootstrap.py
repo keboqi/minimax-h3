@@ -197,11 +197,17 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
         if app_views.dubbing is not None:
             # Dubbing is its own page; the tab shows it and keeps the API endpoints.
             from .dubbing.page import install_dubbing_page
+            from .dubbing.share import install_share_routes
             from .dubbing.tab import build_dubbing_tab
 
-            build_dubbing_tab(app_views.dubbing, services.dubbing_actions)
+            dubbing_gpu = services.dubbing_actions.services.gpu
+            build_dubbing_tab(app_views.dubbing, services.dubbing_actions, gpu=dubbing_gpu)
             demo.h3_routes = (*getattr(demo, "h3_routes", ()), partial(
-                install_dubbing_page, handlers=services.dubbing_actions, interrupt=services.interrupt))
+                install_dubbing_page, handlers=services.dubbing_actions, gpu=dubbing_gpu,
+                interrupt=services.interrupt))
+            if not dubbing_gpu:
+                demo.h3_routes = (*demo.h3_routes, partial(
+                    install_share_routes, runtime=services.dubbing_actions.services.runtime_config()))
         with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools

@@ -257,16 +257,17 @@ function options(app) {
 }
 
 function analyzeCard(app) {
+  const auto = app.boot.gpu && app.settings.auto_mode;
   return `
     <aside class="rail">
       <section class="card card-pad stack-16" aria-labelledby="an-h">
-        <div><h2 id="an-h">${app.settings.auto_mode ? "Auto-dub" : "Analyze"}</h2><p class="muted">${app.settings.auto_mode ? "Analyze, translate and generate the dub without pausing for review. Uses your Dub settings." : "Review lines opens when it is done."}</p></div>
-        <label class="check"><input type="checkbox" data-setting="auto_mode" data-redraw ${app.settings.auto_mode ? "checked" : ""} ${app.boot.gpu ? "" : "disabled"}>Auto mode · analyze through to the finished dub</label>
+        <div><h2 id="an-h">${auto ? "Auto-dub" : "Analyze"}</h2><p class="muted">${auto ? "Analyze, translate and generate the dub without pausing for review. Uses your Dub settings." : "Review lines opens when it is done."}</p></div>
+        <label class="check"><input type="checkbox" data-setting="auto_mode" data-redraw ${auto ? "checked" : ""} ${app.boot.gpu ? "" : "disabled"}>Auto mode · analyze through to the finished dub</label>
         <ol class="plan" id="plan">${planItems(app.plan)}</ol>
         <div class="run-status" data-run="analyze" hidden><span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span></div>
         <div class="row">
-          <button type="button" class="btn btn-primary grow" data-action="analyze" data-busy="analyze">${app.settings.auto_mode ? "Auto-dub source" : "Analyze source"}</button>
+          <button type="button" class="btn btn-primary grow" data-action="analyze" data-busy="analyze">${auto ? "Auto-dub source" : "Analyze source"}</button>
           <button type="button" class="btn" data-stop="analyze" data-action="interrupt" data-kind="analyze" disabled>Interrupt</button>
         </div>
       </section>
@@ -416,7 +417,8 @@ export function bindSource(app) {
         toast("Upload a video or audio file, or pick one from Media.", {error: true});
         return;
       }
-      app.startRun(s.auto_mode ? "auto" : "analyze", s.auto_mode ? autoBody(app) : analyzeBody(app));
+      if (app.boot.gpu && s.auto_mode) app.startRun("auto", autoBody(app));
+      else app.startRun("analyze", analyzeBody(app));
     } else if (action === "interrupt") {
       try {
         const data = await api.post("interrupt", {kind: target.dataset.kind, session: app.sessionId});

@@ -15,6 +15,7 @@ from typing import Any, Callable
 import uuid
 
 from h3_app.errors import H3Error
+from h3_app.workspace_activity import workspace_task
 
 from .page_runs import Run
 
@@ -111,7 +112,7 @@ class RunQueues:
             if self.active(owner) is not None:
                 raise H3Error(self.messages.busy)
             queue = self.queues[owner] = RunQueue(owner, items, session, options)
-        Thread(target=self._execute, args=(queue,), name=self.thread_name, daemon=True).start()
+        Thread(target=workspace_task(self._execute), args=(queue,), name=self.thread_name, daemon=True).start()
         return queue
 
     def stop(self, owner, session) -> str:

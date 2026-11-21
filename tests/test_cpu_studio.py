@@ -19,9 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 _SUBPROCESS_BOOT_SCRIPT = """
 import json
 import os
+import shutil
 import sys
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 class Blocked:
     NAMES = {
@@ -49,6 +52,7 @@ with TemporaryDirectory() as directory:
     os.environ["H3_CPU_ONLY"] = "1"
 
     from h3_gpu import CPU_ONLY_MESSAGE
+    from h3_app.dubbing import pipeline, session as sessions
     from h3_app.workspace_store import WorkspaceStore
     from h3_ui import application as app
     from h3_ui.media_console import media_runtime
@@ -86,11 +90,42 @@ with TemporaryDirectory() as directory:
             assert response.status_code == 200, (route, response.status_code, response.text)
             boots[route] = response.json()
 
-        assert boots["/storyboard/api/boot"]["gpu"] is True
+        assert boots["/storyboard/api/boot"]["gpu"] is False
         assert boots["/remake/api/boot"]["gpu"] is True
         assert boots["/soundstage/api/boot"]["gpu"] is True
-        assert boots["/dubbing/api/boot"]["gpu"] is True
+        assert boots["/dubbing/api/boot"]["gpu"] is False
+        assert {item["label"] for item in boots["/dubbing/api/boot"]["pipelines"]} == {
+            "Gemini (cloud)", "Gemini by hand",
+        }
         assert "Remake · Picture 1" in boots["/media/api/boot"]["set_as"]
+
+        api = "/dubbing/api"
+        source = client.post(f"{api}/upload", files={"file": ("speech.wav", b"test audio")}).json()["source"]
+        reply = json.dumps({"segments": [
+            {"start": 0.2, "end": 1, "source_text": "Hello.", "translated_text": "Bonjour."},
+        ]})
+        with (
+            patch.object(pipeline, "_to_pcm", side_effect=lambda source, target, **_: Path(shutil.copy(source, target))),
+            patch.object(pipeline, "probe_audio_seconds", return_value=2.0),
+            patch.object(pipeline.tools, "run", side_effect=AssertionError("Analysis called a GPU worker")),
+        ):
+            response = client.post(f"{api}/analyze", json={
+                "source": source["path"], "pipeline": pipeline.PIPELINE_MANUAL, "manual_reply": reply,
+                "target_language": "French", "separate": True,
+            })
+            assert response.status_code == 200, response.text
+            for _ in range(100):
+                run = client.get(f"{api}/run").json()["runs"]["analyze"]
+                if run and not run["active"]:
+                    break
+                time.sleep(0.05)
+            assert run and not run["active"] and run["error"] is None, run
+        analyzed = client.get(f"{api}/session", params={"id": run["session"]}).json()["session"]
+        assert analyzed["board"]["lines"][0]["translation"] == "Bonjour.", analyzed
+        assert analyzed["readiness"]["voiced"] == 1, analyzed
+        assert sessions.load(runtime, analyzed["id"]).data[pipeline.SEPARATE_LATER], analyzed
+        refused = client.post(f"{api}/dub", json={"session": analyzed["id"]})
+        assert refused.status_code == 400 and "Studio" in refused.json()["error"], refused.text
 
         redirect = client.get("/comfyui", follow_redirects=False)
         assert redirect.status_code == 307, redirect.status_code

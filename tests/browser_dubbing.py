@@ -9,13 +9,51 @@ from urllib.parse import urlsplit
 import numpy as np
 from playwright.sync_api import expect, sync_playwright
 
-from h3_app.dubbing import pipeline, session as sessions
+from h3_app.dubbing import pipeline, projects, session as sessions
 from h3_app.dubbing.results import Player, player_folder, save_player
 from tests.test_dub_page import PageTests
 
 
 class DubbingBrowserTests(PageTests):
     gpu = True
+
+    def test_workshop_reloads_the_open_project_and_shows_its_studio_dub(self):
+        draft = self.client.post("/dubbing/api/project/save", json={
+            "name": "Interview", "source": str(self.media), "settings": {"target_language": "French"},
+        }).json()["project"]
+        analyzed = self.session([{"start": 0, "end": 1, "source": "Hi", "translation": "Bonjour"}],
+                                target_language="French")
+        self.runtime.outputs_dir.mkdir()
+        output = self.runtime.outputs_dir / "interview.mp3"
+        output.write_bytes(b"dub")
+        sessions.modify(analyzed, lambda session: session.data.update(last_output=str(output)))
+
+        def reload_from_studio(route):
+            self.assertTrue(projects.attach(self.runtime, "Interview", analyzed.id,
+                                            expected_session=draft["session"]))
+            route.fulfill(json={"reloaded": True})
+
+        boot = self.client.get("/dubbing/api/boot").json()
+        boot.update(gpu=False, reload_volume=True, pipelines=[item for item in boot["pipelines"] if item["cloud"]])
+        state = {"screen": "source", "sessionId": draft["session"], "project": draft,
+                 "settings": {"auto_mode": True}}
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            page.route("**/api/boot", lambda route: route.fulfill(json=boot))
+            page.route("**/api/reload-volume", reload_from_studio)
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+            expect(page.get_by_role("button", name="Analyze source", exact=True)).to_be_visible()
+            page.get_by_role("button", name="Reload from Studio").click()
+            expect(page.locator(".line-row.selected")).to_contain_text("Bonjour")
+            page.get_by_role("button", name="Dub", exact=True).click()
+            expect(page.locator(".latest")).to_contain_text("Latest dub")
+            page.reload()
+            page.get_by_role("button", name="Review lines", exact=True).click()
+            expect(page.locator(".line-row.selected")).to_contain_text("Bonjour")
+            browser.close()
 
     def test_language_change_and_new_takes_apply_to_all_requested_lines(self):
         session = self.session([

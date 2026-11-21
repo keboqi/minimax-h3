@@ -309,9 +309,6 @@ class ModelManager:
             ])
         return rows
 
-    # No volume.reload(): the GPU endpoint and the Workshop never run at once, so this
-    # container already sees the latest commits, and a reload under the open workspace
-    # database made it fail to open.
     def refresh(self):
         with self.lock:
             return self._inventory()
@@ -474,7 +471,64 @@ def _build_models(ui, manager: ModelManager):
     ui.load(refresh_catalog, outputs=inventories, **operation)
 
 
-def _server(ui, runtime, *, host: str, port: int):
+def _install_dubbing_reload(app, queue, volume) -> None:
+    """Refresh the Modal mount while no Workshop request or task is using it."""
+    from asyncio import Event
+    from logging import getLogger
+
+    from fastapi import HTTPException
+    from starlette.concurrency import run_in_threadpool
+
+    from h3_app.workspace_activity import idle_workspace
+
+    active_requests = 0
+    ready = Event()
+    ready.set()
+    busy = "Workshop is using the shared volume. Try refreshing when the current work finishes."
+
+    class VolumeRequests:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            nonlocal active_requests
+            if scope["type"] not in ("http", "websocket"):
+                return await self.app(scope, receive, send)
+            await ready.wait()
+            active_requests += 1
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                active_requests -= 1
+
+    def reload_if_idle():
+        with idle_workspace() as idle:
+            if not idle:
+                raise HTTPException(status_code=409, detail=busy)
+            try:
+                volume.reload()
+            except Exception as exc:
+                getLogger(__name__).warning("Shared volume reload failed", exc_info=True)
+                raise HTTPException(
+                    status_code=503, detail="Could not reload the shared volume. Try refreshing again."
+                ) from exc
+
+    @app.post("/dubbing/api/reload-volume", include_in_schema=False)
+    async def reload_volume():
+        if active_requests != 1 or len(queue) or any(queue.active_jobs):
+            raise HTTPException(status_code=409, detail=busy)
+        ready.clear()
+        try:
+            await run_in_threadpool(reload_if_idle)
+        finally:
+            ready.set()
+        return {"reloaded": True}
+
+    app.state.dubbing_volume_reload = True
+    app.add_middleware(VolumeRequests)
+
+
+def _server(ui, runtime, *, host: str, port: int, volume=None):
     """The main application's file routes around ``ui``, without ComfyUI."""
     import uvicorn
 
@@ -484,6 +538,8 @@ def _server(ui, runtime, *, host: str, port: int):
     )
     from h3_ui.styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 
+    if volume is not None:
+        ui.h3_routes = (*ui.h3_routes, partial(_install_dubbing_reload, queue=ui._queue, volume=volume))
     app = server_routes.build_server(
         ui,
         [str(runtime.output_dir.resolve()), str(runtime.outputs_dir.resolve())],
@@ -536,7 +592,7 @@ def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
     store = WorkspaceStore(Path(data) / "h3-workspace")
     ui = build_ui(manager, (runtime, store))
     volume.commit()
-    server = _server(ui, runtime, host="0.0.0.0", port=port)
+    server = _server(ui, runtime, host="0.0.0.0", port=port, volume=volume)
     threading.Thread(target=server.run, name="workshop", daemon=True).start()
 
 

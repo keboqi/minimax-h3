@@ -449,6 +449,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         owner_of(request)
         return {
             "gpu": gpu, "same": pipeline.SAME_LANGUAGE, "lip_sync": lip_sync_available,
+            "reload_volume": getattr(request.app.state, "dubbing_volume_reload", False),
             "source_languages": list(pipeline.SOURCE_LANGUAGES), "target_languages": list(pipeline.TARGET_LANGUAGES),
             "styles": list(pipeline.TRANSLATION_STYLES), "default_style": pipeline.DEFAULT_STYLE,
             "rewrite_styles": list(pipeline.REWRITE_STYLES), "default_rewrite_style": pipeline.DEFAULT_REWRITE_STYLE,

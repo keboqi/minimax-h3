@@ -57,8 +57,11 @@ subtitles, or export a video with burned-in subtitles. Line and speaker edits sa
 automatically. Local transcription, Hy-MT translation, voice generation and word
 alignment run in Studio.
 
-On Modal, stop Studio before using Workshop and restart it after saving, so both
-apps see the latest shared files.
+On Modal, click **Reload from Studio** in Workshop's Dubbing page after Studio
+finishes. This refreshes the open project and updates the saved project list.
+If you generated a dub without saving a project, open it from **Source → Earlier
+session**. Stop Studio before editing the shared workspace in Workshop and restart
+it after saving so Studio sees those changes.
 
 ## 1 · Source
 

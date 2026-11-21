@@ -268,6 +268,73 @@ class ModelManagerTests(unittest.TestCase):
         buttons = {block.value for block in ui.blocks.values() if type(block).__name__ == "Button"}
         self.assertNotIn("Reload shared volume", buttons)
 
+    def test_dubbing_reload_picks_up_studios_analyzed_session_and_dub(self):
+        from fastapi.testclient import TestClient
+
+        from h3_app import media_catalog
+        from h3_app.dubbing import projects, session as sessions
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui import application as studio_app
+        from h3_ui.media_console import media_runtime
+
+        self.addCleanup(setattr, media_catalog, "_CATALOG", media_catalog.get_media_catalog())
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
+        self.addCleanup(studio_app.set_runtime_override, None)
+        JOBS.store = None
+        data = Path(self.temp.name)
+        runtime = media_runtime(data, data / "app")
+        runtime.outputs_dir.mkdir()
+        store = WorkspaceStore(data / "h3-workspace")
+        env = patch.dict("os.environ", {"H3_CPU_ONLY": "1", "H3_WORKSPACE_DIR": str(store.root)})
+        env.start()
+        self.addCleanup(env.stop)
+        ui = manager_module.build_ui(self.manager, (runtime, store))
+        server = manager_module._server(ui, runtime, host="127.0.0.1", port=7860, volume=self.volume)
+        source = data / "interview.wav"
+        source.write_bytes(b"source")
+        draft = projects.save(runtime, "Interview", None, source, {})
+        output = runtime.outputs_dir / "interview-dub.mp3"
+
+        def load_studio_commit():
+            analyzed = sessions.create(runtime, source, video=False)
+            analyzed.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Bonjour"}]
+            output.write_bytes(b"dub")
+            analyzed.data.update(target_language="French", last_output=str(output))
+            analyzed.save()
+            self.assertTrue(projects.attach(runtime, "Interview", analyzed.id, expected_session=draft.id))
+
+        with TestClient(server.config.app) as client:
+            api = "/dubbing/api"
+            boot = client.get(f"{api}/boot").json()
+            self.assertTrue(boot["reload_volume"])
+            self.assertFalse(boot["gpu"])
+            self.assertEqual(client.get(f"{api}/recent").json()["sessions"], [])
+            project = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
+            self.assertEqual(project["session"]["id"], draft.id)
+            self.assertEqual(project["session"]["board"]["lines"], [])
+            self.volume.reload.assert_not_called()
+
+            with patch.object(ui._queue, "active_jobs", [[object()]]):
+                self.assertEqual(client.post(f"{api}/reload-volume").status_code, 409)
+            self.volume.reload.assert_not_called()
+
+            self.volume.reload.side_effect = OSError("volume busy")
+            with self.assertLogs("h3_workshop", level="WARNING"):
+                self.assertEqual(client.post(f"{api}/reload-volume").status_code, 503)
+            self.volume.reload.side_effect = load_studio_commit
+            self.assertEqual(client.post(f"{api}/reload-volume").json(), {"reloaded": True})
+
+            recent, = client.get(f"{api}/recent").json()["sessions"]
+            project = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
+            session = project["session"]
+            self.assertNotEqual(session["id"], draft.id)
+            self.assertEqual(session["id"], recent["id"])
+            self.assertEqual(session["board"]["lines"][0]["translation"], "Bonjour")
+            self.assertEqual(session["readiness"]["voiced"], 1)
+            result, = session["result"]["files"]
+            self.assertEqual(client.get(result["url"]).content, b"dub")
+
     def test_launcher_starts_workshop_before_studio_setup(self):
         source = (Path(__file__).resolve().parents[1] / "run_h3.sh").read_text(encoding="utf-8")
         self.assertIn('APP="${H3_APP:-studio}"', source)

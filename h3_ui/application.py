@@ -1066,6 +1066,11 @@ def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=N
             VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS,
         )
     ]
+    dubbing_actions = dubbing_handlers
+    if is_cpu_only():
+        dubbing_actions = DubbingHandlers(replace(
+            dubbing_handlers.services, gpu=False, free_gpu=None, generation_services=None,
+        ))
     return compose_ui(
         BootstrapCatalog.from_mapping(globals(), COMFY_DIR=active_runtime.comfy_dir),
         BootstrapServices(
@@ -1084,7 +1089,7 @@ def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=N
             generate_for_ui=H3.generate_for_ui,
             generate_with_ui_defaults=H3.generate_with_ui_defaults,
             drama3_actions=_drama3_actions(),
-            dubbing_actions=dubbing_handlers,
+            dubbing_actions=dubbing_actions,
             engine_deps=_engine_deps(),
             soundstage_workspace=(JOBS.store, active_runtime.output_dir),
             storyboard_handlers=_storyboard_handlers(),

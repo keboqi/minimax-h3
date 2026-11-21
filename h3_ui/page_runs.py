@@ -13,6 +13,7 @@ import uuid
 from fastapi.responses import JSONResponse
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
+from h3_app.workspace_activity import workspace_task
 
 # A finished run stays readable this long, for a page that polls or reopens afterwards.
 RUN_RETENTION_SECONDS = 600
@@ -78,7 +79,7 @@ class Runs:
                 run.finished_at = time.time()
                 run.done.set()
 
-        Thread(target=execute, name=f"page-{run.kind}", daemon=True).start()
+        Thread(target=workspace_task(execute), name=f"page-{run.kind}", daemon=True).start()
         return run
 
     def active(self, owner, storyboard_id, kind=None) -> Run | None:

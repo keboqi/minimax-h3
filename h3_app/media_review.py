@@ -23,6 +23,7 @@ import uuid
 
 from h3_app.errors import H3Error
 from h3_app.llm import decisions
+from h3_app.workspace_activity import workspace_task
 
 SUFFIX = ".review.json"
 PENDING, DONE, FAILED = "pending", "done", "failed"
@@ -244,5 +245,5 @@ def schedule(path: str | Path | None, prompt: str, *, api_key: str = "", enabled
             if payload["status"] == DONE:
                 _add_library_tags(path, payload["tags"])
 
-    threading.Thread(target=run, name=f"review-{path.name}", daemon=True).start()
+    threading.Thread(target=workspace_task(run), name=f"review-{path.name}", daemon=True).start()
     return True
