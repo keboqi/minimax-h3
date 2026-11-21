@@ -39,6 +39,8 @@ and processing settings, then click **Save project** and enter a new name.
 The saved source survives the upload cache;
 named projects and their sessions are kept beyond the usual 14-day session cleanup.
 API keys are never saved in projects.
+**Unsaved changes** next to **Save project** marks source or settings changes that
+still need to be saved before switching apps. Line and speaker edits save automatically.
 
 Workshop can also analyze and translate, because **Gemini (cloud)**, **Gemini by
 hand** and translating with Gemini need no GPU here. It leaves vocal separation to
@@ -46,23 +48,24 @@ Studio, unless an earlier analysis of the same file has the stems: Studio then
 separates before the first preview or dub, and the lines stay as edited. Lines a
 Hy-MT translator would fill stay untranslated; use Gemini, or Studio.
 
-Open Studio and **Load project** to analyze with this server's models, preview voices,
+When you finish preparing the project, save it and stop Workshop. Open Studio and
+**Load project** to analyze with this server's models, preview voices,
 generate the dub or align words. Studio publishes each completed analysis as a
 revision of the project it started from. Workshop opens the current revision
 with its analyzed lines and latest finished dub. If someone replaces the
 project's source during analysis, the completed analysis stays available under
 **Earlier session**. **Save project** keeps changes to processing and mix settings.
-Return to Workshop and load that same project to edit lines, assign speaker voices,
+After generation finishes, stop Studio and reopen Workshop. Load that same project
+to edit lines, assign speaker voices,
 listen to the original, review the latest completed dub, download audio/video and
 subtitles, or export a video with burned-in subtitles. Line and speaker edits save
 automatically. Local transcription, Hy-MT translation, voice generation and word
 alignment run in Studio.
 
-On Modal, opening or returning to **Dubbing** in Workshop automatically refreshes
-the open project and the saved project list from Studio.
+If Workshop is already open on Modal, opening or returning to **Dubbing** refreshes
+the open project and the saved project list.
 If you generated a dub without saving a project, open it from **Source → Earlier
-session**. Stop Studio before editing the shared workspace in Workshop and restart
-it after saving so Studio sees those changes.
+session**.
 
 ## 1 · Source
 

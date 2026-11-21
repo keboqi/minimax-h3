@@ -7,13 +7,14 @@ import {esc, icon, plural, toast} from "./ui.js";
 import {renderSource, bindSource, autoBody} from "./source.js";
 import {bindBatch} from "./batch.js";
 import {renderReview, bindReview} from "./review.js";
-import {renderDub, bindDub} from "./dub.js";
+import {renderDub, bindDub, selectedTiming} from "./dub.js";
 import {renderLipSync, bindLipSync, afterLipSync, loadLipSyncPlan} from "./lipsync.js";
 import {renderResult, bindResult, afterResult} from "./result.js";
 
 const STORE = "h3-dubbing-page";
 const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["lipsync", "Lip sync"], ["result", "Result"]];
-const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source", "pendingRuns", "completedAuto"];
+const SAVED = ["settings", "sessionId", "project", "projectSettings", "projectSource",
+  "screen", "sourceTab", "source", "pendingRuns", "completedAuto"];
 
 export const app = {
   boot: null,
@@ -27,6 +28,8 @@ export const app = {
   session: null,
   sessionId: null,
   project: null,
+  projectSettings: null,
+  projectSource: null,
   projects: [],
   screen: "source",
   runs: {},
@@ -131,6 +134,20 @@ function renderTop() {
   document.getElementById("auto-dub").disabled = !app.boot.gpu || !!app.runs.auto?.active;
 }
 
+function savedProjectSettings() {
+  return {...defaults(app.boot), ...JSON.parse(app.project ? app.projectSettings : null)};
+}
+
+function renderProjectSave() {
+  const source = app.source?.path;
+  const sourceChanged = app.project
+    ? source && source !== app.projectSource && source !== app.session?.source?.path
+    : source || app.sessionId;
+  const saved = savedProjectSettings();
+  const settingsChanged = app.boot.project_keys.some((key) => app.settings[key] !== saved[key]);
+  document.getElementById("project-unsaved").hidden = !(sourceChanged || settingsChanged);
+}
+
 export function render() {
   renderTop();
   renderSteps();
@@ -142,6 +159,7 @@ export function render() {
   if (app.screen === "result") afterResult(app);
   afterLipSync(app);
   updateRunViews();
+  renderProjectSave();
   saveSettings();
 }
 
@@ -186,23 +204,42 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
 }
 
 export async function refresh({includePlayer = true, followProject = false, preserveSession = false} = {}) {
-  if (!app.sessionId) return;
+  const {sessionId, project, source} = app;
+  if (!sessionId) return false;
+  const isCurrent = () => sessionId === app.sessionId && project === app.project && source === app.source;
   try {
-    const project = app.project;
-    if (followProject && project?.session === app.sessionId && app.projects.includes(project.name)) {
+    if (followProject && project?.session === sessionId && app.projects.includes(project.name)) {
       const data = await api.post("project/load", {name: project.name, include_player: includePlayer});
-      if (data.session.id !== app.sessionId) applyProject(data, {keepSettings: true});
-      else setSession(data.session, {keepSettings: true});
+      if (!isCurrent()) return false;
+      if (data.session.id !== sessionId) {
+        applyProject(data);
+      } else {
+        const saved = projectSettingsKey(data.settings);
+        // Refresh saved values while keeping fields the user has edited locally.
+        if (app.projectSettings !== null && saved !== app.projectSettings) {
+          const previous = savedProjectSettings();
+          const edited = Object.entries(app.settings).filter(([key, value]) => value !== previous[key]);
+          app.settings = {...defaults(app.boot), ...data.settings, ...Object.fromEntries(edited)};
+        }
+        app.projectSettings = saved;
+        if (app.source?.path === app.projectSource) app.source = data.session.source;
+        app.projectSource = data.session.source?.path || null;
+        setSession(data.session, {keepSettings: true});
+      }
     } else {
-      setSession((await api.get("session", {id: app.sessionId, include_player: includePlayer})).session);
+      const data = await api.get("session", {id: sessionId, include_player: includePlayer});
+      if (!isCurrent()) return false;
+      setSession(data.session);
     }
   } catch (error) {
+    if (!isCurrent()) return false;
     if (preserveSession) throw error;
     toast(error.message, {error: true});
     app.session = null;
     app.sessionId = null;
   }
   render();
+  return true;
 }
 
 const POLL_MS = 1000;
@@ -268,9 +305,13 @@ async function finished(kind, run) {
   if (run.error) toast(run.error, {error: true});
   else if (run.status && run.status !== "Done.") toast(run.status);
   if (kind === "analyze" && run.task === "analyze" && run.session && !run.error) {
+    if (app.project?.name !== run.project) {
+      app.projectSettings = null;
+      app.projectSource = null;
+    }
     app.project = run.project ? {name: run.project, session: run.session} : null;
     app.sessionId = run.session;
-    await refresh();
+    await refresh({followProject: true});
     go("review");
     return;
   }
@@ -357,8 +398,14 @@ export async function startRun(path, body) {
   }
 }
 
+function projectSettingsKey(settings) {
+  return JSON.stringify(settings, Object.keys(settings).sort());
+}
+
 function applyProject(data, {keepSettings = false} = {}) {
   app.project = data.project;
+  app.projectSettings = projectSettingsKey(data.settings);
+  app.projectSource = data.session.source?.path || null;
   if (!keepSettings) app.settings = {...defaults(app.boot), ...data.settings};
   app.source = data.session.source;
   setSession(data.session, {keepSettings: true});
@@ -385,10 +432,8 @@ async function saveProject(name) {
       name, session: app.sessionId, source: app.source?.path || null, settings: app.settings,
       expected_session: app.project?.name === name ? app.project.session : undefined,
     });
-    app.project = data.project;
     app.projects = data.projects;
-    app.source = data.session.source;
-    setSession(data.session, {keepSettings: true});
+    applyProject(data, {keepSettings: true});
     toast(`Saved ${name}. Line edits save automatically.`);
     render();
   } catch (error) {
@@ -425,8 +470,9 @@ async function syncFromStudio({opening = false, showRecent = false} = {}) {
     if (app.sessionId) {
       const previousId = app.sessionId;
       const wasEmpty = app.session?.board.lines.length === 0;
-      await refresh(refreshOptions);
-      if (app.screen === "source" && app.session?.board.lines.length && (wasEmpty || app.sessionId !== previousId)) {
+      const refreshed = await refresh(refreshOptions);
+      if (refreshed && app.screen === "source" && app.session?.board.lines.length
+          && (wasEmpty || app.sessionId !== previousId)) {
         go("review");
       }
     } else {
@@ -483,7 +529,10 @@ function bindChrome() {
   }));
   document.getElementById("auto-dub").addEventListener("click", () => {
     const body = autoBody(app);
-    if (app.screen !== "source" && app.sessionId) body.session = app.sessionId;
+    if (app.screen !== "source" && app.sessionId) {
+      body.session = app.sessionId;
+      body.timing = selectedTiming(app);
+    }
     app.startRun("auto", body);
   });
   document.getElementById("auto-stop").addEventListener("click", async () => {
@@ -535,6 +584,7 @@ function bindChrome() {
     const out = document.querySelector(`[data-output="${key}"]`);
     if (out) out.textContent = field.dataset.format === "x" ? `${Number(field.value).toFixed(2)}×`
       : field.dataset.format === "%" ? `${field.value}%` : field.dataset.format === "s" ? `${Number(field.value).toFixed(2)} s` : field.value;
+    renderProjectSave();
     saveSettings();
   });
   document.getElementById("screen").addEventListener("change", (event) => {
@@ -557,13 +607,12 @@ async function start() {
   }
   const saved = restore();
   app.settings = {...defaults(app.boot), ...(saved.settings || {})};
-  if (!app.boot.gpu && !app.boot.pipelines.some((p) => p.key === app.settings.pipeline)) {
-    app.settings.pipeline = app.boot.pipelines[0].key;
-  }
   app.projects = app.boot.projects;
   app.pendingRuns = saved.pendingRuns || {};
   app.completedAuto = saved.completedAuto || null;
   app.project = saved.project || null;
+  app.projectSettings = saved.projectSettings || null;
+  app.projectSource = saved.projectSource || null;
   app.sourceTab = saved.sourceTab || "upload";
   app.source = saved.source || null;
   app.sessionId = saved.sessionId || null;
@@ -572,7 +621,7 @@ async function start() {
   if (app.boot.reload_volume) {
     watchWorkshop(!saved.sourceTab);
   } else {
-    if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: !app.boot.gpu});
+    if (app.sessionId) await refresh({includePlayer: app.screen === "result", followProject: true});
     else render();
     poll();
   }

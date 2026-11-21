@@ -334,6 +334,9 @@ class ModelManagerTests(unittest.TestCase):
                 self.assertEqual(client.post(f"{api}/reload-volume").json(), {"reloaded": True})
 
                 recent, = client.get(f"{api}/recent").json()["sessions"]
+                unlinked = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
+                self.assertEqual(unlinked["session"]["id"], draft.id)
+                self.assertTrue(projects.attach(runtime, "Interview", recent["id"], expected_session=draft.id))
                 project = client.post(f"{api}/project/load", json={"name": "Interview"}).json()
                 session = project["session"]
                 self.assertNotEqual(session["id"], draft.id)

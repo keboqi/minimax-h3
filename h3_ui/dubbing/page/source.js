@@ -9,6 +9,8 @@ let planKey = "";
 let planTimer = null;
 
 const isSame = (app) => app.settings.target_language === app.boot.same;
+const selectedPipeline = (app) => (app.boot.pipelines.find((p) => p.key === app.settings.pipeline)
+  || app.boot.pipelines[0]).key;
 const gemini = (app) => app.boot.translators[1].key;
 
 function fileCard(source, {replace = true} = {}) {
@@ -154,7 +156,7 @@ function languages(app) {
 }
 
 function transcription(app) {
-  const pipe = app.settings.pipeline;
+  const pipe = selectedPipeline(app);
   const manual = pipe === app.boot.pipelines.find((p) => p.label === "Gemini by hand")?.key;
   const same = isSame(app);
   const translator = app.settings.translator;
@@ -219,7 +221,7 @@ function transcription(app) {
 
 function options(app) {
   const s = app.settings;
-  const local = app.boot.gpu && s.pipeline === app.boot.pipelines[0].key;
+  const local = app.boot.gpu && selectedPipeline(app) === app.boot.pipelines[0].key;
   const summary = [s.separate ? `Separate vocals · ${s.separator_model.split(" (")[0]}` : "No vocal separation",
     s.reuse ? "Reuse earlier results" : "Redo earlier results",
     ...(local ? [s.aligner ? "Word timing" : "No word timing", `Join < ${Number(s.merge_gap).toFixed(2)} s`,
@@ -283,7 +285,7 @@ function planItems(steps) {
 
 function schedulePlan(app) {
   const s = app.settings;
-  const body = {separate: s.separate, separator_model: s.separator_model, reuse: s.reuse, pipeline: s.pipeline,
+  const body = {separate: s.separate, separator_model: s.separator_model, reuse: s.reuse, pipeline: selectedPipeline(app),
     translate: s.translate, translator: s.translator, target_language: s.target_language, rewrite: s.rewrite,
     rewrite_style: s.rewrite_style};
   const key = JSON.stringify(body);
@@ -348,7 +350,8 @@ export function analyzeBody(app, extra = {}) {
   const s = app.settings;
   const same = s.target_language === app.boot.same;
   const style = same && s.rewrite ? s.rewrite_style : s.style;
-  return {...s, style, source: app.source?.path || null, api_key: app.apiKey, manual_reply: app.manualReply,
+  return {...s, style, pipeline: selectedPipeline(app), source: app.source?.path || null,
+    api_key: app.apiKey, manual_reply: app.manualReply,
     rewrite_by_hand: same && s.rewrite && s.rewrite_by_hand,
     translator: same && s.rewrite_by_hand ? gemini(app) : s.translator,
     rewrite: same && s.rewrite && !s.rewrite_by_hand, project: app.project, ...extra};

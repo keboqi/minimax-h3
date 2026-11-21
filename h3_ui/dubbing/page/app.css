@@ -154,6 +154,8 @@ details.sub > summary { cursor: pointer; min-height: 28px; display: flex; align-
 .project-picker { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--chrome-muted); }
 .project-picker select { min-height: 36px; max-width: 240px; padding: 0 10px; border: 1px solid var(--chrome-line); border-radius: 8px; background: var(--chrome-raised); font-weight: 600; color: var(--chrome-text); }
 .project-status { color: var(--chrome-muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-save { display: inline-flex; align-items: center; gap: 8px; }
+#project-unsaved { color: var(--chrome-prepare); font-weight: 600; }
 .btn.btn-ink { background: transparent; border-color: var(--chrome-line); color: var(--chrome-text); }
 .btn.btn-ink:hover:not(:disabled) { background: var(--chrome-raised); }
 .topbar .btn-primary { background: var(--chrome-accent); border-color: var(--chrome-accent); color: var(--chrome-accent-ink); }

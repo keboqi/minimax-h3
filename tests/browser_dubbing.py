@@ -45,12 +45,15 @@ class DubbingBrowserTests(PageTests):
                     session.segments = lines
 
                 sessions.modify(analyzed, update_translation)
+                if len(reloads) == 3:
+                    projects.save(self.runtime, "Interview", analyzed.id, None,
+                                  {"target_language": "French", "notes": "Saved in Studio"})
             route.fulfill(json={"reloaded": True})
 
         boot = self.client.get("/dubbing/api/boot").json()
         boot.update(gpu=False, reload_volume=True, pipelines=[item for item in boot["pipelines"] if item["cloud"]])
         state = {"screen": "source", "sessionId": draft["session"], "project": draft,
-                 "settings": {"auto_mode": True}}
+                 "settings": {"target_language": "Japanese"}}
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
             page = browser.new_page()
@@ -67,6 +70,9 @@ class DubbingBrowserTests(PageTests):
             page.locator("#dub").evaluate("(frame) => { frame.hidden = false; }")
             expect(frame.locator(".line-row.selected")).to_contain_text("Bonjour")
             expect(frame.get_by_role("button", name="Retry Studio sync")).to_be_hidden()
+            self.assertEqual(page.evaluate(
+                "JSON.parse(localStorage.getItem('h3-dubbing-page')).settings.target_language"
+            ), "French")
             self.assertEqual(len(reloads), 2)
             frame.get_by_role("button", name="Dub", exact=True).click()
             expect(frame.locator(".latest")).to_contain_text("Latest dub")
@@ -80,6 +86,9 @@ class DubbingBrowserTests(PageTests):
             self.assertEqual(len(reloads), 3)
             frame.get_by_role("button", name="Review lines", exact=True).click()
             expect(frame.locator(".line-row.selected")).to_contain_text("Salut")
+            self.assertEqual(page.evaluate(
+                "JSON.parse(localStorage.getItem('h3-dubbing-page')).settings.notes"
+            ), "Saved in Studio")
             browser.close()
 
     def test_language_change_and_new_takes_apply_to_all_requested_lines(self):
@@ -244,24 +253,49 @@ class DubbingBrowserTests(PageTests):
         saved = self.client.post("/dubbing/api/project/save", json={
             "name": "Original", "source": str(self.media), "settings": {"target_language": "French"},
         }).json()["project"]
+        replacement = self.root / "replacement.wav"
+        replacement.write_bytes(b"other audio")
+        copied = sessions.create(self.runtime, replacement, video=False)
+        uploaded = self.client.get("/dubbing/api/source", params={"path": str(copied.path("source"))}).json()
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
             page = browser.new_page()
             page.route("http://dubbing.test/**", self.serve)
+            page.route("**/api/upload", lambda route: route.fulfill(json=uploaded))
             page.goto("http://dubbing.test/dubbing/")
             page.locator("#project-list").select_option("Original")
             page.get_by_role("button", name="Load", exact=True).click()
             expect(page.locator("#project-status")).to_have_text("Project: Original")
+            unsaved = page.locator("#project-unsaved")
+            target = page.get_by_label("Dub into", exact=True)
+            expect(unsaved).to_be_hidden()
+            target.select_option("Japanese")
+            expect(unsaved).to_be_visible()
+            target.select_option("French")
+            expect(unsaved).to_be_hidden()
+            target.select_option("Japanese")
+            page.reload()
+            expect(target).to_have_value("Japanese")
+            expect(unsaved).to_be_visible()
+            page.get_by_role("button", name="Save project", exact=True).click()
+            expect(unsaved).to_be_hidden()
             page.get_by_role("button", name="New project").click()
             expect(page.locator("#project-status")).to_contain_text("Unsaved draft")
+            expect(unsaved).to_be_hidden()
             expect(page.get_by_label("Dub into", exact=True)).to_have_value("English")
             state = page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page'))")
             self.assertEqual([state[key] for key in ("sessionId", "source", "project")], [None] * 3)
             page.locator("#project-list").select_option("Original")
             page.get_by_role("button", name="Load", exact=True).click()
-            expect(page.get_by_label("Dub into", exact=True)).to_have_value("French")
+            expect(target).to_have_value("Japanese")
             self.assertEqual(page.evaluate("JSON.parse(localStorage.getItem('h3-dubbing-page')).sessionId"),
                              saved["session"])
+            page.locator('[data-action="replace-file"]').click()
+            page.locator('[data-action="upload"]').set_input_files(replacement)
+            expect(unsaved).to_be_visible()
+            page.get_by_role("button", name="Save project", exact=True).click()
+            expect(unsaved).to_be_hidden()
+            self.assertNotEqual(projects.load(self.runtime, "Original")[1].id, saved["session"])
             browser.close()
 
     def test_opening_a_finished_project_defers_player_until_result(self):

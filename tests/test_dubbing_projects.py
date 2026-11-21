@@ -188,24 +188,6 @@ class DubbingProjectTests(unittest.TestCase):
         self.assertIsNone(self.actions.project_selection(selected, other.id))
         self.assertEqual(projects.load(self.runtime, "Interview")[1].id, draft.id)
 
-    def test_reopening_does_not_guess_between_matching_dubs_or_projects(self):
-        settings = {"target_language": "French"}
-        draft = projects.save(self.runtime, "Interview", None, self.source, settings)
-        second_draft = projects.save(self.runtime, "Second edit", None, self.source, settings)
-        folder = self.runtime.outputs_dir / "dubbing"
-        folder.mkdir(parents=True)
-        for name, target in (("first", "French"), ("second", "French"), ("other", "Japanese")):
-            completed = sessions.create(self.runtime, self.source, video=False)
-            output = folder / f"{name}.mp3"
-            output.write_bytes(b"dub")
-            completed.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Hello"}]
-            completed.data.update(target_language=target, last_output=str(output))
-            completed.save()
-        self.assertEqual(projects.reopen(self.runtime, "Interview")[1].id, draft.id)
-        (folder / "second.mp3").unlink()
-        self.assertEqual(projects.reopen(self.runtime, "Interview")[1].id, draft.id)
-        self.assertEqual(projects.reopen(self.runtime, "Second edit")[1].id, second_draft.id)
-
     def test_project_write_failure_still_returns_completed_analysis(self):
         draft = projects.save(self.runtime, "Interview", "", self.source, {})
         analyzed = sessions.create(self.runtime, self.source, video=False)

@@ -132,58 +132,6 @@ def analysis_target(runtime, selection, source):
     return matches[0] if len(matches) == 1 else None
 
 
-def reopen(runtime, name):
-    """Recover a draft whose matching Studio dub was saved without a project link."""
-    with _LOCK:
-        data, draft = load(runtime, name)
-        target = str(data["settings"].get("target_language") or "").strip().casefold()
-        if draft.segments or draft.data.get("last_output") or not target or not draft.data.get("source_hash"):
-            return data, draft
-        rewrite = bool(data["settings"].get("rewrite"))
-        projects = [{**project, "session": _current_session(path, project)} for path, project in _entries(runtime)]
-        linked = {project["session"] for project in projects}
-        output_root = (runtime.outputs_dir / "dubbing").resolve()
-        matches = []
-        for session in sessions.same_source(draft):
-            if (
-                session.id in linked
-                or not session.segments
-                or session.data.get("created", 0) < draft.data.get("created", 0)
-                or session.data.get("video") != draft.data.get("video")
-                or str(session.data.get("target_language") or "").strip().casefold() != target
-                or bool(session.data.get("rewrite")) != rewrite
-                or not session.data.get("last_output")
-            ):
-                continue
-            result = Path(session.data["last_output"]).resolve()
-            if result.parent == output_root and any(
-                result.with_suffix(suffix).is_file() for suffix in (".mp3", ".mp4")
-            ):
-                matches.append(session)
-        if len(matches) != 1:
-            return data, draft
-        # The same source and settings can be used by more than one named draft.
-        # In that case the owner must choose which project should use the dub.
-        for project in projects:
-            settings = project["settings"]
-            if (
-                project["name"] == data["name"]
-                or str(settings.get("target_language") or "").strip().casefold() != target
-                or bool(settings.get("rewrite")) != rewrite
-            ):
-                continue
-            try:
-                other = sessions.load(runtime, project["session"])
-            except H3Error:
-                continue
-            if not other.segments and other.data.get("source_hash") == draft.data["source_hash"]:
-                return data, draft
-        session = matches[0]
-        if attach(runtime, name, session.id, expected_session=draft.id):
-            return {**data, "session": session.id}, session
-        return load(runtime, name)
-
-
 def _same_source(session, chosen):
     source = session.path("source")
     if source.resolve() == chosen.resolve():

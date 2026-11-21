@@ -28,13 +28,16 @@
     <button type="button" class="btn btn-small btn-ink" id="auto-dub">Auto-dub</button>
     <button type="button" class="btn btn-small btn-ink" id="batch-open">Batch generate</button>
     <button type="button" class="btn btn-small btn-ink" id="project-save-as">Save as…</button>
-    <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
+    <div class="project-save">
+      <span class="small" id="project-unsaved" role="status" hidden>Unsaved changes</span>
+      <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
+    </div>
   </header>
   <div class="banner" id="banner" hidden>
     <strong>Workshop</strong>
     <span>Analyze and translate here with Gemini or a pasted reply. Save the project and load it in Studio to
       separate vocals (when not already cached), transcribe locally, preview voices, dub and align words.
-      Line edits save automatically.</span>
+      Source and settings changes need <strong>Save project</strong>. Line and speaker edits save automatically.</span>
     <button type="button" class="btn btn-small" id="reload-studio" hidden>Retry Studio sync</button>
   </div>
   <div class="card card-pad" id="auto-status" hidden>

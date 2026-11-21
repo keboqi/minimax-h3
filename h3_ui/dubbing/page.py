@@ -463,7 +463,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             "gemini_models": list(GEMINI_PROMPT_MODELS), "default_gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
             "voice_modes": list(pipeline.VOICE_MODES), "presets": list(pipeline.VOICE_PRESETS),
             "timings": [{"key": key, "label": label, "desc": desc} for key, label, desc in TIMINGS],
-            "projects": projects.names(runtime()),
+            "projects": projects.names(runtime()), "project_keys": PROJECT_KEYS,
         }
 
     # Sources ---------------------------------------------------------------
@@ -514,8 +514,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def load_project(request: Request, body: dict = Body(...)):
         owner_of(request)
         name = str(body.get("name") or "")
-        open_project = projects.load if gpu else projects.reopen
-        data, session = open_project(runtime(), name)
+        data, session = projects.load(runtime(), name)
         return {"project": {"name": name, "session": session.id}, "settings": data["settings"],
                 "session": payload(request, session, include_player=body.get("include_player") is not False)}
 
@@ -529,6 +528,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                                 checked_source(body.get("source")), settings,
                                 expected_session=body.get("expected_session"))
         return {"project": {"name": name, "session": session.id}, "projects": projects.names(runtime()),
+                "settings": settings,
                 "session": payload(request, session)}
 
     @app.get(f"{API}/session", include_in_schema=False)

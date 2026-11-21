@@ -56,6 +56,11 @@ function slider(key, label, min, max, step, value, format, hint = "") {
 // The timings in the order page.py lists them: Smart, Match the original, Natural.
 const matchKey = (app) => app.boot.timings[1].key;
 
+// An automatic timing default applies to generation without changing the saved settings.
+export function selectedTiming(app) {
+  return app.session?.same && !app.session.rewrite && !app.timingTouched ? matchKey(app) : app.settings.timing;
+}
+
 // Slot, take, next slot: how each timing fits a take that runs long.
 const TIMING_PICTURES = ["take-smart", "take-match", "take-natural"];
 
@@ -66,6 +71,7 @@ function timingPicture(index) {
 function settings(app) {
   const s = app.settings;
   const match = matchKey(app);
+  const timing = selectedTiming(app);
   return `
     ${speakers(app)}
     <section class="card" aria-labelledby="set-h">
@@ -88,11 +94,11 @@ function settings(app) {
       <div class="sec">
         <h3>Timing</h3>
         <div class="pick-grid three" role="radiogroup" aria-label="Timing">${app.boot.timings.map((t, index) => `
-          <button type="button" role="radio" class="pick pick-timing" aria-checked="${t.key === s.timing}" data-action="timing" data-key="${esc(t.key)}">
+          <button type="button" role="radio" class="pick pick-timing" aria-checked="${t.key === timing}" data-action="timing" data-key="${esc(t.key)}">
             <span class="dot"></span><span><strong>${esc(t.label)}</strong>${timingPicture(index)}<span class="muted small">${esc(t.desc)}</span></span>
           </button>`).join("")}
         </div>
-        ${s.timing !== match ? slider("max_speed", "Maximum speed-up", 1, 2, 0.05, s.max_speed, "x",
+        ${timing !== match ? slider("max_speed", "Maximum speed-up", 1, 2, 0.05, s.max_speed, "x",
           "Takes still too long at this speed overlap the next line.") : ""}
       </div>
     </section>
@@ -125,7 +131,7 @@ function readiness(app) {
   const r = app.session.readiness;
   const same = app.session.same;
   const s = app.settings;
-  const timing = app.boot.timings.find((t) => t.key === s.timing);
+  const timing = app.boot.timings.find((t) => t.key === selectedTiming(app));
   const warnings = [];
   const rushed = [...new Set([...r.long, ...r.rushed])].sort((a, b) => a - b);
   if (rushed.length) warnings.push(["warn", `${rushed.length === 1 ? "Line" : "Lines"} <b>${ranges(rushed)}</b> may sound rushed`, true]);
@@ -148,7 +154,7 @@ function readiness(app) {
             ${fix ? '<button type="button" class="linkish" data-action="to-review">Fix</button>' : ""}</li>`).join("")}</ul>` : ""}
         <div class="recap small">
           <span><strong>${esc(s.voice_mode)}</strong> · ${esc(s.preset)} delivery</span>
-          <span>${esc(timing?.label || "")}${s.timing !== matchKey(app) ? ` · up to ${Number(s.max_speed).toFixed(2)}×` : ""} · mix ${s.speech_volume}% / ${s.background_volume}%</span>
+          <span>${esc(timing?.label || "")}${timing?.key !== matchKey(app) ? ` · up to ${Number(s.max_speed).toFixed(2)}×` : ""} · mix ${s.speech_volume}% / ${s.background_volume}%</span>
           <span>${s.keep_original ? "Original audio kept as a second track" : "No original track"} · word subtitles ${s.word_timing ? "on" : "off"}</span>
         </div>
         ${app.boot.gpu ? `
@@ -167,8 +173,6 @@ function readiness(app) {
 
 export function renderDub(app) {
   if (!app.session) return "";
-  // A fix in the same language lands exactly where the old line was, unless the viewer chose otherwise.
-  if (app.session.same && !app.session.rewrite && !app.timingTouched) app.settings.timing = matchKey(app);
   return `
     <div class="stack-24 wide">
       <div class="layout">
@@ -208,7 +212,7 @@ export function bindDub(app) {
       app.filter = "attention";
       app.go("review");
     } else if (action === "dub") {
-      app.startRun("dub", {session: app.session.id, voice_mode: s.voice_mode, preset: s.preset, timing: s.timing,
+      app.startRun("dub", {session: app.session.id, voice_mode: s.voice_mode, preset: s.preset, timing: selectedTiming(app),
         max_speed: s.max_speed, parallel: s.parallel, speech_volume: s.speech_volume,
         background_volume: s.background_volume, keep_original: s.keep_original, regenerate: s.regenerate,
         word_timing: s.word_timing});
