@@ -396,7 +396,7 @@ export function startWorkspace() {
 
   // -- Voice library ---------------------------------------------------------
   // -- Auto ------------------------------------------------------------------
-  const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", speak: "Speaking", plan: "Planning shots", illustrate: "Illustrating"};
+  const AUTO_STAGES = {script: "Script", cast: "Voices and sounds", music: "Background music", speak: "Speaking", plan: "Planning shots", illustrate: "Illustrating"};
   function autoRunning() { return Boolean(state.run?.active && state.run.auto); }
 
   function renderAuto() {
@@ -430,6 +430,29 @@ export function startWorkspace() {
   function isRunning() { return Boolean(state.run?.active); }
   let autoRevision = 0;
 
+  function renderBackgroundMusic() {
+    const project = state.project;
+    const settings = project.music_settings;
+    const enabled = $("music-enabled");
+    enabled.checked = settings.music_enabled;
+    $("music-controls").hidden = !settings.music_enabled;
+    if (settings.music_enabled) {
+      const volume = $("music-volume");
+      const ducking = $("music-ducking");
+      volume.value = settings.music_volume;
+      $("music-volume-value").value = `${volume.value}%`;
+      ducking.checked = settings.music_ducking;
+    }
+    const status = $("background-music-status");
+    status.hidden = !project.music_pending && !settings.music_enabled;
+    status.textContent = project.music_pending ? "Remix to apply the changes."
+      : !settings.music_volume ? "Background music is muted."
+      : project.result ? "Loops under the full timeline." : "Applied when you speak the project.";
+    const remix = $("remix-background-music");
+    remix.hidden = !project.music_pending;
+    remix.disabled = !state.boot.gpu || isRunning() || videoRunning();
+  }
+
   function renderActions() {
     const onScript = state.screen === "script";
     const onCast = state.screen === "cast";
@@ -447,7 +470,7 @@ export function startWorkspace() {
       renderEstimate();
       return;
     }
-    if (onCast) { renderCastActions(); return; }
+    if (onCast) { renderBackgroundMusic(); renderCastActions(); return; }
     $("speak").hidden = false;
     const project = state.project;
     const result = project.result;
@@ -455,7 +478,10 @@ export function startWorkspace() {
     const title = $("action-title");
     const detail = $("action-detail");
     detail.classList.remove("error");
-    if (running && state.run.task === "words") {
+    if (running && (state.run.stage === "music" || state.run.task === "music")) {
+      title.textContent = "Making background music…";
+      detail.textContent = state.run.status || "Waiting to start…";
+    } else if (running && state.run.task === "words") {
       title.textContent = "Timing every word…";
       detail.textContent = state.run.status || "Waiting for the GPU…";
     } else if (running && state.run.auto) {
@@ -465,7 +491,7 @@ export function startWorkspace() {
       title.textContent = "Speaking…";
       detail.textContent = state.run.status || "Waiting for the GPU…";
     } else if (state.run?.error) {
-      title.textContent = "Speaking stopped";
+      title.textContent = state.run.stage === "music" || state.run.task === "music" ? "Background music stopped" : "Speaking stopped";
       detail.textContent = state.run.error;
       detail.classList.add("error");
     } else if (!state.boot.gpu) {
@@ -664,14 +690,16 @@ export function startWorkspace() {
   // -- Projects and runs -----------------------------------------------------
   let projectLoad = 0;
   let openingProject = null;
+  let loadedMixVersion;
   function loadMixAudio(name, result) {
+    loadedMixVersion = result?.version;
     mixAudio.pause();
     mixVideo.pause();
     takeAudio.pause();
     takeAudio.removeAttribute("src");
     delete takeAudio.dataset.key;
     if (result) {
-      mixAudio.src = `${API}/audio?name=${encodeURIComponent(name)}&v=${result.version}`;
+      mixAudio.src = `${API}${named(`/audio?v=${encodeURIComponent(result.version)}`, name)}`;
     } else {
       mixAudio.removeAttribute("src");
       mixAudio.load();
@@ -713,7 +741,7 @@ export function startWorkspace() {
       if (load !== projectLoad) return;
     } while (edits !== planEdits || revision !== saves.revision(name));
     const switched = state.project?.name !== project.name;
-    const changed = switched || state.project?.result?.version !== project.result?.version;
+    const changed = switched || loadedMixVersion !== project.result?.version;
     if (switched) {
       projectEpoch++;
       poll.stop(); pollCast.stop(); pollVideo.stop();
@@ -1120,7 +1148,7 @@ export function startWorkspace() {
     try {
       await flushEdits();
       if (isRunning()) return;
-      const data = await api(named("/speak"), {method: "POST", body: {action, line}});
+      const data = await api(named("/speak"), {method: "POST", body: {action, line, writer: writerService()}});
       state.run = data.run;
       renderActions();
       renderInspector();
@@ -1150,6 +1178,9 @@ export function startWorkspace() {
       } else if (run.task === "words") {
         if (run.error) toast(`Word timing stopped: ${run.error}`);
         else if (before?.active) toast(run.status || "Word timing ready.");
+      } else if (run.stage === "music" || run.task === "music") {
+        if (run.error) toast(`Background music stopped: ${run.error}`);
+        else if (before?.active) toast("Background music ready.");
       } else if (run.error) toast(`Speaking stopped: ${run.error}`);
       else if (before?.active) toast("Speech ready.");
       await loadProject(name, {keepPick: true, background: true});
@@ -1239,6 +1270,22 @@ export function startWorkspace() {
     window.addEventListener("hashchange", () => show(location.hash.slice(1)));
     $("speak").addEventListener("click", () => speak("generate"));
     $("remix").addEventListener("click", () => speak("remix"));
+    $("music-enabled").addEventListener("change", (event) => {
+      const music_enabled = event.target.checked;
+      state.project.music_settings.music_enabled = music_enabled;
+      saves.queue(state.project.name, "music", {music_enabled}, 0);
+      renderBackgroundMusic();
+    });
+    $("remix-background-music").addEventListener("click", () => { show("mix"); speak("remix"); });
+    $("music-volume").addEventListener("input", (event) => {
+      $("music-volume-value").value = `${event.target.value}%`;
+    });
+    $("music-volume").addEventListener("change", (event) => {
+      saves.queue(state.project.name, "music", {music_volume: Number(event.target.value)}, 250);
+    });
+    $("music-ducking").addEventListener("change", (event) => {
+      saves.queue(state.project.name, "music", {music_ducking: event.target.checked}, 0);
+    });
     $("interrupt").addEventListener("click", interruptRun);
     $("word-timing").addEventListener("change", (event) => saveSettings({word_timing: event.target.checked}));
     const area = $("script-text");
@@ -1428,7 +1475,7 @@ export function startWorkspace() {
   });
 
   const {saves, reconcile, saveSettings, flushEdits} = createProjects({
-    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, renderPlayer, sync, castAnswered, toast
+    state, api, named, scope, renderSaveState, renderHeader, renderSteps, renderSettings, renderScript, queueEstimate, renderVideo, renderActions, renderPlayer, sync, castAnswered, musicSaved: renderBackgroundMusic, toast
   });
 
   return start();

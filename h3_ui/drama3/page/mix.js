@@ -151,7 +151,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       showingVideo && fullscreen ? fullscreenButton : null,
       showingVideo
         ? videoFileButton()
-        : h("a", {class: "btn btn-small", href: `${API}${named("/audio")}`, download: result.file}, "Download"));
+        : h("a", {class: "btn btn-small", href: `${API}${named(`/audio?v=${encodeURIComponent(result.version)}`)}`, download: result.file}, "Download"));
     let stage = null;
     if (showingVideo) {
       const playing = () => (getPlayer().paused ? getPlayer().play() : getPlayer().pause());
@@ -220,6 +220,13 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
           style: {...place(sound.start, sound.end), "--row": soundRows.placed[index]},
           onclick: (event) => { event.stopPropagation(); seek(sound.start); },
         }, h("span", {"aria-hidden": "true"}, sound.name)))));
+    }
+    if (result.music && duration > 0) {
+      lanes.push(h("span", {class: "lane-name", style: laneHeight(1)}, "Music"));
+      tracks.push(h("div", {class: "lane", style: {"--rows": 1}},
+        h("button", {type: "button", class: "clip bed", style: {...place(result.music.start, result.music.end), "--row": 0},
+          "aria-label": "Play from the start of background music", onclick: (event) => { event.stopPropagation(); seek(0); }},
+        h("span", {"aria-hidden": "true"}, "Background music"))));
     }
     const ticks = Math.min(6, Math.max(3, Math.floor(duration / 10)));
     const ruler = h("div", {class: "ruler num", "aria-hidden": "true"},

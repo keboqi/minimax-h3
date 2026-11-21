@@ -293,11 +293,12 @@ class WorkspaceStore:
         return json.loads(row["payload"]), row["result"]
 
     @contextmanager
-    def edit_soundstage_project(self, name, *, reset_result=False):
+    def edit_soundstage_project(self, name, *, reset_result=False, result=None):
         """One transactional read/modify/write, including writers in other processes.
 
         Callers must only do short local edits while holding this transaction.
-        Hosted writers and generation run before entering it.
+        Hosted writers and generation run before entering it. A supplied result
+        is published with the payload in the same transaction.
         """
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -307,8 +308,8 @@ class WorkspaceStore:
             data = json.loads(row["payload"])
             yield data
             db.execute("UPDATE soundstage_projects SET payload=?, updated=?, "
-                       "result=CASE WHEN ? THEN NULL ELSE result END WHERE name=?",
-                       (json.dumps(data), time.time(), reset_result, name))
+                       "result=CASE WHEN ? THEN NULL ELSE COALESCE(?, result) END WHERE name=?",
+                       (json.dumps(data), time.time(), reset_result, result, name))
 
     def mark_soundstage_generated(self, name, result):
         with self.connect() as db:

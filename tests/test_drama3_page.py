@@ -2,16 +2,19 @@
 
 import inspect
 from pathlib import Path
+from shutil import which
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from h3_app.drama3.results import DRAMA3_FAMILY, script_fingerprint
+from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.provenance import write_snapshot
@@ -48,6 +51,7 @@ class Drama3PageTests(unittest.TestCase):
         install_owner_cookie(app, self.store)
         install_soundstage_page(
             app, actions, store=self.store, output_dir=self.output_dir, takes_dir=lambda: self.takes,
+            music=SimpleNamespace(generate_music3=self.generate_music, enhance_music3_prompt=self.write_music),
             interrupt=lambda request, family, job_id: self.interrupted.append((family, job_id)) or "Stopping.")
         self.client = TestClient(app)
         self.client.get(f"{API}/boot")
@@ -56,16 +60,25 @@ class Drama3PageTests(unittest.TestCase):
     def _speak(self, kind, values):
         self.calls.append((kind, values))
         yield GenerationUpdate(None, "Speaking line 1…")
-        yield GenerationUpdate(str(self.result or self.mix()), "Done.")
+        result = str(self.result or self.mix())
+        yield GenerationUpdate(result, "Done.")
 
-    def generate(self, *values):
+    def generate(self, *values, publish):
         yield from self._speak("generate", values)
 
-    def remix(self, *values):
+    def remix(self, *values, publish):
         yield from self._speak("remix", values)
 
-    def regenerate(self, line, *values):
+    def regenerate(self, line, *values, publish):
         yield from self._speak("regenerate", (line, *values))
+
+    def write_music(self, prompt, *values, **options):
+        self.calls.append(("music brief", prompt, options))
+        return "Soft piano and brushed drums", "Unexpected writer lyrics", "Written."
+
+    def generate_music(self, *values):
+        self.calls.append(("music", values))
+        yield GenerationUpdate(str(self.music_clip), "Done.")
 
     def mix(self):
         path = self.output_dir / "drama3" / f"night_{uuid.uuid4().hex}.mp3"
@@ -120,6 +133,158 @@ class Drama3PageTests(unittest.TestCase):
         self.assertIn('src="app.js"', page.text)
         self.assertEqual(self.client.get("/soundstage/app.css").status_code, 200)
         self.assertEqual(self.client.get("/soundstage/other.txt").status_code, 404)
+
+    @unittest.skipUnless(which("ffmpeg"), "Background music mixing needs FFmpeg")
+    def test_remix_applies_background_music_and_reuses_it_after_toggling(self):
+        import numpy as np
+        from h3_app.drama3.serving import audio
+
+        data = self.save_project()
+        rate = 48000
+        audio.save_mp3(np.zeros((6 * rate, 2), dtype=np.float32), rate, self.result)
+        self.music_clip = self.root / "music.wav"
+        cue = (0.6 * np.sin(np.arange(rate) * (2 * np.pi * 440 / rate))).astype(np.float32)
+        self.music_clip.write_bytes(audio.encode_wav(cue, rate))
+        params = {"name": "Night Market"}
+        original = self.ok(self.client.get(f"{API}/project", params=params))["result"]
+
+        pending = self.ok(self.client.patch(f"{API}/project/music", params=params, json={"music_enabled": True}))
+        self.assertTrue(pending["music_pending"])
+        self.assertEqual(pending["result"], original)
+        self.assertEqual(self.calls, [])
+        self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "remix"}))
+        self.assertIsNone(self.wait()["error"])
+        self.assertIn(data["text"], self.calls[0][1])
+        self.assertEqual(self.calls[0][2]["vocals"], "Instrumental")
+        self.assertEqual([call[0] for call in self.calls], ["music brief", "music", "remix"])
+        self.assertEqual(self.calls[1][1][2], "")
+        project = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertTrue(project["background_music"])
+        self.assertEqual(project["result"]["music"], {"start": 0, "end": 6.0})
+        self.assertEqual(project["result"]["lines"], original["lines"])
+        self.assertEqual(project["result"]["takes"], original["takes"])
+        self.assertNotEqual(project["result"]["version"], original["version"])
+
+        scored = self.client.get(f"{API}/audio", params=params)
+        self.assertEqual(scored.status_code, 200)
+        path = self.root / "download.mp3"
+        path.write_bytes(scored.content)
+        samples = audio.load_audio_file(path, rate)
+        self.assertEqual(len(samples), 6 * rate)
+        self.assertGreater(np.max(np.abs(samples[5 * rate:5 * rate + rate // 2])), 0.05)
+
+        pending = self.ok(self.client.patch(f"{API}/project/music", params=params, json={"music_enabled": False}))
+        self.assertTrue(pending["music_pending"])
+        self.assertEqual(self.client.get(f"{API}/audio", params=params).content, scored.content)
+        self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "remix"}))
+        self.assertIsNone(self.wait()["error"])
+        project = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertTrue(project["background_music"])
+        self.assertEqual(project["result"], original)
+        self.assertEqual(self.client.get(f"{API}/audio", params=params).content, self.result.read_bytes())
+        self.ok(self.client.patch(f"{API}/project/music", params=params, json={"music_enabled": True}))
+        self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "remix"}))
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual([call[0] for call in self.calls].count("music"), 1)
+        self.assertEqual(self.client.get(f"{API}/audio", params=params).content, scored.content)
+
+    @unittest.skipUnless(which("ffmpeg"), "Background music mixing needs FFmpeg")
+    def test_background_music_can_be_added_before_speaking(self):
+        import numpy as np
+        from h3_app.drama3.serving import audio
+
+        self.save_project(generated=False)
+        self.result = self.mix()
+        self.music_clip = self.root / "music.wav"
+        recording = audio.encode_wav(np.zeros(48000, dtype=np.float32), 48000)
+        self.result.write_bytes(recording)
+        self.music_clip.write_bytes(recording)
+        params = {"name": "Night Market"}
+        draft = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertFalse(draft["music_settings"]["music_enabled"])
+        self.ok(self.client.patch(f"{API}/project/music", params=params, json={"music_enabled": True}))
+        self.assertEqual(self.calls, [])
+        self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "generate"}))
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual([call[0] for call in self.calls], ["music brief", "music", "generate"])
+        project = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertTrue(project["background_music"])
+        self.assertIn("music", project["result"])
+
+    def test_failed_music_encode_preserves_the_previous_mix(self):
+        self.save_project(background_music="bed.wav", music_enabled=False)
+        params = {"name": "Night Market"}
+        previous = self.result
+        self.result = self.mix()
+        (self.clips / "bed.wav").write_bytes(b"RIFF")
+        enabled = self.ok(self.client.patch(f"{API}/project/music", params=params, json={"music_enabled": True}))
+        self.assertTrue(enabled["music_pending"])
+
+        with patch("h3_ui.drama3.page_music.mixed_audio", side_effect=H3Error("Music encoding failed.")):
+            self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "remix"}))
+            self.assertEqual(self.wait()["error"], "Music encoding failed.")
+
+        project = self.ok(self.client.get(f"{API}/project", params=params))
+        self.assertTrue(project["music_pending"])
+        self.assertNotIn("music", project["result"])
+        self.assertEqual(project["result"]["file"], previous.name)
+        self.assertEqual(self.client.get(f"{API}/audio", params=params).content, previous.read_bytes())
+
+    @unittest.skipUnless(which("ffmpeg"), "Background music mixing needs FFmpeg")
+    def test_music_volume_and_ducking_control_the_saved_audio(self):
+        import numpy as np
+        from h3_app.drama3.serving import audio
+
+        self.save_project(background_music="bed.wav")
+        rate = 48000
+        time_axis = np.arange(6 * rate) / rate
+        bed = 0.4 * np.sin(2 * np.pi * 440 * time_axis)
+        foreground = 0.18 * np.sin(2 * np.pi * 997 * time_axis)
+        base = np.zeros((len(time_axis), 2), dtype=np.float32)
+        base[rate:2 * rate] = foreground[rate:2 * rate, None]  # centered dialogue
+        base[3 * rate:4 * rate] = foreground[3 * rate:4 * rate, None] * [1, -1]  # wide effect
+        audio.save_mp3(base, rate, self.result)
+        (self.clips / "bed.wav").write_bytes(audio.encode_wav(bed, rate))
+        params = {"name": "Night Market"}
+
+        def patch_music(**body):
+            self.ok(self.client.patch(f"{API}/project/music", params=params, json=body))
+            self.ok(self.client.post(f"{API}/speak", params=params, json={"action": "remix"}))
+            self.assertIsNone(self.wait()["error"])
+            return self.ok(self.client.get(f"{API}/project", params=params))
+
+        def download():
+            response = self.client.get(f"{API}/audio", params=params)
+            self.assertEqual(response.status_code, 200)
+            path = self.root / "download.mp3"
+            path.write_bytes(response.content)
+            return audio.load_audio_file(path, rate, stereo=True)[:, 0]
+
+        def level(samples, start):
+            window = slice(round(start * rate), round((start + 0.1) * rate))
+            carrier = np.exp(-2j * np.pi * 440 * time_axis[window])
+            return float(2 * abs(np.mean(samples[window] * carrier)))
+
+        quiet = patch_music(music_volume=20, music_ducking=False)
+        quiet_audio = download()
+        loud = patch_music(music_volume=40)
+        loud_audio = download()
+        self.assertAlmostEqual(level(loud_audio, 0.6) / level(quiet_audio, 0.6), 2, delta=0.06)
+        self.assertNotEqual(quiet["result"]["version"], loud["result"]["version"])
+        self.assertAlmostEqual(level(loud_audio, 1.6), level(loud_audio, 3.6), delta=0.01)
+
+        ducked = patch_music(music_ducking=True)
+        ducked_audio = download()
+        self.assertNotEqual(loud["result"]["version"], ducked["result"]["version"])
+        for start in (1.6, 3.6):
+            self.assertAlmostEqual(level(ducked_audio, start) / level(loud_audio, start), 0.5, delta=0.06)
+        self.assertGreater(level(ducked_audio, 3.0), level(ducked_audio, 3.6))
+        self.assertGreater(level(ducked_audio, 5.5), level(ducked_audio, 4.5))
+        self.assertEqual(self.ok(self.client.get(f"{API}/project", params=params))["music_settings"],
+                         {"music_enabled": True, "music_volume": 40, "music_ducking": True})
+        muted = patch_music(music_volume=0)
+        self.assertTrue(muted["background_music"])
+        self.assertEqual(self.client.get(f"{API}/audio", params=params).content, self.result.read_bytes())
 
     def test_generation_values_follow_the_speak_steps_input_order(self):
         data = self.save_project(generated=False)
@@ -256,7 +421,7 @@ class Drama3PageTests(unittest.TestCase):
     def test_a_failed_run_reports_why(self):
         self.save_project()
 
-        def failing(*values):
+        def failing(*values, publish):
             yield GenerationUpdate(None, "Error: Speaker 1 has no voice.\n\nTimings")
 
         app = FastAPI()

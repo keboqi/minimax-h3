@@ -9,6 +9,7 @@ the page polls it, so it outlives the page that started it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import wraps
 import re
 from pathlib import Path
 from threading import RLock
@@ -25,10 +26,12 @@ from ..page_routes import install_static_page, owner_of, session_of
 from ..page_runs import Runs, guarded
 from .controls import DRAMA3_SAMPLING_PRESETS
 from .page_cast import boot_payload as cast_boot_payload, cast_settings, install_cast_routes, sounds_payload, speakers_payload
-from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, speech_value, timeline_payload
+from .page_common import PageRun, apply_fields, file_response, found, not_found, run_job, speech_value, timeline_payload, value
 from .page_script import boot_payload, install_script_routes, rewrite_project, script_payload
 from .page_library import install_library_routes
-from .page_store import editing
+from .page_music import (MUSIC_FIELD, applied_music, desired_music, generate_track, mixed_audio,
+                         music_mix_id, music_settings, music_track, needs_music_clip, publish_mix, remember_applied_music)
+from .page_store import editing, project_lock
 from .page_video import boot_payload as video_boot_payload, install_video_routes, video_payload
 from .result_view import clean_line
 from .page_adapter import generation_values as generation_values, SpeechProgress
@@ -55,7 +58,7 @@ class SpeakRun(PageRun):
     """Speaking, or Auto, which rewrites, makes the cast and speaks in turn (``stage``)."""
 
     auto: bool = False
-    task: str = "speak"  # "speak", or "words" for word alignment
+    task: str = "speak"
     stage: str | None = None
     slots: dict[str, str] = field(default_factory=dict)
 
@@ -107,6 +110,13 @@ def _preset(data: dict) -> str | None:
 def project_payload(name: str, data: dict, result, clips: Path, runtime=None, *, mix_settings=None) -> dict:
     text = str(speech_value(data, "text"))
     speakers = speakers_payload(name, data, lambda value: _clip(clips, value), runtime)
+    track = music_track(data)
+    desired = desired_music(data)
+    mix = result_payload(result, mix_settings)
+    mix_id = music_mix_id(applied_music(data))
+    if mix and mix_id:
+        mix["version"] = f"{mix['version']}-{mix_id}"
+        mix["music"] = {"start": 0, "end": mix["duration"]}
     return {
         "name": name,
         "title": speech_value(data, "title"),
@@ -119,7 +129,11 @@ def project_payload(name: str, data: dict, result, clips: Path, runtime=None, *,
         "cast_settings": cast_settings(data),
         "settings": {**{key: kind(speech_value(data, key)) for key, kind in SETTING_FIELDS.items()},
                      "preset": _preset(data)},
-        "result": result_payload(result, mix_settings),
+        "result": mix,
+        "background_music": bool(track),
+        "music_settings": music_settings(data),
+        "music_pending": bool(mix) and (mix_id != music_mix_id(desired)
+                                         or needs_music_clip(clips, desired)),
         "script": script_payload(data),
     }
 
@@ -147,7 +161,7 @@ def batch_row(name: str, generated: bool, data: dict, clip, runtime, *, busy: bo
 
 def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_dir: Callable[[], Path],
                             runtime_config: Callable[[], Any] | None = None, gpu: bool = True,
-                            interrupt=None, video_export=None) -> None:
+                            interrupt=None, video_export=None, music=None) -> None:
     """Serve the page at ``/soundstage/`` and its API under ``/soundstage/api``.
 
     ``actions`` holds Soundstage's speech actions; ``store`` keeps the saved projects and
@@ -165,14 +179,15 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
 
     runs = Runs(busy="This project is already speaking.", lock=admission_lock, blocked=speak_blocked)
     clips = Path(output_dir) / "h3" / ".soundstage" / "clips"
+    generate_music = owned_generation(music.generate_music3, "music") if gpu and music is not None else None
 
     def clip(value) -> str | None:
         return _clip(clips, value)
 
     callbacks = {
-        GENERATE: owned_generation(actions.generate_drama3, "drama3"),
-        REMIX: owned_generation(actions.remix_drama3, "drama3"),
-        REGENERATE: owned_generation(actions.regenerate_drama3_line, "drama3"),
+        GENERATE: actions.generate_drama3,
+        REMIX: actions.remix_drama3,
+        REGENERATE: actions.regenerate_drama3_line,
     }
     api = "/soundstage/api"
 
@@ -219,6 +234,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def boot(request: Request):
         owner_of(request)
         return {"gpu": gpu,
+                "background_music": generate_music is not None,
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
                 "ranges": {key: list(bounds) for key, bounds in SETTING_RANGES.items()},
@@ -241,7 +257,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     if video_export is not None:
         video_runs = install_video_routes(app, video_export, api=api, store=store, owner_of=owner_of,
                                           session_of=session_of, payload=payload, project=project, gpu=gpu,
-                                          interrupt=interrupt, admission_lock=admission_lock,
+                                          interrupt=interrupt, admission_lock=admission_lock, music_clips=clips,
                                           blocked=lambda owner, name: "Wait for speech or Auto to finish."
                                           if runs.active(owner, name) else None)
 
@@ -265,8 +281,10 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def project_audio(name: str, request: Request):
         with found():
             owner_of(request)
-            _, result = project(name)
-        return file_response(result)
+            with project_lock(name):
+                data, result = project(name)
+                path = mixed_audio(result, applied_music(data), clips) if result else None
+        return file_response(path, cache="private, no-cache")
 
     @app.get(f"{api}/take", include_in_schema=False)
     def take_audio(name: str, key: str, request: Request):
@@ -285,31 +303,105 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     def read_run(name: str, request: Request):
         return {"run": run_payload(owner_of(request), name)}
 
-    def speak_job(run, owner: str, session, name: str, action: str, line=None) -> None:
+    @app.post(f"{api}/project/music", include_in_schema=False)
+    @guarded
+    def start_music(name: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        if generate_music is None:
+            raise H3Error("Open Soundstage in Studio to generate background music.")
+        data, _ = project(name)
+        if not (data.get("text") or "").strip():
+            raise H3Error("Write or paste some text on Script first.")
+        session = session_of(request)
+        runs.start(SpeakRun(owner, name, RUN_KIND, task="music"),
+                   lambda run: generate_track(run, owner, session, name, data, body,
+                                              write=music.enhance_music3_prompt, generate=generate_music,
+                                              store=store, clips=clips))
+        return {"run": run_payload(owner, name)}
+
+    @app.patch(f"{api}/project/music", include_in_schema=False)
+    @guarded
+    def save_music_settings(name: str, request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        with editing(store, name) as data:
+            settings = music_settings(data)
+            if any(key in body and body[key] is None for key in settings):
+                raise H3Error("Set a volume from 0 to 100 and choose whether to duck the music.")
+            apply_fields(settings, body, {"music_enabled": bool, "music_volume": int, "music_ducking": bool},
+                         {"music_volume": (0, 100)})
+            remember_applied_music(data)
+            data.update(settings)
+        return payload(owner, name)
+
+    @app.delete(f"{api}/project/music", include_in_schema=False)
+    @guarded
+    def remove_music(name: str, request: Request):
+        owner = owner_of(request)
+        with admission_lock:
+            if runs.active(owner, name) or (video_runs is not None and video_runs.active(owner, name)):
+                raise H3Error("Wait for the project’s current run to finish.")
+            with editing(store, name) as data:
+                remember_applied_music(data)
+                data.pop(MUSIC_FIELD, None)
+                data["music_enabled"] = False
+        return payload(owner, name)
+
+    def speak_job(run, owner: str, session, name: str, action: str, line=None, body=None) -> None:
         """Speak, remix or regenerate a line from the project as it is saved now."""
         data, previous_result = project(name)
+        soundtrack = desired_music(data) if action != REGENERATE else applied_music(data)
+        if action != REGENERATE and needs_music_clip(clips, soundtrack):
+            if generate_music is None:
+                raise H3Error("Open Soundstage in Studio to generate background music.")
+            run.stage, run.job_id = "music", None
+            track = generate_track(run, owner, session, name, data, body or {}, write=music.enhance_music3_prompt,
+                                   generate=generate_music, store=store, clips=clips)
+            if track is None or run.stop_requested:
+                return
+            soundtrack[MUSIC_FIELD] = track
+            run.stage, run.job_id = "speak", None
         if video_export is not None and previous_result:
             # Upgrade an older timestamp plan against its own audio before replacing the mix.
             planning_mix(name, data, previous_result, video_export, store=store)
         values = generation_values(name, data, clips)
         if action == REGENERATE:
             values = [line, *values]
-        # Accepted here, once this is the project's only run: a refused run leaves no job.
-        for update in run_job(run, owner, session, "drama3", values, callbacks[action], output_indices=(0,)):
+        # The page publishes after both speech and music have finished. Scripted callers
+        # keep the generation handler's normal project publication.
+        callback = callbacks[action]
+
+        @wraps(callback)
+        def render(*values):
+            return callback(*values, publish=False)
+
+        wrapped = owned_generation(render, "drama3")
+        result = None
+        for update in run_job(run, owner, session, "drama3", values, wrapped, output_indices=(0,)):
             progress = SpeechProgress.read(update)
             if progress.status:
                 run.status = progress.status.splitlines()[0]
             if progress.error:
                 run.error = progress.error
-            if progress.output:
+            output = value(progress.output)
+            if isinstance(output, (str, Path)) and output:
+                result = output
                 run.revision += 1
-        if run.error is None:
-            if video_export is not None:
-                try:
-                    carry_project_stills(store, name, previous_result, project(name)[1], video_export)
-                except H3Error as exc:
-                    run.message = f"Speech ready. Illustrations need review: {exc}"
-            run.status = "Done."
+        if run.error is not None:
+            return
+        if run.stop_requested:
+            run.status = "Interrupted."
+            return
+        if result is None:
+            raise H3Error("Speech returned no audio.")
+        if music_mix_id(soundtrack):
+            run.status = "Mixing background music…"
+        publish_mix(store, name, result, soundtrack, clips, stopped=lambda: run.stop_requested)
+        if video_export is not None:
+            try:
+                carry_project_stills(store, name, previous_result, result, video_export)
+            except H3Error as exc:
+                run.message = f"Speech ready. Illustrations need review: {exc}"
+        run.status = "Done."
 
     @app.post(f"{api}/speak", include_in_schema=False)
     @guarded
@@ -318,7 +410,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             raise H3Error("Open Soundstage in Studio to speak on the GPU.")
         owner = owner_of(request)
         action = body.get("action")
-        if action not in callbacks:
+        if not callbacks.get(action):
             raise H3Error("Unknown speech request.")
         _, result = project(name)
         if action == REGENERATE:
@@ -329,7 +421,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             raise H3Error("Speak the project once before remixing it.")
         session = session_of(request)
         runs.start(SpeakRun(owner, name, RUN_KIND),
-                   lambda run: speak_job(run, owner, session, name, action, body.get("line")))
+                   lambda run: speak_job(run, owner, session, name, action, body.get("line"), body))
         return {"run": run_payload(owner, name)}
 
     def start_auto(owner: str, name: str, session, body: dict | None) -> SpeakRun:
@@ -383,7 +475,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             if stopped(run):
                 return
             run.stage, run.status, run.job_id = "speak", "Speaking…", None
-            speak_job(run, owner, session, name, GENERATE)
+            speak_job(run, owner, session, name, GENERATE, body=body)
             if run.error or stopped(run):
                 return
             if illustrate:
@@ -490,8 +582,12 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         else:
             run.stop_requested = True
             if run.job_id is None:
-                message = ("Auto stops when the writer answers." if run.auto
-                           else "The run is still starting. Try again in a moment.")
+                if run.auto:
+                    message = "Auto stops when the writer answers."
+                elif run.task == "music" or run.stage == "music":
+                    message = "Music generation stops when the writer answers."
+                else:
+                    message = "The run is still starting. Try again in a moment."
             else:
                 message = interrupt(session_of(request), family=run.family or "drama3", job_id=run.job_id)
         return {"message": message, "run": run_payload(owner, name)}

@@ -64,23 +64,23 @@ class GenerationHandlers:
                 sounds.append((name, str(audio or ""), desc, dur))
         return tuple(sounds)
 
-    def generate_drama3(self, *values, progress=gr.Progress(track_tqdm=False)):
+    def generate_drama3(self, *values, progress=gr.Progress(track_tqdm=False), publish=True):
         """Inputs: text, then (voice, audio, transcript) per speaker slot, then settings and sound slots.
 
         The parameter list is generated from the slot count; see ``_drama3_signature``.
         Lines with a saved take for the same text, voice and sampling are reused.
         """
-        yield from self._drama3_job(values, progress)
+        yield from self._drama3_job(values, progress, publish=publish)
 
-    def regenerate_drama3_line(self, line, *values, progress=gr.Progress(track_tqdm=False)):
+    def regenerate_drama3_line(self, line, *values, progress=gr.Progress(track_tqdm=False), publish=True):
         """Generate one line's take again (``line`` is its take key from the takes table), then remix."""
         if not line:
             raise gr.Error("Choose a line from the takes table first.")
-        yield from self._drama3_job(values, progress, regenerate=(str(line),))
+        yield from self._drama3_job(values, progress, publish=publish, regenerate=(str(line),))
 
-    def remix_drama3(self, *values, progress=gr.Progress(track_tqdm=False)):
+    def remix_drama3(self, *values, progress=gr.Progress(track_tqdm=False), publish=True):
         """Rebuild the mix from saved takes, with the current sounds and effects; nothing is generated."""
-        yield from self._drama3_job(values, progress, remix_only=True)
+        yield from self._drama3_job(values, progress, publish=publish, remix_only=True)
 
     def repair_drama3_words(self, output):
         """Refresh subtitle metadata for the existing audio; speech and mix remain unchanged."""
@@ -190,7 +190,7 @@ class GenerationHandlers:
         cast.update((speaker, name) for speaker, name in names if name)
         return sorted((speaker, name) for speaker, name in cast.items() if name)
 
-    def _drama3_job(self, values, progress, **options):
+    def _drama3_job(self, values, progress, *, publish=True, **options):
         from h3_app.generation.drama3 import generate_drama3 as run_drama3, validate_drama3
         from h3_app.drama3.cast import clean_title
         from h3_ui.drama3.controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
@@ -235,7 +235,7 @@ class GenerationHandlers:
             request = replace(request, previous_result=JOBS.store.soundstage_project(project)[1] or "")
         for update in run_drama3(request, self._generation_services(), self._runtime_config(),
                                  progress=progress, free_gpu=self.free_comfy_vram):
-            if project and update.output:
+            if project and update.output and publish:
                 from h3_app.jobs import JOBS
                 result = update.output.get("value") if isinstance(update.output, dict) else update.output
                 if result:

@@ -97,8 +97,8 @@ class CastFixture(unittest.TestCase):
         updates[0:2] = [str(write_wav(self.made / "rain.wav")), "Sound generated."]
         yield (*updates, "Generated 1 of 1 sound clips.")
 
-    def fake_speak(self, *values):
-        """Speech marks its project generated, as the real handler does with the project name it is given."""
+    def fake_speak(self, *values, publish):
+        """Report a rendered mix so the page can publish it."""
         from h3_app.drama3.results import DRAMA3_FAMILY
         from h3_app.generation.results import GenerationUpdate
         from h3_app.provenance import write_snapshot
@@ -106,7 +106,6 @@ class CastFixture(unittest.TestCase):
         self.calls.append(("speak", values))
         mix = write_wav(self.made / f"mix_{len(self.calls)}.wav")
         write_snapshot(mix, {"family": DRAMA3_FAMILY, "settings": {"duration": 0.5, "chunks": [], "sounds": []}})
-        self.store.mark_soundstage_generated(values[-1], str(mix))
         yield GenerationUpdate(None, "Speaking…")
         yield GenerationUpdate(str(mix), "Done.")
 

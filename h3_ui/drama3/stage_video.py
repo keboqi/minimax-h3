@@ -24,11 +24,14 @@ PAUSE_JS = ("(mode) => {{ document.querySelectorAll('{scope} :is(audio, video)')
             ".forEach((media) => media.pause()); return mode; }}")
 
 
-def latest_export(audio):
+def latest_export(audio, *, matches=None):
     """The newest illustrated video made from this mix, if any."""
     audio = Path(audio)
     videos = [path for path in audio.parent.glob(f"{glob.escape(audio.stem)}_illustrated_*.mp4") if path.is_file()]
-    return max(videos, key=lambda path: path.stat().st_mtime, default=None)
+    if matches is None:
+        return max(videos, key=lambda path: path.stat().st_mtime, default=None)
+    return next((path for path in sorted(videos, key=lambda path: path.stat().st_mtime, reverse=True)
+                 if matches(path)), None)
 
 STAGE_VIDEO_JS = BIND_FULLSCREEN_JS + """
 // Gradio patches a new value into the existing DOM, so each new video rebinds through its revision.

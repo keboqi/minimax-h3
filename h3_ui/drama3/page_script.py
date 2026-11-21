@@ -24,6 +24,7 @@ from h3_app.prompt_writers import drama3 as writer
 from ..page_runs import guarded
 from .controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS, UPLOAD_SOUND
 from .page_common import apply_fields, check_proposal, proposal_token, timeline_payload, value, writer_service
+from .page_music import clear_project_music
 from .page_store import edit_project, editing, project_lock
 from .result_view import clean_line, preview_source_lines, script_preview_settings
 
@@ -384,6 +385,7 @@ def install_script_routes(app: FastAPI, actions, *, api: str, store, owner_of, p
                 before = data.get("text") or ""
                 outputs = list(loader(_setting(data, "speaker_group")))
                 clear_cast_clips(data)
+                clear_project_music(data)
                 rest = _apply_cast(data, outputs)
                 data["script_mode"], data["speaker_mode"] = value(rest[0]), value(rest[1])
                 meta = rest[2:2 + 3 * DRAMA3_SOUND_SLOTS]

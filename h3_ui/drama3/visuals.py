@@ -680,7 +680,8 @@ def burned_subtitles(audio, size, orientation="landscape") -> str | None:
     return ass_subtitles(lines, width=width, height=height, size=size) if lines else None
 
 
-def render_stills(audio, root, subtitles: int = 0, *, scene: EffectScene | None = None, progress=None):
+def render_stills(audio, root, subtitles: int = 0, *, scene: EffectScene | None = None, progress=None,
+                  soundtrack=None, music=None):
     """Render the video from the mix's stills, beside the mix, and record it so it shows in Media.
 
     ``subtitles`` is the burned-in subtitles' size in percent, or 0 for none. ``scene`` provides
@@ -701,6 +702,8 @@ def render_stills(audio, root, subtitles: int = 0, *, scene: EffectScene | None 
     size = VIDEO_SIZES[orientation]
     images = [folder / name for name in names]
     options = {}
+    if soundtrack:
+        options["soundtrack"] = soundtrack
     if scene is not None:
         def frame_batches(workspace):
             return capture_frames(workspace, scene.shots, scene.sounds, images, size,
@@ -710,7 +713,8 @@ def render_stills(audio, root, subtitles: int = 0, *, scene: EffectScene | None 
     video = render_video(audio, shots, images, audio.parent, subtitles=script, size=size, **options)
     write_snapshot(video, {"family": ILLUSTRATED_FAMILY, "settings": {
         **(record.get("details") or {}), "source": audio.name, "stills": record["revision"],
-        "subtitles": subtitles, "effects_revision": scene.revision if scene else None}})
+        "subtitles": subtitles, "effects_revision": scene.revision if scene else None,
+        **(music or {})}})
     return video
 
 

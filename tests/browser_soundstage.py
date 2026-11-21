@@ -21,7 +21,8 @@ def run():
     write_snapshot(legacy_mix, {"settings": {"duration": 2.0}})
     fixture.store.save_soundstage_project("Legacy Mix", {"text": "Mia: An older mix.", "shown_slots": 1})
     fixture.store.mark_soundstage_generated("Legacy Mix", str(legacy_mix))
-    fixture.store.save_soundstage_project("Second", {"text": "Mia: Another draft.", "shown_slots": 1})
+    fixture.store.save_soundstage_project("Second", {"text": "Mia: Another draft.", "shown_slots": 1,
+                                                     "background_music": "draft_music.mp3"})
     fixture.store.save_soundstage_project("Scenes", {"script_mode": DRAMA3_SCRIPT_ADVANCED, "text": "\n".join([
         "Mia: Plums, two for one!",
         '<parallel room="small_room" stage="Mia=-0.4, Leo=0.4">',
@@ -235,9 +236,25 @@ def run():
             expect(page.locator("#project-state")).to_have_text("Draft")
             expect(page.locator("#script-text")).to_have_value("Mia: Keep this unsaved draft.")
             held_library[0].continue_()
+            page.locator("#step-cast").click()
+            expect(page.locator("#cast-sounds-card #music-enabled")).to_be_checked()
+            volume = page.locator("#music-volume")
+            ducking = page.locator("#music-ducking")
+            expect(volume).to_have_value("18")
+            expect(ducking).to_be_checked()
+            volume.press("ArrowRight")
+            ducking.uncheck()
+            expect(page.locator("#music-volume-value")).to_have_text("19%")
+            expect(page.locator("#save-state")).to_have_text("All changes saved")
+            music = fixture.store.soundstage_project("Second")[0]
+            assert music["music_volume"] == 19 and music["music_ducking"] is False
+            page.locator("#music-enabled").uncheck()
+            expect(volume).to_be_hidden()
+            expect(page.locator("#save-state")).to_have_text("All changes saved")
+            assert fixture.store.soundstage_project("Second")[0]["music_enabled"] is False
             assert not errors, errors
             browser.close()
-        print("PASS: modules, all page steps, still playback/subtitles, save-on-switch, and project loading races")
+        print("PASS: modules, all page steps, still playback/subtitles, music controls, save-on-switch, and project loading races")
     finally:
         server.should_exit = True
         thread.join(timeout=10)

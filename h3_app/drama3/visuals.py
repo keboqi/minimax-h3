@@ -34,7 +34,7 @@ def _encode(arguments, cwd=None):
 
 
 def render_video(audio, shots, images, output_dir, subtitles: str | None = None, size=(1280, 720),
-                 *, frame_batches=None):
+                 *, frame_batches=None, soundtrack=None):
     """Encode stills or batches of composited JPEG frames, then mux the uninterrupted mix.
 
     ``frame_batches`` produces (JPEG stream, frame count) pairs in the temporary workspace.
@@ -46,6 +46,7 @@ def render_video(audio, shots, images, output_dir, subtitles: str | None = None,
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     audio = Path(audio).resolve()  # the final step runs in the work folder
+    soundtrack = Path(soundtrack).resolve() if soundtrack else audio
     # Scale the still once, then repeat that frame until the shot ends.
     canvas = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
               f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop=-1")
@@ -72,7 +73,7 @@ def render_video(audio, shots, images, output_dir, subtitles: str | None = None,
             # Named relative to the working folder: a Windows drive colon would break the filter's syntax.
             (folder / "subtitles.ass").write_text(subtitles, encoding="utf-8")
             video = ["-vf", "ass=subtitles.ass", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast"]
-        _encode(["-f", "concat", "-i", str(playlist), "-i", str(audio), "-map", "0:v:0", "-map", "1:a:0",
+        _encode(["-f", "concat", "-i", str(playlist), "-i", str(soundtrack), "-map", "0:v:0", "-map", "1:a:0",
                  *video, "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(partial)], cwd=folder)
         output = output_dir / f"{audio.stem}_illustrated_{uuid4().hex[:8]}.mp4"
         partial.replace(output)

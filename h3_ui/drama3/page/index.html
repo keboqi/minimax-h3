@@ -229,6 +229,19 @@
           </div>
           <div class="table-wrap"><table class="sound-table" id="sound-table"></table></div>
           <div class="card-foot"><button type="button" class="btn btn-small" id="add-sound">Add sound</button></div>
+          <div class="sound-settings music-settings">
+            <label class="check"><input type="checkbox" id="music-enabled"> Background music</label>
+            <div class="music-controls" id="music-controls" hidden>
+              <label class="range-row" for="music-volume">
+                <span>Music volume</span>
+                <input type="range" id="music-volume" min="0" max="100" step="1" value="18">
+                <output class="num" id="music-volume-value" for="music-volume">18%</output>
+              </label>
+              <label class="check"><input type="checkbox" id="music-ducking" checked> Lower music under dialogue and sound effects</label>
+            </div>
+            <p class="muted small" id="background-music-status" aria-live="polite" hidden></p>
+            <button type="button" class="btn btn-small" id="remix-background-music" hidden>Remix</button>
+          </div>
         </section>
       </div>
       <aside class="side cast-side">

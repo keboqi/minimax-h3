@@ -32,7 +32,8 @@ from ..page_runs import Runs, guarded
 from .effects_export import EffectScene
 from .page_common import (PageRun, apply_fields, file_response, found, not_found, run_job, timeline_payload,
                           value, writer_service)
-from .page_store import editing
+from .page_music import applied_music, mixed_audio, music_mix_id
+from .page_store import editing, project_lock
 from .stage_video import latest_export
 from . import visuals
 from .project_visuals import planning_mix, save_project_plan
@@ -177,6 +178,16 @@ def plan_payload(name: str, current: dict | None, duration: float, record: dict 
             "art_style": str(plan.get("art_style") or plan.get("style") or "")}
 
 
+def project_export(audio, data):
+    mix_id = music_mix_id(applied_music(data))
+
+    def matches(path):
+        settings = (read_snapshot(path) or {}).get("settings") or {}
+        return music_mix_id(settings) == mix_id
+
+    return latest_export(audio, matches=matches)
+
+
 def video_payload(name: str, data: dict, result, export, *, store=None, result_snapshot=None) -> dict:
     """The video settings, the shot plan drawing would use, the mix's stills and its newest saved video."""
     settings = video_settings(data, export.engines)
@@ -208,7 +219,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
             plan.update(rows=[], subjects=[], counts={}, error=timing_error)
         stills = stills_payload(name, record, plan["rows"])
         scene = effect_scene(stills, mix_settings)
-        video = latest_export(audio)
+        video = project_export(audio, data)
         if video is not None:
             made = (read_snapshot(video) or {}).get("settings") or {}
             latest = {"url": f"/soundstage/api/video?name={quote(name)}&v={video.stat().st_mtime_ns}",
@@ -238,7 +249,7 @@ def boot_payload(engines: list) -> dict:
 
 def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, session_of, payload,
                          project: Callable[[str], tuple[dict, str | None]], gpu: bool, interrupt,
-                         blocked=None, admission_lock=None) -> Runs:
+                         music_clips: Path, blocked=None, admission_lock=None) -> Runs:
     """The video routes; ``export`` is the tab's :class:`visuals.VideoExport`. Returns the video runs."""
     busy = "This mix is already being planned, drawn or saved."
     # One run per mix, of any kind: drawing uses the plan and saving uses the stills.
@@ -504,7 +515,13 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             run.status = f"Rendering visual effects for Media… {frame * 100 // total}%"
 
         def work(run):
-            video = visuals.render_stills(result, root, subtitles=subtitles, scene=scene, progress=progress)
+            options = {}
+            soundtrack = applied_music(data)
+            if music_mix_id(soundtrack):
+                with project_lock(name):
+                    options["soundtrack"] = mixed_audio(result, soundtrack, music_clips)
+                options["music"] = soundtrack
+            video = visuals.render_stills(result, root, subtitles=subtitles, scene=scene, progress=progress, **options)
             run.status = f"Saved {video.name} to Media."
             run.revision += 1
 
@@ -567,7 +584,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         """The newest illustrated video made from the project's mix."""
         with found():
             owner_of(request)
-            _, result = project(name)
-        return file_response(latest_export(result) if result else None, media_type="video/mp4")
+            data, result = project(name)
+        return file_response(project_export(result, data) if result else None, media_type="video/mp4")
 
     return runs

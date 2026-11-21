@@ -347,6 +347,33 @@ class Drama3PageVideoTests(unittest.TestCase):
         folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
         self.assertEqual(len(list(folder.glob("*.jpg"))), 2)
 
+    def test_export_uses_the_project_soundtrack_and_only_offers_the_matching_video(self):
+        self.draw()
+        old_video = self.mix.with_name(f"{self.mix.stem}_illustrated_original.mp4")
+        old_video.write_bytes(b"original")
+        track = "music_cue.mp3"
+        with self.store.edit_soundstage_project(NAME["name"]) as data:
+            data["background_music"] = track
+        self.assertIsNone(self.project()["video"]["latest"])
+
+        soundtrack = self.root / "scored.mp3"
+        scored_video = self.mix.with_name(f"{self.mix.stem}_illustrated_scored.mp4")
+        scored_video.write_bytes(b"scored")
+        with patch("h3_ui.drama3.page_video.mixed_audio", return_value=soundtrack) as mix, \
+                patch.object(visuals, "render_video", return_value=scored_video) as render, \
+                patch.object(visuals, "which"):
+            self.ok(self.client.post(f"{API}/project/video/save", params=NAME))
+            self.assertIsNone(self.wait()["error"])
+        self.assertEqual(mix.call_args.args[0], str(self.mix))
+        self.assertEqual(mix.call_args.args[1]["background_music"], track)
+        self.assertEqual(render.call_args.kwargs["soundtrack"], soundtrack)
+        latest = self.project()["video"]["latest"]
+        self.assertEqual(self.client.get(latest["url"]).content, b"scored")
+        updated = self.ok(self.client.patch(f"{API}/project/music", params=NAME, json={"music_volume": 30}))
+        self.assertTrue(updated["music_pending"])
+        self.assertEqual(updated["video"]["latest"], latest)
+        self.assertEqual(self.client.get(latest["url"]).content, b"scored")
+
     def test_saving_to_media_renders_the_stills_on_request(self):
         refused = self.client.post(f"{API}/project/video/save", params=NAME)
         self.assertIn("Draw the images first", refused.json()["error"])
@@ -451,8 +478,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         from h3_app.generation.results import GenerationUpdate
         from h3_ui.drama3.controls import DRAMA3_SOUND_SLOTS, DRAMA3_VOICE_SLOTS
 
-        def speak(*values):
-            self.store.mark_soundstage_generated(values[-1], str(self.mix))
+        def speak(*values, publish):
             yield GenerationUpdate(str(self.mix), "Done.")
 
         def prepare(*values):
@@ -494,8 +520,7 @@ class Drama3PageVideoTests(unittest.TestCase):
         write_snapshot(updated_mix, {"family": DRAMA3_FAMILY, "settings": {"duration": 6,
             "chunks": [dict(name="Mia", text="Fresh plums!", start=0, end=4)]}})
 
-        def speak(*values):
-            self.store.mark_soundstage_generated(values[-1], str(updated_mix))
+        def speak(*values, publish):
             yield GenerationUpdate(str(updated_mix), "Done.")
 
         client = self.auto_client(speak)
@@ -785,10 +810,16 @@ class Drama3PageVideoTests(unittest.TestCase):
     def test_examples_replace_the_previous_plan_and_load_effects_before_speech(self):
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
         old_plan = visuals.read_plan(self.mix)
+        with self.store.edit_soundstage_project(NAME["name"]) as data:
+            data.update(background_music="old_music.mp3", music_volume=27,
+                        applied_music={"background_music": "old_music.mp3"})
         for lang, opening_effect in (("en", "rain"), ("zh", "snow"), ("zh-latest", "rain")):
             with self.subTest(lang=lang):
                 loaded = self.ok(self.client.post(f"{API}/project/example", params=NAME, json={"example": lang}))
                 self.assertIsNone(loaded["result"])
+                self.assertFalse(loaded["background_music"])
+                self.assertTrue(loaded["music_settings"]["music_enabled"])
+                self.assertEqual(loaded["music_settings"]["music_volume"], 27)
                 video = loaded["video"]
                 self.assertTrue(video["timing_pending"])
                 self.assertEqual(video["limit"], 16)

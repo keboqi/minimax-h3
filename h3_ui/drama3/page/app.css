@@ -219,6 +219,9 @@ button.step:hover { background: var(--surface); }
 .warnings { margin: 0; padding: 10px 12px 10px 30px; border-radius: 10px; background: var(--flag-bg); font-size: 13px; color: var(--flag); }
 .inspector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .sound-settings { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.music-controls { display: grid; gap: 10px; width: 100%; }
+.music-settings { border-top: 1px solid var(--line); }
+.music-controls output { min-width: 4ch; text-align: right; }
 
 /* The next move stays anchored at the window's bottom. */
 .actionbar { flex: none; position: relative; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
