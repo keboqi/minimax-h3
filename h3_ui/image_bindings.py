@@ -15,7 +15,7 @@ from h3_app.h3_image import H3_IMAGE_OFFICIAL
 from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
 from .engines.controls import QUIET, bind_resolution_presets, resolution_preset_values
 from .image_controller import (
-    IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
+    IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, matched_api_aspect, reference_limit, suggest_prompt,
 )
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
@@ -129,6 +129,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
 
     edit_controls = [engine_views[engine].edit_size for engine in ("qwen", "flux3", "fibo2")]
     edit_controls.extend([view.h3_edit_size, engine_views["qwen"].batch_edit_inputs, engine_views["qwen"].reference_resolution])
+    edit_controls.extend(component for name, component in view.hosted_fields.items()
+                         if name.endswith("__match_first_aspect"))
     cache_controls = [engine_views["qwen"].cache_device, engine_views["qwen"].cache_dtype]
     def edit_actions(engine):
         if engine not in IMAGE_MODELS:
@@ -166,12 +168,13 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             return (gr.skip(),) * 4
         intent = image_mode(engine, intent)
         editing = intent == "Image edit"
+        hosted_options = dict(zip(view.hosted_fields, hosted_values, strict=True))
         issue = draft_issue(
             engine, intent, text, paths, variant, fibo_model, separate, backend,
             gpt_models=gpt_models, gpt_endpoints=gpt_endpoints,
             gpt_quality=gpt_quality, gpt_width=gpt_width, gpt_height=gpt_height,
             gpt_batch_count=gpt_batch_count,
-            hosted_options=dict(zip(view.hosted_fields, hosted_values, strict=True)),
+            hosted_options=hosted_options,
         )
         limit = reference_limit(engine, variant, backend)
         note = ("MOSS-Image generates from text only." if engine == "moss_image" else
@@ -189,6 +192,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
                      "clicking an image adds its name to Layout boxes.")
         if not editing and paths:
             note += f" {len(paths)} saved reference(s) are inactive in Generate mode."
+        if not issue and (aspect := matched_api_aspect(engine, intent, paths, hosted_options)):
+            note += f" First image matches the {aspect} preset."
         ready = issue or f"Ready to {'edit' if editing else 'generate'} with {labels[engine]}."
         return (
             note, f'<p class="h3-readiness" role="status">{escape(ready)}</p>',

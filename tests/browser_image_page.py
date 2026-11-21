@@ -56,6 +56,11 @@ def run():
                                    if state["engine"] == "flux3" else None)
             elif "gpt_image__endpoints" in changes:
                 state["gpt_endpoints"]["value"] = changes["gpt_image__endpoints"]
+            elif "nano_banana__aspect_ratio" in changes:
+                state["hosted_aspect_ratio"]["value"] = changes["nano_banana__aspect_ratio"]
+            elif "nano_banana__match_first_aspect" in changes:
+                state["match_first_aspect"]["value"] = changes["nano_banana__match_first_aspect"]
+                state.update(matched_aspect_ratio="9:16", width=768, height=1376)
             request.fulfill(json={"state": state, "runs": {}})
         elif path == "/image/api/empty":
             writes.append("empty")
@@ -151,12 +156,16 @@ def run():
         boot["gpu"] = False
         boot["engines"] = [{"id": "gpt_image", "label": "GPT Image", "description": "API images", "api": True}]
         state.update(engine="gpt_image", prompt="A bird without a GPU", primary_available=True, failback_available=True,
+                     gpt_models={"name": "gpt_image__models", "value": ["gpt-image-2.5-flare"],
+                                 "choices": [["gpt-image-2.5-flare", "gpt-image-2.5-flare"]]},
+                     gpt_price_hint="~$0.00444/image · OpenAI output estimate.",
                      gpt_endpoints={"name": "gpt_image__endpoints", "value": ["primary"],
                                     "choices": [["Primary", "primary"], ["Failback", "failback"]]})
         page.reload()
         expect(page.locator("#prompt")).to_have_value("A bird without a GPU")
         expect(page.locator("#run")).to_be_enabled()
         expect(page.locator("#workshop-note")).to_be_visible()
+        expect(page.locator("#gpt-price-hint")).to_contain_text("$0.00444/image")
         endpoints = page.get_by_role("group", name="GPT Image endpoints")
         primary = endpoints.get_by_role("button", name="Primary")
         failback = endpoints.get_by_role("button", name="Failback")
@@ -168,17 +177,31 @@ def run():
         expect(failback).to_have_attribute("aria-pressed", "true")
         boot["engines"] = [{"id": "nano_banana", "label": "Nano Banana", "api": True}]
         state.update(
-            engine="nano_banana", width=1024, height=1024, requests_per_minute=10, gpt_endpoints=None,
+            engine="nano_banana", width=1024, height=1024, requests_per_minute=10, gpt_endpoints=None, gpt_models=None,
             hosted_model={"name": "nano_banana__model_choice", "value": "gemini-3.1-flash-lite-image",
                           "choices": [["gemini-3.1-flash-lite-image", "gemini-3.1-flash-lite-image"]]},
             hosted_resolution={"name": "nano_banana__resolution", "value": "1K",
                                "choices": [["1K · ~$0.0336/image", "1K"]]},
+            hosted_aspect_ratio={"name": "nano_banana__aspect_ratio", "value": "1:1",
+                                 "choices": [["1:1", "1:1"], ["9:16", "9:16"]]},
         )
         page.reload()
         expect(page.get_by_role("button", name="1K · ~$0.0336/image")).to_be_visible()
         expect(page.get_by_role("group", name="Size", exact=True).get_by_role("button")).to_have_count(1)
+        portrait = page.get_by_role("group", name="Aspect ratio").get_by_role("button", name="9:16")
+        portrait.click()
+        expect(portrait).to_have_attribute("aria-pressed", "true")
         expect(page.locator("#open-size")).to_be_hidden()
         expect(page.locator("#run")).to_be_enabled()
+        expect(page.get_by_role("checkbox", name="Match first image")).to_be_hidden()
+        state.update(editing=True, mode="Image edit", match_first_aspect={
+            "name": "nano_banana__match_first_aspect", "value": False,
+        })
+        page.reload()
+        page.get_by_role("checkbox", name="Match first image").check()
+        expect(page.locator("#resolution")).to_contain_text("768 × 1376")
+        expect(page.locator("#resolution")).to_contain_text("9:16 from first image")
+        expect(portrait).to_be_disabled()
         assert not errors, errors
         browser.close()
     print("Image page: toolbar layout, delayed draft saves, model switching, preview pixels and Empty passed.")

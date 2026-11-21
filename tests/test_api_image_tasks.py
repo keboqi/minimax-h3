@@ -161,7 +161,9 @@ class WorkshopApiImageTests(unittest.TestCase):
                 client.post("/image/api/prompt", json={"prompt": "a blue bird"})
                 client.post("/image/api/writer", json={"changes": {"review": False}})
                 target = runtime.output_dir / "result.png"
-                Image.new("RGB", (4, 4)).save(target)
+                Image.new("RGB", (9, 16)).save(target)
+                response = client.post("/image/api/settings", json={"changes": {"gpt_image__match_first_aspect": True}})
+                self.assertEqual(response.status_code, 200, response.text)
                 requests = []
                 def generate(request, runtime):
                     self.assertFalse(CURRENT_JOB.get().has_gpu)
@@ -183,13 +185,16 @@ class WorkshopApiImageTests(unittest.TestCase):
                         self.assertFalse(run["active"])
                         self.assertFalse(run.get("error"), run)
                 self.assertFalse(requests[0].reference_images)
+                self.assertEqual((requests[0].width, requests[0].height), (1920, 1088))
                 self.assertEqual(len(requests[1].reference_images), 1)
+                self.assertEqual((requests[1].width, requests[1].height), (1088, 1920))
 
-                def generate_hosted(engine, model, resolution, count, prompt, references, runtime):
+                def generate_hosted(engine, model, resolution, count, prompt, references, runtime, *, aspect_ratio):
                     self.assertFalse(CURRENT_JOB.get().has_gpu)
                     self.assertEqual((resolution, count, prompt), ("1K" if engine == "nano_banana" else "2K",
                                                                   1, "a blue bird"))
                     self.assertEqual(len(references), 1)
+                    self.assertEqual(aspect_ratio, "9:16")
                     yield GenerationUpdate([str(target)], f"{model} complete")
 
                 with patch("h3_app.generation.hosted_image.generate_hosted_image", generate_hosted):
@@ -200,7 +205,8 @@ class WorkshopApiImageTests(unittest.TestCase):
                         })
                         self.assertEqual(response.status_code, 200, response.text)
                         response = client.post("/image/api/settings", json={
-                            "changes": {f"{engine}__model_choice": model, f"{engine}__resolution": tier},
+                            "changes": {f"{engine}__model_choice": model, f"{engine}__resolution": tier,
+                                        f"{engine}__match_first_aspect": True},
                         })
                         self.assertEqual(response.status_code, 200, response.text)
                         response = client.post("/image/api/generate")

@@ -1,5 +1,8 @@
 """Image draft policies and named adapters to existing generation handlers."""
 
+from math import log
+from PIL import Image
+
 from h3_app.catalog import H3_EDIT_SIZE_CAP, H3_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MANUAL
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from h3_app.errors import H3Error
@@ -9,13 +12,39 @@ from h3_app.generation.requests import H3Request
 from h3_models import qwen_image21_reference_limit
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA, H3_IMAGE_EDIT_SIZE_MAX, H3_IMAGE_MAX_REFERENCES, official_edit_dimensions
 from h3_app.gpt_image import (
-    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_REFERENCES, GPT_IMAGE_QUALITY,
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_REFERENCES, GPT_IMAGE_QUALITY, GPT_IMAGE_SIZES,
     normalize_gpt_image_endpoints, normalize_gpt_image_models, validate_gpt_image_settings,
 )
-from h3_app.hosted_image import API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS, validate_hosted_image_settings
+from h3_app.hosted_image import (
+    API_IMAGE_ENGINES, DEFAULT_ASPECT_RATIO, HOSTED_IMAGE_PROVIDERS,
+    hosted_aspect_ratios, validate_hosted_image_settings,
+)
 from .h3.layout import start_frame_generation_resolution
 
 IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2", *API_IMAGE_ENGINES)
+GPT_IMAGE_ASPECT_SIZES = dict(zip(("16:9", "9:16"), GPT_IMAGE_SIZES, strict=True))
+
+
+def matched_api_aspect(engine, mode, references, settings):
+    """Match the first edit reference to the nearest supported aspect ratio."""
+    if (engine not in API_IMAGE_ENGINES or mode != "Image edit" or not references
+            or not settings.get(f"{engine}__match_first_aspect")):
+        return None
+    try:
+        with Image.open(references[0]) as source:
+            width, height = source.size
+            if source.getexif().get(274) in (5, 6, 7, 8):
+                width, height = height, width
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise H3Error("Could not read the first reference image's dimensions.") from exc
+    ratios = GPT_IMAGE_ASPECT_SIZES if engine == "gpt_image" else hosted_aspect_ratios(engine)
+    source_ratio = log(width / height)
+
+    def distance(ratio):
+        ratio_width, ratio_height = map(int, ratio.split(":"))
+        return abs(log(ratio_width / ratio_height) - source_ratio)
+
+    return min(ratios, key=distance)
 
 
 def image_mode(engine, intent):
@@ -69,8 +98,12 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
         except H3Error as exc:
             return str(exc)
     if engine in HOSTED_IMAGE_PROVIDERS:
+        settings = hosted_options or {}
         try:
-            validate_hosted_image_settings(engine, *hosted_image_options(engine, hosted_options or {}))
+            validate_hosted_image_settings(
+                engine, *hosted_image_options(engine, settings),
+                aspect_ratio=settings.get(f"{engine}__aspect_ratio", DEFAULT_ASPECT_RATIO),
+            )
         except H3Error as exc:
             return str(exc)
     if not (prompt or "").strip():
@@ -81,6 +114,10 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
         limit = reference_limit(engine, variant, h3_backend)
         if not (engine == "qwen" and separate) and len(references) > limit:
             return f"This model supports up to {limit} references per edit. Remove inputs or choose another model."
+        try:
+            matched_api_aspect(engine, mode, references, hosted_options or {})
+        except H3Error as exc:
+            return str(exc)
     return ""
 
 
@@ -248,23 +285,28 @@ class ImageGenerationController:
         if issue:
             raise H3Error(issue)
         active_references = list(references or []) if mode == "Image edit" else []
+        matched = matched_api_aspect(engine, mode, active_references, captured)
         if engine in HOSTED_IMAGE_PROVIDERS:
             from h3_app.generation.hosted_image import generate_hosted_image
 
             return generate_hosted_image(engine, *hosted_image_options(engine, captured),
-                                         prompt, active_references, self.deps.runtime_config())
+                                         prompt, active_references, self.deps.runtime_config(),
+                                         aspect_ratio=matched or captured.get(f"{engine}__aspect_ratio", DEFAULT_ASPECT_RATIO))
         if engine == "gpt_image":
             from h3_app.generation.gpt_image import GptImageRequest, generate_gpt_image
 
             endpoints = captured.get("gpt_image__endpoints")
+            width, height = GPT_IMAGE_ASPECT_SIZES[matched] if matched else (
+                captured.get("gpt_image__width", 1920), captured.get("gpt_image__height", 1088),
+            )
             request = GptImageRequest(
                 prompt=prompt,
                 models=normalize_gpt_image_models(captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,))),
                 use_failback=bool(captured.get("gpt_image__use_failback", False)),
                 endpoints=normalize_gpt_image_endpoints(endpoints) if endpoints is not None else None,
                 quality=str(captured.get("gpt_image__quality", GPT_IMAGE_QUALITY)),
-                width=int(captured.get("gpt_image__width", 1920)),
-                height=int(captured.get("gpt_image__height", 1088)),
+                width=int(width),
+                height=int(height),
                 batch_count=int(captured.get("gpt_image__batch_count", 1)),
                 reference_images=tuple(active_references),
             )

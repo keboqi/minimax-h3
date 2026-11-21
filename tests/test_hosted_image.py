@@ -24,10 +24,11 @@ class HostedImageTests(unittest.TestCase):
         ]}}]}
         with patch("h3_app.generation.hosted_image.requests.post", return_value=response) as post:
             data = _gemini_image(endpoint, "gemini-nano-banana-2.1", "edit", "4K",
-                                 [("reference.png", b"reference", "image/png")])
+                                 [("reference.png", b"reference", "image/png")], aspect_ratio="9:16")
         self.assertEqual(data, b"final")
         body = post.call_args.kwargs["json"]
         self.assertEqual(body["generationConfig"]["imageConfig"]["imageSize"], "4K")
+        self.assertEqual(body["generationConfig"]["imageConfig"]["aspectRatio"], "9:16")
         self.assertEqual(body["contents"][0]["parts"][1]["inlineData"]["mimeType"], "image/png")
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "key")
 
@@ -40,11 +41,28 @@ class HostedImageTests(unittest.TestCase):
             images.generate.return_value = images.edit.return_value = result
             model = "MAI-Image-2.7-Flash"
             self.assertEqual(_mai_image(endpoint, model, "create", "1K", []), b"image")
-            self.assertEqual(_mai_image(endpoint, model, "edit", "2K", references), b"image")
+            self.assertEqual(_mai_image(endpoint, model, "edit", "2K", references, aspect_ratio="16:9"), b"image")
         images.generate.assert_called_once_with(model=model, prompt="create", size="1024x1024", n=1)
-        images.edit.assert_called_once_with(model=model, prompt="edit", size="2048x2048", n=1, image=references)
+        images.edit.assert_called_once_with(model=model, prompt="edit", size="2720x1536", n=1, image=references)
         self.assertEqual(client_type.call_args.kwargs, {"base_url": endpoint.url, "api_key": "key",
                                                         "timeout": 600, "max_retries": 0})
+
+    def test_mai_foundry_uses_dimensions_for_generation_and_framing_for_edits(self):
+        endpoint = GptImageEndpoint("primary", "https://gateway.example/mai/v1", "key")
+        model = "MAI-Image-2.7"
+        response = MagicMock()
+        response.json.return_value = {"data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+        references = [("reference.png", b"reference", "image/png")]
+        with patch("h3_app.generation.hosted_image.requests.post", return_value=response) as post:
+            _mai_image(endpoint, model, "create", "1K", [], aspect_ratio="3:4")
+            self.assertEqual(post.call_args.kwargs["json"], {
+                "model": model, "prompt": "create", "width": 864, "height": 1152,
+            })
+            _mai_image(endpoint, model, "edit", "2K", references, aspect_ratio="9:16")
+            fields = post.call_args.kwargs["data"]
+            self.assertEqual(set(fields), {"model", "prompt"})
+            self.assertIn("9:16", fields["prompt"])
+            self.assertEqual(post.call_args.kwargs["files"], [("image", references[0])])
 
     def test_image_job_uses_provider_quota_and_keeps_provider_output_dimensions(self):
         buffer = io.BytesIO()
@@ -63,7 +81,7 @@ class HostedImageTests(unittest.TestCase):
                         with patch(f"h3_app.generation.hosted_image.{method}", return_value=buffer.getvalue()) as call:
                             updates = list(generate_hosted_image(engine, model, requested, 1, "test", [],
                                                                  SimpleNamespace(output_dir=root)))
-                        call.assert_called_once_with(endpoint, model, "test", requested, [])
+                        call.assert_called_once_with(endpoint, model, "test", requested, [], aspect_ratio="1:1")
                         self.assertEqual(limiter.acquire.call_args.args, (endpoint.url, engine))
                         self.assertEqual(limiter.acquire.call_args.kwargs["api_key"], endpoint.api_key)
                         with Image.open(updates[-1][0][0]) as image:

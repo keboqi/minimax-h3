@@ -18,6 +18,9 @@ DEFAULT_GPT_IMAGE_MODEL = "gpt-image-2.5-flare"
 GPT_IMAGE_QUALITY = "low"
 GPT_IMAGE_QUALITIES = ("low", "medium")
 GPT_IMAGE_SIZES = ((1920, 1088), (1088, 1920))
+# OpenAI's calculator gives 148 low or 344 medium image-output tokens for either canvas.
+GPT_IMAGE_OUTPUT_PRICES = {"low": "$0.00444", "medium": "$0.01032"}
+GPT_IMAGE_PRICE_SCOPE = "OpenAI output estimate. Input charges are separate, and gateway rates may differ."
 GPT_IMAGE_RESOLUTION_PRESETS = ("2M · 16:9 · 1920×1088", "2M · 9:16 · 1088×1920")
 GPT_IMAGE_RATE_LIMIT = 2
 GPT_IMAGE_RATE_WINDOW_SECONDS = 60.0

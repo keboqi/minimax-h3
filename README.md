@@ -459,13 +459,16 @@ Select **Primary**, **Failback**, or both in Image → GPT Image → Endpoints.
 Selecting both distinct endpoints combines their budgets and lets failed requests
 retry on the other endpoint. Rate-limited requests wait and retry, while
 character matching waits for its portrait and scene images.
+GPT Image shows the estimated output cost for the selected quality at its
+supported canvas sizes. [OpenAI image generation cost calculator](https://developers.openai.com/api/docs/guides/image-generation#calculating-costs).
 The Image page in Studio and CPU Workshop also supports **Nano Banana** with
 `GEMINI_API_KEY` and **MAI-Image** with the primary `GPT_IMAGE_API_URL` and
 `GPT_IMAGE_API_KEY`. Nano Banana shares 10 requests per minute across its two
 Gemini models. MAI-Image 2.7 and 2.7 Flash share 6 requests per minute.
-The picker shows native square sizes and estimated prices. Nano Banana 2.1
+The picker shows native sizes, aspect ratios, and estimated prices. Nano Banana 2.1
 offers 1K, 2K and 4K. Gemini 3.1 Flash Lite offers 1K, and both MAI models
-offer 1K and 2K. MAI estimates
+offer 1K and 2K. For Foundry image edits, the selected framing is passed as
+prompt guidance. MAI estimates
 use Microsoft's typical per-image price as a baseline and scale with output
 area. Actual charges depend on usage and the configured gateway.
 [Gemini API pricing](https://aistudio.google.com/docs/pricing).

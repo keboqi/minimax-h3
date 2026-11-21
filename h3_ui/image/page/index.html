@@ -130,7 +130,8 @@
           <button type="button" class="link" id="open-model-plain">Model &amp; sampling</button>
         </div>
         <div class="row setting" id="gpt-models-row" hidden><span class="small muted name">Models</span>
-          <div class="seg wrap" role="group" aria-label="GPT Image models" id="gpt-models"></div></div>
+          <div class="seg wrap" role="group" aria-label="GPT Image models" id="gpt-models"></div>
+          <span class="small muted" id="gpt-price-hint" aria-live="polite"></span></div>
         <div class="row setting" id="hosted-model-row" hidden><span class="small muted name">Model</span>
           <div class="seg wrap" role="group" aria-label="Hosted model" id="hosted-model"></div></div>
         <div class="row setting" id="gpt-endpoints-row" hidden><span class="small muted name">Endpoints</span>
@@ -141,8 +142,10 @@
           <span class="small muted" id="batch-note">same inputs, a different seed each</span></div>
         <div class="row setting" id="edit-size-row" hidden><span class="small muted name">Edit size</span>
           <div class="seg wrap" role="group" aria-label="Edit output size" id="edit-size"></div></div>
-        <div class="row setting" id="aspect-row"><span class="small muted name">Aspect ratio</span>
-          <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div></div>
+        <div class="row setting"><span class="small muted name">Aspect ratio</span>
+          <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div>
+          <label class="check" id="match-first-row" hidden><input type="checkbox" id="match-first"> Match first image</label>
+        </div>
         <div class="row setting"><span class="small muted name">Size</span>
           <div class="seg wrap" role="group" aria-label="Size" id="tier"></div></div>
         <div class="row between line-above">

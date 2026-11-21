@@ -11,7 +11,8 @@ import requests
 
 from h3_app.errors import H3Error
 from h3_app.hosted_image import (
-    HOSTED_IMAGE_PROVIDERS, NANO_BANANA, RESOLUTION_PIXELS, validate_hosted_image_settings,
+    DEFAULT_ASPECT_RATIO, GEMINI_FLASH_LITE, HOSTED_IMAGE_PROVIDERS, MAI_IMAGE, NANO_BANANA,
+    hosted_image_dimensions, validate_hosted_image_settings,
 )
 from h3_app.jobs import JobCancelled, check_cancelled, record_failure
 from h3_app.llm import gemini
@@ -26,12 +27,12 @@ RATE_LIMITERS = {engine: GptImageRateLimiter(limit=provider.requests_per_minute)
                  for engine, provider in HOSTED_IMAGE_PROVIDERS.items()}
 
 
-def _gemini_image(endpoint, model, prompt, resolution, references):
+def _gemini_image(endpoint, model, prompt, resolution, references, *, aspect_ratio=DEFAULT_ASPECT_RATIO):
     parts = [{"text": prompt}]
     parts.extend({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}}
                  for _, data, mime in references)
-    image_config = {"aspectRatio": "1:1"}
-    if model != "gemini-3.1-flash-lite-image":
+    image_config = {"aspectRatio": aspect_ratio}
+    if model != GEMINI_FLASH_LITE:
         image_config["imageSize"] = resolution
     response = requests.post(
         f"{endpoint.url}/v1beta/models/{model}:generateContent",
@@ -55,16 +56,20 @@ def _gemini_image(endpoint, model, prompt, resolution, references):
     raise H3Error(f"Gemini returned no image ({gemini.empty_reply_reason(payload)}).")
 
 
-def _mai_image(endpoint, model, prompt, resolution, references):
+def _mai_image(endpoint, model, prompt, resolution, references, *, aspect_ratio=DEFAULT_ASPECT_RATIO):
     from openai import OpenAI
 
-    pixels = RESOLUTION_PIXELS[resolution]
+    width, height = hosted_image_dimensions(MAI_IMAGE, resolution, aspect_ratio)
     if endpoint.url.lower().endswith("/mai/v1"):
         # Foundry exposes its MAI-specific endpoint at this path.
         operation = "edits" if references else "generations"
-        fields = {"model": model, "prompt": prompt, "width": pixels, "height": pixels}
-        request = ({"data": fields, "files": [("image", image) for image in references]}
-                   if references else {"json": fields})
+        fields = {"model": model, "prompt": prompt}
+        if references:
+            # Foundry exposes explicit dimensions on generations. Edits take framing in the prompt.
+            fields["prompt"] = f"{prompt}\n\nFrame the result at {aspect_ratio} ({width}×{height})."
+            request = {"data": fields, "files": [("image", image) for image in references]}
+        else:
+            request = {"json": {**fields, "width": width, "height": height}}
         response = requests.post(f"{endpoint.url}/images/{operation}",
                                  headers={"api-key": endpoint.api_key}, timeout=600, **request)
         response.raise_for_status()
@@ -73,7 +78,7 @@ def _mai_image(endpoint, model, prompt, resolution, references):
             raise H3Error("MAI-Image returned no image.")
         return base64.b64decode(items[0]["b64_json"])
     with OpenAI(base_url=endpoint.url, api_key=endpoint.api_key, timeout=600, max_retries=0) as client:
-        fields = {"model": model, "prompt": prompt, "size": f"{pixels}x{pixels}", "n": 1}
+        fields = {"model": model, "prompt": prompt, "size": f"{width}x{height}", "n": 1}
         if references:
             image = references[0] if len(references) == 1 else references
             response = client.images.edit(image=image, **fields)
@@ -82,8 +87,9 @@ def _mai_image(endpoint, model, prompt, resolution, references):
     return _extract_image_bytes(response, label="MAI-Image")
 
 
-def generate_hosted_image(engine, model, resolution, batch_count, prompt, references, runtime):
-    endpoint = validate_hosted_image_settings(engine, model, resolution, batch_count)
+def generate_hosted_image(engine, model, resolution, batch_count, prompt, references, runtime,
+                          *, aspect_ratio=DEFAULT_ASPECT_RATIO):
+    endpoint = validate_hosted_image_settings(engine, model, resolution, batch_count, aspect_ratio=aspect_ratio)
     provider = HOSTED_IMAGE_PROVIDERS[engine]
     prompt = str(prompt or "").strip()
     if not prompt:
@@ -96,7 +102,7 @@ def generate_hosted_image(engine, model, resolution, batch_count, prompt, refere
     notices = SimpleQueue()
     count = int(batch_count)
 
-    yield GenerationUpdate(None, f"{model} · Preparing {count} image request(s) at {resolution}…")
+    yield GenerationUpdate(None, f"{model} · Preparing {count} image request(s) at {resolution} · {aspect_ratio}…")
     encoded = [_encode_reference_file(path) for path in references]
 
     def run_one(index):
@@ -106,7 +112,7 @@ def generate_hosted_image(engine, model, resolution, batch_count, prompt, refere
                             on_wait=lambda delay: notices.put(f"{provider.label} · Waiting {delay:.0f}s for quota"))
             check_cancelled()
             try:
-                raw = generate(endpoint, model, prompt, resolution, encoded)
+                raw = generate(endpoint, model, prompt, resolution, encoded, aspect_ratio=aspect_ratio)
                 break
             except Exception as exc:
                 delay = _rate_limit_delay(exc)
@@ -119,7 +125,7 @@ def generate_hosted_image(engine, model, resolution, batch_count, prompt, refere
         target = runtime.output_dir / f"{engine}_{job_id}_{index + 1:05d}.png"
         width, height = _save_png(raw, target)
         write_snapshot(target, {"job_id": job_id, "family": provider.label, "settings": {
-            "model": model, "resolution": resolution,
+            "model": model, "resolution": resolution, "aspect_ratio": aspect_ratio,
             "width": width, "height": height, "batch_count": count,
             "variant_index": index, "reference_count": len(references),
         }})

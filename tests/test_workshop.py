@@ -411,7 +411,7 @@ class ModelManagerTests(unittest.TestCase):
             for install in ui.h3_routes:
                 install(app)
             client = TestClient(app)
-            self.assertTrue(client.get("/storyboard/api/boot").json()["gpu"])
+            self.assertFalse(client.get("/storyboard/api/boot").json()["gpu"])
             created = client.post("/storyboard/api/boards", json={"name": "Workshop story", "story": "One.\n\n---\n\nTwo."})
             self.assertEqual(created.status_code, 200)
             board = created.json()
@@ -517,13 +517,12 @@ class ModelManagerTests(unittest.TestCase):
     def test_cpu_image_includes_hosted_writer_dependencies_and_guidelines(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
-        image = next(node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
-                     and any(isinstance(target, ast.Name) and target.id == "console_image"
-                             for target in node.targets)
-                     and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
-                     and node.value.func.attr == "uv_pip_install")
-        install = next(node for node in ast.walk(image) if isinstance(node, ast.Call)
-                       and isinstance(node.func, ast.Attribute) and node.func.attr == "uv_pip_install")
+        install = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute) and node.func.attr == "uv_pip_install"
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "console_image"
+        )
         from h3_workshop_requirements import WORKSHOP_REQUIREMENTS
 
         self.assertEqual(ast.unparse(install.args[0]), "*WORKSHOP_REQUIREMENTS")

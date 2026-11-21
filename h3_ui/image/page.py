@@ -19,10 +19,13 @@ from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
 from h3_app.gpt_image import (
-    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, gpt_image_credentials,
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_OUTPUT_PRICES, GPT_IMAGE_PRICE_SCOPE, GPT_IMAGE_QUALITY, gpt_image_credentials,
     gpt_image_max_concurrency, gpt_image_quality_choices, normalize_gpt_image_endpoints, validate_gpt_image_quality,
 )
-from h3_app.hosted_image import API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS, RESOLUTION_PIXELS, hosted_image_endpoint
+from h3_app.hosted_image import (
+    API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS, MAI_IMAGE, RESOLUTION_PIXELS,
+    hosted_image_dimensions, hosted_image_endpoint,
+)
 from h3_app import catalog, media_review
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
@@ -36,7 +39,9 @@ from ..engines.controls import resolution_preset_values
 from ..engines.moss_image import moss_image_turbo_defaults, moss_image_turbo_size_steps
 from ..engines.qwen.bindings import qwen_turbo_defaults
 from ..engines.qwen.view import QWEN_IMAGE21_LIGHTNING_MODES
-from ..image_controller import IMAGE_MODELS, draft_issue, image_mode, reference_limit, reference_tag
+from ..image_controller import (
+    GPT_IMAGE_ASPECT_SIZES, IMAGE_MODELS, draft_issue, image_mode, matched_api_aspect, reference_limit, reference_tag,
+)
 from ..job_admission import execute_accepted
 from ..page_fields import (
     FieldSpec, change_writer, coerce, library_items, library_source, option_row, owned_file,
@@ -77,7 +82,8 @@ GROUP_OF = {
 }
 # Options Compose shows itself; a change to one is not a change to the preset's settings.
 COMPOSE = ("preset", "batch_count", "batch_edit_inputs", "edit_size", "layout",
-           "output_resolution_1k", "output_resolution_2k", "models", "endpoints", "resolution")
+           "output_resolution_1k", "output_resolution_2k", "models", "endpoints", "resolution", "aspect_ratio",
+           "match_first_aspect")
 EDIT_ONLY = ("reference_resolution", "cache_device", "cache_dtype")
 
 
@@ -513,14 +519,28 @@ class ImagePageState(OwnerPageState):
         provider = HOSTED_IMAGE_PROVIDERS.get(engine)
         hosted_model = compose("model_choice") if provider else None
         hosted_resolution = compose("resolution") if provider else None
+        hosted_ratio = compose("aspect_ratio") if provider else None
+        match_first_aspect = compose("match_first_aspect", editing)
+        matched = None
+        if match_first_aspect and match_first_aspect["value"]:
+            try:
+                matched = matched_api_aspect(engine, mode, state["references"], options)
+            except H3Error as exc:
+                issue = issue or str(exc)
         if hosted_resolution:
             hosted_resolution["choices"] = provider.resolution_choices(hosted_model["value"])
-            width = height = RESOLUTION_PIXELS[hosted_resolution["value"]]
+            width, height = hosted_image_dimensions(engine, hosted_resolution["value"], matched or hosted_ratio["value"])
+        elif matched:
+            width, height = GPT_IMAGE_ASPECT_SIZES[matched]
         else:
             width, height = options[key_of(engine, "width")], options[key_of(engine, "height")]
         api_availability = {"gpt_image": creds.available}
+        size_note = ""
         for hosted_engine in HOSTED_IMAGE_PROVIDERS:
-            api_availability[hosted_engine] = hosted_image_endpoint(hosted_engine) is not None
+            endpoint = hosted_image_endpoint(hosted_engine)
+            api_availability[hosted_engine] = endpoint is not None
+            if editing and engine == hosted_engine == MAI_IMAGE and endpoint and endpoint.url.lower().endswith("/mai/v1"):
+                size_note = "Foundry edits use the requested framing as prompt guidance. Output dimensions may vary."
         batch = compose("batch_count")
         if engine == "gpt_image" and batch is not None:
             batch = {
@@ -532,11 +552,17 @@ class ImagePageState(OwnerPageState):
                 ),
             }
         paths = [self.grant(owner, path) for path in state["results"]]
+        gpt_price = None
+        if engine == "gpt_image":
+            price = GPT_IMAGE_OUTPUT_PRICES[options["gpt_image__quality"]]
+            gpt_price = f"~{price}/image · {GPT_IMAGE_PRICE_SCOPE}"
         return {
             "engine": engine, "mode": mode, "editing": editing, "generate_only": engine == "moss_image",
             "available": api_availability.get(engine, True),
             "api_availability": api_availability,
-            "hosted_model": hosted_model, "hosted_resolution": hosted_resolution,
+            "hosted_model": hosted_model, "hosted_resolution": hosted_resolution, "hosted_aspect_ratio": hosted_ratio,
+            "match_first_aspect": match_first_aspect, "matched_aspect_ratio": matched,
+            "size_note": size_note,
             "requests_per_minute": provider.requests_per_minute if provider else None,
             "gpt_image_available": creds.available,
             "primary_available": creds.primary_available,
@@ -548,7 +574,7 @@ class ImagePageState(OwnerPageState):
                            for index, path in enumerate(state["references"], 1)],
             "fields": rows, "changed": counts,
             "preset": compose("preset"), "batch": batch,
-            "gpt_models": compose("models"), "gpt_endpoints": compose("endpoints"),
+            "gpt_models": compose("models"), "gpt_endpoints": compose("endpoints"), "gpt_price_hint": gpt_price,
             "edit_size": compose("edit_size", editing), "separate": compose("batch_edit_inputs", editing),
             "layout": compose("layout"),
             "width": width, "height": height,

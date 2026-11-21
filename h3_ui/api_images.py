@@ -10,7 +10,7 @@ from h3_app.gpt_image import (DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_ENDPOINT_CHOICE
                               GPT_IMAGE_QUALITY, GPT_IMAGE_MAX_CONCURRENCY, GPT_IMAGE_RESOLUTION_PRESETS,
                               gpt_image_credentials)
 from h3_app.jobs import JOBS
-from h3_app.hosted_image import API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS
+from h3_app.hosted_image import API_IMAGE_ENGINES, DEFAULT_ASPECT_RATIO, HOSTED_IMAGE_PROVIDERS, hosted_aspect_ratios
 from .image_controller import ImageGenerationController
 from .image.page import ImagePageServices, ImagePageState, install_image_page, private_image_root
 from .job_bindings import owned_generation
@@ -47,6 +47,12 @@ def build_api_images(ui, runtime, *, library=None):
             f"{engine}__batch_count": FieldSpec("int", "Concurrent images", 1, minimum=1,
                                                maximum=provider.requests_per_minute, step=1),
         })
+    # Retained jobs use the order of these fields.
+    fields.update({f"{engine}__aspect_ratio": FieldSpec(
+        "choice", "Aspect ratio", DEFAULT_ASPECT_RATIO, tuple((ratio, ratio) for ratio in hosted_aspect_ratios(engine)),
+    ) for engine in HOSTED_IMAGE_PROVIDERS})
+    fields.update({f"{engine}__match_first_aspect": FieldSpec("bool", "Match first image", False)
+                   for engine in API_IMAGE_ENGINES})
     deps = SimpleNamespace(runtime_config=lambda: runtime,
                            resolve_result=lambda name: runtime.output_dir / Path(name).name)
     controller = ImageGenerationController.api_only(

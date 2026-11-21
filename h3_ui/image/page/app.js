@@ -212,7 +212,7 @@
   };
   const renderOutput = () => {
     const {preset, batch, edit_size: editSize, gpt_models: gptModels, gpt_endpoints: endpoints,
-      hosted_model: hostedModel, hosted_resolution: hostedSize} = app.s;
+      hosted_model: hostedModel, hosted_resolution: hostedSize, hosted_aspect_ratio: hostedRatio} = app.s;
     $("preset-box").hidden = !preset;
     $("no-preset").hidden = Boolean(preset || hostedModel);
     if (preset) {
@@ -225,6 +225,7 @@
     $("gpt-models-row").hidden = !gptModels;
     if (gptModels) {
       multiSeg($("gpt-models"), gptModels.choices, gptModels.value, (value) => change("edit", {[gptModels.name]: value}));
+      $("gpt-price-hint").textContent = app.s.gpt_price_hint;
     }
     $("hosted-model-row").hidden = !hostedModel;
     if (hostedModel) {
@@ -256,19 +257,30 @@
     const chosen = sizeChoice();
     const ratios = [...new Set(tiers.flatMap((tier) => tier.sizes.map((size) => size.ratio)))];
     const restricted = app.s.engine === "gpt_image";
-    $("aspect-row").hidden = Boolean(hostedSize);
-    $("open-size").hidden = Boolean(hostedSize);
+    const match = app.s.match_first_aspect;
+    const matching = Boolean(match?.value);
+    $("match-first-row").hidden = !match;
+    $("match-first").checked = matching;
+    $("match-first").onchange = match ? (event) => change("edit", {[match.name]: event.target.checked}) : null;
+    $("open-size").hidden = Boolean(hostedSize) || matching;
     $("open-size").textContent = restricted ? "Exact size" : "Exact size & seed";
     if (hostedSize) {
+      seg($("aspect"), hostedRatio.choices, app.s.matched_aspect_ratio || hostedRatio.value,
+        (value) => change("edit", {[hostedRatio.name]: value}), {disabled: matching});
       seg($("tier"), hostedSize.choices, hostedSize.value, (value) => change("edit", {[hostedSize.name]: value}));
     } else {
-      seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
+      seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio,
+        (value) => pickSize(value, Math.max(0, chosen.tier)), {disabled: matching});
       seg($("tier"), restricted ? tiers.map((tier, index) => [tier.label, index]) : [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
-        (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value));
+        (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value), {disabled: matching});
     }
     const follows = editSize && editSize.value !== editSize.choices[editSize.choices.length - 1][1];
+    const matchNote = matching
+      ? app.s.matched_aspect_ratio ? ` · ${app.s.matched_aspect_ratio} from first image` : " · add a first image to match"
+      : "";
     $("resolution").replaceChildren(h("span", {class: "mono", text: `${app.s.width} × ${app.s.height}`}),
-      h("span", {class: "muted", text: ` · ${(app.s.width * app.s.height / 1e6).toFixed(1)} MP${follows ? " · this edit follows Edit size; pick a size to override it" : ""}`}));
+      h("span", {class: "muted", text: ` · ${(app.s.width * app.s.height / 1e6).toFixed(1)} MP${follows ? " · this edit follows Edit size; pick a size to override it" : ""}${matchNote}`}),
+      app.s.size_note && h("span", {class: "muted", text: ` · ${app.s.size_note}`}));
   };
 
   // Prompt ------------------------------------------------------------------
@@ -423,7 +435,7 @@
       `${count} ${count === 1 ? "image" : "images"}`].filter(Boolean).join(" · ");
     const chips = [editing ? `Edit · ${app.s.references.length} ${app.s.references.length === 1 ? "image" : "images"}` : "Generate"];
     if (app.s.engine === "gpt_image") {
-      chips.push("Quality low");
+      chips.push(`Quality ${app.s.options.gpt_image__quality || "low"}`);
       if (endpoints?.value) {
         chips.push(endpoints.choices.filter(([, id]) => endpoints.value.includes(id)).map(([label]) => label).join(" + "));
       }

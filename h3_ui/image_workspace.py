@@ -13,10 +13,11 @@ from h3_app.h3_image import (
 )
 from h3_app.gpt_image import (
     DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_ENDPOINT_CHOICES, GPT_IMAGE_MAX_CONCURRENCY,
-    GPT_IMAGE_MODELS, GPT_IMAGE_QUALITIES, GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
+    GPT_IMAGE_MODELS, GPT_IMAGE_OUTPUT_PRICES, GPT_IMAGE_PRICE_SCOPE,
+    GPT_IMAGE_QUALITIES, GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
     gpt_image_credentials,
 )
-from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
+from h3_app.hosted_image import API_IMAGE_ENGINES, DEFAULT_ASPECT_RATIO, HOSTED_IMAGE_PROVIDERS, hosted_aspect_ratios
 from .engines.controls import QUIET, generation_actions, prompt_writer, resolution_presets
 from .image_controller import IMAGE_MODELS, reference_tag
 from .image_library import build_image_file_input
@@ -95,6 +96,8 @@ def _move(component):
 def _build_size_settings(engine_views):
     size_groups = {}
     hosted_fields = {}
+    hosted_ratios = {}
+    hosted_matches = {}
     with gr.Accordion("Output settings", open=True):
         for engine in IMAGE_MODELS:
             with gr.Group(visible=engine == "qwen") as size_groups[engine]:
@@ -126,6 +129,9 @@ def _build_size_settings(engine_views):
                     gpt_image_seed = gr.Number(value=-1, precision=0, visible=False)
                 elif engine in HOSTED_IMAGE_PROVIDERS:
                     provider = HOSTED_IMAGE_PROVIDERS[engine]
+                    hosted_ratios[f"{engine}__aspect_ratio"] = gr.Dropdown(
+                        hosted_aspect_ratios(engine), value=DEFAULT_ASPECT_RATIO, label="Aspect ratio",
+                    )
                     hosted_fields[f"{engine}__resolution"] = gr.Dropdown(
                         provider.resolution_choices(provider.default_model), value="1K",
                         label="Output size", info="Estimated USD per image. Input and gateway charges may vary.",
@@ -135,9 +141,15 @@ def _build_size_settings(engine_views):
                         component = getattr(engine_views[engine], name, None)
                         if component is not None:
                             _move(component)
+                if engine in API_IMAGE_ENGINES:
+                    hosted_matches[f"{engine}__match_first_aspect"] = gr.Checkbox(
+                        value=False, visible=False, label="Match first image",
+                        info="Use the closest supported aspect ratio for edits.",
+                    )
     return (
         size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
-        gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed, hosted_fields,
+        gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed,
+        hosted_fields, {**hosted_ratios, **hosted_matches},
     )
 
 
@@ -175,7 +187,10 @@ def _build_model_settings(engine_views, h3, labels, hosted_fields):
                     )
                     gpt_image_quality = gr.Dropdown(
                         list(GPT_IMAGE_QUALITIES), value=GPT_IMAGE_QUALITY, label="Image quality",
-                        interactive=True, info="Medium requires all selected models to be GPT Image 2.5.",
+                        interactive=True,
+                        info=f"Low ~{GPT_IMAGE_OUTPUT_PRICES['low']}/image. "
+                             f"Medium ~{GPT_IMAGE_OUTPUT_PRICES['medium']}/image with GPT Image 2.5. "
+                             f"{GPT_IMAGE_PRICE_SCOPE}",
                     )
                 elif engine in HOSTED_IMAGE_PROVIDERS:
                     provider = HOSTED_IMAGE_PROVIDERS[engine]
@@ -234,7 +249,7 @@ def build_image_view(root, engine, engine_views, h3):
             with gr.Column(scale=3, min_width=320):
                 (
                     size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
-                    gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed, hosted_fields,
+                    gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed, hosted_fields, hosted_ratios,
                 ) = _build_size_settings(engine_views)
             with gr.Column(scale=2, min_width=320):
                 (
@@ -252,7 +267,7 @@ def build_image_view(root, engine, engine_views, h3):
         gpt_image_height=gpt_image_height, gpt_image_seed=gpt_image_seed,
         gpt_image_models=gpt_image_models, gpt_image_endpoints=gpt_image_endpoints,
         gpt_image_quality=gpt_image_quality,
-        hosted_fields=hosted_fields,
+        hosted_fields={**hosted_fields, **hosted_ratios},
         reference_panel=reference_panel,
         batch_counts=batch_counts,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,
