@@ -27,12 +27,10 @@ from fastapi.responses import Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.alignment import open_alignment
 from h3_app.dubbing.lip_sync import (
-    REPORT_FILE, SCAN_CACHE_DIR, build_lip_sync_plan_payload, load_lip_sync_plan,
-    load_manual_overrides, plan_lip_sync_windows, save_manual_overrides, _save_lip_sync_plan,
+    REPORT_FILE, SCAN_CACHE_DIR, load_lip_sync_plan, load_manual_overrides, revise_lip_sync_plan,
 )
-from h3_app.dubbing.lip_sync_match import assign_speakers_to_shots, load_source_scan, video_fingerprint
+from h3_app.dubbing.lip_sync_match import load_source_scan, video_fingerprint
 from h3_app.dubbing.results import PLAYER_DIR, TRACKS, load_player, load_result, player_folder
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
@@ -256,6 +254,7 @@ def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
             })
     return {
         "video": video.name,
+        "video_version": _version(video),
         "ready": ready,
         "output": output,
         "report": {
@@ -869,6 +868,25 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return start(request, WORDS, session_id, "words", handlers.align_words, [session_id], reader(1),
                      session_id=session_id)
 
+    def lip_sync_source(session_id, video=None, video_version=None):
+        loaded = load(session_id)
+        output = loaded.data.get("last_output")
+        result = load_result(output) if output else None
+        dub = result.video if result else None
+        if dub is None or not dub.is_file():
+            raise H3Error("Generate a video dub first.")
+        if (video is not None and video != dub.name) or (video_version is not None and video_version != _version(dub)):
+            raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
+        return loaded, dub
+
+    def checked_lip_sync_plan(dub, revision):
+        plan = load_lip_sync_plan(dub)
+        if plan is None:
+            raise H3Error("Detect faces and speakers before reviewing this dub.")
+        if revision is not None and plan["revision"] != revision:
+            raise H3Error("The lip-sync plan changed. Review the updated face assignments.")
+        return plan
+
     def _lip_sync_plan_response(sid: str, loaded: sessions.Session, dub: Path) -> dict[str, Any]:
         ver = _version(dub)
         plan = load_lip_sync_plan(dub)
@@ -891,6 +909,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return {
             "session": sid,
             "video": dub.name,
+            "video_version": ver,
             "video_url": f"{API}/output?session={sid}&name={quote(dub.name)}&inline=true&v={ver}",
             "dub_audio_url": f"{API}/track?session={sid}&name=dub&v={ver}",
             "speakers": speakers,
@@ -901,46 +920,29 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
 
     @app.get(f"{API}/lip-sync-plan", include_in_schema=False)
     @guarded
-    def lip_sync_plan(session: str, request: Request):
+    def lip_sync_plan(session: str, request: Request, video: str | None = None, video_version: str | None = None):
         owner_of(request)
-        loaded = load(session)
-        output = loaded.data.get("last_output")
-        result = load_result(output) if output else None
-        dub = result.video if result else None
-        if dub is None or not dub.is_file():
-            raise H3Error("Generate a video dub first.")
+        loaded, dub = lip_sync_source(session, video, video_version)
         return _lip_sync_plan_response(session, loaded, dub)
 
     @app.post(f"{API}/lip-sync-detect", include_in_schema=False)
     @guarded
     def lip_sync_detect(request: Request, body: dict = Body(...)):
         session_id = str(body.get("session") or "")
-        loaded = load(session_id)
-        output = loaded.data.get("last_output")
-        result = load_result(output) if output else None
-        dub = result.video if result else None
-        if dub is None or not dub.is_file():
-            raise H3Error("Generate a video dub first.")
+        _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
         force = bool(body.get("force", False))
         return start(
             request, LIP_SYNC_DETECT, session_id, LIP_SYNC_DETECT, handlers.detect_lip_sync,
-            [session_id, force], reader(1), session_id=session_id, dub_video=dub.name,
+            [session_id, force, str(dub)], reader(1), session_id=session_id, dub_video=dub.name,
         )
 
     @app.post(f"{API}/lip-sync-overrides", include_in_schema=False)
     @guarded
     def lip_sync_overrides_save(request: Request, body: dict = Body(...)):
-        owner_of(request)
+        owner = owner_of(request)
         session_id = str(body.get("session") or "")
-        loaded = load(session_id)
-        output = loaded.data.get("last_output")
-        result = load_result(output) if output else None
-        dub = result.video if result else None
-        if dub is None or not dub.is_file():
-            raise H3Error("Generate a video dub first.")
-        merged = load_manual_overrides(dub)
-        if body.get("clear"):
-            merged = {}
+        edits = {}
+        reset = set()
         raw_overrides = body.get("overrides") or []
         if isinstance(raw_overrides, list):
             for item in raw_overrides:
@@ -948,35 +950,22 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                     raise H3Error("Each face override needs shot_index and speaker.")
                 key = (int(item["shot_index"]), str(item["speaker"]))
                 if item.get("reset"):
-                    merged.pop(key, None)
+                    edits.pop(key, None)
+                    reset.add(key)
                 else:
                     track_id = item.get("track_id")
-                    merged[key] = None if track_id is None else int(track_id)
-        save_manual_overrides(dub, merged)
-        # Recompute cached plan assignments immediately without re-scanning video frames.
-        scan = load_source_scan(dub.parent / PLAYER_DIR / SCAN_CACHE_DIR, video_fingerprint(dub))
-        if scan is not None:
-            try:
-                with open_alignment(dub) as (saved, _clips):
-                    saved_lines = list(saved.get("lines") or ())
-                    saved_spoken = dict(saved.get("spoken") or {})
-                    saved_vs = list(saved.get("visual_speakers") or ())
-                eff_vs = saved_vs if saved_vs else list((loaded.data.get("transcript") or {}).get("visual_speakers") or ())
-                assignments = assign_speakers_to_shots(
-                    scan, saved_lines, visual_speakers=eff_vs or None, manual_overrides=merged or None,
-                )
-                windows = plan_lip_sync_windows(
-                    dub, scan.duration, video_size=(scan.width, scan.height), shot_cuts=scan.cuts,
-                    assignments=assignments, visual_speakers=eff_vs or None,
-                )
-                plan = build_lip_sync_plan_payload(
-                    dub=dub, scan=scan, lines=saved_lines, spoken=saved_spoken,
-                    assignments=assignments, windows=windows,
-                )
-                _save_lip_sync_plan(dub, plan)
-            except (OSError, ValueError, KeyError, TypeError, H3Error):
-                pass
-        return _lip_sync_plan_response(session_id, loaded, dub)
+                    reset.discard(key)
+                    edits[key] = None if track_id is None else int(track_id)
+        with admission_lock:
+            if runs[LIP_SYNC_DETECT].active(owner, session_id):
+                raise H3Error("Wait for face detection to finish before changing assignments.")
+            loaded, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            plan = checked_lip_sync_plan(dub, body.get("plan_revision"))
+            revise_lip_sync_plan(
+                dub, plan, edits, reset=reset, clear=bool(body.get("clear")),
+                visual_speakers=(loaded.data.get("transcript") or {}).get("visual_speakers"),
+            )
+            return _lip_sync_plan_response(session_id, loaded, dub)
 
     @app.post(f"{API}/lip-sync", include_in_schema=False)
     @guarded
@@ -984,30 +973,33 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         if not lip_sync_available:
             raise H3Error(STUDIO_ONLY.format("run lip sync"))
         session_id = str(body.get("session") or "")
-        loaded = load(session_id)
-        output = loaded.data.get("last_output")
-        result = load_result(output) if output else None
-        dub = result.video if result else None
-        if dub is None or not dub.is_file():
-            raise H3Error("Generate a video dub first.")
         raw_overrides = body.get("overrides")
-        overrides: dict[tuple[int, str], int | None] | None = None
+        overrides: list[tuple[int, str, int | None]] | None = None
         if isinstance(raw_overrides, list) and raw_overrides:
-            overrides = {}
+            overrides = []
             for item in raw_overrides:
                 if not isinstance(item, dict) or "shot_index" not in item or not item.get("speaker"):
                     raise H3Error("Each face override needs shot_index and speaker.")
                 track_id = item.get("track_id")
-                overrides[(int(item["shot_index"]), str(item["speaker"]))] = (
-                    None if track_id is None else int(track_id)
-                )
+                overrides.append((int(item["shot_index"]), str(item["speaker"]),
+                                  None if track_id is None else int(track_id)))
         strength = body.get("strength")
         feather = body.get("feather")
-        return start(
-            request, LIP_SYNC, session_id, LIP_SYNC, handlers.lip_sync_video,
-            [session_id, overrides, strength, feather], reader(1, file_index=0),
-            session_id=session_id, dub_video=dub.name,
-        )
+        with admission_lock:
+            _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            values = [session_id, overrides, strength, feather]
+            revision = body.get("plan_revision")
+            if revision is not None:
+                if runs[LIP_SYNC_DETECT].active(owner_of(request), session_id):
+                    raise H3Error("Wait for face detection to finish before rendering.")
+                if overrides:
+                    raise H3Error("Save changes to face assignments before rendering the reviewed plan.")
+                checked_lip_sync_plan(dub, revision)
+                values.extend((str(dub), revision))
+            return start(
+                request, LIP_SYNC, session_id, LIP_SYNC, handlers.lip_sync_video,
+                values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
+            )
 
     @app.get(f"{API}/lip-sync-frame", include_in_schema=False)
     def lip_sync_frame(session: str, time: float, request: Request):

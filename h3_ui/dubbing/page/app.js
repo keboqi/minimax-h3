@@ -8,7 +8,7 @@ import {renderSource, bindSource, autoBody} from "./source.js";
 import {bindBatch} from "./batch.js";
 import {renderReview, bindReview} from "./review.js";
 import {renderDub, bindDub} from "./dub.js";
-import {renderLipSync, bindLipSync, afterLipSync, loadLipSyncPlan, resetLipSyncState} from "./lipsync.js";
+import {renderLipSync, bindLipSync, afterLipSync, loadLipSyncPlan} from "./lipsync.js";
 import {renderResult, bindResult, afterResult} from "./result.js";
 
 const STORE = "h3-dubbing-page";
@@ -140,7 +140,7 @@ export function render() {
   screen.innerHTML = renderers[app.screen](app);
   screen.dataset.screen = app.screen;
   if (app.screen === "result") afterResult(app);
-  else if (app.screen === "lipsync") afterLipSync(app);
+  afterLipSync(app);
   updateRunViews();
   saveSettings();
 }
@@ -274,11 +274,16 @@ async function finished(kind, run) {
     return;
   }
   if (kind === "lip-sync-detect" && !run.error && !run.stop_requested) {
-    await loadLipSyncPlan(app, {silent: true});
+    if (run.session === app.session?.id && run.dub_video === app.session.result?.lip_sync?.video) {
+      await loadLipSyncPlan(app, {silent: true});
+    }
     return;
   }
   if (kind === "lip-sync" && !run.error && !run.stop_requested && run.status !== "Interrupted.") {
+    if (run.session !== app.session?.id || run.dub_video !== app.session.result?.lip_sync?.video) return;
     await refresh();
+    if (run.session !== app.session?.id || run.dub_video !== app.session.result?.lip_sync?.video) return;
+    await loadLipSyncPlan(app, {silent: true});
     app.playerView = {...(app.playerView || {voice: "dub", music: "on", subtitles: "translation"}), video: "lipsync"};
     go("result");
     return;

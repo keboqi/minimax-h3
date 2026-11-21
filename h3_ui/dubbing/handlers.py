@@ -20,7 +20,7 @@ import gradio as gr
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.lip_sync import detect_lip_sync_plan, render_dub_lip_sync
+from h3_app.dubbing.lip_sync import detect_lip_sync_plan, load_lip_sync_plan, render_dub_lip_sync
 from h3_app.dubbing.results import load_result
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices
@@ -764,7 +764,7 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def detect_lip_sync(self, session_id, force_rescan=False):
+    def detect_lip_sync(self, session_id, force_rescan=False, expected_video=None):
         """Stage 1 only: detect shot cuts, track faces, and align speakers without rendering H3."""
         try:
             session = self._session(session_id)
@@ -773,6 +773,8 @@ class DubbingHandlers:
             dub = result.video if result else None
             if dub is None or not dub.is_file():
                 raise H3Error("Generate a video dub first.")
+            if expected_video is not None and str(dub) != expected_video:
+                raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
             services = self.services.generation_services() if self.services.generation_services is not None else None
             for update in detect_lip_sync_plan(
                 dub=dub,
@@ -790,7 +792,8 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None):
+    def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None,
+                       expected_video=None, reviewed_revision=None):
         """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
@@ -801,16 +804,26 @@ class DubbingHandlers:
             dub = result.video if result else None
             if dub is None or not dub.is_file():
                 raise H3Error("Generate a video dub first.")
+            if expected_video is not None and str(dub) != expected_video:
+                raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
+            reviewed_plan = None
+            if reviewed_revision is not None:
+                reviewed_plan = load_lip_sync_plan(dub)
+                if reviewed_plan is None or reviewed_plan["revision"] != reviewed_revision:
+                    raise H3Error("The lip-sync plan changed. Review the updated face assignments.")
             extra = {}
             if strength is not None:
                 extra["strength"] = max(0.2, min(1.0, float(strength)))
             if feather is not None:
                 extra["feather"] = max(0, min(32, int(feather)))
+            if isinstance(manual_overrides, list):
+                manual_overrides = {(shot, speaker): track_id for shot, speaker, track_id in manual_overrides}
             for update in render_dub_lip_sync(
                 dub=dub,
                 services=self.services.generation_services(),
                 manual_overrides=manual_overrides,
                 visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
+                reviewed_plan=reviewed_plan,
                 **extra,
             ):
                 if isinstance(update, Path):

@@ -320,7 +320,7 @@ class StudioPageTests(PageTests):
 
     def test_one_click_lip_sync_and_optional_shot_overrides(self):
         import json as _json
-        from h3_app.dubbing.lip_sync import REPORT_FILE
+        from h3_app.dubbing.lip_sync import PLAN_FILE, REPORT_FILE
         from h3_app.dubbing.results import player_folder
 
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
@@ -341,25 +341,29 @@ class StudioPageTests(PageTests):
 
         calls = []
 
-        def fake_lip_sync(session_id, overrides=None):
-            calls.append((session_id, overrides))
+        def fake_render(*, dub, manual_overrides, reviewed_plan, **_kwargs):
+            self.assertEqual(dub, dub_video)
+            calls.append((manual_overrides, reviewed_plan["revision"] if reviewed_plan else None))
             out = dub_video.with_name("clip.lipsync.mp4")
             out.write_bytes(b"mp4-lipsync")
             (folder / REPORT_FILE).write_text(_json.dumps({
                 "output": out.name, "backend": "lr-asd", "total_windows": 2,
-                "cached_windows": 1 if overrides else 0, "rendered_windows": 1 if overrides else 2,
-                "uncertain_count": 0 if overrides else 1,
-                "assignments": [] if overrides else [{
+                "cached_windows": 1 if manual_overrides else 0, "rendered_windows": 1 if manual_overrides else 2,
+                "uncertain_count": 0 if manual_overrides else 1,
+                "assignments": [] if manual_overrides else [{
                     "shot_index": 0, "speaker": "speaker1", "status": "uncertain",
                     "track_id": None, "face_center": None, "reference_time": 0.5,
                     "source": "lr-asd", "confidence": 0.3, "reason": "Ambiguous match.",
                 }],
             }), encoding="utf-8")
-            yield str(out), "Lip-synced video ready."
+            yield out
+
+        def run_job(_run, _owner, _session, _family, values, callback):
+            return callback(*_json.loads(_json.dumps(values)))
 
         with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
-                patch("h3_ui.dubbing.page.run_job", lambda run, owner, session, family, values, callback: callback(*values)), \
-                patch.object(self.handlers, "lip_sync_video", fake_lip_sync):
+                patch("h3_ui.dubbing.page.run_job", run_job), \
+                patch("h3_ui.dubbing.handlers.render_dub_lip_sync", fake_render):
             res = self.client.post(f"{API}/lip-sync", json={"session": created.id})
             self.assertEqual(res.status_code, 200)
             done = self.wait("lip-sync", created.id)
@@ -387,7 +391,28 @@ class StudioPageTests(PageTests):
             self.assertEqual(res2.status_code, 200)
             self.assertIsNone(self.wait("lip-sync", created.id)["error"])
 
-        self.assertEqual(calls, [(created.id, None), (created.id, {(0, "speaker1"): 1})])
+            target = {"session": created.id, "video": initial["video"], "video_version": initial["video_version"]}
+            (folder / PLAN_FILE).write_text(_json.dumps({"video": dub_video.name, "revision": "reviewed"}), encoding="utf-8")
+            stale = self.client.post(f"{API}/lip-sync", json={**target, "plan_revision": "old"})
+            self.assertEqual(stale.status_code, 400)
+            confirmed = self.client.post(f"{API}/lip-sync", json={**target, "plan_revision": "reviewed"})
+            self.assertEqual(confirmed.status_code, 200)
+            self.assertIsNone(self.wait("lip-sync", created.id)["error"])
+
+            new_dub = out_dir / "new-dub.mp4"
+            new_dub.write_bytes(b"new-mp4")
+            sessions.modify(created, lambda current: current.data.update(last_output=str(new_dub)))
+            for action in ("lip-sync-overrides", "lip-sync-detect", "lip-sync"):
+                response = self.client.post(f"{API}/{action}", json={**target, "plan_revision": "reviewed"})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("dub changed", response.json()["error"])
+            self.assertEqual(self.client.get(f"{API}/lip-sync-plan", params=target).status_code, 400)
+
+        self.assertEqual(calls, [
+            (None, None),
+            ({(0, "speaker1"): 1}, None),
+            (None, "reviewed"),
+        ])
 
 
 if __name__ == "__main__":

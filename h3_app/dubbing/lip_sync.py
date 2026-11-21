@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from fractions import Fraction
 import hashlib
 import json
@@ -40,7 +40,11 @@ from h3_app.workflows.lip_sync import (
 from .alignment import FITTED_AUDIO_RATE, open_alignment
 from .lip_sync_match import (
     ActiveSpeakerScanner,
+    FaceTrack,
+    Shot,
     ShotSpeakerAssignment,
+    SourceScan,
+    TrackObservation,
     assign_speakers_to_shots,
     get_or_scan_source,
     resolve_uncertain_with_gemini_decision,
@@ -250,6 +254,7 @@ def plan_lip_sync_windows(
     speaker: str | None = None,
     assignments: dict[tuple[int, str], ShotSpeakerAssignment] | None = None,
     visual_speakers: Sequence[dict[str, Any]] | None = None,
+    require_assignment: bool = False,
     context_seconds: float = DEFAULT_CONTEXT_SECONDS,
     max_gap_seconds: float = DEFAULT_MAX_GAP_SECONDS,
     max_window_seconds: float = DEFAULT_MAX_WINDOW_SECONDS,
@@ -284,8 +289,6 @@ def plan_lip_sync_windows(
                     _line_visual_hint(line, line_speaker, start, end, effective_hints)
                     if use_visual_hints else None
                 )
-                if isinstance(hint, dict) and hint.get("visibility") == "off_screen":
-                    continue
                 clamped_start = max(0.0, float(start))
                 clamped_end = min(float(video_duration), float(end))
                 if clamped_end - clamped_start < _MIN_TURN_SECONDS:
@@ -308,10 +311,13 @@ def plan_lip_sync_windows(
             right = min(end, shot_end)
             if right - left < _MIN_TURN_SECONDS:
                 continue
-            if assignments is not None:
-                assigned = assignments.get((shot_index, line_speaker))
-                if assigned is not None and assigned.status in ("off_screen", "uncertain"):
-                    continue
+            assigned = assignments.get((shot_index, line_speaker)) if assignments is not None else None
+            if require_assignment and assigned is None:
+                continue
+            if assigned is not None and assigned.status in ("off_screen", "uncertain"):
+                continue
+            if hint and hint.get("visibility") == "off_screen" and (assigned is None or assigned.status != "manual"):
+                continue
             shot_turns.append(_Turn(
                 speaker=line_speaker, start=left, end=right,
                 shot_start=shot_start, shot_end=shot_end, shot_index=shot_index, visual_hint=hint,
@@ -450,53 +456,65 @@ def assemble_lip_sync_video(
     if not rendered_windows:
         raise H3Error("No rendered lip-sync windows to assemble.")
     meta = probe_video_metadata(dub)
-    fps_str = f"{meta.fps:.6f}".rstrip("0").rstrip(".")
-    min_gap = 0.5 / meta.fps
+    rate = Fraction(meta.fps).limit_denominator(100000)
+    fps_str = f"{rate.numerator}/{rate.denominator}"
+    time_base = f"{rate.denominator}/{rate.numerator}"
+    total_frames = max(1, round(meta.duration * rate))
+    # Cover rounding at the splice boundary, including a one-frame patch downsampled below 24 fps.
+    patch_padding = max(1, math.ceil(FPS / rate))
 
     ordered = sorted(rendered_windows, key=lambda item: item[0].start)
     inputs = ["-i", str(dub)]
     filter_parts: list[str] = []
     concat_labels: list[str] = []
-    cursor = 0.0
+    cursor = 0
     seg_index = 0
 
-    def add_source_segment(seg_start: float, seg_end: float) -> None:
+    def add_source_segment(seg_start: int, seg_end: int) -> None:
         nonlocal seg_index
-        if seg_end - seg_start < min_gap:
+        if seg_end <= seg_start:
             return
         label = f"v{seg_index}"
         seg_index += 1
         filter_parts.append(
-            f"[0:v]trim=start={seg_start:.6f}:end={seg_end:.6f},setpts=PTS-STARTPTS,"
-            f"fps={fps_str},format=yuv420p[{label}]"
+            f"[0:v]fps={fps_str}:start_time=0,"
+            f"trim=start_frame={seg_start}:end_frame={seg_end},setpts=PTS-STARTPTS,format=yuv420p[{label}]"
         )
         concat_labels.append(f"[{label}]")
 
     for window, rendered_path in ordered:
         if not rendered_path.is_file():
             raise H3Error(f"Rendered lip-sync window is missing: {rendered_path.name}")
-        win_start = max(cursor, window.start)
-        win_end = min(meta.duration, window.end)
-        if win_end - win_start < min_gap:
+        patch_start = round(window.start * rate)
+        win_start = max(cursor, patch_start)
+        win_end = min(total_frames, round(window.end * rate))
+        if win_end <= win_start:
             continue
         add_source_segment(cursor, win_start)
         input_idx = len(inputs) // 2
         inputs += ["-i", str(rendered_path)]
         label = f"v{seg_index}"
         seg_index += 1
-        win_duration = win_end - win_start
+        patch_offset = win_start - patch_start
+        patch_end = patch_offset + win_end - win_start
         filter_parts.append(
-            f"[{input_idx}:v]trim=start=0:end={win_duration:.6f},setpts=PTS-STARTPTS,"
-            f"scale={meta.width}:{meta.height}:flags=lanczos,fps={fps_str},format=yuv420p[{label}]"
+            f"[{input_idx}:v]trim=end_frame={window.source_frames},setpts=PTS-STARTPTS,"
+            f"tpad=stop_mode=clone:stop={patch_padding},fps={fps_str}:start_time=0,"
+            f"trim=start_frame={patch_offset}:end_frame={patch_end},setpts=PTS-STARTPTS,"
+            f"scale={meta.width}:{meta.height}:flags=lanczos,format=yuv420p[{label}]"
         )
         concat_labels.append(f"[{label}]")
         cursor = win_end
 
-    add_source_segment(cursor, meta.duration)
+    add_source_segment(cursor, total_frames)
     if not concat_labels:
         raise H3Error("No video segments were produced for lip-sync assembly.")
 
-    filter_parts.append(f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0[vout]")
+    # The concat filter estimates segment durations from timestamps. Number every
+    # frame on the common output timeline so estimation errors cannot accumulate.
+    filter_parts.append(
+        f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0,settb={time_base},setpts=N[vout]"
+    )
     encoder = "h264_nvenc" if has_encoder("h264_nvenc") else "libx264"
     video_args = (
         ["-c:v", encoder, "-preset", "p5", "-cq", "19"]
@@ -513,6 +531,7 @@ def assemble_lip_sync_video(
         "-map", "0:a:0?",
         "-map", "0:s?",
         *video_args,
+        "-r", fps_str,
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         "-disposition:a:0", "default",
@@ -663,23 +682,28 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
+        raw = path.read_bytes()
+        data = json.loads(raw)
+        if not isinstance(data, dict) or data.get("video") != dub.name:
+            return None
+        if "video_mtime_ns" in data and data["video_mtime_ns"] != dub.stat().st_mtime_ns:
+            return None
+        if "revision" not in data:
+            data["revision"] = hashlib.sha256(raw).hexdigest()
+        return data
     except (OSError, ValueError):
         return None
 
 
 def _save_lip_sync_plan(dub: Path, plan: dict[str, Any]) -> None:
     folder = player_folder(dub)
-    if not folder.is_dir():
-        return
     destination = folder / PLAN_FILE
     temporary = folder / f"{PLAN_FILE}.{uuid4().hex}.tmp"
     try:
         temporary.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, destination)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise H3Error("Could not save this dub's lip-sync plan.") from exc
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -687,7 +711,7 @@ def _save_lip_sync_plan(dub: Path, plan: dict[str, Any]) -> None:
 def build_lip_sync_plan_payload(
     *,
     dub: Path,
-    scan,
+    scan: SourceScan,
     lines: Sequence[dict[str, Any]],
     spoken: dict[str, Any],
     assignments: dict[tuple[int, str], ShotSpeakerAssignment],
@@ -733,12 +757,16 @@ def build_lip_sync_plan_payload(
     turns_out.sort(key=lambda item: (item["start"], item["end"]))
     return {
         "video": dub.name,
+        "video_mtime_ns": dub.stat().st_mtime_ns,
+        "revision": uuid4().hex,
         "backend": scan.backend,
-        "duration": round(float(scan.duration), 3),
+        "duration": float(scan.duration),
+        "cuts": list(scan.cuts),
         "width": int(scan.width),
         "height": int(scan.height),
         "fps": round(float(scan.fps), 3),
         "windows_count": len(windows),
+        "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
         "shots": shots_out,
         "assignments": [
@@ -747,6 +775,89 @@ def build_lip_sync_plan_payload(
         ],
         "turns": turns_out,
     }
+
+
+def _plan_assignments(plan: dict[str, Any]) -> dict[tuple[int, str], ShotSpeakerAssignment]:
+    assignments = {}
+    for item in plan["assignments"]:
+        center = item["face_center"]
+        assignment = ShotSpeakerAssignment(**{**item, "face_center": tuple(center) if center else None})
+        assignments[(assignment.shot_index, assignment.speaker)] = assignment
+    return assignments
+
+
+def _plan_cuts(plan: dict[str, Any]) -> Sequence[float]:
+    # Plans saved before exact cut times were persisted still have shot boundaries.
+    if "cuts" in plan:
+        return plan["cuts"]
+    return [shot["start"] for shot in plan["shots"][1:]]
+
+
+def revise_lip_sync_plan(
+    dub: Path,
+    plan: dict[str, Any],
+    edits: dict[tuple[int, str], int | None],
+    *,
+    reset: set[tuple[int, str]],
+    clear: bool = False,
+    visual_speakers: Sequence[dict[str, Any]] | None = None,
+) -> None:
+    """Update only the affected shot-speaker pairs in the reviewed plan."""
+    overrides = load_manual_overrides(dub)
+    changed = set(edits) | reset
+    if clear:
+        changed.update(overrides)
+        overrides.clear()
+    for key in reset:
+        overrides.pop(key, None)
+    overrides.update(edits)
+
+    assignments = _plan_assignments(plan)
+    shot_indices = {shot_index for shot_index, _ in changed & assignments.keys()}
+    shots = []
+    bounds = [0.0, *_plan_cuts(plan), plan["duration"]]
+    for item in plan["shots"]:
+        shot_index = item["index"]
+        if shot_index not in shot_indices:
+            continue
+        tracks = []
+        for track in item["tracks"]:
+            observations = tuple(
+                TrackObservation(t, (x, y, w, h), score) for t, x, y, w, h, score in track["obs"]
+            )
+            if observations:
+                tracks.append(FaceTrack(track["track_id"], shot_index, observations[0].time,
+                                        observations[-1].time, observations))
+        shots.append(Shot(shot_index, bounds[shot_index], bounds[shot_index + 1], tuple(tracks)))
+    tracks_by_shot = {shot.index: {track.track_id for track in shot.tracks} for shot in shots}
+    for key, track_id in edits.items():
+        if key not in assignments or (track_id is not None and track_id not in tracks_by_shot[key[0]]):
+            raise H3Error("Choose a tracked face or mark a speaker off-screen in the current plan.")
+    with open_alignment(dub) as (saved, _clips):
+        lines = saved["lines"]
+        hints = saved.get("visual_speakers") or visual_speakers
+    scan = SourceScan("", plan["duration"], plan["width"], plan["height"], plan["fps"],
+                      tuple(_plan_cuts(plan)), tuple(shots), plan["backend"])
+    revised = assign_speakers_to_shots(scan, lines, visual_speakers=hints, manual_overrides=overrides)
+    for key in changed & assignments.keys():
+        if key in revised:
+            assignments[key] = revised[key]
+    windows = _reviewed_windows(dub, plan, assignments, visual_speakers=hints)
+    _save_lip_sync_plan(dub, {
+        **plan, "revision": uuid4().hex, "windows_count": len(windows),
+        "windows": [asdict(window) for window in windows],
+        "uncertain_count": len(uncertain_assignments(assignments)),
+        "assignments": [item.to_dict() for item in assignments.values()],
+    })
+    save_manual_overrides(dub, overrides)
+
+
+def _reviewed_windows(dub, plan, assignments, *, visual_speakers=None, speaker=None):
+    return plan_lip_sync_windows(
+        dub, plan["duration"], video_size=(plan["width"], plan["height"]), shot_cuts=_plan_cuts(plan),
+        speaker=speaker, assignments=assignments, visual_speakers=visual_speakers,
+        require_assignment=True,
+    )
 
 
 def detect_lip_sync_plan(
@@ -810,6 +921,7 @@ def detect_lip_sync_plan(
     windows = plan_lip_sync_windows(
         dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
         assignments=assignments, visual_speakers=effective_visual_speakers or None,
+        require_assignment=True,
     )
     plan = build_lip_sync_plan_payload(
         dub=dub, scan=scan, lines=saved_lines, spoken=saved_spoken,
@@ -837,21 +949,13 @@ def render_dub_lip_sync(
     use_cache: bool = True,
     scan_cache_dir: Path | None = None,
     gemini_api_key: str | None = None,
+    reviewed_plan: dict[str, Any] | None = None,
 ) -> Iterator[str | Path]:
     """Automatically scan shots, match speakers, render H3 mouth patches (cached per window), and assemble MP4."""
     yield "Inspecting the dubbed video"
     check_cancelled()
     if dub.suffix.lower() != ".mp4" or not dub.is_file():
         raise H3Error("Choose a completed dubbed MP4.")
-    meta = services.media.probe_video_metadata(dub)
-    yield "Detecting shot cuts"
-    check_cancelled()
-    cuts = detect_shot_cuts(dub, threshold=shot_threshold)
-
-    yield "Matching speakers to visible faces"
-    check_cancelled()
-    effective_scan_cache = scan_cache_dir if scan_cache_dir is not None else (dub.parent / PLAYER_DIR / SCAN_CACHE_DIR)
-    scan = get_or_scan_source(dub, cuts, cache_dir=effective_scan_cache, scanner=scanner)
     try:
         with open_alignment(dub) as (saved, _clips):
             saved_lines = list(saved.get("lines") or ())
@@ -860,32 +964,50 @@ def render_dub_lip_sync(
         raise H3Error("Saved fitted dialogue is missing or unreadable. Generate this dub again.") from exc
     effective_visual_speakers = saved_visual_speakers if saved_visual_speakers else list(visual_speakers or ())
 
-    merged_overrides = load_manual_overrides(dub)
-    if manual_overrides:
-        merged_overrides.update(manual_overrides)
-        save_manual_overrides(dub, merged_overrides)
-
-    assignments = assign_speakers_to_shots(
-        scan, saved_lines, visual_speakers=effective_visual_speakers or None,
-        manual_overrides=merged_overrides or None,
-    )
-    if uncertain_assignments(assignments) and decisions.key_or_none(gemini_api_key):
-        yield "Resolving uncertain speakers with Gemini Decision"
+    if reviewed_plan is not None:
+        yield "Using reviewed face assignments"
+        assignments = _plan_assignments(reviewed_plan)
+        backend = reviewed_plan["backend"]
+        if "windows" in reviewed_plan:
+            windows = [
+                LipSyncWindow(**window) for window in reviewed_plan["windows"]
+                if speaker is None or window["speaker"] == speaker
+            ]
+        else:
+            windows = _reviewed_windows(
+                dub, reviewed_plan, assignments, visual_speakers=effective_visual_speakers, speaker=speaker,
+            )
+    else:
+        meta = services.media.probe_video_metadata(dub)
+        yield "Detecting shot cuts"
         check_cancelled()
-        player = load_player(dub)
-        assignments = resolve_uncertain_with_gemini_decision(
-            video=dub,
-            scan=scan,
-            lines=saved_lines,
-            assignments=assignments,
-            original_audio=player.original if player is not None else None,
-            api_key=gemini_api_key,
-            cache_dir=effective_scan_cache,
+        cuts = detect_shot_cuts(dub, threshold=shot_threshold)
+        yield "Matching speakers to visible faces"
+        check_cancelled()
+        effective_scan_cache = scan_cache_dir if scan_cache_dir is not None else (dub.parent / PLAYER_DIR / SCAN_CACHE_DIR)
+        scan = get_or_scan_source(dub, cuts, cache_dir=effective_scan_cache, scanner=scanner)
+        backend = scan.backend
+        merged_overrides = load_manual_overrides(dub)
+        if manual_overrides:
+            merged_overrides.update(manual_overrides)
+            save_manual_overrides(dub, merged_overrides)
+        assignments = assign_speakers_to_shots(
+            scan, saved_lines, visual_speakers=effective_visual_speakers or None,
+            manual_overrides=merged_overrides or None,
         )
-    windows = plan_lip_sync_windows(
-        dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
-        speaker=speaker, assignments=assignments, visual_speakers=effective_visual_speakers or None,
-    )
+        if uncertain_assignments(assignments) and decisions.key_or_none(gemini_api_key):
+            yield "Resolving uncertain speakers with Gemini Decision"
+            check_cancelled()
+            player = load_player(dub)
+            assignments = resolve_uncertain_with_gemini_decision(
+                video=dub, scan=scan, lines=saved_lines, assignments=assignments,
+                original_audio=player.original if player is not None else None,
+                api_key=gemini_api_key, cache_dir=effective_scan_cache,
+            )
+        windows = plan_lip_sync_windows(
+            dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
+            speaker=speaker, assignments=assignments, visual_speakers=effective_visual_speakers or None,
+        )
     if not windows:
         raise H3Error("No confident on-screen speaking windows were found for lip sync.")
 
@@ -978,7 +1100,7 @@ def render_dub_lip_sync(
         destination = output or dub.with_name(f"{dub.stem}.lipsync.mp4")
         assembled = assemble_lip_sync_video(dub, rendered_windows, destination)
         _save_lip_sync_report(
-            dub, output=assembled, backend=scan.backend,
+            dub, output=assembled, backend=backend,
             total_windows=len(windows), cached_windows=cached_hits,
             skipped_windows=skipped_windows, assignments=assignments,
         )

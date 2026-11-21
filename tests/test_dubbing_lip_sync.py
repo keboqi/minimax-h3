@@ -16,11 +16,16 @@ from h3_app.dubbing.alignment import FITTED_AUDIO_RATE as RATE
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
     assemble_lip_sync_video,
+    build_lip_sync_plan_payload,
+    detect_lip_sync_plan,
     fitted_dialogue,
+    load_lip_sync_plan,
     plan_lip_sync_windows,
     render_dub_lip_sync,
     render_lip_sync_preview,
+    revise_lip_sync_plan,
 )
+from h3_app.dubbing.lip_sync_match import FaceTrack, Shot, ShotSpeakerAssignment, SourceScan, TrackObservation
 from h3_app.dubbing.results import player_folder
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
@@ -220,6 +225,38 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual([w.speaker for w in windows], ["A"])
         self.assertEqual(windows[0].face_target[:2], (320, 360))
 
+    def test_review_edit_overrides_off_screen_hint_and_preserves_other_decisions(self):
+        folder = player_folder(self.dub)
+        lines = [
+            {"speaker": "A", "start": 0.3, "end": 1.0, "visual_speaker": {"visibility": "off_screen"}},
+            {"speaker": "B", "start": 1.3, "end": 1.9},
+        ]
+        spoken = {"0": [0.3, 1.0], "1": [1.3, 1.9]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        np.savez(folder / "alignment.npz", **{key: np.ones(1) for key in spoken})
+        face = FaceTrack(7, 0, 0.5, 0.5, (TrackObservation(0.5, (0.1, 0.1, 0.3, 0.3)),))
+        scan = SourceScan("fp", 2.0, 640, 480, 24.0, (), (Shot(0, 0.0, 2.0, (face,)),), "yolo-mediapipe")
+        auto_decision = ShotSpeakerAssignment(0, "B", "matched", 7, (0.25, 0.25), 1.6, "gemini-decision", 0.9)
+        assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "off_screen", None, None, 0.6, "gemini", 0.9),
+            (0, "B"): auto_decision,
+        }
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=[],
+        )
+        revise_lip_sync_plan(self.dub, plan, {(0, "A"): 7}, reset=set())
+        reviewed = load_lip_sync_plan(self.dub)
+        self.assertNotEqual(reviewed["revision"], plan["revision"])
+        self.assertEqual(reviewed["assignments"][0]["status"], "manual")
+        self.assertEqual(reviewed["assignments"][1], auto_decision.to_dict())
+        self.assertEqual([window["speaker"] for window in reviewed["windows"]], ["A", "B"])
+
+        # An empty reviewed selection must stay empty even if auto detection could now find a match.
+        with patch("h3_app.dubbing.lip_sync.get_or_scan_source") as scanner:
+            with self.assertRaisesRegex(H3Error, "No confident on-screen"):
+                list(render_dub_lip_sync(dub=self.dub, services=None, reviewed_plan=plan))
+            scanner.assert_not_called()
+
     def test_auto_graph_wires_face_track_lower_mask_audio_lock_and_stitch(self):
         graph = build_auto_lip_sync_graph(
             video="slice.mp4", dialogue="dialogue.wav", frames=73, models=self.models,
@@ -274,6 +311,28 @@ class LipSyncTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_assembly_keeps_fractional_rate_frame_count_across_many_windows(self):
+        root = self.dub.parent
+        dub = root / "fractional.mp4"
+        patch_video = root / "patch.mp4"
+        for path, rate, frames in ((dub, "30000/1001", "300"), (patch_video, "24", "22")):
+            subprocess.run([
+                "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=s=160x120:r={rate}",
+                "-frames:v", frames, "-c:v", "libx264", str(path),
+            ], check=True)
+        windows = [
+            (LipSyncWindow("A", index / 2, (index + 1) / 2, index / 2, (index + 1) / 2,
+                           index * 12, 12, 22, 0, 12), patch_video)
+            for index in range(20)
+        ]
+        # Include a source-only interval so the final timeline contains both kinds of segment.
+        windows.pop(10)
+        with patch("h3_app.dubbing.lip_sync.has_encoder", return_value=False):
+            out = assemble_lip_sync_video(dub, windows, root / "assembled.mp4")
+        self.assertEqual(probe_video_metadata(out).frame_count, 300)
+        self.assertAlmostEqual(probe_video_metadata(out).fps, 30000 / 1001)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
     def test_render_dub_lip_sync_end_to_end_preserves_audio_and_subtitles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -294,7 +353,7 @@ class LipSyncTests(unittest.TestCase):
             folder.mkdir(parents=True)
             samples = round(1.2 * RATE) - round(0.4 * RATE)
             (folder / "alignment.json").write_text(json.dumps({
-                "lines": [{"speaker": "A"}],
+                "lines": [{"speaker": "A", "start": 0.4, "end": 1.2}],
                 "spoken": {"0": [0.4, 1.2]},
             }), encoding="utf-8")
             np.savez_compressed(folder / "alignment.npz", **{"0": np.full(samples, 0.25, dtype=np.float32)})
@@ -340,7 +399,16 @@ class LipSyncTests(unittest.TestCase):
                     poll_comfy_progress=lambda *_: [],
                 ),
             )
-            updates = list(render_dub_lip_sync(dub=dub, services=services, crop_size=320))
+            def scanner(_video, cuts):
+                return SourceScan("test", 2.5, 320, 240, 24.0, tuple(cuts), (Shot(0, 0.0, 2.5),))
+
+            plan = list(detect_lip_sync_plan(dub=dub, scanner=scanner))[-1]
+            self.assertEqual(plan["windows_count"], 1)
+            with patch("h3_app.dubbing.lip_sync.get_or_scan_source") as rescan:
+                updates = list(render_dub_lip_sync(
+                    dub=dub, services=services, crop_size=320, reviewed_plan=load_lip_sync_plan(dub),
+                ))
+                rescan.assert_not_called()
             assembled = updates[-1]
             self.assertIsInstance(assembled, Path)
             self.assertTrue(assembled.is_file())

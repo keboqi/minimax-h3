@@ -4,9 +4,11 @@ import {api} from "./api.js";
 import {esc, icon, plural, toast} from "./ui.js";
 
 const lsState = {
-  sessionId: null,
+  targetKey: null,
   data: null,
   loading: false,
+  request: null,
+  saving: false,
   error: null,
   filter: "all",
   selectedShot: 0,
@@ -14,6 +16,7 @@ const lsState = {
   strength: 0.55,
   feather: 6,
   rafId: null,
+  observer: null,
 };
 
 function stopOverlayLoop() {
@@ -21,30 +24,34 @@ function stopOverlayLoop() {
     cancelAnimationFrame(lsState.rafId);
     lsState.rafId = null;
   }
+  lsState.observer?.disconnect();
+  lsState.observer = null;
 }
 
-export function resetLipSyncState() {
-  stopOverlayLoop();
-  lsState.sessionId = null;
-  lsState.data = null;
-  lsState.loading = false;
-  lsState.error = null;
+function reviewTarget(app) {
+  const ls = app.session?.result?.lip_sync;
+  return ls ? {session: app.session.id, video: ls.video, video_version: ls.video_version} : null;
 }
 
 export async function loadLipSyncPlan(app, {silent = false} = {}) {
-  const sid = app.session?.id;
-  if (!sid || !app.session?.result?.lip_sync) return;
-  lsState.sessionId = sid;
-  lsState.loading = !silent;
-  lsState.error = null;
+  const target = reviewTarget(app);
+  if (!target) return;
+  const key = JSON.stringify(target);
+  if (lsState.targetKey !== key) {
+    Object.assign(lsState, {targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null});
+  }
+  const request = Symbol();
+  Object.assign(lsState, {request, loading: true, error: null});
+  const isCurrent = () => lsState.request === request && JSON.stringify(reviewTarget(app)) === key;
   if (!silent) app.render();
   try {
-    lsState.data = await api.get("lip-sync-plan", {session: sid});
+    const data = await api.get("lip-sync-plan", target);
+    if (isCurrent()) lsState.data = data;
   } catch (error) {
-    lsState.error = error.message;
+    if (isCurrent()) lsState.error = error.message;
   } finally {
-    lsState.loading = false;
-    if (app.screen === "lipsync") app.render();
+    if (lsState.request === request) lsState.loading = false;
+    if (isCurrent() && app.screen === "lipsync") app.render();
   }
 }
 
@@ -125,7 +132,7 @@ export function renderLipSync(app) {
       </div>`;
   }
 
-  const data = lsState.sessionId === app.session.id ? lsState.data : null;
+  const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
   const plan = data?.plan || null;
   const items = shotItems(plan);
   const visible = items.filter((it) => {
@@ -143,7 +150,7 @@ export function renderLipSync(app) {
   const uncertainCount = items.filter((it) => it.assignment.status === "uncertain").length;
   const confirmedCount = items.filter((it) => it.assignment.status === "matched" || it.assignment.status === "manual").length;
   const offCount = items.filter((it) => it.assignment.status === "off_screen").length;
-  const canRender = !!(app.boot.lip_sync && ls.ready && plan);
+  const canRender = !!(app.boot.lip_sync && ls.ready && plan?.revision && !lsState.loading);
 
   return `
     <div class="ls-workspace stack-16">
@@ -247,7 +254,7 @@ export function renderLipSync(app) {
                   (${plural(plan.windows_count || 0, "render window")})
                 </span>
                 <span class="spacer"></span>
-                <button type="button" class="btn btn-primary" data-ls-action="render" data-busy="lip-sync" ${canRender ? "" : "disabled"}>
+                <button type="button" class="btn btn-primary" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}">
                   ${data?.output ? "Confirm & re-render lip sync" : "Confirm & render lip sync"}
                 </button>
               </div>
@@ -300,6 +307,14 @@ function drawOverlay(app) {
   const subtitle = document.getElementById("ls-subtitle");
   const plan = lsState.data?.plan;
   if (!video || !overlay || !plan) return;
+  if (!video.videoWidth || !video.videoHeight) return;
+  const scale = Math.min(video.clientWidth / video.videoWidth, video.clientHeight / video.videoHeight);
+  const width = video.videoWidth * scale;
+  const height = video.videoHeight * scale;
+  Object.assign(overlay.style, {
+    left: `${(video.clientWidth - width) / 2}px`, top: `${(video.clientHeight - height) / 2}px`,
+    width: `${width}px`, height: `${height}px`,
+  });
 
   const t = Number(video.currentTime) || 0;
   const shot = (plan.shots || []).find((s) => t >= s.start - 0.05 && t < s.end + 0.05)
@@ -347,13 +362,16 @@ function drawOverlay(app) {
 
 export function afterLipSync(app) {
   stopOverlayLoop();
-  if (!app.session?.result?.lip_sync) return;
-  if (lsState.sessionId !== app.session.id || (!lsState.data && !lsState.loading && !lsState.error)) {
+  const target = reviewTarget(app);
+  if (app.screen !== "lipsync" || !target) return;
+  if (lsState.targetKey !== JSON.stringify(target) || (!lsState.data && !lsState.loading && !lsState.error)) {
     loadLipSyncPlan(app);
     return;
   }
   const video = document.getElementById("ls-video");
   if (!video || !lsState.data?.plan) return;
+  lsState.observer = new ResizeObserver(() => drawOverlay(app));
+  lsState.observer.observe(video);
   const tick = () => {
     if (!video.isConnected || app.screen !== "lipsync") {
       stopOverlayLoop();
@@ -371,18 +389,26 @@ export function afterLipSync(app) {
   video.addEventListener("seeked", () => drawOverlay(app));
   video.addEventListener("timeupdate", () => { if (lsState.rafId === null) drawOverlay(app); });
   video.addEventListener("loadedmetadata", () => drawOverlay(app));
+  video.addEventListener("resize", () => drawOverlay(app));
   drawOverlay(app);
 }
 
 async function saveOverride(app, key, trackId) {
+  const target = reviewTarget(app);
+  const targetKey = JSON.stringify(target);
+  const revision = lsState.data?.plan?.revision;
+  if (!target || lsState.targetKey !== targetKey || !revision || lsState.loading || lsState.saving) return;
   const sep = key.indexOf(":");
   const shotIndex = Number(key.slice(0, sep));
   const speaker = key.slice(sep + 1);
+  lsState.saving = true;
   try {
     const resp = await api.post("lip-sync-overrides", {
-      session: app.session.id,
+      ...target,
+      plan_revision: revision,
       overrides: [{shot_index: shotIndex, speaker, track_id: trackId}],
     });
+    if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     lsState.data = resp;
     lsState.selectedShot = shotIndex;
     lsState.selectedSpeaker = speaker;
@@ -400,7 +426,11 @@ async function saveOverride(app, key, trackId) {
     }
     toast(trackId === null ? `Shot ${shotIndex + 1} marked off-screen.` : `Shot ${shotIndex + 1} aligned to Face.`);
   } catch (error) {
+    if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     toast(error.message, {error: true});
+    await loadLipSyncPlan(app, {silent: true});
+  } finally {
+    if (lsState.targetKey === targetKey) lsState.saving = false;
   }
 }
 
@@ -444,10 +474,14 @@ export function bindLipSync(app) {
       stopOverlayLoop();
       app.go("dub");
     } else if (action === "detect") {
-      app.startRun("lip-sync-detect", {session: app.session.id, force: !!lsState.data?.plan});
+      if (!lsState.saving) app.startRun("lip-sync-detect", {...reviewTarget(app), force: !!lsState.data?.plan});
     } else if (action === "render") {
+      const target = reviewTarget(app);
+      const revision = lsState.data?.plan?.revision;
+      if (lsState.targetKey !== JSON.stringify(target) || !revision || lsState.saving || lsState.loading) return;
       app.startRun("lip-sync", {
-        session: app.session.id,
+        ...target,
+        plan_revision: revision,
         strength: lsState.strength,
         feather: lsState.feather,
       });
