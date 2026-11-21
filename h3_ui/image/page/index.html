@@ -8,7 +8,7 @@
 </head>
 <body>
 <div id="editor" class="editor" hidden>
-  <p id="workshop-note" class="notice" hidden>GPT Image generates and edits through the API without starting a GPU.</p>
+  <p id="workshop-note" class="notice" hidden>Hosted image engines generate and edit through their APIs without starting a GPU.</p>
   <section class="bar" aria-label="Image controls" tabindex="0">
     <div class="seg" role="group" aria-label="Image task" id="mode"></div>
     <div class="seg" role="group" aria-label="Image model" id="models"></div>
@@ -131,15 +131,17 @@
         </div>
         <div class="row setting" id="gpt-models-row" hidden><span class="small muted name">Models</span>
           <div class="seg wrap" role="group" aria-label="GPT Image models" id="gpt-models"></div></div>
-        <div class="row setting" id="failback-row" hidden><span class="small muted name">Failback</span>
-          <div class="seg" role="group" aria-label="Use failback endpoint" id="failback"></div>
-          <span class="small muted" id="failback-note"></span></div>
+        <div class="row setting" id="hosted-model-row" hidden><span class="small muted name">Model</span>
+          <div class="seg wrap" role="group" aria-label="Hosted model" id="hosted-model"></div></div>
+        <div class="row setting" id="gpt-endpoints-row" hidden><span class="small muted name">Endpoints</span>
+          <div class="seg wrap" role="group" aria-label="GPT Image endpoints" id="gpt-endpoints"></div>
+          <span class="small muted" id="gpt-endpoints-note"></span></div>
         <div class="row setting" id="batch-row" hidden><span class="small muted name">Variations</span>
           <div class="seg wrap" role="group" aria-label="Images per batch" id="batch"></div>
           <span class="small muted" id="batch-note">same inputs, a different seed each</span></div>
         <div class="row setting" id="edit-size-row" hidden><span class="small muted name">Edit size</span>
           <div class="seg wrap" role="group" aria-label="Edit output size" id="edit-size"></div></div>
-        <div class="row setting"><span class="small muted name">Aspect ratio</span>
+        <div class="row setting" id="aspect-row"><span class="small muted name">Aspect ratio</span>
           <div class="seg wrap" role="group" aria-label="Aspect ratio" id="aspect"></div></div>
         <div class="row setting"><span class="small muted name">Size</span>
           <div class="seg wrap" role="group" aria-label="Size" id="tier"></div></div>

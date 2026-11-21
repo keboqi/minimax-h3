@@ -23,6 +23,8 @@ GPT_IMAGE_RATE_LIMIT = 2
 GPT_IMAGE_RATE_WINDOW_SECONDS = 60.0
 GPT_IMAGE_MAX_CONCURRENCY = len(GPT_IMAGE_MODELS) * 2 * GPT_IMAGE_RATE_LIMIT
 GPT_IMAGE_MAX_REFERENCES = 16
+GPT_IMAGE_ENDPOINT_CHOICES = (("Primary", "primary"), ("Failback", "failback"))
+GPT_IMAGE_ENDPOINTS = tuple(value for _, value in GPT_IMAGE_ENDPOINT_CHOICES)
 GPT_IMAGE_ENV_NAMES = (
     "GPT_IMAGE_API_URL",
     "GPT_IMAGE_API_FAILBACK_URL",
@@ -139,7 +141,11 @@ class GptImageCredentials:
 
     @property
     def available(self) -> bool:
-        return self.primary_available
+        return self.primary_available or self.failback_available
+
+    @property
+    def default_endpoints(self) -> tuple[str, ...]:
+        return ("failback",) if self.failback_available and not self.primary_available else ("primary",)
 
     @property
     def distinct_failback(self) -> bool:
@@ -149,11 +155,12 @@ class GptImageCredentials:
             and (self.api_url, self.api_key) != (self.failback_url, self.failback_key)
         )
 
-    def endpoints(self, use_failback: bool = False) -> tuple[GptImageEndpoint, ...]:
-        if not self.primary_available:
-            return ()
-        items = [GptImageEndpoint("primary", self.api_url, self.api_key)]
-        if use_failback and self.failback_available:
+    def endpoints(self, use_failback: bool | Sequence[str] = False) -> tuple[GptImageEndpoint, ...]:
+        selected = normalize_gpt_image_endpoints(use_failback)
+        items = []
+        if "primary" in selected and self.primary_available:
+            items.append(GptImageEndpoint("primary", self.api_url, self.api_key))
+        if "failback" in selected and self.failback_available:
             items.append(GptImageEndpoint("failback", self.failback_url, self.failback_key))
         return tuple(items)
 
@@ -209,9 +216,21 @@ def normalize_gpt_image_models(models: Any) -> tuple[str, ...]:
     return tuple(model for model in GPT_IMAGE_MODELS if model in chosen)
 
 
+def normalize_gpt_image_endpoints(selection: Any) -> tuple[str, ...]:
+    """Normalize the endpoint picker and retained boolean selections."""
+    if isinstance(selection, bool):
+        return GPT_IMAGE_ENDPOINTS if selection else ("primary",)
+    if isinstance(selection, str):
+        selection = tuple(part.strip() for part in selection.split(","))
+    if (not isinstance(selection, (list, tuple, set)) or not selection
+            or any(value not in GPT_IMAGE_ENDPOINTS for value in selection)):
+        raise H3Error("Choose at least one GPT Image endpoint: Primary or Failback.")
+    return tuple(value for value in GPT_IMAGE_ENDPOINTS if value in selection)
+
+
 def gpt_image_max_concurrency(
     models: Any,
-    use_failback: bool = False,
+    use_failback: bool | Sequence[str] = False,
     *,
     credentials: GptImageCredentials | None = None,
 ) -> int:
@@ -220,7 +239,7 @@ def gpt_image_max_concurrency(
     if credentials is not None:
         endpoint_count = len({(ep.url, ep.api_key) for ep in credentials.endpoints(use_failback)}) or 1
     else:
-        endpoint_count = 2 if use_failback else 1
+        endpoint_count = len(normalize_gpt_image_endpoints(use_failback))
     return len(selected) * endpoint_count * GPT_IMAGE_RATE_LIMIT
 
 
@@ -265,6 +284,7 @@ def validate_gpt_image_settings(
     *,
     models: Any = (DEFAULT_GPT_IMAGE_MODEL,),
     use_failback: bool = False,
+    endpoints: Sequence[str] | bool | None = None,
     quality: Any = GPT_IMAGE_QUALITY,
     width: Any = 1920,
     height: Any = 1088,
@@ -273,21 +293,22 @@ def validate_gpt_image_settings(
 ) -> tuple[tuple[str, ...], str, int, int, int, GptImageCredentials]:
     """Validate credentials, models, quality, canvas size and adapted concurrency."""
     creds = gpt_image_credentials() if credentials is None else credentials
-    if not creds.primary_available:
+    selected_endpoints = normalize_gpt_image_endpoints(use_failback if endpoints is None else endpoints)
+    if "primary" in selected_endpoints and not creds.primary_available:
         raise H3Error(
-            "GPT Image is not available. Configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY "
-            "in .env or runtime secrets."
+            "GPT Image primary endpoint is not available. Configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY "
+            "in .env or runtime secrets, or deselect Primary."
         )
-    if use_failback and not creds.failback_available:
+    if "failback" in selected_endpoints and not creds.failback_available:
         raise H3Error(
             "GPT Image failback endpoint is not available. Configure GPT_IMAGE_API_FAILBACK_URL "
-            "and GPT_IMAGE_API_FAILBACK_KEY in .env or runtime secrets, or turn Failback off."
+            "and GPT_IMAGE_API_FAILBACK_KEY in .env or runtime secrets, or deselect Failback."
         )
     normalized_models = normalize_gpt_image_models(models)
     normalized_quality = validate_gpt_image_quality(quality, normalized_models)
     canvas_width, canvas_height = validate_gpt_image_canvas(width, height)
     max_concurrency = gpt_image_max_concurrency(
-        normalized_models, bool(use_failback), credentials=creds
+        normalized_models, selected_endpoints, credentials=creds
     )
     try:
         valid_count = (
@@ -302,6 +323,6 @@ def validate_gpt_image_settings(
     if not valid_count:
         raise H3Error(
             f"GPT Image concurrency must be between 1 and {max_concurrency} "
-            "for the selected models and failback setting."
+            "for the selected models and endpoints."
         )
     return normalized_models, normalized_quality, canvas_width, canvas_height, int(batch_count), creds

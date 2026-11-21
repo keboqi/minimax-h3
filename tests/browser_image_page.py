@@ -47,11 +47,15 @@ def run():
                 save_prompt(request)
         elif path == "/image/api/settings":
             writes.append("settings")
+            changes = request.request.post_data_json["changes"]
             if state["engine"] == "flux3":
                 assert state["layout"]["value"] == "A box around the bird"
-            state["engine"] = request.request.post_data_json["changes"]["engine"]
-            state["layout"] = (dict(name="flux3__layout", value="", hint="", placeholder="")
-                               if state["engine"] == "flux3" else None)
+            if "engine" in changes:
+                state["engine"] = changes["engine"]
+                state["layout"] = (dict(name="flux3__layout", value="", hint="", placeholder="")
+                                   if state["engine"] == "flux3" else None)
+            elif "gpt_image__endpoints" in changes:
+                state["gpt_endpoints"]["value"] = changes["gpt_image__endpoints"]
             request.fulfill(json={"state": state, "runs": {}})
         elif path == "/image/api/empty":
             writes.append("empty")
@@ -145,12 +149,36 @@ def run():
         expect(page.locator("#prompt")).to_have_value("")
         expect(page.locator("#result-image")).to_be_visible()
         boot["gpu"] = False
-        boot["engines"] = [{"id": "gpt_image", "label": "GPT Image", "description": "API images"}]
-        state.update(engine="gpt_image", prompt="A bird without a GPU")
+        boot["engines"] = [{"id": "gpt_image", "label": "GPT Image", "description": "API images", "api": True}]
+        state.update(engine="gpt_image", prompt="A bird without a GPU", primary_available=True, failback_available=True,
+                     gpt_endpoints={"name": "gpt_image__endpoints", "value": ["primary"],
+                                    "choices": [["Primary", "primary"], ["Failback", "failback"]]})
         page.reload()
         expect(page.locator("#prompt")).to_have_value("A bird without a GPU")
         expect(page.locator("#run")).to_be_enabled()
         expect(page.locator("#workshop-note")).to_be_visible()
+        endpoints = page.get_by_role("group", name="GPT Image endpoints")
+        primary = endpoints.get_by_role("button", name="Primary")
+        failback = endpoints.get_by_role("button", name="Failback")
+        expect(primary).to_have_attribute("aria-pressed", "true")
+        failback.click()
+        expect(failback).to_have_attribute("aria-pressed", "true")
+        primary.click()
+        expect(primary).to_have_attribute("aria-pressed", "false")
+        expect(failback).to_have_attribute("aria-pressed", "true")
+        boot["engines"] = [{"id": "nano_banana", "label": "Nano Banana", "api": True}]
+        state.update(
+            engine="nano_banana", width=1024, height=1024, requests_per_minute=10, gpt_endpoints=None,
+            hosted_model={"name": "nano_banana__model_choice", "value": "gemini-3.1-flash-lite-image",
+                          "choices": [["gemini-3.1-flash-lite-image", "gemini-3.1-flash-lite-image"]]},
+            hosted_resolution={"name": "nano_banana__resolution", "value": "1K",
+                               "choices": [["1K · ~$0.0336/image", "1K"]]},
+        )
+        page.reload()
+        expect(page.get_by_role("button", name="1K · ~$0.0336/image")).to_be_visible()
+        expect(page.get_by_role("group", name="Size", exact=True).get_by_role("button")).to_have_count(1)
+        expect(page.locator("#open-size")).to_be_hidden()
+        expect(page.locator("#run")).to_be_enabled()
         assert not errors, errors
         browser.close()
     print("Image page: toolbar layout, delayed draft saves, model switching, preview pixels and Empty passed.")

@@ -26,7 +26,9 @@ class JobCancelled(RuntimeError):
 def request_requires_gpu(family, values):
     """Resource policy for the shared image entry points and their retained retries."""
     if family == "image":
-        return not values or values[0] != "gpt_image"
+        from .hosted_image import API_IMAGE_ENGINES
+
+        return not values or values[0] not in API_IMAGE_ENGINES
     if family == "remake_edit":
         return len(values) < 3 or values[2] != "gpt_image"
     if family == "drama3_visuals":

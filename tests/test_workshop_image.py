@@ -13,7 +13,7 @@ class WorkshopImageIsolationTests(unittest.TestCase):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         studio, workshop = Mock(), Mock()
         for image in (studio, workshop):
-            for method in ("entrypoint", "apt_install", "uv_pip_install", "run_commands",
+            for method in ("entrypoint", "apt_install", "env", "uv_pip_install", "run_commands",
                            "add_local_file", "add_local_dir", "run_function"):
                 getattr(image, method).return_value = image
         modal = SimpleNamespace(

@@ -10,11 +10,12 @@ from h3_models import qwen_image21_reference_limit
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA, H3_IMAGE_EDIT_SIZE_MAX, H3_IMAGE_MAX_REFERENCES, official_edit_dimensions
 from h3_app.gpt_image import (
     DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_REFERENCES, GPT_IMAGE_QUALITY,
-    normalize_gpt_image_models, validate_gpt_image_settings,
+    normalize_gpt_image_endpoints, normalize_gpt_image_models, validate_gpt_image_settings,
 )
+from h3_app.hosted_image import API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS, validate_hosted_image_settings
 from .h3.layout import start_frame_generation_resolution
 
-IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2", "gpt_image")
+IMAGE_MODELS = ("h3", "qwen", "flux3", "moss_image", "fibo2", *API_IMAGE_ENGINES)
 
 
 def image_mode(engine, intent):
@@ -25,6 +26,8 @@ def image_mode(engine, intent):
 def reference_limit(engine, variant="Off", h3_backend=H3_IMAGE_OFFICIAL):
     if engine == "qwen":
         return qwen_image21_reference_limit(variant)
+    if engine in HOSTED_IMAGE_PROVIDERS:
+        return HOSTED_IMAGE_PROVIDERS[engine].max_references
     return {"h3": 8 if h3_backend == H3_IMAGE_PRUNA else H3_IMAGE_MAX_REFERENCES, "flux3": 10, "moss_image": 0, "fibo2": 4, "gpt_image": GPT_IMAGE_MAX_REFERENCES}[engine]
 
 
@@ -42,7 +45,7 @@ def reference_tag(engine, index, count, separate=False):
 
 def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev", separate=False, h3_backend=H3_IMAGE_OFFICIAL,
                 *, gpt_models=(DEFAULT_GPT_IMAGE_MODEL,), gpt_use_failback=False, gpt_quality=GPT_IMAGE_QUALITY,
-                gpt_width=1920, gpt_height=1088, gpt_batch_count=1):
+                gpt_width=1920, gpt_height=1088, gpt_batch_count=1, gpt_endpoints=None, hosted_options=None):
     if engine not in IMAGE_MODELS:
         return "Choose an image model."
     if mode not in {"Text to image", "Image edit"}:
@@ -57,11 +60,17 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
             validate_gpt_image_settings(
                 models=gpt_models,
                 use_failback=bool(gpt_use_failback),
+                endpoints=gpt_endpoints,
                 quality=gpt_quality,
                 width=gpt_width,
                 height=gpt_height,
                 batch_count=gpt_batch_count,
             )
+        except H3Error as exc:
+            return str(exc)
+    if engine in HOSTED_IMAGE_PROVIDERS:
+        try:
+            validate_hosted_image_settings(engine, *hosted_image_options(engine, hosted_options or {}))
         except H3Error as exc:
             return str(exc)
     if not (prompt or "").strip():
@@ -73,6 +82,13 @@ def draft_issue(engine, mode, prompt, references, variant="Off", fibo_model="Dev
         if not (engine == "qwen" and separate) and len(references) > limit:
             return f"This model supports up to {limit} references per edit. Remove inputs or choose another model."
     return ""
+
+
+def hosted_image_options(engine, fields):
+    provider = HOSTED_IMAGE_PROVIDERS[engine]
+    return (fields.get(f"{engine}__model_choice", provider.default_model),
+            fields.get(f"{engine}__resolution", "1K"),
+            fields.get(f"{engine}__batch_count", 1))
 
 
 def h3_image_size(edit_size, references, width, height, backend=H3_IMAGE_OFFICIAL):
@@ -176,14 +192,16 @@ class ImageGenerationController:
             component = getattr(view, f"h3_{name}", None)
             if component is not None:
                 self.fields[f"image__{name}"] = component
-        for name in ("width", "height", "seed", "models", "use_failback", "quality"):
+        # Endpoints keep the previous failback checkbox's positional slot in retained jobs.
+        for name in ("width", "height", "seed", "models", "endpoints", "quality"):
             component = getattr(view, f"gpt_image_{name}", None)
             if component is not None:
                 self.fields[f"gpt_image__{name}"] = component
+        self.fields.update(getattr(view, "hosted_fields", {}))
 
     def generate(self, engine, mode, prompt, references, captured):
         # Qwen and GPT Image already handle concurrency / variations in their native jobs.
-        if engine not in ("qwen", "gpt_image"):
+        if engine != "qwen" and engine not in API_IMAGE_ENGINES:
             prefix = "image" if engine == "h3" else engine
             count = captured.get(f"{prefix}__batch_count", 1)
             if isinstance(count, bool) or not isinstance(count, (int, float)) or count not in (1, 2, 3, 4):
@@ -220,21 +238,30 @@ class ImageGenerationController:
             separate=options.get("batch_edit_inputs", False), h3_backend=backend,
             gpt_models=captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)),
             gpt_use_failback=bool(captured.get("gpt_image__use_failback", False)),
+            gpt_endpoints=captured.get("gpt_image__endpoints"),
             gpt_quality=captured.get("gpt_image__quality", GPT_IMAGE_QUALITY),
             gpt_width=captured.get("gpt_image__width", 1920),
             gpt_height=captured.get("gpt_image__height", 1088),
             gpt_batch_count=captured.get("gpt_image__batch_count", 1),
+            hosted_options=captured,
         )
         if issue:
             raise H3Error(issue)
         active_references = list(references or []) if mode == "Image edit" else []
+        if engine in HOSTED_IMAGE_PROVIDERS:
+            from h3_app.generation.hosted_image import generate_hosted_image
+
+            return generate_hosted_image(engine, *hosted_image_options(engine, captured),
+                                         prompt, active_references, self.deps.runtime_config())
         if engine == "gpt_image":
             from h3_app.generation.gpt_image import GptImageRequest, generate_gpt_image
 
+            endpoints = captured.get("gpt_image__endpoints")
             request = GptImageRequest(
                 prompt=prompt,
                 models=normalize_gpt_image_models(captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,))),
                 use_failback=bool(captured.get("gpt_image__use_failback", False)),
+                endpoints=normalize_gpt_image_endpoints(endpoints) if endpoints is not None else None,
                 quality=str(captured.get("gpt_image__quality", GPT_IMAGE_QUALITY)),
                 width=int(captured.get("gpt_image__width", 1920)),
                 height=int(captured.get("gpt_image__height", 1088)),

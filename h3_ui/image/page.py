@@ -9,7 +9,7 @@ A run takes the job path the Gradio Generate button took, in a thread here, and 
 from __future__ import annotations
 
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping
@@ -19,9 +19,10 @@ from fastapi import Body, FastAPI, File, Request, UploadFile
 
 from h3_app.h3_image import H3_IMAGE_OFFICIAL, H3_IMAGE_PRUNA
 from h3_app.gpt_image import (
-    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, gpt_image_available, gpt_image_credentials,
-    gpt_image_max_concurrency, gpt_image_quality_choices, validate_gpt_image_quality,
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, gpt_image_credentials,
+    gpt_image_max_concurrency, gpt_image_quality_choices, normalize_gpt_image_endpoints, validate_gpt_image_quality,
 )
+from h3_app.hosted_image import API_IMAGE_ENGINES, HOSTED_IMAGE_PROVIDERS, RESOLUTION_PIXELS, hosted_image_endpoint
 from h3_app import catalog, media_review
 from h3_app.capabilities import engines_for_task
 from h3_app.errors import H3Error
@@ -76,7 +77,7 @@ GROUP_OF = {
 }
 # Options Compose shows itself; a change to one is not a change to the preset's settings.
 COMPOSE = ("preset", "batch_count", "batch_edit_inputs", "edit_size", "layout",
-           "output_resolution_1k", "output_resolution_2k", "models", "use_failback")
+           "output_resolution_1k", "output_resolution_2k", "models", "endpoints", "resolution")
 EDIT_ONLY = ("reference_resolution", "cache_device", "cache_dtype")
 
 
@@ -88,7 +89,7 @@ def _clamp_gpt_image_options(options: dict[str, Any]) -> None:
     if options.get("gpt_image__quality", GPT_IMAGE_QUALITY) not in gpt_image_quality_choices(options["gpt_image__models"]):
         options["gpt_image__quality"] = GPT_IMAGE_QUALITY
     max_concurrency = gpt_image_max_concurrency(
-        options["gpt_image__models"], bool(options.get("gpt_image__use_failback"))
+        options["gpt_image__models"], options["gpt_image__endpoints"], credentials=gpt_image_credentials()
     )
     if options["gpt_image__batch_count"] > max_concurrency:
         options["gpt_image__batch_count"] = max_concurrency
@@ -223,7 +224,21 @@ class ImagePageState(OwnerPageState):
     def load(self, owner: str) -> dict[str, Any]:
         saved = self.read_saved(owner)
         options = self.load_options(saved)
+        saved_options = saved.get("options") or {}
+        if "gpt_image__endpoints" in options and "gpt_image__endpoints" not in saved_options:
+            legacy = saved_options.get("gpt_image__use_failback")
+            options["gpt_image__endpoints"] = list(
+                normalize_gpt_image_endpoints(legacy) if isinstance(legacy, bool)
+                else gpt_image_credentials().default_endpoints
+            )
         _clamp_gpt_image_options(options)
+        for engine, provider in HOSTED_IMAGE_PROVIDERS.items():
+            model, resolution = key_of(engine, "model_choice"), key_of(engine, "resolution")
+            if resolution in options:
+                tier = saved_options.get(resolution)
+                if not isinstance(tier, str) or tier not in RESOLUTION_PIXELS:
+                    tier = options[resolution]
+                options[resolution] = provider.clamp_resolution(options[model], tier)
         writer = self.load_writer(owner, saved)
         files = lambda paths: [str(path) for path in paths or [] if path and Path(path).is_file()]
         # Earlier drafts stored absolute paths under the old output directory.
@@ -300,10 +315,13 @@ class ImagePageState(OwnerPageState):
                 options[at("height")] = 1088 if options[name] == 1920 else 1920
             elif parameter == "height":
                 options[at("width")] = 1088 if options[name] == 1920 else 1920
-            elif parameter in ("models", "use_failback"):
+            elif parameter in ("models", "endpoints"):
                 _clamp_gpt_image_options(options)
         if parameter in ("width", "height") and engine == "qwen":
             options[at("output_resolution_1k")] = options[at("output_resolution_2k")] = None
+        if engine in HOSTED_IMAGE_PROVIDERS and parameter == "model_choice":
+            provider = HOSTED_IMAGE_PROVIDERS[engine]
+            options[at("resolution")] = provider.clamp_resolution(options[name], options[at("resolution")])
 
     def apply(self, state: dict[str, Any], action: str, changes: dict[str, Any], name: str | None = None) -> None:
         """One edit of the draft or of a model's options."""
@@ -323,22 +341,32 @@ class ImagePageState(OwnerPageState):
         else:
             ordered_changes = sorted(
                 changes.items(),
-                key=lambda item: item[0] in ("gpt_image__batch_count", "gpt_image__quality"),
+                key=lambda item: (item[0] in ("gpt_image__batch_count", "gpt_image__quality")
+                                  or item[0].endswith("__resolution")),
             )
             for changed, value in ordered_changes:
+                if changed == "gpt_image__use_failback" and isinstance(value, bool):
+                    changed, value = "gpt_image__endpoints", normalize_gpt_image_endpoints(value)
                 if changed not in self.services.fields:
                     raise H3Error(f"Unknown setting: {changed}")
-                options[changed] = coerce(self.services.fields[changed], value)
+                changed_engine, _, parameter = changed.partition("__")
+                provider = HOSTED_IMAGE_PROVIDERS.get(changed_engine)
+                spec = self.services.fields[changed]
+                if provider is not None and parameter == "resolution":
+                    model = options[key_of(changed_engine, "model_choice")]
+                    spec = replace(spec, choices=provider.resolution_choices(model))
+                options[changed] = coerce(spec, value)
                 if changed == "gpt_image__quality":
                     validate_gpt_image_quality(options[changed], options["gpt_image__models"])
                 if changed == "gpt_image__batch_count":
                     max_concurrency = gpt_image_max_concurrency(
-                        options["gpt_image__models"], bool(options["gpt_image__use_failback"])
+                        options["gpt_image__models"], options["gpt_image__endpoints"],
+                        credentials=gpt_image_credentials(),
                     )
                     if options[changed] > max_concurrency:
                         raise H3Error(
                             f"GPT Image concurrency must be between 1 and {max_concurrency} "
-                            "for the selected models and failback setting."
+                            "for the selected models and endpoints."
                         )
                 self.cascade(options, changed)
 
@@ -374,10 +402,12 @@ class ImagePageState(OwnerPageState):
                 options[name] = clean[name]
         if engine == "gpt_image":
             options["gpt_image__models"] = clean["gpt_image__models"]
-            options["gpt_image__use_failback"] = clean["gpt_image__use_failback"]
+            options["gpt_image__endpoints"] = list(gpt_image_credentials().default_endpoints)
             _clamp_gpt_image_options(options)
 
     def fine_names(self, engine: str) -> list[str]:
+        if engine in HOSTED_IMAGE_PROVIDERS:
+            return []
         prefix = key_of(engine, "")
         return [name for name in self.services.fields
                 if name.startswith(prefix) and name.partition("__")[2] in GROUP_OF]
@@ -426,11 +456,12 @@ class ImagePageState(OwnerPageState):
             bool(options.get("qwen__batch_edit_inputs")),
             options.get("image__backend", H3_IMAGE_OFFICIAL),
             gpt_models=options.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)),
-            gpt_use_failback=bool(options.get("gpt_image__use_failback", False)),
+            gpt_endpoints=options.get("gpt_image__endpoints"),
             gpt_quality=options.get("gpt_image__quality", GPT_IMAGE_QUALITY),
             gpt_width=options.get("gpt_image__width", 1920),
             gpt_height=options.get("gpt_image__height", 1088),
             gpt_batch_count=options.get("gpt_image__batch_count", 1),
+            hosted_options=options,
         )
 
     def guidance(self, state: Mapping[str, Any], editing: bool) -> str:
@@ -479,21 +510,36 @@ class ImagePageState(OwnerPageState):
         compose = lambda parameter, shown=True: (
             self.option(key_of(engine, parameter), options) if shown and self.has(engine, parameter) else None)
         creds = gpt_image_credentials()
+        provider = HOSTED_IMAGE_PROVIDERS.get(engine)
+        hosted_model = compose("model_choice") if provider else None
+        hosted_resolution = compose("resolution") if provider else None
+        if hosted_resolution:
+            hosted_resolution["choices"] = provider.resolution_choices(hosted_model["value"])
+            width = height = RESOLUTION_PIXELS[hosted_resolution["value"]]
+        else:
+            width, height = options[key_of(engine, "width")], options[key_of(engine, "height")]
+        api_availability = {"gpt_image": creds.available}
+        for hosted_engine in HOSTED_IMAGE_PROVIDERS:
+            api_availability[hosted_engine] = hosted_image_endpoint(hosted_engine) is not None
         batch = compose("batch_count")
         if engine == "gpt_image" and batch is not None:
             batch = {
                 **batch,
                 "maximum": gpt_image_max_concurrency(
                     options["gpt_image__models"],
-                    bool(options["gpt_image__use_failback"]),
+                    options["gpt_image__endpoints"],
                     credentials=creds,
                 ),
             }
         paths = [self.grant(owner, path) for path in state["results"]]
         return {
             "engine": engine, "mode": mode, "editing": editing, "generate_only": engine == "moss_image",
-            "available": creds.primary_available if engine == "gpt_image" else True,
-            "gpt_image_available": creds.primary_available,
+            "available": api_availability.get(engine, True),
+            "api_availability": api_availability,
+            "hosted_model": hosted_model, "hosted_resolution": hosted_resolution,
+            "requests_per_minute": provider.requests_per_minute if provider else None,
+            "gpt_image_available": creds.available,
+            "primary_available": creds.primary_available,
             "failback_available": creds.failback_available,
             "prompt": state["prompt"], "ui": state["ui"], "options": options,
             "references": [{"path": path, "url": f"{API}/file?path={_quote(path)}",
@@ -502,10 +548,10 @@ class ImagePageState(OwnerPageState):
                            for index, path in enumerate(state["references"], 1)],
             "fields": rows, "changed": counts,
             "preset": compose("preset"), "batch": batch,
-            "gpt_models": compose("models"), "failback": compose("use_failback"),
+            "gpt_models": compose("models"), "gpt_endpoints": compose("endpoints"),
             "edit_size": compose("edit_size", editing), "separate": compose("batch_edit_inputs", editing),
             "layout": compose("layout"),
-            "width": options[key_of(engine, "width")], "height": options[key_of(engine, "height")],
+            "width": width, "height": height,
             "seed": options.get(key_of(engine, "seed")),
             "guidance": self.guidance(state, editing),
             "readiness": {"ready": not issue,
@@ -524,7 +570,7 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
     runs = {kind: Runs(busy=message) for kind, message in BUSY.items()}
 
     def require_generation(engine):
-        if (not gpu and engine != "gpt_image") or "image" not in JOBS.callbacks:
+        if (not gpu and engine not in API_IMAGE_ENGINES) or "image" not in JOBS.callbacks:
             raise H3Error("Open Image in Studio to generate on the GPU.")
 
     def run_payloads(owner: str) -> dict[str, Any]:
@@ -565,7 +611,12 @@ def install_image_page(app: FastAPI, pages: ImagePageState, *, gpu: bool = True)
                     "id": engine.id,
                     "label": engine.label,
                     "description": engine.description,
-                    "available": gpt_image_available() if engine.id == "gpt_image" else True,
+                    "available": described["state"]["api_availability"].get(engine.id, True),
+                    "api": engine.id in API_IMAGE_ENGINES,
+                    "credentials_hint": (HOSTED_IMAGE_PROVIDERS[engine.id].credentials_hint
+                                         if engine.id in HOSTED_IMAGE_PROVIDERS
+                                         else "Configure a GPT Image primary or failback endpoint." if engine.id == "gpt_image"
+                                         else ""),
                 }
                 for engine in sorted(engines_for_task("Image"), key=lambda item: IMAGE_MODELS.index(item.id))
                 if engine.id in services.engines

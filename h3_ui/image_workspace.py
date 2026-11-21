@@ -12,9 +12,11 @@ from h3_app.h3_image import (
     H3_IMAGE_16M_PRESETS,
 )
 from h3_app.gpt_image import (
-    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_MAX_CONCURRENCY, GPT_IMAGE_MODELS, GPT_IMAGE_QUALITIES,
-    GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
+    DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_ENDPOINT_CHOICES, GPT_IMAGE_MAX_CONCURRENCY,
+    GPT_IMAGE_MODELS, GPT_IMAGE_QUALITIES, GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
+    gpt_image_credentials,
 )
+from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
 from .engines.controls import QUIET, generation_actions, prompt_writer, resolution_presets
 from .image_controller import IMAGE_MODELS, reference_tag
 from .image_library import build_image_file_input
@@ -56,8 +58,9 @@ class ImageWorkspace:
     gpt_image_height: gr.Slider
     gpt_image_seed: gr.Number
     gpt_image_models: gr.CheckboxGroup
-    gpt_image_use_failback: gr.Checkbox
+    gpt_image_endpoints: gr.CheckboxGroup
     gpt_image_quality: gr.Dropdown
+    hosted_fields: dict
     batch_counts: dict[str, gr.Slider]
 
     reference_panel: gr.Column
@@ -91,6 +94,7 @@ def _move(component):
 
 def _build_size_settings(engine_views):
     size_groups = {}
+    hosted_fields = {}
     with gr.Accordion("Output settings", open=True):
         for engine in IMAGE_MODELS:
             with gr.Group(visible=engine == "qwen") as size_groups[engine]:
@@ -120,6 +124,12 @@ def _build_size_settings(engine_views):
                         gpt_image_height = gr.Slider(1088, 1920, value=1088, step=832, label="Height")
                     # Keep the input position used by retained image jobs.
                     gpt_image_seed = gr.Number(value=-1, precision=0, visible=False)
+                elif engine in HOSTED_IMAGE_PROVIDERS:
+                    provider = HOSTED_IMAGE_PROVIDERS[engine]
+                    hosted_fields[f"{engine}__resolution"] = gr.Dropdown(
+                        provider.resolution_choices(provider.default_model), value="1K",
+                        label="Output size", info="Estimated USD per image. Input and gateway charges may vary.",
+                    )
                 else:
                     for name in SIZE_FIELDS:
                         component = getattr(engine_views[engine], name, None)
@@ -127,18 +137,18 @@ def _build_size_settings(engine_views):
                             _move(component)
     return (
         size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
-        gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed,
+        gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed, hosted_fields,
     )
 
 
-def _build_model_settings(engine_views, h3, labels):
+def _build_model_settings(engine_views, h3, labels, hosted_fields):
     option_groups = {}
     batch_counts = {"qwen": engine_views["qwen"].batch_count}
     with gr.Accordion("Model settings", open=False):
         for engine in IMAGE_MODELS:
             with gr.Group(visible=engine == "qwen") as option_groups[engine]:
                 gr.Markdown(f"### {labels[engine]}")
-                if engine != "qwen":
+                if engine != "qwen" and engine not in HOSTED_IMAGE_PROVIDERS:
                     batch_counts[engine] = gr.Slider(
                         1, GPT_IMAGE_MAX_CONCURRENCY if engine == "gpt_image" else 4, value=1, step=1,
                         label="Variations",
@@ -158,20 +168,30 @@ def _build_model_settings(engine_views, h3, labels):
                         label="GPT Image models",
                         info="Select one or more models; 2 requests/min per model on each endpoint.",
                     )
-                    gpt_image_use_failback = gr.Checkbox(
-                        value=False, label="Use failback endpoint",
-                        info="Enable the backup endpoint's independent capacity and retry failed requests there.",
+                    gpt_image_endpoints = gr.CheckboxGroup(
+                        GPT_IMAGE_ENDPOINT_CHOICES, value=list(gpt_image_credentials().default_endpoints),
+                        label="GPT Image endpoints",
+                        info="Select Primary, Failback, or both. Each distinct endpoint allows 2 requests/min per model.",
                     )
                     gpt_image_quality = gr.Dropdown(
                         list(GPT_IMAGE_QUALITIES), value=GPT_IMAGE_QUALITY, label="Image quality",
                         interactive=True, info="Medium requires all selected models to be GPT Image 2.5.",
+                    )
+                elif engine in HOSTED_IMAGE_PROVIDERS:
+                    provider = HOSTED_IMAGE_PROVIDERS[engine]
+                    hosted_fields[f"{engine}__model_choice"] = gr.Dropdown(
+                        list(provider.native_prices), value=provider.default_model, label="Model",
+                    )
+                    hosted_fields[f"{engine}__batch_count"] = gr.Slider(
+                        1, provider.requests_per_minute, value=1, step=1, label="Concurrent images",
+                        info=f"Shared limit of {provider.requests_per_minute} requests per minute.",
                     )
                 else:
                     for name in OPTION_FIELDS[engine]:
                         _move(getattr(engine_views[engine], name))
     return (
         option_groups, base, backend, expand_prompt, batch_counts,
-        gpt_image_models, gpt_image_use_failback, gpt_image_quality,
+        gpt_image_models, gpt_image_endpoints, gpt_image_quality,
     )
 
 
@@ -214,13 +234,13 @@ def build_image_view(root, engine, engine_views, h3):
             with gr.Column(scale=3, min_width=320):
                 (
                     size_groups, h3_width, h3_height, h3_seed, h3_edit_size, h3_small, h3_large,
-                    gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed,
+                    gpt_image_resolution, gpt_image_width, gpt_image_height, gpt_image_seed, hosted_fields,
                 ) = _build_size_settings(engine_views)
             with gr.Column(scale=2, min_width=320):
                 (
                     option_groups, base, backend, expand_prompt, batch_counts,
-                    gpt_image_models, gpt_image_use_failback, gpt_image_quality,
-                ) = _build_model_settings(engine_views, h3, labels)
+                    gpt_image_models, gpt_image_endpoints, gpt_image_quality,
+                ) = _build_model_settings(engine_views, h3, labels, hosted_fields)
                 with gr.Accordion("Prompt assistance", open=False):
                     writer, enhance, enhance_status = prompt_writer("Suggest a prompt")
                     enhance.h3_review = build_prompt_review(compact=True)
@@ -230,8 +250,9 @@ def build_image_view(root, engine, engine_views, h3):
         h3_resolution_small=h3_small, h3_resolution_large=h3_large,
         gpt_image_resolution=gpt_image_resolution, gpt_image_width=gpt_image_width,
         gpt_image_height=gpt_image_height, gpt_image_seed=gpt_image_seed,
-        gpt_image_models=gpt_image_models, gpt_image_use_failback=gpt_image_use_failback,
+        gpt_image_models=gpt_image_models, gpt_image_endpoints=gpt_image_endpoints,
         gpt_image_quality=gpt_image_quality,
+        hosted_fields=hosted_fields,
         reference_panel=reference_panel,
         batch_counts=batch_counts,
         guidance=guidance, readiness=readiness, size_groups=size_groups, option_groups=option_groups,

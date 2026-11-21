@@ -9,9 +9,10 @@ from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
 from h3_app.gpt_image import (
     DEFAULT_GPT_IMAGE_MODEL, GPT_IMAGE_QUALITY, GPT_IMAGE_RESOLUTION_PRESETS,
-    gpt_image_max_concurrency, gpt_image_quality_choices, normalize_gpt_image_models,
+    gpt_image_credentials, gpt_image_max_concurrency, gpt_image_quality_choices, normalize_gpt_image_models,
 )
 from h3_app.h3_image import H3_IMAGE_OFFICIAL
+from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
 from .engines.controls import QUIET, bind_resolution_presets, resolution_preset_values
 from .image_controller import (
     IMAGE_MODELS, ImageGenerationController, draft_issue, image_mode, reference_limit, suggest_prompt,
@@ -64,8 +65,19 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
 
     state_inputs = [app_views.engine, mode, prompt, refs, engine_views["qwen"].turbo_variant,
                     engine_views["fibo2"].model, engine_views["qwen"].batch_edit_inputs, view.h3_backend,
-                    view.gpt_image_models, view.gpt_image_use_failback, view.gpt_image_width,
-                    view.gpt_image_height, view.gpt_image_quality, view.batch_counts["gpt_image"]]
+                    view.gpt_image_models, view.gpt_image_endpoints, view.gpt_image_width,
+                    view.gpt_image_height, view.gpt_image_quality, view.batch_counts["gpt_image"],
+                    *view.hosted_fields.values()]
+
+    for engine, provider in HOSTED_IMAGE_PROVIDERS.items():
+        model = view.hosted_fields[f"{engine}__model_choice"]
+        resolution = view.hosted_fields[f"{engine}__resolution"]
+        def hosted_sizes(value, tier, provider=provider):
+            selected = value or provider.default_model
+            return gr.update(choices=provider.resolution_choices(selected),
+                             value=provider.clamp_resolution(selected, tier))
+
+        model.change(hosted_sizes, inputs=[model, resolution], outputs=resolution, **QUIET)
 
     # As in the other engines, a chosen preset takes priority over the first image's size.
     bind_resolution_presets(
@@ -85,19 +97,20 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
         inputs=view.gpt_image_height, outputs=[view.gpt_image_width, view.gpt_image_resolution], **QUIET,
     )
 
-    def gpt_batch_limit(models, use_failback, count):
+    def gpt_batch_limit(models, endpoints, count):
         try:
             normalized = normalize_gpt_image_models(models or (DEFAULT_GPT_IMAGE_MODEL,))
         except H3Error:
             normalized = (DEFAULT_GPT_IMAGE_MODEL,)
-        limit = gpt_image_max_concurrency(normalized, bool(use_failback))
+        creds = gpt_image_credentials()
+        limit = gpt_image_max_concurrency(normalized, endpoints or creds.default_endpoints, credentials=creds)
         current = int(count) if isinstance(count, (int, float)) and not isinstance(count, bool) else 1
         return gr.update(maximum=limit, value=max(1, min(current, limit)))
 
     gr.on(
-        triggers=[view.gpt_image_models.change, view.gpt_image_use_failback.change, demo.load],
+        triggers=[view.gpt_image_models.change, view.gpt_image_endpoints.change, demo.load],
         fn=gpt_batch_limit,
-        inputs=[view.gpt_image_models, view.gpt_image_use_failback, view.batch_counts["gpt_image"]],
+        inputs=[view.gpt_image_models, view.gpt_image_endpoints, view.batch_counts["gpt_image"]],
         outputs=view.batch_counts["gpt_image"],
         trigger_mode="always_last",
         **QUIET,
@@ -147,16 +160,18 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
           inputs=[app_views.engine, mode], outputs=layout_outputs, trigger_mode="always_last", **QUIET)
 
     def readiness_state(engine, intent, text, paths, variant, fibo_model, separate, backend,
-                        gpt_models, gpt_use_failback, gpt_width, gpt_height, gpt_quality, gpt_batch_count):
+                        gpt_models, gpt_endpoints, gpt_width, gpt_height, gpt_quality, gpt_batch_count,
+                        *hosted_values):
         if engine not in IMAGE_MODELS:
             return (gr.skip(),) * 4
         intent = image_mode(engine, intent)
         editing = intent == "Image edit"
         issue = draft_issue(
             engine, intent, text, paths, variant, fibo_model, separate, backend,
-            gpt_models=gpt_models, gpt_use_failback=gpt_use_failback,
+            gpt_models=gpt_models, gpt_endpoints=gpt_endpoints,
             gpt_quality=gpt_quality, gpt_width=gpt_width, gpt_height=gpt_height,
             gpt_batch_count=gpt_batch_count,
+            hosted_options=dict(zip(view.hosted_fields, hosted_values, strict=True)),
         )
         limit = reference_limit(engine, variant, backend)
         note = ("MOSS-Image generates from text only." if engine == "moss_image" else
@@ -188,7 +203,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
     controller = ImageGenerationController(engine_views, handlers, h3, view, deps)
 
     def generate(engine, intent, text, paths, *values):
-        captured = dict(zip(controller.fields, values, strict=True))
+        # Retained jobs may predate the hosted-engine fields appended to this callback.
+        captured = dict(zip(controller.fields, values))
         try:
             updates = controller.generate(engine, image_mode(engine, intent), text, paths, captured)
         except H3Error as exc:

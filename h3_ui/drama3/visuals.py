@@ -22,6 +22,7 @@ from uuid import uuid4
 import gradio as gr
 
 from h3_app.capabilities import engines_for_task
+from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
@@ -139,7 +140,7 @@ def match_characters(controller, engine, scene, portraits, shot, captured, *, re
     prompt, references, options = character_match_request(engine, scene, portraits, shot, captured)
     if record is not None:
         option_names = (
-            ("models", "use_failback", "quality", "width", "height", "seed")
+            ("models", "endpoints", "use_failback", "quality", "width", "height", "seed")
             if engine == "gpt_image"
             else tuple(name for name, _ in GENERATION_OPTIONS.get(engine, ()))
         )
@@ -176,7 +177,8 @@ def _parallel_images(tasks, captured):
     from h3_app.jobs import check_cancelled
 
     models = normalize_gpt_image_models(captured.get("gpt_image__models", (DEFAULT_GPT_IMAGE_MODEL,)))
-    workers = gpt_image_max_concurrency(models, bool(captured.get("gpt_image__use_failback")),
+    endpoints = captured.get("gpt_image__endpoints", bool(captured.get("gpt_image__use_failback")))
+    workers = gpt_image_max_concurrency(models, endpoints,
                                         credentials=gpt_image_credentials())
     events, stop = Queue(), Event()
 
@@ -1000,7 +1002,8 @@ def video_export(controller, deps, triggers=()):
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 
-    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")],
+    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")
+                                                      if item.id not in HOSTED_IMAGE_PROVIDERS],
                          preview=preview)
     if triggers:
         names = list(controller.fields)

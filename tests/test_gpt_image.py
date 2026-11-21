@@ -323,6 +323,20 @@ class GptImageGenerationTests(unittest.TestCase):
                 credentials=primary_only,
             )
 
+    def test_failback_only_never_uses_primary(self):
+        for api_url, api_key in (("", ""), ("https://primary", "pk")):
+            with self.subTest(primary_configured=bool(api_url)):
+                creds = GptImageCredentials(api_url, api_key, "https://backup", "fk")
+                request = GptImageRequest(prompt="fox", endpoints=("failback",), batch_count=2)
+                self.assertEqual(gpt_image_max_concurrency(request.models, request.endpoints, credentials=creds), 2)
+                with tempfile.TemporaryDirectory() as folder, patch(
+                    "h3_app.generation.gpt_image._call_endpoint", side_effect=RuntimeError("unavailable"),
+                ) as submit:
+                    updates = list(generate_gpt_image(request, _test_runtime(Path(folder)),
+                                                       credentials=creds, limiter=GptImageRateLimiter()))
+                self.assertEqual([call.args[0].name for call in submit.call_args_list], ["failback", "failback"])
+                self.assertTrue(updates[-1].status.startswith("Error:"))
+
     def test_concurrent_generate_writes_png_provenance_and_gallery_family(self):
         creds = GptImageCredentials(
             api_url="https://primary.example/v1",

@@ -141,7 +141,7 @@ class WorkshopApiImageTests(unittest.TestCase):
             runtime.output_dir.mkdir()
             with patch.object(JOBS, "store", WorkspaceStore(root / "state")), patch.dict(JOBS.callbacks), \
                  patch.dict(os.environ, {"GPT_IMAGE_API_URL": "https://example.invalid/v1",
-                                         "GPT_IMAGE_API_KEY": "test-key"}):
+                                         "GPT_IMAGE_API_KEY": "test-key", "GEMINI_API_KEY": "test-key"}):
                 with gr.Blocks() as ui:
                     controller, deps, pages = build_api_images(ui, runtime)
                 app = FastAPI()
@@ -151,7 +151,7 @@ class WorkshopApiImageTests(unittest.TestCase):
                 client = TestClient(app)
                 boot = client.get("/image/api/boot").json()
                 self.assertFalse(boot["gpu"])
-                self.assertEqual([item["id"] for item in boot["engines"]], ["gpt_image"])
+                self.assertEqual([item["id"] for item in boot["engines"]], ["gpt_image", "nano_banana", "mai_image"])
                 self.assertEqual(boot["state"]["engine"], "gpt_image")
                 self.assertNotIn("gpt_image__seed", boot["state"]["options"])
                 response = client.post("/image/api/settings", json={"action": "engine", "changes": {"engine": "qwen"}})
@@ -184,6 +184,34 @@ class WorkshopApiImageTests(unittest.TestCase):
                         self.assertFalse(run.get("error"), run)
                 self.assertFalse(requests[0].reference_images)
                 self.assertEqual(len(requests[1].reference_images), 1)
+
+                def generate_hosted(engine, model, resolution, count, prompt, references, runtime):
+                    self.assertFalse(CURRENT_JOB.get().has_gpu)
+                    self.assertEqual((resolution, count, prompt), ("1K" if engine == "nano_banana" else "2K",
+                                                                  1, "a blue bird"))
+                    self.assertEqual(len(references), 1)
+                    yield GenerationUpdate([str(target)], f"{model} complete")
+
+                with patch("h3_app.generation.hosted_image.generate_hosted_image", generate_hosted):
+                    for engine, model, tier in (("nano_banana", "gemini-3.1-flash-lite-image", "1K"),
+                                                ("mai_image", "MAI-Image-2.7", "2K")):
+                        response = client.post("/image/api/settings", json={
+                            "action": "engine", "changes": {"engine": engine},
+                        })
+                        self.assertEqual(response.status_code, 200, response.text)
+                        response = client.post("/image/api/settings", json={
+                            "changes": {f"{engine}__model_choice": model, f"{engine}__resolution": tier},
+                        })
+                        self.assertEqual(response.status_code, 200, response.text)
+                        response = client.post("/image/api/generate")
+                        self.assertEqual(response.status_code, 200, response.text)
+                        for _ in range(100):
+                            run = client.get("/image/api/run").json()["runs"]["generate"]
+                            if run and not run["active"]:
+                                break
+                            time.sleep(0.02)
+                        self.assertFalse(run["active"])
+                        self.assertFalse(run.get("error"), run)
                 self.assertEqual([request.quality for request in requests], ["medium", "medium"])
                 self.assertEqual(client.post("/image/api/interrupt").status_code, 200)
 

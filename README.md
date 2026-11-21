@@ -454,9 +454,22 @@ to that Modal Secret, Colab Secrets, or local `.env`.
 GPT Image also edits Remake frames and draws Sound Stage illustrations and style
 previews without a GPU. Sound Stage can draw a saved shot plan before speech;
 its images carry over when speech supplies the final timing. Independent API
-images share a two-requests-per-minute budget per model on each endpoint;
-primary and failback have independent budgets. Rate-limited requests wait and retry, while
+images share a two-requests-per-minute budget per model on each endpoint.
+Select **Primary**, **Failback**, or both in Image → GPT Image → Endpoints.
+Selecting both distinct endpoints combines their budgets and lets failed requests
+retry on the other endpoint. Rate-limited requests wait and retry, while
 character matching waits for its portrait and scene images.
+The Image page in Studio and CPU Workshop also supports **Nano Banana** with
+`GEMINI_API_KEY` and **MAI-Image** with the primary `GPT_IMAGE_API_URL` and
+`GPT_IMAGE_API_KEY`. Nano Banana shares 10 requests per minute across its two
+Gemini models. MAI-Image 2.7 and 2.7 Flash share 6 requests per minute.
+The picker shows native square sizes and estimated prices. Nano Banana 2.1
+offers 1K, 2K and 4K. Gemini 3.1 Flash Lite offers 1K, and both MAI models
+offer 1K and 2K. MAI estimates
+use Microsoft's typical per-image price as a baseline and scale with output
+area. Actual charges depend on usage and the configured gateway.
+[Gemini API pricing](https://aistudio.google.com/docs/pricing).
+[Microsoft's MAI Image 2.7 pricing](https://microsoft.ai/news/introducing-mai-image-2-7/).
 The same Gemini key also gives the writers optional free Gemma checks (song style detection,
 pronunciation note fixes and the strict source check), which stay inside the free per-minute quota
 and fall back to the built-in rules. Set `H3_GEMMA=0` to turn them off.

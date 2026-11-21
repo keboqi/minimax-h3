@@ -58,6 +58,7 @@ class GptImageRequest:
     height: int = 1088
     batch_count: int = 1
     reference_images: tuple[str, ...] = ()
+    endpoints: tuple[str, ...] | None = None
 
 
 class GptImageRateLimiter:
@@ -170,6 +171,7 @@ def validate_gpt_image(
     models, quality, width, height, batch_count, creds = validate_gpt_image_settings(
         models=request.models,
         use_failback=bool(request.use_failback),
+        endpoints=request.endpoints,
         quality=request.quality,
         width=request.width,
         height=request.height,
@@ -216,10 +218,10 @@ def _encode_reference_file(path_str: str) -> tuple[str, bytes, str]:
         raise H3Error(f"Could not read reference image {path.name}: {exc}") from exc
 
 
-def _extract_image_bytes(response: Any) -> bytes:
+def _extract_image_bytes(response: Any, *, label: str = GPT_IMAGE_LABEL) -> bytes:
     items = getattr(response, "data", None) or []
     if not items:
-        raise H3Error("GPT Image returned no image data.")
+        raise H3Error(f"{label} returned no image data.")
     first = items[0]
     b64 = getattr(first, "b64_json", None)
     if b64:
@@ -229,16 +231,18 @@ def _extract_image_bytes(response: Any) -> bytes:
         reply = requests.get(url, timeout=120)
         reply.raise_for_status()
         return reply.content
-    raise H3Error("GPT Image returned an empty image payload.")
+    raise H3Error(f"{label} returned an empty image payload.")
 
 
-def _save_png(raw_bytes: bytes, target: Path) -> None:
+def _save_png(raw_bytes: bytes, target: Path) -> tuple[int, int]:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f"{target.stem}.{uuid.uuid4().hex[:8]}.tmp.png")
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img:
             img.save(temporary, format="PNG")
+            size = img.size
         temporary.replace(target)
+        return size
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -278,9 +282,10 @@ def _call_endpoint(
 
 def _rate_limit_delay(error: Exception) -> float | None:
     """Read retry hints without letting SDK retries bypass our shared quota."""
-    if getattr(error, "status_code", None) != 429:
+    response = getattr(error, "response", None)
+    if getattr(error, "status_code", getattr(response, "status_code", None)) != 429:
         return None
-    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
+    headers = getattr(response, "headers", {}) or {}
     for name, scale in (("retry-after-ms", 0.001), ("x-ms-retry-after-ms", 0.001), ("retry-after", 1)):
         value = headers.get(name)
         if value is None:
@@ -312,7 +317,7 @@ def generate_gpt_image(
     models, quality, width, height, batch_count, references, creds = validate_gpt_image(
         request, credentials
     )
-    endpoints = creds.endpoints(bool(request.use_failback))
+    endpoints = creds.endpoints(request.use_failback if request.endpoints is None else request.endpoints)
     slots = plan_gpt_image_slots(models, endpoints, batch_count, limiter=limiter)
 
     def _run() -> Iterator[GenerationUpdate]:
@@ -438,7 +443,8 @@ def generate_gpt_image(
                                 "models": list(models),
                                 "endpoint": used_endpoint.name,
                                 "planned_endpoint": planned_endpoint.name,
-                                "use_failback": bool(request.use_failback),
+                                "use_failback": any(ep.name == "failback" for ep in endpoints),
+                                "endpoints": [ep.name for ep in endpoints],
                                 "quality": quality,
                                 "width": width,
                                 "height": height,

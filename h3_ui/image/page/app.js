@@ -6,7 +6,7 @@
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
   const multiSeg = (node, options, current, pick, extra = {}) =>
-    sharedMultiSeg(node, options, current, pick, {...extra, onEmpty: () => toast("Keep at least one model selected.", true)});
+    sharedMultiSeg(node, options, current, pick, {onEmpty: () => toast("Keep at least one model selected.", true), ...extra});
   const openStudio = (task, label) => sharedOpenStudio(task, label, toast);
 
   const app = {boot: null, s: null, runs: {}, progress: [], take: 0, suggestion: null, previous: null,
@@ -211,9 +211,10 @@
     return change("resolution", {}, size.name);
   };
   const renderOutput = () => {
-    const {preset, batch, edit_size: editSize, gpt_models: gptModels, failback} = app.s;
+    const {preset, batch, edit_size: editSize, gpt_models: gptModels, gpt_endpoints: endpoints,
+      hosted_model: hostedModel, hosted_resolution: hostedSize} = app.s;
     $("preset-box").hidden = !preset;
-    $("no-preset").hidden = Boolean(preset);
+    $("no-preset").hidden = Boolean(preset || hostedModel);
     if (preset) {
       seg($("preset"), preset.choices, preset.value, (value) => change("edit", {[preset.name]: value}));
       $("preset-hint").textContent = preset.hint;
@@ -225,19 +226,26 @@
     if (gptModels) {
       multiSeg($("gpt-models"), gptModels.choices, gptModels.value, (value) => change("edit", {[gptModels.name]: value}));
     }
-    $("failback-row").hidden = !failback;
-    if (failback) {
-      seg($("failback"), [["Off", false], ["On", true]], Boolean(failback.value), (value) => change("edit", {[failback.name]: value}));
-      $("failback-note").textContent = app.s.failback_available
-        ? "Failback endpoint ready"
-        : "Set GPT_IMAGE_API_FAILBACK_URL and GPT_IMAGE_API_FAILBACK_KEY";
+    $("hosted-model-row").hidden = !hostedModel;
+    if (hostedModel) {
+      seg($("hosted-model"), hostedModel.choices, hostedModel.value, (value) => change("edit", {[hostedModel.name]: value}));
+    }
+    $("gpt-endpoints-row").hidden = !endpoints;
+    if (endpoints) {
+      const pick = (value) => change("edit", {[endpoints.name]: value});
+      multiSeg($("gpt-endpoints"), endpoints.choices, endpoints.value, pick,
+        {onEmpty: () => toast("Keep at least one endpoint selected.", true)});
+      const missing = endpoints.choices.filter(([, id]) => !app.s[`${id}_available`]);
+      $("gpt-endpoints-note").textContent = missing.map(([label]) => `${label} needs configuration`).join(" · ");
     }
     $("batch-row").hidden = !batch;
     if (batch) {
       seg($("batch"), Array.from({length: batch.maximum - batch.minimum + 1}, (_, index) => batch.minimum + index), batch.value, (value) => change("edit", {[batch.name]: value}));
       $("batch-note").textContent = app.s.engine === "gpt_image"
         ? `up to ${batch.maximum} concurrent · 2 req/min per model`
-        : "same inputs, a different seed each";
+        : app.s.requests_per_minute
+          ? `up to ${batch.maximum} concurrent · ${app.s.requests_per_minute} req/min shared`
+          : "same inputs, a different seed each";
     }
     $("edit-size-row").hidden = !editSize;
     if (editSize) {
@@ -248,10 +256,16 @@
     const chosen = sizeChoice();
     const ratios = [...new Set(tiers.flatMap((tier) => tier.sizes.map((size) => size.ratio)))];
     const restricted = app.s.engine === "gpt_image";
+    $("aspect-row").hidden = Boolean(hostedSize);
+    $("open-size").hidden = Boolean(hostedSize);
     $("open-size").textContent = restricted ? "Exact size" : "Exact size & seed";
-    seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
-    seg($("tier"), restricted ? tiers.map((tier, index) => [tier.label, index]) : [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
-      (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value));
+    if (hostedSize) {
+      seg($("tier"), hostedSize.choices, hostedSize.value, (value) => change("edit", {[hostedSize.name]: value}));
+    } else {
+      seg($("aspect"), restricted ? ratios : [...ratios, "Custom"], chosen.ratio, (value) => pickSize(value, Math.max(0, chosen.tier)));
+      seg($("tier"), restricted ? tiers.map((tier, index) => [tier.label, index]) : [...tiers.map((tier, index) => [tier.label, index]), ["Exact dimensions", -1]], chosen.tier,
+        (value) => pickSize(chosen.ratio === "Custom" ? ratios[0] : chosen.ratio, value));
+    }
     const follows = editSize && editSize.value !== editSize.choices[editSize.choices.length - 1][1];
     $("resolution").replaceChildren(h("span", {class: "mono", text: `${app.s.width} × ${app.s.height}`}),
       h("span", {class: "muted", text: ` · ${(app.s.width * app.s.height / 1e6).toFixed(1)} MP${follows ? " · this edit follows Edit size; pick a size to override it" : ""}`}));
@@ -340,7 +354,7 @@
       : app.s.available === false ? app.s.readiness.message
       : !hasPrompt ? "Write an image prompt or edit instruction." : app.s.readiness.message;
     $("run-label").textContent = app.s.editing ? "Edit image" : "Generate image";
-    $("run").disabled = !(app.boot.gpu || app.s.engine === "gpt_image") || !ready || Boolean(run?.active);
+    $("run").disabled = !(app.boot.gpu || engine().api) || !ready || Boolean(run?.active);
     $("stop").hidden = !run?.active;
     const status = $("run-status");
     status.hidden = !run || (!run.active && !run.error && !run.status);
@@ -401,18 +415,20 @@
   };
 
   const renderSummary = () => {
-    const {preset, batch, edit_size: editSize, editing, gpt_models: gptModels, failback} = app.s;
+    const {preset, batch, edit_size: editSize, editing, gpt_models: gptModels, gpt_endpoints: endpoints} = app.s;
     const follows = editSize && editSize.value !== editSize.choices[editSize.choices.length - 1][1];
     const count = batch ? batch.value : 1;
-    const modelsText = gptModels ? (gptModels.value || []).join(", ") : "";
+    const modelsText = gptModels ? (gptModels.value || []).join(", ") : app.s.hosted_model?.value;
     $("summary").textContent = [engine().label, preset?.value, modelsText, follows ? editSize.value : `${app.s.width} × ${app.s.height}`,
       `${count} ${count === 1 ? "image" : "images"}`].filter(Boolean).join(" · ");
     const chips = [editing ? `Edit · ${app.s.references.length} ${app.s.references.length === 1 ? "image" : "images"}` : "Generate"];
     if (app.s.engine === "gpt_image") {
       chips.push("Quality low");
-      if (failback?.value) chips.push("Failback on");
+      if (endpoints?.value) {
+        chips.push(endpoints.choices.filter(([, id]) => endpoints.value.includes(id)).map(([label]) => label).join(" + "));
+      }
       chips.push(`Max ${batch ? batch.maximum : 2} concurrent`);
-    } else {
+    } else if (!app.s.hosted_model) {
       chips.push(app.s.seed === -1 ? "Random seed" : `Seed ${app.s.seed}`);
     }
     if (app.s.separate?.value) chips.push("Each image separately");
@@ -423,9 +439,7 @@
   const render = () => {
     if (!app.s) return;
     seg($("mode"), app.boot.modes, app.s.mode, (value) => change("mode", {mode: value}), {disabled: app.s.generate_only});
-    const isAvailable = (item) => item.id === "gpt_image" && app.s.gpt_image_available !== undefined
-      ? app.s.gpt_image_available
-      : item.available !== false;
+    const isAvailable = (item) => app.s.api_availability?.[item.id] ?? item.available !== false;
     seg($("models"), app.boot.engines.map((item) => [
       isAvailable(item) ? item.label : `${item.label} (not available)`,
       item.id,
@@ -433,9 +447,7 @@
     for (const [index, item] of app.boot.engines.entries()) {
       const button = $("models").children[index];
       if (button) {
-        button.title = isAvailable(item)
-          ? ""
-          : `${item.label} is not available: configure GPT_IMAGE_API_URL and GPT_IMAGE_API_KEY.`;
+        button.title = isAvailable(item) ? "" : item.credentials_hint;
       }
     }
     $("references").hidden = !app.s.editing;
