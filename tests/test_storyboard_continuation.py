@@ -17,6 +17,7 @@ NAMES = {
     "h3_apply_continuation", "H3ContinuationPrefix", "h3_storyboard_latent_path",
     "H3SaveAVLatent", "H3LoadAVLatent",
     "H3_TAIL_FRAMES", "h3_tail_latent_steps", "h3_tail_pixels", "h3_tail_wave", "H3EncodeAVTail", "H3LipSyncMask",
+    "H3LowerFaceMask",
 }
 
 
@@ -110,6 +111,36 @@ class ContinuationGeometryTests(unittest.TestCase):
             apply(latent, frames, mouth[:-1])
         with self.assertRaisesRegex(ValueError, "no editable pixels"):
             apply(latent, frames, torch.zeros_like(mouth))
+
+    def test_lower_face_mask_targets_mouth_and_respects_active_interval_and_absent_frames(self):
+        crops = torch.zeros((6, 128, 128, 3))
+        transform = {
+            "face_rect": [(32.0, 20.0, 64.0, 80.0)] * 6,
+            "detected": [True, True, False, True, True, True],
+            "absent": [False, False, False, True, False, False],
+            "weights": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0],
+        }
+        build = self.nodes["H3LowerFaceMask"]().build
+        denoise, composite = build(crops, transform, active_start=1, active_end=5)
+        self.assertEqual(tuple(denoise.shape), (6, 128, 128))
+        self.assertEqual(tuple(composite.shape), (6, 128, 128))
+        # Outside active interval: frame 0 and frame 5 composite must be zero.
+        self.assertFalse(torch.any(composite[0]))
+        self.assertFalse(torch.any(composite[5]))
+        # Undetected (frame 2) and absent (frame 3) must be zero in both masks.
+        self.assertFalse(torch.any(denoise[2]))
+        self.assertFalse(torch.any(composite[2]))
+        self.assertFalse(torch.any(denoise[3]))
+        self.assertFalse(torch.any(composite[3]))
+        # Active detected frame 1: upper face (forehead y=25) is untouched; mouth (y=82, x=64) is masked.
+        self.assertEqual(float(composite[1, 25, 64]), 0.0)
+        self.assertGreater(float(composite[1, 82, 64]), 0.9)
+        self.assertEqual(float(denoise[1, 82, 64]), 1.0)
+        # Denoise mask is strictly wider than composite mask.
+        self.assertGreater(int((denoise[1] > 0.5).sum()), int((composite[1] > 0.5).sum()))
+        # All absent raises clearly.
+        with self.assertRaisesRegex(ValueError, "No detected face frames"):
+            build(crops, {**transform, "absent": [True] * 6})
 
     def test_short_source_or_target_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at least 5"):

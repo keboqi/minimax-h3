@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -11,11 +13,19 @@ import wave
 import numpy as np
 
 from h3_app.dubbing.alignment import FITTED_AUDIO_RATE as RATE
-from h3_app.dubbing.lip_sync import fitted_dialogue, render_lip_sync_preview
+from h3_app.dubbing.lip_sync import (
+    LipSyncWindow,
+    assemble_lip_sync_video,
+    fitted_dialogue,
+    plan_lip_sync_windows,
+    render_dub_lip_sync,
+    render_lip_sync_preview,
+)
 from h3_app.dubbing.results import player_folder
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
-from h3_app.workflows.lip_sync import build_lip_sync_graph
+from h3_app.media_tools import probe_video_metadata
+from h3_app.workflows.lip_sync import build_auto_lip_sync_graph, build_lip_sync_graph, snap_h3_frames
 from tests.test_face_refine import by_class, link_id, models
 
 
@@ -108,3 +118,179 @@ class LipSyncTests(unittest.TestCase):
             list(render_lip_sync_preview(dub=self.dub, speaker="A", first_frame=0, crop=Path("crop.mp4"),
                                          mask=Path("mask.mp4"), services=SimpleNamespace(media=media)))
         media.stage_file.assert_not_called()
+
+    def test_snap_h3_frames_rounds_up_to_17k_plus_5(self):
+        self.assertEqual(snap_h3_frames(1), 5)
+        self.assertEqual(snap_h3_frames(5), 5)
+        self.assertEqual(snap_h3_frames(6), 22)
+        self.assertEqual(snap_h3_frames(22), 22)
+        self.assertEqual(snap_h3_frames(23), 39)
+        self.assertEqual(snap_h3_frames(362), 362)
+        with self.assertRaises(H3Error):
+            snap_h3_frames(0)
+        with self.assertRaises(H3Error):
+            snap_h3_frames(363)
+
+    def test_plan_windows_splits_cuts_skips_overlaps_and_uses_visual_hints(self):
+        folder = player_folder(self.dub)
+        samples = lambda start, end: round(end * RATE) - round(start * RATE)
+        (folder / "alignment.json").write_text(json.dumps({
+            "lines": [
+                {"speaker": "A", "visual_speaker": {"time": 0.5, "visibility": "on_screen", "face_center": [0.25, 0.5]}},
+                {"speaker": "A"},
+                {"speaker": "B"},  # overlaps with line 1 from 2.2..2.6
+                {"speaker": "A", "visual_speaker": {"time": 4.2, "visibility": "off_screen"}},
+                {"speaker": "B", "visual_speaker": {"time": 5.5, "visibility": "on_screen", "face_center": [0.75, 0.4]}},
+            ],
+            "spoken": {
+                "0": [0.2, 1.0],
+                "1": [1.3, 2.6],
+                "2": [2.2, 3.0],
+                "3": [4.0, 4.6],
+                "4": [5.0, 6.5],  # extends past 6.0s video_duration
+            },
+        }), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.full(samples(0.2, 1.0), 0.2, dtype=np.float32),
+            "1": np.full(samples(1.3, 2.6), 0.2, dtype=np.float32),
+            "2": np.full(samples(2.2, 3.0), 0.3, dtype=np.float32),
+            "3": np.full(samples(4.0, 4.6), 0.2, dtype=np.float32),
+            "4": np.full(samples(5.0, 6.5), 0.3, dtype=np.float32),
+        })
+        # Shot cut at 1.5s splits A's second line; overlap 2.2..2.6 is dropped; off_screen line 3 is skipped;
+        # line 4 is clamped to 6.0s.
+        windows = plan_lip_sync_windows(
+            self.dub, video_duration=6.0, video_size=(1280, 720), shot_cuts=[1.5],
+        )
+        # Expect: A [0.2..1.5] (merged line 0 + pre-cut part of line 1), A [1.5..2.2], B [2.6..3.0], B [5.0..6.0]
+        self.assertEqual([w.speaker for w in windows], ["A", "A", "B", "B"])
+        # No window crosses the 1.5s cut.
+        self.assertLessEqual(windows[0].end, 1.5 + 1e-6)
+        self.assertGreaterEqual(windows[1].start, 1.5 - 1e-6)
+        # Overlap 2.2..2.6 is excluded from active intervals.
+        self.assertLessEqual(windows[1].active_end, 2.2 + 1e-6)
+        self.assertGreaterEqual(windows[2].active_start, 2.6 - 1e-6)
+        # Last window is clamped to video_duration=6.0.
+        self.assertLessEqual(windows[-1].end, 6.0 + 1e-6)
+        # Visual hints mapped to pixel coordinates.
+        self.assertIsNotNone(windows[0].face_target)
+        self.assertEqual(windows[0].face_target[:2], (320, 360))
+        self.assertIsNotNone(windows[-1].face_target)
+        self.assertEqual(windows[-1].face_target[:2], (960, 288))
+        # All windows satisfy H3's 17k+5 render grid and never overlap each other.
+        for prev, curr in zip(windows, windows[1:]):
+            self.assertLessEqual(prev.end, curr.start + 1e-6)
+        for w in windows:
+            self.assertEqual((w.render_frames - 5) % 17, 0)
+            self.assertGreaterEqual(w.render_frames, w.source_frames)
+
+    def test_auto_graph_wires_face_track_lower_mask_audio_lock_and_stitch(self):
+        graph = build_auto_lip_sync_graph(
+            video="slice.mp4", dialogue="dialogue.wav", frames=73, models=self.models,
+            refinement={}, output_prefix="auto", crop_size=640, active_start=4, active_end=60,
+            face_target=(320, 240, 12),
+        )
+        track = by_class(graph, "H3FaceTrackCrop")
+        self.assertEqual(track["select"], "closest_to_xy")
+        self.assertEqual((track["X"], track["Y"], track["frame_index"]), (320, 240, 12))
+        self.assertEqual(track["cut_detection"], "none")
+        self.assertEqual(track["absent_shots"], "off")
+        lower = by_class(graph, "H3LowerFaceMask")
+        self.assertEqual(lower["crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
+        self.assertEqual(lower["transform"], [link_id(graph, "H3FaceTrackCrop"), 1])
+        self.assertEqual((lower["active_start"], lower["active_end"]), (4, 60))
+        mask = by_class(graph, "H3LipSyncMask")
+        self.assertEqual(mask["mouth_mask"], [link_id(graph, "H3LowerFaceMask"), 0])
+        stitch = by_class(graph, "H3FaceStitch")
+        self.assertEqual(stitch["masks"], [link_id(graph, "H3LowerFaceMask"), 1])
+        self.assertEqual(stitch["refined_crops"], [link_id(graph, "VAEDecode"), 0])
+        self.assertEqual(stitch["base_images"], [link_id(graph, "GetVideoComponents"), 0])
+
+        default_graph = build_auto_lip_sync_graph(
+            video="slice.mp4", dialogue="dialogue.wav", frames=73, models=self.models,
+            refinement={}, output_prefix="auto",
+        )
+        self.assertEqual(by_class(default_graph, "H3FaceTrackCrop")["select"], "largest_face")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_render_dub_lip_sync_end_to_end_preserves_audio_and_subtitles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            srt = root / "subs.srt"
+            srt.write_text("1\n00:00:00,200 --> 00:00:01,500\nHello world\n", encoding="utf-8")
+            dub = root / "dubbed.mp4"
+            subprocess.run([
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=24:d=2.5",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=2.5",
+                "-i", str(srt),
+                "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-c:s", "mov_text",
+                str(dub),
+            ], check=True)
+            folder = player_folder(dub)
+            folder.mkdir(parents=True)
+            samples = round(1.2 * RATE) - round(0.4 * RATE)
+            (folder / "alignment.json").write_text(json.dumps({
+                "lines": [{"speaker": "A"}],
+                "spoken": {"0": [0.4, 1.2]},
+            }), encoding="utf-8")
+            np.savez_compressed(folder / "alignment.npz", **{"0": np.full(samples, 0.25, dtype=np.float32)})
+
+            staged_videos: dict[str, Path] = {}
+            out_dir = root / "comfy_out"
+            out_dir.mkdir()
+
+            def stage(path, category):
+                self.assertEqual(category, "lip_sync")
+                src = Path(path)
+                if src.suffix == ".mp4":
+                    copied = out_dir / f"staged_{len(staged_videos)}.mp4"
+                    shutil.copy2(src, copied)
+                    staged_videos[copied.name] = copied
+                    return copied.name
+                return src.name
+
+            rendered_map: dict[str, Path] = {}
+
+            def submit(graph, client_id):
+                video_name = by_class(graph, "LoadVideo")["file"]
+                # Stub ComfyUI: return the sliced 24fps video as the rendered window output.
+                rendered = out_dir / f"{client_id}_00001_.mp4"
+                shutil.copy2(staged_videos[video_name], rendered)
+                rendered_map[client_id] = rendered
+                return client_id
+
+            services = SimpleNamespace(
+                models=SimpleNamespace(load_model_config=lambda: self.models),
+                media=SimpleNamespace(
+                    probe_video_metadata=probe_video_metadata,
+                    stage_file=stage,
+                    resolve_output=lambda history, _: rendered_map[history],
+                ),
+                execution=SimpleNamespace(
+                    submit_prompt=Mock(side_effect=submit),
+                    wait_for_history=lambda prompt_id: prompt_id,
+                    poll_comfy_progress=lambda *_: [],
+                ),
+            )
+            updates = list(render_dub_lip_sync(dub=dub, services=services, crop_size=320))
+            assembled = updates[-1]
+            self.assertIsInstance(assembled, Path)
+            self.assertTrue(assembled.is_file())
+            self.assertEqual(assembled.name, "dubbed.lipsync.mp4")
+
+            # Verify output video dimensions, duration, audio stream, and subtitle stream are preserved.
+            out_meta = probe_video_metadata(assembled)
+            self.assertEqual((out_meta.width, out_meta.height), (320, 240))
+            self.assertAlmostEqual(out_meta.duration, 2.5, delta=0.15)
+            self.assertTrue(out_meta.has_audio)
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(assembled)],
+                capture_output=True, text=True, check=True,
+            )
+            stream_types = [s["codec_type"] for s in json.loads(probe.stdout)["streams"]]
+            self.assertIn("video", stream_types)
+            self.assertIn("audio", stream_types)
+            self.assertIn("subtitle", stream_types)

@@ -2660,6 +2660,92 @@ class H3LipSyncMask:
         return masked, composite_mask
 
 
+class H3LowerFaceMask:
+    """Build per-frame lower-face denoise and composite masks from H3FaceTrackCrop."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "crops": ("IMAGE",),
+                "transform": ("H3FACEXFORM",),
+            },
+            "optional": {
+                "active_start": ("INT", {"default": 0, "min": 0, "max": 999999}),
+                "active_end": ("INT", {"default": -1, "min": -1, "max": 999999}),
+                "mouth_top": ("FLOAT", {"default": 0.45, "min": 0.2, "max": 0.85, "step": 0.01}),
+                "mouth_bottom": ("FLOAT", {"default": 1.08, "min": 0.6, "max": 1.35, "step": 0.01}),
+                "width_scale": ("FLOAT", {"default": 0.92, "min": 0.4, "max": 1.3, "step": 0.02}),
+                "denoise_expand": ("FLOAT", {"default": 1.18, "min": 1.0, "max": 1.6, "step": 0.02}),
+            },
+        }
+
+    RETURN_TYPES = ("MASK", "MASK")
+    RETURN_NAMES = ("denoise_mask", "composite_mask")
+    FUNCTION = "build"
+    CATEGORY = "H3/Dubbing"
+
+    def build(self, crops, transform, active_start=0, active_end=-1,
+              mouth_top=0.45, mouth_bottom=1.08, width_scale=0.92, denoise_expand=1.18):
+        frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
+        if frames <= 0 or height <= 0 or width <= 0:
+            raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
+        if mouth_bottom <= mouth_top:
+            raise ValueError("mouth_bottom must be greater than mouth_top")
+
+        start = max(0, min(int(active_start), frames))
+        end = frames if int(active_end) < 0 else max(start, min(int(active_end), frames))
+        denoise_start = max(0, start - 2)
+        denoise_end = min(frames, end + 2)
+
+        face_rects = transform.get("face_rect") or []
+        absent = transform.get("absent") or []
+        detected = transform.get("detected") or []
+        weights = transform.get("weights") or []
+
+        device = crops.device
+        yy = torch.arange(height, device=device, dtype=torch.float32)[:, None] + 0.5
+        xx = torch.arange(width, device=device, dtype=torch.float32)[None, :] + 0.5
+        denoise_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
+        composite_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
+
+        for index in range(frames):
+            if index < denoise_start or index >= denoise_end:
+                continue
+            if index < len(absent) and absent[index]:
+                continue
+            is_detected = bool(detected[index]) if index < len(detected) else True
+            weight = float(weights[index]) if index < len(weights) else (1.0 if is_detected else 0.0)
+            if not is_detected and weight <= 0.0:
+                continue
+            if index < len(face_rects):
+                fx, fy, fw, fh = (float(v) for v in face_rects[index])
+            else:
+                fx, fy, fw, fh = width * 0.25, height * 0.25, width * 0.5, height * 0.5
+            if fw <= 1.0 or fh <= 1.0:
+                continue
+
+            cx = fx + 0.5 * fw
+            cy = fy + 0.5 * (mouth_top + mouth_bottom) * fh
+            rx = max(1.0, 0.5 * fw * float(width_scale))
+            ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
+
+            rx_d = rx * float(denoise_expand)
+            ry_d = ry * float(denoise_expand)
+            d2_denoise = ((xx - cx) / rx_d) ** 2 + ((yy - cy) / ry_d) ** 2
+            denoise_mask[index] = (d2_denoise <= 1.0).float()
+
+            if start <= index < end:
+                d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
+                # Softly taper the outer 25% of the ellipse before H3FaceStitch feathers it.
+                soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
+                composite_mask[index] = soft * max(0.0, min(1.0, weight))
+
+        if not (denoise_mask >= 0.5).any() or not (composite_mask > 0.0).any():
+            raise ValueError("No detected face frames available in the active lip-sync interval")
+        return denoise_mask, composite_mask
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -2670,6 +2756,7 @@ NODE_CLASS_MAPPINGS = {
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
     "H3SourceAudioLatent": H3SourceAudioLatent,
     "H3LipSyncMask": H3LipSyncMask,
+    "H3LowerFaceMask": H3LowerFaceMask,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,
@@ -2718,4 +2805,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
     "H3RefinementCompilerGuard": "MiniMax H3 Refinement Compiler Guard",
     "H3SaveVideoNVENC": "MiniMax H3 Save Video (Auto H.264)",
+    "H3LipSyncMask": "MiniMax H3 Lip Sync Latent Mask",
+    "H3LowerFaceMask": "MiniMax H3 Lower-Face Mouth Mask",
 }
