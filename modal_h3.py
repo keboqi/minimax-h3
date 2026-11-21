@@ -762,6 +762,12 @@ image = (
     .uv_pip_install(PLAYWRIGHT_REQUIREMENT)
     .env({"PLAYWRIGHT_BROWSERS_PATH": "/opt/playwright"})
     .run_commands("python -m playwright install --with-deps --only-shell chromium")
+    # MediaPipe FaceMesh for lip-sync mouth-motion (MAR) backup and landmark lip/jaw masks.
+    # Installed with --no-deps so pinned numpy/opencv/protobuf constraints stay untouched.
+    .run_commands(
+        "uv pip install --system --no-deps mediapipe==0.10.21",
+        "uv pip install --system flatbuffers absl-py attrs",
+    )
 )
 
 # Local bytecode is rewritten by every test run or import. Mounting it changes the

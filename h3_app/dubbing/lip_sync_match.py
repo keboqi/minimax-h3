@@ -405,20 +405,271 @@ def run_lr_asd_scan(
     )
 
 
+def _box_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    ax1, ay1, aw, ah = a
+    bx1, by1, bw, bh = b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    union = max(0.0, aw * ah) + max(0.0, bw * bh) - inter
+    return inter / union if union > 1e-9 else 0.0
+
+
+def _find_yolo_face_model(yolo_model_path: Path | None = None) -> Path | None:
+    if yolo_model_path is not None and Path(yolo_model_path).is_file():
+        return Path(yolo_model_path)
+    candidates = []
+    for env_key in ("H3_COMFY_DIR", "COMFY_DIR"):
+        base = os.getenv(env_key, "").strip()
+        if base:
+            candidates.append(Path(base) / "models" / "ultralytics" / "bbox" / "face_yolov8m.pt")
+    candidates.extend([
+        Path("/opt/h3/ComfyUI/models/ultralytics/bbox/face_yolov8m.pt"),
+        Path("ComfyUI/models/ultralytics/bbox/face_yolov8m.pt"),
+    ])
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _mouth_aspect_ratio(crop_rgb, face_mesh) -> float | None:
+    """MediaPipe FaceMesh inner-lip openness ratio (MAR), or None if no face landmarks found."""
+    result = face_mesh.process(crop_rgb)
+    faces = getattr(result, "multi_face_landmarks", None)
+    if not faces:
+        return None
+    best = min(faces, key=lambda f: (f.landmark[1].x - 0.5) ** 2 + (f.landmark[1].y - 0.5) ** 2)
+    top, bot = best.landmark[13], best.landmark[14]
+    left, right = best.landmark[78], best.landmark[308]
+    width = math.hypot(right.x - left.x, right.y - left.y)
+    if width < 1e-4:
+        return None
+    return math.hypot(bot.x - top.x, bot.y - top.y) / width
+
+
+def _score_motion_series(values: list[float | None]) -> list[float]:
+    """Convert a per-frame MAR or mouth-motion series into speaking scores centered around 0."""
+    n = len(values)
+    if n == 0:
+        return []
+    deltas = [0.0] * n
+    prev_val: float | None = None
+    for i, val in enumerate(values):
+        if val is not None and prev_val is not None:
+            deltas[i] = abs(val - prev_val)
+        if val is not None:
+            prev_val = val
+    scores: list[float] = []
+    for i in range(n):
+        lo, hi = max(0, i - 2), min(n, i + 3)
+        window = [deltas[j] for j in range(lo, hi) if values[j] is not None]
+        if not window:
+            scores.append(0.0)
+            continue
+        activity = sum(window) / len(window)
+        # Typical quiet MAR delta is ~0.005-0.015; active speaking is ~0.04-0.18+.
+        scores.append(round(max(-1.0, min(2.0, (activity - 0.028) * 18.0)), 4))
+    return scores
+
+
+def run_yolo_mediapipe_scan(
+    video: Path,
+    cuts: Sequence[float] = (),
+    *,
+    yolo_model_path: Path | None = None,
+    sample_fps: float = 5.0,
+    confidence: float = 0.35,
+    iou_threshold: float = 0.3,
+) -> SourceScan:
+    """Detect & IoU-track faces per shot with face_yolov8m.pt and score mouth motion via MediaPipe MAR."""
+    meta = probe_video_metadata(video)
+    fp = video_fingerprint(video)
+    valid_cuts = tuple(sorted(c for c in cuts if 0.0 < c < meta.duration))
+    model_path = _find_yolo_face_model(yolo_model_path)
+    if model_path is None:
+        return SourceScan(
+            fingerprint=fp, duration=meta.duration, width=meta.width, height=meta.height,
+            fps=meta.fps, cuts=valid_cuts, shots=build_shots_from_cuts(meta.duration, valid_cuts),
+            backend="none",
+        )
+    try:
+        import cv2
+        import numpy as np
+        from ultralytics import YOLO
+    except ImportError:
+        return SourceScan(
+            fingerprint=fp, duration=meta.duration, width=meta.width, height=meta.height,
+            fps=meta.fps, cuts=valid_cuts, shots=build_shots_from_cuts(meta.duration, valid_cuts),
+            backend="none",
+        )
+
+    face_mesh = None
+    backend = "yolo-motion"
+    try:
+        import mediapipe as mp
+        if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_mesh"):
+            face_mesh = mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=True, max_num_faces=1, refine_landmarks=False,
+                min_detection_confidence=0.35,
+            )
+            backend = "yolo-mediapipe"
+    except Exception:
+        face_mesh = None
+
+    detector = YOLO(str(model_path))
+    shot_bounds = list(zip([0.0, *valid_cuts], [*valid_cuts, float(meta.duration)]))
+    shot_tracks: list[list[dict[str, Any]]] = [[] for _ in shot_bounds]
+
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        if face_mesh is not None:
+            face_mesh.close()
+        return SourceScan(
+            fingerprint=fp, duration=meta.duration, width=meta.width, height=meta.height,
+            fps=meta.fps, cuts=valid_cuts, shots=build_shots_from_cuts(meta.duration, valid_cuts),
+            backend="none",
+        )
+
+    try:
+        src_fps = float(cap.get(cv2.CAP_PROP_FPS) or meta.fps or 24.0)
+        stride = max(1, int(round(src_fps / max(1.0, float(sample_fps)))))
+        frame_idx = 0
+        shot_cursor = 0
+        next_track_id = 0
+        while True:
+            ok, frame_bgr = cap.read()
+            if not ok:
+                break
+            if frame_idx % stride != 0:
+                frame_idx += 1
+                continue
+            check_cancelled()
+            t = frame_idx / src_fps
+            frame_idx += 1
+            while shot_cursor + 1 < len(shot_bounds) and t >= shot_bounds[shot_cursor][1]:
+                shot_cursor += 1
+            fh, fw = frame_bgr.shape[:2]
+            if fh <= 0 or fw <= 0:
+                continue
+            results = detector.predict(frame_bgr, conf=confidence, verbose=False)
+            boxes_norm: list[tuple[float, float, float, float]] = []
+            if results and results[0].boxes is not None and len(results[0].boxes) > 0:
+                for xyxy in results[0].boxes.xyxy.cpu().numpy():
+                    x1, y1, x2, y2 = (float(v) for v in xyxy[:4])
+                    bx = max(0.0, min(1.0, x1 / fw))
+                    by = max(0.0, min(1.0, y1 / fh))
+                    bw = max(0.0, min(1.0 - bx, (x2 - x1) / fw))
+                    bh = max(0.0, min(1.0 - by, (y2 - y1) / fh))
+                    if bw >= 0.02 and bh >= 0.02:
+                        boxes_norm.append((bx, by, bw, bh))
+            if not boxes_norm:
+                continue
+
+            active = shot_tracks[shot_cursor]
+            matched_tracks: set[int] = set()
+            for box in boxes_norm:
+                best_idx = -1
+                best_iou = iou_threshold
+                for idx, tr in enumerate(active):
+                    if idx in matched_tracks or t - tr["last_t"] > 1.5:
+                        continue
+                    iou = _box_iou(tr["last_box"], box)
+                    if iou >= best_iou:
+                        best_iou = iou
+                        best_idx = idx
+                if best_idx >= 0:
+                    tr = active[best_idx]
+                    matched_tracks.add(best_idx)
+                else:
+                    tr = {"track_id": next_track_id, "obs": [], "mar": [], "prev_mouth": None, "last_t": t, "last_box": box}
+                    next_track_id += 1
+                    active.append(tr)
+                    matched_tracks.add(len(active) - 1)
+                tr["last_t"] = t
+                tr["last_box"] = box
+
+                # Extract face crop for MediaPipe MAR or fallback mouth-region motion.
+                bx, by, bw, bh = box
+                pad = 0.15
+                cx1 = max(0, int((bx - bw * pad) * fw))
+                cy1 = max(0, int((by - bh * pad) * fh))
+                cx2 = min(fw, int((bx + bw * (1.0 + pad)) * fw))
+                cy2 = min(fh, int((by + bh * (1.0 + pad)) * fh))
+                metric: float | None = None
+                if cx2 > cx1 + 8 and cy2 > cy1 + 8:
+                    crop_bgr = frame_bgr[cy1:cy2, cx1:cx2]
+                    if face_mesh is not None:
+                        crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+                        metric = _mouth_aspect_ratio(crop_rgb, face_mesh)
+                    if metric is None:
+                        # Lightweight lower-face grayscale mean diff fallback.
+                        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+                        lh = gray.shape[0]
+                        mouth_patch = cv2.resize(gray[int(lh * 0.55):, :], (32, 16)).astype(np.float32) / 255.0
+                        if tr["prev_mouth"] is not None:
+                            metric = float(np.mean(np.abs(mouth_patch - tr["prev_mouth"])))
+                        tr["prev_mouth"] = mouth_patch
+                tr["obs"].append((t, box))
+                tr["mar"].append(metric)
+    finally:
+        cap.release()
+        if face_mesh is not None:
+            try:
+                face_mesh.close()
+            except Exception:
+                pass
+
+    shots: list[Shot] = []
+    for shot_index, ((shot_start, shot_end), raw_tracks) in enumerate(zip(shot_bounds, shot_tracks)):
+        built_tracks: list[FaceTrack] = []
+        for tr in raw_tracks:
+            if not tr["obs"]:
+                continue
+            scores = _score_motion_series(tr["mar"])
+            observations = tuple(
+                TrackObservation(time=t, box=box, score=score)
+                for (t, box), score in zip(tr["obs"], scores)
+            )
+            built_tracks.append(FaceTrack(
+                track_id=tr["track_id"], shot_index=shot_index,
+                start=observations[0].time, end=observations[-1].time,
+                observations=observations,
+            ))
+        built_tracks.sort(key=lambda item: item.track_id)
+        shots.append(Shot(index=shot_index, start=shot_start, end=shot_end, tracks=tuple(built_tracks)))
+
+    return SourceScan(
+        fingerprint=fp, duration=meta.duration, width=meta.width, height=meta.height,
+        fps=meta.fps, cuts=valid_cuts, shots=tuple(shots), backend=backend,
+    )
+
+
 def get_or_scan_source(
     video: Path,
     cuts: Sequence[float],
     *,
     cache_dir: Path | None = None,
     scanner: ActiveSpeakerScanner | None = None,
+    yolo_model_path: Path | None = None,
+    force_rescan: bool = False,
 ) -> SourceScan:
     """Return a cached SourceScan when available, otherwise scan and persist it."""
     fp = video_fingerprint(video)
-    if cache_dir is not None:
+    expected_cuts = tuple(sorted(c for c in cuts if 0.0 < c < probe_video_metadata(video).duration)) if force_rescan else None
+    if cache_dir is not None and not force_rescan:
         cached = load_source_scan(cache_dir, fp)
         if cached is not None and cached.cuts == tuple(sorted(c for c in cuts if 0.0 < c < cached.duration)):
-            return cached
-    scan = scanner(video, cuts) if scanner is not None else run_lr_asd_scan(video, cuts, allow_fallback=True)
+            if cached.backend != "none" or (scanner is None and _find_yolo_face_model(yolo_model_path) is None):
+                return cached
+    if scanner is not None:
+        scan = scanner(video, cuts)
+    elif os.getenv("H3_LR_ASD_DIR", "").strip():
+        scan = run_lr_asd_scan(video, cuts, allow_fallback=True)
+    else:
+        scan = run_yolo_mediapipe_scan(video, cuts, yolo_model_path=yolo_model_path)
     if cache_dir is not None:
         try:
             save_source_scan(cache_dir, scan)
@@ -449,6 +700,7 @@ def assign_speakers_to_shots(
     scan: SourceScan,
     lines: Sequence[dict[str, Any]],
     *,
+    visual_speakers: Sequence[dict[str, Any]] | None = None,
     manual_overrides: dict[tuple[int, str], int | None] | None = None,
     min_observations: int = DEFAULT_MIN_OBSERVATIONS,
     min_speaking_score: float = DEFAULT_MIN_SPEAKING_SCORE,
@@ -460,7 +712,7 @@ def assign_speakers_to_shots(
 
     Priority:
       1. Manual override ``(shot_index, speaker) -> track_id | None``
-      2. Gemini ``visual_speaker`` hints on original lines in the shot
+      2. Gemini ``visual_speaker`` hints on original lines or transcript ``visual_speakers`` in the shot
       3. Local LR-ASD speaking scores aggregated over the speaker's original turns
       4. Single-speaker fallback when no tracks/hints exist (uses largest face in Phase 1)
     """
@@ -488,6 +740,16 @@ def assign_speakers_to_shots(
             if isinstance(hint, dict):
                 hint_time = hint.get("time")
                 if not isinstance(hint_time, (int, float)) or shot.start - 0.1 <= float(hint_time) <= shot.end + 0.1:
+                    speaker_hints.setdefault(spk, []).append(hint)
+        if use_visual_hints and visual_speakers:
+            for hint in visual_speakers:
+                if not isinstance(hint, dict):
+                    continue
+                spk = hint.get("speaker")
+                if not spk or spk not in speaker_turns:
+                    continue
+                hint_time = hint.get("time")
+                if isinstance(hint_time, (int, float)) and shot.start - 0.1 <= float(hint_time) <= shot.end + 0.1:
                     speaker_hints.setdefault(spk, []).append(hint)
 
         unique_speakers = list(speaker_turns.keys())

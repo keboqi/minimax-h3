@@ -184,6 +184,42 @@ class LipSyncTests(unittest.TestCase):
             self.assertEqual((w.render_frames - 5) % 17, 0)
             self.assertGreaterEqual(w.render_frames, w.source_frames)
 
+    def test_manual_transcript_visual_speakers_flow_to_matching_and_windows(self):
+        from h3_app.dubbing.lip_sync_match import Shot, SourceScan, assign_speakers_to_shots
+
+        folder = player_folder(self.dub)
+        samples = lambda start, end: round(end * RATE) - round(start * RATE)
+        visual_speakers = [
+            {"speaker": "A", "time": 0.5, "visibility": "on_screen", "face_center": [0.25, 0.5]},
+            {"speaker": "B", "time": 2.5, "visibility": "off_screen"},
+        ]
+        lines = [
+            {"speaker": "A", "start": 0.2, "end": 1.2},
+            {"speaker": "B", "start": 2.0, "end": 3.0},
+        ]
+        (folder / "alignment.json").write_text(json.dumps({
+            "lines": lines,
+            "spoken": {"0": [0.2, 1.2], "1": [2.0, 3.0]},
+            "visual_speakers": visual_speakers,
+        }), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.full(samples(0.2, 1.2), 0.2, dtype=np.float32),
+            "1": np.full(samples(2.0, 3.0), 0.3, dtype=np.float32),
+        })
+        scan = SourceScan(
+            fingerprint="fp", duration=4.0, fps=24.0, width=1280, height=720, cuts=(), backend="none",
+            shots=(Shot(index=0, start=0.0, end=4.0, tracks=()),),
+        )
+        assignments = assign_speakers_to_shots(scan, lines, visual_speakers=visual_speakers)
+        self.assertEqual(assignments[(0, "A")].source, "gemini")
+        self.assertEqual(assignments[(0, "A")].face_center, (0.25, 0.5))
+        self.assertEqual(assignments[(0, "B")].status, "off_screen")
+        windows = plan_lip_sync_windows(
+            self.dub, video_duration=4.0, video_size=(1280, 720), assignments=assignments,
+        )
+        self.assertEqual([w.speaker for w in windows], ["A"])
+        self.assertEqual(windows[0].face_target[:2], (320, 360))
+
     def test_auto_graph_wires_face_track_lower_mask_audio_lock_and_stitch(self):
         graph = build_auto_lip_sync_graph(
             video="slice.mp4", dialogue="dialogue.wav", frames=73, models=self.models,
@@ -211,6 +247,31 @@ class LipSyncTests(unittest.TestCase):
             refinement={}, output_prefix="auto",
         )
         self.assertEqual(by_class(default_graph, "H3FaceTrackCrop")["select"], "largest_face")
+
+    def test_auto_graph_uses_ui_default_singularity_profile_when_available(self):
+        from h3_app.model_types import ModelConfig, ModelProfile
+
+        prod_models = ModelConfig(
+            {
+                "speed": ModelProfile("Speed", "minimax_h3_fl2va_pruned_nvfp4.safetensors", "speed_ref.safetensors"),
+                "singularity": ModelProfile(
+                    "Singularity",
+                    "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+                    "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+                ),
+            },
+            "speed", "text.safetensors", "video.safetensors", "audio.safetensors",
+            turbo_lora="turbo.safetensors",
+        )
+        prod_models.turbo_lora_for = lambda _mode, _variant: "pika.safetensors"
+        graph = build_auto_lip_sync_graph(
+            video="slice.mp4", dialogue="dialogue.wav", frames=73, models=prod_models,
+            refinement={"_source_duration": 73 / 24}, output_prefix="auto",
+        )
+        self.assertEqual(
+            by_class(graph, "UNETLoader")["unet_name"],
+            "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+        )
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
     def test_render_dub_lip_sync_end_to_end_preserves_audio_and_subtitles(self):

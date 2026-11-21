@@ -28,11 +28,19 @@ function chips(result) {
 
 function controls(app, result) {
   const same = app.session.same;
-  const view = app.playerView || {voice: "dub", music: "on", subtitles: "translation"};
+  const hasLipSync = !!result.lip_sync?.output;
+  const view = {
+    voice: "dub", music: "on", subtitles: "translation",
+    video: hasLipSync ? "lipsync" : "original",
+    ...(app.playerView || {}),
+  };
   const button = (group, value, label) => `<button type="button" data-player-control="${group}" data-value="${value}"
     aria-pressed="${view[group] === value}">${label}</button>`;
   return `
     <div class="player-controls">
+      ${hasLipSync ? `
+        <div class="control"><span class="field-label">Video</span><div class="seg" role="group" aria-label="Video version">
+          ${button("video", "original", "Original")}${button("video", "lipsync", "Lip sync")}</div></div>` : ""}
       <div class="control"><span class="field-label">Voice</span><div class="seg" role="group" aria-label="Voice">
         ${button("voice", "dub", same ? "Edited" : "Dub")}${button("voice", "original", "Original")}</div></div>
       <div class="control"><span class="field-label">Music</span>${result.separated
@@ -105,66 +113,21 @@ function lipSyncCard(app, result) {
   if (!ls) return "";
   const out = ls.output;
   const report = ls.report;
-  const shots = ls.review_shots || [];
-  const picks = overridesFor(ls.video);
-  const canRun = !!(app.boot.lip_sync && ls.ready);
-  const stats = report
-    ? `<span class="chip chip-quiet">${plural(report.total_windows, "window")}${report.cached_windows ? ` · ${report.cached_windows} cached` : ""}</span>`
-    : "";
-  const reviewHtml = shots.length && canRun ? `
-    <details class="sec lip-sync-review">
-      <summary>Review ${plural(shots.length, "uncertain shot")} (optional)</summary>
-      <div class="stack-10">
-        <p class="muted small">Uncertain shots kept the original picture. Pick the speaking face or mark off-screen, then re-render only those shots.</p>
-        ${shots.map((shot) => {
-          const key = shotKey(shot);
-          const picked = Object.prototype.hasOwnProperty.call(picks, key) ? picks[key] : undefined;
-          return `
-            <div class="lip-sync-shot stack-8">
-              <div class="row align-baseline row-wrap">
-                <strong>${esc(shot.speaker_label)}</strong>
-                <span class="muted small">Shot ${shot.shot_index + 1} · ${shot.time.toFixed(1)}s</span>
-              </div>
-              ${shot.reason ? `<span class="muted small">${esc(shot.reason)}</span>` : ""}
-              <div class="lip-sync-frame-wrap">
-                <img src="${esc(shot.frame_url)}" alt="${esc(shot.speaker_label)} frame at ${shot.time.toFixed(1)}s" loading="lazy">
-                ${shot.tracks.map((track, idx) => {
-                  const [x, y, w, h] = track.box;
-                  const active = picked === track.track_id;
-                  return `<button type="button" class="lip-sync-box"
-                    style="left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%"
-                    data-lip-sync-pick="${esc(key)}" data-track-id="${track.track_id}"
-                    aria-pressed="${active}">Face ${idx + 1}</button>`;
-                }).join("")}
-              </div>
-              <div class="row row-wrap">
-                <button type="button" class="btn btn-small" data-lip-sync-pick="${esc(key)}" data-track-id="off"
-                  aria-pressed="${picked === null}">Off-screen / skip</button>
-              </div>
-            </div>`;
-        }).join("")}
-        <div class="row">
-          <button type="button" class="btn btn-small btn-primary" data-action="lip-sync-apply" data-busy="lip-sync">Apply &amp; re-render affected shots</button>
-        </div>
-      </div>
-    </details>` : "";
+  const stats = out
+    ? `<span class="chip">${report ? `${plural(report.total_windows, "window")} synced` : "Lip sync ready"}</span>`
+    : '<span class="chip chip-quiet">Optional step</span>';
   return `
     <section class="card card-pad stack-10" aria-labelledby="ls-h">
       <div class="row align-center row-wrap"><h2 id="ls-h">Lip sync</h2>${stats}</div>
-      <p class="muted small">Automatically tracks faces, repaints the lower face to match the fitted dub with H3, and keeps the approved audio and subtitles.</p>
-      ${app.boot.lip_sync ? `
-        <div class="run-status" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
-          <span class="spinner" aria-hidden="true"></span><span data-run-status role="status"></span></div>
-        <div class="row row-wrap">
-          <button type="button" class="btn btn-small btn-primary" data-action="lip-sync" data-busy="lip-sync"
-            ${ls.ready ? "" : 'data-locked="true" disabled'}>${out ? "Re-run lip sync" : "Lip sync video"}</button>
-          <button type="button" class="btn btn-small" data-stop="lip-sync" data-action="interrupt" data-kind="lip-sync" disabled>Interrupt</button>
-          ${out ? `<a class="btn btn-small" href="${esc(out.url)}" download>${icon("download", 14)} Download (${size(out.size)})</a>` : ""}
-        </div>
-        ${ls.ready ? "" : '<span class="muted small">Generate this dub again to save fitted dialogue for lip sync.</span>'}`
-        : `<span class="small info-text">Lip sync runs in Studio.</span>${out ? `<div class="row"><a class="btn btn-small" href="${esc(out.url)}" download>${icon("download", 14)} Download (${size(out.size)})</a></div>` : ""}`}
-      ${out ? `<video controls playsinline preload="metadata" class="lip-sync-preview" aria-label="Lip-synced video" src="${esc(out.inline_url)}"></video>` : ""}
-      ${reviewHtml}
+      <p class="muted small">${out
+        ? "Switch between Original and Lip sync video in the player above. Open the Lip Sync workspace to review or adjust face alignment and re-render."
+        : "Auto-detect faces and speakers, confirm face alignment on the playing video with dubbed audio, then render lip sync."}</p>
+      <div class="row row-wrap">
+        <button type="button" class="btn btn-small ${out ? "" : "btn-primary"}" data-action="to-lipsync">
+          ${out ? "Open Lip Sync workspace →" : "Go to Lip Sync step →"}
+        </button>
+        ${out ? `<a class="btn btn-small btn-primary" href="${esc(out.url)}" download>${icon("download", 14)} Download lip-sync MP4 (${size(out.size)})</a>` : ""}
+      </div>
     </section>`;
 }
 
@@ -257,7 +220,28 @@ function playerRoot() {
 function applyView(app) {
   const root = playerRoot();
   if (!root) return;
-  const view = app.playerView || {voice: "dub", music: "on", subtitles: "translation"};
+  const hasLipSync = !!app.session?.result?.lip_sync?.output?.inline_url;
+  const view = {
+    voice: "dub", music: "on", subtitles: "translation",
+    video: hasLipSync ? "lipsync" : "original",
+    ...(app.playerView || {}),
+  };
+  const videoEl = root.querySelector("video");
+  const lipUrl = app.session?.result?.lip_sync?.output?.inline_url;
+  if (videoEl && lipUrl) {
+    if (!videoEl.dataset.origSrc) videoEl.dataset.origSrc = videoEl.getAttribute("src") || videoEl.currentSrc || "";
+    const targetSrc = view.video === "lipsync" ? lipUrl : videoEl.dataset.origSrc;
+    if (targetSrc && videoEl.getAttribute("src") !== targetSrc) {
+      const t = videoEl.currentTime;
+      const wasPaused = videoEl.paused;
+      videoEl.setAttribute("src", targetSrc);
+      videoEl.load();
+      videoEl.addEventListener("loadedmetadata", () => {
+        videoEl.currentTime = t;
+        if (!wasPaused) videoEl.play().catch(() => {});
+      }, {once: true});
+    }
+  }
   const voices = root.querySelectorAll("[data-voice-choice]");
   const voice = voices[view.voice === "original" ? 1 : 0];
   if (voice && !voice.checked) {
@@ -376,6 +360,7 @@ export function bindResult(app) {
     const action = target.dataset.action;
     const session = app.session;
     if (action === "to-dub") app.go("dub");
+    else if (action === "to-lipsync") app.go("lipsync");
     else if (action === "to-review") app.go("review");
     else if (action === "retry-failed") {
       app.filter = "failed";

@@ -20,7 +20,7 @@ import gradio as gr
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.lip_sync import render_dub_lip_sync
+from h3_app.dubbing.lip_sync import detect_lip_sync_plan, render_dub_lip_sync
 from h3_app.dubbing.results import load_result
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices
@@ -764,7 +764,33 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def lip_sync_video(self, session_id, manual_overrides=None):
+    def detect_lip_sync(self, session_id, force_rescan=False):
+        """Stage 1 only: detect shot cuts, track faces, and align speakers without rendering H3."""
+        try:
+            session = self._session(session_id)
+            output = session.data.get("last_output") if session else None
+            result = load_result(output) if output else None
+            dub = result.video if result else None
+            if dub is None or not dub.is_file():
+                raise H3Error("Generate a video dub first.")
+            services = self.services.generation_services() if self.services.generation_services is not None else None
+            for update in detect_lip_sync_plan(
+                dub=dub,
+                services=services,
+                visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
+                force_rescan=bool(force_rescan),
+            ):
+                if isinstance(update, dict):
+                    yield None, (
+                        f"Detected {len(update.get('shots') or ())} shot(s) "
+                        f"({update.get('windows_count', 0)} lip-sync window(s), backend: {update.get('backend', 'none')})."
+                    )
+                else:
+                    yield None, update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
+
+    def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None):
         """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
@@ -775,10 +801,17 @@ class DubbingHandlers:
             dub = result.video if result else None
             if dub is None or not dub.is_file():
                 raise H3Error("Generate a video dub first.")
+            extra = {}
+            if strength is not None:
+                extra["strength"] = max(0.2, min(1.0, float(strength)))
+            if feather is not None:
+                extra["feather"] = max(0, min(32, int(feather)))
             for update in render_dub_lip_sync(
                 dub=dub,
                 services=self.services.generation_services(),
                 manual_overrides=manual_overrides,
+                visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
+                **extra,
             ):
                 if isinstance(update, Path):
                     yield str(update), "Lip-synced video ready."

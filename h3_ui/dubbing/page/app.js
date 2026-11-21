@@ -8,10 +8,11 @@ import {renderSource, bindSource, autoBody} from "./source.js";
 import {bindBatch} from "./batch.js";
 import {renderReview, bindReview} from "./review.js";
 import {renderDub, bindDub} from "./dub.js";
+import {renderLipSync, bindLipSync, afterLipSync, loadLipSyncPlan, resetLipSyncState} from "./lipsync.js";
 import {renderResult, bindResult, afterResult} from "./result.js";
 
 const STORE = "h3-dubbing-page";
-const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["result", "Result"]];
+const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["lipsync", "Lip sync"], ["result", "Result"]];
 const SAVED = ["settings", "sessionId", "project", "screen", "sourceTab", "source", "pendingRuns", "completedAuto"];
 
 export const app = {
@@ -101,15 +102,18 @@ function attention(session) {
 function renderSteps() {
   const session = app.session;
   const result = session?.result;
-  const done = {source: !!session, review: !!session && !!result, dub: !!result, result: false};
+  const hasLipSync = !!result?.lip_sync;
+  const done = {source: !!session, review: !!session && !!result, dub: !!result, lipsync: !!result?.lip_sync?.output, result: false};
   const notes = {
     source: app.source?.name || session?.source?.name || "",
     review: session ? (attention(session) ? `<span class="chip chip-warn">${attention(session)} need attention</span>` : "") : "",
-    dub: "", result: "",
+    dub: "",
+    lipsync: hasLipSync && !result?.lip_sync?.output ? '<span class="muted small">Optional</span>' : "",
+    result: "",
   };
   document.getElementById("steps").innerHTML = SCREENS.map(([key, title], index) => `
     <button type="button" class="step" data-screen="${key}" ${app.screen === key ? 'aria-current="step"' : ""}
-      ${!session && key !== "source" ? "disabled" : ""}>
+      ${(!session && key !== "source") || (key === "lipsync" && !hasLipSync) ? "disabled" : ""}>
       <span class="step-mark ${done[key] && app.screen !== key ? "done" : ""}">${done[key] && app.screen !== key ? icon("check", 13) : index + 1}</span>
       ${title}${key === "source" && notes.source ? `<span class="muted small step-note">${esc(notes.source)}</span>` : ""}${notes[key] && key !== "source" ? notes[key] : ""}
     </button>`).join("");
@@ -131,11 +135,12 @@ export function render() {
   renderTop();
   renderSteps();
   const screen = document.getElementById("screen");
-  const renderers = {source: renderSource, review: renderReview, dub: renderDub, result: renderResult};
+  const renderers = {source: renderSource, review: renderReview, dub: renderDub, lipsync: renderLipSync, result: renderResult};
   if (app.screen !== "source" && !app.session) app.screen = "source";
   screen.innerHTML = renderers[app.screen](app);
   screen.dataset.screen = app.screen;
   if (app.screen === "result") afterResult(app);
+  else if (app.screen === "lipsync") afterLipSync(app);
   updateRunViews();
   saveSettings();
 }
@@ -265,6 +270,16 @@ async function finished(kind, run) {
   if (kind === "auto" && run.session) await restoreAutoSession(run);
   if (["dub", "auto"].includes(kind) && !run.error && !run.stop_requested && run.status !== "Interrupted.") {
     if (kind !== "auto") await refresh();
+    go("result");
+    return;
+  }
+  if (kind === "lip-sync-detect" && !run.error && !run.stop_requested) {
+    await loadLipSyncPlan(app, {silent: true});
+    return;
+  }
+  if (kind === "lip-sync" && !run.error && !run.stop_requested && run.status !== "Interrupted.") {
+    await refresh();
+    app.playerView = {...(app.playerView || {voice: "dub", music: "on", subtitles: "translation"}), video: "lipsync"};
     go("result");
     return;
   }
@@ -440,6 +455,7 @@ function bindChrome() {
   bindSource(app);
   bindReview(app);
   bindDub(app);
+  bindLipSync(app);
   bindResult(app);
 }
 

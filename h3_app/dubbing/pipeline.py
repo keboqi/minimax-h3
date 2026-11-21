@@ -1614,11 +1614,17 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         notes.insert(0, f"Dub saved, but its result player could not be saved for Media: {exc}.")
     try:
         np.savez_compressed(folder / "alignment.npz", **{str(index): clip for index, clip in clips.items()})
-        (folder / "alignment.json").write_text(json.dumps({
+        alignment_data = {
             "lines": lines, "spoken": spoken, "files": dict(session.data.get("files", {})),
             # The player keeps the dub's label ("English · edited"); the aligner needs its language.
             "language": language,
-        }, ensure_ascii=False, default=str), encoding="utf-8")
+        }
+        visual_speakers = (session.data.get("transcript") or {}).get("visual_speakers")
+        if visual_speakers:
+            alignment_data["visual_speakers"] = visual_speakers
+        (folder / "alignment.json").write_text(
+            json.dumps(alignment_data, ensure_ascii=False, default=str), encoding="utf-8"
+        )
     except OSError as exc:
         notes.insert(0, f"Dub saved, but word-alignment repair audio could not be saved: {exc}. "
                      "The repair button is unavailable for this result; generate a dub again after resolving storage.")

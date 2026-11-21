@@ -2660,6 +2660,39 @@ class H3LipSyncMask:
         return masked, composite_mask
 
 
+_LOWER_FACE_LANDMARKS = (
+    # Outer lips + philtrum + lower cheeks + chin/jawline (MediaPipe 468-point FaceMesh)
+    61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185,
+    164, 207, 427, 212, 432, 202, 422, 172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397,
+)
+
+
+def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh):
+    """Return a binary (H, W) float32 polygon mask over the real mouth/jaw landmarks, or None."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    result = face_mesh.process(frame_rgb_uint8)
+    faces = getattr(result, "multi_face_landmarks", None)
+    if not faces:
+        return None
+    # Pick the face closest to crop center (crops are centered on the tracked face).
+    best = min(
+        faces,
+        key=lambda f: (f.landmark[1].x - 0.5) ** 2 + (f.landmark[1].y - 0.5) ** 2,
+    )
+    pts = np.array(
+        [[best.landmark[i].x * width, best.landmark[i].y * height] for i in _LOWER_FACE_LANDMARKS],
+        dtype=np.float32,
+    )
+    hull = cv2.convexHull(pts).astype(np.int32)
+    mask = np.zeros((height, width), dtype=np.float32)
+    cv2.fillConvexPoly(mask, hull, 1.0)
+    return mask
+
+
 class H3LowerFaceMask:
     """Build per-frame lower-face denoise and composite masks from H3FaceTrackCrop."""
 
@@ -2673,10 +2706,10 @@ class H3LowerFaceMask:
             "optional": {
                 "active_start": ("INT", {"default": 0, "min": 0, "max": 999999}),
                 "active_end": ("INT", {"default": -1, "min": -1, "max": 999999}),
-                "mouth_top": ("FLOAT", {"default": 0.45, "min": 0.2, "max": 0.85, "step": 0.01}),
-                "mouth_bottom": ("FLOAT", {"default": 1.08, "min": 0.6, "max": 1.35, "step": 0.01}),
-                "width_scale": ("FLOAT", {"default": 0.92, "min": 0.4, "max": 1.3, "step": 0.02}),
-                "denoise_expand": ("FLOAT", {"default": 1.18, "min": 1.0, "max": 1.6, "step": 0.02}),
+                "mouth_top": ("FLOAT", {"default": 0.52, "min": 0.2, "max": 0.85, "step": 0.01}),
+                "mouth_bottom": ("FLOAT", {"default": 1.02, "min": 0.6, "max": 1.35, "step": 0.01}),
+                "width_scale": ("FLOAT", {"default": 0.82, "min": 0.4, "max": 1.3, "step": 0.02}),
+                "denoise_expand": ("FLOAT", {"default": 1.15, "min": 1.0, "max": 1.6, "step": 0.02}),
             },
         }
 
@@ -2686,7 +2719,7 @@ class H3LowerFaceMask:
     CATEGORY = "H3/Dubbing"
 
     def build(self, crops, transform, active_start=0, active_end=-1,
-              mouth_top=0.45, mouth_bottom=1.08, width_scale=0.92, denoise_expand=1.18):
+              mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15):
         frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
         if frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
@@ -2709,37 +2742,80 @@ class H3LowerFaceMask:
         denoise_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
         composite_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
 
-        for index in range(frames):
-            if index < denoise_start or index >= denoise_end:
-                continue
-            if index < len(absent) and absent[index]:
-                continue
-            is_detected = bool(detected[index]) if index < len(detected) else True
-            weight = float(weights[index]) if index < len(weights) else (1.0 if is_detected else 0.0)
-            if not is_detected and weight <= 0.0:
-                continue
-            if index < len(face_rects):
-                fx, fy, fw, fh = (float(v) for v in face_rects[index])
-            else:
-                fx, fy, fw, fh = width * 0.25, height * 0.25, width * 0.5, height * 0.5
-            if fw <= 1.0 or fh <= 1.0:
-                continue
+        face_mesh = None
+        cv2_mod = None
+        try:
+            import cv2 as _cv2
+            import mediapipe as mp
+            if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_mesh"):
+                face_mesh = mp.solutions.face_mesh.FaceMesh(
+                    static_image_mode=False, max_num_faces=2, refine_landmarks=False,
+                    min_detection_confidence=0.35, min_tracking_confidence=0.35,
+                )
+                cv2_mod = _cv2
+        except Exception:
+            face_mesh = None
 
-            cx = fx + 0.5 * fw
-            cy = fy + 0.5 * (mouth_top + mouth_bottom) * fh
-            rx = max(1.0, 0.5 * fw * float(width_scale))
-            ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
+        try:
+            for index in range(frames):
+                if index < denoise_start or index >= denoise_end:
+                    continue
+                if index < len(absent) and absent[index]:
+                    continue
+                is_detected = bool(detected[index]) if index < len(detected) else True
+                weight = float(weights[index]) if index < len(weights) else (1.0 if is_detected else 0.0)
+                if not is_detected and weight <= 0.0:
+                    continue
+                if index < len(face_rects):
+                    fx, fy, fw, fh = (float(v) for v in face_rects[index])
+                else:
+                    fx, fy, fw, fh = width * 0.25, height * 0.25, width * 0.5, height * 0.5
+                if fw <= 1.0 or fh <= 1.0:
+                    continue
 
-            rx_d = rx * float(denoise_expand)
-            ry_d = ry * float(denoise_expand)
-            d2_denoise = ((xx - cx) / rx_d) ** 2 + ((yy - cy) / ry_d) ** 2
-            denoise_mask[index] = (d2_denoise <= 1.0).float()
+                poly_mask = None
+                if face_mesh is not None:
+                    try:
+                        frame_np = (crops[index, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
+                        poly_mask = _mediapipe_mouth_polygon(frame_np, width, height, face_mesh)
+                    except Exception:
+                        poly_mask = None
 
-            if start <= index < end:
-                d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
-                # Softly taper the outer 25% of the ellipse before H3FaceStitch feathers it.
-                soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
-                composite_mask[index] = soft * max(0.0, min(1.0, weight))
+                if poly_mask is not None and cv2_mod is not None:
+                    pad_px = max(3, int(round(0.04 * fh * max(1.0, float(denoise_expand)))))
+                    k_denoise = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (pad_px * 2 + 1, pad_px * 2 + 1))
+                    denoise_np = cv2_mod.dilate(poly_mask, k_denoise)
+                    denoise_mask[index] = torch.from_numpy(denoise_np).to(device=device, dtype=torch.float32)
+                    if start <= index < end:
+                        blur_px = max(3, int(round(0.03 * fh)) | 1)
+                        comp_np = cv2_mod.GaussianBlur(poly_mask, (blur_px, blur_px), 0)
+                        composite_mask[index] = (
+                            torch.from_numpy(comp_np).to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
+                            * max(0.0, min(1.0, weight))
+                        )
+                    continue
+
+                cx = fx + 0.5 * fw
+                cy = fy + 0.5 * (mouth_top + mouth_bottom) * fh
+                rx = max(1.0, 0.5 * fw * float(width_scale))
+                ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
+
+                rx_d = rx * float(denoise_expand)
+                ry_d = ry * float(denoise_expand)
+                d2_denoise = ((xx - cx) / rx_d) ** 2 + ((yy - cy) / ry_d) ** 2
+                denoise_mask[index] = (d2_denoise <= 1.0).float()
+
+                if start <= index < end:
+                    d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
+                    # Softly taper the outer 25% of the ellipse before H3FaceStitch feathers it.
+                    soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
+                    composite_mask[index] = soft * max(0.0, min(1.0, weight))
+        finally:
+            if face_mesh is not None:
+                try:
+                    face_mesh.close()
+                except Exception:
+                    pass
 
         if not (denoise_mask >= 0.5).any() or not (composite_mask > 0.0).any():
             raise ValueError("No detected face frames available in the active lip-sync interval")

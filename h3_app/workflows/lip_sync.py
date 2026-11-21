@@ -14,7 +14,8 @@ MIN_FRAMES = 5
 FRAME_STRIDE = 17
 MAX_FRAMES = 362
 DEFAULT_CROP_SIZE = 640
-DEFAULT_AUTO_STRENGTH = 0.75
+DEFAULT_AUTO_STRENGTH = 0.55
+DEFAULT_AUTO_FEATHER = 6
 REQUIRED_AUTO_LIP_SYNC_NODES = frozenset({
     "H3FaceTrackCrop",
     "H3InjectVideoLatent",
@@ -98,7 +99,7 @@ def build_lip_sync_graph(*, crop, mask, dialogue, width, height, frames, models,
 def build_auto_lip_sync_graph(
     *, video, dialogue, frames, models, refinement, output_prefix,
     crop_size=DEFAULT_CROP_SIZE, seed=0, strength=DEFAULT_AUTO_STRENGTH,
-    active_start=0, active_end=-1, face_target=None, feather=16,
+    active_start=0, active_end=-1, face_target=None, feather=DEFAULT_AUTO_FEATHER,
 ):
     """Track one face automatically, repaint its lower face to fitted audio, and stitch back."""
     validate_lip_sync_window(crop_size, crop_size, frames, strength)
