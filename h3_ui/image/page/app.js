@@ -280,7 +280,7 @@
       : "";
     $("resolution").replaceChildren(h("span", {class: "mono", text: `${app.s.width} × ${app.s.height}`}),
       h("span", {class: "muted", text: ` · ${(app.s.width * app.s.height / 1e6).toFixed(1)} MP${follows ? " · this edit follows Edit size; pick a size to override it" : ""}${matchNote}`}),
-      app.s.size_note && h("span", {class: "muted", text: ` · ${app.s.size_note}`}));
+      ...(app.s.size_note ? [h("span", {class: "muted", text: ` · ${app.s.size_note}`})] : []));
   };
 
   // Prompt ------------------------------------------------------------------

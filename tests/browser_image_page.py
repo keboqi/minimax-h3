@@ -21,6 +21,7 @@ def run():
                 engines=[{"id": engine, "label": label} for engine, label in (
                     ("h3", "MiniMax H3"), ("qwen", "Qwen Image 2.1"), ("flux3", "FLUX 3 Image Klein"),
                     ("moss_image", "MOSS-Image"), ("fibo2", "Fibo 2.0"), ("gpt_image", "GPT Image"),
+                    ("nano_banana", "Nano Banana"), ("mai_image", "MAI-Image"),
                 )], sizes={}, groups=[])
     colors = ["red", "green", "blue", "yellow"]
     writes = []
@@ -88,8 +89,9 @@ def run():
         page.route("**/*", route)
         page.goto("http://test.local/image/")
         toolbar = page.get_by_role("region", name="Image controls")
-        expect(toolbar.get_by_role("button")).to_have_count(10)
-        for width in (1280, 390):
+        expect(toolbar.get_by_role("button")).to_have_count(12)
+        expect(page.locator("#resolution")).not_to_contain_text("undefined")
+        for width in (1500, 1280, 390):
             page.set_viewport_size({"width": width, "height": 800})
             toolbar_width, content_width, centers = toolbar.evaluate("""bar => [
                 bar.clientWidth, bar.scrollWidth,
@@ -100,7 +102,7 @@ def run():
                     })
             ]""")
             assert max(centers) - min(centers) <= 1, centers
-            assert (content_width > toolbar_width) == (width == 390), (width, toolbar_width, content_width)
+            assert (content_width > toolbar_width) == (width < 1500), (width, toolbar_width, content_width)
         page.set_viewport_size({"width": 1280, "height": 800})
 
         def switch_with_delayed_save(label, text, layout=None):

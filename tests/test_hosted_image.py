@@ -95,3 +95,47 @@ class HostedImageTests(unittest.TestCase):
         ):
             with self.subTest(model=model), self.assertRaisesRegex(H3Error, "native output sizes"):
                 list(generate_hosted_image(engine, model, tier, 1, "test", [], None))
+
+    def test_foundry_error_surfaces_api_message(self):
+        endpoint = GptImageEndpoint("primary", "https://gateway.example/mai/v1", "key")
+        response = MagicMock(status_code=400, ok=False)
+        response.json.return_value = {"error": {"message": "unsupported edit size"}}
+        with patch("h3_app.generation.hosted_image.requests.post", return_value=response):
+            with self.assertRaisesRegex(H3Error, "unsupported edit size"):
+                _mai_image(endpoint, "MAI-Image-2.7", "create", "1K", [])
+
+    def test_failed_batch_request_reports_failure_and_exhausted_429_is_formatted(self):
+        import requests as req
+
+        endpoint = GptImageEndpoint("Gemini", "https://gemini.example", "key")
+        response = MagicMock(status_code=429, ok=False, headers={"retry-after": "1"})
+        response.json.return_value = {"error": {"message": "quota exceeded"}}
+        response.raise_for_status.side_effect = req.HTTPError("429 Too Many Requests", response=response)
+        with TemporaryDirectory() as directory, \
+                patch("h3_app.hosted_image.hosted_image_endpoint", return_value=endpoint), \
+                patch("h3_app.generation.hosted_image.RATE_LIMITERS") as limiters, \
+                patch("h3_app.generation.hosted_image.requests.post", return_value=response):
+            updates = list(generate_hosted_image(
+                NANO_BANANA, "gemini-nano-banana-2.1", "1K", 1, "test", [], SimpleNamespace(output_dir=Path(directory)),
+            ))
+            self.assertEqual(limiters.__getitem__.return_value.defer.call_count, 3)
+        messages = [update.status for update in updates]
+        self.assertFalse(any("Completed" in message for message in messages), messages)
+        self.assertTrue(any("failed:" in message and "quota exceeded" in message for message in messages), messages)
+        self.assertIn("quota exceeded", messages[-1])
+
+    def test_cancelled_hosted_image_job_records_failure(self):
+        from h3_app.jobs import JobCancelled
+
+        endpoint = GptImageEndpoint("Gemini", "https://gemini.example", "key")
+        with TemporaryDirectory() as directory, \
+                patch("h3_app.hosted_image.hosted_image_endpoint", return_value=endpoint), \
+                patch("h3_app.generation.hosted_image.RATE_LIMITERS"), \
+                patch("h3_app.generation.hosted_image._gemini_image", side_effect=JobCancelled("stopped")), \
+                patch("h3_app.generation.hosted_image.record_failure") as record:
+            with self.assertRaises(JobCancelled):
+                list(generate_hosted_image(
+                    NANO_BANANA, "gemini-nano-banana-2.1", "1K", 1, "test", [],
+                    SimpleNamespace(output_dir=Path(directory)),
+                ))
+        record.assert_called_once()

@@ -56,6 +56,19 @@ def _gemini_image(endpoint, model, prompt, resolution, references, *, aspect_rat
     raise H3Error(f"Gemini returned no image ({gemini.empty_reply_reason(payload)}).")
 
 
+def _foundry_error(response):
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        detail = error.get("message") if isinstance(error, dict) else (error or payload.get("message") or payload.get("detail"))
+        if isinstance(detail, str) and detail.strip():
+            return H3Error(f"MAI-Image failed (HTTP {response.status_code}): {detail.strip()}")
+    return H3Error(f"MAI-Image request failed (HTTP {response.status_code}).")
+
+
 def _mai_image(endpoint, model, prompt, resolution, references, *, aspect_ratio=DEFAULT_ASPECT_RATIO):
     from openai import OpenAI
 
@@ -72,7 +85,10 @@ def _mai_image(endpoint, model, prompt, resolution, references, *, aspect_ratio=
             request = {"json": {**fields, "width": width, "height": height}}
         response = requests.post(f"{endpoint.url}/images/{operation}",
                                  headers={"api-key": endpoint.api_key}, timeout=600, **request)
-        response.raise_for_status()
+        if response.status_code == 429:
+            response.raise_for_status()
+        if not response.ok:
+            raise _foundry_error(response)
         items = response.json().get("data") or []
         if not items or not items[0].get("b64_json"):
             raise H3Error("MAI-Image returned no image.")
@@ -120,6 +136,10 @@ def generate_hosted_image(engine, model, resolution, batch_count, prompt, refere
                     raise
                 limiter.defer(endpoint.url, engine, delay, api_key=endpoint.api_key)
                 if attempt == 2:
+                    response = getattr(exc, "response", None)
+                    if isinstance(exc, requests.HTTPError) and response is not None:
+                        raise (gemini.error(response, "image generation")
+                               if engine == NANO_BANANA else _foundry_error(response)) from exc
                     raise
         check_cancelled()
         target = runtime.output_dir / f"{engine}_{job_id}_{index + 1:05d}.png"
@@ -152,9 +172,14 @@ def generate_hosted_image(engine, model, resolution, batch_count, prompt, refere
                     raise
                 except Exception as exc:
                     errors.append(exc)
-            if done:
-                yield GenerationUpdate([outputs[index] for index in sorted(outputs)] or None,
-                                       f"{model} · Completed {count - len(pending)}/{count} requests")
+                    yield GenerationUpdate([outputs[i] for i in sorted(outputs)] or None,
+                                           f"{count - len(pending)}/{count} · {model} failed: {exc}")
+                else:
+                    yield GenerationUpdate([outputs[i] for i in sorted(outputs)],
+                                           f"{model} · Completed {len(outputs)}/{count} requests")
+    except JobCancelled as exc:
+        record_failure(exc)
+        raise
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 

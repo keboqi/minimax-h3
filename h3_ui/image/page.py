@@ -436,6 +436,7 @@ class ImagePageState(OwnerPageState):
         if engine == "flux3" and not str(value("model_choice")).startswith("Base "):
             hidden.add("cfg")
         locked = {"steps", "cfg"} if engine == "fibo2" and value("model_choice") == "Edit Turbo" else set()
+        matched_size = editing and engine == "gpt_image" and bool(value("match_first_aspect"))
         rows = []
         for name in self.fine_names(engine):
             parameter = name.partition("__")[2]
@@ -443,14 +444,23 @@ class ImagePageState(OwnerPageState):
                 continue
             group = GROUP_OF[parameter]
             idle = parameter in EDIT_ONLY and not editing
+            matched = matched_size and parameter in ("width", "height")
             changed = group != 1 and not idle and options[name] != clean[name]
-            row = self.option(name, options, group=group, disabled=parameter in locked or idle,
-                              note="applies to edits" if idle else "set by the model" if parameter in locked else "",
-                              preset=clean[name] if changed else None, changed=changed)
+            row = self.option(
+                name, options, group=group, disabled=parameter in locked or idle or matched,
+                note=("applies to edits" if idle else "matched to first image" if matched
+                      else "set by the model" if parameter in locked else ""),
+                preset=clean[name] if changed else None, changed=changed,
+            )
             if engine == "gpt_image" and parameter == "quality":
                 choices = gpt_image_quality_choices(value("models"))
-                row.update(choices=[[quality, quality] for quality in choices], disabled=len(choices) == 1,
-                           hint="Medium requires all selected models to be GPT Image 2.5.")
+                row.update(
+                    choices=[[quality, quality] for quality in choices],
+                    disabled=len(choices) == 1,
+                    hint=f"Low ~{GPT_IMAGE_OUTPUT_PRICES['low']}/image. "
+                         f"Medium ~{GPT_IMAGE_OUTPUT_PRICES['medium']}/image requires all selected models to be GPT Image 2.5. "
+                         f"{GPT_IMAGE_PRICE_SCOPE}",
+                )
             rows.append(row)
         return rows
 

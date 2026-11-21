@@ -35,10 +35,12 @@ def matched_api_aspect(engine, mode, references, settings):
             width, height = source.size
             if source.getexif().get(274) in (5, 6, 7, 8):
                 width, height = height, width
+        if width <= 0 or height <= 0:
+            raise ValueError("Invalid image dimensions.")
+        source_ratio = log(width / height)
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise H3Error("Could not read the first reference image's dimensions.") from exc
     ratios = GPT_IMAGE_ASPECT_SIZES if engine == "gpt_image" else hosted_aspect_ratios(engine)
-    source_ratio = log(width / height)
 
     def distance(ratio):
         ratio_width, ratio_height = map(int, ratio.split(":"))

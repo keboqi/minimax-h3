@@ -140,7 +140,7 @@ def match_characters(controller, engine, scene, portraits, shot, captured, *, re
     prompt, references, options = character_match_request(engine, scene, portraits, shot, captured)
     if record is not None:
         option_names = (
-            ("models", "endpoints", "use_failback", "quality", "width", "height", "seed")
+            ("models", "endpoints", "use_failback", "quality", "width", "height", "seed", "match_first_aspect")
             if engine == "gpt_image"
             else tuple(name for name, _ in GENERATION_OPTIONS.get(engine, ()))
         )
