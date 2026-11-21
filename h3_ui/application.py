@@ -921,6 +921,7 @@ dubbing_handlers = DubbingHandlers(DubbingServices(
     runtime_config=lambda: _runtime_config(),
     free_gpu=lambda: free_comfy_vram(),
     list_media=lambda mode: _dubbing_media(mode),
+    generation_services=lambda: _generation_services(),
 ))
 
 

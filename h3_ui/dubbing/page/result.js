@@ -7,6 +7,18 @@ import {copyText, esc, icon, plural, size, toast} from "./ui.js";
 let mounted = {key: null, node: null};
 let bindPlayers = null;
 const playerRequests = new WeakMap();
+let lipSyncOverrides = {video: null, picks: {}};
+
+function overridesFor(video) {
+  if (lipSyncOverrides.video !== video) {
+    lipSyncOverrides = {video, picks: {}};
+  }
+  return lipSyncOverrides.picks;
+}
+
+function shotKey(shot) {
+  return `${shot.shot_index}:${shot.speaker}`;
+}
 
 function chips(result) {
   const s = result.settings || {};
@@ -88,6 +100,74 @@ function exportCard(app, result) {
     </section>`;
 }
 
+function lipSyncCard(app, result) {
+  const ls = result.lip_sync;
+  if (!ls) return "";
+  const out = ls.output;
+  const report = ls.report;
+  const shots = ls.review_shots || [];
+  const picks = overridesFor(ls.video);
+  const canRun = !!(app.boot.lip_sync && ls.ready);
+  const stats = report
+    ? `<span class="chip chip-quiet">${plural(report.total_windows, "window")}${report.cached_windows ? ` · ${report.cached_windows} cached` : ""}</span>`
+    : "";
+  const reviewHtml = shots.length && canRun ? `
+    <details class="sec lip-sync-review">
+      <summary>Review ${plural(shots.length, "uncertain shot")} (optional)</summary>
+      <div class="stack-10">
+        <p class="muted small">Uncertain shots kept the original picture. Pick the speaking face or mark off-screen, then re-render only those shots.</p>
+        ${shots.map((shot) => {
+          const key = shotKey(shot);
+          const picked = Object.prototype.hasOwnProperty.call(picks, key) ? picks[key] : undefined;
+          return `
+            <div class="lip-sync-shot stack-8">
+              <div class="row align-baseline row-wrap">
+                <strong>${esc(shot.speaker_label)}</strong>
+                <span class="muted small">Shot ${shot.shot_index + 1} · ${shot.time.toFixed(1)}s</span>
+              </div>
+              ${shot.reason ? `<span class="muted small">${esc(shot.reason)}</span>` : ""}
+              <div class="lip-sync-frame-wrap">
+                <img src="${esc(shot.frame_url)}" alt="${esc(shot.speaker_label)} frame at ${shot.time.toFixed(1)}s" loading="lazy">
+                ${shot.tracks.map((track, idx) => {
+                  const [x, y, w, h] = track.box;
+                  const active = picked === track.track_id;
+                  return `<button type="button" class="lip-sync-box"
+                    style="left:${(x * 100).toFixed(2)}%;top:${(y * 100).toFixed(2)}%;width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%"
+                    data-lip-sync-pick="${esc(key)}" data-track-id="${track.track_id}"
+                    aria-pressed="${active}">Face ${idx + 1}</button>`;
+                }).join("")}
+              </div>
+              <div class="row row-wrap">
+                <button type="button" class="btn btn-small" data-lip-sync-pick="${esc(key)}" data-track-id="off"
+                  aria-pressed="${picked === null}">Off-screen / skip</button>
+              </div>
+            </div>`;
+        }).join("")}
+        <div class="row">
+          <button type="button" class="btn btn-small btn-primary" data-action="lip-sync-apply" data-busy="lip-sync">Apply &amp; re-render affected shots</button>
+        </div>
+      </div>
+    </details>` : "";
+  return `
+    <section class="card card-pad stack-10" aria-labelledby="ls-h">
+      <div class="row align-center row-wrap"><h2 id="ls-h">Lip sync</h2>${stats}</div>
+      <p class="muted small">Automatically tracks faces, repaints the lower face to match the fitted dub with H3, and keeps the approved audio and subtitles.</p>
+      ${app.boot.lip_sync ? `
+        <div class="run-status" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
+          <span class="spinner" aria-hidden="true"></span><span data-run-status role="status"></span></div>
+        <div class="row row-wrap">
+          <button type="button" class="btn btn-small btn-primary" data-action="lip-sync" data-busy="lip-sync"
+            ${ls.ready ? "" : 'data-locked="true" disabled'}>${out ? "Re-run lip sync" : "Lip sync video"}</button>
+          <button type="button" class="btn btn-small" data-stop="lip-sync" data-action="interrupt" data-kind="lip-sync" disabled>Interrupt</button>
+          ${out ? `<a class="btn btn-small" href="${esc(out.url)}" download>${icon("download", 14)} Download (${size(out.size)})</a>` : ""}
+        </div>
+        ${ls.ready ? "" : '<span class="muted small">Generate this dub again to save fitted dialogue for lip sync.</span>'}`
+        : `<span class="small info-text">Lip sync runs in Studio.</span>${out ? `<div class="row"><a class="btn btn-small" href="${esc(out.url)}" download>${icon("download", 14)} Download (${size(out.size)})</a></div>` : ""}`}
+      ${out ? `<video controls playsinline preload="metadata" class="lip-sync-preview" aria-label="Lip-synced video" src="${esc(out.inline_url)}"></video>` : ""}
+      ${reviewHtml}
+    </section>`;
+}
+
 function wordsCard(app, result) {
   const missing = result.cues - result.timed;
   return `
@@ -165,7 +245,7 @@ export function renderResult(app) {
         <div class="player-slot" id="player-slot"></div>
       </section>
       <div class="output-grid">
-        ${downloads(result)}${exportCard(app, result)}${wordsCard(app, result)}${shareCard(app)}
+        ${downloads(result)}${lipSyncCard(app, result)}${exportCard(app, result)}${wordsCard(app, result)}${shareCard(app)}
       </div>
     </div>`;
 }
@@ -279,6 +359,18 @@ export function bindResult(app) {
       showExportChoice(app);
       return;
     }
+    const pick = event.target.closest("[data-lip-sync-pick]");
+    if (pick && app.session.result?.lip_sync) {
+      const picks = overridesFor(app.session.result.lip_sync.video);
+      const key = pick.dataset.lipSyncPick;
+      const raw = pick.dataset.trackId;
+      picks[key] = raw === "off" ? null : Number(raw);
+      for (const btn of document.querySelectorAll(`[data-lip-sync-pick="${key}"]`)) {
+        const val = btn.dataset.trackId === "off" ? null : Number(btn.dataset.trackId);
+        btn.setAttribute("aria-pressed", String(picks[key] === val));
+      }
+      return;
+    }
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const action = target.dataset.action;
@@ -292,6 +384,16 @@ export function bindResult(app) {
     } else if (action === "jump-failed") jumpTo(session.result.failed[0]);
     else if (action === "export") app.startRun("export", {session: session.id, subtitles: exportChoice(app)});
     else if (action === "align") app.startRun("align", {session: session.id});
+    else if (action === "lip-sync") app.startRun("lip-sync", {session: session.id});
+    else if (action === "lip-sync-apply") {
+      const ls = session.result?.lip_sync;
+      const picks = ls ? overridesFor(ls.video) : {};
+      const overrides = Object.entries(picks).map(([key, trackId]) => {
+        const sep = key.indexOf(":");
+        return {shot_index: Number(key.slice(0, sep)), speaker: key.slice(sep + 1), track_id: trackId};
+      });
+      app.startRun("lip-sync", {session: session.id, overrides});
+    }
     else if (action === "interrupt") {
       try {
         toast((await api.post("interrupt", {kind: target.dataset.kind, session: session.id})).message);

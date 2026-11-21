@@ -268,7 +268,7 @@ async function finished(kind, run) {
     go("result");
     return;
   }
-  if (["lines", "dub", "words", "export"].includes(kind)) await refresh();
+  if (["lines", "dub", "words", "export", "lip-sync"].includes(kind)) await refresh();
   else render();
 }
 
@@ -284,7 +284,8 @@ function updateRunViews() {
   for (const box of document.querySelectorAll("[data-run]")) {
     const run = app.runs[box.dataset.run];
     const task = box.dataset.task;
-    const show = run && (!task || task.split(",").includes(run.task));
+    const show = run && (!task || task.split(",").includes(run.task))
+      && (!box.dataset.dubVideo || box.dataset.dubVideo === run.dub_video);
     box.hidden = !show || (!run.active && !run.error && !run.status);
     if (!show) continue;
     box.querySelector("[data-run-status]").textContent = run.error || run.status || "";

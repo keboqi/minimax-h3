@@ -20,7 +20,10 @@ import gradio as gr
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
+from h3_app.dubbing.lip_sync import render_dub_lip_sync
+from h3_app.dubbing.results import load_result
 from h3_app.errors import H3Error
+from h3_app.generation.services import GenerationServices
 from h3_app.jobs import JobCancelled, record_failure
 
 from . import presenters
@@ -39,6 +42,7 @@ class DubbingServices:
     # (mode) -> newest-first managed media paths for "Video" or "Audio".
     list_media: Callable[[str], list]
     gpu: bool = True
+    generation_services: Callable[[], GenerationServices] | None = None
 
 
 def _origin(request) -> str:
@@ -757,6 +761,29 @@ class DubbingHandlers:
                     yield panel_update(dub_html(update.player, scope="dub")), update.message
                 else:
                     yield gr.skip(), update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
+
+    def lip_sync_video(self, session_id, manual_overrides=None):
+        """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
+        try:
+            if self.services.generation_services is None:
+                raise H3Error("Lip sync runs in Studio.")
+            session = self._session(session_id)
+            output = session.data.get("last_output") if session else None
+            result = load_result(output) if output else None
+            dub = result.video if result else None
+            if dub is None or not dub.is_file():
+                raise H3Error("Generate a video dub first.")
+            for update in render_dub_lip_sync(
+                dub=dub,
+                services=self.services.generation_services(),
+                manual_overrides=manual_overrides,
+            ):
+                if isinstance(update, Path):
+                    yield str(update), "Lip-synced video ready."
+                else:
+                    yield None, update
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 

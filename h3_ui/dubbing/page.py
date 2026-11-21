@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from html import unescape
+import json
+import math
 from pathlib import Path
 from threading import RLock
 import shutil
@@ -25,10 +27,13 @@ from fastapi.responses import Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.results import TRACKS, load_player, load_result
+from h3_app.dubbing.lip_sync import REPORT_FILE, SCAN_CACHE_DIR
+from h3_app.dubbing.lip_sync_match import load_source_scan, video_fingerprint
+from h3_app.dubbing.results import PLAYER_DIR, TRACKS, load_player, load_result, player_folder
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
+from h3_app.processes import run_media_process
 from h3_app.jobs import JOBS, JobCancelled
 
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
@@ -69,10 +74,13 @@ TIMINGS = (
     (pipeline.TIMING_NATURAL, "Natural pace", "Keeps each take's own pace; long takes may overlap."),
 )
 ANALYZE, LINES, DUB, WORDS, EXPORT, AUTO = "analyze", "lines", "dub", "words", "export", "auto"
-FAMILIES = {ANALYZE: FAMILY_ANALYZE, LINES: FAMILY_LINES, DUB: FAMILY_DUB, WORDS: FAMILY_WORDS}
+LIP_SYNC = "lip-sync"
+FAMILIES = {ANALYZE: FAMILY_ANALYZE, LINES: FAMILY_LINES, DUB: FAMILY_DUB, WORDS: FAMILY_WORDS,
+            LIP_SYNC: "dubbing_lip_sync"}
 BUSY = {ANALYZE: "An analysis is already running.", LINES: "A line action is already running.",
         DUB: "This session is already dubbing.", WORDS: "Words are already being aligned.",
-        EXPORT: "An export is already running.", AUTO: "Auto mode is already running."}
+        EXPORT: "An export is already running.", AUTO: "Auto mode is already running.",
+        LIP_SYNC: "This project is already running lip sync."}
 # Analysis has no session until it finishes: one runs per browser at a time.
 SOURCE_KEY = "source"
 STUDIO_ONLY = "Open this project in Studio to {} on the GPU."
@@ -88,11 +96,12 @@ class DubRun(PageRun):
     audio: bytes | None = None
     file: str | None = None
     batch: bool = False
+    dub_video: str | None = None
 
     def public(self, scene_id=None) -> dict[str, Any]:
         return {**super().public(scene_id), "task": self.task, "session": self.session, "step": self.step,
                 "audio": self.audio is not None, "file": Path(self.file).name if self.file else None,
-                "batch": self.batch}
+                "batch": self.batch, "dub_video": self.dub_video}
 
 
 def _plain(text: str) -> str:
@@ -186,6 +195,75 @@ def _result_player_html(session_id, output, player) -> str:
     return player_html(player, key=Path(output).stem, url=urls.__getitem__)
 
 
+def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
+    """Lip-sync availability, latest output, and any uncertain shots for optional review."""
+    if video is None or not video.is_file():
+        return None
+    folder = player_folder(video)
+    ready = (folder / "alignment.json").is_file() and (folder / "alignment.npz").is_file()
+    out = video.with_name(f"{video.stem}.lipsync.mp4")
+    output = None
+    if out.is_file():
+        ver = _version(out)
+        output = {
+            "name": out.name,
+            "size": out.stat().st_size,
+            "url": f"{API}/output?session={sid}&name={quote(out.name)}&v={ver}",
+            "inline_url": f"{API}/output?session={sid}&name={quote(out.name)}&inline=true&v={ver}",
+        }
+    report = None
+    report_path = folder / REPORT_FILE
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            report = None
+    review_shots = []
+    if isinstance(report, dict) and report.get("uncertain_count"):
+        scan = None
+        try:
+            scan = load_source_scan(video.parent / PLAYER_DIR / SCAN_CACHE_DIR, video_fingerprint(video))
+        except OSError:
+            scan = None
+        shots_by_index = {shot.index: shot for shot in (scan.shots if scan else ())}
+        for item in report.get("assignments") or ():
+            if item.get("status") != "uncertain":
+                continue
+            shot_index = int(item.get("shot_index", 0))
+            shot = shots_by_index.get(shot_index)
+            ref_time = item.get("reference_time")
+            if ref_time is None and shot is not None:
+                ref_time = 0.5 * (shot.start + shot.end)
+            tracks = []
+            if shot is not None:
+                for track in shot.tracks:
+                    box = track.representative_box()
+                    if box is not None:
+                        tracks.append({"track_id": track.track_id, "box": [round(v, 4) for v in box]})
+            review_shots.append({
+                "shot_index": shot_index,
+                "speaker": item.get("speaker", ""),
+                "speaker_label": presenters.speaker_label(item.get("speaker", "")),
+                "time": round(float(ref_time or 0.0), 3),
+                "reason": item.get("reason", ""),
+                "frame_url": f"{API}/lip-sync-frame?session={sid}&time={float(ref_time or 0.0):.3f}",
+                "tracks": tracks,
+            })
+    return {
+        "video": video.name,
+        "ready": ready,
+        "output": output,
+        "report": {
+            "total_windows": report.get("total_windows", 0),
+            "cached_windows": report.get("cached_windows", 0),
+            "rendered_windows": report.get("rendered_windows", 0),
+            "uncertain_count": report.get("uncertain_count", 0),
+            "backend": report.get("backend", "none"),
+        } if isinstance(report, dict) else None,
+        "review_shots": review_shots,
+    }
+
+
 def result_payload(session: sessions.Session, *, include_player: bool = True) -> dict | None:
     """The latest finished dub: its player, files and what can still be done to it."""
     from h3_app.provenance import read_snapshot
@@ -219,6 +297,7 @@ def result_payload(session: sessions.Session, *, include_player: bool = True) ->
             "duration": getattr(player, "duration", 0.0), "separated": getattr(player, "music", None) is not None,
             "word_timing": bool(getattr(player, "word_timing", False)), "cues": cues, "timed": timed,
             "failed": failed, "export": bool(result.video and result.translated_subtitles),
+            "lip_sync": _lip_sync_payload(sid, result.video),
             "settings": {key: settings.get(key) for key in ("timing", "preset", "voice_mode", "word_timing")}}
 
 
@@ -249,6 +328,7 @@ def _step(status: str) -> str | None:
 def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool = True, interrupt=None) -> None:
     """Serve the page at ``/dubbing/`` and its API under ``/dubbing/api``."""
     admission_lock = RLock()
+    lip_sync_available = bool(gpu and handlers.services.generation_services is not None)
 
     def active_runs(owner):
         return [item for collection in runs.values() for item in collection.items.values()
@@ -364,7 +444,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def boot(request: Request):
         owner_of(request)
         return {
-            "gpu": gpu, "same": pipeline.SAME_LANGUAGE,
+            "gpu": gpu, "same": pipeline.SAME_LANGUAGE, "lip_sync": lip_sync_available,
             "source_languages": list(pipeline.SOURCE_LANGUAGES), "target_languages": list(pipeline.TARGET_LANGUAGES),
             "styles": list(pipeline.TRANSLATION_STYLES), "default_style": pipeline.DEFAULT_STYLE,
             "rewrite_styles": list(pipeline.REWRITE_STYLES), "default_rewrite_style": pipeline.DEFAULT_REWRITE_STYLE,
@@ -634,10 +714,10 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             updates.close()
 
     def start(request: Request, kind: str, key: str, task: str, callback: Callable, values: list,
-              read: Callable[[DubRun, tuple], None], *, job=True, session_id=None) -> dict:
+              read: Callable[[DubRun, tuple], None], *, job=True, session_id=None, dub_video=None) -> dict:
         owner = owner_of(request)
         request_session = session_of(request)
-        run = DubRun(owner, key, kind, task=task, session=session_id)
+        run = DubRun(owner, key, kind, task=task, session=session_id, dub_video=dub_video)
         run.status = "Starting…"
 
         def work(run: DubRun):
@@ -783,6 +863,52 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         load(session_id)
         return start(request, WORDS, session_id, "words", handlers.align_words, [session_id], reader(1),
                      session_id=session_id)
+
+    @app.post(f"{API}/lip-sync", include_in_schema=False)
+    @guarded
+    def lip_sync(request: Request, body: dict = Body(...)):
+        if not lip_sync_available:
+            raise H3Error(STUDIO_ONLY.format("run lip sync"))
+        session_id = str(body.get("session") or "")
+        loaded = load(session_id)
+        output = loaded.data.get("last_output")
+        result = load_result(output) if output else None
+        dub = result.video if result else None
+        if dub is None or not dub.is_file():
+            raise H3Error("Generate a video dub first.")
+        raw_overrides = body.get("overrides")
+        overrides: dict[tuple[int, str], int | None] | None = None
+        if isinstance(raw_overrides, list) and raw_overrides:
+            overrides = {}
+            for item in raw_overrides:
+                if not isinstance(item, dict) or "shot_index" not in item or not item.get("speaker"):
+                    raise H3Error("Each face override needs shot_index and speaker.")
+                track_id = item.get("track_id")
+                overrides[(int(item["shot_index"]), str(item["speaker"]))] = (
+                    None if track_id is None else int(track_id)
+                )
+        return start(
+            request, LIP_SYNC, session_id, LIP_SYNC, handlers.lip_sync_video,
+            [session_id, overrides], reader(1, file_index=0),
+            session_id=session_id, dub_video=dub.name,
+        )
+
+    @app.get(f"{API}/lip-sync-frame", include_in_schema=False)
+    def lip_sync_frame(session: str, time: float, request: Request):
+        with found():
+            owner_of(request)
+            result = latest_result(session)
+        dub = result.video
+        if dub is None or not dub.is_file() or not math.isfinite(time) or time < 0:
+            raise not_found()
+        proc = run_media_process(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{float(time):.3f}",
+             "-i", str(dub), "-frames:v", "1", "-f", "image2", "-vcodec", "mjpeg", "-q:v", "4", "-"],
+            capture_output=True, timeout=15,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            raise not_found()
+        return Response(proc.stdout, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
     def start_auto(owner, request_session, body, *, batch=False):
         if not gpu:
@@ -996,11 +1122,18 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return file_response(path)
 
     @app.get(f"{API}/output", include_in_schema=False)
-    def output(session: str, name: str, request: Request):
+    def output(session: str, name: str, request: Request, inline: bool = False):
         with found():
             owner_of(request)
             result = latest_result(session)
-        files = {path.name: path for path in (result.video, result.audio, *result.subtitles) if path is not None}
+        lip_sync_out = (
+            result.video.with_name(f"{result.video.stem}.lipsync.mp4")
+            if result.video is not None else None
+        )
+        candidates = [result.video, result.audio, *result.subtitles]
+        if lip_sync_out is not None and lip_sync_out.is_file():
+            candidates.append(lip_sync_out)
+        files = {path.name: path for path in candidates if path is not None}
         if name not in files:
             raise not_found()
-        return file_response(files[name], filename=name)
+        return file_response(files[name], filename=None if inline else name)

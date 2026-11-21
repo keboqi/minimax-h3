@@ -417,6 +417,7 @@ picture.
 Below the player:
 
 - **Downloads**: the dubbed video, the MP3 mix and both subtitle files (also in Media).
+- **Lip sync** (Studio, video dubs): one-click automatic H3 lip sync. Studio detects shot cuts, matches speakers to visible faces using Gemini visual hints or local active-speaker detection, repaints the lower face to match the fitted dub, and exports a separate `.lipsync.mp4` keeping the approved audio and subtitles. Uncertain shots keep the original picture and can be optionally reviewed afterward; fixing a face match re-renders only that shot's windows.
 - **Video with subtitles**: the burned-in export described under Dub, with its progress.
 - **Word timing**: how many lines light word by word, and **Repair word timing**
   (Studio), which aligns the latest dub again without new voices.

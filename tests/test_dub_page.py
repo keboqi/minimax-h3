@@ -39,9 +39,12 @@ class PageTests(unittest.TestCase):
         JOBS.store = store
         self.media = self.root / "media.wav"
         self.media.write_bytes(b"media")
-        self.handlers = DubbingHandlers(DubbingServices(lambda: self.runtime, None,
-                                                        lambda mode: [self.media] if mode == "Audio" else [],
-                                                        gpu=self.gpu))
+        self.handlers = DubbingHandlers(DubbingServices(
+            lambda: self.runtime, None,
+            lambda mode: [self.media] if mode == "Audio" else [],
+            gpu=self.gpu,
+            generation_services=(lambda: SimpleNamespace()) if self.gpu else None,
+        ))
         app = FastAPI()
         install_owner_cookie(app, store)
         install_dubbing_page(app, self.handlers, gpu=self.gpu)
@@ -314,6 +317,77 @@ class StudioPageTests(PageTests):
         self.assertEqual(self.client.post(f"{API}/interrupt", json={"kind": "dub", "session": "x"}).json()["message"],
                          "Nothing is running.")
         self.assertIn("Unknown step", self.client.post(f"{API}/interrupt", json={"kind": "other"}).json()["error"])
+
+    def test_one_click_lip_sync_and_optional_shot_overrides(self):
+        import json as _json
+        from h3_app.dubbing.lip_sync import REPORT_FILE
+        from h3_app.dubbing.results import player_folder
+
+        created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True)
+        dub_video = out_dir / "clip.mp4"
+        dub_video.write_bytes(b"mp4-dub")
+        folder = player_folder(dub_video)
+        folder.mkdir(parents=True)
+        (folder / "alignment.json").write_text("{}", encoding="utf-8")
+        (folder / "alignment.npz").write_bytes(b"npz")
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        self.assertTrue(self.client.get(f"{API}/boot").json()["lip_sync"])
+        initial = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]["lip_sync"]
+        self.assertTrue(initial["ready"])
+        self.assertIsNone(initial["output"])
+
+        calls = []
+
+        def fake_lip_sync(session_id, overrides=None):
+            calls.append((session_id, overrides))
+            out = dub_video.with_name("clip.lipsync.mp4")
+            out.write_bytes(b"mp4-lipsync")
+            (folder / REPORT_FILE).write_text(_json.dumps({
+                "output": out.name, "backend": "lr-asd", "total_windows": 2,
+                "cached_windows": 1 if overrides else 0, "rendered_windows": 1 if overrides else 2,
+                "uncertain_count": 0 if overrides else 1,
+                "assignments": [] if overrides else [{
+                    "shot_index": 0, "speaker": "speaker1", "status": "uncertain",
+                    "track_id": None, "face_center": None, "reference_time": 0.5,
+                    "source": "lr-asd", "confidence": 0.3, "reason": "Ambiguous match.",
+                }],
+            }), encoding="utf-8")
+            yield str(out), "Lip-synced video ready."
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", lambda run, owner, session, family, values, callback: callback(*values)), \
+                patch.object(self.handlers, "lip_sync_video", fake_lip_sync):
+            res = self.client.post(f"{API}/lip-sync", json={"session": created.id})
+            self.assertEqual(res.status_code, 200)
+            done = self.wait("lip-sync", created.id)
+            self.assertIsNone(done["error"])
+            self.assertEqual(done["file"], "clip.lipsync.mp4")
+
+            after = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]["lip_sync"]
+            self.assertEqual(after["output"]["name"], "clip.lipsync.mp4")
+            self.assertEqual(len(after["review_shots"]), 1)
+            self.assertEqual(after["review_shots"][0]["speaker"], "speaker1")
+
+            # Serve lip-synced output both inline and as download.
+            dl = self.client.get(f"{API}/output", params={"session": created.id, "name": "clip.lipsync.mp4"})
+            self.assertEqual(dl.content, b"mp4-lipsync")
+            self.assertIn("content-disposition", dl.headers)
+            inline = self.client.get(f"{API}/output", params={"session": created.id, "name": "clip.lipsync.mp4", "inline": "true"})
+            self.assertEqual(inline.content, b"mp4-lipsync")
+            self.assertNotIn("content-disposition", inline.headers)
+
+            # Apply an optional shot override.
+            res2 = self.client.post(f"{API}/lip-sync", json={
+                "session": created.id,
+                "overrides": [{"shot_index": 0, "speaker": "speaker1", "track_id": 1}],
+            })
+            self.assertEqual(res2.status_code, 200)
+            self.assertIsNone(self.wait("lip-sync", created.id)["error"])
+
+        self.assertEqual(calls, [(created.id, None), (created.id, {(0, "speaker1"): 1})])
 
 
 if __name__ == "__main__":
