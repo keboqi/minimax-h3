@@ -2667,7 +2667,7 @@ _LOWER_FACE_LANDMARKS = (
 )
 
 
-def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh, target_center=(0.5, 0.5)):
+def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh, target_center=(0.5, 0.5), jaw_margin=0.14):
     """Return a binary (H, W) float32 polygon mask over the real mouth/jaw landmarks, or None."""
     try:
         import cv2
@@ -2684,10 +2684,20 @@ def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh, target_c
         faces,
         key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2,
     )
-    pts = np.array(
-        [[best.landmark[i].x * width, best.landmark[i].y * height] for i in _LOWER_FACE_LANDMARKS],
-        dtype=np.float32,
-    )
+    nose_bottom_y = float(best.landmark[2].y) * height
+    chin_y = float(best.landmark[152].y) * height
+    mouth_mid_y = 0.5 * (float(best.landmark[13].y) + float(best.landmark[14].y)) * height
+    jaw_pad = max(0.0, float(jaw_margin)) * max(4.0, chin_y - nose_bottom_y)
+    pts_list = []
+    for i in _LOWER_FACE_LANDMARKS:
+        px = float(best.landmark[i].x) * width
+        py = float(best.landmark[i].y) * height
+        if py > mouth_mid_y:
+            py += jaw_pad
+        py = max(nose_bottom_y, min(float(height - 1), py))
+        px = max(0.0, min(float(width - 1), px))
+        pts_list.append([px, py])
+    pts = np.array(pts_list, dtype=np.float32)
     hull = cv2.convexHull(pts).astype(np.int32)
     mask = np.zeros((height, width), dtype=np.float32)
     cv2.fillConvexPoly(mask, hull, 1.0)
@@ -2711,6 +2721,7 @@ class H3LowerFaceMask:
                 "mouth_bottom": ("FLOAT", {"default": 1.02, "min": 0.6, "max": 1.35, "step": 0.01}),
                 "width_scale": ("FLOAT", {"default": 0.82, "min": 0.4, "max": 1.3, "step": 0.02}),
                 "denoise_expand": ("FLOAT", {"default": 1.15, "min": 1.0, "max": 1.6, "step": 0.02}),
+                "jaw_margin": ("FLOAT", {"default": 0.14, "min": 0.0, "max": 0.35, "step": 0.02}),
             },
         }
 
@@ -2720,7 +2731,7 @@ class H3LowerFaceMask:
     CATEGORY = "H3/Dubbing"
 
     def build(self, crops, transform, active_start=0, active_end=-1,
-              mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15):
+              mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15, jaw_margin=0.14):
         frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
         if frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
@@ -2783,7 +2794,9 @@ class H3LowerFaceMask:
                     try:
                         frame_np = (crops[index, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
                         target_center = ((fx + 0.5 * fw) / width, (fy + 0.5 * fh) / height)
-                        poly_mask = _mediapipe_mouth_polygon(frame_np, width, height, face_mesh, target_center)
+                        poly_mask = _mediapipe_mouth_polygon(
+                            frame_np, width, height, face_mesh, target_center, jaw_margin=jaw_margin,
+                        )
                     except Exception:
                         poly_mask = None
 
@@ -2828,6 +2841,330 @@ class H3LowerFaceMask:
         return denoise_mask, composite_mask
 
 
+class H3LipSyncPrepareCrop:
+    """Neutralize source lip texture inside the denoise mask before VAE injection to prevent mouth ghosting."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "crops": ("IMAGE",),
+                "denoise_mask": ("MASK",),
+            },
+            "optional": {
+                "strength": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("prepared_crops",)
+    FUNCTION = "prepare"
+    CATEGORY = "H3/Dubbing"
+
+    @staticmethod
+    def _torch_blur_2d(tensor_nchw, kernel_size):
+        k = max(3, int(kernel_size) | 1)
+        pad = k // 2
+        h, w = tensor_nchw.shape[-2:]
+        mode = "reflect" if pad < min(h, w) else "replicate"
+        x = tensor_nchw
+        for _ in range(2):
+            x = F.pad(x, (pad, pad, pad, pad), mode=mode)
+            x = F.avg_pool2d(x, kernel_size=k, stride=1)
+        return x
+
+    def prepare(self, crops, denoise_mask, strength=0.65):
+        if tuple(crops.shape[:3]) != tuple(denoise_mask.shape[:3]):
+            raise ValueError("H3LipSyncPrepareCrop requires crops and denoise_mask with matching frame and spatial dimensions")
+        s = max(0.0, min(1.0, float(strength)))
+        if s <= 0.0:
+            return (crops.clone(),)
+        try:
+            import cv2 as _cv2
+        except ImportError:
+            _cv2 = None
+
+        frames = int(crops.shape[0])
+        out = crops.clone()
+        for index in range(frames):
+            mask_t = denoise_mask[index]
+            active_t = (mask_t >= 0.5)
+            if not active_t.any():
+                continue
+            ys = torch.nonzero(active_t, as_tuple=False)[:, 0]
+            mask_h = max(8, int(ys.max() - ys.min() + 1))
+            erode_r = max(2, int(round(0.04 * mask_h)))
+            k_erode = erode_r * 2 + 1
+            k_feather = max(5, (max(3, int(round(0.08 * mask_h))) * 2 + 1))
+            k_blur = max(15, int(round(0.35 * mask_h)) | 1)
+            if _cv2 is not None:
+                src_np = crops[index, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype("float32")
+                bin_np = active_t.detach().cpu().numpy().astype("float32")
+                kernel = _cv2.getStructuringElement(_cv2.MORPH_ELLIPSE, (k_erode, k_erode))
+                eroded = _cv2.erode(bin_np, kernel)
+                if eroded.max() <= 0.0:
+                    eroded = bin_np
+                feathered = _cv2.GaussianBlur(eroded, (k_feather, k_feather), 0)
+                weight_np = (feathered * bin_np).clip(0.0, 1.0) * s
+                smooth_np = _cv2.GaussianBlur(src_np, (k_blur, k_blur), 0, borderType=_cv2.BORDER_REFLECT_101)
+                blended_np = src_np * (1.0 - weight_np[..., None]) + smooth_np * weight_np[..., None]
+                out[index, ..., :3] = torch.from_numpy(blended_np).to(device=crops.device, dtype=crops.dtype)
+            else:
+                bin_t = active_t.float()[None, None]
+                eroded_t = 1.0 - F.max_pool2d(1.0 - bin_t, kernel_size=k_erode, stride=1, padding=erode_r)
+                if not (eroded_t > 0.0).any():
+                    eroded_t = bin_t
+                feathered_t = self._torch_blur_2d(eroded_t, k_feather).clamp(0.0, 1.0)
+                weight_t = (feathered_t * bin_t).squeeze(0).squeeze(0) * s
+                src_t = crops[index, ..., :3].float().permute(2, 0, 1).unsqueeze(0)
+                smooth_t = self._torch_blur_2d(src_t, k_blur).squeeze(0).permute(1, 2, 0)
+                blended_t = crops[index, ..., :3].float() * (1.0 - weight_t[..., None]) + smooth_t * weight_t[..., None]
+                out[index, ..., :3] = blended_t.to(dtype=crops.dtype)
+        return (out,)
+
+
+class H3LipSyncBlend:
+    """Skin-ring LAB color match, adaptive high-pass detail match, and Laplacian pyramid blend."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_crops": ("IMAGE",),
+                "generated_crops": ("IMAGE",),
+                "composite_mask": ("MASK",),
+            },
+            "optional": {
+                "color_match": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "sharpen": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "pyramid_levels": ("INT", {"default": 3, "min": 1, "max": 5, "step": 1}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("blended_crops",)
+    FUNCTION = "blend"
+    CATEGORY = "H3/Dubbing"
+
+    @staticmethod
+    def _torch_gaussian_blur(img_nchw, sigma):
+        radius = max(1, int(round(2.5 * float(sigma))))
+        k = 2 * radius + 1
+        coords = torch.arange(-radius, radius + 1, device=img_nchw.device, dtype=torch.float32)
+        kernel_1d = torch.exp(-(coords ** 2) / (2.0 * float(sigma) ** 2))
+        kernel_1d = kernel_1d / kernel_1d.sum()
+        ch = img_nchw.shape[1]
+        kx = kernel_1d.view(1, 1, 1, k).expand(ch, 1, 1, k)
+        ky = kernel_1d.view(1, 1, k, 1).expand(ch, 1, k, 1)
+        h, w = img_nchw.shape[-2:]
+        mode = "reflect" if radius < min(h, w) else "replicate"
+        x = F.pad(img_nchw, (radius, radius, 0, 0), mode=mode)
+        x = F.conv2d(x, kx, groups=ch)
+        x = F.pad(x, (0, 0, radius, radius), mode=mode)
+        return F.conv2d(x, ky, groups=ch)
+
+    @staticmethod
+    def _skin_ring_np(mask_np, cv2_mod):
+        outer = mask_np > 0.05
+        if not outer.any():
+            return outer
+        ys, xs = outer.nonzero()
+        span = max(8, int(max(ys.max() - ys.min() + 1, xs.max() - xs.min() + 1)))
+        r_inner = max(2, int(round(0.06 * span)))
+        core = (mask_np > 0.5).astype("uint8")
+        k_in = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (2 * r_inner + 1, 2 * r_inner + 1))
+        eroded_core = cv2_mod.erode(core, k_in) > 0
+        ring = outer & (~eroded_core)
+        if int(ring.sum()) < 32:
+            r_out = max(4, int(round(0.08 * span)))
+            k_out = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (2 * r_out + 1, 2 * r_out + 1))
+            dilated = cv2_mod.dilate(outer.astype("uint8"), k_out) > 0
+            ring = dilated & (~eroded_core)
+        return ring if int(ring.sum()) >= 32 else outer
+
+    @staticmethod
+    def _skin_ring_torch(mask_t):
+        outer = mask_t > 0.05
+        if not outer.any():
+            return outer
+        nz = torch.nonzero(outer, as_tuple=False)
+        span = max(8, int(max(nz[:, 0].max() - nz[:, 0].min() + 1, nz[:, 1].max() - nz[:, 1].min() + 1)))
+        r_inner = max(2, int(round(0.06 * span)))
+        core_t = (mask_t > 0.5).float()[None, None]
+        eroded_core = (1.0 - F.max_pool2d(1.0 - core_t, kernel_size=2 * r_inner + 1, stride=1, padding=r_inner)) > 0.5
+        eroded_core = eroded_core.squeeze(0).squeeze(0)
+        ring = outer & (~eroded_core)
+        if int(ring.sum()) < 32:
+            r_out = max(4, int(round(0.08 * span)))
+            dilated = F.max_pool2d(outer.float()[None, None], kernel_size=2 * r_out + 1, stride=1, padding=r_out) > 0.5
+            ring = dilated.squeeze(0).squeeze(0) & (~eroded_core)
+        return ring if int(ring.sum()) >= 32 else outer
+
+    @staticmethod
+    def _laplacian_blend_np(src, gen, mask, levels, cv2_mod):
+        h, w = mask.shape
+        if levels <= 1 or min(h, w) < 8:
+            return gen * mask[..., None] + src * (1.0 - mask[..., None])
+        g_src = [src]
+        g_gen = [gen]
+        g_mask = [mask]
+        for _ in range(levels - 1):
+            if min(g_mask[-1].shape[0], g_mask[-1].shape[1]) < 8:
+                break
+            g_src.append(cv2_mod.pyrDown(g_src[-1]))
+            g_gen.append(cv2_mod.pyrDown(g_gen[-1]))
+            g_mask.append(cv2_mod.pyrDown(g_mask[-1]))
+        n = len(g_mask)
+        if n <= 1:
+            return gen * mask[..., None] + src * (1.0 - mask[..., None])
+        l_out = []
+        for idx in range(n - 1):
+            th, tw = g_mask[idx].shape[:2]
+            up_src = cv2_mod.pyrUp(g_src[idx + 1], dstsize=(tw, th))
+            up_gen = cv2_mod.pyrUp(g_gen[idx + 1], dstsize=(tw, th))
+            lap_src = g_src[idx] - up_src
+            lap_gen = g_gen[idx] - up_gen
+            m = g_mask[idx][..., None]
+            l_out.append(lap_gen * m + lap_src * (1.0 - m))
+        m_top = g_mask[-1][..., None]
+        acc = g_gen[-1] * m_top + g_src[-1] * (1.0 - m_top)
+        for idx in range(n - 2, -1, -1):
+            th, tw = g_mask[idx].shape[:2]
+            acc = cv2_mod.pyrUp(acc, dstsize=(tw, th)) + l_out[idx]
+        return acc.clip(0.0, 1.0)
+
+    def _laplacian_blend_torch(self, src_t, gen_t, mask_t, levels):
+        h, w = mask_t.shape
+        if levels <= 1 or min(h, w) < 8:
+            return (gen_t * mask_t[..., None] + src_t * (1.0 - mask_t[..., None])).clamp(0.0, 1.0)
+        g_src = [src_t.permute(2, 0, 1).unsqueeze(0)]
+        g_gen = [gen_t.permute(2, 0, 1).unsqueeze(0)]
+        g_mask = [mask_t.unsqueeze(0).unsqueeze(0)]
+        for _ in range(levels - 1):
+            cur_h, cur_w = g_mask[-1].shape[-2:]
+            if min(cur_h, cur_w) < 8:
+                break
+            next_size = (max(2, (cur_h + 1) // 2), max(2, (cur_w + 1) // 2))
+            g_src.append(F.interpolate(self._torch_gaussian_blur(g_src[-1], 1.0), size=next_size, mode="bilinear", align_corners=False))
+            g_gen.append(F.interpolate(self._torch_gaussian_blur(g_gen[-1], 1.0), size=next_size, mode="bilinear", align_corners=False))
+            g_mask.append(F.interpolate(self._torch_gaussian_blur(g_mask[-1], 1.0), size=next_size, mode="bilinear", align_corners=False))
+        n = len(g_mask)
+        if n <= 1:
+            return (gen_t * mask_t[..., None] + src_t * (1.0 - mask_t[..., None])).clamp(0.0, 1.0)
+        l_out = []
+        for idx in range(n - 1):
+            th, tw = g_mask[idx].shape[-2:]
+            up_src = F.interpolate(g_src[idx + 1], size=(th, tw), mode="bilinear", align_corners=False)
+            up_gen = F.interpolate(g_gen[idx + 1], size=(th, tw), mode="bilinear", align_corners=False)
+            m = g_mask[idx]
+            l_out.append((g_gen[idx] - up_gen) * m + (g_src[idx] - up_src) * (1.0 - m))
+        acc = g_gen[-1] * g_mask[-1] + g_src[-1] * (1.0 - g_mask[-1])
+        for idx in range(n - 2, -1, -1):
+            th, tw = g_mask[idx].shape[-2:]
+            acc = F.interpolate(acc, size=(th, tw), mode="bilinear", align_corners=False) + l_out[idx]
+        return acc.squeeze(0).permute(1, 2, 0).clamp(0.0, 1.0)
+
+    @staticmethod
+    def _clamped_std_scale(s_std, g_std):
+        return 1.0 if g_std < 1e-4 else max(0.75, min(1.33, s_std / g_std))
+
+    @staticmethod
+    def _adaptive_sharpen_gain(sh, src_energy, gen_energy):
+        ratio = src_energy / max(gen_energy, 1e-4)
+        return sh * max(0.25, min(1.5, ratio - 0.85))
+
+    def _blend_frame_np(self, src_np, gen_np, mask_np, cm, sh, levels, cv2_mod, np_mod):
+        ring = self._skin_ring_np(mask_np, cv2_mod)
+        gen_cm = gen_np
+        if cm > 0.0 and ring.any():
+            src_lab = cv2_mod.cvtColor(src_np, cv2_mod.COLOR_RGB2LAB)
+            gen_lab = cv2_mod.cvtColor(gen_np, cv2_mod.COLOR_RGB2LAB)
+            matched_lab = gen_lab.copy()
+            for ch in range(3):
+                s_vals = src_lab[..., ch][ring]
+                g_vals = gen_lab[..., ch][ring]
+                scale = self._clamped_std_scale(float(s_vals.std()), float(g_vals.std()))
+                matched_lab[..., ch] = (gen_lab[..., ch] - float(g_vals.mean())) * scale + float(s_vals.mean())
+            matched_lab[..., 0] = matched_lab[..., 0].clip(0.0, 100.0)
+            matched_lab[..., 1:] = matched_lab[..., 1:].clip(-127.0, 127.0)
+            matched_rgb = cv2_mod.cvtColor(matched_lab, cv2_mod.COLOR_LAB2RGB).clip(0.0, 1.0)
+            gen_cm = gen_np * (1.0 - cm) + matched_rgb * cm
+
+        gen_sharp = gen_cm
+        if sh > 0.0 and ring.any():
+            src_hp = src_np - cv2_mod.GaussianBlur(src_np, (0, 0), 1.5, borderType=cv2_mod.BORDER_REFLECT_101)
+            gen_hp = gen_cm - cv2_mod.GaussianBlur(gen_cm, (0, 0), 1.5, borderType=cv2_mod.BORDER_REFLECT_101)
+            gain = self._adaptive_sharpen_gain(sh, float(src_hp[ring].std()), float(gen_hp[ring].std()))
+            detail = gen_cm - cv2_mod.GaussianBlur(gen_cm, (0, 0), 1.2, borderType=cv2_mod.BORDER_REFLECT_101)
+            gen_sharp = (gen_cm + gain * detail).clip(0.0, 1.0)
+
+        blended = self._laplacian_blend_np(src_np, gen_sharp, mask_np, levels, cv2_mod)
+        return np_mod.where(mask_np[..., None] > 1e-4, blended, src_np)
+
+    def _blend_frame_torch(self, src_t, gen_t, mask_t, cm, sh, levels):
+        ring = self._skin_ring_torch(mask_t)
+        gen_cm = gen_t
+        if cm > 0.0 and ring.any():
+            matched = gen_t.clone()
+            for ch in range(3):
+                s_vals = src_t[..., ch][ring]
+                g_vals = gen_t[..., ch][ring]
+                scale = self._clamped_std_scale(
+                    float(s_vals.std(unbiased=False)), float(g_vals.std(unbiased=False)),
+                )
+                matched[..., ch] = ((gen_t[..., ch] - g_vals.mean()) * scale + s_vals.mean()).clamp(0.0, 1.0)
+            gen_cm = gen_t * (1.0 - cm) + matched * cm
+
+        gen_sharp = gen_cm
+        if sh > 0.0 and ring.any():
+            src_b = self._torch_gaussian_blur(src_t.permute(2, 0, 1).unsqueeze(0), 1.5).squeeze(0).permute(1, 2, 0)
+            gen_b = self._torch_gaussian_blur(gen_cm.permute(2, 0, 1).unsqueeze(0), 1.5).squeeze(0).permute(1, 2, 0)
+            gain = self._adaptive_sharpen_gain(
+                sh,
+                float((src_t - src_b)[ring].std(unbiased=False)),
+                float((gen_cm - gen_b)[ring].std(unbiased=False)),
+            )
+            d_blur = self._torch_gaussian_blur(gen_cm.permute(2, 0, 1).unsqueeze(0), 1.2).squeeze(0).permute(1, 2, 0)
+            gen_sharp = (gen_cm + gain * (gen_cm - d_blur)).clamp(0.0, 1.0)
+
+        blended = self._laplacian_blend_torch(src_t, gen_sharp, mask_t, levels)
+        return torch.where(mask_t[..., None] > 1e-4, blended, src_t)
+
+    def blend(self, source_crops, generated_crops, composite_mask,
+              color_match=0.85, sharpen=0.35, pyramid_levels=3):
+        if (tuple(source_crops.shape[:3]) != tuple(generated_crops.shape[:3])
+                or tuple(source_crops.shape[:3]) != tuple(composite_mask.shape[:3])):
+            raise ValueError("H3LipSyncBlend requires source_crops, generated_crops, and composite_mask with matching dimensions")
+        cm = max(0.0, min(1.0, float(color_match)))
+        sh = max(0.0, min(1.0, float(sharpen)))
+        levels = max(1, min(5, int(pyramid_levels)))
+        try:
+            import cv2 as _cv2
+            import numpy as _np
+        except ImportError:
+            _cv2 = None
+            _np = None
+
+        frames = int(source_crops.shape[0])
+        out = source_crops.clone()
+        for index in range(frames):
+            mask_t = composite_mask[index].float().clamp(0.0, 1.0)
+            if float(mask_t.max()) <= 1e-4:
+                continue
+            if _cv2 is not None and _np is not None:
+                src_np = source_crops[index, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype("float32")
+                gen_np = generated_crops[index, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype("float32")
+                mask_np = mask_t.detach().cpu().numpy().astype("float32")
+                blended = self._blend_frame_np(src_np, gen_np, mask_np, cm, sh, levels, _cv2, _np)
+                out[index, ..., :3] = torch.from_numpy(blended).to(device=source_crops.device, dtype=source_crops.dtype)
+            else:
+                src_t = source_crops[index, ..., :3].float().clamp(0.0, 1.0)
+                gen_t = generated_crops[index, ..., :3].float().clamp(0.0, 1.0)
+                blended = self._blend_frame_torch(src_t, gen_t, mask_t, cm, sh, levels)
+                out[index, ..., :3] = blended.to(dtype=source_crops.dtype)
+        return (out,)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -2839,6 +3176,8 @@ NODE_CLASS_MAPPINGS = {
     "H3SourceAudioLatent": H3SourceAudioLatent,
     "H3LipSyncMask": H3LipSyncMask,
     "H3LowerFaceMask": H3LowerFaceMask,
+    "H3LipSyncPrepareCrop": H3LipSyncPrepareCrop,
+    "H3LipSyncBlend": H3LipSyncBlend,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,
@@ -2889,4 +3228,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3SaveVideoNVENC": "MiniMax H3 Save Video (Auto H.264)",
     "H3LipSyncMask": "MiniMax H3 Lip Sync Latent Mask",
     "H3LowerFaceMask": "MiniMax H3 Lower-Face Mouth Mask",
+    "H3LipSyncPrepareCrop": "MiniMax H3 Lip Sync Prepare Crop",
+    "H3LipSyncBlend": "MiniMax H3 Lip Sync Blend",
 }

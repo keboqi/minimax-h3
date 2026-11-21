@@ -17,7 +17,7 @@ NAMES = {
     "h3_apply_continuation", "H3ContinuationPrefix", "h3_storyboard_latent_path",
     "H3SaveAVLatent", "H3LoadAVLatent",
     "H3_TAIL_FRAMES", "h3_tail_latent_steps", "h3_tail_pixels", "h3_tail_wave", "H3EncodeAVTail", "H3LipSyncMask",
-    "H3LowerFaceMask",
+    "H3LowerFaceMask", "H3LipSyncPrepareCrop", "H3LipSyncBlend",
 }
 
 
@@ -145,6 +145,67 @@ class ContinuationGeometryTests(unittest.TestCase):
         # All absent raises clearly.
         with self.assertRaisesRegex(ValueError, "No detected face frames"):
             build(crops, {**transform, "absent": [True] * 6})
+
+    def test_lip_sync_prepare_crop_neutralizes_core_and_preserves_context(self):
+        crops = torch.full((2, 96, 96, 3), 0.2)
+        crops[:, :, ::2, :] = 0.8
+        mask = torch.zeros((2, 96, 96))
+        mask[1, 24:72, 24:72] = 1.0
+        (prepared,) = self.nodes["H3LipSyncPrepareCrop"]().prepare(crops, mask, strength=0.85)
+        self.assertTrue(torch.equal(prepared[0], crops[0]))
+        self.assertTrue(torch.equal(prepared[1, :24, :], crops[1, :24, :]))
+        self.assertTrue(torch.equal(prepared[1, 72:, :], crops[1, 72:, :]))
+        core_before_std = float(crops[1, 36:60, 36:60].std())
+        core_after_std = float(prepared[1, 36:60, 36:60].std())
+        self.assertLess(core_after_std, core_before_std * 0.35)
+
+    def test_lip_sync_blend_skin_ring_color_match_pyramid_and_outside_preservation(self):
+        from unittest.mock import patch
+        import builtins
+
+        src = torch.zeros((2, 95, 97, 3), dtype=torch.float32)
+        src[..., 0] = 0.75
+        src[..., 1] = 0.55
+        src[..., 2] = 0.45
+        # Add subtle skin texture so high-pass sharpening path executes non-trivially.
+        src[:, ::2, ::2, :] += 0.03
+        mask = torch.zeros((2, 95, 97), dtype=torch.float32)
+        mask[1, 18:78, 18:78] = 0.5
+        mask[1, 24:72, 24:72] = 1.0
+
+        gen = src.clone()
+        # Shift generated crop cooler/darker across the masked area and add a dark inner mouth cavity.
+        gen[1, :, :, 0] = (src[1, :, :, 0] - 0.18).clamp(0.0, 1.0)
+        gen[1, :, :, 1] = (src[1, :, :, 1] + 0.06).clamp(0.0, 1.0)
+        gen[1, :, :, 2] = (src[1, :, :, 2] + 0.12).clamp(0.0, 1.0)
+        gen[1, 40:56, 40:56, :] = 0.02
+
+        blend_fn = self.nodes["H3LipSyncBlend"]().blend
+        (out,) = blend_fn(src, gen, mask, color_match=1.0, sharpen=0.35, pyramid_levels=3)
+        self.assertEqual(tuple(out.shape), (2, 95, 97, 3))
+        self.assertTrue(torch.equal(out[0], src[0]))
+        self.assertTrue(torch.equal(out[1, :18, :], src[1, :18, :]))
+        # Outer skin inside the mask stays close to source skin tone despite the dark center cavity.
+        ring_mean = out[1, 26:32, 26:32, :].mean(dim=(0, 1))
+        self.assertAlmostEqual(float(ring_mean[0]), float(src[1, 26:32, 26:32, 0].mean()), delta=0.05)
+        self.assertAlmostEqual(float(ring_mean[2]), float(src[1, 26:32, 26:32, 2].mean()), delta=0.05)
+        # Inner mouth cavity remains dark (not washed out).
+        self.assertLess(float(out[1, 46:50, 46:50, :].mean()), 0.25)
+
+        # Also exercise the pure-PyTorch fallback when cv2 is unavailable.
+        real_import = builtins.__import__
+
+        def no_cv2(name, *args, **kwargs):
+            if name == "cv2":
+                raise ImportError("cv2 disabled")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=no_cv2):
+            (out_torch,) = blend_fn(src, gen, mask, color_match=1.0, sharpen=0.35, pyramid_levels=3)
+        self.assertEqual(tuple(out_torch.shape), (2, 95, 97, 3))
+        self.assertTrue(torch.equal(out_torch[1, :18, :], src[1, :18, :]))
+        ring_mean_torch = out_torch[1, 26:32, 26:32, :].mean(dim=(0, 1))
+        self.assertAlmostEqual(float(ring_mean_torch[0]), float(src[1, 26:32, 26:32, 0].mean()), delta=0.05)
 
     def test_short_source_or_target_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at least 5"):

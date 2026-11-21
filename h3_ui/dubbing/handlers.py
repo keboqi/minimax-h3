@@ -796,7 +796,8 @@ class DubbingHandlers:
             yield gr.skip(), self._failed(exc)
 
     def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None,
-                       expected_video=None, reviewed_revision=None, *, gemini_api_key=None):
+                       expected_video=None, reviewed_revision=None, *,
+                       min_face_size=None, max_face_size=None, gemini_api_key=None):
         """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
@@ -819,6 +820,10 @@ class DubbingHandlers:
                 extra["strength"] = max(0.2, min(1.0, float(strength)))
             if feather is not None:
                 extra["feather"] = max(0, min(32, int(feather)))
+            if min_face_size is not None:
+                extra["min_face_size"] = min_face_size
+            if max_face_size is not None:
+                extra["max_face_size"] = max_face_size
             if isinstance(manual_overrides, list):
                 manual_overrides = {(shot, speaker): track_id for shot, speaker, track_id in manual_overrides}
             for update in render_dub_lip_sync(

@@ -27,7 +27,13 @@ from fastapi.responses import Response
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.lip_sync import (
-    REPORT_FILE, load_lip_sync_plan, load_manual_overrides, revise_lip_sync_plan,
+    LipSyncWindow,
+    REPORT_FILE,
+    filter_lip_sync_windows,
+    load_lip_sync_plan,
+    load_manual_overrides,
+    revise_lip_sync_plan,
+    validate_face_size_range,
 )
 from h3_app.dubbing.results import TRACKS, load_player, load_result, player_folder
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
@@ -959,6 +965,12 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                                   None if track_id is None else int(track_id)))
         strength = body.get("strength")
         feather = body.get("feather")
+        raw_min = body.get("min_face_size")
+        raw_max = body.get("max_face_size")
+        if raw_min is not None or raw_max is not None:
+            min_size, max_size = validate_face_size_range(raw_min, raw_max)
+        else:
+            min_size, max_size = 0.0, 1.0
         with admission_lock:
             _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
             values = [session_id, overrides, strength, feather]
@@ -969,10 +981,20 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                 plan = checked_lip_sync_plan(dub, revision)
                 if plan.get("windows_count") == 0:
                     raise H3Error("No render windows. Review the speaker assignments first.")
+                if (isinstance(plan.get("windows"), list) and plan["windows"]
+                        and (raw_min is not None or raw_max is not None)):
+                    planned = [LipSyncWindow(**w) for w in plan["windows"]]
+                    if not filter_lip_sync_windows(planned, min_face_size=min_size, max_face_size=max_size):
+                        raise H3Error("No speaking windows fall within the selected face size range. Widen the range or manually select a face.")
                 values.extend((str(dub), revision))
             return start(
                 request, LIP_SYNC, session_id, LIP_SYNC,
-                partial(handlers.lip_sync_video, gemini_api_key=body.get("api_key")),
+                partial(
+                    handlers.lip_sync_video,
+                    gemini_api_key=body.get("api_key"),
+                    min_face_size=raw_min,
+                    max_face_size=raw_max,
+                ),
                 values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
             )
 

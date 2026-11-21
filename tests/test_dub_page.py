@@ -443,6 +443,101 @@ class StudioPageTests(PageTests):
             (None, "reviewed"),
         ])
 
+    def test_lip_sync_endpoint_validates_and_forwards_face_size_range(self):
+        import json as _json
+        from h3_app.dubbing.lip_sync import PLAN_FILE
+        from h3_app.dubbing.results import player_folder
+
+        created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True)
+        dub_video = out_dir / "clip.mp4"
+        dub_video.write_bytes(b"mp4")
+        folder = player_folder(dub_video)
+        folder.mkdir(parents=True)
+        (folder / "alignment.json").write_text("{}", encoding="utf-8")
+        (folder / "alignment.npz").write_bytes(b"npz")
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        initial = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]["lip_sync"]
+        target = {"session": created.id, "video": initial["video"], "video_version": initial["video_version"]}
+
+        # Invalid face size ranges fail fast at the API layer.
+        for payload in (
+            {**target, "min_face_size": 0.6, "max_face_size": 0.3},
+            {**target, "min_face_size": -0.1, "max_face_size": 0.5},
+            {**target, "min_face_size": 0.1, "max_face_size": 1.2},
+        ):
+            bad = self.client.post(f"{API}/lip-sync", json=payload)
+            self.assertEqual(bad.status_code, 400)
+
+        (folder / PLAN_FILE).write_text(_json.dumps({
+            "video": dub_video.name,
+            "revision": "sized-plan",
+            "windows_count": 2,
+            "windows": [
+                {
+                    "speaker": "speaker1", "start": 0.0, "end": 0.5, "active_start": 0.1, "active_end": 0.4,
+                    "first_frame": 0, "source_frames": 12, "render_frames": 22,
+                    "active_start_frame": 2, "active_end_frame": 10,
+                    "face_target": [100, 100, 5], "shot_index": 0, "face_size": 0.05, "manual": False,
+                },
+                {
+                    "speaker": "speaker2", "start": 0.5, "end": 1.0, "active_start": 0.6, "active_end": 0.9,
+                    "first_frame": 12, "source_frames": 12, "render_frames": 22,
+                    "active_start_frame": 2, "active_end_frame": 10,
+                    "face_target": [300, 200, 5], "shot_index": 1, "face_size": 0.30, "manual": False,
+                },
+            ],
+        }), encoding="utf-8")
+
+        # Range excluding all auto windows is rejected cleanly before queuing a job.
+        empty = self.client.post(f"{API}/lip-sync", json={
+            **target, "plan_revision": "sized-plan", "min_face_size": 0.40, "max_face_size": 0.90,
+        })
+        self.assertEqual(empty.status_code, 400)
+        self.assertIn("face size range", empty.json()["error"])
+
+        received: list[tuple[float | None, float | None]] = []
+
+        def fake_render(*, min_face_size=None, max_face_size=None, **_kwargs):
+            received.append((min_face_size, max_face_size))
+            out = dub_video.with_name("clip.lipsync.mp4")
+            out.write_bytes(b"mp4-lipsync")
+            yield out
+
+        def run_job(_run, _owner, _session, _family, values, callback):
+            return callback(*_json.loads(_json.dumps(values)))
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", run_job), \
+                patch("h3_ui.dubbing.handlers.render_dub_lip_sync", fake_render):
+            ok = self.client.post(f"{API}/lip-sync", json={
+                **target, "plan_revision": "sized-plan", "min_face_size": 0.10, "max_face_size": 0.80,
+            })
+            self.assertEqual(ok.status_code, 200)
+            self.assertIsNone(self.wait("lip-sync", created.id)["error"])
+
+            # A manual window outside the range still satisfies the pre-check and forwards the range.
+            (folder / PLAN_FILE).write_text(_json.dumps({
+                "video": dub_video.name,
+                "revision": "manual-plan",
+                "windows_count": 1,
+                "windows": [{
+                    "speaker": "speaker1", "start": 0.0, "end": 0.5, "active_start": 0.1, "active_end": 0.4,
+                    "first_frame": 0, "source_frames": 12, "render_frames": 22,
+                    "active_start_frame": 2, "active_end_frame": 10,
+                    "face_target": [100, 100, 5], "shot_index": 0, "face_size": 0.05, "manual": True,
+                }],
+            }), encoding="utf-8")
+            manual_ok = self.client.post(f"{API}/lip-sync", json={
+                **target, "plan_revision": "manual-plan", "min_face_size": 0.40, "max_face_size": 0.90,
+            })
+            self.assertEqual(manual_ok.status_code, 200)
+            self.assertIsNone(self.wait("lip-sync", created.id)["error"])
+
+        self.assertEqual(received, [(0.1, 0.8), (0.4, 0.9)])
+
 
 if __name__ == "__main__":
     unittest.main()

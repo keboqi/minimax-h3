@@ -58,6 +58,8 @@ DEFAULT_SHOT_THRESHOLD = 0.35
 DEFAULT_CONTEXT_SECONDS = 0.25
 DEFAULT_MAX_GAP_SECONDS = 0.8
 DEFAULT_MAX_WINDOW_SECONDS = 12.0
+DEFAULT_MIN_FACE_SIZE = 0.0
+DEFAULT_MAX_FACE_SIZE = 1.0
 _MIN_TURN_SECONDS = 1.0 / FPS
 WINDOW_CACHE_DIR = "lip_sync_cache"
 REPORT_FILE = "lip_sync_report.json"
@@ -87,6 +89,60 @@ class LipSyncWindow:
     active_end_frame: int
     face_target: tuple[int, int, int] | None = None
     shot_index: int = 0
+    face_size: float | None = None
+    manual: bool = False
+
+
+def _parse_face_size_bound(value: float | int | None, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise H3Error("Face size bounds must be numbers between 0 and 1.")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise H3Error("Face size bounds must be numbers between 0 and 1.") from exc
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise H3Error("Face size bounds must be between 0.0 and 1.0 (fraction of frame height).")
+    return parsed
+
+
+def validate_face_size_range(
+    min_face_size: float | None,
+    max_face_size: float | None,
+) -> tuple[float, float]:
+    """Validate normalized [0.0..1.0] face-height bounds for lip-sync window filtering."""
+    low = _parse_face_size_bound(min_face_size, DEFAULT_MIN_FACE_SIZE)
+    high = _parse_face_size_bound(max_face_size, DEFAULT_MAX_FACE_SIZE)
+    if low > high:
+        raise H3Error("Minimum face size cannot exceed maximum face size.")
+    return low, high
+
+
+def window_matches_face_size(
+    window: LipSyncWindow,
+    *,
+    min_face_size: float = DEFAULT_MIN_FACE_SIZE,
+    max_face_size: float = DEFAULT_MAX_FACE_SIZE,
+) -> bool:
+    """Return True when the window passes the face-size filter (manual selections always pass)."""
+    if window.manual or window.face_size is None:
+        return True
+    return min_face_size - 1e-6 <= float(window.face_size) <= max_face_size + 1e-6
+
+
+def filter_lip_sync_windows(
+    windows: Sequence[LipSyncWindow],
+    *,
+    min_face_size: float | None = None,
+    max_face_size: float | None = None,
+) -> list[LipSyncWindow]:
+    """Filter lip-sync windows to a face-size range while keeping all manual overrides."""
+    low, high = validate_face_size_range(min_face_size, max_face_size)
+    return [
+        window for window in windows
+        if window_matches_face_size(window, min_face_size=low, max_face_size=high)
+    ]
 
 
 def fitted_dialogue(video: Path, speaker: str, first_frame: int, frames: int, *,
@@ -385,16 +441,21 @@ def plan_lip_sync_windows(
         active_start_frame = max(0, min(source_frames - 1, math.floor(chunk.start * FPS) - first_frame))
         active_end_frame = max(active_start_frame + 1, min(source_frames, math.ceil(chunk.end * FPS) - first_frame))
         face_target = None
+        face_size = None
+        manual = False
         if assignments is not None:
             assigned = assignments.get((chunk.shot_index, chunk.speaker))
+            manual = bool(assigned is not None and assigned.status == "manual")
             if assigned and assigned.track_id is not None and tracks is not None:
                 track = tracks.get((chunk.shot_index, assigned.track_id))
                 mid = (chunk.start + chunk.end) / 2
-                samples = (obs for obs in track.observations
-                           if first_frame <= round(obs.time * FPS) < last_frame) if track else ()
+                samples = [obs for obs in track.observations
+                           if first_frame <= round(obs.time * FPS) < last_frame] if track else []
                 observation = min(samples, key=lambda obs: abs(obs.time - mid), default=None)
                 if observation is None:
                     continue
+                heights = sorted(obs.box[3] for obs in samples)
+                face_size = round(float(heights[len(heights) // 2]), 4)
                 face_target = _center_to_face_target(
                     observation.center, observation.time, video_size, first_frame, 0, source_frames,
                 )
@@ -432,6 +493,8 @@ def plan_lip_sync_windows(
             active_end_frame=active_end_frame,
             face_target=face_target,
             shot_index=chunk.shot_index,
+            face_size=face_size,
+            manual=manual,
         ))
         prev_last_frame = last_frame
     return windows
@@ -590,7 +653,7 @@ def window_cache_key(
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": 2,  # per-window tracking and temporal mask feathering
+        "version": 3,  # tighter crop, neutralized mouth prep, skin-ring LAB + pyramid blend
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [
             window.shot_index, window.speaker, window.first_frame, window.source_frames,
@@ -674,6 +737,8 @@ def _save_lip_sync_report(
     cached_windows: int,
     skipped_windows: int,
     assignments: dict[tuple[int, str], ShotSpeakerAssignment],
+    filtered_windows: int = 0,
+    face_size_range: tuple[float, float] = (DEFAULT_MIN_FACE_SIZE, DEFAULT_MAX_FACE_SIZE),
 ) -> None:
     folder = player_folder(dub)
     if not folder.is_dir():
@@ -685,6 +750,8 @@ def _save_lip_sync_report(
         "cached_windows": cached_windows,
         "rendered_windows": max(0, total_windows - cached_windows - skipped_windows),
         "skipped_windows": skipped_windows,
+        "filtered_windows": filtered_windows,
+        "face_size_range": [round(float(face_size_range[0]), 4), round(float(face_size_range[1]), 4)],
         "uncertain_count": len(uncertain_assignments(assignments)),
         "assignments": [
             item.to_dict()
@@ -791,7 +858,7 @@ def build_lip_sync_plan_payload(
         "width": int(scan.width),
         "height": int(scan.height),
         "fps": round(float(scan.fps), 3),
-        "window_version": 2,
+        "window_version": 3,
         "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
@@ -885,7 +952,7 @@ def revise_lip_sync_plan(
     windows = _reviewed_windows(dub, plan, assignments, visual_speakers=hints)
     _save_lip_sync_plan(dub, {
         **plan, "revision": uuid4().hex, "automatic_assignments": automatic,
-        "window_version": 2, "windows_count": len(windows),
+        "window_version": 3, "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
         "assignments": [item.to_dict() for item in assignments.values()],
@@ -1000,9 +1067,12 @@ def render_dub_lip_sync(
     gemini_api_key: str | None = None,
     reviewed_plan: dict[str, Any] | None = None,
     source_video: Path | None = None,
+    min_face_size: float | None = None,
+    max_face_size: float | None = None,
 ) -> Iterator[str | Path]:
     """Automatically scan shots, match speakers, render H3 mouth patches (cached per window), and assemble MP4."""
     check_cancelled()
+    min_size, max_size = validate_face_size_range(min_face_size, max_face_size)
     if reviewed_plan is None:
         for update in detect_lip_sync_plan(
             dub=dub, services=services, shot_threshold=shot_threshold, scanner=scanner,
@@ -1017,12 +1087,19 @@ def render_dub_lip_sync(
         yield "Using reviewed face assignments"
     assignments = _plan_assignments(reviewed_plan)
     backend = reviewed_plan["backend"]
-    if reviewed_plan.get("window_version") == 2 and "windows" in reviewed_plan:
+    if reviewed_plan.get("window_version") == 3 and "windows" in reviewed_plan:
         windows = [LipSyncWindow(**w) for w in reviewed_plan["windows"] if speaker is None or w["speaker"] == speaker]
     else:
         windows = _reviewed_windows(dub, reviewed_plan, assignments, visual_speakers=visual_speakers, speaker=speaker)
     if not windows:
         raise H3Error("No confident on-screen speaking windows were found for lip sync.")
+    total_before_filter = len(windows)
+    windows = filter_lip_sync_windows(windows, min_face_size=min_size, max_face_size=max_size)
+    filtered_windows = total_before_filter - len(windows)
+    if not windows:
+        raise H3Error("No speaking windows fall within the selected face size range. Widen the range or manually select a face.")
+    if filtered_windows > 0:
+        yield f"Filtered {filtered_windows} window(s) outside face size range ({len(windows)} to render)"
 
     models = services.models.load_model_config()
     ensure_keys = getattr(services.models, "ensure_model_keys", None)
@@ -1116,6 +1193,7 @@ def render_dub_lip_sync(
             dub, output=assembled, backend=backend,
             total_windows=len(windows), cached_windows=cached_hits,
             skipped_windows=skipped_windows, assignments=assignments,
+            filtered_windows=filtered_windows, face_size_range=(min_size, max_size),
         )
     yield assembled
 

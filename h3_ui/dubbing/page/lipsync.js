@@ -3,6 +3,8 @@
 import {api} from "./api.js";
 import {esc, icon, plural, toast} from "./ui.js";
 
+const SIZE_PRESETS = [[0, 100, "All"], [8, 100, "8%+"], [15, 100, "15%+"], [25, 100, "25%+"]];
+
 const lsState = {
   targetKey: null,
   data: null,
@@ -13,8 +15,10 @@ const lsState = {
   filter: "all",
   selectedShot: 0,
   selectedSpeaker: null,
-  strength: 0.55,
+  strength: 0.70,
   feather: 6,
+  minFaceSize: 0,
+  maxFaceSize: 100,
   rafId: null,
   observer: null,
 };
@@ -38,7 +42,10 @@ export async function loadLipSyncPlan(app, {silent = false} = {}) {
   if (!target) return;
   const key = JSON.stringify(target);
   if (lsState.targetKey !== key) {
-    Object.assign(lsState, {targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null});
+    Object.assign(lsState, {
+      targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null,
+      minFaceSize: 0, maxFaceSize: 100,
+    });
   }
   const request = Symbol();
   Object.assign(lsState, {request, loading: true, error: null});
@@ -141,6 +148,130 @@ function statusBadge(a) {
   return {label: "Needs check", cls: "chip chip-warn"};
 }
 
+function trackMedianHeight(track) {
+  const obs = track?.obs || [];
+  if (obs.length) {
+    const heights = obs.map((o) => Number(o[4])).filter(Number.isFinite).sort((a, b) => a - b);
+    if (heights.length) return heights[Math.floor(heights.length / 2)];
+  }
+  const boxH = Number(track?.box?.[3]);
+  return Number.isFinite(boxH) ? boxH : null;
+}
+
+function windowFaceSize(win, plan) {
+  if (typeof win?.face_size === "number" && Number.isFinite(win.face_size)) return win.face_size;
+  const a = (plan?.assignments || []).find((item) => item.shot_index === win.shot_index && item.speaker === win.speaker);
+  if (!a || a.track_id === null || a.track_id === undefined) return null;
+  const shot = (plan?.shots || []).find((s) => s.index === win.shot_index);
+  const track = (shot?.tracks || []).find((t) => t.track_id === a.track_id);
+  return track ? trackMedianHeight(track) : null;
+}
+
+function isWindowManual(win, plan) {
+  if (typeof win?.manual === "boolean") return win.manual;
+  const a = (plan?.assignments || []).find((item) => item.shot_index === win.shot_index && item.speaker === win.speaker);
+  return a?.status === "manual";
+}
+
+function sizeInRange(size) {
+  if (size === null) return true;
+  const min = lsState.minFaceSize / 100;
+  const max = lsState.maxFaceSize / 100;
+  return size >= min - 1e-6 && size <= max + 1e-6;
+}
+
+function windowInSizeRange(win, plan) {
+  if (isWindowManual(win, plan)) return true;
+  return sizeInRange(windowFaceSize(win, plan));
+}
+
+function filteredWindowsInfo(plan) {
+  const wins = plan?.windows || [];
+  const total = plan?.windows_count ?? wins.length;
+  if (!wins.length) return {total, included: total, filtered: 0};
+  const included = wins.filter((w) => windowInSizeRange(w, plan)).length;
+  return {total: wins.length, included, filtered: wins.length - included};
+}
+
+function itemFaceSize(it, plan) {
+  const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
+  const winSizes = wins.map((w) => windowFaceSize(w, plan)).filter((v) => v !== null);
+  if (winSizes.length) {
+    winSizes.sort((a, b) => a - b);
+    return winSizes[Math.floor(winSizes.length / 2)];
+  }
+  if (it.assignment.track_id !== null && it.assignment.track_id !== undefined) {
+    const track = (it.shot.tracks || []).find((t) => t.track_id === it.assignment.track_id);
+    if (track) return trackMedianHeight(track);
+  }
+  return null;
+}
+
+function isItemSizeFiltered(it, plan) {
+  if (it.assignment.status !== "matched") return false;
+  const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
+  if (wins.length) return wins.every((w) => !windowInSizeRange(w, plan));
+  return !sizeInRange(itemFaceSize(it, plan));
+}
+
+function shotCounts(items) {
+  let uncertainCount = 0;
+  let confirmedCount = 0;
+  let offCount = 0;
+  for (const it of items) {
+    if (it.assignment.status === "uncertain") uncertainCount++;
+    else if (it.assignment.status === "off_screen") offCount++;
+    else confirmedCount++;
+  }
+  return {uncertainCount, confirmedCount, offCount};
+}
+
+function rowBadgeFor(it, plan) {
+  return isItemSizeFiltered(it, plan) ? {label: "Size ignored", cls: "chip chip-quiet"} : statusBadge(it.assignment);
+}
+
+function formatFacePct(size) {
+  return size === null ? "" : `${Math.round(size * 100)}%`;
+}
+
+function faceSizeLabel(plan) {
+  const minPct = lsState.minFaceSize;
+  const maxPct = lsState.maxFaceSize;
+  const h = Number(plan?.height);
+  const px = Number.isFinite(h) && h > 0
+    ? ` (~${Math.round((minPct / 100) * h)}–${Math.round((maxPct / 100) * h)} px)`
+    : "";
+  return `${minPct}% – ${maxPct}%${px}`;
+}
+
+function shotTargetDescription(it, plan) {
+  if (it.assignment.status === "off_screen") return "Skipped (off-screen)";
+  const trackIdx = (it.shot.tracks || []).findIndex((t) => t.track_id === it.assignment.track_id);
+  if (trackIdx < 0) return it.assignment.reason || it.assignment.source;
+  const faceSize = itemFaceSize(it, plan);
+  const pct = formatFacePct(faceSize);
+  const manualOutside = it.assignment.status === "manual" && !sizeInRange(faceSize);
+  return `Face #${trackIdx + 1}${pct ? ` (${pct})` : ""} · ${manualOutside ? "Manual override" : it.assignment.source}`;
+}
+
+function renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount) {
+  const info = filteredWindowsInfo(plan);
+  const winText = info.filtered > 0
+    ? `${info.included} of ${info.total} render windows (${info.filtered} size-ignored)`
+    : plural(info.total, "render window");
+  return `<strong>${confirmedCount}</strong> matched · <strong>${uncertainCount}</strong> needs check · <strong>${offCount}</strong> off-screen (${esc(winText)})`;
+}
+
+function renderLockedReason(ls, app, plan) {
+  if (!ls.ready) return "Generate this dub again to save its fitted dialogue.";
+  if (!app.boot.lip_sync) return "Open this dub in Studio to render lip sync.";
+  if (plan && !plan.windows_count) return "No render windows. Review speaker assignments and choose a visible face.";
+  if (plan && filteredWindowsInfo(plan).included === 0) {
+    return "No windows match the face size range. Widen the range or manually select a face.";
+  }
+  return "";
+}
+
 export function renderLipSync(app) {
   const result = app.session?.result;
   const ls = result?.lip_sync;
@@ -168,12 +299,9 @@ export function renderLipSync(app) {
     lsState.selectedSpeaker = activeItem.speaker;
   }
 
-  const uncertainCount = items.filter((it) => it.assignment.status === "uncertain").length;
-  const confirmedCount = items.filter((it) => it.assignment.status === "matched" || it.assignment.status === "manual").length;
-  const offCount = items.filter((it) => it.assignment.status === "off_screen").length;
+  const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
   const unavailable = !ls.ready ? "Generate this dub again to save its fitted dialogue." : "";
-  const renderReason = unavailable || (!app.boot.lip_sync ? "Open this dub in Studio to render lip sync."
-    : plan && !plan.windows_count ? "No render windows. Review speaker assignments and choose a visible face." : "");
+  const renderReason = renderLockedReason(ls, app, plan);
   const canRender = !!(plan?.revision && !renderReason && !lsState.loading);
 
   return `
@@ -207,7 +335,7 @@ export function renderLipSync(app) {
         </div>
       </section>
 
-      ${renderReason ? `<p class="muted small">${esc(renderReason)}</p>` : ""}
+      <p class="muted small" id="ls-render-reason" ${renderReason ? "" : "hidden"}>${esc(renderReason)}</p>
       ${lsState.loading ? '<div class="card card-pad muted">Loading lip-sync plan…</div>' : ""}
       ${lsState.error ? `<div class="card card-pad fail-text">${esc(lsState.error)}</div>` : ""}
 
@@ -256,17 +384,36 @@ export function renderLipSync(app) {
               <div class="ls-settings-row">
                 <label class="field">
                   <span class="field-label">Denoise strength <span class="mono" data-ls-out="strength">${lsState.strength.toFixed(2)}</span></span>
-                  <input type="range" min="0.25" max="0.85" step="0.05" value="${lsState.strength}" data-ls-setting="strength">
+                  <input type="range" min="0.25" max="0.90" step="0.05" value="${lsState.strength}" data-ls-setting="strength">
                 </label>
                 <label class="field">
                   <span class="field-label">Mask feather <span class="mono" data-ls-out="feather">${lsState.feather} px</span></span>
                   <input type="range" min="2" max="16" step="1" value="${lsState.feather}" data-ls-setting="feather">
                 </label>
               </div>
+              <div class="field ls-range-field">
+                <div class="row align-center row-wrap">
+                  <span class="field-label">Face size range <span class="mono" data-ls-out="face-size">${esc(faceSizeLabel(plan))}</span></span>
+                  <span class="spacer"></span>
+                  <div class="ls-size-presets row row-wrap">
+                    ${SIZE_PRESETS.map(([lo, hi, label]) => `
+                      <button type="button" class="btn btn-small ${lsState.minFaceSize === lo && lsState.maxFaceSize === hi ? "btn-primary" : ""}"
+                        data-ls-size-preset="${lo},${hi}">${label}</button>
+                    `).join("")}
+                  </div>
+                </div>
+                <div class="ls-range-dual">
+                  <div class="ls-range-track">
+                    <div class="ls-range-fill" id="ls-range-fill" style="left:${lsState.minFaceSize}%;width:${Math.max(0, lsState.maxFaceSize - lsState.minFaceSize)}%"></div>
+                  </div>
+                  <input type="range" min="0" max="100" step="1" value="${lsState.minFaceSize}" data-ls-range="min" aria-label="Minimum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 4 : 3}">
+                  <input type="range" min="0" max="100" step="1" value="${lsState.maxFaceSize}" data-ls-range="max" aria-label="Maximum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 3 : 4}">
+                </div>
+                <span class="muted small">Auto-ignores faces outside this height range; manual face selections are always included.</span>
+              </div>
               <div class="row align-center row-wrap top-line">
-                <span class="small">
-                  <strong>${confirmedCount}</strong> matched · <strong>${uncertainCount}</strong> needs check · <strong>${offCount}</strong> off-screen
-                  (${plural(plan.windows_count || 0, "render window")})
+                <span class="small" data-ls-render-summary>
+                  ${renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount)}
                 </span>
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-primary" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}">
@@ -291,22 +438,19 @@ export function renderLipSync(app) {
             </div>
             <div class="ls-queue-list">
               ${visible.map((it) => {
-                const badge = statusBadge(it.assignment);
+                const badge = rowBadgeFor(it, plan);
                 const selected = activeItem && it.key === activeItem.key;
-                const trackIdx = (it.shot.tracks || []).findIndex((t) => t.track_id === it.assignment.track_id);
-                const targetDesc = it.assignment.status === "off_screen"
-                  ? "Skipped (off-screen)"
-                  : trackIdx >= 0 ? `Face #${trackIdx + 1} · ${it.assignment.source}` : it.assignment.reason || it.assignment.source;
+                const targetDesc = shotTargetDescription(it, plan);
                 return `
                   <button type="button" class="ls-shot-row ${selected ? "selected" : ""}" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.seekTime}">
                     <div class="row align-center">
                       <strong>Shot ${it.shot.index + 1}</strong>
                       <span class="mono muted">${formatClock(it.shot.start)}–${formatClock(it.shot.end)}</span>
                       <span class="spacer"></span>
-                      <span class="${badge.cls}">${badge.label}</span>
+                      <span class="${badge.cls}" data-ls-row-badge="${esc(it.key)}">${badge.label}</span>
                     </div>
                     <div class="small ellipsis"><strong>${esc(speakerLabel(it.speaker))}</strong>${it.line ? ` · ${esc(it.line)}` : ""}</div>
-                    <div class="small muted ellipsis">${esc(targetDesc)}</div>
+                    <div class="small muted ellipsis" data-ls-row-desc="${esc(it.key)}">${esc(targetDesc)}</div>
                   </button>`;
               }).join("") || '<p class="muted small card-pad">No shots in this filter.</p>'}
             </div>
@@ -371,9 +515,14 @@ function drawOverlay(app) {
     if (!b) return;
     const [x, y, w, h] = b;
     const isSpeaking = activeTrackId !== null && track.track_id === activeTrackId;
+    const trackSize = trackMedianHeight(track) ?? h;
+    const pct = formatFacePct(trackSize);
+    const outOfRange = !sizeInRange(trackSize);
+    const sizeIgnored = isSpeaking && activeAssign?.status === "matched" && outOfRange;
+    const manualKept = isSpeaking && activeAssign?.status === "manual" && outOfRange;
     const label = isSpeaking
-      ? `${speakerLabel(activeSpeaker)} · Assigned`
-      : `Face #${idx + 1}`;
+      ? `${speakerLabel(activeSpeaker)} · ${pct}${sizeIgnored ? " (size ignored)" : manualKept ? " (manual)" : ""}`
+      : `Face #${idx + 1} · ${pct}`;
     const boxId = `${shot.index}:${track.track_id}`;
     seen.add(boxId);
     let btn = existing.get(boxId);
@@ -388,6 +537,7 @@ function drawOverlay(app) {
       overlay.appendChild(btn);
     }
     btn.classList.toggle("speaking", isSpeaking);
+    btn.classList.toggle("size-ignored", sizeIgnored);
     btn.style.left = `${(x * 100).toFixed(2)}%`;
     btn.style.top = `${(y * 100).toFixed(2)}%`;
     btn.style.width = `${(w * 100).toFixed(2)}%`;
@@ -485,10 +635,76 @@ async function saveOverride(app, key, trackId) {
   }
 }
 
+function syncFaceSizeUI(app) {
+  const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
+  const plan = data?.plan;
+  if (!plan) return;
+  const fill = document.getElementById("ls-range-fill");
+  if (fill) {
+    fill.style.left = `${lsState.minFaceSize}%`;
+    fill.style.width = `${Math.max(0, lsState.maxFaceSize - lsState.minFaceSize)}%`;
+  }
+  const minInput = document.querySelector('[data-ls-range="min"]');
+  const maxInput = document.querySelector('[data-ls-range="max"]');
+  if (minInput) {
+    if (Number(minInput.value) !== lsState.minFaceSize) minInput.value = String(lsState.minFaceSize);
+    minInput.style.zIndex = lsState.minFaceSize >= 95 ? "4" : "3";
+  }
+  if (maxInput) {
+    if (Number(maxInput.value) !== lsState.maxFaceSize) maxInput.value = String(lsState.maxFaceSize);
+    maxInput.style.zIndex = lsState.minFaceSize >= 95 ? "3" : "4";
+  }
+  const out = document.querySelector('[data-ls-out="face-size"]');
+  if (out) out.textContent = faceSizeLabel(plan);
+  for (const btn of document.querySelectorAll("[data-ls-size-preset]")) {
+    const [lo, hi] = btn.dataset.lsSizePreset.split(",").map(Number);
+    btn.classList.toggle("btn-primary", lsState.minFaceSize === lo && lsState.maxFaceSize === hi);
+  }
+  const items = shotItems(plan);
+  const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
+  const summary = document.querySelector("[data-ls-render-summary]");
+  if (summary) summary.innerHTML = renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount);
+  const ls = app.session?.result?.lip_sync;
+  const reason = ls ? renderLockedReason(ls, app, plan) : "";
+  const reasonEl = document.getElementById("ls-render-reason");
+  if (reasonEl) {
+    reasonEl.textContent = reason;
+    reasonEl.hidden = !reason;
+  }
+  const renderBtn = document.querySelector('[data-ls-action="render"]');
+  if (renderBtn) {
+    const locked = !(plan?.revision && !reason && !lsState.loading);
+    renderBtn.dataset.locked = String(locked);
+    const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+    renderBtn.disabled = busy || locked;
+  }
+  for (const it of items) {
+    const badgeEl = document.querySelector(`[data-ls-row-badge="${CSS.escape(it.key)}"]`);
+    if (badgeEl) {
+      const badge = rowBadgeFor(it, plan);
+      badgeEl.className = badge.cls;
+      badgeEl.textContent = badge.label;
+    }
+    const descEl = document.querySelector(`[data-ls-row-desc="${CSS.escape(it.key)}"]`);
+    if (descEl) {
+      descEl.textContent = shotTargetDescription(it, plan);
+    }
+  }
+  drawOverlay(app);
+}
+
 export function bindLipSync(app) {
   const screen = document.getElementById("screen");
   screen.addEventListener("click", async (event) => {
     if (app.screen !== "lipsync" || !app.session) return;
+    const preset = event.target.closest("[data-ls-size-preset]");
+    if (preset) {
+      const [lo, hi] = preset.dataset.lsSizePreset.split(",").map(Number);
+      lsState.minFaceSize = lo;
+      lsState.maxFaceSize = hi;
+      syncFaceSizeUI(app);
+      return;
+    }
     const filter = event.target.closest("[data-ls-filter]");
     if (filter) {
       lsState.filter = filter.dataset.lsFilter;
@@ -536,6 +752,8 @@ export function bindLipSync(app) {
         api_key: app.apiKey,
         strength: lsState.strength,
         feather: lsState.feather,
+        min_face_size: lsState.minFaceSize / 100,
+        max_face_size: lsState.maxFaceSize / 100,
       });
     } else if (action === "interrupt") {
       try {
@@ -561,6 +779,17 @@ export function bindLipSync(app) {
   });
   screen.addEventListener("input", (event) => {
     if (app.screen !== "lipsync") return;
+    const rangeEl = event.target.closest("[data-ls-range]");
+    if (rangeEl) {
+      const val = Math.max(0, Math.min(100, Math.round(Number(rangeEl.value) || 0)));
+      if (rangeEl.dataset.lsRange === "min") {
+        lsState.minFaceSize = Math.min(val, lsState.maxFaceSize);
+      } else {
+        lsState.maxFaceSize = Math.max(val, lsState.minFaceSize);
+      }
+      syncFaceSizeUI(app);
+      return;
+    }
     const el = event.target.closest("[data-ls-setting]");
     if (!el) return;
     const key = el.dataset.lsSetting;
