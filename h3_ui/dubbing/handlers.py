@@ -569,8 +569,10 @@ class DubbingHandlers:
                         from h3_app.dubbing import projects
 
                         try:
-                            attached = projects.attach(self._runtime(), project["name"], session.id,
-                                                       expected_session=project["session"])
+                            attached = projects.attach(
+                                self._runtime(), project["name"], session.id,
+                                expected_session=project["session"], expected_generation=project.get("generation"),
+                            )
                         except OSError as exc:
                             record_failure(exc)
                             message += f" Project could not be updated: {exc}. Save project to keep these lines."

@@ -193,6 +193,24 @@ class WorkshopPageTests(PageTests):
             if expected:
                 project = {"name": run["project"], "session": run["session"]}
 
+    def test_analysis_of_the_saved_project_source_recovers_its_context(self):
+        saved = self.client.post(f"{API}/project/save", json={"name": "Interview", "source": str(self.media)}).json()
+        source = saved["session"]["source"]["path"]
+        analyzed = self.session([{"start": 0, "end": 1, "source": "Hi", "translation": "Bonjour"}])
+        with patch.object(pipeline, "analyze", return_value=iter([pipeline.Analysis(analyzed, "Done.")])):
+            self.client.post(f"{API}/analyze", json={"source": source, "pipeline": pipeline.PIPELINE_MANUAL})
+            run = self.wait("analyze")
+        self.assertEqual((run["project"], run["session"], run["error"]), ("Interview", analyzed.id, None))
+        stale = self.client.post(f"{API}/project/save", json={
+            "name": "Interview", "session": saved["session"]["id"], "expected_session": saved["session"]["id"],
+            "settings": {"target_language": "Japanese"},
+        })
+        self.assertEqual(stale.status_code, 400)
+        self.assertIn("changed", stale.json()["error"])
+        loaded = self.client.post(f"{API}/project/load", json={"name": "Interview"}).json()
+        self.assertEqual(loaded["session"]["id"], analyzed.id)
+        self.assertEqual(loaded["session"]["board"]["lines"][0]["translation"], "Bonjour")
+
     def test_prepared_audio_download_with_unicode_filename(self):
         speech = self.root / "日本語-speech.mp3"
         speech.write_bytes(b"vocals")

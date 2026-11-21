@@ -293,8 +293,9 @@ class ModelManagerTests(unittest.TestCase):
         server = manager_module._server(ui, runtime, host="127.0.0.1", port=7860, volume=self.volume)
         source = data / "interview.wav"
         source.write_bytes(b"source")
-        draft = projects.save(runtime, "Interview", None, source, {})
-        output = runtime.outputs_dir / "interview-dub.mp3"
+        draft = projects.save(runtime, "Interview", None, source, {"target_language": "French", "notes": "Keep names"})
+        output = runtime.outputs_dir / "dubbing" / "interview-dub.mp3"
+        output.parent.mkdir()
 
         def load_studio_commit():
             analyzed = sessions.create(runtime, source, video=False)
@@ -302,7 +303,6 @@ class ModelManagerTests(unittest.TestCase):
             output.write_bytes(b"dub")
             analyzed.data.update(target_language="French", last_output=str(output))
             analyzed.save()
-            self.assertTrue(projects.attach(runtime, "Interview", analyzed.id, expected_session=draft.id))
 
         with TestClient(server.config.app) as client:
             api = "/dubbing/api"
@@ -340,6 +340,9 @@ class ModelManagerTests(unittest.TestCase):
                 self.assertEqual(session["id"], recent["id"])
                 self.assertEqual(session["board"]["lines"][0]["translation"], "Bonjour")
                 self.assertEqual(session["readiness"]["voiced"], 1)
+                saved, stored = projects.load(runtime, "Interview")
+                self.assertEqual(stored.id, session["id"])
+                self.assertEqual(saved["settings"]["notes"], "Keep names")
                 result, = session["result"]["files"]
                 self.assertEqual(client.get(result["url"]).content, b"dub")
 

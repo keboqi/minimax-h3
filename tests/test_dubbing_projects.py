@@ -1,4 +1,5 @@
 """Workshop/Studio handoff keeps drafts, edited lines, settings and completed results."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,7 @@ import gradio as gr
 from h3_app.dubbing import pipeline, projects, session as sessions
 from h3_app.dubbing.results import Player, player_folder, save_player
 from h3_app.errors import H3Error
+from h3_models import write_json_atomic
 from h3_ui.dubbing.handlers import DubbingHandlers, DubbingServices
 from h3_ui.dubbing.workshop import build_dubbing_workshop
 
@@ -186,6 +188,24 @@ class DubbingProjectTests(unittest.TestCase):
         self.assertIsNone(self.actions.project_selection(selected, other.id))
         self.assertEqual(projects.load(self.runtime, "Interview")[1].id, draft.id)
 
+    def test_reopening_does_not_guess_between_matching_dubs_or_projects(self):
+        settings = {"target_language": "French"}
+        draft = projects.save(self.runtime, "Interview", None, self.source, settings)
+        second_draft = projects.save(self.runtime, "Second edit", None, self.source, settings)
+        folder = self.runtime.outputs_dir / "dubbing"
+        folder.mkdir(parents=True)
+        for name, target in (("first", "French"), ("second", "French"), ("other", "Japanese")):
+            completed = sessions.create(self.runtime, self.source, video=False)
+            output = folder / f"{name}.mp3"
+            output.write_bytes(b"dub")
+            completed.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Hello"}]
+            completed.data.update(target_language=target, last_output=str(output))
+            completed.save()
+        self.assertEqual(projects.reopen(self.runtime, "Interview")[1].id, draft.id)
+        (folder / "second.mp3").unlink()
+        self.assertEqual(projects.reopen(self.runtime, "Interview")[1].id, draft.id)
+        self.assertEqual(projects.reopen(self.runtime, "Second edit")[1].id, second_draft.id)
+
     def test_project_write_failure_still_returns_completed_analysis(self):
         draft = projects.save(self.runtime, "Interview", "", self.source, {})
         analyzed = sessions.create(self.runtime, self.source, video=False)
@@ -205,6 +225,49 @@ class DubbingProjectTests(unittest.TestCase):
         stale = sessions.create(self.runtime, self.source, video=False)
         self.assertFalse(projects.attach(self.runtime, "Interview", stale.id, expected_session=draft.id))
         self.assertEqual(projects.load(self.runtime, "Interview")[1].id, newer.id)
+
+    def test_analysis_does_not_overwrite_settings_and_source_changes_reset_revisions(self):
+        name = "Interview"
+        draft = projects.save(self.runtime, name, "", self.source, {"notes": "first"})
+        target = projects.analysis_target(self.runtime, {"name": name, "session": draft.id}, self.source)
+        projects.save(self.runtime, name, draft.id, None, {"notes": "edited"})
+        record = projects._path(self.runtime, name)
+        before = record.read_bytes()
+        analyzed = sessions.create(self.runtime, self.source, video=False)
+        self.assertTrue(projects.attach(self.runtime, name, analyzed.id, expected_session=draft.id,
+                                        expected_generation=target["generation"]))
+        self.assertEqual(record.read_bytes(), before)
+        data, session = projects.load(self.runtime, name)
+        self.assertEqual(data["settings"], {"notes": "edited"})
+        self.assertEqual(session.id, analyzed.id)
+
+        # Explicitly selecting the original session again creates a new source generation.
+        projects.save(self.runtime, name, draft.id, None, {})
+        self.assertEqual(projects.load(self.runtime, name)[1].id, draft.id)
+        stale = sessions.create(self.runtime, self.source, video=False)
+        self.assertFalse(projects.attach(self.runtime, name, stale.id, expected_session=draft.id,
+                                         expected_generation=target["generation"]))
+        self.assertEqual(projects.load(self.runtime, name)[1].id, draft.id)
+
+    def test_legacy_project_resolves_committed_revisions_in_a_consistent_order(self):
+        name = "Interview"
+        draft = sessions.create(self.runtime, self.source, video=False)
+        first = sessions.create(self.runtime, self.source, video=False)
+        competing = sessions.create(self.runtime, self.source, video=False)
+        next_revision = sessions.create(self.runtime, self.source, video=False)
+        record = projects._path(self.runtime, name)
+        legacy = {"name": name, "session": draft.id, "settings": {"notes": "Keep names"}}
+        write_json_atomic(record, legacy)
+        self.assertEqual(projects.load(self.runtime, name)[1].id, draft.id)
+
+        # Independent containers can each see the draft and publish a successor.
+        revisions = record.with_suffix("") / draft.id
+        write_json_atomic(revisions / f"{competing.id}.json", {"previous": draft.id, "published": 20})
+        write_json_atomic(revisions / f"{first.id}.json", {"previous": draft.id, "published": 10})
+        write_json_atomic(revisions / f"{next_revision.id}.json", {"previous": first.id, "published": 30})
+        self.assertEqual(projects.load(self.runtime, name)[1].id, next_revision.id)
+        self.assertEqual(projects.retained_sessions(self.runtime), {next_revision.id})
+        self.assertEqual(json.loads(record.read_text(encoding="utf-8")), legacy)
 
     def test_session_reset_preserves_loaded_generation_settings_only_for_that_session(self):
         draft = projects.save(self.runtime, "Interview", "", self.source, {})

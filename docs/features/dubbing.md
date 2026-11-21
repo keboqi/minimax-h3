@@ -47,10 +47,11 @@ separates before the first preview or dub, and the lines stay as edited. Lines a
 Hy-MT translator would fill stay untranslated; use Gemini, or Studio.
 
 Open Studio and **Load project** to analyze with this server's models, preview voices,
-generate the dub or align words. Completed analysis updates the project selected
-when analysis started. If another save has replaced its session in the meantime,
-the new analysis stays open for review and can be kept with **Save project**.
-**Save project** also keeps changes to processing and mix settings.
+generate the dub or align words. Studio publishes each completed analysis as a
+revision of the project it started from. Workshop opens the current revision
+with its analyzed lines and latest finished dub. If someone replaces the
+project's source during analysis, the completed analysis stays available under
+**Earlier session**. **Save project** keeps changes to processing and mix settings.
 Return to Workshop and load that same project to edit lines, assign speaker voices,
 listen to the original, review the latest completed dub, download audio/video and
 subtitles, or export a video with burned-in subtitles. Line and speaker edits save

@@ -514,7 +514,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
     def load_project(request: Request, body: dict = Body(...)):
         owner_of(request)
         name = str(body.get("name") or "")
-        data, session = projects.load(runtime(), name)
+        open_project = projects.load if gpu else projects.reopen
+        data, session = open_project(runtime(), name)
         return {"project": {"name": name, "session": session.id}, "settings": data["settings"],
                 "session": payload(request, session, include_player=body.get("include_player") is not False)}
 
@@ -525,7 +526,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         name = str(body.get("name") or "").strip()
         settings = {key: value for key, value in (body.get("settings") or {}).items() if key in PROJECT_KEYS}
         session = projects.save(runtime(), name, body.get("session") or None,
-                                checked_source(body.get("source")), settings)
+                                checked_source(body.get("source")), settings,
+                                expected_session=body.get("expected_session"))
         return {"project": {"name": name, "session": session.id}, "projects": projects.names(runtime()),
                 "session": payload(request, session)}
 
@@ -763,10 +765,11 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return {"picked": [int(index) for index in body.get("picked") or [] if isinstance(index, int)]}
 
     def analysis_inputs(body: dict):
-        project = body.get("project")
-        if not isinstance(project, dict) or not project.get("name"):
-            project = None
-        values = [checked_source(body.get("source")), None, bool(body.get("separate", True)),
+        source = checked_source(body.get("source"))
+        if not source:
+            raise H3Error("Upload a video or audio file, or pick one from Media.")
+        project = projects.analysis_target(runtime(), body.get("project"), source)
+        values = [source, None, bool(body.get("separate", True)),
                   body.get("separator_model") or DEFAULT_SEPARATOR, body.get("pipeline") or pipeline.PIPELINE_LOCAL,
                   body.get("source_language") or "Auto-detect", body.get("target_language") or "",
                   bool(body.get("translate", True)), body.get("translator") or pipeline.TRANSLATOR_HYMT,
@@ -778,8 +781,6 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                   body.get("manual_reply") or "", body.get("style") or pipeline.DEFAULT_STYLE,
                   bool(body.get("rewrite", False)), bool(body.get("shorten_lines", False)),
                   bool(body.get("readings", False))]
-        if not values[0]:
-            raise H3Error("Upload a video or audio file, or pick one from Media.")
         read_frame = reader(3, session_index=0)
 
         def read_analysis(run, update):

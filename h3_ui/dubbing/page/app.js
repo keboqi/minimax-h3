@@ -383,6 +383,7 @@ async function saveProject(name) {
   try {
     const data = await api.post("project/save", {
       name, session: app.sessionId, source: app.source?.path || null, settings: app.settings,
+      expected_session: app.project?.name === name ? app.project.session : undefined,
     });
     app.project = data.project;
     app.projects = data.projects;
