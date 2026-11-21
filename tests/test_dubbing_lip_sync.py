@@ -256,6 +256,10 @@ class LipSyncTests(unittest.TestCase):
 
             def submit(graph, client_id):
                 video_name = by_class(graph, "LoadVideo")["file"]
+                expected_frames = by_class(graph, "MiniMaxH3ImageToVideo")["length"]
+                slice_meta = probe_video_metadata(staged_videos[video_name])
+                self.assertEqual(slice_meta.frame_count, expected_frames)
+                self.assertEqual((slice_meta.frame_count - 5) % 17, 0)
                 # Stub ComfyUI: return the sliced 24fps video as the rendered window output.
                 rendered = out_dir / f"{client_id}_00001_.mp4"
                 shutil.copy2(staged_videos[video_name], rendered)

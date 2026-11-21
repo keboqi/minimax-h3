@@ -55,6 +55,13 @@ _MIN_TURN_SECONDS = 1.0 / FPS
 WINDOW_CACHE_DIR = "lip_sync_cache"
 SCAN_CACHE_DIR = ".lip-sync-scans"
 REPORT_FILE = "lip_sync_report.json"
+OVERRIDES_FILE = "lip_sync_overrides.json"
+_NO_FACE_MARKERS = (
+    "no detected face",
+    "no face detected",
+    "no faces detected",
+    "no editable pixels",
+)
 
 
 @dataclass(frozen=True)
@@ -366,13 +373,18 @@ def _extract_window_slice(source: Path, window: LipSyncWindow, destination: Path
     """Slice a single 24 fps CFR video window, cloning the last frame to match H3's 17k+5 grid."""
     pad_frames = max(0, window.render_frames - window.source_frames)
     duration = max(window.source_frames / FPS, window.end - window.start)
-    filters = [f"fps={FPS}", "format=yuv420p"]
+    # Trim inside the filtergraph before tpad; an output -t would truncate the cloned padding frames.
+    filters = [
+        f"trim=duration={duration:.6f}",
+        "setpts=PTS-STARTPTS",
+        f"fps={FPS}",
+        "format=yuv420p",
+    ]
     if pad_frames > 0:
         filters.append(f"tpad=stop_mode=clone:stop={pad_frames}")
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{window.start:.6f}", "-i", str(source),
-        "-t", f"{duration:.6f}",
         "-an", "-sn",
         "-vf", ",".join(filters),
         "-frames:v", str(window.render_frames),
@@ -419,7 +431,7 @@ def assemble_lip_sync_video(
         )
         concat_labels.append(f"[{label}]")
 
-    for input_idx, (window, rendered_path) in enumerate(ordered, start=1):
+    for window, rendered_path in ordered:
         if not rendered_path.is_file():
             raise H3Error(f"Rendered lip-sync window is missing: {rendered_path.name}")
         win_start = max(cursor, window.start)
@@ -427,6 +439,7 @@ def assemble_lip_sync_video(
         if win_end - win_start < min_gap:
             continue
         add_source_segment(cursor, win_start)
+        input_idx = len(inputs) // 2
         inputs += ["-i", str(rendered_path)]
         label = f"v{seg_index}"
         seg_index += 1
@@ -520,6 +533,51 @@ def _store_cached_window(source: Path, cache_path: Path) -> Path:
         temporary.unlink(missing_ok=True)
 
 
+def load_manual_overrides(dub: Path) -> dict[tuple[int, str], int | None]:
+    """Read saved shot-speaker face overrides for a dub, if any."""
+    path = player_folder(dub) / OVERRIDES_FILE
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    result: dict[tuple[int, str], int | None] = {}
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and "shot_index" in item and item.get("speaker"):
+                track_id = item.get("track_id")
+                result[(int(item["shot_index"]), str(item["speaker"]))] = (
+                    None if track_id is None else int(track_id)
+                )
+    return result
+
+
+def save_manual_overrides(dub: Path, overrides: dict[tuple[int, str], int | None]) -> None:
+    """Persist shot-speaker face overrides beside the dub so later edits accumulate."""
+    folder = player_folder(dub)
+    if not folder.is_dir():
+        return
+    payload = [
+        {"shot_index": shot_index, "speaker": speaker, "track_id": track_id}
+        for (shot_index, speaker), track_id in sorted(overrides.items())
+    ]
+    destination = folder / OVERRIDES_FILE
+    temporary = folder / f"{OVERRIDES_FILE}.{uuid4().hex}.tmp"
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, destination)
+    except OSError:
+        pass
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _is_no_face_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _NO_FACE_MARKERS)
+
+
 def _save_lip_sync_report(
     dub: Path,
     *,
@@ -527,6 +585,7 @@ def _save_lip_sync_report(
     backend: str,
     total_windows: int,
     cached_windows: int,
+    skipped_windows: int,
     assignments: dict[tuple[int, str], ShotSpeakerAssignment],
 ) -> None:
     folder = player_folder(dub)
@@ -537,7 +596,8 @@ def _save_lip_sync_report(
         "backend": backend,
         "total_windows": total_windows,
         "cached_windows": cached_windows,
-        "rendered_windows": total_windows - cached_windows,
+        "rendered_windows": max(0, total_windows - cached_windows - skipped_windows),
+        "skipped_windows": skipped_windows,
         "uncertain_count": len(uncertain_assignments(assignments)),
         "assignments": [
             item.to_dict()
@@ -591,7 +651,14 @@ def render_dub_lip_sync(
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise H3Error("Saved fitted dialogue is missing or unreadable. Generate this dub again.") from exc
 
-    assignments = assign_speakers_to_shots(scan, saved_lines, manual_overrides=manual_overrides)
+    merged_overrides = load_manual_overrides(dub)
+    if manual_overrides:
+        merged_overrides.update(manual_overrides)
+        save_manual_overrides(dub, merged_overrides)
+
+    assignments = assign_speakers_to_shots(
+        scan, saved_lines, manual_overrides=merged_overrides or None,
+    )
     windows = plan_lip_sync_windows(
         dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
         speaker=speaker, assignments=assignments,
@@ -602,6 +669,7 @@ def render_dub_lip_sync(
     models = services.models.load_model_config()
     rendered_windows: list[tuple[LipSyncWindow, Path]] = []
     cached_hits = 0
+    skipped_windows = 0
     cache_dir = _window_cache_dir(dub)
 
     with TemporaryDirectory(prefix="h3-lip-sync-auto-") as directory:
@@ -654,11 +722,18 @@ def render_dub_lip_sync(
             yield f"Rendering lip-sync window {index}/{total}"
             check_cancelled()
             queued_at = time.time()
-            prompt_id = services.execution.submit_prompt(graph, client_id)
-            for stage, _completed, _total, _step, _step_total in services.execution.poll_comfy_progress(prompt_id, graph):
-                check_cancelled()
-                yield f"Window {index}/{total}: {stage}"
-            rendered_path = services.media.resolve_output(services.execution.wait_for_history(prompt_id), queued_at)
+            try:
+                prompt_id = services.execution.submit_prompt(graph, client_id)
+                for stage, _completed, _total, _step, _step_total in services.execution.poll_comfy_progress(prompt_id, graph):
+                    check_cancelled()
+                    yield f"Window {index}/{total}: {stage}"
+                rendered_path = services.media.resolve_output(services.execution.wait_for_history(prompt_id), queued_at)
+            except Exception as exc:
+                if _is_no_face_error(exc):
+                    skipped_windows += 1
+                    yield f"Window {index}/{total}: no face detected, keeping original frames"
+                    continue
+                raise
             check_cancelled()
             if not rendered_path.name.startswith(f"{client_id}_"):
                 raise H3Error(f"Window {index}/{total} finished, but its output could not be located.")
@@ -669,13 +744,16 @@ def render_dub_lip_sync(
                     pass
             rendered_windows.append((window, rendered_path))
 
+        if not rendered_windows:
+            raise H3Error("No faces were detected in any speaking window for lip sync.")
         yield "Assembling the lip-synced video"
         check_cancelled()
         destination = output or dub.with_name(f"{dub.stem}.lipsync.mp4")
         assembled = assemble_lip_sync_video(dub, rendered_windows, destination)
         _save_lip_sync_report(
             dub, output=assembled, backend=scan.backend,
-            total_windows=len(windows), cached_windows=cached_hits, assignments=assignments,
+            total_windows=len(windows), cached_windows=cached_hits,
+            skipped_windows=skipped_windows, assignments=assignments,
         )
     yield assembled
 

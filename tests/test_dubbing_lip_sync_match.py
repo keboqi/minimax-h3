@@ -279,3 +279,81 @@ class LipSyncMatchTests(unittest.TestCase):
             self.assertEqual(submitted_targets, [(64, 96)])
             report3 = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
             self.assertEqual((report3["total_windows"], report3["cached_windows"], report3["rendered_windows"]), (2, 1, 1))
+
+            # Run 4: re-running without passing overrides again still remembers the saved override (100% cache hit).
+            submit_mock.reset_mock()
+            list(render_dub_lip_sync(dub=dub, services=services, crop_size=320, scanner=fake_scanner))
+            self.assertEqual(submit_mock.call_count, 0)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_no_face_window_is_skipped_without_failing_other_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dub = root / "broll.mp4"
+            subprocess.run([
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=24:d=3.0",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=3.0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                str(dub),
+            ], check=True)
+            folder = player_folder(dub)
+            folder.mkdir(parents=True)
+            samples = lambda s, e: round(e * RATE) - round(s * RATE)
+            (folder / "alignment.json").write_text(json.dumps({
+                "lines": [
+                    {"speaker": "A", "start": 0.1, "end": 0.7},
+                    {"speaker": "A", "start": 2.0, "end": 2.6},
+                ],
+                "spoken": {"0": [0.1, 0.7], "1": [2.0, 2.6]},
+            }), encoding="utf-8")
+            np.savez_compressed(folder / "alignment.npz", **{
+                "0": np.full(samples(0.1, 0.7), 0.25, dtype=np.float32),
+                "1": np.full(samples(2.0, 2.6), 0.25, dtype=np.float32),
+            })
+
+            out_dir = root / "comfy_out"
+            out_dir.mkdir()
+            staged_videos: dict[str, Path] = {}
+            rendered_map: dict[str, Path] = {}
+            calls = 0
+
+            def stage(path, category):
+                src = Path(path)
+                if src.suffix == ".mp4":
+                    copied = out_dir / f"staged_{len(staged_videos)}.mp4"
+                    shutil.copy2(src, copied)
+                    staged_videos[copied.name] = copied
+                    return copied.name
+                return src.name
+
+            def submit(graph, client_id):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise RuntimeError("No detected face frames available in the active lip-sync interval")
+                video_name = by_class(graph, "LoadVideo")["file"]
+                rendered = out_dir / f"{client_id}_00001_.mp4"
+                shutil.copy2(staged_videos[video_name], rendered)
+                rendered_map[client_id] = rendered
+                return client_id
+
+            model_cfg = models()
+            model_cfg.turbo_lora_for = lambda _m, _v: "pika.safetensors"
+            services = SimpleNamespace(
+                models=SimpleNamespace(load_model_config=lambda: model_cfg),
+                media=SimpleNamespace(
+                    probe_video_metadata=probe_video_metadata,
+                    stage_file=stage,
+                    resolve_output=lambda history, _: rendered_map[history],
+                ),
+                execution=SimpleNamespace(
+                    submit_prompt=submit,
+                    wait_for_history=lambda prompt_id: prompt_id,
+                    poll_comfy_progress=lambda *_: [],
+                ),
+            )
+            updates = list(render_dub_lip_sync(dub=dub, services=services, crop_size=320, use_cache=False))
+            self.assertTrue(updates[-1].is_file())
+            report = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
+            self.assertEqual((report["total_windows"], report["skipped_windows"], report["rendered_windows"]), (2, 1, 1))

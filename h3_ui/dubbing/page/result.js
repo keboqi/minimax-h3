@@ -392,6 +392,10 @@ export function bindResult(app) {
         const sep = key.indexOf(":");
         return {shot_index: Number(key.slice(0, sep)), speaker: key.slice(sep + 1), track_id: trackId};
       });
+      if (!overrides.length) {
+        toast("Pick a face or Off-screen for at least one shot first.", {error: true});
+        return;
+      }
       app.startRun("lip-sync", {session: session.id, overrides});
     }
     else if (action === "interrupt") {
