@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+import hashlib
+import json
 import math
+import os
 import re
+import shutil
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -33,6 +37,14 @@ from h3_app.workflows.lip_sync import (
 )
 
 from .alignment import FITTED_AUDIO_RATE, open_alignment
+from .lip_sync_match import (
+    ActiveSpeakerScanner,
+    ShotSpeakerAssignment,
+    assign_speakers_to_shots,
+    get_or_scan_source,
+    uncertain_assignments,
+)
+from .results import PLAYER_DIR, player_folder
 
 _PTS_TIME_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 DEFAULT_SHOT_THRESHOLD = 0.35
@@ -40,6 +52,9 @@ DEFAULT_CONTEXT_SECONDS = 0.25
 DEFAULT_MAX_GAP_SECONDS = 0.8
 DEFAULT_MAX_WINDOW_SECONDS = 12.0
 _MIN_TURN_SECONDS = 1.0 / FPS
+WINDOW_CACHE_DIR = "lip_sync_cache"
+SCAN_CACHE_DIR = ".lip-sync-scans"
+REPORT_FILE = "lip_sync_report.json"
 
 
 @dataclass(frozen=True)
@@ -57,6 +72,7 @@ class LipSyncWindow:
     active_start_frame: int
     active_end_frame: int
     face_target: tuple[int, int, int] | None = None
+    shot_index: int = 0
 
 
 def fitted_dialogue(video: Path, speaker: str, first_frame: int, frames: int, *,
@@ -125,6 +141,7 @@ class _Turn:
     end: float
     shot_start: float
     shot_end: float
+    shot_index: int = 0
     visual_hint: dict[str, Any] | None = None
 
 
@@ -144,40 +161,46 @@ def _drop_cross_speaker_overlaps(turns: list[_Turn]) -> list[_Turn]:
         chosen = active[0]
         hint = next((t.visual_hint for t in active if t.visual_hint is not None), None)
         if (clean and clean[-1].speaker == chosen.speaker
-                and clean[-1].shot_start == chosen.shot_start
+                and clean[-1].shot_index == chosen.shot_index
                 and abs(clean[-1].end - left) < 1e-4):
             prev = clean[-1]
             clean[-1] = _Turn(
                 speaker=prev.speaker, start=prev.start, end=right,
                 shot_start=prev.shot_start, shot_end=prev.shot_end,
-                visual_hint=prev.visual_hint or hint,
+                shot_index=prev.shot_index, visual_hint=prev.visual_hint or hint,
             )
         else:
             clean.append(_Turn(
                 speaker=chosen.speaker, start=left, end=right,
                 shot_start=chosen.shot_start, shot_end=chosen.shot_end,
-                visual_hint=hint,
+                shot_index=chosen.shot_index, visual_hint=hint,
             ))
     return clean
 
 
-def _hint_to_face_target(hint: dict[str, Any] | None, video_size: tuple[int, int] | None,
-                         first_frame: int, active_start_frame: int, active_end_frame: int) -> tuple[int, int, int] | None:
-    if not hint or video_size is None or hint.get("visibility") != "on_screen":
-        return None
-    center = hint.get("face_center")
-    if not isinstance(center, (list, tuple)) or len(center) != 2:
+def _center_to_face_target(center: tuple[float, float] | Sequence[float] | None, ref_time: float | None,
+                           video_size: tuple[int, int] | None, first_frame: int,
+                           active_start_frame: int, active_end_frame: int) -> tuple[int, int, int] | None:
+    if center is None or video_size is None or len(center) != 2:
         return None
     width, height = video_size
     x = max(0, min(width - 1, round(float(center[0]) * width)))
     y = max(0, min(height - 1, round(float(center[1]) * height)))
-    hint_time = hint.get("time")
-    if isinstance(hint_time, (int, float)) and math.isfinite(hint_time):
-        frame = round(float(hint_time) * FPS) - first_frame
+    if isinstance(ref_time, (int, float)) and math.isfinite(ref_time):
+        frame = round(float(ref_time) * FPS) - first_frame
         frame = max(active_start_frame, min(active_end_frame - 1, frame))
     else:
         frame = (active_start_frame + active_end_frame) // 2
     return (x, y, frame)
+
+
+def _hint_to_face_target(hint: dict[str, Any] | None, video_size: tuple[int, int] | None,
+                         first_frame: int, active_start_frame: int, active_end_frame: int) -> tuple[int, int, int] | None:
+    if not hint or hint.get("visibility") != "on_screen":
+        return None
+    return _center_to_face_target(
+        hint.get("face_center"), hint.get("time"), video_size, first_frame, active_start_frame, active_end_frame,
+    )
 
 
 def plan_lip_sync_windows(
@@ -187,6 +210,7 @@ def plan_lip_sync_windows(
     video_size: tuple[int, int] | None = None,
     shot_cuts: Sequence[float] = (),
     speaker: str | None = None,
+    assignments: dict[tuple[int, str], ShotSpeakerAssignment] | None = None,
     context_seconds: float = DEFAULT_CONTEXT_SECONDS,
     max_gap_seconds: float = DEFAULT_MAX_GAP_SECONDS,
     max_window_seconds: float = DEFAULT_MAX_WINDOW_SECONDS,
@@ -230,19 +254,24 @@ def plan_lip_sync_windows(
         return []
 
     cuts = sorted(c for c in shot_cuts if 0.0 < c < video_duration)
-    shots = list(zip([0.0, *cuts], [*cuts, float(video_duration)]))
+    shots = list(enumerate(zip([0.0, *cuts], [*cuts, float(video_duration)])))
 
-    # Split every turn cleanly at shot boundaries.
+    # Split every turn cleanly at shot boundaries, applying shot-level assignments when supplied.
     shot_turns: list[_Turn] = []
     for start, end, line_speaker, hint in sorted(raw_turns, key=lambda item: (item[0], item[1])):
-        for shot_start, shot_end in shots:
+        for shot_index, (shot_start, shot_end) in shots:
             left = max(start, shot_start)
             right = min(end, shot_end)
-            if right - left >= _MIN_TURN_SECONDS:
-                shot_turns.append(_Turn(
-                    speaker=line_speaker, start=left, end=right,
-                    shot_start=shot_start, shot_end=shot_end, visual_hint=hint,
-                ))
+            if right - left < _MIN_TURN_SECONDS:
+                continue
+            if assignments is not None:
+                assigned = assignments.get((shot_index, line_speaker))
+                if assigned is not None and assigned.status in ("off_screen", "uncertain"):
+                    continue
+            shot_turns.append(_Turn(
+                speaker=line_speaker, start=left, end=right,
+                shot_start=shot_start, shot_end=shot_end, shot_index=shot_index, visual_hint=hint,
+            ))
 
     if speaker is None:
         shot_turns = _drop_cross_speaker_overlaps(shot_turns)
@@ -253,14 +282,14 @@ def plan_lip_sync_windows(
     grouped: list[_Turn] = []
     for turn in shot_turns:
         if (grouped and grouped[-1].speaker == turn.speaker
-                and grouped[-1].shot_start == turn.shot_start
+                and grouped[-1].shot_index == turn.shot_index
                 and turn.start - grouped[-1].end <= max_gap_seconds
                 and turn.end - grouped[-1].start <= max_window):
             prev = grouped[-1]
             grouped[-1] = _Turn(
                 speaker=prev.speaker, start=prev.start, end=max(prev.end, turn.end),
                 shot_start=prev.shot_start, shot_end=prev.shot_end,
-                visual_hint=prev.visual_hint or turn.visual_hint,
+                shot_index=prev.shot_index, visual_hint=prev.visual_hint or turn.visual_hint,
             )
         else:
             grouped.append(turn)
@@ -271,13 +300,15 @@ def plan_lip_sync_windows(
         while turn.end - cursor > max_window + 1e-6:
             chunks.append(_Turn(
                 speaker=turn.speaker, start=cursor, end=cursor + max_window,
-                shot_start=turn.shot_start, shot_end=turn.shot_end, visual_hint=turn.visual_hint,
+                shot_start=turn.shot_start, shot_end=turn.shot_end,
+                shot_index=turn.shot_index, visual_hint=turn.visual_hint,
             ))
             cursor += max_window
         if turn.end - cursor >= _MIN_TURN_SECONDS:
             chunks.append(_Turn(
                 speaker=turn.speaker, start=cursor, end=turn.end,
-                shot_start=turn.shot_start, shot_end=turn.shot_end, visual_hint=turn.visual_hint,
+                shot_start=turn.shot_start, shot_end=turn.shot_end,
+                shot_index=turn.shot_index, visual_hint=turn.visual_hint,
             ))
 
     total_frames = max(1, math.ceil(video_duration * FPS))
@@ -301,9 +332,18 @@ def plan_lip_sync_windows(
         render_frames = snap_h3_frames(source_frames)
         active_start_frame = max(0, min(source_frames - 1, math.floor(chunk.start * FPS) - first_frame))
         active_end_frame = max(active_start_frame + 1, min(source_frames, math.ceil(chunk.end * FPS) - first_frame))
-        face_target = _hint_to_face_target(
-            chunk.visual_hint, video_size, first_frame, active_start_frame, active_end_frame,
-        )
+        face_target = None
+        if assignments is not None:
+            assigned = assignments.get((chunk.shot_index, chunk.speaker))
+            if assigned is not None and assigned.face_center is not None:
+                face_target = _center_to_face_target(
+                    assigned.face_center, assigned.reference_time, video_size,
+                    first_frame, active_start_frame, active_end_frame,
+                )
+        if face_target is None:
+            face_target = _hint_to_face_target(
+                chunk.visual_hint, video_size, first_frame, active_start_frame, active_end_frame,
+            )
         windows.append(LipSyncWindow(
             speaker=chunk.speaker,
             start=first_frame / FPS,
@@ -316,6 +356,7 @@ def plan_lip_sync_windows(
             active_start_frame=active_start_frame,
             active_end_frame=active_end_frame,
             face_target=face_target,
+            shot_index=chunk.shot_index,
         ))
         prev_last_frame = last_frame
     return windows
@@ -437,6 +478,83 @@ def assemble_lip_sync_video(
         pending.unlink(missing_ok=True)
 
 
+def window_cache_key(
+    dub: Path,
+    window: LipSyncWindow,
+    dialogue: np.ndarray,
+    *,
+    crop_size: int,
+    strength: float,
+    seed: int,
+    refinement: dict[str, Any],
+) -> str:
+    """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
+    stat = dub.stat()
+    payload = {
+        "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
+        "window": [
+            window.shot_index, window.speaker, window.first_frame, window.source_frames,
+            window.render_frames, window.active_start_frame, window.active_end_frame,
+            list(window.face_target) if window.face_target is not None else None,
+        ],
+        "render": [int(crop_size), round(float(strength), 4), int(seed)],
+        "refinement": refinement,
+        "dialogue_sha256": hashlib.sha256(np.ascontiguousarray(dialogue).tobytes()).hexdigest(),
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:24]
+
+
+def _window_cache_dir(dub: Path) -> Path:
+    return player_folder(dub) / WINDOW_CACHE_DIR
+
+
+def _store_cached_window(source: Path, cache_path: Path) -> Path:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(f".{uuid4().hex}.tmp")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, cache_path)
+        return cache_path
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _save_lip_sync_report(
+    dub: Path,
+    *,
+    output: Path,
+    backend: str,
+    total_windows: int,
+    cached_windows: int,
+    assignments: dict[tuple[int, str], ShotSpeakerAssignment],
+) -> None:
+    folder = player_folder(dub)
+    if not folder.is_dir():
+        return
+    report = {
+        "output": output.name,
+        "backend": backend,
+        "total_windows": total_windows,
+        "cached_windows": cached_windows,
+        "rendered_windows": total_windows - cached_windows,
+        "uncertain_count": len(uncertain_assignments(assignments)),
+        "assignments": [
+            item.to_dict()
+            for item in sorted(assignments.values(), key=lambda a: (a.shot_index, a.speaker))
+        ],
+    }
+    destination = folder / REPORT_FILE
+    temporary = folder / f"{REPORT_FILE}.{uuid4().hex}.tmp"
+    try:
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, destination)
+    except OSError:
+        pass
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def render_dub_lip_sync(
     *,
     dub: Path,
@@ -448,8 +566,12 @@ def render_dub_lip_sync(
     seed: int = 0,
     output: Path | None = None,
     shot_threshold: float = DEFAULT_SHOT_THRESHOLD,
+    scanner: ActiveSpeakerScanner | None = None,
+    manual_overrides: dict[tuple[int, str], int | None] | None = None,
+    use_cache: bool = True,
+    scan_cache_dir: Path | None = None,
 ) -> Iterator[str | Path]:
-    """Automatically track faces, render H3 mouth patches per speaking window, and assemble a full MP4."""
+    """Automatically scan shots, match speakers, render H3 mouth patches (cached per window), and assemble MP4."""
     yield "Inspecting the dubbed video"
     check_cancelled()
     if dub.suffix.lower() != ".mp4" or not dub.is_file():
@@ -458,21 +580,56 @@ def render_dub_lip_sync(
     yield "Detecting shot cuts"
     check_cancelled()
     cuts = detect_shot_cuts(dub, threshold=shot_threshold)
+
+    yield "Matching speakers to visible faces"
+    check_cancelled()
+    effective_scan_cache = scan_cache_dir if scan_cache_dir is not None else (dub.parent / PLAYER_DIR / SCAN_CACHE_DIR)
+    scan = get_or_scan_source(dub, cuts, cache_dir=effective_scan_cache, scanner=scanner)
+    try:
+        with open_alignment(dub) as (saved, _clips):
+            saved_lines = list(saved.get("lines") or ())
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise H3Error("Saved fitted dialogue is missing or unreadable. Generate this dub again.") from exc
+
+    assignments = assign_speakers_to_shots(scan, saved_lines, manual_overrides=manual_overrides)
     windows = plan_lip_sync_windows(
-        dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts, speaker=speaker,
+        dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
+        speaker=speaker, assignments=assignments,
     )
     if not windows:
-        raise H3Error("No eligible speaking windows were found for lip sync.")
+        raise H3Error("No confident on-screen speaking windows were found for lip sync.")
 
     models = services.models.load_model_config()
     rendered_windows: list[tuple[LipSyncWindow, Path]] = []
+    cached_hits = 0
+    cache_dir = _window_cache_dir(dub)
+
     with TemporaryDirectory(prefix="h3-lip-sync-auto-") as directory:
         work_dir = Path(directory)
         total = len(windows)
         for index, window in enumerate(windows, start=1):
             check_cancelled()
-            yield f"Preparing lip-sync window {index}/{total}"
             dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, window.render_frames)
+            config = {
+                "model_profile": models.default_profile,
+                **(refinement or {}),
+                "_source_duration": window.render_frames / FPS,
+            }
+            window_seed = seed + index - 1
+            cache_path = None
+            if use_cache:
+                key = window_cache_key(
+                    dub, window, dialogue,
+                    crop_size=crop_size, strength=strength, seed=window_seed, refinement=config,
+                )
+                cache_path = cache_dir / f"{key}.mp4"
+                if cache_path.is_file() and cache_path.stat().st_size > 0:
+                    cached_hits += 1
+                    yield f"Reusing cached window {index}/{total}"
+                    rendered_windows.append((window, cache_path))
+                    continue
+
+            yield f"Preparing lip-sync window {index}/{total}"
             wav_path = work_dir / f"window_{index:03d}.wav"
             wav_path.write_bytes(encode_wav(dialogue, FITTED_AUDIO_RATE))
             slice_path = _extract_window_slice(dub, window, work_dir / f"window_{index:03d}.mp4")
@@ -480,11 +637,6 @@ def render_dub_lip_sync(
             staged_video = services.media.stage_file(str(slice_path), "lip_sync")
             staged_dialogue = services.media.stage_file(str(wav_path), "lip_sync")
             client_id = uuid4().hex
-            config = {
-                "model_profile": models.default_profile,
-                **(refinement or {}),
-                "_source_duration": window.render_frames / FPS,
-            }
             graph = build_auto_lip_sync_graph(
                 video=staged_video,
                 dialogue=staged_dialogue,
@@ -493,7 +645,7 @@ def render_dub_lip_sync(
                 refinement=config,
                 output_prefix=f"dubbing/.lip-sync-window/{client_id}",
                 crop_size=crop_size,
-                seed=seed + index - 1,
+                seed=window_seed,
                 strength=strength,
                 active_start=window.active_start_frame,
                 active_end=window.active_end_frame,
@@ -510,12 +662,21 @@ def render_dub_lip_sync(
             check_cancelled()
             if not rendered_path.name.startswith(f"{client_id}_"):
                 raise H3Error(f"Window {index}/{total} finished, but its output could not be located.")
+            if cache_path is not None:
+                try:
+                    rendered_path = _store_cached_window(rendered_path, cache_path)
+                except OSError:
+                    pass
             rendered_windows.append((window, rendered_path))
 
         yield "Assembling the lip-synced video"
         check_cancelled()
         destination = output or dub.with_name(f"{dub.stem}.lipsync.mp4")
         assembled = assemble_lip_sync_video(dub, rendered_windows, destination)
+        _save_lip_sync_report(
+            dub, output=assembled, backend=scan.backend,
+            total_windows=len(windows), cached_windows=cached_hits, assignments=assignments,
+        )
     yield assembled
 
 
