@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>System</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;650;700&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: #065f51; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    button, summary { cursor: pointer; font: inherit; }
+    button:disabled { cursor: default; }
+    h1, h2, h3, p { margin: 0; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 3px; }
+    .action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #b7ccc2; border-radius: 8px; background: white; color: #202e2b; font-size: 14px; font-weight: 600; }
+    .action:hover { background: #edf4f1; }
+    .action.primary { color: white; background: #087766; border-color: #087766; }
+    .action.stop { color: #991b1b; border-color: #edc6c6; }
+    .disclosure { border: 1px solid #dbe3df; border-radius: 8px; padding: 0 12px; }
+    .disclosure summary { padding: 12px 0; font-weight: 600; }
+    .disclosure p { margin-bottom: 12px; color: #596963; }
+  </style>
+</helmet>
+<div style="background:#f2f5f3;color:#202e2b;font:16px/1.45 'Source Sans 3',system-ui,sans-serif;min-height:100vh">
+  <header style="background:#fff;border-bottom:1px solid #dbe3df;padding:10px clamp(18px,4vw,56px);display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center">
+    <div style="display:flex;align-items:center;gap:10px;font-weight:700"><span aria-hidden="true" style="display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#087f6c;color:white;font-size:13px">PS</span>Prism Studio</div>
+    <nav aria-label="Operations" style="display:flex;gap:16px;align-items:center">
+      <a href="Jobs.dc.html" style="padding:11px 8px;color:#596963">Jobs</a>
+      <a href="Main.dc.html" aria-current="page" style="padding:11px 8px;border-bottom:2px solid #087f6c;font-weight:700">System</a>
+    </nav>
+  </header>
+  <main style="max-width:1440px;margin:0 auto;padding:24px clamp(16px,3.4vw,48px) 36px;display:flex;flex-direction:column;gap:18px">
+    <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:18px;padding:24px clamp(16px,2.5vw,32px);background:#e3f1ec;border:1px solid #b7ccc2;border-radius:16px">
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <span style="display:grid;place-items:center;flex:none;width:48px;height:48px;margin-top:5px;border:1px solid #b7ccc2;border-radius:12px;background:#fff;color:#065f51">
+          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="7" rx="2"></rect><rect x="4" y="13" width="16" height="7" rx="2"></rect><path d="M7 7.5h2m-2 9h2"></path></svg>
+        </span>
+        <div style="display:flex;flex-direction:column;gap:3px"><h1 style="font-size:38px;line-height:1.05;letter-spacing:-.04em">System</h1><p style="color:#596963">Manage the backend, local models, and browser settings.</p></div>
+      </div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><button class="action" type="button" disabled="disabled">Open ComfyUI ↗</button><button class="action primary" type="button" disabled="disabled">Refresh backend</button></div>
+    </section>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+      <section style="flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
+        <div style="display:flex;flex-direction:column;gap:2px"><h2 style="font-size:21px">Backend &amp; VRAM</h2><p style="font-size:14px;color:#596963">Check the runtime and free GPU memory.</p></div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;background:#f2f5f3;border-radius:8px;padding:14px"><strong>CPU Workshop</strong><span style="color:#596963">No GPU backend</span></div>
+        <details class="disclosure"><summary>Runtime diagnostics</summary><p>ComfyUI, SGLang-Omni and GPU workers are disabled in CPU Workshop.</p></details>
+        <div><button type="button" class="action" disabled="disabled">Unload all models / free VRAM</button></div>
+      </section>
+      <section style="flex:1 1 330px;min-width:0;display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
+        <h2 style="font-size:21px">Maintenance</h2>
+        <details class="disclosure" open="open"><summary>Media index maintenance</summary><p>Scan historical files to register older outputs and repair missing previews.</p><button class="action" type="button" disabled="disabled" style="margin-bottom:12px">Scan historical media</button></details>
+        <details class="disclosure"><summary>Browser settings</summary><p>Clears settings saved in this browser and reloads the workspace with app defaults.</p><button class="action stop" type="button" disabled="disabled" style="margin-bottom:12px">Reset all settings to defaults</button></details>
+      </section>
+    </div>
+    <section style="display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:2px"><h2 style="font-size:21px">Model readiness</h2><p style="font-size:14px;color:#596963">Check which files are already local. Missing files download when used.</p></div>
+        <button class="action" type="button" disabled="disabled">Refresh local model presence</button>
+      </div>
+      <details class="disclosure"><summary>Model inventory</summary><p>Component, filename, and local presence for each registered model.</p></details>
+      <details class="disclosure"><summary>Engine capabilities</summary><p>Workflow execution checks required nodes, model compatibility, and TensorRT engine currency before submission.</p></details>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":790}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

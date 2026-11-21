@@ -9,13 +9,6 @@ from .h3.view import H3View
 
 @dataclass(frozen=True)
 class AppComponents(H3View):
-    api_components: Any
-    api_stop: gr.components.Component
-    api_status: gr.components.Component
-    system_summary: gr.components.Component
-    health: gr.components.Component
-    unload_models: gr.components.Component
-    memory_status: gr.components.Component
     gallery_components: Any
     gallery_tab: gr.components.Component
 
@@ -88,7 +81,6 @@ class BootstrapCatalog:
 @dataclass(frozen=True)
 class BootstrapServices:
     api_get: Callable
-    api_guide: Callable
     api_post: Callable
     auto_resolution_from_start_frame: Callable
     backend_status: Callable

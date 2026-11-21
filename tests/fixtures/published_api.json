@@ -438,7 +438,7 @@
       "enum": [
         "Larry v4-600 EMA",
         "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)",
-        "LightX2V v1.1 / 8-step 768p",
+        "LightX2V v1.2 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step",
         "Pika H3 Flex (6-step)"
@@ -844,7 +844,7 @@
         "Same as generation",
         "Larry v4-600 EMA",
         "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)",
-        "LightX2V v1.1 / 8-step 768p",
+        "LightX2V v1.2 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step",
         "Pika H3 Flex (6-step)"

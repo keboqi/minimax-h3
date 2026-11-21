@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Jobs</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;650;700&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: #065f51; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1, h2, h3, p, dl, dd { margin: 0; }
+    button, summary, select { font: inherit; }
+    summary { cursor: pointer; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 3px; }
+    .action { min-height: 44px; padding: 0 14px; border: 1px solid #b7ccc2; border-radius: 8px; background: white; color: #202e2b; font-size: 14px; font-weight: 600; }
+    .action.primary { color: white; background: #087766; border-color: #087766; }
+    .muted { color: #596963; font-size: 14px; }
+    .metrics > div { flex: 1 1 140px; }
+    @media (max-width: 540px) { .metrics > div { flex: 1 1 40%; } }
+  </style>
+</helmet>
+<div style="background:#f2f5f3;color:#202e2b;font:16px/1.45 'Source Sans 3',system-ui,sans-serif;min-height:100vh">
+  <header style="background:#fff;border-bottom:1px solid #dbe3df;padding:10px clamp(18px,4vw,56px);display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center">
+    <div style="display:flex;align-items:center;gap:10px;font-weight:700"><span aria-hidden="true" style="display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#087f6c;color:white;font-size:13px">PS</span>Prism Studio</div>
+    <nav aria-label="Operations" style="display:flex;gap:16px;align-items:center">
+      <a href="Jobs.dc.html" aria-current="page" style="padding:11px 8px;border-bottom:2px solid #087f6c;font-weight:700">Jobs</a>
+      <a href="Main.dc.html" style="padding:11px 8px;color:#596963">System</a>
+    </nav>
+  </header>
+  <main style="max-width:1440px;margin:0 auto;padding:24px clamp(16px,3.4vw,48px) 36px;display:flex;flex-direction:column;gap:18px">
+    <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:18px;padding:24px clamp(16px,2.5vw,32px);background:#e3f1ec;border:1px solid #b7ccc2;border-radius:16px">
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <span style="display:grid;place-items:center;flex:none;width:48px;height:48px;margin-top:5px;border:1px solid #b7ccc2;border-radius:12px;background:#fff;color:#065f51">
+          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 8h8m-8 4h8m-8 4h5"></path></svg>
+        </span>
+        <div style="display:flex;flex-direction:column;gap:3px"><h1 style="font-size:38px;line-height:1.05;letter-spacing:-.04em">Jobs</h1><p style="color:#596963">Track requests, download outputs, and recover unfinished work.</p></div>
+      </div>
+      <button class="action primary" type="button" disabled="disabled">Refresh jobs</button>
+    </section>
+    <dl class="metrics" aria-label="Job counts" style="display:flex;flex-wrap:wrap;gap:10px">
+      <div style="background:#fff;border:1px solid #dbe3df;border-radius:10px;padding:12px 16px"><dt class="muted">Queued</dt><dd style="font-size:30px;font-weight:650;line-height:1.1">0</dd></div>
+      <div style="background:#fff;border:1px solid #dbe3df;border-radius:10px;padding:12px 16px"><dt class="muted">Active</dt><dd style="font-size:30px;font-weight:650;line-height:1.1">0</dd></div>
+      <div style="background:#fff;border:1px solid #dbe3df;border-radius:10px;padding:12px 16px"><dt class="muted">Completed</dt><dd style="font-size:30px;font-weight:650;line-height:1.1">0</dd></div>
+      <div style="background:#fff;border:1px solid #dbe3df;border-radius:10px;padding:12px 16px"><dt class="muted">Needs attention</dt><dd style="font-size:30px;font-weight:650;line-height:1.1">0</dd></div>
+    </dl>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+      <section style="flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
+        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px"><div><h2 style="font-size:21px">Request history</h2><p class="muted">Updates every 2 seconds while this tab is open.</p></div>
+        <label class="muted" style="display:flex;align-items:center;gap:8px">Status <select aria-label="Filter by status" style="min-height:44px;background:#fff;color:#202e2b;border:1px solid #b7ccc2;border-radius:8px;padding:6px 10px"><option value="all">All jobs</option><option value="queued">Queued</option><option value="active">Active</option><option value="completed">Completed</option><option value="attention">Needs attention</option><option value="cancelled">Cancelled</option></select></label></div>
+        <div style="padding:42px 18px;text-align:center;background:#f2f5f3;border:1px dashed #b7ccc2;border-radius:10px"><strong style="font-size:18px">No jobs yet</strong><p class="muted">Start a request in Create. Its progress and outputs will appear here.</p></div>
+      </section>
+      <section style="flex:1 1 330px;min-width:0;display:flex;flex-direction:column;gap:14px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
+        <h2 style="font-size:21px">Job details</h2>
+        <label class="muted" style="display:flex;flex-direction:column;gap:4px">Job <select disabled="disabled" style="min-height:44px;color:#596963;background:#f2f5f3;border:1px solid #b7ccc2;border-radius:8px;padding:6px 10px"><option value="">Select a job</option></select></label>
+        <div style="padding:20px 14px;text-align:center;background:#f2f5f3;border:1px dashed #b7ccc2;border-radius:10px"><strong>Select a job</strong><p class="muted">Review progress, outputs, and retry options.</p></div>
+        <button class="action" type="button" disabled="disabled" style="color:#596963">Cancel selected job</button>
+        <details style="border:1px solid #dbe3df;border-radius:8px;padding:0 12px"><summary style="padding:12px 0;font-weight:600">Retry &amp; recovery</summary><p class="muted" style="margin-bottom:12px">Retry failed variants or finish a retained source.</p></details>
+      </section>
+    </div>
+    <details style="background:#fff;border:1px solid #dbe3df;border-radius:12px;padding:0 20px"><summary style="padding:13px 0;font-weight:600">Browser ownership and recovery</summary><p class="muted" style="margin-bottom:14px">Keep a recovery key to reopen jobs after losing browser cookies.</p></details>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":790}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

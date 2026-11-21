@@ -1,20 +1,20 @@
 """Composition root with explicit catalogs and callbacks; no generation policy."""
 
-from contextlib import nullcontext
 from types import SimpleNamespace
 import gradio as gr
+from .api_bindings import bind_default_video_api
 from .app_bindings import bind_app
 from .contracts import AppComponents, BootstrapCatalog, BootstrapServices
+from .events.system import bind_system
 from .h3.services import H3ViewServices
 from .h3.view import build_h3_view
 from .layout import create_app_views, bind_workspace_navigation
 from .persistence import (
-    RESET_BROWSER_SETTINGS_JS,
     bind_browser_settings,
     create_browser_state,
 )
+from .system_view import build_readiness_view, build_system_view
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
-from .api_view import build_api_view
 from .media_view import build_gallery_view
 from h3_ui.engines import FEATURES
 from h3_ui import audio_probe_cache
@@ -57,6 +57,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
     audio_probe_cache.install()
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
+    initial_summary = services.compact_backend_status(initial_backend)
     with (
         gr.Blocks(title="Prism Studio", fill_width=True) as demo,
         gr.Column(elem_classes=["h3-workspace"]),
@@ -72,9 +73,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             task_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-task-picker"])
             summary_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-header-status"])
             with summary_root:
-                system_summary = gr.HTML(
-                    services.compact_backend_status(initial_backend)
-                )
+                system_summary = gr.HTML(initial_summary)
             engine_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-engine-bar"])
         app_views = create_app_views(
             summary_root=summary_root,
@@ -82,31 +81,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             engine_root=engine_root,
             include_models=build_models is not None,
         )
-        with app_views.system if app_views is not None else nullcontext():
-            gr.Markdown(
-                "## System\nManage your backend, memory, and browser preferences. "
-                '[Open ComfyUI ↗](/comfyui/)'
-            )
-            with gr.Accordion("System details and VRAM", open=False):
-                with gr.Row(equal_height=True):
-                    health = gr.Markdown(initial_backend)
-                    unload_models = gr.Button("Unload all models / free VRAM", scale=0)
-                memory_status = gr.Markdown()
-            with gr.Row(equal_height=True):
-                gr.Markdown(
-                    "Settings are saved in this browser. Resetting clears them "
-                    "and reloads the page with the app defaults."
-                )
-                gr.Button(
-                    "Reset all settings to defaults",
-                    variant="stop",
-                    scale=0,
-                    elem_id="h3-reset-browser-settings",
-                ).click(None, js=RESET_BROWSER_SETTINGS_JS, api_name=False)
-        app_views = app_views or create_app_views()
+        system_view = build_system_view(app_views.system, initial_backend, initial_summary)
         generation_view = app_views.generation
         gallery_view = app_views.gallery
-        api_view = app_views.api
         gallery_tab = app_views.gallery_tab
         h3_components = build_h3_view(
             generation_view,
@@ -236,7 +213,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             gallery_view,
             services.list_media_paths,
             view=gallery_components,
-            system_root=app_views.system,
+            system_root=system_view.maintenance,
             validate_path=services.gallery_media_download_path,
             preview_media=services.refresh_media_page,
         )
@@ -302,19 +279,12 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
                 api_name=False,
                 show_progress="hidden",
             )
-        api_components = build_api_view(api_view, services.api_guide())
+        bind_default_video_api(services.generate_with_ui_defaults)
         app_components = dict(h3_components.values)
         app_components.update(
             {
-                "api_components": api_components,
-                "api_status": api_components.status,
-                "api_stop": api_components.stop,
                 "gallery_components": gallery_components,
                 "gallery_tab": gallery_tab,
-                "health": health,
-                "memory_status": memory_status,
-                "system_summary": system_summary,
-                "unload_models": unload_models,
             }
         )
         browser_state = create_browser_state()
@@ -341,14 +311,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
                 jobs_tab=app_views.jobs_tab,
                 other_tabs=tuple(tab for tab in app_views.main_tabs if tab is not app_views.jobs_tab),
             )
-            from h3_ui.system_view import build_readiness_view
-            from h3_models import MODEL_SPECS
+        from h3_models import MODEL_SPECS
 
-            build_readiness_view(
-                app_views.system,
-                model_specs=MODEL_SPECS,
-                models_root=catalog.COMFY_DIR / "models",
-            )
+        build_readiness_view(
+            app_views.system,
+            model_specs=MODEL_SPECS,
+            models_root=catalog.COMFY_DIR / "models",
+        )
         from h3_ui.canvas_controls import bind_canvas_controls
 
         bind_canvas_controls(
@@ -392,9 +361,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             browser_state=browser_state,
             navigation=navigation,
         )
-        # The UI can open before ComfyUI's API: each page load shows the backend as it is now.
-        demo.load(services.refresh_backend_views, outputs=[system_summary, health], queue=False,
-                  show_progress="hidden", api_name=False)
+        bind_system(
+            demo, system_view, summary=system_summary,
+            create_refresh=h3_components.refresh, services=services,
+        )
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
         demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
         demo.load(None, js=REFERENCE_TAG_JS, api_name=False)

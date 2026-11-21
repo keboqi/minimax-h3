@@ -235,10 +235,10 @@ class ModelManagerTests(unittest.TestCase):
         ui = manager_module.build_ui(self.manager, (runtime, WorkspaceStore(data / "h3-workspace")))
         blocks = ui.blocks.values()
         labels = {getattr(block, "label", None) for block in blocks}
-        self.assertTrue({"Create", "Media", "Models", "Jobs", "System", "API & workflows"} <= labels)
+        self.assertTrue({"Create", "Media", "Models", "Jobs", "System"} <= labels)
         tabs = next(block for block in blocks if isinstance(block, gr.Tabs))
         self.assertEqual([child.label for child in tabs.children],
-                         ["Create", "Media", "Models", "Jobs", "System", "API & workflows"])
+                         ["Create", "Media", "Models", "Jobs", "System"])
         self.assertTrue(all(isinstance(child, gr.Tab) for child in tabs.children))
         self.assertGreaterEqual(len(getattr(ui, "h3_routes", ())), 9)
 
@@ -264,7 +264,7 @@ class ModelManagerTests(unittest.TestCase):
         self.assertTrue(ui.get_config_file()["fill_width"])
         tabs = next(block for block in ui.blocks.values() if isinstance(block, gr.Tabs))
         self.assertEqual([child.label for child in tabs.children],
-                         ["Create", "Media", "Jobs", "System", "API & workflows"])
+                         ["Create", "Media", "Jobs", "System"])
         buttons = {block.value for block in ui.blocks.values() if type(block).__name__ == "Button"}
         self.assertNotIn("Reload shared volume", buttons)
 

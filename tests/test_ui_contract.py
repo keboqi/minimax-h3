@@ -660,6 +660,18 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(accepts)
         self.assertEqual(accepts - restarted, set())
 
+    def test_jobs_refresh_and_filter_share_the_poll_event(self) -> None:
+        refreshes = [
+            event for event in self.demo.fns.values()
+            if getattr(event.fn, "__module__", "") == "h3_ui.jobs_view"
+            and event.fn.__name__ == "refresh_jobs"
+        ]
+        self.assertEqual(len(refreshes), 1)
+        refresh = refreshes[0]
+        self.assertCountEqual([event for _, event in refresh.targets], ["tick", "click", "input"])
+        self.assertEqual(refresh.trigger_mode, "always_last")
+        self.assertFalse(refresh.queue)
+
     def test_storyboard_tab_is_a_frame_with_only_its_scripted_api(self) -> None:
         frame = next(c for c in self.config["components"]
                      if c["type"] == "html" and "h3-storyboard-frame" in str(c["props"].get("value")))
@@ -690,7 +702,7 @@ class UiContractTests(unittest.TestCase):
         tab_nodes = layout["children"]
         self.assertEqual(
             [self.components[node["id"]]["props"]["label"] for node in tab_nodes],
-            ["Create", "Media", "Jobs", "System", "API & workflows"],
+            ["Create", "Media", "Jobs", "System"],
         )
         engine_tabs = next(
             c

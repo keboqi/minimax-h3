@@ -17,7 +17,7 @@ Modal launches use the same UI.
 One top bar holds the navigation, so the centre of the window stays for the
 work: the Create tasks, in two groups (Video, Image and Song; then Remake, Storyboard, Soundstage and
 Dubbing), then
-Media, Jobs, System and API & workflows, with backend and job status
+Media, Jobs and System, with backend and job status
 at the right. Picking a task opens it from any tab; when a task has multiple
 studio engines, its engine switcher sits in the right corner of the top bar. On narrow windows the bar stacks into scrolling rows.
 
@@ -285,11 +285,10 @@ and a half million spatiotemporal positions bypasses the compiler; this isolates
 malloc-graph incompatibility with SLA's high-resolution Triton specialization
 without slowing ordinary generation or tiled refinement.
 
-The **API** tab includes a copy-ready Python example. Its `/generate_video`
-endpoint only requires a prompt and uses the same defaults shown in the MiniMax H3
-tab. It returns a public HTTP download URL instead of a client-local temporary
-file path. The `/generate_video_advanced` endpoint exposes every generation
-control; its current request schema is linked from the API tab.
+The `/generate_video` endpoint requires a prompt and uses the MiniMax H3
+defaults. It returns a public HTTP download URL and generation status.
+The `/generate_video_advanced` endpoint exposes every generation control.
+See `/gradio_api/openapi.json` on the running app for the request schema.
 The LTX tab is also available as `/generate_ltx25_video` and shares the same
 single-job ComfyUI queue. Qwen Image 2.1 is available as
 `/generate_qwen_image21` and uses that queue as well.

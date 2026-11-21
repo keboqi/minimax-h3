@@ -42,9 +42,8 @@ class AppViews:
     music3: gr.Group
     yue2: gr.Group
     gallery: gr.Column
-    api: gr.Group
     gallery_tab: gr.Tab
-    system: gr.Group | None = None
+    system: gr.Column | None = None
     jobs: gr.Column | None = None
     task: gr.Radio | None = None
     engine: gr.Radio | None = None
@@ -203,11 +202,9 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
             with gr.Tab("Models", id="models") as models_tab:
                 models = gr.Column(elem_classes=["h3-models-shell"])
         with gr.Tab("Jobs", id="jobs") as jobs_tab:
-            jobs = gr.Column(elem_classes=["h3-jobs-shell"])
+            jobs = gr.Column(elem_classes=["h3-ops-page", "h3-jobs-shell"])
         with gr.Tab("System", id="system") as system_tab:
-            system = gr.Group()
-        with gr.Tab("API & workflows", id="api") as api_tab:
-            api = gr.Group()
+            system = gr.Column(elem_classes=["h3-ops-page"])
     return AppViews(
         tabs,
         generation,
@@ -216,7 +213,6 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
         music,
         yue2,
         gallery,
-        api,
         gallery_tab,
         system,
         jobs,
@@ -232,9 +228,9 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
         dubbing,
         create_tab,
         jobs_tab,
-        (create_tab, gallery_tab, models_tab, jobs_tab, system_tab, api_tab)
+        (create_tab, gallery_tab, models_tab, jobs_tab, system_tab)
         if models_tab is not None
-        else (create_tab, gallery_tab, jobs_tab, system_tab, api_tab),
+        else (create_tab, gallery_tab, jobs_tab, system_tab),
         storyboard=storyboard,
         remake=remake,
         image=image,

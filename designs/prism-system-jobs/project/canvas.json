@@ -1,0 +1,14 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-21T01:21:20.081Z"},
+  "title": "Prism Studio System and Jobs",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"title": "System", "x": 0, "y": 0, "w": 1360, "h": 790, "expand": "fill", "is_interactive": true},
+    "Jobs.dc.html": {"title": "Jobs", "x": 1440, "y": 0, "w": 1360, "h": 790, "expand": "fill", "is_interactive": true}
+  },
+  "order": ["Main.dc.html", "Jobs.dc.html"],
+  "notes": {},
+  "designSystems": []
+}

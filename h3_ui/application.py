@@ -20,7 +20,7 @@ from .h3.layout import (
     fbcache_preset_defaults,
     input_image_frame_preset_updates,
 )
-from .h3.handlers import H3Handlers, H3Services, api_guide, mode_help, reference_prompt_help
+from .h3.handlers import H3Handlers, H3Services, mode_help, reference_prompt_help
 from h3_app.policy import input_image_upscale_dimensions
 import argparse
 import math
@@ -1069,7 +1069,6 @@ def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=N
         BootstrapCatalog.from_mapping(globals(), COMFY_DIR=active_runtime.comfy_dir),
         BootstrapServices(
             api_get=api_get,
-            api_guide=api_guide,
             api_post=api_post,
             auto_resolution_from_start_frame=auto_resolution_from_start_frame,
             backend_status=backend_status,

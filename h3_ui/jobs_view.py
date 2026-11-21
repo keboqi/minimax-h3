@@ -18,21 +18,27 @@ from .job_admission import (
     watch_acceptance,
 )
 from .job_bindings import GPU_QUEUE
+from .operations_view import page_heading
 
 JOB_SELECTION_JS = """
-const select = (row) => {
+element.addEventListener('click', event => {
+  const row = event.target.closest('[data-job-id]');
   if (!row) return;
-  element.querySelectorAll('[data-job-id]').forEach(item => item.setAttribute('aria-selected', String(item === row)));
+  element.querySelectorAll('[data-job-id]').forEach(item => {
+    item.querySelector('button').setAttribute('aria-current', String(item === row));
+  });
   trigger('click', {job_id: row.dataset.jobId});
-};
-element.addEventListener('click', event => select(event.target.closest('[data-job-id]')));
-element.addEventListener('keydown', event => {
-  if (event.key === 'Enter' || event.key === ' ') {
-    const row = event.target.closest('[data-job-id]');
-    if (row) { event.preventDefault(); select(row); }
-  }
 });
 """
+
+STATUS_FILTERS = {
+    "Queued": lambda job: job.state == "queued",
+    "Active": lambda job: job.finished_at is None and job.state != "queued",
+    "Completed": lambda job: job.state == "completed",
+    "Needs attention": lambda job: job.state in {"failed", "submission_unknown", "recovering"},
+    "Cancelled": lambda job: job.state == "cancelled",
+}
+METRIC_LABELS = ("Queued", "Active", "Completed", "Needs attention")
 
 
 def state_badge(state):
@@ -49,58 +55,52 @@ def state_badge(state):
 def empty_details():
     return (
         '<div class="h3-empty-state"><strong>Select a job</strong>'
-        "<p>Click a request in the history to review its progress, outputs and retry options.</p></div>"
+        "<p>Review progress, outputs, and retry options.</p></div>"
     )
 
 
-def table(jobs, selected=None):
+def job_metrics(counts):
+    return (
+        '<dl class="h3-job-metrics" aria-label="Job counts">'
+        + "".join(
+            f"<div><dt>{label}</dt><dd>{count}</dd></div>"
+            for label, count in zip(METRIC_LABELS, counts, strict=True)
+        )
+        + "</dl>"
+    )
+
+
+def table(jobs, selected=None, status_filter="All jobs"):
     if not jobs:
         return (
             '<div class="h3-empty-state" role="status"><strong>No jobs yet</strong>'
             "<p>Start a request in Create. Its progress and outputs will appear here.</p></div>"
         )
-    counts = (
-        ("Queued", sum(job.state == "queued" for job in jobs)),
-        (
-            "Active",
-            sum(job.finished_at is None and job.state != "queued" for job in jobs),
-        ),
-        ("Completed", sum(job.state == "completed" for job in jobs)),
-        (
-            "Needs attention",
-            sum(
-                job.state in {"failed", "submission_unknown", "recovering"}
-                for job in jobs
-            ),
-        ),
-    )
-    metrics = (
-        '<dl class="h3-job-metrics">'
-        + "".join(
-            f"<div><dt>{label}</dt><dd>{count}</dd></div>" for label, count in counts
-        )
-        + "</dl>"
-    )
+    matches = STATUS_FILTERS.get(status_filter)
     rows = []
     for job in jobs:
-        cells = (
-            job.id[:8],
-            job.family,
-            job.stage,
-            f"{max(0, int((job.finished_at or time.time()) - job.created_at))}s",
-            len(job.outputs),
-        )
+        if matches and not matches(job):
+            continue
+        job_label = escape(job.id[:8])
+        current = str(job.id == selected).lower()
+        elapsed = max(0, int((job.finished_at or time.time()) - job.created_at))
         rows.append(
-            f'<tr data-job-id="{escape(job.id, quote=True)}" tabindex="0" aria-selected="{str(job.id == selected).lower()}" aria-label="Select job {escape(job.id[:8], quote=True)}">'
-            + f"<td><code>{escape(str(cells[0]))}</code><small>{escape(str(cells[1]))}</small></td>"
-            + f"<td>{state_badge(job.state)}</td>"
-            + "".join(f"<td>{escape(str(cell))}</td>" for cell in cells[2:])
-            + "</tr>"
+            f'<tr data-job-id="{escape(job.id, quote=True)}">'
+            f'<td><button type="button" aria-current="{current}" aria-label="Inspect job {job_label}">'
+            f"<code>{job_label}</code><small>{escape(job.family)}</small></button></td>"
+            f"<td>{state_badge(job.state)}</td><td>{escape(str(job.stage))}</td>"
+            f"<td>{elapsed}s</td><td>{len(job.outputs)}</td></tr>"
+        )
+    if not rows:
+        return (
+            '<div class="h3-empty-state" role="status"><strong>No matching jobs</strong>'
+            "<p>Choose another status to see more requests.</p></div>"
         )
     return (
-        metrics
-        + '<div class="h3-job-table"><table><caption>Jobs for this browser owner</caption>'
-        '<thead><tr><th scope="col">Request / engine</th><th scope="col">Status</th><th scope="col">Current stage</th><th scope="col">Elapsed</th><th scope="col">Outputs</th></tr></thead>'
+        '<div class="h3-ops-table h3-job-table" tabindex="0" role="region" aria-label="Request history">'
+        '<table aria-label="Jobs for this browser owner"><thead><tr>'
+        '<th scope="col">Request / engine</th><th scope="col">Status</th>'
+        '<th scope="col">Current stage</th><th scope="col">Elapsed</th><th scope="col">Outputs</th></tr></thead>'
         "<tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
@@ -112,32 +112,41 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
     ``jobs_tab`` is open, so an idle page sends nothing and the server can scale down.
     """
     with root:
-        with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
-            gr.Markdown(
-                "## Jobs\nFollow your requests from queue to output. Review a job to download results or recover unfinished work.",
-                scale=4,
+        with gr.Row(elem_classes=["h3-ops-hero"]):
+            page_heading(
+                "Jobs",
+                "Track requests, download outputs, and recover unfinished work.",
+                "M7 4h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3Z "
+                "M8 8h8m-8 4h8m-8 4h5",
             )
-            refresh = gr.Button("Refresh jobs", scale=0, min_width=140)
-        with gr.Row(equal_height=False, elem_classes=["h3-jobs-workspace"]):
-            with gr.Column(scale=5, min_width=340, elem_classes=["h3-job-history"]):
-                gr.Markdown(
-                    "### Request history\nClick a row to inspect it. Updates automatically every 2 seconds.",
-                    elem_classes=["h3-gallery-section-title"],
-                )
+            refresh = gr.Button("Refresh jobs", variant="primary", scale=0)
+        metrics = gr.HTML(job_metrics((0,) * len(METRIC_LABELS)))
+        with gr.Row(equal_height=False, elem_classes=["h3-ops-split"]):
+            with gr.Column(min_width=0, elem_classes=["h3-ops-panel", "h3-ops-main"]):
+                with gr.Row(elem_classes=["h3-ops-panel-header"]):
+                    gr.Markdown(
+                        "### Request history\nUpdates every 2 seconds while this tab is open.",
+                        elem_classes=["h3-ops-section-title"],
+                    )
+                    status_filter = gr.Dropdown(
+                        ["All jobs", *STATUS_FILTERS],
+                        value="All jobs",
+                        label="Status",
+                        container=False,
+                        scale=0,
+                        min_width=160,
+                        elem_classes=["h3-job-filter"],
+                    )
                 listing = gr.HTML(table(()), js_on_load=JOB_SELECTION_JS)
             with gr.Column(
-                scale=3,
-                min_width=320,
-                elem_classes=["h3-preview-panel", "h3-job-inspector"],
+                min_width=0,
+                elem_classes=["h3-ops-panel", "h3-ops-aside", "h3-job-inspector"],
             ):
-                gr.Markdown(
-                    "### Job details", elem_classes=["h3-gallery-section-title"]
-                )
+                gr.Markdown("### Job details", elem_classes=["h3-ops-section-title"])
                 selected = gr.Dropdown(
                     [],
                     label="Job",
                     value=None,
-                    info="Choose a request to inspect or manage.",
                 )
                 details = gr.HTML(empty_details(), elem_classes=["h3-job-details"])
                 files = gr.File(
@@ -150,7 +159,7 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
                     "Cancel selected job", variant="stop", interactive=False
                 )
                 with gr.Accordion(
-                    "Retry & recovery", open=False, elem_classes=["h3-gallery-card"]
+                    "Retry & recovery", open=False,
                 ):
                     gr.Markdown(
                         "Retry failed variants with their recorded seeds, or finish a retained source without repeating generation."
@@ -178,17 +187,23 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
                 "This browser's signed ownership cookie expires after 30 days. "
                 "Recovery never automatically repeats inference. "
                 "Keep a recovery key to reopen jobs after losing browser cookies. "
-                "The key grants access to your job history; keep it private."
+                "The key grants access to your job history; keep it private.",
+                elem_classes=["h3-ops-note"],
             )
-            reconcile = gr.Button("Reconnect to backend history")
-            recovery_key = gr.Textbox(
-                label="Browser recovery key", type="password", interactive=False
-            )
-            export_owner = gr.Button("Show my recovery key")
-            recovery_input = gr.Textbox(
-                label="Restore browser recovery key", type="password"
-            )
-            recover_owner = gr.Button("Restore owner and reload")
+            with gr.Row(equal_height=False, elem_classes=["h3-ops-split"]):
+                with gr.Column(min_width=0, elem_classes=["h3-ops-recovery-field"]):
+                    recovery_key = gr.Textbox(
+                        label="Browser recovery key", type="password", interactive=False
+                    )
+                    export_owner = gr.Button("Show my recovery key")
+                with gr.Column(min_width=0, elem_classes=["h3-ops-recovery-field"]):
+                    recovery_input = gr.Textbox(
+                        label="Restore browser recovery key", type="password"
+                    )
+                    recover_owner = gr.Button("Restore owner and reload")
+            with gr.Row(elem_classes=["h3-ops-actions"]):
+                reconcile = gr.Button("Reconnect to backend history", scale=0)
+            recovery_status = gr.Markdown()
 
     def owner_key(request: gr.Request):
         owner = require_owner(request)
@@ -209,41 +224,39 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
     )
 
     def refresh_jobs(
-        selected_id, failed_selection, source_selection, previous, watching, request: gr.Request
+        selected_id, failed_selection, source_selection, previous, watching, filter_value,
+        request: gr.Request,
     ):
         jobs = JOBS.list_owned(require_owner(request))
         choices = [
             (f"{job.id[:8]} · {job.family} · {job.state}", job.id) for job in jobs
         ]
         value = selected_id if any(job.id == selected_id for job in jobs) else None
-        queued = sum(job.state == "queued" for job in jobs)
-        active = sum(job.finished_at is None and job.state != "queued" for job in jobs)
+        counts = tuple(sum(STATUS_FILTERS[label](job) for job in jobs) for label in METRIC_LABELS)
+        queued, active = counts[:2]
         inspected = list(inspect_job(value, request))
         signature = json.dumps(inspected, sort_keys=True)
         failed_choices = inspected[1].get("choices")
         previous = previous or {}
         if previous.get("selected") == value:
-            if previous.get("failed") == inspected[1].get("choices"):
+            if previous.get("failed") == failed_choices:
                 inspected[1]["value"] = failed_selection
             sources = [item[1] for item in inspected[5].get("choices", [])]
             if source_selection in sources:
                 inspected[5]["value"] = source_selection
         if previous.get("detail") == signature and previous.get("selected") == value:
             inspected = [gr.skip() for _ in inspected]
+        history = table(jobs, value, filter_value)
         next_presentation = {
             "selected": value,
             "detail": signature,
             "choices": choices,
             "failed": failed_choices,
-            "table": table(jobs, value),
-            "counts": (queued, active),
+            "table": history,
+            "counts": counts,
         }
         return (
-            (
-                gr.skip()
-                if previous.get("table") == next_presentation["table"]
-                else next_presentation["table"]
-            ),
+            gr.skip() if previous.get("table") == history else history,
             (
                 gr.skip()
                 if previous.get("choices") == choices and value == selected_id
@@ -251,36 +264,40 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
             ),
             (
                 gr.skip()
-                if previous.get("counts") == (queued, active)
+                if previous.get("counts", ())[:2] == (queued, active)
                 else f'<p class="h3-system-status" role="status">{queued} queued · {active} active in this session</p>'
             ),
+            gr.skip() if previous.get("counts") == counts else job_metrics(counts),
             *inspected,
             next_presentation,
             gr.Timer(active=bool(watching or queued or active)),
         )
 
-    for event in (timer.tick, refresh.click):
-        event(
-            refresh_jobs,
-            inputs=[selected, variants, finishing_variant, presentation, watching],
-            outputs=[
-                listing,
-                selected,
-                summary,
-                details,
-                variants,
-                cancel,
-                retry,
-                finishing,
-                finishing_variant,
-                files,
-                presentation,
-                timer,
-            ],
-            queue=False,
-            api_name=False,
-            show_progress="hidden",
-        )
+    # Share a single request slot so a poll and a filter change cannot finish out of order.
+    gr.on(
+        triggers=[timer.tick, refresh.click, status_filter.input],
+        fn=refresh_jobs,
+        inputs=[selected, variants, finishing_variant, presentation, watching, status_filter],
+        outputs=[
+            listing,
+            selected,
+            summary,
+            metrics,
+            details,
+            variants,
+            cancel,
+            retry,
+            finishing,
+            finishing_variant,
+            files,
+            presentation,
+            timer,
+        ],
+        queue=False,
+        api_name=False,
+        show_progress="hidden",
+        trigger_mode="always_last",
+    )
 
     poll_after_acceptance(timer)
     if jobs_tab is not None:
@@ -310,7 +327,7 @@ def build_jobs_view(root, *, get, post, summary, jobs_tab=None, other_tabs=()):
         except Exception as exc:
             return f"Backend history is unavailable: {exc}. No work was replayed."
 
-    reconcile.click(reconnect, outputs=status, queue=False, api_name=False)
+    reconcile.click(reconnect, outputs=recovery_status, queue=False, api_name=False)
 
     def inspect_job(job_id, request: gr.Request):
         if not job_id:

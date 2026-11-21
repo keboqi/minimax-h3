@@ -174,9 +174,10 @@ def build_library_tools(
             visible=False,
         )
         videos = gr.HTML("", js_on_load=VIDEO_JS)
-    with system_root, gr.Accordion("Media index maintenance", open=False):
+    with system_root, gr.Accordion("Media index maintenance", open=True):
         gr.Markdown(
-            "New outputs are registered when created. Scan historical media to add older or externally created files and repair missing previews."
+            "Scan historical files to register older or externally created outputs and repair missing previews.",
+            elem_classes=["h3-ops-note"],
         )
         rebuild = gr.Button("Scan historical media", elem_id="h3-system-history-scan")
         index_status = gr.Markdown()
