@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -16,6 +17,59 @@ from tests.test_dub_page import PageTests
 
 class DubbingBrowserTests(PageTests):
     gpu = True
+
+    def test_face_box_targets_selected_speaker_and_resets_to_auto(self):
+        from h3_app.dubbing.lip_sync import PLAN_FILE, build_lip_sync_plan_payload
+        from h3_app.dubbing.lip_sync_match import FaceTrack, Shot, SourceScan, TrackObservation, assign_speakers_to_shots
+
+        lines = [{"speaker": spk, "start": start, "end": end, "source": spk, "translation": spk}
+                 for spk, start, end in [("A", 0, 1), ("B", 1, 2)]]
+        session = self.session(lines)
+        self.runtime.outputs_dir.mkdir()
+        dub = self.runtime.outputs_dir / "sample.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=2",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dub)], check=True)
+        sessions.modify(session, lambda current: current.data.update(last_output=str(dub)))
+        folder = player_folder(dub)
+        folder.mkdir(parents=True)
+        spoken = {"0": [0, 1], "1": [1, 2]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}))
+        np.savez(folder / "alignment.npz", **{key: np.ones(1) for key in spoken})
+        track = FaceTrack(7, 0, 0.5, 1.5, tuple(TrackObservation(t, (0.1, 0.1, 0.4, 0.5)) for t in (0.5, 1.5)))
+        scan = SourceScan("test", 2, 160, 120, 24, (), (Shot(0, 0, 2, (track,)),), "yolo-motion")
+        plan = build_lip_sync_plan_payload(dub=dub, scan=scan, lines=lines, spoken=spoken,
+                                           assignments=assign_speakers_to_shots(scan, lines), windows=[])
+        (folder / PLAN_FILE).write_text(json.dumps(plan))
+        state = {"screen": "lipsync", "sessionId": session.id}
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+
+            def serve_video(route):
+                url = urlsplit(route.request.url)
+                response = self.client.get(url.path + "?" + url.query,
+                                           headers={"Range": route.request.headers.get("range", "bytes=0-")})
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("**/api/output?*", serve_video)
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+            page.locator('[data-ls-shot][data-ls-speaker="B"]').click()
+            page.wait_for_function("document.querySelector('#ls-video')?.currentTime >= 1")
+            expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
+            page.locator("#ls-video").evaluate("(video) => { video.currentTime = 0.5; }")
+            expect(page.locator("#ls-subtitle")).to_contain_text("A")
+            box = page.locator("#ls-overlay [data-track-id]")
+            expect(box).to_have_attribute("data-ls-assign", "0:B")
+            box.click()
+            reset = page.get_by_role("button", name="Restore automatic match")
+            expect(reset).to_be_visible()
+            expect(page.locator('[data-ls-action="render"]')).to_be_enabled()
+            reset.click()
+            expect(reset).to_have_count(0)
+            expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
+            browser.close()
 
     def test_workshop_automatically_loads_the_open_project_and_studio_dub(self):
         draft = self.client.post("/dubbing/api/project/save", json={

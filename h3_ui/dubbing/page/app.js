@@ -1,4 +1,4 @@
-// The Dubbing page: four steps over one dubbing session (Source, Review lines, Dub, Result).
+// The Dubbing page: five steps over one dubbing session (Source, Review lines, Dub, Lip sync, Result).
 // The session and every run live on the server; this keeps what the viewer is looking at and the
 // settings of the next analysis and dub, and polls the runs it started.
 
@@ -363,7 +363,9 @@ function updateRunViews() {
   }
   for (const button of document.querySelectorAll("[data-busy]")) {
     const run = app.runs[button.dataset.busy];
-    button.disabled = !!auto?.active || !!(run && run.active) || button.dataset.locked === "true";
+    const lipSyncBusy = ["lip-sync", "lip-sync-detect"].includes(button.dataset.busy)
+      && (app.runs["lip-sync"]?.active || app.runs["lip-sync-detect"]?.active);
+    button.disabled = !!auto?.active || !!run?.active || !!lipSyncBusy || button.dataset.locked === "true";
   }
   for (const button of document.querySelectorAll("[data-stop]")) {
     const run = app.runs[button.dataset.stop];

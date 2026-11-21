@@ -2729,6 +2729,8 @@ class H3LowerFaceMask:
 
         start = max(0, min(int(active_start), frames))
         end = frames if int(active_end) < 0 else max(start, min(int(active_end), frames))
+        # Fades span at most three active frames per edge. Short turns retain a full-strength peak.
+        ramp = min(3, max(1, (end - start + 1) // 2))
         denoise_start = max(0, start - 2)
         denoise_end = min(frames, end + 2)
 
@@ -2767,6 +2769,8 @@ class H3LowerFaceMask:
                 weight = float(weights[index]) if index < len(weights) else (1.0 if is_detected else 0.0)
                 if not is_detected and weight <= 0.0:
                     continue
+                edge_weight = max(0, min(ramp, index - start + 1, end - index)) / ramp
+                opacity = max(0.0, min(1.0, weight)) * edge_weight
                 if index < len(face_rects):
                     fx, fy, fw, fh = (float(v) for v in face_rects[index])
                 else:
@@ -2793,7 +2797,7 @@ class H3LowerFaceMask:
                         comp_np = cv2_mod.GaussianBlur(poly_mask, (blur_px, blur_px), 0)
                         composite_mask[index] = (
                             torch.from_numpy(comp_np).to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
-                            * max(0.0, min(1.0, weight))
+                            * opacity
                         )
                     continue
 
@@ -2811,7 +2815,7 @@ class H3LowerFaceMask:
                     d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
                     # Softly taper the outer 25% of the ellipse before H3FaceStitch feathers it.
                     soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
-                    composite_mask[index] = soft * max(0.0, min(1.0, weight))
+                    composite_mask[index] = soft * opacity
         finally:
             if face_mesh is not None:
                 try:

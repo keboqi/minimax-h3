@@ -10,10 +10,9 @@ Line edits save at once.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from html import unescape
 import json
-import math
 from pathlib import Path
 from threading import RLock
 import shutil
@@ -28,14 +27,12 @@ from fastapi.responses import Response
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
 from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.lip_sync import (
-    REPORT_FILE, SCAN_CACHE_DIR, load_lip_sync_plan, load_manual_overrides, revise_lip_sync_plan,
+    REPORT_FILE, load_lip_sync_plan, load_manual_overrides, revise_lip_sync_plan,
 )
-from h3_app.dubbing.lip_sync_match import load_source_scan, video_fingerprint
-from h3_app.dubbing.results import PLAYER_DIR, TRACKS, load_player, load_result, player_folder
+from h3_app.dubbing.results import TRACKS, load_player, load_result, player_folder
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
-from h3_app.processes import run_media_process
 from h3_app.jobs import JOBS, JobCancelled
 
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
@@ -221,37 +218,6 @@ def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             report = None
-    review_shots = []
-    if isinstance(report, dict) and report.get("uncertain_count"):
-        scan = None
-        try:
-            scan = load_source_scan(video.parent / PLAYER_DIR / SCAN_CACHE_DIR, video_fingerprint(video))
-        except OSError:
-            scan = None
-        shots_by_index = {shot.index: shot for shot in (scan.shots if scan else ())}
-        for item in report.get("assignments") or ():
-            if item.get("status") != "uncertain":
-                continue
-            shot_index = int(item.get("shot_index", 0))
-            shot = shots_by_index.get(shot_index)
-            ref_time = item.get("reference_time")
-            if ref_time is None and shot is not None:
-                ref_time = 0.5 * (shot.start + shot.end)
-            tracks = []
-            if shot is not None:
-                for track in shot.tracks:
-                    box = track.representative_box()
-                    if box is not None:
-                        tracks.append({"track_id": track.track_id, "box": [round(v, 4) for v in box]})
-            review_shots.append({
-                "shot_index": shot_index,
-                "speaker": item.get("speaker", ""),
-                "speaker_label": presenters.speaker_label(item.get("speaker", "")),
-                "time": round(float(ref_time or 0.0), 3),
-                "reason": item.get("reason", ""),
-                "frame_url": f"{API}/lip-sync-frame?session={sid}&time={float(ref_time or 0.0):.3f}",
-                "tracks": tracks,
-            })
     return {
         "video": video.name,
         "video_version": _version(video),
@@ -264,7 +230,6 @@ def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
             "uncertain_count": report.get("uncertain_count", 0),
             "backend": report.get("backend", "none"),
         } if isinstance(report, dict) else None,
-        "review_shots": review_shots,
     }
 
 
@@ -338,7 +303,14 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         return [item for collection in runs.values() for item in collection.items.values()
                 if item.owner == owner and item.finished_at is None]
 
+    def lip_sync_busy(video):
+        # The plan and rendered output belong to the dub, including when reopened in another session.
+        return any(item.finished_at is None and item.dub_video == video
+                   for kind in (LIP_SYNC_DETECT, LIP_SYNC) for item in runs[kind].items.values())
+
     def blocked(run):
+        if run.kind in (LIP_SYNC, LIP_SYNC_DETECT) and lip_sync_busy(run.dub_video):
+            return "Wait for the current lip-sync operation to finish."
         if run.kind == AUTO:
             if any(item.kind != AUTO for item in active_runs(run.owner)):
                 return "Wait for the current dubbing action before starting Auto mode."
@@ -913,7 +885,6 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             "video": dub.name,
             "video_version": ver,
             "video_url": f"{API}/output?session={sid}&name={quote(dub.name)}&inline=true&v={ver}",
-            "dub_audio_url": f"{API}/track?session={sid}&name=dub&v={ver}",
             "speakers": speakers,
             "plan": plan,
             "overrides": {f"{s}:{spk}": tid for (s, spk), tid in overrides.items()},
@@ -934,14 +905,15 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
         force = bool(body.get("force", False))
         return start(
-            request, LIP_SYNC_DETECT, session_id, LIP_SYNC_DETECT, handlers.detect_lip_sync,
+            request, LIP_SYNC_DETECT, session_id, LIP_SYNC_DETECT,
+            partial(handlers.detect_lip_sync, gemini_api_key=body.get("api_key")),
             [session_id, force, str(dub)], reader(1), session_id=session_id, dub_video=dub.name,
         )
 
     @app.post(f"{API}/lip-sync-overrides", include_in_schema=False)
     @guarded
     def lip_sync_overrides_save(request: Request, body: dict = Body(...)):
-        owner = owner_of(request)
+        owner_of(request)
         session_id = str(body.get("session") or "")
         edits = {}
         reset = set()
@@ -959,9 +931,9 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                     reset.discard(key)
                     edits[key] = None if track_id is None else int(track_id)
         with admission_lock:
-            if runs[LIP_SYNC_DETECT].active(owner, session_id):
-                raise H3Error("Wait for face detection to finish before changing assignments.")
             loaded, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            if lip_sync_busy(dub.name):
+                raise H3Error("Wait for the current lip-sync operation before changing assignments.")
             plan = checked_lip_sync_plan(dub, body.get("plan_revision"))
             revise_lip_sync_plan(
                 dub, plan, edits, reset=reset, clear=bool(body.get("clear")),
@@ -992,33 +964,17 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             values = [session_id, overrides, strength, feather]
             revision = body.get("plan_revision")
             if revision is not None:
-                if runs[LIP_SYNC_DETECT].active(owner_of(request), session_id):
-                    raise H3Error("Wait for face detection to finish before rendering.")
                 if overrides:
                     raise H3Error("Save changes to face assignments before rendering the reviewed plan.")
-                checked_lip_sync_plan(dub, revision)
+                plan = checked_lip_sync_plan(dub, revision)
+                if plan.get("windows_count") == 0:
+                    raise H3Error("No render windows. Review the speaker assignments first.")
                 values.extend((str(dub), revision))
             return start(
-                request, LIP_SYNC, session_id, LIP_SYNC, handlers.lip_sync_video,
+                request, LIP_SYNC, session_id, LIP_SYNC,
+                partial(handlers.lip_sync_video, gemini_api_key=body.get("api_key")),
                 values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
             )
-
-    @app.get(f"{API}/lip-sync-frame", include_in_schema=False)
-    def lip_sync_frame(session: str, time: float, request: Request):
-        with found():
-            owner_of(request)
-            result = latest_result(session)
-        dub = result.video
-        if dub is None or not dub.is_file() or not math.isfinite(time) or time < 0:
-            raise not_found()
-        proc = run_media_process(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{float(time):.3f}",
-             "-i", str(dub), "-frames:v", "1", "-f", "image2", "-vcodec", "mjpeg", "-q:v", "4", "-"],
-            capture_output=True, timeout=15,
-        )
-        if proc.returncode != 0 or not proc.stdout:
-            raise not_found()
-        return Response(proc.stdout, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
     def start_auto(owner, request_session, body, *, batch=False):
         if not gpu:

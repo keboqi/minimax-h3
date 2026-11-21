@@ -766,7 +766,7 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
-    def detect_lip_sync(self, session_id, force_rescan=False, expected_video=None):
+    def detect_lip_sync(self, session_id, force_rescan=False, expected_video=None, *, gemini_api_key=None):
         """Stage 1 only: detect shot cuts, track faces, and align speakers without rendering H3."""
         try:
             session = self._session(session_id)
@@ -782,7 +782,8 @@ class DubbingHandlers:
                 dub=dub,
                 services=services,
                 visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
-                force_rescan=bool(force_rescan),
+                source_video=session.path("source") if session.data.get("video") else None,
+                gemini_api_key=gemini_api_key, force_rescan=bool(force_rescan),
             ):
                 if isinstance(update, dict):
                     yield None, (
@@ -795,7 +796,7 @@ class DubbingHandlers:
             yield gr.skip(), self._failed(exc)
 
     def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None,
-                       expected_video=None, reviewed_revision=None):
+                       expected_video=None, reviewed_revision=None, *, gemini_api_key=None):
         """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
@@ -825,7 +826,8 @@ class DubbingHandlers:
                 services=self.services.generation_services(),
                 manual_overrides=manual_overrides,
                 visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
-                reviewed_plan=reviewed_plan,
+                source_video=session.path("source") if session.data.get("video") else None,
+                gemini_api_key=gemini_api_key, reviewed_plan=reviewed_plan,
                 **extra,
             ):
                 if isinstance(update, Path):

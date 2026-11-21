@@ -96,6 +96,49 @@ class LipSyncMatchTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.backend, "lr-asd")
 
+    def test_shared_cache_survives_pruning_and_rechecks_new_lr_asd(self):
+        from h3_app.dubbing.lip_sync_match import video_fingerprint
+        from h3_app.dubbing.results import PLAYER_DIR, SCAN_CACHE_DIR, prune_players
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"original video")
+            cache = root / PLAYER_DIR / SCAN_CACHE_DIR
+            fp = video_fingerprint(source)
+            scan = SourceScan(fp, 2, 640, 480, 24, (), (Shot(0, 0, 2),))
+            save_source_scan(cache, scan)
+            prune_players(root)
+            self.assertEqual(load_source_scan(cache, fp), scan)
+            with patch.dict(os.environ, {"H3_LR_ASD_DIR": tmp}), \
+                    patch("h3_app.dubbing.lip_sync_match.run_lr_asd_scan", return_value=scan) as run:
+                get_or_scan_source(source, (), cache_dir=cache)
+                run.assert_called_once()
+
+    def test_language_dubs_scan_the_same_original_picture_once(self):
+        from h3_app.dubbing.lip_sync import detect_lip_sync_plan
+        from h3_app.dubbing.lip_sync_match import video_fingerprint
+        from h3_app.dubbing.results import prune_players
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "original.mov"
+            source.write_bytes(b"source picture and soundtrack")
+            scan = SourceScan(video_fingerprint(source), 2, 640, 480, 24, (), (Shot(0, 0, 2),), "lr-asd")
+            scanner = Mock(return_value=scan)
+            with patch("h3_app.dubbing.lip_sync.detect_shot_cuts", return_value=[]), \
+                    patch("h3_app.dubbing.lip_sync.probe_video_metadata", return_value=scan):
+                for lang in ("en", "fr"):
+                    dub = root / f"clip.{lang}.mp4"
+                    dub.write_bytes(lang.encode())
+                    folder = player_folder(dub)
+                    folder.mkdir(parents=True)
+                    (folder / "alignment.json").write_text(json.dumps({"lines": [], "spoken": {}}))
+                    np.savez(folder / "alignment.npz")
+                    prune_players(root)
+                    list(detect_lip_sync_plan(dub=dub, source_video=source, scanner=scanner))
+            scanner.assert_called_once_with(source, [])
+
     def test_assign_speakers_handles_two_speaker_lr_asd_reaction_shot_and_ambiguous_case(self):
         # Shot 0 (0..4s): two-person interview. A speaks 0.2..1.8 (left face active), B speaks 2.0..3.6 (right face active).
         left_face = _track(0, 0, (0.15, 0.2, 0.2, 0.4), [

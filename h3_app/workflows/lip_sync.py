@@ -16,14 +16,6 @@ MAX_FRAMES = 362
 DEFAULT_CROP_SIZE = 640
 DEFAULT_AUTO_STRENGTH = 0.55
 DEFAULT_AUTO_FEATHER = 6
-REQUIRED_AUTO_LIP_SYNC_NODES = frozenset({
-    "H3FaceTrackCrop",
-    "H3InjectVideoLatent",
-    "H3FaceStitch",
-    H3_SOURCE_AUDIO_LATENT_NODE,
-    "H3LipSyncMask",
-    "H3LowerFaceMask",
-})
 LIP_SYNC_PROMPT = (
     "Preserve the source shot, framing, identity, lighting and expression. "
     "Synchronize the speaker's mouth and jaw to the supplied dialogue."

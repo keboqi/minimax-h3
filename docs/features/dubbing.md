@@ -6,7 +6,7 @@ fix or rewrite (see [Same language](#same-language-fix-or-rewrite)). Open **Crea
 and choose the **Dubbing** task, after Soundstage.
 
 Dubbing is its own page (`/dubbing/`), shown in the tab as Soundstage's is. It works
-in four steps on a step bar: **Source**, **Review lines**, **Dub** and **Result**. A
+in five steps: **Source**, **Review lines**, **Dub**, **Lip sync** (optional) and **Result**. A
 finished analysis opens Review lines and a finished dub opens Result. The top bar
 holds the project picker with **Load**, **New project**, **Save as…** and **Save project**, and says
 whether this server has a GPU. The page keeps its settings, the open session and step
@@ -410,7 +410,17 @@ enter the numbers under **Fresh takes for lines**, then dub again: every other
 line reuses its saved take. A mark clears when the line gets a take that passes,
 and it no longer applies once the line's start or translation is edited.
 
-## 4 · Result
+## 4 · Lip sync (optional)
+
+Open **Lip sync** on a completed video dub. Choose **Auto detect faces & speakers**,
+then select a speaker in the shot list to jump to their turn. Click a face box or
+use the face buttons to correct the match. **Off-screen / Skip** keeps the original
+picture, and **Restore automatic match** removes a manual choice. Review uncertain
+turns, including fitted speech that crosses a cut. Studio renders confirmed windows
+with **Confirm & render lip sync** and reuses unchanged rendered windows. The separate
+`.lipsync.mp4` preserves the dubbed audio, optional original soundtrack and subtitles.
+
+## 5 · Result
 
 The finished dub opens on **Result**: its name, when it was made and the settings it
 used, then the player with its lines beside it. An **Incomplete dub** banner names
@@ -424,7 +434,7 @@ picture.
 Below the player:
 
 - **Downloads**: the dubbed video, the MP3 mix and both subtitle files (also in Media).
-- **Lip sync** (Studio, video dubs): one-click automatic H3 lip sync. Studio detects shot cuts, matches speakers to visible faces using Gemini visual hints or local active-speaker detection, repaints the lower face to match the fitted dub, and exports a separate `.lipsync.mp4` keeping the approved audio and subtitles. Uncertain shots keep the original picture and can be optionally reviewed afterward; fixing a face match re-renders only that shot's windows.
+- **Lip sync** opens the face review. Once rendered, choose the lip-synced video in the player.
 - **Video with subtitles**: the burned-in export described under Dub, with its progress.
 - **Word timing**: how many lines light word by word, and **Repair word timing**
   (Studio), which aligns the latest dub again without new voices.

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 import time
 from typing import Any, Callable, Mapping, Sequence
 
@@ -251,7 +252,7 @@ def save_source_scan(cache_dir: Path, scan: SourceScan) -> Path:
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     destination = cache_dir / f"{scan.fingerprint}.json"
-    temporary = cache_dir / f"{scan.fingerprint}.{os.getpid()}.tmp"
+    temporary = cache_dir / f"{scan.fingerprint}.{uuid4().hex}.tmp"
     try:
         temporary.write_text(json.dumps(scan.to_dict(), ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, destination)
@@ -546,13 +547,17 @@ def run_yolo_mediapipe_scan(
         frame_idx = 0
         shot_cursor = 0
         next_track_id = 0
-        while True:
-            ok, frame_bgr = cap.read()
-            if not ok:
-                break
+        decoded_any = False
+        while cap.grab():
             if frame_idx % stride != 0:
                 frame_idx += 1
                 continue
+            ok, frame_bgr = cap.retrieve()
+            if not ok:
+                if decoded_any:
+                    break
+                raise H3Error("Could not read a sampled face-tracking frame.")
+            decoded_any = True
             check_cancelled()
             t = frame_idx / src_fps
             frame_idx += 1
@@ -677,7 +682,8 @@ def get_or_scan_source(
     if cache_dir is not None and not force_rescan:
         cached = load_source_scan(cache_dir, fp)
         if cached is not None and cached.cuts == tuple(sorted(c for c in cuts if 0.0 < c < cached.duration)):
-            if cached.backend != "none" or (scanner is None and _find_yolo_face_model(yolo_model_path) is None):
+            if cached.backend != "none" or (scanner is None and not os.getenv("H3_LR_ASD_DIR", "").strip()
+                                             and _find_yolo_face_model(yolo_model_path) is None):
                 return cached
     if scanner is not None:
         scan = scanner(video, cuts)
@@ -717,6 +723,7 @@ def assign_speakers_to_shots(
     *,
     visual_speakers: Sequence[dict[str, Any]] | None = None,
     manual_overrides: dict[tuple[int, str], int | None] | None = None,
+    spoken: dict[str, Any] | None = None,
     min_observations: int = DEFAULT_MIN_OBSERVATIONS,
     min_speaking_score: float = DEFAULT_MIN_SPEAKING_SCORE,
     min_margin: float = DEFAULT_MIN_MARGIN,
@@ -767,6 +774,25 @@ def assign_speakers_to_shots(
                 if isinstance(hint_time, (int, float)) and shot.start - 0.1 <= float(hint_time) <= shot.end + 0.1:
                     speaker_hints.setdefault(spk, []).append(hint)
 
+        # Shifted fitted speech may enter a shot where this speaker never spoke in the source.
+        # Keep it reviewable without treating dubbed timings as active-speaker evidence.
+        spillovers = {}
+        for key, span in (spoken or {}).items():
+            try:
+                index = int(key)
+                start, end = float(span[0]), float(span[1])
+            except (ValueError, TypeError, IndexError):
+                continue
+            if not 0 <= index < len(lines) or not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end):
+                continue
+            line = lines[index]
+            spk = line.get("speaker") if isinstance(line, dict) else None
+            if not spk or spk in speaker_turns:
+                continue
+            left, right = max(start, shot.start), min(end, shot.end)
+            if right - left >= 1 / 24:
+                spillovers.setdefault(spk, []).append((left, right))
+        speaker_turns.update(spillovers)
         unique_speakers = list(speaker_turns.keys())
         for spk in unique_speakers:
             key = (shot.index, spk)
@@ -784,12 +810,23 @@ def assign_speakers_to_shots(
                     )
                 else:
                     track = shot.track_by_id(chosen_id)
-                    center = (track.center_at(mid_time) or track.representative_center()) if track else None
+                    if track is None:
+                        assignments[key] = ShotSpeakerAssignment(shot.index, spk, "uncertain", None, None,
+                                                                 mid_time, "none", 0.0, "Selected track is missing.")
+                        continue
+                    center = track.center_at(mid_time) or track.representative_center()
                     assignments[key] = ShotSpeakerAssignment(
                         shot_index=shot.index, speaker=spk, status="manual", track_id=chosen_id,
                         face_center=center, reference_time=mid_time, source="manual", confidence=1.0,
                         reason="Selected by user.",
                     )
+                continue
+
+            if spk in spillovers:
+                assignments[key] = ShotSpeakerAssignment(
+                    shot.index, spk, "uncertain", None, None, mid_time, "none", 0.0,
+                    "Fitted dialogue crosses a cut. Choose a visible face or mark off-screen.",
+                )
                 continue
 
             # 2. Gemini visual_speaker hints
@@ -1023,7 +1060,7 @@ def _save_decision_cache(cache_dir: Path | None, fingerprint: str, cache: dict[s
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     destination = _decision_cache_path(cache_dir, fingerprint)
-    temporary = cache_dir / f"{fingerprint}.decisions.{os.getpid()}.tmp"
+    temporary = cache_dir / f"{fingerprint}.decisions.{uuid4().hex}.tmp"
     try:
         temporary.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, destination)

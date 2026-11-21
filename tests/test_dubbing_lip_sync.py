@@ -189,6 +189,31 @@ class LipSyncTests(unittest.TestCase):
             self.assertEqual((w.render_frames - 5) % 17, 0)
             self.assertGreaterEqual(w.render_frames, w.source_frames)
 
+    def test_contained_overlap_stays_out_of_active_windows(self):
+        data = {"lines": [{"speaker": "A"}, {"speaker": "B"}], "spoken": {"0": [0, 3], "1": [1, 1.5]}}
+        (player_folder(self.dub) / "alignment.json").write_text(json.dumps(data), encoding="utf-8")
+        for speaker in (None, "A"):
+            windows = plan_lip_sync_windows(self.dub, 4, speaker=speaker)
+            self.assertEqual([(w.active_start, w.active_end) for w in windows], [(0, 1), (1.5, 3)])
+
+    def test_fitted_speech_across_cut_is_reviewable(self):
+        from h3_app.dubbing.lip_sync_match import assign_speakers_to_shots
+
+        lines = [{"speaker": "A", "start": 0.5, "end": 1}]
+        spoken = {"0": [0.75, 1.5]}
+        (player_folder(self.dub) / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}))
+        face = FaceTrack(3, 1, 1.25, 1.25, (TrackObservation(1.25, (0.3, 0.25, 0.2, 0.2)),))
+        scan = SourceScan("test", 2, 640, 480, 24, (1,), (Shot(0, 0, 1), Shot(1, 1, 2, (face,))))
+        assignments = assign_speakers_to_shots(scan, lines, spoken=spoken)
+        self.assertEqual(assignments[(1, "A")].status, "uncertain")
+        windows = plan_lip_sync_windows(self.dub, 2, shot_cuts=[1], assignments=assignments, require_assignment=True)
+        self.assertEqual([w.shot_index for w in windows], [0])
+        plan = build_lip_sync_plan_payload(dub=self.dub, scan=scan, lines=lines, spoken=spoken,
+                                           assignments=assignments, windows=windows)
+        revise_lip_sync_plan(self.dub, plan, {(1, "A"): 3}, reset=set())
+        revised = load_lip_sync_plan(self.dub)
+        self.assertEqual([w["shot_index"] for w in revised["windows"]], [0, 1])
+
     def test_manual_transcript_visual_speakers_flow_to_matching_and_windows(self):
         from h3_app.dubbing.lip_sync_match import Shot, SourceScan, assign_speakers_to_shots
 
@@ -225,6 +250,35 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual([w.speaker for w in windows], ["A"])
         self.assertEqual(windows[0].face_target[:2], (320, 360))
 
+    def test_single_gemini_hint_covers_later_windows_in_same_shot_without_tracks(self):
+        from h3_app.dubbing.lip_sync_match import Shot, SourceScan, assign_speakers_to_shots
+
+        folder = player_folder(self.dub)
+        visual_speakers = [
+            {"speaker": "A", "time": 0.5, "visibility": "on_screen", "face_center": [0.25, 0.5]},
+        ]
+        lines = [
+            {"speaker": "A", "start": 0.2, "end": 1.2},
+            {"speaker": "A", "start": 3.0, "end": 4.0},
+        ]
+        (folder / "alignment.json").write_text(json.dumps({
+            "lines": lines,
+            "spoken": {"0": [0.2, 1.2], "1": [3.0, 4.0]},
+            "visual_speakers": visual_speakers,
+        }), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{"0": np.ones(1, dtype=np.float32), "1": np.ones(1, dtype=np.float32)})
+        scan = SourceScan(
+            fingerprint="fp", duration=5.0, fps=24.0, width=1280, height=720, cuts=(), backend="none",
+            shots=(Shot(index=0, start=0.0, end=5.0, tracks=()),),
+        )
+        assignments = assign_speakers_to_shots(scan, lines, visual_speakers=visual_speakers)
+        windows = plan_lip_sync_windows(
+            self.dub, video_duration=5.0, video_size=(1280, 720), assignments=assignments, require_assignment=True,
+        )
+        self.assertEqual(len(windows), 2)
+        self.assertEqual(windows[1].face_target[:2], (320, 360))
+        self.assertEqual(windows[1].face_target[2], (windows[1].active_start_frame + windows[1].active_end_frame) // 2)
+
     def test_review_edit_overrides_off_screen_hint_and_preserves_other_decisions(self):
         folder = player_folder(self.dub)
         lines = [
@@ -234,7 +288,8 @@ class LipSyncTests(unittest.TestCase):
         spoken = {"0": [0.3, 1.0], "1": [1.3, 1.9]}
         (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
         np.savez(folder / "alignment.npz", **{key: np.ones(1) for key in spoken})
-        face = FaceTrack(7, 0, 0.5, 0.5, (TrackObservation(0.5, (0.1, 0.1, 0.3, 0.3)),))
+        face = FaceTrack(7, 0, 0.5, 1.6, (TrackObservation(0.5, (0.1, 0.1, 0.3, 0.3)),
+                                          TrackObservation(1.6, (0.5, 0.1, 0.3, 0.3))))
         scan = SourceScan("fp", 2.0, 640, 480, 24.0, (), (Shot(0, 0.0, 2.0, (face,)),), "yolo-mediapipe")
         auto_decision = ShotSpeakerAssignment(0, "B", "matched", 7, (0.25, 0.25), 1.6, "gemini-decision", 0.9)
         assignments = {
@@ -250,6 +305,11 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(reviewed["assignments"][0]["status"], "manual")
         self.assertEqual(reviewed["assignments"][1], auto_decision.to_dict())
         self.assertEqual([window["speaker"] for window in reviewed["windows"]], ["A", "B"])
+
+        second = reviewed["windows"][1]
+        self.assertEqual(second["face_target"], [416, 120, round(1.6 * 24) - second["first_frame"]])
+        revise_lip_sync_plan(self.dub, reviewed, {}, reset={(0, "A")})
+        self.assertEqual(load_lip_sync_plan(self.dub)["assignments"][0], assignments[(0, "A")].to_dict())
 
         # An empty reviewed selection must stay empty even if auto detection could now find a match.
         with patch("h3_app.dubbing.lip_sync.get_or_scan_source") as scanner:
@@ -344,7 +404,8 @@ class LipSyncTests(unittest.TestCase):
                 "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=24:d=2.5",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=2.5",
                 "-i", str(srt),
-                "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0",
+                "-map", "0:v:0", "-map", "1:a:0", "-map", "1:a:0", "-map", "2:s:0",
+                "-metadata:s:a:1", "language=eng",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-c:s", "mov_text",
                 str(dub),
@@ -420,10 +481,13 @@ class LipSyncTests(unittest.TestCase):
             self.assertAlmostEqual(out_meta.duration, 2.5, delta=0.15)
             self.assertTrue(out_meta.has_audio)
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(assembled)],
+                ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type:stream_tags=language:stream_disposition=default", "-of", "json", str(assembled)],
                 capture_output=True, text=True, check=True,
             )
             stream_types = [s["codec_type"] for s in json.loads(probe.stdout)["streams"]]
             self.assertIn("video", stream_types)
-            self.assertIn("audio", stream_types)
+            audio = [s for s in json.loads(probe.stdout)["streams"] if s["codec_type"] == "audio"]
+            self.assertEqual(len(audio), 2)
+            self.assertEqual(audio[0]["disposition"]["default"], 1)
+            self.assertEqual(audio[1]["tags"]["language"], "eng")
             self.assertIn("subtitle", stream_types)

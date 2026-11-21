@@ -357,10 +357,15 @@ class StudioPageTests(PageTests):
         self.assertTrue(initial["ready"])
         self.assertIsNone(initial["output"])
 
+        from threading import Event
+        entered, release = Event(), Event()
         calls = []
 
         def fake_render(*, dub, manual_overrides, reviewed_plan, **_kwargs):
             self.assertEqual(dub, dub_video)
+            if _kwargs.get("gemini_api_key") == "session-test-key":
+                entered.set()
+                self.assertTrue(release.wait(5))
             calls.append((manual_overrides, reviewed_plan["revision"] if reviewed_plan else None))
             out = dub_video.with_name("clip.lipsync.mp4")
             out.write_bytes(b"mp4-lipsync")
@@ -382,16 +387,22 @@ class StudioPageTests(PageTests):
         with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
                 patch("h3_ui.dubbing.page.run_job", run_job), \
                 patch("h3_ui.dubbing.handlers.render_dub_lip_sync", fake_render):
-            res = self.client.post(f"{API}/lip-sync", json={"session": created.id})
+            res = self.client.post(f"{API}/lip-sync", json={"session": created.id, "api_key": "session-test-key"})
             self.assertEqual(res.status_code, 200)
+            try:
+                self.assertTrue(entered.wait(5))
+                for endpoint in ("lip-sync-overrides", "lip-sync-detect"):
+                    rejected = self.client.post(f"{API}/{endpoint}", json={"session": created.id})
+                    self.assertIn("current lip-sync operation", rejected.json()["error"])
+            finally:
+                release.set()
             done = self.wait("lip-sync", created.id)
             self.assertIsNone(done["error"])
             self.assertEqual(done["file"], "clip.lipsync.mp4")
 
             after = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]["result"]["lip_sync"]
             self.assertEqual(after["output"]["name"], "clip.lipsync.mp4")
-            self.assertEqual(len(after["review_shots"]), 1)
-            self.assertEqual(after["review_shots"][0]["speaker"], "speaker1")
+            self.assertEqual(after["report"]["uncertain_count"], 1)
 
             # Serve lip-synced output both inline and as download.
             dl = self.client.get(f"{API}/output", params={"session": created.id, "name": "clip.lipsync.mp4"})

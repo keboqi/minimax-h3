@@ -19,6 +19,7 @@ DUB_FAMILY = "Dub & Translate"
 # The result player's separate tracks sit beside the outputs in this folder, which Media skips.
 PLAYER_DIR = ".dub-player"
 PLAYER_FILE = "player.json"
+SCAN_CACHE_DIR = ".lip-sync-scans"
 
 
 @dataclass
@@ -129,6 +130,8 @@ def prune_players(output_dir: Path) -> None:
 
     root = Path(output_dir) / PLAYER_DIR
     for folder in root.iterdir() if root.is_dir() else ():
+        if folder.name == SCAN_CACHE_DIR:
+            continue
         if folder.is_dir() and not any((Path(output_dir) / f"{folder.name}{suffix}").exists()
                                        for suffix in (".mp3", ".mp4")):
             shutil.rmtree(folder, ignore_errors=True)

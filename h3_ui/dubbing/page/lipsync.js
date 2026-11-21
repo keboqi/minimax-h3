@@ -84,17 +84,38 @@ function shotItems(plan) {
     const shotTurns = turns.filter((t) => Math.min(t.end, shot.end) - Math.max(t.start, shot.start) >= 0.04);
     if (!shotAssignments.length) continue;
     for (const a of shotAssignments) {
-      const firstTurn = shotTurns.find((t) => t.speaker === a.speaker) || shotTurns[0];
+      const firstTurn = shotTurns.find((t) => t.speaker === a.speaker);
       items.push({
         shot,
         assignment: a,
         speaker: a.speaker,
+        seekTime: firstTurn
+          ? (Math.max(shot.start, firstTurn.start) + Math.min(shot.end, firstTurn.end)) / 2
+          : Math.min(shot.end, Math.max(shot.start, a.reference_time ?? shot.start)),
         line: firstTurn?.text || "",
         key: `${shot.index}:${a.speaker}`,
       });
     }
   }
   return items;
+}
+
+function assignmentLabel(shot, speaker) {
+  return shot && speaker
+    ? `Shot ${shot.index + 1} (${formatClock(shot.start)}–${formatClock(shot.end)}) · <strong>${esc(speakerLabel(speaker))}</strong>`
+    : "Choose a shot with a speaker to review.";
+}
+
+function assignmentButtons(shot, assignment, overrides) {
+  if (!shot || !assignment) return "";
+  const key = `${shot.index}:${assignment.speaker}`;
+  const button = (id, label, selected) => `<button type="button" class="btn btn-small ${selected ? "btn-primary" : ""}"
+    data-ls-assign="${esc(key)}" data-track-id="${id}">${label}</button>`;
+  const buttons = (shot.tracks || []).map((track, idx) =>
+    button(track.track_id, `Face #${idx + 1}`, track.track_id === assignment.track_id));
+  buttons.push(button("off", "Off-screen / Skip", assignment.status === "off_screen"));
+  if (Object.hasOwn(overrides || {}, key)) buttons.push(button("auto", "Restore automatic match", false));
+  return buttons.join("");
 }
 
 function boxAtTime(track, time) {
@@ -150,7 +171,10 @@ export function renderLipSync(app) {
   const uncertainCount = items.filter((it) => it.assignment.status === "uncertain").length;
   const confirmedCount = items.filter((it) => it.assignment.status === "matched" || it.assignment.status === "manual").length;
   const offCount = items.filter((it) => it.assignment.status === "off_screen").length;
-  const canRender = !!(app.boot.lip_sync && ls.ready && plan?.revision && !lsState.loading);
+  const unavailable = !ls.ready ? "Generate this dub again to save its fitted dialogue." : "";
+  const renderReason = unavailable || (!app.boot.lip_sync ? "Open this dub in Studio to render lip sync."
+    : plan && !plan.windows_count ? "No render windows. Review speaker assignments and choose a visible face." : "");
+  const canRender = !!(plan?.revision && !renderReason && !lsState.loading);
 
   return `
     <div class="ls-workspace stack-16">
@@ -165,7 +189,7 @@ export function renderLipSync(app) {
           </div>
           <span class="spacer"></span>
           <div class="row row-wrap">
-            <button type="button" class="btn btn-small" data-ls-action="detect" data-busy="lip-sync-detect">
+            <button type="button" class="btn btn-small" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!unavailable}">
               ${plan ? "Re-run auto detect" : "Auto detect faces & speakers"}
             </button>
             <button type="button" class="btn btn-small" data-ls-action="to-result">Skip to Result →</button>
@@ -183,6 +207,7 @@ export function renderLipSync(app) {
         </div>
       </section>
 
+      ${renderReason ? `<p class="muted small">${esc(renderReason)}</p>` : ""}
       ${lsState.loading ? '<div class="card card-pad muted">Loading lip-sync plan…</div>' : ""}
       ${lsState.error ? `<div class="card card-pad fail-text">${esc(lsState.error)}</div>` : ""}
 
@@ -191,7 +216,7 @@ export function renderLipSync(app) {
           <h2>Step 1 · Auto detect faces &amp; speaking speakers</h2>
           <p class="muted">Runs <code>face_yolov8m.pt</code> face tracking, aligns speakers using your Gemini <code>visual_speakers</code> hints, and uses MediaPipe mouth-motion (MAR) as backup. No H3 video rendering starts until you review and confirm.</p>
           <div class="row row-wrap">
-            <button type="button" class="btn btn-primary" data-ls-action="detect" data-busy="lip-sync-detect">
+            <button type="button" class="btn btn-primary" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!unavailable}">
               Auto detect faces &amp; speakers
             </button>
             <button type="button" class="btn" data-ls-action="to-result">Skip to Result</button>
@@ -213,21 +238,11 @@ export function renderLipSync(app) {
                   <button type="button" class="btn btn-small" data-ls-action="prev-shot">← Prev shot</button>
                   <button type="button" class="btn btn-small" data-ls-action="next-shot">Next shot →</button>
                   <span class="muted small" id="ls-active-info">
-                    ${activeItem ? `Shot ${activeItem.shot.index + 1} (${formatClock(activeItem.shot.start)}–${formatClock(activeItem.shot.end)}) · <strong>${esc(speakerLabel(activeItem.speaker))}</strong>` : "Play the video and click any face rectangle to align."}
+                    ${assignmentLabel(activeItem?.shot, activeItem?.speaker)}
                   </span>
                 </div>
-                <div class="row row-wrap" id="ls-quick-buttons">
-                  ${activeItem ? `
-                    ${(activeItem.shot.tracks || []).map((t, idx) => `
-                      <button type="button" class="btn btn-small ${activeItem.assignment.track_id === t.track_id && activeItem.assignment.status !== "off_screen" ? "btn-primary" : ""}"
-                        data-ls-assign="${esc(activeItem.key)}" data-track-id="${t.track_id}">
-                        Face #${idx + 1}
-                      </button>`).join("")}
-                    <button type="button" class="btn btn-small ${activeItem.assignment.status === "off_screen" ? "btn-primary" : ""}"
-                      data-ls-assign="${esc(activeItem.key)}" data-track-id="off">
-                      Off-screen / Skip
-                    </button>
-                  ` : ""}
+                <div class="row row-wrap" id="ls-quick-buttons" data-key="${esc(activeItem?.key || "")}">
+                  ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides)}
                 </div>
               </div>
             </div>
@@ -283,7 +298,7 @@ export function renderLipSync(app) {
                   ? "Skipped (off-screen)"
                   : trackIdx >= 0 ? `Face #${trackIdx + 1} · ${it.assignment.source}` : it.assignment.reason || it.assignment.source;
                 return `
-                  <button type="button" class="ls-shot-row ${selected ? "selected" : ""}" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.shot.start}">
+                  <button type="button" class="ls-shot-row ${selected ? "selected" : ""}" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.seekTime}">
                     <div class="row align-center">
                       <strong>Shot ${it.shot.index + 1}</strong>
                       <span class="mono muted">${formatClock(it.shot.start)}–${formatClock(it.shot.end)}</span>
@@ -317,9 +332,8 @@ function drawOverlay(app) {
   });
 
   const t = Number(video.currentTime) || 0;
-  const shot = (plan.shots || []).find((s) => t >= s.start - 0.05 && t < s.end + 0.05)
-    || (plan.shots || []).find((s) => s.index === lsState.selectedShot);
-  const turn = (plan.turns || []).find((ln) => t >= ln.start && t <= ln.end) || null;
+  const shot = (plan.shots || []).find((s) => t >= s.start && t < s.end);
+  const turn = (plan.turns || []).find((ln) => t >= ln.start && t < ln.end) || null;
   if (subtitle) {
     if (turn) {
       subtitle.hidden = false;
@@ -328,15 +342,22 @@ function drawOverlay(app) {
       subtitle.hidden = true;
     }
   }
+  const aMap = assignmentMap(plan);
+  const selected = shot?.index === lsState.selectedShot ? lsState.selectedSpeaker : null;
+  const activeAssign = shot && (aMap.get(`${shot.index}:${selected}`) || aMap.get(`${shot.index}:${turn?.speaker}`)
+    || (plan.assignments || []).find((a) => a.shot_index === shot.index));
+  const activeSpeaker = activeAssign?.speaker;
+  const key = activeSpeaker ? `${shot.index}:${activeSpeaker}` : "";
+  const buttons = document.getElementById("ls-quick-buttons");
+  if (buttons && buttons.dataset.key !== key) {
+    buttons.dataset.key = key;
+    buttons.innerHTML = assignmentButtons(shot, activeAssign, lsState.data.overrides);
+    document.getElementById("ls-active-info").innerHTML = assignmentLabel(shot, activeSpeaker);
+  }
   if (!shot) {
     if (overlay.childElementCount) overlay.textContent = "";
     return;
   }
-
-  const aMap = assignmentMap(plan);
-  const activeSpeaker = turn?.speaker || (shot.index === lsState.selectedShot ? lsState.selectedSpeaker : null)
-    || (plan.assignments || []).find((a) => a.shot_index === shot.index)?.speaker || null;
-  const activeAssign = activeSpeaker ? aMap.get(`${shot.index}:${activeSpeaker}`) : null;
   const activeTrackId = activeAssign && activeAssign.status !== "off_screen" ? activeAssign.track_id : null;
 
   // Reuse existing box buttons keyed by shot/track so clicks complete across animation frames.
@@ -351,9 +372,8 @@ function drawOverlay(app) {
     const [x, y, w, h] = b;
     const isSpeaking = activeTrackId !== null && track.track_id === activeTrackId;
     const label = isSpeaking
-      ? `${speakerLabel(activeSpeaker)} · Speaking`
+      ? `${speakerLabel(activeSpeaker)} · Assigned`
       : `Face #${idx + 1}`;
-    const assignKey = activeSpeaker ? `${shot.index}:${activeSpeaker}` : "";
     const boxId = `${shot.index}:${track.track_id}`;
     seen.add(boxId);
     let btn = existing.get(boxId);
@@ -372,13 +392,14 @@ function drawOverlay(app) {
     btn.style.top = `${(y * 100).toFixed(2)}%`;
     btn.style.width = `${(w * 100).toFixed(2)}%`;
     btn.style.height = `${(h * 100).toFixed(2)}%`;
-    if (assignKey) {
-      btn.dataset.lsAssign = assignKey;
+    if (key) {
+      btn.dataset.lsAssign = key;
       btn.dataset.trackId = String(track.track_id);
     } else {
       delete btn.dataset.lsAssign;
       delete btn.dataset.trackId;
     }
+    btn.disabled = !activeSpeaker;
     btn.title = `Click to assign ${speakerLabel(activeSpeaker)} to Face #${idx + 1}`;
     const tag = btn.firstElementChild;
     if (tag && tag.textContent !== label) tag.textContent = label;
@@ -434,7 +455,7 @@ async function saveOverride(app, key, trackId) {
     const resp = await api.post("lip-sync-overrides", {
       ...target,
       plan_revision: revision,
-      overrides: [{shot_index: shotIndex, speaker, track_id: trackId}],
+      overrides: [{shot_index: shotIndex, speaker, ...(trackId === "auto" ? {reset: true} : {track_id: trackId})}],
     });
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     lsState.data = resp;
@@ -454,7 +475,7 @@ async function saveOverride(app, key, trackId) {
       if (nextVideo.readyState >= 1) restore();
       else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
     }
-    toast(trackId === null ? `Shot ${shotIndex + 1} marked off-screen.` : `Shot ${shotIndex + 1} aligned to Face.`);
+    toast(trackId === "auto" ? "Automatic assignment restored." : trackId === null ? `Shot ${shotIndex + 1} marked off-screen.` : `Shot ${shotIndex + 1} aligned to Face.`);
   } catch (error) {
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     toast(error.message, {error: true});
@@ -482,7 +503,7 @@ export function bindLipSync(app) {
       app.render();
       const video = document.getElementById("ls-video");
       if (video) {
-        const seek = () => { video.currentTime = jumpTime + 0.08; drawOverlay(app); };
+        const seek = () => { video.currentTime = jumpTime; drawOverlay(app); };
         if (video.readyState >= 1) seek();
         else video.addEventListener("loadedmetadata", seek, {once: true});
       }
@@ -491,7 +512,7 @@ export function bindLipSync(app) {
     const assign = event.target.closest("[data-ls-assign]");
     if (assign) {
       const raw = assign.dataset.trackId;
-      await saveOverride(app, assign.dataset.lsAssign, raw === "off" ? null : Number(raw));
+      await saveOverride(app, assign.dataset.lsAssign, raw === "auto" ? "auto" : raw === "off" ? null : Number(raw));
       return;
     }
     const btn = event.target.closest("[data-ls-action]");
@@ -504,7 +525,7 @@ export function bindLipSync(app) {
       stopOverlayLoop();
       app.go("dub");
     } else if (action === "detect") {
-      if (!lsState.saving) app.startRun("lip-sync-detect", {...reviewTarget(app), force: !!lsState.data?.plan});
+      if (!lsState.saving) app.startRun("lip-sync-detect", {...reviewTarget(app), api_key: app.apiKey, force: !!lsState.data?.plan});
     } else if (action === "render") {
       const target = reviewTarget(app);
       const revision = lsState.data?.plan?.revision;
@@ -512,6 +533,7 @@ export function bindLipSync(app) {
       app.startRun("lip-sync", {
         ...target,
         plan_revision: revision,
+        api_key: app.apiKey,
         strength: lsState.strength,
         feather: lsState.feather,
       });
@@ -531,7 +553,7 @@ export function bindLipSync(app) {
       app.render();
       const video = document.getElementById("ls-video");
       if (video) {
-        const seek = () => { video.currentTime = next.shot.start + 0.08; drawOverlay(app); };
+        const seek = () => { video.currentTime = next.seekTime; drawOverlay(app); };
         if (video.readyState >= 1) seek();
         else video.addEventListener("loadedmetadata", seek, {once: true});
       }

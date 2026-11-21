@@ -1,4 +1,4 @@
-// Step 4, Result: the latest dub's player with its lines, downloads, subtitles export, word timing and share.
+// Step 5, Result: the latest dub's player with its lines, downloads, subtitles export, word timing and share.
 // The player is the same one the share page plays; the page draws its own controls over it.
 
 import {api} from "./api.js";
@@ -7,19 +7,6 @@ import {copyText, esc, icon, plural, size, toast} from "./ui.js";
 let mounted = {key: null, node: null};
 let bindPlayers = null;
 const playerRequests = new WeakMap();
-let lipSyncOverrides = {video: null, picks: {}};
-
-function overridesFor(video) {
-  if (lipSyncOverrides.video !== video) {
-    lipSyncOverrides = {video, picks: {}};
-  }
-  return lipSyncOverrides.picks;
-}
-
-function shotKey(shot) {
-  return `${shot.shot_index}:${shot.speaker}`;
-}
-
 function chips(result) {
   const s = result.settings || {};
   const list = [s.timing, s.preset, s.voice_mode, s.word_timing ? "Word timing" : null].filter(Boolean);
@@ -343,18 +330,6 @@ export function bindResult(app) {
       showExportChoice(app);
       return;
     }
-    const pick = event.target.closest("[data-lip-sync-pick]");
-    if (pick && app.session.result?.lip_sync) {
-      const picks = overridesFor(app.session.result.lip_sync.video);
-      const key = pick.dataset.lipSyncPick;
-      const raw = pick.dataset.trackId;
-      picks[key] = raw === "off" ? null : Number(raw);
-      for (const btn of document.querySelectorAll(`[data-lip-sync-pick="${key}"]`)) {
-        const val = btn.dataset.trackId === "off" ? null : Number(btn.dataset.trackId);
-        btn.setAttribute("aria-pressed", String(picks[key] === val));
-      }
-      return;
-    }
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const action = target.dataset.action;
@@ -369,20 +344,6 @@ export function bindResult(app) {
     } else if (action === "jump-failed") jumpTo(session.result.failed[0]);
     else if (action === "export") app.startRun("export", {session: session.id, subtitles: exportChoice(app)});
     else if (action === "align") app.startRun("align", {session: session.id});
-    else if (action === "lip-sync") app.startRun("lip-sync", {session: session.id});
-    else if (action === "lip-sync-apply") {
-      const ls = session.result?.lip_sync;
-      const picks = ls ? overridesFor(ls.video) : {};
-      const overrides = Object.entries(picks).map(([key, trackId]) => {
-        const sep = key.indexOf(":");
-        return {shot_index: Number(key.slice(0, sep)), speaker: key.slice(sep + 1), track_id: trackId};
-      });
-      if (!overrides.length) {
-        toast("Pick a face or Off-screen for at least one shot first.", {error: true});
-        return;
-      }
-      app.startRun("lip-sync", {session: session.id, overrides});
-    }
     else if (action === "interrupt") {
       try {
         toast((await api.post("interrupt", {kind: target.dataset.kind, session: session.id})).message);

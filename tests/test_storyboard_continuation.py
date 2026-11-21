@@ -134,10 +134,14 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertFalse(torch.any(composite[3]))
         # Active detected frame 1: upper face (forehead y=25) is untouched; mouth (y=82, x=64) is masked.
         self.assertEqual(float(composite[1, 25, 64]), 0.0)
-        self.assertGreater(float(composite[1, 82, 64]), 0.9)
+        self.assertAlmostEqual(float(composite[1, 82, 64]), 0.5)
         self.assertEqual(float(denoise[1, 82, 64]), 1.0)
         # Denoise mask is strictly wider than composite mask.
         self.assertGreater(int((denoise[1] > 0.5).sum()), int((composite[1] > 0.5).sum()))
+        _, faded = build(crops, {"face_rect": transform["face_rect"]}, active_start=0, active_end=6)
+        torch.testing.assert_close(faded[:, 82, 64], torch.tensor([1/3, 2/3, 1., 1., 2/3, 1/3]))
+        _, single = build(crops, {"face_rect": transform["face_rect"]}, active_start=2, active_end=3)
+        self.assertEqual(float(single[2, 82, 64]), 1.0)
         # All absent raises clearly.
         with self.assertRaisesRegex(ValueError, "No detected face frames"):
             build(crops, {**transform, "absent": [True] * 6})
