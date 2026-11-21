@@ -10,7 +10,6 @@ from typing import Generator
 from h3_app.catalog import (
     COMFY_UPSCALE_OPTIONS,
     H3_REGENERATE_MODELS,
-    LIGHTX2V_8STEP_TURBO,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
 )
@@ -18,7 +17,6 @@ from h3_app.policy import upscale_target_dimensions
 from h3_app.progress import ProgressCallback
 from h3_app.jobs import CURRENT_JOB, record_failure
 from h3_app.provenance import write_snapshot
-from h3_app.refinement import FACE_REFINE_STEPS
 from h3_app.status import StageTimings, progress_status
 
 from .preparation import PreparedH3
@@ -94,7 +92,6 @@ def refine_faces(
     yield GenerationUpdate(None, progress_status("Checking face refine models", started=started))
     downloaded = [
         services.models.ensure_model_keys(("face_yolov8m",)),
-        services.models.ensure_turbo_lora(prepared.models, LIGHTX2V_8STEP_TURBO, request.media.mode),
         services.models.ensure_base_video_vae(prepared.models),
     ]
     if any(downloaded):
@@ -127,7 +124,7 @@ def refine_faces(
             yield GenerationUpdate(None, progress_status(
                 stage, started=started, completed_nodes=completed, total_nodes=total,
                 step=step, step_total=step_total,
-                configured_steps=FACE_REFINE_STEPS if step is not None else None,
+                configured_steps=prepared.plan.effective.sampling.steps if step is not None else None,
                 detail=f"Face refine job `{prompt_id}`",
             ))
         refined = services.media.resolve_output(

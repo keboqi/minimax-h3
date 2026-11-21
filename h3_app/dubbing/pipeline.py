@@ -43,7 +43,8 @@ from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
 from . import gemini, moss, nemotron, refinement, segments as segment_tools, session as sessions, tools, tools_worker
-from .results import DUB_FAMILY, PLAYER_DIR, Player, load_player, prune_players as _prune_players, save_player
+from .alignment import FITTED_AUDIO_RATE as RATE, open_alignment
+from .results import DUB_FAMILY, PLAYER_DIR, Player, load_player, player_folder, prune_players as _prune_players, save_player
 from .segments import TARGET_LANGUAGES as TARGET_LANGUAGES
 from .text import (
     DEFAULT_REWRITE_STYLE, DEFAULT_STYLE, REWRITE_STYLES, SAME_LANGUAGE, SUBTITLE_MODES,
@@ -67,7 +68,6 @@ from .voices import (
     speaker_settings, speaker_settings_available,
 )
 
-RATE = 44100
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
 PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
 PIPELINE_NEMOTRON = "Local: Nemotron Transcribe + Hy-MT"
@@ -1659,10 +1659,8 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
     output_dir = (runtime.outputs_dir / "dubbing").resolve()
     if output.resolve().parent != output_dir or not output.is_file():
         raise H3Error("Generate a dub first; its output files must still exist.")
-    folder = output_dir / PLAYER_DIR / output.stem
     try:
-        saved = json.loads((folder / "alignment.json").read_text(encoding="utf-8"))
-        with np.load(folder / "alignment.npz", allow_pickle=False) as archive:
+        with open_alignment(output) as (saved, archive):
             clips = {int(index): archive[index] for index in archive.files}
     except (OSError, ValueError, KeyError) as exc:
         raise H3Error("This dub has no saved alignment audio. Generate the dub once to enable this button.") from exc
@@ -1712,5 +1710,5 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
                 if completed == len(expected) else
                 f" Newly aligned this run: {max(0, completed - before)}; already aligned: {before}. "
                 "Missing tracks still use plain subtitles. Generating the dub again is not required to apply a successful repair.")
-    save_player(folder, player)
+    save_player(player_folder(output), player)
     yield WordAlignment(player, message)

@@ -132,7 +132,7 @@
     [5, "ltx25_model", "Generation finishing LTX model", "choice", {when: () => app.boot.postprocess_kinds.ltx.includes(post_()), hint: "Used for H3 finishing independently of the LTX generation workspace, with the H3 generation prompt. The gated 2x IC-LoRA downloads on first use."}],
     [5, "upscale_force_offload", "Unload H3 models before upscaling", "bool", {when: () => app.boot.postprocess_kinds.ai.includes(post_()), hint: "Reduces peak VRAM at the cost of reloading H3 for the next generation."}],
     [5, null, "Face refine", "head"],
-    [5, "face_refine", "Refine small faces after generation", "bool", {hint: "Turn on for wide shots with distant faces. Re-renders the largest face up close and blends it back before any upscaling, adding an extra H3 pass per video. The detector and 8-step LoRA download on first use."}],
+    [5, "face_refine", "Refine small faces after generation", "bool", {hint: "Turn on for wide shots with distant faces. Re-renders the largest face up close and blends it back before any upscaling, adding an extra pass with the selected H3 sampler and LoRA. The face detector downloads on first use."}],
     [5, "face_refine_strength", "Face refine strength", "num", {when: () => v("face_refine"), range: () => app.boot.limits.face_refine_strength.join(" – "), hint: "How much of the face H3 may redraw. Higher fixes more but can drift from the original face."}],
 
     [6, "slots", "Images to upscale", "multi", {store: "input", options: () => app.boot.choices.input_slots, hint: "Fits smaller images upward into a target frame before generation. Aspect ratio is preserved and images already at or beyond the frame are not downscaled."}],

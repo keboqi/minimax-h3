@@ -114,11 +114,13 @@ audible.
   returns timed lines with speaker labels and their translations. The key comes
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
 
-- **Gemini by hand** runs the same request yourself, in Gemini or any chat model,
-  so you can tune the prompt further. No API key is needed. **Copy prompt** copies
-  it with your languages, **Translation style** and **Translation notes**.
-  **Prepare audio** makes an MP3 to attach (the vocals when separating in
-  Studio, and that separation is reused by the analysis). Paste the JSON reply in
+- **Gemini by hand** runs the request yourself in Gemini or a compatible chat model.
+  No API key is needed. **Copy prompt** includes your languages, **Translation style**
+  and **Translation notes**. Use the same prompt with either the original video and
+  its soundtrack, or audio from that source. For video, the prompt asks for visual
+  speaker hints alongside the timed dialogue. Valid hints are saved with the source
+  transcript. **Prepare audio** makes an MP3 (the vocals when separating in Studio,
+  and that separation is reused by the analysis). Paste the JSON reply in
   **Reply**, then **Analyze source**; the lines are checked before anything slow
   starts. Timestamps must come from this file's audio, so keep them exact when
   editing the prompt. Nothing here calls a model: lines the reply left untranslated

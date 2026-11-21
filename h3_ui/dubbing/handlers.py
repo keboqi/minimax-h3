@@ -613,14 +613,14 @@ class DubbingHandlers:
 
     def source_prompt(self, target_language, translate, notes, style=pipeline.DEFAULT_STYLE, shorten_lines=False,
                       readings=False):
-        """The prompt to send a chat model with the audio."""
+        """The prompt to send a chat model with audio or video."""
         target = str(target_language or "").strip()
         if translate and not target:
             raise gr.Error("Choose the language to dub into.")
         return dub_gemini.transcribe_prompt(target_language=target, translate=bool(translate),
                                             ignore_non_speech=True, notes=str(notes or ""),
                                             style=pipeline.style_text(style), shorten=bool(shorten_lines),
-                                            readings=bool(readings))
+                                            readings=bool(readings), accept_video=True)
 
     def prepare_speech(self, source, library, separate, separator_model, reuse, target_language):
         """Outputs: audio file, status. Studio attaches the vocals; Workshop the soundtrack, or stems it has."""

@@ -14,7 +14,7 @@ from h3_app.catalog import (
 )
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig
-from h3_app.refinement import FACE_REFINE_STEPS, resolve_face_refinement
+from h3_app.refinement import resolve_face_refinement
 
 REQUIRED_FACE_REFINE_NODES = frozenset({
     "H3FaceTrackCrop", "H3InjectVideoLatent", "H3PerFrameDenoise", "H3FaceStitch",
@@ -34,7 +34,7 @@ def build_h3_face_refine_graph(
 ) -> dict[str, Any]:
     """``output_prefix`` keeps the refined clip beside its source, such as inside a Remake project."""
     from .h3 import add_h3_stage_offload, h3_conditioning_cache_key
-    from .refinement import add_refinement_stack
+    from .refinement import add_partial_refinement_schedule, add_refinement_stack
 
     config = resolve_face_refinement(refinement, models)
     settings = config["settings"]
@@ -94,13 +94,10 @@ def build_h3_face_refine_graph(
     if settings["stage_model_offload"]:
         conditioning_ref, latent, _, _ = add_h3_stage_offload(graph, conditioning_ref, latent)
     guider = graph.add("BasicGuider", model=Graph.out(per_frame, 2), conditioning=conditioning_ref)
-    # Strength is BasicScheduler's denoise. The pack warns that SplitSigmas stays at too
-    # high a sigma after H3's shift and rewrites the frame.
-    sigmas = graph.add("BasicScheduler", model=schedule_model, scheduler="simple",
-                       steps=FACE_REFINE_STEPS, denoise=float(strength))
+    sampler, sigmas = add_partial_refinement_schedule(graph, schedule_model, config, strength)
     sampled = graph.add(
         "SamplerCustomAdvanced", noise=Graph.out(graph.add("RandomNoise", noise_seed=int(seed))),
-        guider=Graph.out(guider), sampler=Graph.out(graph.add("KSamplerSelect", sampler_name="er_sde")),
+        guider=Graph.out(guider), sampler=Graph.out(sampler),
         sigmas=Graph.out(sigmas), latent_image=latent,
     )
     video_latent = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(sampled))

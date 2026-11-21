@@ -179,8 +179,8 @@ function transcription(app) {
       ${manual ? `
         <div class="sub stack-12">
           <strong>Run it yourself in a chat model</strong>
-          <p class="muted small">Copy the prompt into Gemini or any chat model and attach the audio. Your languages,
-            style and notes are in it. Keep timestamps exact if you tune it. Nothing here calls a model.</p>
+          <p class="muted small">Copy the prompt into Gemini or a compatible chat model. Attach either the original
+            video with its soundtrack for visual speaker hints, or audio from the same source.</p>
           <div class="row row-wrap">
             <button type="button" class="btn btn-small" data-action="copy-source-prompt">Copy prompt</button>
             <button type="button" class="btn btn-small" data-action="prepare-audio" data-busy="analyze">Prepare audio</button>
@@ -405,7 +405,7 @@ export function bindSource(app) {
       try {
         const {prompt} = await api.post("source-prompt", {target_language: s.target_language, translate: s.translate,
           notes: s.notes, style: s.style, shorten_lines: s.shorten_lines, readings: s.readings});
-        toast(await copyText(prompt) ? "Prompt copied. Paste it with the audio in your chat model." : "Copy failed.");
+        toast(await copyText(prompt) ? "Prompt copied. Attach either the original video or the audio." : "Copy failed.");
       } catch (error) {
         toast(error.message, {error: true});
       }

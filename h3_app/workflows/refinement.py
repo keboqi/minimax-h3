@@ -5,9 +5,29 @@ from h3_models import MODEL_SPECS
 
 from h3_app.catalog import (
     H3_REGENERATE_MODELS, H3_CONDITIONING_CACHE_NODE, H3_SEMANTIC_BRIDGE_NODE,
-    REFINEMENT_LORA_SETTINGS,
+    LARRY_TURBO_SAMPLER_NODE, PIKA_FLEX, PIKA_FLEX_SIGMAS, REFINEMENT_LORA_SETTINGS,
 )
-from h3_app.policy import resolve_sol_policy
+from h3_app.policy import resolve_sol_policy, turbo_sampler_name, turbo_sigma_shifts, turbo_uses_custom_nodes
+
+
+def add_partial_refinement_schedule(graph, schedule_model, config, strength):
+    """Sample from encoded source frames with the chosen H3 sampler and denoise strength."""
+    variant, lora = config["variant"], config["lora"]
+    if lora and turbo_uses_custom_nodes(variant):
+        sampler = graph.add(LARRY_TURBO_SAMPLER_NODE)
+    else:
+        sampler = graph.add("KSamplerSelect", sampler_name=turbo_sampler_name(variant, lora))
+    if variant == PIKA_FLEX:
+        # Scale in unshifted time, then reapply H3's video shift to keep all six steps.
+        shift, _ = turbo_sigma_shifts(variant, lora)
+        ladder = [float(value) for value in PIKA_FLEX_SIGMAS.split(",")]
+        adjusted = [shift * strength * sigma / (shift - (shift - 1) * (1 - strength) * sigma)
+                    for sigma in ladder]
+        sigmas = graph.add("ManualSigmas", sigmas=", ".join(f"{value:.8g}" for value in adjusted))
+    else:
+        sigmas = graph.add("BasicScheduler", model=schedule_model, scheduler=config["settings"]["scheduler"],
+                           steps=config["steps"], denoise=float(strength))
+    return sampler, sigmas
 
 
 def add_refinement_stack(graph, models, config, width, height):

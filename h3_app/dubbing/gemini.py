@@ -13,9 +13,9 @@ from . import segments as segment_tools
 
 TRANSCRIBE_PROMPT = (
     "You are a professional interpreter and diarization analyst. Transcribe every line of speech in this "
-    "audio{translate_clause} {non_speech}"
+    "{media}{translate_clause} {non_speech}"
     "Conversations can switch speakers without a pause: detect each change by voice (pitch, timbre, accent, "
-    "cadence) and never put two speakers in one segment. "
+    "cadence) and never put two speakers in one segment. {speaker_cues}"
     "Return JSON only, with two keys. \"speakers\": an array in order of first appearance, each with \"id\" "
     "(speaker1, speaker2, ...) and \"description\" (at most 12 words: gender, approximate age, tone). "
     "\"segments\": an array of utterances, each with \"start\" and \"end\" (mm:ss.mmm with milliseconds), "
@@ -24,6 +24,22 @@ TRANSCRIBE_PROMPT = (
     "Timestamps cut the audio for voice cloning, so they must be exact: start at the first syllable, end at "
     "the last, with no padding and no rounding to whole seconds. Keep each segment under about 12 seconds, "
     "splitting long speeches at sentence ends.{style}{notes}{shorten}{readings}"
+)
+VIDEO_SPEAKER_CUES = (
+    "If the attachment is a video, use its soundtrack and visible speaking activity together to identify "
+    "who is talking. Keep the same speaker ID across cuts, angle changes and off-screen turns. A visible "
+    "listener or the largest face may be someone other than the speaker. "
+)
+VISUAL_SPEAKER_PROMPT = (
+    '\n\nFor a video attachment only, also include an optional "visual_speaker" object inside each segment. '
+    'This is an observation at a reference frame, not a claim about the whole segment. Use "time" '
+    '(mm:ss.mmm on the original video, between the segment\'s start and end) and "visibility". '
+    'Use "on_screen" only if you can identify the visible person actually speaking at that time. '
+    'For "on_screen", also give "face_center": [x, y], normalized from 0 to 1 relative to the full frame, '
+    'with the origin at the top left. Pick a frame where the speaking face is clearly visible. '
+    'Use "off_screen" if the speaker is known to be outside the frame, or "uncertain" if you cannot tell. '
+    'Omit "face_center" for both of those cases. For an audio-only attachment, omit "visual_speaker" entirely. '
+    'Use the soundtrack to time the speech and never round line times to the sampled video frames.'
 )
 NON_SPEECH = ("Ignore laughter, shouts, singing, crowd noise and background voices that are not clear "
               "dialogue. ")
@@ -107,8 +123,9 @@ def _line_request(kind: str, texts: list[str], seconds: list[float] | None, *, t
 
 
 def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speech: bool, notes: str = "",
-                      style: str = "", shorten: bool = False, readings: bool = False) -> str:
-    """The prompt sent with the audio, also what a person copies into a chat model.
+                      style: str = "", shorten: bool = False, readings: bool = False,
+                      accept_video: bool = False) -> str:
+    """The transcription prompt. The copied version can also use a video attachment.
 
     A dub in the same language only transcribes: its lines are copied or rewritten afterwards.
     ``shorten`` asks Gemini to shorten translations that would clearly run long, ``readings`` for pinyin
@@ -117,6 +134,8 @@ def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speec
     notes = str(notes or "").strip()
     translate = translate and target_language != segment_tools.SAME_LANGUAGE
     return TRANSCRIBE_PROMPT.format(
+        media="attached audio or video" if accept_video else "audio",
+        speaker_cues=VIDEO_SPEAKER_CUES if accept_video else "",
         translate_clause=f" and translate it into {target_language} with wording that "
                          "can be said in the same time as the original line, since it is dubbed over it."
         if translate else " in its original language without translating it.",
@@ -126,7 +145,7 @@ def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speec
         notes=f" Translation notes: {notes}" if translate and notes else "",
         shorten=SHORTEN_TRANSCRIBE if translate and shorten else "",
         readings=READINGS_TRANSCRIBE if translate and readings else "",
-    )
+    ) + (VISUAL_SPEAKER_PROMPT if accept_video else "")
 
 
 def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, translate: bool,

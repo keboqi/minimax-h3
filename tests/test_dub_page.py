@@ -217,6 +217,9 @@ class WorkshopPageTests(PageTests):
         prompt = self.client.post(f"{API}/source-prompt", json={"target_language": pipeline.SAME_LANGUAGE,
                                                                 "translate": True}).json()["prompt"]
         self.assertIn("without translating it", prompt)
+        self.assertIn("attached audio or video", prompt)
+        self.assertIn('For an audio-only attachment, omit "visual_speaker"', prompt)
+        self.assertIn('"face_center": [x, y]', prompt)
         copied = self.client.post(f"{API}/lines-prompt", json={"session": created.id, "picked": [],
                                                                "target_language": pipeline.SAME_LANGUAGE,
                                                                "style": "Children"}).json()

@@ -7,6 +7,7 @@ times in seconds. ``dub`` False keeps the original voice for that line.
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any, Iterable
 
@@ -69,6 +70,27 @@ def speaker_id(value: Any, fallback: int = 1) -> str:
     return f"speaker{int(match.group(1))}" if match else text[:40]
 
 
+def _visual_speaker(value: Any, start: float, end: float) -> dict | None:
+    """A frame reference for the line's speaker, when a video reply provides one."""
+    if not isinstance(value, dict):
+        return None
+    time = parse_time(value.get("time"))
+    visibility = value.get("visibility")
+    if time is None or not math.isfinite(time) or not start <= time <= end:
+        return None
+    if visibility not in ("on_screen", "off_screen", "uncertain"):
+        return None
+    hint = {"time": round(time, 3), "visibility": visibility}
+    if visibility == "on_screen":
+        center = value.get("face_center")
+        if not isinstance(center, list) or len(center) != 2 or not all(
+            type(point) in (int, float) and 0 <= point <= 1 for point in center
+        ):
+            return None
+        hint["face_center"] = center.copy()
+    return hint
+
+
 def normalize(segments: Iterable[dict]) -> list[dict]:
     """Sorted, valid segments with consistent keys; unreadable or empty rows are dropped."""
     cleaned = []
@@ -81,14 +103,18 @@ def normalize(segments: Iterable[dict]) -> list[dict]:
         translation = str(raw.get("translation", raw.get("translated_text", "")) or "").strip()
         if start is None or end is None or not (source or translation):
             continue
-        cleaned.append({
+        segment = {
             "start": round(start, 3),
             "end": round(max(end, start + MIN_SEGMENT_SECONDS), 3),
             "speaker": speaker_id(raw.get("speaker")),
             "source": source,
             "translation": translation,
             "dub": bool(raw.get("dub", True)),
-        })
+        }
+        hint = _visual_speaker(raw.get("visual_speaker"), segment["start"], segment["end"])
+        if hint is not None:
+            segment["visual_speaker"] = hint
+        cleaned.append(segment)
     cleaned.sort(key=lambda segment: (segment["start"], segment["end"]))
     return cleaned
 

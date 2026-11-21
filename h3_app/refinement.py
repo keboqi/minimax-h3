@@ -1,7 +1,7 @@
 """Resolve the shared native H3 controls for existing-video refinement."""
 
 from h3_app.catalog import (
-    UI_DEFAULTS, H3_LATENT_UPSCALE_STANDARD, H3_REGENERATE_MODELS, LIGHTX2V_8STEP_TURBO,
+    UI_DEFAULTS, H3_REGENERATE_MODELS,
     SAME_REFINEMENT_LORA, REFINEMENT_LORA_SETTINGS, PIKA_FLEX,
 )
 from h3_app.errors import H3Error
@@ -24,11 +24,11 @@ H3_REFINEMENT_INPUTS = tuple(dict(zip(GENERATION_FIELDS, GENERATION_COMPONENTS))
                              for name in H3_REFINEMENT_FIELDS)
 
 
-def refinement_settings(values):
+def refinement_settings(values, *, latent_upscale=True):
     """Use H3's effective policy for an existing-video, native-refinement job."""
     from dataclasses import asdict
     from h3_app.settings import GenerationRequest, resolve_settings
-    requested = {**UI_DEFAULTS, **(values or {}), "result_format": "Video", "latent_upscale": True}
+    requested = {**UI_DEFAULTS, **(values or {}), "result_format": "Video", "latent_upscale": latent_upscale}
     plan = resolve_settings(GenerationRequest.from_values(requested))
     if plan.issues:
         raise H3Error(" ".join(plan.issues))
@@ -40,28 +40,27 @@ def refinement_settings(values):
     return settings
 
 
-# The face pass has one tested recipe, whatever produced the clip. TensorRT stays off
-# because its decoder engines are built for fixed sizes and the crop canvas varies.
-FACE_REFINE_STEPS = 8
-_FACE_REFINE_OVERRIDES = {
-    "generation_mode": "Turbo", "turbo_variant": LIGHTX2V_8STEP_TURBO, "steps": FACE_REFINE_STEPS,
-    "scheduler": "simple", "latent_upscale_refine_lora": SAME_REFINEMENT_LORA,
-    "latent_upscale_method": H3_LATENT_UPSCALE_STANDARD,
-    "latent_upscale_refine_steps": FACE_REFINE_STEPS - 1, "use_trt_vae": False,
-}
-
-
 def resolve_face_refinement(values, models):
-    config = resolve_refinement({**values, **_FACE_REFINE_OVERRIDES}, models)
-    # Refinement steps must stay below the schedule, but this pass samples all of it.
-    return {**config, "steps": FACE_REFINE_STEPS}
+    # The crop varies in size and uses a per-frame mask, so keep the face pass's
+    # VAE and cache constraints independent of the generation sampler settings.
+    settings = refinement_settings({**values, "use_trt_vae": False, "cache_mode": "Off"}, latent_upscale=False)
+    variant = settings["turbo_variant"] if settings["generation_mode"] == "Turbo" else "Off"
+    lora = None if variant == "Off" else models.turbo_lora_for(settings["mode"], variant)
+    if variant != "Off" and not lora:
+        raise H3Error(f"{variant} Turbo LoRA is not provisioned. Re-run setup/provisioning.")
+    return dict(settings=settings, variant=variant, lora=lora,
+                text_encoder=_refinement_text_encoder(values, models), steps=int(settings["steps"]))
+
+
+def _refinement_text_encoder(values, models):
+    from h3_app.model_types import h3_text_encoder_settings
+    return (h3_text_encoder_settings(models, values["text_encoder"])[1]
+            if values and "text_encoder" in values else models.text_encoder)
 
 
 def resolve_refinement(values, models):
     settings = refinement_settings(values)
-    from h3_app.model_types import h3_text_encoder_settings
-    text_encoder = (h3_text_encoder_settings(models, values["text_encoder"])[1]
-                    if values and "text_encoder" in values else models.text_encoder)
+    text_encoder = _refinement_text_encoder(values, models)
     method = resolve_h3_latent_upscale_method(settings["latent_upscale_method"])
     variant = settings["latent_upscale_refine_lora"]
     if method in H3_REGENERATE_MODELS:

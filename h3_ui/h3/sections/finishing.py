@@ -154,8 +154,7 @@ def build_finishing_section(
             info=(
                 "Turn on for wide shots with distant faces. Re-renders the largest face up "
                 "close and blends it back before any upscaling, adding an extra H3 pass per "
-                "video. Keeps the clip unchanged if no face is found. The detector and "
-                "8-step LoRA download on first use."
+                "video using the selected H3 sampler and LoRA. The face detector downloads on first use."
             ),
         )
         with gr.Group(visible=defaults["face_refine"]) as face_refine_settings:

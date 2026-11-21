@@ -123,7 +123,17 @@ def manual_transcript(reply: str) -> dict:
         raise H3Error(f"The pasted reply could not be read: {exc}") from exc
     if not found:
         raise H3Error("The pasted reply has no timed lines.")
-    return {"segments": found, "speakers": speakers}
+    # Keep observations with the source transcript so editing the dialogue cannot
+    # accidentally move a face hint to a different speaker or line.
+    visual_speakers = []
+    for segment in found:
+        hint = segment.pop("visual_speaker", None)
+        if hint is not None:
+            visual_speakers.append({"speaker": segment["speaker"], **hint})
+    transcript = {"segments": found, "speakers": speakers}
+    if visual_speakers:
+        transcript["visual_speakers"] = visual_speakers
+    return transcript
 
 
 def moss_lines(found: list[dict]) -> list[dict]:

@@ -14,7 +14,7 @@ from h3_app.model_types import ModelConfig, ModelProfile
 from h3_app.settings import GenerationRequest, resolve_settings
 from h3_app.storyboard import model as storyboard
 from h3_app.workflows.face_refine import REQUIRED_FACE_REFINE_NODES, build_h3_face_refine_graph
-from h3_app.refinement import FACE_REFINE_STEPS, H3_REFINEMENT_FIELDS, resolve_face_refinement
+from h3_app.refinement import H3_REFINEMENT_FIELDS
 from h3_models import MODEL_SPECS
 
 
@@ -67,9 +67,9 @@ class FaceRefineSettingsTests(unittest.TestCase):
 class FaceRefineGraphTests(unittest.TestCase):
     def build(self, **overrides):
         values = {**catalog.UI_DEFAULTS, "mode": "First / last frame", "prompt": "A distant singer",
-                  "generation_mode": "Normal", "use_trt_vae": True, **overrides}
+                  "generation_mode": "Normal", "steps": 12, "scheduler": "beta", "use_trt_vae": True, **overrides}
         config = models()
-        config.turbo_lora_for = lambda mode, variant: "turbo8.safetensors"
+        config.turbo_lora_for = lambda mode, variant: f"{variant}.safetensors"
         return build_h3_face_refine_graph(
             source_video="source.mp4", seed=7, models=config, prompt="A distant singer",
             fps=24.0, strength=0.4, refinement=values, output_nonce="abc",
@@ -82,15 +82,32 @@ class FaceRefineGraphTests(unittest.TestCase):
         self.assertEqual(track["canvas_mode"], "auto_capped_768")
         self.assertEqual(MODEL_SPECS["face_yolov8m"].local_name, track["detector"])
         schedule = by_class(graph, "BasicScheduler")
-        self.assertEqual((schedule["steps"], schedule["denoise"]), (8, 0.4))
+        self.assertEqual((schedule["steps"], schedule["scheduler"], schedule["denoise"]), (12, "beta", 0.4))
+        self.assertEqual(by_class(graph, "KSamplerSelect")["sampler_name"], "res_multistep")
         self.assertFalse({"H3RegeneratePrepareLatent", "MiniMaxH3TRTVAELoader"}
                          & {node["class_type"] for node in graph.values()})
 
-    def test_the_stack_plans_for_every_sampled_step(self):
-        config = models()
-        config.turbo_lora_for = lambda mode, variant: "turbo8.safetensors"
-        resolved = resolve_face_refinement({**catalog.UI_DEFAULTS, "generation_mode": "Normal"}, config)
-        self.assertEqual(resolved["steps"], FACE_REFINE_STEPS)
+    def test_follows_the_selected_turbo_adapter_and_sampler(self):
+        variant = catalog.LIGHTX2V_4STEP_TURBO
+        graph = self.build(generation_mode="Turbo", turbo_variant=variant, steps=4)
+        self.assertEqual(by_class(graph, catalog.LIGHTX2V_BYPASS_LORA_NODE)["lora_name"], f"{variant}.safetensors")
+        self.assertEqual(by_class(graph, "BasicScheduler")["steps"], 4)
+        self.assertEqual(by_class(graph, "KSamplerSelect")["sampler_name"], "euler")
+
+    def test_default_pika_uses_six_partial_denoise_lcm_steps(self):
+        graph = self.build(generation_mode="Turbo", turbo_variant=catalog.PIKA_FLEX)
+        self.assertEqual(by_class(graph, "LoraLoaderModelOnly")["lora_name"], f"{catalog.PIKA_FLEX}.safetensors")
+        self.assertEqual(by_class(graph, "KSamplerSelect")["sampler_name"], "lcm")
+        sigmas = [float(value) for value in by_class(graph, "ManualSigmas")["sigmas"].split(",")]
+        self.assertEqual(len(sigmas), 7)
+        self.assertAlmostEqual(sigmas[0], 12 * 0.4 / (1 + 11 * 0.4))
+        self.assertEqual(sigmas[-1], 0.0)
+        self.assertTrue(all(first > second for first, second in zip(sigmas, sigmas[1:])))
+
+    def test_larry_uses_its_custom_sampler(self):
+        graph = self.build(generation_mode="Turbo", turbo_variant=catalog.LARRY_TURBO, steps=6)
+        sampler = link_id(graph, catalog.LARRY_TURBO_SAMPLER_NODE)
+        self.assertEqual(by_class(graph, "SamplerCustomAdvanced")["sampler"], [sampler, 0])
 
     def test_canvas_and_length_follow_the_tracker(self):
         graph = self.build()
@@ -180,6 +197,7 @@ class FaceRefineFinishingTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs["strength"], 0.45)
         self.assertEqual(build.call_args.kwargs["refinement"]["_source_duration"], 12.5)
         services.models.ensure_model_keys.assert_called_once_with(("face_yolov8m",))
+        services.models.ensure_turbo_lora.assert_not_called()
         services.media.postprocess_video.assert_called_once_with(Path("refined.mp4"), "None")
 
     def test_a_take_with_its_own_prefix_keeps_the_face_pass_beside_it(self):
@@ -191,7 +209,7 @@ class FaceRefineFinishingTests(unittest.TestCase):
     def test_the_graph_saves_to_the_given_prefix(self):
         config = models()
         config.turbo_lora_for = lambda mode, variant: "turbo8.safetensors"
-        values = {**catalog.UI_DEFAULTS, "mode": "First / last frame", "generation_mode": "Normal"}
+        values = {**catalog.UI_DEFAULTS, "mode": "First / last frame"}
 
         def prefix(**options):
             graph = build_h3_face_refine_graph(source_video="source.mp4", seed=7, models=config, prompt="x",

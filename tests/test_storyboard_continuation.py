@@ -16,7 +16,7 @@ NAMES = {
     "h3_latent_frame_boundaries", "h3_continuation_plan", "h3_av_streams",
     "h3_apply_continuation", "H3ContinuationPrefix", "h3_storyboard_latent_path",
     "H3SaveAVLatent", "H3LoadAVLatent",
-    "H3_TAIL_FRAMES", "h3_tail_latent_steps", "h3_tail_pixels", "h3_tail_wave", "H3EncodeAVTail",
+    "H3_TAIL_FRAMES", "h3_tail_latent_steps", "h3_tail_pixels", "h3_tail_wave", "H3EncodeAVTail", "H3LipSyncMask",
 }
 
 
@@ -87,6 +87,29 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertEqual(boundaries[result["end_step"]] - boundaries[result["start_step"]], 39)
         self.assertEqual(result["audio_steps"], 65)
         self.assertEqual(result["audio_end"], round(boundaries[result["end_step"]] * 40 / 24))
+
+    def test_lip_sync_mask_covers_whole_video_tokens_and_keeps_audio_fixed(self):
+        latent = av_latent(2, 8, height=4, width=4)
+        frames = torch.zeros((5, 64, 64, 3))
+        mouth = torch.zeros((5, 64, 64))
+        mouth[2, 42, 18] = 0.1
+        mouth[3, 42, 18] = 1.0
+        mouth[3, 43, 18] = 0.25
+        apply = self.nodes["H3LipSyncMask"]().apply
+        masked, composite = apply(latent, frames, mouth)
+        video, audio = masked["noise_mask"].tensors
+        self.assertIs(masked["samples"], latent["samples"])
+        self.assertFalse(torch.any(audio))
+        self.assertFalse(torch.any(video[:, :, 0]))
+        expected = torch.zeros((4, 4))
+        expected[2:, :2] = 1
+        self.assertTrue(torch.equal(video[0, 0, 1], expected))
+        self.assertFalse(torch.any(composite[2]))
+        self.assertTrue(torch.equal(composite[3], mouth[3]))
+        with self.assertRaisesRegex(ValueError, "matching crop"):
+            apply(latent, frames, mouth[:-1])
+        with self.assertRaisesRegex(ValueError, "no editable pixels"):
+            apply(latent, frames, torch.zeros_like(mouth))
 
     def test_short_source_or_target_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at least 5"):

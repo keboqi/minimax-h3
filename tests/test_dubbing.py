@@ -2219,10 +2219,33 @@ class DubRenderTests(Workspace):
         with self.assertRaisesRegex(H3Error, "past the end"):
             self.analyze(self.make_video(), separate=False, pipeline=pipeline.PIPELINE_MANUAL, manual_reply=late)
 
+    def test_manual_video_speaker_hints_survive_line_edits(self):
+        lines = [
+            {"start": 0.2, "end": 1.5, "speaker": "Speaker 2", "source_text": "First.",
+             "visual_speaker": {"time": "00:01.200", "visibility": "on_screen", "face_center": [0.25, 0.4]}},
+            {"start": 1.5, "end": 2.5, "speaker": "Speaker 1", "source_text": "Second.",
+             "visual_speaker": {"time": 2, "visibility": "off_screen"}},
+            {"start": 2.5, "end": 3.5, "speaker": "Speaker 2", "source_text": "Third.",
+             "visual_speaker": {"time": 3, "visibility": "on_screen", "face_center": [0.25, 2]}},
+        ]
+        session = self.analyze(self.make_video(), separate=False, pipeline=pipeline.PIPELINE_MANUAL,
+                               manual_reply=json.dumps({"segments": lines}))
+        self.assertEqual(len(session.segments), 3)
+        edited = session.segments
+        edited[0]["speaker"] = "speaker1"
+        sessions.update_segments(self.runtime, session.id, edited)
+        saved = sessions.load(self.runtime, session.id)
+        self.assertEqual(saved.data["transcript"]["visual_speakers"], [
+            {"speaker": "speaker2", "time": 1.2, "visibility": "on_screen", "face_center": [0.25, 0.4]},
+            {"speaker": "speaker1", "time": 2, "visibility": "off_screen"},
+        ])
+        self.assertNotIn("visual_speaker", saved.segments[0])
+
     def test_gemini_transcription_carries_the_notes_and_keeps_old_cache_keys(self):
         from h3_app.dubbing import gemini as dub_gemini
 
         plain = dub_gemini.transcribe_prompt(target_language="French", translate=True, ignore_non_speech=True)
+        self.assertNotIn("visual_speaker", plain)
         styled = dub_gemini.transcribe_prompt(target_language="French", translate=True, ignore_non_speech=True,
                                               notes="For children aged 8 to 12.")
         self.assertEqual(styled, plain + " Translation notes: For children aged 8 to 12.")

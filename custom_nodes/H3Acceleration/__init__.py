@@ -2621,6 +2621,45 @@ class H3SourceAudioLatent:
         },)
 
 
+class H3LipSyncMask:
+    """Apply a tracked mouth mask to H3's video tokens while holding its audio clean."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"latent": ("LATENT",), "source_frames": ("IMAGE",), "mouth_mask": ("MASK",)}}
+
+    RETURN_TYPES = ("LATENT", "MASK")
+    RETURN_NAMES = ("masked_latent", "composite_mask")
+    FUNCTION = "apply"
+    CATEGORY = "H3/Dubbing"
+
+    def apply(self, latent, source_frames, mouth_mask):
+        video, audio = h3_av_streams(latent, "Lip sync mask")
+        height, width = video.shape[-2:]
+        boundaries = h3_latent_frame_boundaries(video.shape[2])
+        expected = (boundaries[-1], height * 16, width * 16)
+        if tuple(source_frames.shape[:3]) != expected or tuple(mouth_mask.shape) != expected:
+            raise ValueError("Lip sync requires a matching crop and per-frame mask on H3's 17k+5 frame grid")
+        if height % 2 or width % 2:
+            raise ValueError("Lip sync crop dimensions must be multiples of 32 pixels")
+
+        # A video token covers a 2x2 latent patch. Sample any patch touched by the
+        # mask in its pixel-frame span; the softer per-frame mask handles delivery.
+        patches = F.max_pool2d((mouth_mask >= 0.5).float().unsqueeze(1), kernel_size=32).squeeze(1)
+        editable = patches.flatten(1).any(dim=1)
+        if not editable.any():
+            raise ValueError("The lip-sync mouth mask has no editable pixels")
+        grouped = torch.stack([patches[first:last].amax(dim=0)
+                               for first, last in zip(boundaries, boundaries[1:])])
+        grouped = grouped.repeat_interleave(2, dim=-2).repeat_interleave(2, dim=-1)
+        mask = grouped.to(video).unsqueeze(0).unsqueeze(0).expand_as(video)
+        # Prevent faint matte values on skipped frames from blending VAE reconstruction
+        # into the original picture, even when a neighboring frame shares the token.
+        composite_mask = torch.where(editable[:, None, None], mouth_mask, 0.0)
+        masked = {**latent, "noise_mask": comfy.nested_tensor.NestedTensor((mask, torch.zeros_like(audio)))}
+        return masked, composite_mask
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -2630,6 +2669,7 @@ NODE_CLASS_MAPPINGS = {
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
     "H3SourceAudioLatent": H3SourceAudioLatent,
+    "H3LipSyncMask": H3LipSyncMask,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,
