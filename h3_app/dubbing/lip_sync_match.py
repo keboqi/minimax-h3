@@ -9,9 +9,13 @@ import math
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, Callable, Sequence
+from tempfile import TemporaryDirectory
+import time
+from typing import Any, Callable, Mapping, Sequence
 
 from h3_app.errors import H3Error
+from h3_app.jobs import check_cancelled
+from h3_app.llm import decisions
 from h3_app.media_tools import probe_video_metadata
 from h3_app.processes import run_media_process
 
@@ -606,3 +610,350 @@ def uncertain_assignments(
         (item for item in assignments.values() if item.status == "uncertain"),
         key=lambda item: (item.shot_index, item.speaker),
     )
+
+
+# ---------------------------------------------------------------------------
+# Budget-aware Gemini Decision tie-breaker (respects 50k input tokens/min)
+# ---------------------------------------------------------------------------
+
+DECISION_MAX_TOKENS_PER_BATCH = 40_000
+DECISION_TOKENS_PER_SECOND = 180
+DECISION_OVERHEAD_TOKENS = 250
+DECISION_SNIPPET_SECONDS = 2.0
+DECISION_SNIPPET_FPS = 2
+DECISION_SNIPPET_WIDTH = 480
+DECISION_MIN_PROB = 0.65
+DECISION_MIN_MARGIN = 0.20
+DECISION_PACE_SECONDS = 62.0
+_BOX_COLORS = ("cyan", "yellow", "magenta", "lime", "orange", "red")
+
+
+def estimate_decision_snippet_tokens(duration_seconds: float, track_count: int) -> int:
+    """Conservative input-token estimate for one low-res snippet + choice question."""
+    return int(round(max(0.5, float(duration_seconds)) * DECISION_TOKENS_PER_SECOND)) + 80 + 25 * max(1, track_count)
+
+
+def _position_label(cx: float) -> str:
+    if cx < 0.36:
+        return "left"
+    if cx > 0.64:
+        return "right"
+    return "center"
+
+
+def _best_turn_for_speaker(shot: Shot, lines: Sequence[dict[str, Any]], speaker: str,
+                           max_seconds: float = DECISION_SNIPPET_SECONDS) -> tuple[float, float, str] | None:
+    """Pick the longest original turn for ``speaker`` inside ``shot``, trimmed to ``max_seconds``."""
+    best: tuple[float, float, str] | None = None
+    for line in lines:
+        if not isinstance(line, dict) or line.get("speaker") != speaker:
+            continue
+        start, end = line.get("start"), line.get("end")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            continue
+        left = max(float(start), shot.start)
+        right = min(float(end), shot.end)
+        if right - left < 0.15:
+            continue
+        if best is None or (right - left) > (best[1] - best[0]):
+            text = str(line.get("source") or line.get("translation") or "").strip()
+            best = (left, right, text)
+    if best is None:
+        return None
+    left, right, text = best
+    if right - left > max_seconds:
+        mid = 0.5 * (left + right)
+        left = max(shot.start, mid - 0.5 * max_seconds)
+        right = min(shot.end, left + max_seconds)
+    return (left, right, text)
+
+
+def _extract_annotated_snippet(
+    video: Path,
+    start: float,
+    end: float,
+    tracks: Sequence[FaceTrack],
+    destination: Path,
+    *,
+    original_audio: Path | None = None,
+    timeout: int = 60,
+) -> Path:
+    """Slice a compact low-res clip with color-coded face boxes (no font deps) and original audio."""
+    duration = max(0.25, end - start)
+    mid = 0.5 * (start + end)
+    filters = [
+        f"scale='min({DECISION_SNIPPET_WIDTH},iw)':-2",
+        f"fps={DECISION_SNIPPET_FPS}",
+    ]
+    for idx, track in enumerate(tracks[:len(_BOX_COLORS)]):
+        box = track.representative_box()
+        if box is None:
+            continue
+        bx, by, bw, bh = box
+        # Re-center using the track's position near the snippet midpoint when available.
+        center = track.center_at(mid)
+        if center is not None:
+            bx = max(0.0, min(1.0 - bw, center[0] - 0.5 * bw))
+            by = max(0.0, min(1.0 - bh, center[1] - 0.5 * bh))
+        color = _BOX_COLORS[idx]
+        filters.append(
+            f"drawbox=x=iw*{bx:.4f}:y=ih*{by:.4f}:w=iw*{bw:.4f}:h=ih*{bh:.4f}:color={color}@0.95:t=3"
+        )
+    use_external_audio = original_audio is not None and original_audio.is_file()
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-ss", f"{start:.4f}", "-i", str(video),
+    ]
+    if use_external_audio:
+        cmd += ["-ss", f"{start:.4f}", "-i", str(original_audio)]
+        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+    else:
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?"]
+    cmd += [
+        "-t", f"{duration:.4f}",
+        "-vf", ",".join(filters),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "64k", "-ac", "1",
+        "-movflags", "+faststart",
+        str(destination),
+    ]
+    proc = run_media_process(cmd, capture_output=True, text=True, timeout=timeout, partial_outputs=(destination,))
+    if proc.returncode != 0 or not destination.is_file():
+        raise H3Error(f"Could not extract decision snippet: {proc.stderr.strip()[-200:]}")
+    return destination
+
+
+def _decision_cache_path(cache_dir: Path, fingerprint: str) -> Path:
+    return Path(cache_dir) / f"{fingerprint}.decisions.json"
+
+
+def _load_decision_cache(cache_dir: Path | None, fingerprint: str) -> dict[str, dict[str, Any]]:
+    if cache_dir is None:
+        return {}
+    path = _decision_cache_path(cache_dir, fingerprint)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_decision_cache(cache_dir: Path | None, fingerprint: str, cache: dict[str, dict[str, Any]]) -> None:
+    if cache_dir is None:
+        return
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    destination = _decision_cache_path(cache_dir, fingerprint)
+    temporary = cache_dir / f"{fingerprint}.decisions.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, destination)
+    except OSError:
+        pass
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _parse_choice_decision(
+    answer: Mapping[str, Any] | None,
+    *,
+    shot: Shot,
+    speaker: str,
+    tracks_by_key: Mapping[str, FaceTrack],
+    ref_time: float,
+    min_prob: float,
+    min_margin: float,
+) -> ShotSpeakerAssignment | None:
+    if not isinstance(answer, Mapping) or answer.get("type") != "choice":
+        return None
+    probs_raw = answer.get("probabilities")
+    if isinstance(probs_raw, Mapping) and probs_raw:
+        ranked = sorted(
+            ((str(k), float(v)) for k, v in probs_raw.items() if isinstance(v, (int, float))),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+    else:
+        picked = answer.get("choice")
+        conf = answer.get("confidence", 0.0)
+        ranked = [(str(picked), float(conf))] if picked else []
+    if not ranked:
+        return None
+
+    best_opt, best_p = ranked[0]
+    second_p = ranked[1][1] if len(ranked) > 1 else 0.0
+    margin = best_p - second_p
+    if best_p < min_prob or margin < min_margin:
+        return None
+
+    if best_opt == "off_screen":
+        return ShotSpeakerAssignment(
+            shot_index=shot.index, speaker=speaker, status="off_screen", track_id=None,
+            face_center=None, reference_time=ref_time, source="gemini-decision",
+            confidence=best_p, reason=f"Gemini Decision marked off-screen (p={best_p:.2f}).",
+        )
+    track = tracks_by_key.get(best_opt)
+    if track is not None:
+        center = track.center_at(ref_time) or track.representative_center()
+        return ShotSpeakerAssignment(
+            shot_index=shot.index, speaker=speaker, status="matched", track_id=track.track_id,
+            face_center=center, reference_time=ref_time, source="gemini-decision",
+            confidence=best_p, reason=f"Matched by Gemini Decision ({best_opt}, p={best_p:.2f}, margin={margin:.2f}).",
+        )
+    return None
+
+
+def resolve_uncertain_with_gemini_decision(
+    *,
+    video: Path,
+    scan: SourceScan,
+    lines: Sequence[dict[str, Any]],
+    assignments: dict[tuple[int, str], ShotSpeakerAssignment],
+    original_audio: Path | None = None,
+    api_key: str | None = None,
+    cache_dir: Path | None = None,
+    max_tokens_per_batch: int = DECISION_MAX_TOKENS_PER_BATCH,
+    max_batches: int = 1,
+    pace_batches: bool = False,
+    min_prob: float = DECISION_MIN_PROB,
+    min_margin: float = DECISION_MIN_MARGIN,
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None = None,
+) -> dict[tuple[int, str], ShotSpeakerAssignment]:
+    """Use Gemini Decision (`gemini-decision-1`) as a token-budgeted tie-breaker for uncertain shots.
+
+    Only uncertain ``(shot_index, speaker)`` pairs with candidate face tracks are queried.
+    Snippets are trimmed to ~2 seconds at low resolution and packed under ``max_tokens_per_batch``
+    (default 40,000 tokens, staying safely below the 50,000 input tokens/min free-tier ceiling).
+    Resolved matches are cached beside the source scan so re-runs cost 0 tokens.
+    """
+    key = decisions.key_or_none(api_key)
+    if not key:
+        return dict(assignments)
+
+    shots_by_index = {shot.index: shot for shot in scan.shots}
+    updated = dict(assignments)
+    cache = _load_decision_cache(cache_dir, scan.fingerprint)
+    cache_dirty = False
+
+    pending: list[tuple[Shot, str, float, float, str, list[FaceTrack], str]] = []
+    for item in uncertain_assignments(updated):
+        shot = shots_by_index.get(item.shot_index)
+        if shot is None or not shot.tracks:
+            continue
+        tracks = list(shot.tracks[:len(_BOX_COLORS)])
+        turn = _best_turn_for_speaker(shot, lines, item.speaker)
+        if turn is None:
+            continue
+        start, end, spoken_text = turn
+        track_ids = [t.track_id for t in tracks]
+        cache_key = f"{shot.index}:{item.speaker}:{start:.2f}:{end:.2f}:{','.join(map(str, track_ids))}"
+        cached_entry = cache.get(cache_key)
+        if isinstance(cached_entry, dict):
+            status = cached_entry.get("status")
+            if status in ("matched", "off_screen"):
+                center = tuple(cached_entry["face_center"]) if cached_entry.get("face_center") else None
+                updated[(shot.index, item.speaker)] = ShotSpeakerAssignment(
+                    shot_index=shot.index, speaker=item.speaker, status=status,
+                    track_id=cached_entry.get("track_id"), face_center=center,
+                    reference_time=float(cached_entry.get("reference_time", 0.5 * (start + end))),
+                    source="gemini-decision", confidence=float(cached_entry.get("confidence", 0.8)),
+                    reason=str(cached_entry.get("reason", "Cached Gemini Decision match.")),
+                )
+                continue
+        pending.append((shot, item.speaker, start, end, spoken_text, tracks, cache_key))
+
+    if not pending:
+        return updated
+
+    # Pack pending items into token-budgeted batches under max_tokens_per_batch.
+    batches: list[list[tuple[Shot, str, float, float, str, list[FaceTrack], str]]] = []
+    current_batch: list[tuple[Shot, str, float, float, str, list[FaceTrack], str]] = []
+    current_tokens = DECISION_OVERHEAD_TOKENS
+    for entry in pending:
+        est = estimate_decision_snippet_tokens(entry[3] - entry[2], len(entry[5]))
+        if current_batch and current_tokens + est > max_tokens_per_batch:
+            batches.append(current_batch)
+            current_batch = []
+            current_tokens = DECISION_OVERHEAD_TOKENS
+        current_batch.append(entry)
+        current_tokens += est
+    if current_batch:
+        batches.append(current_batch)
+
+    ask = decide_fn or decisions.decide
+    limit = max(1, int(max_batches)) if not pace_batches else len(batches)
+    with TemporaryDirectory(prefix="h3-lip-sync-decision-") as directory:
+        work_dir = Path(directory)
+        for batch_idx, batch in enumerate(batches[:limit]):
+            check_cancelled()
+            if batch_idx > 0 and pace_batches:
+                deadline = time.monotonic() + DECISION_PACE_SECONDS
+                while time.monotonic() < deadline:
+                    check_cancelled()
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+            blocks: list[dict[str, Any]] = [
+                decisions.text(
+                    "Each clip below shows a short video segment with its original audio and color-coded "
+                    "bounding boxes around candidate faces. For each question, identify which boxed person "
+                    "is visibly speaking the dialogue in that clip, or choose off_screen / uncertain."
+                )
+            ]
+            questions: dict[str, dict[str, Any]] = {}
+            meta_by_q: dict[str, tuple[Shot, str, dict[str, FaceTrack], float, str]] = {}
+
+            for clip_idx, (shot, speaker, start, end, spoken_text, tracks, cache_key) in enumerate(batch):
+                clip_label = f"Clip {clip_idx + 1}"
+                clip_path = work_dir / f"b{batch_idx}_c{clip_idx}.mp4"
+                try:
+                    _extract_annotated_snippet(
+                        video, start, end, tracks, clip_path, original_audio=original_audio,
+                    )
+                except H3Error:
+                    continue
+                blocks.append(decisions.text(f"{clip_label} (shot {shot.index + 1}, {start:.1f}s-{end:.1f}s):"))
+                blocks.append(decisions.media(clip_path, resolution="low"))
+
+                options: dict[str, str] = {}
+                tracks_by_key: dict[str, FaceTrack] = {}
+                mid = 0.5 * (start + end)
+                for t_idx, track in enumerate(tracks):
+                    opt_key = f"face_{track.track_id}"
+                    center = track.center_at(mid) or track.representative_center() or (0.5, 0.5)
+                    color = _BOX_COLORS[t_idx]
+                    options[opt_key] = f"Person in the {color} box on the {_position_label(center[0])} side"
+                    tracks_by_key[opt_key] = track
+                options["off_screen"] = "The speaker is off-screen or none of the boxed faces are speaking"
+                options["uncertain"] = "Cannot tell reliably which face is speaking"
+
+                quote = f' saying "{spoken_text[:120]}"' if spoken_text else ""
+                q_key = f"s{shot.index}_{speaker}"
+                questions[q_key] = decisions.choice(
+                    f"In {clip_label}, which boxed person is visibly speaking{quote}?",
+                    options,
+                )
+                meta_by_q[q_key] = (shot, speaker, tracks_by_key, mid, cache_key)
+
+            if not questions:
+                continue
+            try:
+                answers = ask(questions, blocks, key=key, timeout=120)
+            except decisions.DecisionError:
+                break
+
+            for q_key, (shot, speaker, tracks_by_key, mid, cache_key) in meta_by_q.items():
+                resolved = _parse_choice_decision(
+                    answers.get(q_key),
+                    shot=shot, speaker=speaker, tracks_by_key=tracks_by_key,
+                    ref_time=mid, min_prob=min_prob, min_margin=min_margin,
+                )
+                if resolved is not None:
+                    updated[(shot.index, speaker)] = resolved
+                    cache[cache_key] = resolved.to_dict()
+                    cache_dirty = True
+
+    if cache_dirty:
+        _save_decision_cache(cache_dir, scan.fingerprint, cache)
+    return updated

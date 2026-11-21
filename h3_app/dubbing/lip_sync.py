@@ -42,9 +42,11 @@ from .lip_sync_match import (
     ShotSpeakerAssignment,
     assign_speakers_to_shots,
     get_or_scan_source,
+    resolve_uncertain_with_gemini_decision,
     uncertain_assignments,
 )
-from .results import PLAYER_DIR, player_folder
+from h3_app.llm import decisions
+from .results import PLAYER_DIR, load_player, player_folder
 
 _PTS_TIME_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 DEFAULT_SHOT_THRESHOLD = 0.35
@@ -630,6 +632,7 @@ def render_dub_lip_sync(
     manual_overrides: dict[tuple[int, str], int | None] | None = None,
     use_cache: bool = True,
     scan_cache_dir: Path | None = None,
+    gemini_api_key: str | None = None,
 ) -> Iterator[str | Path]:
     """Automatically scan shots, match speakers, render H3 mouth patches (cached per window), and assemble MP4."""
     yield "Inspecting the dubbed video"
@@ -659,6 +662,19 @@ def render_dub_lip_sync(
     assignments = assign_speakers_to_shots(
         scan, saved_lines, manual_overrides=merged_overrides or None,
     )
+    if uncertain_assignments(assignments) and decisions.key_or_none(gemini_api_key):
+        yield "Resolving uncertain speakers with Gemini Decision"
+        check_cancelled()
+        player = load_player(dub)
+        assignments = resolve_uncertain_with_gemini_decision(
+            video=dub,
+            scan=scan,
+            lines=saved_lines,
+            assignments=assignments,
+            original_audio=player.original if player is not None else None,
+            api_key=gemini_api_key,
+            cache_dir=effective_scan_cache,
+        )
     windows = plan_lip_sync_windows(
         dub, meta.duration, video_size=(meta.width, meta.height), shot_cuts=cuts,
         speaker=speaker, assignments=assignments,

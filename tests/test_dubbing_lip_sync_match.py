@@ -1,13 +1,14 @@
 """Phase 2 tests: source scan cache, LR-ASD parsing, speaker-to-face matching, and window cache."""
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -19,13 +20,16 @@ from h3_app.dubbing.lip_sync_match import (
     SourceScan,
     TrackObservation,
     assign_speakers_to_shots,
+    estimate_decision_snippet_tokens,
     get_or_scan_source,
     load_source_scan,
     parse_lr_asd_tracks,
+    resolve_uncertain_with_gemini_decision,
     save_source_scan,
     uncertain_assignments,
 )
 from h3_app.dubbing.results import player_folder
+from h3_app.llm.decisions import DecisionError
 from h3_app.media_tools import probe_video_metadata
 from tests.test_face_refine import by_class, models
 
@@ -357,3 +361,99 @@ class LipSyncMatchTests(unittest.TestCase):
             self.assertTrue(updates[-1].is_file())
             report = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
             self.assertEqual((report["total_windows"], report["skipped_windows"], report["rendered_windows"]), (2, 1, 1))
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg required")
+    def test_gemini_decision_tie_breaker_resolves_caches_respects_budget_and_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "clip.mp4"
+            orig_audio = root / "original.wav"
+            subprocess.run([
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=24:d=4.0",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=4.0",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                str(video),
+            ], check=True)
+            subprocess.run([
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "sine=frequency=660:duration=4.0",
+                str(orig_audio),
+            ], check=True)
+            cache_dir = root / "scans"
+            t0 = _track(0, 0, (0.1, 0.2, 0.2, 0.4), [(0.5, 0.4), (1.0, 0.4), (1.5, 0.4)])
+            t1 = _track(1, 0, (0.7, 0.2, 0.2, 0.4), [(0.5, 0.35), (1.0, 0.35), (1.5, 0.35)])
+            t2 = _track(0, 1, (0.1, 0.2, 0.2, 0.4), [(2.5, 0.4), (3.0, 0.4), (3.5, 0.4)])
+            t3 = _track(1, 1, (0.7, 0.2, 0.2, 0.4), [(2.5, 0.35), (3.0, 0.35), (3.5, 0.35)])
+            scan = SourceScan(
+                fingerprint="fp-dec", duration=4.0, width=320, height=240, fps=24.0, cuts=(2.0,),
+                shots=(
+                    Shot(index=0, start=0.0, end=2.0, tracks=(t0, t1)),
+                    Shot(index=1, start=2.0, end=4.0, tracks=(t2, t3)),
+                ),
+                backend="lr-asd",
+            )
+            lines = [
+                {"speaker": "A", "start": 0.2, "end": 1.0, "source": "Hello there"},
+                {"speaker": "B", "start": 1.1, "end": 1.9, "source": "Narrator voice"},
+                {"speaker": "A", "start": 2.2, "end": 3.6, "source": "Hard to tell"},
+            ]
+            initial = assign_speakers_to_shots(scan, lines)
+            self.assertEqual(len(uncertain_assignments(initial)), 3)
+
+            seen_calls = []
+
+            def fake_decide(questions, blocks, *, key, timeout=120):
+                seen_calls.append((list(questions.keys()), len(blocks), key))
+                return {
+                    "s0_A": {"type": "choice", "choice": "face_0",
+                             "probabilities": {"face_0": 0.88, "face_1": 0.06, "off_screen": 0.04, "uncertain": 0.02}},
+                    "s0_B": {"type": "choice", "choice": "off_screen",
+                             "probabilities": {"off_screen": 0.84, "face_0": 0.08, "face_1": 0.05, "uncertain": 0.03}},
+                    "s1_A": {"type": "choice", "choice": "face_0",
+                             "probabilities": {"face_0": 0.52, "face_1": 0.45, "off_screen": 0.02, "uncertain": 0.01}},
+                }
+
+            with patch.dict(os.environ, {"H3_DECISION": "1"}):
+                resolved = resolve_uncertain_with_gemini_decision(
+                    video=video, scan=scan, lines=lines, assignments=initial,
+                    original_audio=orig_audio, api_key="test-key", cache_dir=cache_dir, decide_fn=fake_decide,
+                )
+                self.assertEqual(len(seen_calls), 1)
+                self.assertEqual(set(seen_calls[0][0]), {"s0_A", "s0_B", "s1_A"})
+                self.assertEqual(resolved[(0, "A")].status, "matched")
+                self.assertEqual(resolved[(0, "A")].track_id, 0)
+                self.assertEqual(resolved[(0, "A")].source, "gemini-decision")
+                self.assertEqual(resolved[(0, "B")].status, "off_screen")
+                self.assertEqual(resolved[(0, "B")].source, "gemini-decision")
+                # Low-margin shot stays uncertain for optional review.
+                self.assertEqual(resolved[(1, "A")].status, "uncertain")
+
+                # Second call hits cache for s0_A and s0_B -> only queries s1_A.
+                seen_calls.clear()
+                resolve_uncertain_with_gemini_decision(
+                    video=video, scan=scan, lines=lines, assignments=initial,
+                    api_key="test-key", cache_dir=cache_dir, decide_fn=fake_decide,
+                )
+                self.assertEqual(seen_calls[0][0], ["s1_A"])
+
+                # Token budget cap: only 1 snippet fits in a tight budget when max_batches=1.
+                seen_calls.clear()
+                one_clip_budget = 250 + estimate_decision_snippet_tokens(1.0, 2) + 50
+                resolve_uncertain_with_gemini_decision(
+                    video=video, scan=scan, lines=lines, assignments=initial,
+                    api_key="test-key", cache_dir=None, max_tokens_per_batch=one_clip_budget,
+                    max_batches=1, decide_fn=fake_decide,
+                )
+                self.assertEqual(len(seen_calls), 1)
+                self.assertEqual(len(seen_calls[0][0]), 1)
+
+                # DecisionError (e.g. 429 rate limit) falls back cleanly without raising.
+                def fail_429(*_args, **_kwargs):
+                    raise DecisionError("Rate limited", status=429)
+
+                fallback = resolve_uncertain_with_gemini_decision(
+                    video=video, scan=scan, lines=lines, assignments=initial,
+                    api_key="test-key", cache_dir=None, decide_fn=fail_429,
+                )
+                self.assertEqual(fallback, initial)
