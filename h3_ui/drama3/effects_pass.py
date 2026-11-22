@@ -3,11 +3,12 @@
 from urllib.parse import quote
 
 from h3_app.drama3.effect_enhancement import base_stack, revision
+from h3_app.drama3.serving.planner import spoken_text
 from . import effect_regions
 from .visuals import stills_dir
 
 
-def inventory(audio, root, rows, subjects, data):
+def inventory(audio, root, rows, subjects, data, *, speech=()):
     saved = data.get("video_effect_stacks") or {}
     fixes = data.get("video_effect_regions") or {}
     subjects = {subject["key"]: subject for subject in subjects}
@@ -37,6 +38,8 @@ def inventory(audio, root, rows, subjects, data):
         items.append({
             "shot_id": shot_id, "index": row["index"], "image": image,
             "start": row["start"], "end": row["end"], "beat": row["beat"],
+            "speech": [{"speaker": cue.get("speaker", ""), "text": spoken_text(cue["text"])}
+                       for cue in speech if cue["start"] < row["end"] and row["start"] < cue["end"]],
             "labels": labels, "regions": regions, "default": base_stack(row["effects"]),
             "applied": stack, "manual": bool(entry.get("manual") and stack is not None),
         })
@@ -48,7 +51,7 @@ def prompt_input(items, sounds, include_manual=False):
     for item in items:
         if not item["regions"] or (item["manual"] and not include_manual):
             continue
-        shots.append({"shot_id": item["shot_id"], "beat": item["beat"],
+        shots.append({"shot_id": item["shot_id"], "beat": item["beat"], "speech": item["speech"],
                       "effects": item["applied"] if item["applied"] is not None else item["default"],
                       "sounds": [sound["name"] for sound in sounds
                                  if sound["start"] is not None and item["start"] <= sound["start"] < item["end"]],

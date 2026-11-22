@@ -64,6 +64,21 @@ def mix_cues(settings):
             for line in lines]
 
 
+def shot_speech_cues(settings):
+    """Spoken lines on the mix clock, or the shot plan's preview clock before recording."""
+    cues = mix_cues(settings)
+    if settings.get("untimed") and cues:
+        clock = _TextPositions(cues)
+        duration = settings["duration"]
+        # Match the frame-rounded cue boundaries used by bind_plan and exposed by plan_rows.
+        boundaries = [round(round(position / clock.total * duration * FPS) / FPS, 3)
+                      for position in (*clock.starts, clock.total)]
+        cues = [dict(cue, start=start, end=end)
+                for cue, start, end in zip(cues, boundaries, boundaries[1:])]
+    return sorted((cue for cue in cues if cue.get("start") is not None and cue.get("end") is not None),
+                  key=lambda cue: cue["start"])
+
+
 def _timed_lines(settings):
     return [dict(speaker=chunk.get("name") or chunk.get("speaker") or "", **line)
             for chunk in settings.get("chunks") or []

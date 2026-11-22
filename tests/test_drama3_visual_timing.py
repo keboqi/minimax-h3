@@ -3,7 +3,7 @@ from copy import deepcopy
 import unittest
 
 from h3_app.drama3.visual_plan import check_plan_reply, plan_request
-from h3_app.drama3.visual_timing import adapt_plan, anchor_plan, bind_plan, preview_settings, script_cues
+from h3_app.drama3.visual_timing import adapt_plan, anchor_plan, bind_plan, preview_settings, script_cues, shot_speech_cues
 from h3_app.errors import H3Error
 
 
@@ -22,6 +22,13 @@ class VisualTimingTests(unittest.TestCase):
         self.assertEqual(len(shots), 2)
         self.assertNotIn("start", plan["shots"][1])
         self.assertEqual(plan["script_cues"], self.settings["script_cues"])
+
+    def test_preview_speech_shares_the_shot_clock(self):
+        plan, _ = check_plan_reply(json.dumps(self.plan), self.settings, 2)
+        boundary = round(bind_plan(plan, self.settings)["shots"][1]["start"], 3)
+        first, second = shot_speech_cues(self.settings)
+        self.assertEqual((first["speaker"], first["end"]), ("Mia", boundary))
+        self.assertEqual((second["speaker"], second["start"]), ("Leo", boundary))
 
     def test_binding_uses_actual_line_times_and_handles_chunk_splitting(self):
         plan, _ = check_plan_reply(json.dumps(self.plan), self.settings, 2)

@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import Body, Request
 
 from h3_app.drama3 import effect_enhancement
+from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
 from h3_app.jobs import check_cancelled
 
@@ -40,7 +41,8 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
         record = visuals.read_stills(audio, root)
         plan = plan_payload(name, saved, float(mix.get("duration") or 0), record, mix.get("voices", {}),
                             root, audio, settings)
-        items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data)
+        items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data,
+                                       speech=shot_speech_cues(mix))
         if not items:
             raise H3Error("Draw the shots before enhancing their effects.")
         return visuals.stills_dir(audio, root), items, timeline_payload(mix)["sounds"]

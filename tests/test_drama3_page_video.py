@@ -148,6 +148,8 @@ class Drama3PageVideoTests(unittest.TestCase):
         request = json.loads(copied.split("\n\n")[-1])
         first, second = request["shots"]
         self.assertEqual(first["regions"][0]["position"], "middle left")
+        self.assertEqual(first["speech"], [{"speaker": "Mia", "text": "Plums!"}])
+        self.assertEqual(second["speech"], [])
         stack = [{"preset": "rain", "mode": "inside", "region_id": "region_1"},
                  {"preset": "cold_tint", "mode": "inside", "region_id": "region_1"}]
         reply = json.dumps({"revision": request["revision"], "shots": [
@@ -173,6 +175,15 @@ class Drama3PageVideoTests(unittest.TestCase):
             self.assertEqual(writer.call_count, 2)
         generated = self.project()["video"]["effect_enhancement"]["proposal"]
         self.assertEqual(pasted["decisions"], generated["decisions"])
+        with self.store.edit_soundstage_project(NAME["name"]) as project:
+            project["text"] = "Mia: Plums?"
+        updated = json.loads(self.ok(call("prompt"))["prompt"].split("\n\n")[-1])
+        self.assertEqual(updated["shots"][0]["speech"], [{"speaker": "Mia", "text": "Plums?"}])
+        self.assertNotEqual(updated["revision"], request["revision"])
+        self.assertIsNone(self.project()["video"]["effect_enhancement"]["proposal"])
+        self.assertEqual(call("apply", {"id": generated["id"]}).status_code, 400)
+        with self.store.edit_soundstage_project(NAME["name"]) as project:
+            project["text"] = "Mia: Plums!"
         changed = self.ok(call("apply", {"id": generated["id"]}))["video"]
         self.assertEqual(changed["stills"]["shots"][0]["effects"], ["rain", "cold_tint"])
         self.assertNotIn("effect_layers", changed["stills"]["shots"][1])

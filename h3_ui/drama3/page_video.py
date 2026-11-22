@@ -24,6 +24,7 @@ from h3_app.drama3 import effect_enhancement, voice_looks
 from h3_app.drama3.visual_effects import EFFECT_PRESETS
 from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject, full_plan_prompt, mentions,
                                        plan_shots, subjects)
+from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot
 
@@ -229,7 +230,8 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
                 "saved_settings": {"limit": saved.get("limit")} if stale else None}
         if timing_error:
             plan.update(rows=[], subjects=[], counts={}, error=timing_error)
-        items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data)
+        items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data,
+                                       speech=shot_speech_cues(mix_settings) if plan["rows"] else ())
         sounds = timeline_payload(mix_settings)["sounds"] if items else []
         enhancement = effects_pass.public_pass(name, items, sounds, data)
         stills = stills_payload(name, record, plan["rows"], items)
