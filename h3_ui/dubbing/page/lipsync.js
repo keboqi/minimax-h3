@@ -274,9 +274,10 @@ function formatSettingOut(key, value) {
 }
 
 function engineSettingsHtml() {
+  const featherLabel = lsState.engine === "musetalk" ? "Fallback mask feather" : "Mask feather";
   const feather = `
     <label class="field">
-      <span class="field-label">Mask feather <span class="mono" data-ls-out="feather">${formatSettingOut("feather", lsState.feather)}</span></span>
+      <span class="field-label">${featherLabel} <span class="mono" data-ls-out="feather">${formatSettingOut("feather", lsState.feather)}</span></span>
       <input type="range" min="2" max="16" step="1" value="${lsState.feather}" data-ls-setting="feather">
     </label>`;
   if (lsState.engine === "musetalk") {

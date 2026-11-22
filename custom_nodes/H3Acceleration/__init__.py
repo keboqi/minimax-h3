@@ -2723,6 +2723,8 @@ class H3LowerFaceMask:
                 "denoise_expand": ("FLOAT", {"default": 1.15, "min": 1.0, "max": 1.6, "step": 0.02}),
                 "jaw_margin": ("FLOAT", {"default": 0.14, "min": 0.0, "max": 0.35, "step": 0.02}),
                 "separate_opacity": ("BOOLEAN", {"default": False}),
+                "stitch_feather": ("INT", {"default": -1, "min": -1, "max": 64,
+                    "tooltip": "Feather only the edge of the mouth patch, in source pixels. -1 uses the legacy mask."}),
             },
         }
 
@@ -2733,7 +2735,7 @@ class H3LowerFaceMask:
 
     def build(self, crops, transform, active_start=0, active_end=-1,
               mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15,
-              jaw_margin=0.14, separate_opacity=False):
+              jaw_margin=0.14, separate_opacity=False, stitch_feather=-1):
         frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
         if frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
@@ -2742,11 +2744,13 @@ class H3LowerFaceMask:
 
         start = max(0, min(int(active_start), frames))
         end = frames if int(active_end) < 0 else max(start, min(int(active_end), frames))
-        # Fades span at most three active frames per edge. Short turns retain a full-strength peak.
+        # The legacy mask fades over at most three active frames per edge.
         ramp = min(3, max(1, (end - start + 1) // 2))
         denoise_start = max(0, start - 2)
         denoise_end = min(frames, end + 2)
 
+        single_composite = stitch_feather >= 0
+        boxes = transform.get("boxes") or []
         face_rects = transform.get("face_rect") or []
         absent = transform.get("absent") or []
         detected = transform.get("detected") or []
@@ -2783,8 +2787,13 @@ class H3LowerFaceMask:
                 weight = float(weights[index]) if index < len(weights) else (1.0 if is_detected else 0.0)
                 if not is_detected and weight <= 0.0:
                     continue
-                edge_weight = max(0, min(ramp, index - start + 1, end - index)) / ramp
-                opacity = max(0.0, min(1.0, weight)) * edge_weight
+                if single_composite:
+                    opacity = float(is_detected and start <= index < end)
+                    source_h = float(boxes[index][3]) if index < len(boxes) else height
+                    feather_px = stitch_feather * height / max(1.0, source_h)
+                else:
+                    edge_weight = max(0, min(ramp, index - start + 1, end - index)) / ramp
+                    opacity = max(0.0, min(1.0, weight)) * edge_weight
                 if index < len(face_rects):
                     fx, fy, fw, fh = (float(v) for v in face_rects[index])
                 else:
@@ -2809,8 +2818,17 @@ class H3LowerFaceMask:
                     denoise_np = cv2_mod.dilate(poly_mask, k_denoise)
                     denoise_mask[index] = torch.from_numpy(denoise_np).to(device=device, dtype=torch.float32)
                     if opacity > 0.0:
-                        blur_px = max(3, int(round(0.03 * fh)) | 1)
-                        comp_np = cv2_mod.GaussianBlur(poly_mask, (blur_px, blur_px), 0)
+                        comp_np = poly_mask
+                        if single_composite:
+                            # Put the transition outside the lip/jaw polygon and inside the denoise mask.
+                            edge_width = min(feather_px, float(pad_px))
+                            if edge_width > 0.0:
+                                outside = (poly_mask == 0).astype("uint8")
+                                distance = cv2_mod.distanceTransform(outside, cv2_mod.DIST_L2, cv2_mod.DIST_MASK_PRECISE)
+                                comp_np = (1.0 - distance / edge_width).clip(0.0, 1.0) * denoise_np
+                        else:
+                            blur_px = max(3, int(round(0.03 * fh)) | 1)
+                            comp_np = cv2_mod.GaussianBlur(poly_mask, (blur_px, blur_px), 0)
                         soft = torch.from_numpy(comp_np).to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
                 else:
                     cx = fx + 0.5 * fw
@@ -2820,11 +2838,19 @@ class H3LowerFaceMask:
                     d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
                     denoise_mask[index] = (d2_comp <= float(denoise_expand) ** 2).float()
                     if opacity > 0.0:
-                        soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
+                        if single_composite:
+                            edge_width = min(feather_px / min(rx, ry), float(denoise_expand) - 1.0)
+                            if edge_width > 0.0:
+                                soft = ((1.0 + edge_width - d2_comp.sqrt()) / edge_width).clamp(0.0, 1.0)
+                            else:
+                                soft = (d2_comp <= 1.0).float()
+                        else:
+                            soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
                 if opacity > 0.0:
                     if separate_opacity:
-                        # Blend the spatial taper in crop space, then fade the patch at stitch time.
                         spatial_mask[index] = soft
+                    if separate_opacity and not single_composite:
+                        # Blend the spatial taper in crop space, then fade the patch at stitch time.
                         composite_mask[index] = (soft > 1e-4) * opacity
                     else:
                         composite_mask[index] = soft * opacity

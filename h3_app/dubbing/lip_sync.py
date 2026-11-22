@@ -708,7 +708,7 @@ def window_cache_key(
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": 5,  # engine-namespaced per-window render cache
+        "version": 6 if engine in ("h3", "musetalk") else 5,
         "engine": str(engine),
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [

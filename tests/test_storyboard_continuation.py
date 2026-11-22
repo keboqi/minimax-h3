@@ -4,9 +4,11 @@ import ast
 import logging
 import os
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -146,9 +148,39 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertEqual(float(spatial[1, 82, 64]), 1.0)
         self.assertEqual(float(stitch_mask[1, 82, 64]), 0.5)
         self.assertFalse(torch.any(spatial[0]))
+        _, stitch_mask, _ = build(
+            crops, {**transform, "weights": [1.0, 0.5, 0.5, 0.0, 0.5, 1.0]},
+            active_start=1, active_end=5, stitch_feather=6,
+        )
+        torch.testing.assert_close(stitch_mask[:, 82, 64], torch.tensor([0., 1., 0., 0., 1., 0.]))
+        self.assertTrue(((stitch_mask[1] > 0) & (stitch_mask[1] < 1)).any())
+        self.assertEqual(float(stitch_mask[1, 25, 64]), 0.0)
         # All absent raises clearly.
         with self.assertRaisesRegex(ValueError, "No detected face frames"):
             build(crops, {**transform, "absent": [True] * 6})
+
+    def test_landmark_mask_feathers_outside_the_opaque_mouth(self):
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest("OpenCV is required for the landmark mask")
+
+        crops = torch.zeros((1, 64, 64, 3))
+        polygon = crops[0, ..., 0].numpy().copy()
+        polygon[32:52, 20:44] = 1.0
+        transform = {"face_rect": [(8, 8, 48, 48)], "boxes": [(0, 0, 64, 64)]}
+        mesh = SimpleNamespace(close=lambda: None)
+        mediapipe = SimpleNamespace(solutions=SimpleNamespace(face_mesh=SimpleNamespace(FaceMesh=lambda **_: mesh)))
+        build = self.nodes["H3LowerFaceMask"]().build
+        with patch.dict(sys.modules, {"cv2": cv2, "mediapipe": mediapipe}), \
+                patch.dict(self.nodes, {"_mediapipe_mouth_polygon": lambda *_args, **_kwargs: polygon}):
+            denoise, composite, _ = build(crops, transform, stitch_feather=6)
+            _, hard, _ = build(crops, transform, stitch_feather=0)
+
+        self.assertTrue((composite[0, 32:52, 20:44] == 1).all())
+        self.assertAlmostEqual(float(composite[0, 31, 32]), 2 / 3)
+        self.assertFalse(torch.any(composite[denoise == 0]))
+        torch.testing.assert_close(hard[0], torch.from_numpy(polygon))
 
     def test_lip_sync_prepare_crop_neutralizes_core_and_preserves_context(self):
         crops = torch.full((2, 96, 96, 3), 0.2)
@@ -164,7 +196,6 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertLess(core_after_std, core_before_std * 0.35)
 
     def test_lip_sync_blend_skin_ring_color_match_pyramid_and_outside_preservation(self):
-        from unittest.mock import patch
         import builtins
 
         src = torch.zeros((2, 95, 97, 3), dtype=torch.float32)

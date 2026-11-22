@@ -18,9 +18,6 @@ DEFAULT_LIP_SYNC_CROP_FACTOR = 1.65
 DEFAULT_AUTO_STRENGTH = 0.70
 DEFAULT_AUTO_FEATHER = 6
 DEFAULT_NEUTRALIZE_MOUTH = 0.65
-DEFAULT_BLEND_COLOR_MATCH = 0.85
-DEFAULT_BLEND_SHARPEN = 0.35
-DEFAULT_PYRAMID_LEVELS = 3
 LIP_SYNC_PROMPT = (
     "Preserve the source shot, framing, identity, lighting and expression. "
     "Synchronize the speaker's mouth and jaw to the supplied dialogue."
@@ -128,7 +125,7 @@ def build_auto_lip_sync_graph(
 
     masks = graph.add(
         "H3LowerFaceMask", crops=crops, transform=transform,
-        active_start=int(active_start), active_end=int(active_end), separate_opacity=True,
+        active_start=int(active_start), active_end=int(active_end), stitch_feather=int(feather),
     )
     denoise_mask, composite_mask = Graph.out(masks), Graph.out(masks, 1)
     prepared = graph.add(
@@ -162,15 +159,10 @@ def build_auto_lip_sync_graph(
                         latent_image=latent)
     video_latent = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(sampled))
     decoded = graph.add("VAEDecode", samples=Graph.out(video_latent), vae=decoder)
-    blended = graph.add(
-        "H3LipSyncBlend", source_crops=crops, generated_crops=Graph.out(decoded),
-        composite_mask=Graph.out(masks, 2), color_match=DEFAULT_BLEND_COLOR_MATCH,
-        sharpen=DEFAULT_BLEND_SHARPEN, pyramid_levels=DEFAULT_PYRAMID_LEVELS,
-    )
     stitched = graph.add(
-        "H3FaceStitch", base_images=Graph.out(source), refined_crops=Graph.out(blended), transform=transform,
-        paste_region="face_ellipse", mask_dilation=0, feather=int(feather), colour_match=0.0, blend=1.0,
-        undetected_frames="fade_out", masks=composite_mask, feather_scales_with_crop=False,
+        "H3FaceStitch", base_images=Graph.out(source), refined_crops=Graph.out(decoded), transform=transform,
+        paste_region="face_ellipse", mask_dilation=0, feather=0, colour_match=0.0, blend=1.0,
+        undetected_frames="skip", masks=composite_mask, feather_scales_with_crop=True,
     )
     rendered = graph.add("CreateVideo", images=Graph.out(stitched), audio=Graph.out(audio), fps=FPS, bit_depth=8)
     graph.add("SaveVideo", video=Graph.out(rendered), filename_prefix=output_prefix, format="auto", codec="auto")

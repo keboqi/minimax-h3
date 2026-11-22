@@ -56,31 +56,42 @@ class LipSyncWorkerRenderTests(unittest.TestCase):
         self.box = (1, 1, 7, 7)
         self.request = {"video_path": "input.mp4", "audio_path": "audio.wav", "output_path": "out.mp4", "fps": 25}
 
-    def test_musetalk_renders_with_a_multiframe_whisper_tensor(self):
+    def test_musetalk_renders_with_a_multiframe_whisper_tensor_and_one_composite(self):
         audio_processor = Mock()
         audio_processor.get_audio_feature.return_value = (object(), 1920)
         # NumPy rejects boolean conversion of this batch just as Torch does.
         audio_processor.get_whisper_chunk.return_value = np.zeros((3, 50, 384))
         vae = Mock()
-        vae.decode_latents.return_value = self.frames
+        vae.decode_latents.return_value = [np.full_like(frame, 200) for frame in self.frames[:2]]
         bundle = dict(device="cpu", dtype="float32", vae=vae, unet=Mock(), pe=Mock(), whisper=Mock(),
                       audio_processor=audio_processor, face_parser=Mock(), base=self.root)
         cv2 = SimpleNamespace(resize=lambda frame, *_args, **_kw: frame[:6, :6], INTER_LANCZOS4=1)
         torch = Mock()
         torch.inference_mode.side_effect = contextlib.nullcontext
-        blending = SimpleNamespace(get_image_prepare_material=Mock(return_value=(None, None)),
-                                   get_image_blending=Mock())
+        parsed = self.frames[0].copy()
+        parsed[2, 2] = 200
+        blending = SimpleNamespace(get_image_prepare_material=Mock(side_effect=[(object(), object()), (None, None)]),
+                                   get_image_blending=Mock(return_value=parsed))
+        fallback_mask = np.zeros((8, 8, 1), dtype=np.float32)
+        fallback_mask[3, 3] = 1.0
         with patch.dict(sys.modules, {"cv2": cv2, "torch": torch, "musetalk.utils.blending": blending}), \
                 patch.object(self.worker, "_load_musetalk", return_value=bundle), \
                 patch.object(lip_sync_worker, "_read_video_frames", return_value=(self.frames, 25)), \
                 patch.object(lip_sync_worker, "_detect_faces_per_frame", return_value=[[self.box]] * 3), \
-                patch.object(lip_sync_worker, "_feathered_lower_face_mask"), \
-                patch.object(lip_sync_worker, "_blend_frame", side_effect=lambda orig, *_: orig), \
+                patch.object(lip_sync_worker, "_feathered_lower_face_mask", return_value=fallback_mask) as fallback, \
                 patch.object(lip_sync_worker, "_write_cfr_mp4") as write:
-            result = self.worker.handle({"op": "render_musetalk", **self.request})
+            result = self.worker.handle({"op": "render_musetalk", **self.request, "active_end_frame": 2})
         self.assertEqual(result["frames"], 3)
-        self.assertEqual(len(torch.stack.call_args.args[0]), 3)
+        self.assertEqual(len(torch.stack.call_args.args[0]), 2)
+        blending.get_image_blending.assert_called_once()
+        fallback.assert_called_once()
         write.assert_called_once()
+        frames = write.call_args.args[0]
+        np.testing.assert_array_equal(frames[0], parsed)
+        expected_fallback = self.frames[1].copy()
+        expected_fallback[3, 3] = 200
+        np.testing.assert_array_equal(frames[1], expected_fallback)
+        np.testing.assert_array_equal(frames[2], self.frames[2])
 
     def test_latentsync_recovers_later_frames_and_leaves_failed_frames_original(self):
         class Processor:
@@ -470,14 +481,14 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(inject["images"], [link_id(graph, "H3LipSyncPrepareCrop"), 0])
         mask = by_class(graph, "H3LipSyncMask")
         self.assertEqual(mask["mouth_mask"], [link_id(graph, "H3LowerFaceMask"), 0])
-        blend = by_class(graph, "H3LipSyncBlend")
-        self.assertEqual(blend["source_crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
-        self.assertEqual(blend["generated_crops"], [link_id(graph, "VAEDecode"), 0])
-        self.assertTrue(lower["separate_opacity"])
-        self.assertEqual(blend["composite_mask"], [link_id(graph, "H3LowerFaceMask"), 2])
+        self.assertEqual(lower["stitch_feather"], 6)
+        self.assertNotIn("H3LipSyncBlend", {node["class_type"] for node in graph.values()})
         stitch = by_class(graph, "H3FaceStitch")
         self.assertEqual(stitch["masks"], [link_id(graph, "H3LowerFaceMask"), 1])
-        self.assertEqual(stitch["refined_crops"], [link_id(graph, "H3LipSyncBlend"), 0])
+        self.assertEqual(stitch["refined_crops"], [link_id(graph, "VAEDecode"), 0])
+        self.assertEqual(stitch["feather"], 0)
+        self.assertTrue(stitch["feather_scales_with_crop"])
+        self.assertEqual(stitch["undetected_frames"], "skip")
         self.assertEqual(stitch["colour_match"], 0.0)
         self.assertEqual(stitch["base_images"], [link_id(graph, "GetVideoComponents"), 0])
 
