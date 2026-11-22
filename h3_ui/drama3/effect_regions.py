@@ -15,6 +15,7 @@ from h3_app.jobs import check_cancelled
 from h3_models import MODEL_SPECS
 
 MODEL = "soundstage_sam31"
+MASK_OUTPUT_NODE = "H3SaveDetectedMasks"
 MASK_FOLDER = ".effect-masks"
 OBJECTS = ("window", "door", "lamp", "candle", "screen", "mirror", "fire", "tree",
            "vehicle", "sign", "table", "chair", "book", "cup", "microphone", "telephone")
@@ -56,9 +57,9 @@ def read_regions(folder, image, labels):
 
 
 def prepare(services):
-    required = {"SAM3_Detect", "CheckpointLoaderSimple", "MaskToImage", "SaveImage"}
+    required = {"SAM3_Detect", "CheckpointLoaderSimple", MASK_OUTPUT_NODE}
     if missing := required.difference(services.execution.object_info()):
-        raise H3Error(f"Update ComfyUI for SAM 3.1. Missing nodes: {', '.join(sorted(missing))}.")
+        raise H3Error(f"Update ComfyUI and the bundled H3 nodes for SAM 3.1. Missing nodes: {', '.join(sorted(missing))}.")
     services.models.ensure_model_keys((MODEL,))
 
 
@@ -77,8 +78,7 @@ def _graph(image, labels, prefix, clicks=None):
             inputs["negative_coords"] = json.dumps(clicks["exclude"])
         mask = graph.add("SAM3_Detect", model=Graph.out(checkpoint), image=Graph.out(source),
                          individual_masks=clicks is None, refine_iterations=2, threshold=0.5, **inputs)
-        pixels = graph.add("MaskToImage", mask=Graph.out(mask))
-        output = graph.add("SaveImage", images=Graph.out(pixels), filename_prefix=f"{prefix}/{index}")
+        output = graph.add(MASK_OUTPUT_NODE, masks=Graph.out(mask), filename_prefix=f"{prefix}/{index}")
         outputs[output] = label
     return graph.nodes, outputs
 

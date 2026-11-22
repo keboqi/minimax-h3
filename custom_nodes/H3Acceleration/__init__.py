@@ -3190,6 +3190,28 @@ class H3LipSyncBlend:
         return (out,)
 
 
+class H3SaveDetectedMasks:
+    """Save SAM detections independently, including a successful empty result."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"masks": ("MASK",), "filename_prefix": ("STRING",)}}
+
+    RETURN_TYPES = ()
+    FUNCTION = "save"
+    OUTPUT_NODE = True
+    CATEGORY = "H3/Effects"
+
+    def save(self, masks, filename_prefix):
+        if masks.shape[0] == 0:
+            return {"ui": {"images": []}}
+
+        from nodes import SaveImage
+
+        images = masks.unsqueeze(-1).expand(-1, -1, -1, 3)
+        return {"ui": SaveImage().save_images(images, filename_prefix)["ui"]}
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -3224,6 +3246,7 @@ NODE_CLASS_MAPPINGS = {
     "H3StageModelOffload": H3StageModelOffload,
     "H3RefinementCompilerGuard": H3RefinementCompilerGuard,
     "H3SaveVideoNVENC": H3SaveVideoNVENC,
+    "H3SaveDetectedMasks": H3SaveDetectedMasks,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -3251,6 +3274,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
     "H3RefinementCompilerGuard": "MiniMax H3 Refinement Compiler Guard",
     "H3SaveVideoNVENC": "MiniMax H3 Save Video (Auto H.264)",
+    "H3SaveDetectedMasks": "H3 Save Detected Masks",
     "H3LipSyncMask": "MiniMax H3 Lip Sync Latent Mask",
     "H3LowerFaceMask": "MiniMax H3 Lower-Face Mouth Mask",
     "H3LipSyncPrepareCrop": "MiniMax H3 Lip Sync Prepare Crop",
