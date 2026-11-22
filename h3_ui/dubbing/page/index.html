@@ -7,30 +7,73 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path><path d="M13 21l4-9 4 9M14.5 18h5"></path>
-      </svg>
-      <span>Dubbing</span>
+  <header class="dub-chrome" id="dub-chrome">
+    <div class="topbar">
+      <div class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path><path d="M13 21l4-9 4 9M14.5 18h5"></path>
+        </svg>
+        <span>Dubbing</span>
+      </div>
+      <span class="chrome-divider" aria-hidden="true"></span>
+      <div class="project-cluster">
+        <div class="project-picker">
+          <label class="sr-only" for="project-list">Project</label>
+          <select id="project-list"></select>
+          <button type="button" class="btn btn-small btn-ink" id="project-load">Load</button>
+        </div>
+        <button type="button" class="btn btn-small btn-ink" id="project-new">New project</button>
+        <span class="small project-status" id="project-status" role="status" title="API keys are never saved">Unsaved draft</span>
+        <span class="unsaved-pill" id="project-unsaved" role="status" hidden>Unsaved changes</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="chrome-actions">
+        <span class="mode" id="mode"></span>
+        <div class="auto-pill" id="auto-status" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="auto-message" role="status"></span>
+          <button type="button" class="btn btn-small btn-ink" id="auto-stop">Interrupt Auto</button>
+        </div>
+        <button type="button" class="btn btn-small btn-ink" id="batch-open">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h10"></path>
+          </svg>
+          <span id="batch-label">Batch generate</span>
+        </button>
+        <button type="button" class="btn btn-small btn-ink" id="auto-dub">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path>
+          </svg>
+          <span>Auto-dub</span>
+        </button>
+        <span class="chrome-divider" aria-hidden="true"></span>
+        <div class="project-save-split">
+          <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
+          <details class="chrome-menu" id="save-menu">
+            <summary class="btn btn-small btn-ink" aria-label="More save options">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </summary>
+            <div class="chrome-menu-panel">
+              <button type="button" class="chrome-menu-item" id="project-save-as">Save as…</button>
+              <p class="chrome-menu-note">Line &amp; speaker edits save automatically. API keys are never saved.</p>
+            </div>
+          </details>
+        </div>
+      </div>
     </div>
-    <div class="project-picker">
-      <label for="project-list">Project</label>
-      <select id="project-list"></select>
-      <button type="button" class="btn btn-small btn-ink" id="project-load">Load</button>
-      <button type="button" class="btn btn-small btn-ink" id="project-new">New project</button>
-    </div>
-    <span class="small project-status" id="project-status" role="status">Unsaved draft</span>
-    <nav class="steps" id="steps" aria-label="Steps"></nav>
-    <span class="spacer"></span>
-    <span class="mode" id="mode"></span>
-    <button type="button" class="btn btn-small btn-ink" id="auto-dub">Auto-dub</button>
-    <button type="button" class="btn btn-small btn-ink" id="batch-open">Batch generate</button>
-    <button type="button" class="btn btn-small btn-ink" id="project-save-as">Save as…</button>
-    <div class="project-save">
-      <span class="small" id="project-unsaved" role="status" hidden>Unsaved changes</span>
-      <button type="button" class="btn btn-small btn-primary" id="project-save">Save project</button>
+    <div class="stepbar">
+      <nav class="steps" id="steps" aria-label="Steps"></nav>
+      <span class="spacer"></span>
+      <div class="stepbar-context">
+        <button type="button" class="lang-pill" id="step-lang" hidden></button>
+        <button type="button" class="btn btn-small" id="step-cta" hidden></button>
+      </div>
     </div>
   </header>
   <div class="banner" id="banner" hidden>
@@ -39,11 +82,6 @@
       separate vocals (when not already cached), transcribe locally, preview voices, dub and align words.
       Source and settings changes need <strong>Save project</strong>. Line and speaker edits save automatically.</span>
     <button type="button" class="btn btn-small" id="reload-studio" hidden>Retry Studio sync</button>
-  </div>
-  <div class="card card-pad" id="auto-status" hidden>
-    <span class="spinner" aria-hidden="true"></span>
-    <span id="auto-message" role="status" class="grow"></span>
-    <button type="button" class="btn btn-small" id="auto-stop">Interrupt Auto</button>
   </div>
   <main id="screen" class="screen"></main>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

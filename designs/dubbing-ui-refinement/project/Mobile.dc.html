@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Mobile</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+  </style>
+</helmet>
+<div style="background: #f2f5f3; color: #202e2b; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <!-- Sticky Mobile 2-Tier Header -->
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 8px rgba(10, 16, 14, 0.08);">
+    <!-- Tier 1 -->
+    <div style="background: #141c1a; color: #e9f1ed; padding: 5px 10px; min-height: 54px; display: flex; align-items: center; gap: 6px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#66d8bb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none;">
+        <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+        <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+      </svg>
+
+      <button type="button" onClick="{{ toggleProjects }}" aria-expanded="{{ projectsOpen }}" style="flex: 1; min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600;">
+        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ currentProject }}</span>
+        <sc-if value="{{ unsaved }}" hint-placeholder-val="{{ true }}">
+          <span aria-label="Unsaved changes" style="width: 7px; height: 7px; border-radius: 50%; background: #fdba74; flex: none;"></span>
+        </sc-if>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a9bdb3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-left: auto; flex: none;">
+          <path d="m6 9 6 6 6-6"></path>
+        </svg>
+      </button>
+
+      <button type="button" onClick="{{ saveNow }}" style="min-height: 44px; padding: 0 12px; border: 1px solid {{ saveBg }}; border-radius: 8px; background: {{ saveBg }}; color: {{ saveFg }}; font-size: 13px; font-weight: 700; flex: none;">{{ saveLabel }}</button>
+
+      <button type="button" onClick="{{ toggleMore }}" aria-label="More project actions" aria-expanded="{{ moreOpen }}" style="width: 44px; min-height: 44px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; display: inline-flex; align-items: center; justify-content: center; flex: none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Tier 2: Horizontal Scrollable Steps -->
+    <nav aria-label="Dubbing steps" style="background: #ffffff; border-bottom: 1px solid #dbe3df; padding: 2px 10px; display: flex; align-items: center; gap: 4px; overflow-x: auto;">
+      <a href="Source.dc.html" style="flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: #202e2b; font-size: 13px; font-weight: 600;">
+        <span style="width: 18px; height: 18px; border-radius: 50%; background: #e3f1ec; color: #087f6c; display: grid; place-items: center; font-size: 11px; font-weight: 700;">✓</span>
+        <span>Source</span>
+      </a>
+      <a href="Main.dc.html" aria-current="step" style="flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; background: #e3f1ec; color: #075b4e; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-size: 13px; font-weight: 700;">
+        <span style="width: 18px; height: 18px; border-radius: 50%; background: #087f6c; color: #ffffff; display: grid; place-items: center; font-size: 11px; font-weight: 700;">2</span>
+        <span>Review</span>
+        <span style="padding: 1px 6px; border-radius: 999px; background: #fdecdc; color: #8a420e; font-size: 11px; font-weight: 700;">3</span>
+      </a>
+      <a href="Dub.dc.html" style="flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: #4f605a; font-size: 13px; font-weight: 600;">
+        <span>3 Dub</span>
+      </a>
+      <a href="LipSync.dc.html" style="flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: #4f605a; font-size: 13px; font-weight: 600;">
+        <span>4 Lip sync</span>
+      </a>
+      <a href="Result.dc.html" style="flex: none; min-height: 44px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: #4f605a; font-size: 13px; font-weight: 600;">
+        <span>5 Result</span>
+      </a>
+    </nav>
+  </header>
+
+  <!-- Popover / Action Sheets -->
+  <sc-if value="{{ projectsOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-label="Switch project" style="margin: 8px 12px 0; padding: 12px; border-radius: 12px; background: #ffffff; border: 1px solid #dbe3df; box-shadow: 0 10px 24px rgba(10, 16, 14, 0.14); display: flex; flex-direction: column; gap: 8px;">
+      <strong style="font-size: 13px; color: #4f605a; text-transform: uppercase;">Saved projects</strong>
+      <sc-for list="{{ savedProjects }}" as="proj" hint-placeholder-count="3">
+        <button type="button" onClick="{{ proj.pick }}" style="min-height: 46px; padding: 8px 10px; border-radius: 8px; border: 1px solid {{ proj.border }}; background: {{ proj.bg }}; text-align: left; display: flex; flex-direction: column;">
+          <strong style="font-size: 14px;">{{ proj.name }}</strong>
+          <span style="font-size: 12px; color: #4f605a;">{{ proj.meta }}</span>
+        </button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ moreOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-label="More project actions" style="margin: 8px 12px 0; padding: 12px; border-radius: 12px; background: #141c1a; color: #e9f1ed; border: 1px solid #34463e; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #a9bdb3; padding: 2px 4px;">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #66d8bb;"></span>
+        <span>GPU ready · Studio</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+        <button type="button" onClick="{{ runAuto }}" style="min-height: 44px; padding: 0 10px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; font-size: 13px; font-weight: 600;">Auto-dub</button>
+        <button type="button" onClick="{{ openBatch }}" style="min-height: 44px; padding: 0 10px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; font-size: 13px; font-weight: 600;">Batch generate</button>
+        <button type="button" onClick="{{ saveAsToast }}" style="min-height: 44px; padding: 0 10px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; font-size: 13px; font-weight: 600;">Save as…</button>
+        <button type="button" onClick="{{ newProject }}" style="min-height: 44px; padding: 0 10px; border: 1px solid #34463e; border-radius: 8px; background: #1e2c28; color: #e9f1ed; font-size: 13px; font-weight: 600;">New project</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Scrollable Mobile Content -->
+  <main style="padding: 14px; display: flex; flex-direction: column; gap: 14px;">
+    <!-- Compact Readiness Card -->
+    <section aria-label="Readiness" style="background: #ffffff; border: 1px solid #dbe3df; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
+        <h1 style="margin: 0; font-size: 18px; font-weight: 700;">15 of 18 lines ready</h1>
+        <span style="font-size: 12px; color: #4f605a;">EN → ES · 0:36</span>
+      </div>
+      <div role="img" aria-label="Readiness bar" style="display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #eef2f0;">
+        <span style="width: 78%; background: #087f6c;"></span>
+        <span style="width: 16.5%; background: #d97a2b;"></span>
+        <span style="width: 5.5%; background: #c9d4cf;"></span>
+      </div>
+      <a href="Dub.dc.html" style="min-height: 44px; border-radius: 8px; background: #087f6c; color: #ffffff; text-decoration: none; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;">Next: Dub →</a>
+    </section>
+
+    <!-- Filter Chips -->
+    <div role="group" aria-label="Filter lines" style="display: flex; gap: 6px; overflow-x: auto;">
+      <sc-for list="{{ filterBtns }}" as="flt" hint-placeholder-count="3">
+        <button type="button" onClick="{{ flt.pick }}" aria-pressed="{{ flt.pressed }}" style="flex: none; min-height: 44px; padding: 0 14px; border: 1px solid {{ flt.border }}; border-radius: 999px; background: {{ flt.bg }}; color: {{ flt.fg }}; font-size: 13px; font-weight: 600;">{{ flt.label }}</button>
+      </sc-for>
+    </div>
+
+    <!-- Touch-Friendly Line Cards -->
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <sc-for list="{{ lines }}" as="ln" hint-placeholder-count="4">
+        <section style="background: #ffffff; border: 1px solid {{ ln.border }}; border-radius: 12px; overflow: hidden;">
+          <button type="button" onClick="{{ ln.select }}" style="width: 100%; min-height: 44px; padding: 12px 14px; border: 0; background: {{ ln.headBg }}; text-align: left; display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: #4f605a;">#{{ ln.num }} · {{ ln.start }}</span>
+              <span style="font-size: 13px; font-weight: 700; color: {{ ln.speakerColor }};">{{ ln.speaker }}</span>
+              <span style="flex: 1;"></span>
+              <sc-if value="{{ ln.hasFlag }}" hint-placeholder-val="{{ true }}">
+                <span style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: {{ ln.flagBg }}; color: {{ ln.flagFg }};">{{ ln.flagLabel }}</span>
+              </sc-if>
+            </div>
+            <span style="font-size: 13px; color: #4f605a;">{{ ln.source }}</span>
+            <span style="font-size: 15px; font-weight: 600; color: {{ ln.transColor }};">{{ ln.translation }}</span>
+          </button>
+
+          <sc-if value="{{ ln.expanded }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 12px 14px 14px; border-top: 1px solid #e8eeeb; background: #f7f9f8; display: flex; flex-direction: column; gap: 10px;">
+              <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">Spanish translation
+                <textarea rows="2" style="padding: 10px; border: 1px solid #dbe3df; border-radius: 8px; background: #ffffff; font-weight: 400;">{{ ln.translation }}</textarea>
+              </label>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+                <button type="button" onClick="{{ ln.playOrig }}" style="min-height: 44px; border: 1px solid #dbe3df; border-radius: 8px; background: #ffffff; font-size: 13px; font-weight: 600;">Play original</button>
+                <button type="button" onClick="{{ ln.previewDub }}" style="min-height: 44px; border: 1px solid #087f6c; border-radius: 8px; background: #087f6c; color: #ffffff; font-size: 13px; font-weight: 700;">Preview dub</button>
+              </div>
+            </div>
+          </sc-if>
+        </section>
+      </sc-for>
+    </div>
+
+    <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+      <div role="status" style="padding: 10px 14px; border-radius: 10px; background: #141c1a; color: #e9f1ed; font-size: 13px; font-weight: 600; text-align: center;">{{ toast }}</div>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const currentProject = this.state?.projectName ?? 'The Editing Room';
+    const unsaved = this.state?.unsaved ?? true;
+    const projectsOpen = !!this.state?.projectsOpen;
+    const moreOpen = !!this.state?.moreOpen;
+    const filter = this.state?.filter ?? 'all';
+    const selectedIdx = this.state?.selectedIdx ?? 2;
+
+    const savedProjects = [
+      { name: 'The Editing Room', meta: 'EN → ES · 18 lines' },
+      { name: 'Keynote Q4 Recap', meta: 'EN → JA · 42 lines' },
+      { name: 'Field Notes Ep. 04', meta: 'ZH → EN · 29 lines' }
+    ].map((p) => {
+      const active = p.name === currentProject;
+      return {
+        name: p.name, meta: p.meta,
+        bg: active ? '#f2faf7' : '#ffffff', border: active ? '#087f6c' : '#dbe3df',
+        pick: () => this.setState({ projectName: p.name, projectsOpen: false, unsaved: false, toast: 'Opened ' + p.name + '.' })
+      };
+    });
+
+    const filterBtns = [['all', 'All (18)'], ['attention', 'Needs attention (3)'], ['untranslated', 'Untranslated (1)']].map(([key, label]) => {
+      const pressed = filter === key;
+      return {
+        label, pressed,
+        bg: pressed ? '#087f6c' : '#ffffff', fg: pressed ? '#ffffff' : '#202e2b',
+        border: pressed ? '#087f6c' : '#dbe3df',
+        pick: () => this.setState({ filter: key })
+      };
+    });
+
+    const rawLines = [
+      { num: 1, start: '0:01.2', speaker: 'Maya Lin', speakerColor: '#1864ab', source: 'Every scene starts with a rhythm you can feel.', translation: 'Cada escena comienza con un ritmo que se siente.', flag: '', flagBg: '', flagFg: '' },
+      { num: 2, start: '0:04.8', speaker: 'Carlos Vega', speakerColor: '#2b8a3e', source: 'And when the cut lands cleanly, the audience trusts.', translation: 'Y cuando el corte encaja limpio, el público confía.', flag: '', flagBg: '', flagFg: '' },
+      { num: 3, start: '0:08.6', speaker: 'Maya Lin', speakerColor: '#1864ab', source: 'We start with the story we want to tell.', translation: 'Empezamos con la historia que queremos contar y luego moldeamos cada plano.', flag: 'May be too long', flagBg: '#fdecdc', flagFg: '#8a420e' },
+      { num: 4, start: '0:12.4', speaker: 'Carlos Vega', speakerColor: '#2b8a3e', source: 'Even a half-second pause gives room to breathe.', translation: 'Incluso una pausa de medio segundo da espacio.', flag: 'Check translation', flagBg: '#fdecdc', flagFg: '#8a420e' },
+      { num: 5, start: '0:18.0', speaker: 'Maya Lin', speakerColor: '#1864ab', source: 'That is why we record room tone first.', translation: 'Not translated yet', flag: 'Not translated', flagBg: '#fdecdc', flagFg: '#8a420e' }
+    ];
+
+    const lines = rawLines.filter((l) => {
+      if (filter === 'attention') return !!l.flag;
+      if (filter === 'untranslated') return l.flag === 'Not translated';
+      return true;
+    }).map((l, idx) => {
+      const expanded = idx === selectedIdx;
+      return {
+        num: l.num, start: l.start, speaker: l.speaker, speakerColor: l.speakerColor,
+        source: l.source, translation: l.translation,
+        transColor: l.flag === 'Not translated' ? '#8a420e' : '#202e2b',
+        hasFlag: !!l.flag, flagLabel: l.flag, flagBg: l.flagBg, flagFg: l.flagFg,
+        expanded,
+        border: expanded ? '#087f6c' : '#dbe3df',
+        headBg: expanded ? '#f2faf7' : '#ffffff',
+        select: () => this.setState({ selectedIdx: expanded ? -1 : idx }),
+        playOrig: () => this.setState({ toast: 'Playing original line ' + l.num + '.' }),
+        previewDub: () => this.setState({ toast: 'Previewing dubbed line ' + l.num + '.' })
+      };
+    });
+
+    return {
+      currentProject, unsaved, projectsOpen, moreOpen, savedProjects, filterBtns, lines,
+      saveLabel: unsaved ? 'Save' : 'Saved',
+      saveBg: unsaved ? '#66d8bb' : '#1e2c28',
+      saveFg: unsaved ? '#0b2a23' : '#e9f1ed',
+      toast: this.state?.toast ?? '',
+      toggleProjects: () => this.setState({ projectsOpen: !projectsOpen, moreOpen: false }),
+      toggleMore: () => this.setState({ moreOpen: !moreOpen, projectsOpen: false }),
+      saveNow: () => this.setState({ unsaved: false, toast: 'Saved ' + currentProject + '.' }),
+      runAuto: () => this.setState({ moreOpen: false, toast: 'Auto-dub started.' }),
+      openBatch: () => this.setState({ moreOpen: false, toast: 'Batch queue opened.' }),
+      saveAsToast: () => this.setState({ moreOpen: false, toast: 'Save as opened.' }),
+      newProject: () => this.setState({ moreOpen: false, toast: 'Started new draft.' })
+    };
+  }
+}
+</script>
+</body>
+</html>

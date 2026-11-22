@@ -114,12 +114,47 @@ function renderSteps() {
     lipsync: hasLipSync && !result?.lip_sync?.output ? '<span class="muted small">Optional</span>' : "",
     result: "",
   };
-  document.getElementById("steps").innerHTML = SCREENS.map(([key, title], index) => `
-    <button type="button" class="step" data-screen="${key}" ${app.screen === key ? 'aria-current="step"' : ""}
-      ${(!session && key !== "source") || (key === "lipsync" && !hasLipSync) ? "disabled" : ""}>
-      <span class="step-mark ${done[key] && app.screen !== key ? "done" : ""}">${done[key] && app.screen !== key ? icon("check", 13) : index + 1}</span>
-      ${title}${key === "source" && notes.source ? `<span class="muted small step-note">${esc(notes.source)}</span>` : ""}${notes[key] && key !== "source" ? notes[key] : ""}
-    </button>`).join("");
+  document.getElementById("steps").innerHTML = SCREENS.map(([key, title], index) => {
+    const optional = key === "lipsync" && hasLipSync && !result?.lip_sync?.output;
+    const isDone = done[key] && app.screen !== key;
+    const stepBtn = `
+      <button type="button" class="step${optional ? " optional" : ""}" data-screen="${key}" ${app.screen === key ? 'aria-current="step"' : ""}
+        ${(!session && key !== "source") || (key === "lipsync" && !hasLipSync) ? "disabled" : ""}>
+        <span class="step-mark ${isDone ? "done" : ""}" aria-hidden="true">${isDone ? icon("check", 13) : index + 1}</span>
+        ${title}${key === "source" && notes.source ? `<span class="muted small step-note">${esc(notes.source)}</span>` : ""}${notes[key] && key !== "source" ? notes[key] : ""}
+      </button>`;
+    const rail = index < SCREENS.length - 1 ? `<span class="step-rail${done[key] ? " done" : ""}" aria-hidden="true"></span>` : "";
+    return stepBtn + rail;
+  }).join("");
+
+  const langEl = document.getElementById("step-lang");
+  const target = session?.target_language || app.settings.target_language;
+  const spoken = session?.spoken || app.settings.source_language;
+  if (target === app.boot.same) {
+    langEl.textContent = "Same language";
+    langEl.hidden = false;
+  } else if (spoken || target) {
+    langEl.textContent = `${spoken || "Auto-detect"} → ${target || "…"}`;
+    langEl.hidden = false;
+  } else {
+    langEl.hidden = true;
+  }
+
+  const ctaEl = document.getElementById("step-cta");
+  const ctaByScreen = {
+    source: session ? {label: "Review lines →", go: "review", primary: false} : null,
+    review: session ? {label: "Next: Dub →", go: "dub", primary: true} : null,
+    dub: result ? {label: "Watch result →", go: "result", primary: true} : null,
+    lipsync: result ? {label: "Skip to Result →", go: "result", primary: false} : null,
+    result: session ? {label: "Edit lines", go: "review", primary: false} : null,
+  };
+  const cta = ctaByScreen[app.screen] || null;
+  ctaEl.hidden = !cta;
+  if (cta) {
+    ctaEl.textContent = cta.label;
+    ctaEl.dataset.go = cta.go;
+    ctaEl.className = cta.primary ? "btn btn-small btn-primary" : "btn btn-small";
+  }
 }
 
 function renderTop() {
@@ -129,7 +164,8 @@ function renderTop() {
     + app.projects.map((name) => `<option ${name === current ? "selected" : ""}>${esc(name)}</option>`).join("");
   document.getElementById("project-status").textContent = current ? `Project: ${current}` : "Unsaved draft · API keys are never saved";
   const mode = document.getElementById("mode");
-  mode.innerHTML = `<span class="dot ${app.boot.gpu ? "ready" : "prepare"}"></span>${app.boot.gpu ? "GPU ready" : "Prepare only · voices run in Studio"}`;
+  mode.dataset.mode = app.boot.gpu ? "studio" : "workshop";
+  mode.innerHTML = `<span class="dot ${app.boot.gpu ? "ready" : "prepare"}"></span>${app.boot.gpu ? "GPU ready" : "Workshop · Prepare only"}`;
   document.getElementById("banner").hidden = app.boot.gpu;
   document.getElementById("auto-dub").disabled = !app.boot.gpu || !!app.runs.auto?.active;
 }
@@ -145,7 +181,9 @@ function renderProjectSave() {
     : source || app.sessionId;
   const saved = savedProjectSettings();
   const settingsChanged = app.boot.project_keys.some((key) => app.settings[key] !== saved[key]);
-  document.getElementById("project-unsaved").hidden = !(sourceChanged || settingsChanged);
+  const dirty = Boolean(sourceChanged || settingsChanged);
+  document.getElementById("project-unsaved").hidden = !dirty;
+  document.getElementById("project-save").classList.toggle("is-dirty", dirty);
 }
 
 export function render() {
@@ -347,9 +385,12 @@ function updateRunViews() {
   const status = document.getElementById("auto-status");
   status.hidden = !auto?.active && !auto?.error;
   status.classList.toggle("active", !!auto?.active);
+  status.classList.toggle("error", !!auto?.error);
   document.getElementById("auto-message").textContent = auto ? `Auto · ${auto.error || auto.status}` : "";
   document.getElementById("auto-stop").disabled = !auto?.active;
-  document.getElementById("auto-dub").disabled = !app.boot.gpu || !!auto?.active;
+  const autoDub = document.getElementById("auto-dub");
+  autoDub.disabled = !app.boot.gpu || !!auto?.active;
+  autoDub.hidden = !!auto?.active;
   for (const box of document.querySelectorAll("[data-run]")) {
     const run = app.runs[box.dataset.run];
     const task = box.dataset.task;
@@ -558,7 +599,23 @@ function bindChrome() {
   document.getElementById("project-save").addEventListener("click", () => {
     if (app.project?.name) saveProject(app.project.name); else askName();
   });
-  document.getElementById("project-save-as").addEventListener("click", askName);
+  const saveMenu = document.getElementById("save-menu");
+  document.getElementById("project-save-as").addEventListener("click", () => {
+    if (saveMenu) saveMenu.open = false;
+    askName();
+  });
+  document.addEventListener("click", (event) => {
+    if (saveMenu?.open && !saveMenu.contains(event.target)) saveMenu.open = false;
+  });
+  document.getElementById("step-lang").addEventListener("click", () => go("source"));
+  const stepCta = document.getElementById("step-cta");
+  stepCta.addEventListener("click", () => { if (stepCta.dataset.go) go(stepCta.dataset.go); });
+  const chrome = document.getElementById("dub-chrome");
+  const syncChromeHeight = () => {
+    if (chrome) document.documentElement.style.setProperty("--chrome-h", `${Math.ceil(chrome.getBoundingClientRect().height)}px`);
+  };
+  syncChromeHeight();
+  if (chrome && typeof ResizeObserver !== "undefined") new ResizeObserver(syncChromeHeight).observe(chrome);
   const dialog = document.getElementById("name-dialog");
   document.getElementById("name-cancel").addEventListener("click", () => dialog.close("cancel"));
   dialog.addEventListener("close", () => {

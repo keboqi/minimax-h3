@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Dub</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .dc-spin { animation: spin 0.9s linear infinite; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 10px rgba(10, 16, 14, 0.08);">
+    <!-- Tier 1: Project & Common Functions Bar -->
+    <div style="background: {{ t.chrome }}; color: {{ t.chromeText }}; border-bottom: 1px solid {{ t.chromeLine }}; padding: 8px 20px; min-height: 52px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+      <div style="display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+          <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+        </svg>
+        <span>Dubbing</span>
+      </div>
+      <span aria-hidden="true" style="width: 1px; height: 20px; background: {{ t.chromeLine }}; flex: none;"></span>
+
+      <div style="position: relative; display: flex; align-items: center; gap: 8px;">
+        <button type="button" onClick="{{ toggleProjects }}" aria-expanded="{{ projectsOpen }}" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-weight: 600; font-size: 14px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeMuted }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          </svg>
+          <span>{{ currentProject }}</span>
+          <sc-if value="{{ unsaved }}" hint-placeholder-val="{{ true }}">
+            <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 999px; background: #362210; color: #fdba74; font-size: 11px; font-weight: 700;">
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: #fdba74;"></span>
+              Unsaved
+            </span>
+          </sc-if>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeMuted }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </button>
+
+        <button type="button" onClick="{{ newProject }}" style="display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 10px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: transparent; color: {{ t.chromeText }}; font-size: 13px; font-weight: 600;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"></path>
+          </svg>
+          New
+        </button>
+
+        <sc-if value="{{ projectsOpen }}" hint-placeholder-val="{{ false }}">
+          <div role="dialog" aria-label="Switch project" style="position: absolute; top: 44px; left: 0; width: 340px; max-width: 90vw; border-radius: 12px; background: {{ t.surface }}; color: {{ t.text }}; border: 1px solid {{ t.line }}; box-shadow: 0 16px 36px rgba(10, 16, 14, 0.28); padding: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 40;">
+            <sc-for list="{{ savedProjects }}" as="proj" hint-placeholder-count="3">
+              <button type="button" onClick="{{ proj.pick }}" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid {{ proj.border }}; background: {{ proj.bg }}; text-align: left;">
+                <span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+                  <strong style="font-size: 14px; color: {{ t.text }};">{{ proj.name }}</strong>
+                  <span style="font-size: 12px; color: {{ t.muted }};">{{ proj.meta }}</span>
+                </span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+
+      <span style="flex: 1;"></span>
+
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <sc-if value="{{ isStudio }}" hint-placeholder-val="{{ true }}">
+          <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border-radius: 999px; background: {{ t.chromeRaised }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; color: {{ t.chromeText }};">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ t.chromeAccent }};"></span>
+            GPU ready
+          </span>
+        </sc-if>
+        <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+          <div style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 6px 0 11px; border-radius: 999px; background: #362210; border: 1px solid #6b4620; font-size: 13px; font-weight: 600; color: #fdba74;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: #fdba74;"></span>
+            <span>Workshop · CPU</span>
+            <button type="button" onClick="{{ syncStudio }}" style="min-height: 24px; padding: 0 8px; border-radius: 999px; border: 1px solid #6b4620; background: #4a2e16; color: #fdecdc; font-size: 12px; font-weight: 600;">Sync</button>
+          </div>
+        </sc-if>
+
+        <button type="button" onClick="{{ openBatch }}" style="display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-size: 13px; font-weight: 600;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeMuted }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h10"></path>
+          </svg>
+          <span>Batch</span>
+        </button>
+
+        <sc-if value="{{ autoRunning }}" hint-placeholder-val="{{ false }}">
+          <div role="status" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 6px 0 11px; border: 1px solid {{ t.chromeAccent }}; border-radius: 8px; background: {{ t.chromeDone }}; color: {{ t.chromeText }}; font-size: 13px; font-weight: 600;">
+            <span class="dc-spin" style="width: 13px; height: 13px; border-radius: 50%; border: 2px solid {{ t.chromeAccent }}; border-right-color: transparent;"></span>
+            <span>Auto · Voicing 11/18</span>
+            <button type="button" onClick="{{ stopAuto }}" style="min-height: 26px; padding: 0 9px; border: 1px solid {{ t.chromeLine }}; border-radius: 6px; background: {{ t.chrome }}; color: {{ t.chromeText }}; font-size: 12px; font-weight: 600;">Interrupt</button>
+          </div>
+        </sc-if>
+        <sc-if value="{{ autoIdle }}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{ startAuto }}" disabled="{{ autoDisabled }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-size: 13px; font-weight: 600;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"></path>
+            </svg>
+            <span>Auto-dub</span>
+          </button>
+        </sc-if>
+
+        <span aria-hidden="true" style="width: 1px; height: 20px; background: {{ t.chromeLine }}; flex: none;"></span>
+
+        <div style="position: relative; display: inline-flex; align-items: stretch;">
+          <button type="button" onClick="{{ saveNow }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 13px; border: 1px solid {{ saveBtnBorder }}; border-right: 0; border-radius: 8px 0 0 8px; background: {{ saveBtnBg }}; color: {{ saveBtnFg }}; font-size: 13px; font-weight: 700;">
+            <span>{{ saveLabel }}</span>
+          </button>
+          <button type="button" onClick="{{ toggleSaveMenu }}" aria-label="More save options" aria-expanded="{{ saveMenuOpen }}" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; min-height: 36px; border: 1px solid {{ saveBtnBorder }}; border-left: 1px solid {{ saveSplitLine }}; border-radius: 0 8px 8px 0; background: {{ saveBtnBg }}; color: {{ saveBtnFg }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </button>
+          <sc-if value="{{ saveMenuOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; top: 44px; right: 0; width: 180px; border-radius: 10px; background: {{ t.surface }}; color: {{ t.text }}; border: 1px solid {{ t.line }}; box-shadow: 0 14px 32px rgba(10, 16, 14, 0.25); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 40;">
+              <button type="button" onClick="{{ saveAsToast }}" style="min-height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 14px; font-weight: 600;">Save as…</button>
+              <button type="button" onClick="{{ newProject }}" style="min-height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 14px; font-weight: 600;">New project</button>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tier 2: Workflow Stepper & Step Action Bar -->
+    <div style="background: {{ t.surface }}; color: {{ t.text }}; border-bottom: 1px solid {{ t.line }}; padding: 6px 20px; min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;">
+      <nav aria-label="Dubbing steps" style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px;">
+        <a href="Source.dc.html" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accentSoft }}; color: {{ t.accent }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12l5 5 9-10"></path>
+            </svg>
+          </span>
+          <span>Source</span>
+          <span style="font-size: 12px; font-weight: 500; color: {{ t.muted }};">editing_room.mp4</span>
+        </a>
+        <span aria-hidden="true" style="width: 18px; height: 2px; border-radius: 1px; background: {{ t.accent }}; opacity: 0.45;"></span>
+
+        <a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accentSoft }}; color: {{ t.accent }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12l5 5 9-10"></path>
+            </svg>
+          </span>
+          <span>Review lines</span>
+          <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }}; font-size: 11px; font-weight: 700;">3</span>
+        </a>
+        <span aria-hidden="true" style="width: 18px; height: 2px; border-radius: 1px; background: {{ t.accent }}; opacity: 0.45;"></span>
+
+        <a href="Dub.dc.html" aria-current="step" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 14px; font-weight: 700;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 12px; font-weight: 700;">3</span>
+          <span>Dub</span>
+          <span style="font-size: 12px; font-weight: 500; color: {{ t.accentText }};">{{ timingShort }} · 18</span>
+        </a>
+        <span aria-hidden="true" style="width: 18px; height: 2px; border-radius: 1px; background: {{ t.line }};"></span>
+
+        <a href="LipSync.dc.html" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; color: {{ t.muted }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px dashed {{ t.muted }}; color: {{ t.muted }}; font-size: 12px; font-weight: 700;">4</span>
+          <span>Lip sync</span>
+          <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.quietBg }}; color: {{ t.quiet }}; font-size: 11px; font-weight: 600;">Optional</span>
+        </a>
+        <span aria-hidden="true" style="width: 18px; height: 2px; border-radius: 1px; background: {{ t.line }};"></span>
+
+        <a href="Result.dc.html" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 2px solid {{ t.line }}; color: {{ t.muted }}; font-size: 12px; font-weight: 700;">5</span>
+          <span>Result</span>
+          <span style="font-size: 12px; font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; color: {{ t.muted }};">0:36</span>
+        </a>
+      </nav>
+
+      <span style="flex: 1;"></span>
+
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <a href="Source.dc.html" style="display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 999px; background: {{ t.raised }}; border: 1px solid {{ t.line }}; color: {{ t.muted }}; text-decoration: none; font-size: 12px; font-weight: 600;">English → Spanish</a>
+        <a href="Result.dc.html" style="display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700; white-space: nowrap;">
+          <span>Generate dub</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6"></path>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 9px 20px; background: {{ t.infoBg }}; color: {{ t.info }}; border-bottom: 1px solid {{ t.line }}; font-size: 14px;">
+      <strong>Workshop</strong>
+      <span style="flex: 1 1 460px;">Speaker voice assignments and mix settings save with the project. Load this project in Studio to generate voices on the GPU.</span>
+      <button type="button" onClick="{{ syncStudio }}" style="min-height: 32px; padding: 0 12px; border: 1px solid {{ t.info }}; border-radius: 7px; background: {{ t.surface }}; color: {{ t.info }}; font-size: 13px; font-weight: 600;">Retry Studio sync</button>
+    </div>
+  </sc-if>
+
+  <main style="padding: 20px 24px 36px; max-width: 1440px; width: 100%; margin: 0 auto;">
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start;">
+      <!-- Main Column -->
+      <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px;">
+        <!-- Speakers Card -->
+        <section aria-labelledby="cast-h" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;">
+            <h1 id="cast-h" style="margin: 0; font-size: 19px; font-weight: 700;">Speakers</h1>
+            <span style="font-size: 13px; color: {{ t.muted }};">Cloned from the original audio with Drama 3. Give a speaker a saved voice instead, or adjust volume. Changes save at once.</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;">
+            <sc-for list="{{ speakerCards }}" as="spk" hint-placeholder-count="2">
+              <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid {{ t.line }}; border-radius: 10px; background: {{ t.surface }};">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span style="flex: none; width: 34px; height: 34px; border-radius: 50%; background: {{ spk.tone }}; color: #ffffff; display: grid; place-items: center; font-weight: 700; font-size: 13px;">{{ spk.initials }}</span>
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+                    <strong>{{ spk.label }}</strong>
+                    <span style="font-size: 13px; color: {{ t.muted }};">{{ spk.detail }}</span>
+                  </span>
+                </div>
+                <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: {{ t.muted }};">Voice
+                  <select value="{{ spk.voice }}" onChange="{{ spk.changeVoice }}" style="min-height: 40px; padding: 0 10px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 14px;">
+                    <option value="clone">Cloned from original</option>
+                    <option value="warm_alto">Warm Alto (Saved)</option>
+                    <option value="studio_baritone">Studio Baritone (Saved)</option>
+                  </select>
+                </label>
+                <label style="display: grid; grid-template-columns: auto minmax(0, 1fr) 48px; gap: 10px; align-items: center; font-size: 13px; color: {{ t.muted }};">
+                  <span>Volume</span>
+                  <input type="range" min="0" max="200" step="5" value="{{ spk.volume }}" onInput="{{ spk.changeVol }}" style="width: 100%; accent-color: {{ t.accent }};">
+                  <output style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; text-align: right;">{{ spk.volumeLabel }}</output>
+                </label>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Voices and Timing Card -->
+        <section aria-labelledby="set-h" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden;">
+          <div style="padding: 18px 20px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;">
+            <h2 id="set-h" style="margin: 0; font-size: 19px; font-weight: 700;">Voices and timing</h2>
+            <span style="font-size: 13px; color: {{ t.muted }};">Changes apply to the next dub. Unchanged lines keep their takes.</span>
+          </div>
+
+          <div style="padding: 16px 20px; border-top: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 14px;">
+            <h3 style="margin: 0; font-size: 15px; font-weight: 700;">Voices</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-start;">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 14px; font-weight: 600;">Clone from</span>
+                <div role="group" aria-label="Clone from" style="display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+                  <sc-for list="{{ cloneButtons }}" as="btn" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ btn.pick }}" aria-pressed="{{ btn.pressed }}" style="min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: {{ btn.bg }}; color: {{ btn.color }}; box-shadow: {{ btn.shadow }}; font-size: 14px; font-weight: 600;">{{ btn.label }}</button>
+                  </sc-for>
+                </div>
+                <span style="font-size: 13px; color: {{ t.muted }};">{{ cloneDesc }}</span>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-size: 14px; font-weight: 600;">Delivery</span>
+                <div role="group" aria-label="Delivery" style="display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+                  <sc-for list="{{ presetButtons }}" as="btn" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ btn.pick }}" aria-pressed="{{ btn.pressed }}" style="min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: {{ btn.bg }}; color: {{ btn.color }}; box-shadow: {{ btn.shadow }}; font-size: 14px; font-weight: 600;">{{ btn.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="padding: 16px 20px 20px; border-top: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 14px;">
+            <h3 style="margin: 0; font-size: 15px; font-weight: 700;">Timing</h3>
+            <div role="radiogroup" aria-label="Timing" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+              <sc-for list="{{ timingCards }}" as="tm" hint-placeholder-count="3">
+                <button type="button" role="radio" aria-checked="{{ tm.checked }}" onClick="{{ tm.pick }}" style="display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 13px 14px; border: 1px solid {{ tm.border }}; border-radius: 10px; background: {{ tm.bg }}; box-shadow: {{ tm.shadow }}; text-align: left;">
+                  <span style="flex: none; width: 18px; height: 18px; margin-top: 2px; border-radius: 50%; border: {{ tm.dotBorder }};"></span>
+                  <span style="display: flex; flex-direction: column; gap: 8px; flex: 1;">
+                    <strong>{{ tm.label }}</strong>
+                    <span aria-hidden="true" style="display: flex; align-items: flex-end; gap: 3px; height: 22px;">
+                      <span style="flex: 3; height: 100%; border-radius: 3px; background: {{ t.off }};"></span>
+                      <span style="flex: {{ tm.takeFlex }}; margin-right: {{ tm.takeMargin }}; height: 65%; border-radius: 3px; background: {{ tm.takeColor }};"></span>
+                      <span style="flex: 2; height: 100%; border-radius: 3px; background: {{ t.off }};"></span>
+                    </span>
+                    <span style="font-size: 13px; color: {{ t.muted }};">{{ tm.desc }}</span>
+                  </span>
+                </button>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ showMaxSpeed }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="display: grid; grid-template-columns: 170px minmax(0, 1fr) 60px; gap: 12px; align-items: center; font-size: 14px; font-weight: 600;">
+                  <span>Maximum speed-up</span>
+                  <input type="range" min="1" max="2" step="0.05" value="{{ maxSpeed }}" onInput="{{ changeMaxSpeed }}" style="width: 100%; accent-color: {{ t.accent }};">
+                  <output style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; text-align: right;">{{ maxSpeedLabel }}</output>
+                </label>
+                <span style="font-size: 13px; color: {{ t.muted }};">Takes still too long at this speed overlap the next line.</span>
+              </div>
+            </sc-if>
+          </div>
+        </section>
+
+        <!-- Mix and Output Card -->
+        <section aria-labelledby="mix-h" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden;">
+          <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+            <h2 id="mix-h" style="margin: 0; font-size: 19px; font-weight: 700;">Mix and output</h2>
+            <label style="display: grid; grid-template-columns: 170px minmax(0, 1fr) 60px; gap: 12px; align-items: center; font-size: 14px; font-weight: 600;">
+              <span>Dub volume</span>
+              <input type="range" min="0" max="200" step="5" value="{{ dubVolume }}" onInput="{{ changeDubVol }}" style="width: 100%; accent-color: {{ t.accent }};">
+              <output style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; text-align: right;">{{ dubVolume }}%</output>
+            </label>
+            <label style="display: grid; grid-template-columns: 170px minmax(0, 1fr) 60px; gap: 12px; align-items: center; font-size: 14px; font-weight: 600;">
+              <span>Music and effects</span>
+              <input type="range" min="0" max="200" step="5" value="{{ bgVolume }}" onInput="{{ changeBgVol }}" style="width: 100%; accent-color: {{ t.accent }};">
+              <output style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; text-align: right;">{{ bgVolume }}%</output>
+            </label>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px 26px;">
+              <label style="display: inline-flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer;">
+                <input type="checkbox" checked="{{ keepOrig }}" onChange="{{ toggleKeepOrig }}" style="width: 18px; height: 18px; accent-color: {{ t.accent }};">
+                <span>Keep the original audio as a second track</span>
+              </label>
+              <label style="display: inline-flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer;">
+                <input type="checkbox" checked="{{ wordTiming }}" onChange="{{ toggleWordTiming }}" style="width: 18px; height: 18px; accent-color: {{ t.accent }};">
+                <span>Word-by-word subtitles</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="padding: 14px 20px; border-top: 1px solid {{ t.lineSoft }};">
+            <button type="button" onClick="{{ toggleAdvanced }}" aria-expanded="{{ advancedOpen }}" style="display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; padding: 0; text-align: left;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ t.muted }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: {{ advChevron }}; transition: transform 0.15s;">
+                <path d="M9 6l6 6-6 6"></path>
+              </svg>
+              <strong>Advanced</strong>
+              <span style="font-size: 13px; color: {{ t.muted }};">16 parallel requests · no forced fresh takes</span>
+            </button>
+            <sc-if value="{{ advancedOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="padding-top: 14px; display: flex; flex-direction: column; gap: 12px;">
+                <label style="display: flex; flex-direction: column; gap: 5px; max-width: 340px; font-size: 14px; font-weight: 600;">Fresh takes for lines
+                  <input placeholder="e.g. 4, 9-10" style="min-height: 42px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-weight: 400;">
+                  <span style="font-size: 13px; font-weight: 400; color: {{ t.muted }};">These lines get new takes even when unchanged.</span>
+                </label>
+              </div>
+            </sc-if>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sticky Right Rail: Dub It Summary -->
+      <aside aria-label="Dub summary" style="flex: 1 1 360px; min-width: 0; position: sticky; top: 116px; display: flex; flex-direction: column; gap: 12px;">
+        <section aria-labelledby="go-h" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+          <h2 id="go-h" style="margin: 0; font-size: 18px; font-weight: 700;">Dub it</h2>
+          <p style="margin: 0; font-size: 13px; color: {{ t.muted }};">Dubbing into <strong style="color: {{ t.text }};">Spanish</strong>.</p>
+
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; text-align: center;">
+            <div style="display: flex; flex-direction: column; padding: 10px 6px; border-radius: 10px; background: {{ t.selected }}; font-size: 13px; color: {{ t.muted }};">
+              <strong style="font-size: 25px; color: {{ t.accent }};">{{ voicedCount }}</strong>
+              <span>voiced</span>
+            </div>
+            <div style="display: flex; flex-direction: column; padding: 10px 6px; border-radius: 10px; background: {{ t.quietBg }}; font-size: 13px; color: {{ t.muted }};">
+              <strong style="font-size: 25px; color: {{ t.text }};">2</strong>
+              <span>original voice</span>
+            </div>
+            <div style="display: flex; flex-direction: column; padding: 10px 6px; border-radius: 10px; background: {{ t.quietBg }}; font-size: 13px; color: {{ t.muted }};">
+              <strong style="font-size: 25px; color: {{ t.text }};">2</strong>
+              <span>speakers</span>
+            </div>
+          </div>
+
+          <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: {{ t.muted }};">Before you dub</span>
+          <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px;">
+            <li style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: {{ t.warnBg }}; color: {{ t.warn }};">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 2px;">
+                <path d="M12 3l9 16H3zM12 10v4M12 17v.5"></path>
+              </svg>
+              <span style="flex: 1;">Line <strong>3</strong> may sound rushed</span>
+              <a href="Main.dc.html" style="color: inherit; font-weight: 700;">Fix</a>
+            </li>
+            <li style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: {{ t.warnBg }}; color: {{ t.warn }};">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 2px;">
+                <path d="M12 3l9 16H3zM12 10v4M12 17v.5"></path>
+              </svg>
+              <span style="flex: 1;">1 line untranslated; keeps its voice</span>
+              <a href="Main.dc.html" style="color: inherit; font-weight: 700;">Fix</a>
+            </li>
+          </ul>
+
+          <div style="display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: 10px; background: {{ t.raised }}; font-size: 13px; color: {{ t.quiet }};">
+            <span><strong style="color: {{ t.text }};">{{ cloneMode }}</strong> · {{ preset }} delivery</span>
+            <span>{{ timingLabel }}{{ timingSpeedSuffix }} · mix {{ dubVolume }}% / {{ bgVolume }}%</span>
+            <span>{{ origTrackLabel }} · word subtitles {{ wordSubLabel }}</span>
+          </div>
+
+          <sc-if value="{{ isStudio }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; gap: 8px;">
+              <button type="button" onClick="{{ runDub }}" style="flex: 1; min-height: 46px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 16px; font-weight: 700;">Generate dub</button>
+              <button type="button" disabled style="min-height: 46px; padding: 0 14px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-weight: 600;">Interrupt</button>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: {{ t.muted }};">Only changed lines are voiced; every other line reuses its saved take.</p>
+          </sc-if>
+          <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 12px 14px; border-radius: 10px; background: {{ t.infoBg }}; color: {{ t.info }}; font-size: 14px;">
+              Voices are generated in Studio. Save the project, then load it in Studio to dub.
+            </div>
+          </sc-if>
+        </section>
+
+        <!-- Latest dub link card -->
+        <a href="Result.dc.html" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; text-decoration: none; color: {{ t.text }};">
+          <span aria-hidden="true" style="flex: none; width: 58px; aspect-ratio: 16 / 10; border-radius: 6px; background: #141c1a; color: {{ t.chromeAccent }}; display: grid; place-items: center;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M7 4v16l13-8z"></path>
+            </svg>
+          </span>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+            <strong style="font-size: 14px;">Latest dub · Nov 21, 14:20</strong>
+            <span style="font-size: 13px; color: {{ t.muted }};">Spanish · 0:36</span>
+          </span>
+          <span style="font-size: 14px; font-weight: 700; color: {{ t.accent }};">Watch result →</span>
+        </a>
+      </aside>
+    </div>
+  </main>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div role="status" aria-live="polite" style="position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px; border-radius: 10px; background: {{ t.chrome }}; color: {{ t.chromeText }}; border: 1px solid {{ t.chromeLine }}; font-size: 14px; font-weight: 600; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); z-index: 70;">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"mode":{"editor":"enum","options":["studio","workshop"],"default":"studio"},"unsaved":{"editor":"boolean","default":true},"autoRunning":{"editor":"boolean","default":false},"$preview":{"width":1360,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const isDark = theme === 'dark';
+    const mode = this.props.mode ?? 'studio';
+    const isWorkshop = mode === 'workshop';
+    const isStudio = !isWorkshop;
+    const unsaved = this.state?.unsavedOverride !== undefined ? this.state.unsavedOverride : (this.props.unsaved ?? true);
+    const autoRunning = this.state?.autoOverride !== undefined ? this.state.autoOverride : (this.props.autoRunning ?? false);
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', lane: '#22312c', line: '#34463e', lineSoft: '#2a3a34',
+      text: '#e9f1ed', muted: '#a9bdb3', quiet: '#b8c7c0', quietBg: '#26342f',
+      accent: '#66d8bb', accentInk: '#0b2a23', accentSoft: '#1f3d35', accentText: '#8ee6cf', selected: '#1c332d',
+      off: '#3d514a', warn: '#fdba74', warnBg: '#432010', info: '#a5c8ff', infoBg: '#1c2d47',
+      chrome: '#0a100e', chromeRaised: '#17221f', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb', chromeDone: '#1f3d35'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#f7f9f8', lane: '#eef2f0', line: '#dbe3df', lineSoft: '#e8eeeb',
+      text: '#202e2b', muted: '#4f605a', quiet: '#4b5a55', quietBg: '#eef2f0',
+      accent: '#087f6c', accentInk: '#ffffff', accentSoft: '#e3f1ec', accentText: '#075b4e', selected: '#f2faf7',
+      off: '#c9d4cf', warn: '#8a420e', warnBg: '#fdecdc', info: '#1d4f9a', infoBg: '#e3eefc',
+      chrome: '#141c1a', chromeRaised: '#1e2c28', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb', chromeDone: '#1f3d35'
+    };
+
+    const currentProject = this.state?.projectName ?? 'The Editing Room';
+    const projectsOpen = !!this.state?.projectsOpen;
+    const saveMenuOpen = !!this.state?.saveMenuOpen;
+    const cloneMode = this.state?.cloneMode ?? "Each line's own voice";
+    const preset = this.state?.preset ?? 'Balance';
+    const timing = this.state?.timing ?? 'smart';
+    const maxSpeed = this.state?.maxSpeed ?? 1.35;
+    const dubVolume = this.state?.dubVolume ?? 100;
+    const bgVolume = this.state?.bgVolume ?? 85;
+    const keepOrig = this.state?.keepOrig ?? true;
+    const wordTiming = this.state?.wordTiming ?? true;
+    const advancedOpen = !!this.state?.advancedOpen;
+    const spkVoices = this.state?.spkVoices ?? ['clone', 'clone'];
+    const spkVols = this.state?.spkVols ?? [100, 100];
+
+    const savedProjects = [
+      { name: 'The Editing Room', meta: 'English → Spanish · 18 lines · 2m ago' },
+      { name: 'Keynote Q4 Recap', meta: 'English → Japanese · 42 lines · Yesterday' },
+      { name: 'Field Notes Ep. 04', meta: 'Chinese → English · 29 lines · Nov 19' }
+    ].map((p) => {
+      const active = p.name === currentProject;
+      return {
+        name: p.name, meta: p.meta, active,
+        bg: active ? t.selected : t.surface,
+        border: active ? t.accent : t.lineSoft,
+        pick: () => this.setState({ projectName: p.name, projectsOpen: false, unsavedOverride: false, toast: 'Opened ' + p.name + '.' })
+      };
+    });
+
+    const speakerCards = [
+      { initials: 'ML', label: 'Maya Lin', detail: '11 lines · 21.4 s', tone: '#1864ab' },
+      { initials: 'CV', label: 'Carlos Vega', detail: '7 lines · 14.6 s', tone: '#2b8a3e' }
+    ].map((s, idx) => ({
+      initials: s.initials, label: s.label, detail: s.detail, tone: s.tone,
+      voice: spkVoices[idx], volume: spkVols[idx], volumeLabel: spkVols[idx] + '%',
+      changeVoice: (e) => {
+        const next = spkVoices.slice(); next[idx] = e.target.value;
+        this.setState({ spkVoices: next, toast: s.label + ' voice updated.' });
+      },
+      changeVol: (e) => {
+        const next = spkVols.slice(); next[idx] = Number(e.target.value);
+        this.setState({ spkVols: next });
+      }
+    }));
+
+    const cloneButtons = [
+      ["Each line's own voice", "Each line's own voice"],
+      ['Nearest clean voice', 'Nearest clean voice'],
+      ['One voice per speaker', 'One per speaker']
+    ].map(([val, label]) => {
+      const pressed = cloneMode === val;
+      return {
+        label, pressed,
+        bg: pressed ? t.surface : 'transparent', color: pressed ? t.text : t.muted,
+        shadow: pressed ? '0 1px 2px rgba(0, 0, 0, 0.14)' : 'none',
+        pick: () => this.setState({ cloneMode: val, unsavedOverride: true })
+      };
+    });
+
+    const cloneDesc = {
+      "Each line's own voice": "Keeps each line's delivery. Lines under 2 s use their speaker's clip.",
+      'Nearest clean voice': "Clones overlapping or short lines from the speaker's closest solo passage.",
+      'One voice per speaker': "Each speaker's best clip (3–15 s). Steadier tone."
+    }[cloneMode];
+
+    const presetButtons = ['Strict', 'Balance', 'Expressive'].map((val) => {
+      const pressed = preset === val;
+      return {
+        label: val, pressed,
+        bg: pressed ? t.surface : 'transparent', color: pressed ? t.text : t.muted,
+        shadow: pressed ? '0 1px 2px rgba(0, 0, 0, 0.14)' : 'none',
+        pick: () => this.setState({ preset: val, unsavedOverride: true })
+      };
+    });
+
+    const timingDefs = [
+      { key: 'smart', short: 'Smart', label: 'Smart timing', desc: 'Uses nearby silence and shorter pauses before speeding up.', takeFlex: '3.4', takeMargin: '0px' },
+      { key: 'match', short: 'Match', label: 'Match the original', desc: 'Starts and ends with each line. Best for lip-sync.', takeFlex: '3', takeMargin: '0px' },
+      { key: 'natural', short: 'Natural', label: 'Natural pace', desc: "Keeps each take's own pace; long takes may overlap.", takeFlex: '4.2', takeMargin: '-18px' }
+    ];
+    const timingCards = timingDefs.map((tm) => {
+      const checked = timing === tm.key;
+      return {
+        label: tm.label, desc: tm.desc, checked,
+        border: checked ? t.accent : t.line, bg: checked ? t.selected : t.surface,
+        shadow: checked ? 'inset 0 0 0 1px ' + t.accent : 'none',
+        dotBorder: checked ? '5px solid ' + t.accent : '2px solid ' + t.off,
+        takeFlex: tm.takeFlex, takeMargin: tm.takeMargin,
+        takeColor: checked ? t.accent : t.muted,
+        pick: () => this.setState({ timing: tm.key, unsavedOverride: true })
+      };
+    });
+    const activeTiming = timingDefs.find((x) => x.key === timing) || timingDefs[0];
+
+    return {
+      t, isStudio, isWorkshop, unsaved, autoRunning, autoIdle: !autoRunning, autoDisabled: isWorkshop,
+      currentProject, projectsOpen, saveMenuOpen, savedProjects,
+      speakerCards, cloneButtons, cloneMode, cloneDesc, presetButtons, preset, timingCards,
+      timingShort: activeTiming.short, timingLabel: activeTiming.label,
+      timingSpeedSuffix: timing === 'match' ? '' : ' · up to ' + Number(maxSpeed).toFixed(2) + '×',
+      showMaxSpeed: timing !== 'match', maxSpeed, maxSpeedLabel: Number(maxSpeed).toFixed(2) + '×',
+      dubVolume, bgVolume, keepOrig, wordTiming,
+      origTrackLabel: keepOrig ? 'Original audio kept as a second track' : 'No original track',
+      wordSubLabel: wordTiming ? 'on' : 'off',
+      advancedOpen, advChevron: advancedOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+      voicedCount: 16,
+      saveLabel: unsaved ? 'Save project' : 'Saved',
+      saveBtnBg: unsaved ? t.chromeAccent : t.chromeRaised,
+      saveBtnFg: unsaved ? '#0b2a23' : t.chromeText,
+      saveBtnBorder: unsaved ? t.chromeAccent : t.chromeLine,
+      saveSplitLine: unsaved ? 'rgba(11,42,35,0.22)' : t.chromeLine,
+      toast: this.state?.toast ?? '',
+      toggleProjects: () => this.setState({ projectsOpen: !projectsOpen, saveMenuOpen: false }),
+      toggleSaveMenu: () => this.setState({ saveMenuOpen: !saveMenuOpen, projectsOpen: false }),
+      saveNow: () => this.setState({ unsavedOverride: false, saveMenuOpen: false, toast: 'Saved ' + currentProject + '.' }),
+      saveAsToast: () => this.setState({ saveMenuOpen: false, toast: 'Save as dialog ready from header.' }),
+      newProject: () => this.setState({ projectsOpen: false, saveMenuOpen: false, toast: 'Started a fresh draft.' }),
+      openBatch: () => this.setState({ toast: 'Batch generate opens saved project queue.' }),
+      startAuto: () => this.setState({ autoOverride: true, toast: 'Auto-dub started.' }),
+      stopAuto: () => this.setState({ autoOverride: false, toast: 'Auto-dub interrupted.' }),
+      syncStudio: () => this.setState({ toast: 'Synced project state with Studio.' }),
+      changeMaxSpeed: (e) => this.setState({ maxSpeed: Number(e.target.value), unsavedOverride: true }),
+      changeDubVol: (e) => this.setState({ dubVolume: Number(e.target.value), unsavedOverride: true }),
+      changeBgVol: (e) => this.setState({ bgVolume: Number(e.target.value), unsavedOverride: true }),
+      toggleKeepOrig: () => this.setState({ keepOrig: !keepOrig, unsavedOverride: true }),
+      toggleWordTiming: () => this.setState({ wordTiming: !wordTiming, unsavedOverride: true }),
+      toggleAdvanced: () => this.setState({ advancedOpen: !advancedOpen }),
+      runDub: () => this.setState({ toast: 'Generating Spanish dub for 16 lines…' })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-22T00:30:00Z"
+  },
+  "title": "Prism Dubbing · Fixed Header & Workflow UI",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1360,
+      "h": 1180,
+      "title": "01 · Step 2 — Review lines (Primary workspace)",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Source.dc.html": {
+      "x": 1440,
+      "y": 0,
+      "w": 1360,
+      "h": 1200,
+      "title": "02 · Step 1 — Source",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Dub.dc.html": {
+      "x": 2880,
+      "y": 0,
+      "w": 1360,
+      "h": 1180,
+      "title": "03 · Step 3 — Dub",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "LipSync.dc.html": {
+      "x": 4320,
+      "y": 0,
+      "w": 1360,
+      "h": 1080,
+      "title": "04 · Step 4 — Lip sync (Optional)",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Result.dc.html": {
+      "x": 5760,
+      "y": 0,
+      "w": 1360,
+      "h": 1180,
+      "title": "05 · Step 5 — Result",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "HeaderStates.dc.html": {
+      "x": 0,
+      "y": 1600,
+      "w": 1360,
+      "h": 1320,
+      "title": "06 · Fixed Header States & Common Functions",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Mobile.dc.html": {
+      "x": 1440,
+      "y": 1600,
+      "w": 390,
+      "h": 844,
+      "title": "07 · Mobile (390px) — Fixed Header & Review",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Source.dc.html",
+    "Dub.dc.html",
+    "LipSync.dc.html",
+    "Result.dc.html",
+    "HeaderStates.dc.html",
+    "Mobile.dc.html"
+  ],
+  "notes": {
+    "row1": {
+      "x": 0,
+      "y": -260,
+      "text": "Dubbing Workflow · Fixed 2-Tier Header",
+      "kind": "title1",
+      "maxW": 7120
+    },
+    "row2": {
+      "x": 0,
+      "y": 1340,
+      "text": "Header States, Common Functions & Mobile",
+      "kind": "title1",
+      "maxW": 1830
+    }
+  },
+  "designSystems": []
+}

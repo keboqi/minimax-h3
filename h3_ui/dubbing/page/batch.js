@@ -14,7 +14,8 @@ export function bindBatch(app) {
   function render(projects) {
     const known = new Set(projects);
     for (const name of selected) if (!known.has(name)) selected.delete(name);
-    $("batch-open").textContent = batch?.active ? `Batch ${batch.finished}/${batch.items.length}` : "Batch generate";
+    ($("batch-label") || $("batch-open")).textContent = batch?.active ? `Batch ${batch.finished}/${batch.items.length}` : "Batch generate";
+    $("batch-open").classList.toggle("is-active", !!batch?.active);
     // Leave the picker mounted between polls so keyboard focus stays on its checkbox.
     const key = JSON.stringify([projects, !!batch?.active]);
     if (key !== pickerKey) {
