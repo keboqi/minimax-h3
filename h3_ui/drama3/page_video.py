@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from fastapi import Body, FastAPI, Request
 
-from h3_app.drama3 import voice_looks
+from h3_app.drama3 import effect_enhancement, voice_looks
 from h3_app.drama3.visual_effects import EFFECT_PRESETS
 from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject, full_plan_prompt, mentions,
                                        plan_shots, subjects)
@@ -29,13 +29,14 @@ from h3_app.provenance import read_snapshot
 
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
+from .effect_routes import EFFECT_RUNS, install_effect_routes
 from .effects_export import EffectScene
 from .page_common import (PageRun, apply_fields, file_response, found, not_found, run_job, timeline_payload,
                           value, writer_service)
 from .page_music import applied_music, mixed_audio, music_mix_id
 from .page_store import editing, project_lock
 from .stage_video import latest_export
-from . import visuals
+from . import effects_pass, visuals
 from .project_visuals import planning_mix, save_project_plan
 
 VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
@@ -85,26 +86,35 @@ def video_settings(data: dict, engines: list) -> dict:
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
-def stills_payload(name: str, record: dict | None, rows=()) -> dict | None:
+def stills_payload(name: str, record: dict | None, rows=(), enhancement=()) -> dict | None:
     """The stills the page slides along the mix: each image's time and the seconds it dissolves in."""
     if not record:
         return None
     fps = float(record.get("fps") or visuals.FPS)
-    rows_by_time, rows_by_image = {}, {}
+    rows_by_time, rows_by_image, rows_by_id = {}, {}, {}
     for row in rows:
         if row["image"]:
             rows_by_time[row["start"]] = row
             rows_by_image.setdefault(row["image"], row)
+            if row.get("shot_id"):
+                rows_by_id[row["shot_id"]] = row
+    by_id = {item["shot_id"]: item for item in enhancement}
     shots = []
     for index, item in enumerate(sorted(record["shots"], key=lambda shot: int(shot["first_frame"]))):
         first, frames = int(item["first_frame"]), int(item["frames"])
         fade = min(12, frames - 1) / fps if item.get("dissolve") and frames > 1 else 0.0
         url = still_url(name, item["image"])
-        timed = rows_by_time.get(round(first / fps, 3), {})
+        timed = rows_by_id.get(item.get("shot_id"), rows_by_time.get(round(first / fps, 3), {}))
         row = timed if timed.get("image") == url else rows_by_image.get(url, {})
-        shots.append({"start": first / fps, "end": (first + frames) / fps, "fade": fade,
-                      "beat": item.get("beat") or "", "url": url, "index": row.get("index", index),
-                      "effects": row.get("effects", [])})
+        shot_id = row.get("shot_id")
+        shot = {"start": first / fps, "end": (first + frames) / fps, "fade": fade,
+                "beat": item.get("beat") or "", "url": url, "index": row.get("index", index),
+                "effects": row.get("effects", []), "shot_id": shot_id}
+        enhanced = by_id.get(shot_id)
+        if enhanced and enhanced["image"] == item["image"] and enhanced["applied"] is not None:
+            shot["effect_layers"] = effects_pass.layer_payload(name, enhanced, enhanced["applied"])
+            shot["effects"] = [layer["preset"] for layer in shot["effect_layers"]]
+        shots.append(shot)
     return {"revision": record["revision"], "shots": shots,
             "orientation": visuals.orientation_of(record.get("orientation"))}
 
@@ -142,7 +152,8 @@ def plan_rows(name, current, duration, record, settings):
     for index, (shot, still, row, mentioned) in enumerate(zip(shots, visuals.match_stills(shots, record),
                                                               plan["shots"], keys)):
         status = visuals.shot_status(shot, still)
-        rows.append({"index": index, "start": round(shot.first / visuals.FPS, 3),
+        rows.append({"index": index, "shot_id": shot.id or f"shot_{index + 1}",
+                     "image_file": still["image"] if still else None, "start": round(shot.first / visuals.FPS, 3),
                      "end": round((shot.first + shot.frames) / visuals.FPS, 3),
                      "transition": "Dissolve" if shot.dissolve else "Cut", "beat": shot.beat,
                      "prompt": row["prompt"], "subjects": list(mentioned), "status": status,
@@ -196,6 +207,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
     latest = None
     stills = None
     scene = None
+    enhancement = None
     if result or data.get("visual_plan"):
         try:
             audio, mix_settings = planning_mix(name, data, result, export, store=store, result_snapshot=result_snapshot)
@@ -217,7 +229,10 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
                 "saved_settings": {"limit": saved.get("limit")} if stale else None}
         if timing_error:
             plan.update(rows=[], subjects=[], counts={}, error=timing_error)
-        stills = stills_payload(name, record, plan["rows"])
+        items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data)
+        sounds = timeline_payload(mix_settings)["sounds"] if items else []
+        enhancement = effects_pass.public_pass(name, items, sounds, data)
+        stills = stills_payload(name, record, plan["rows"], items)
         scene = effect_scene(stills, mix_settings)
         video = project_export(audio, data)
         if video is not None:
@@ -231,7 +246,8 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
     previews = {preset: preview_url(settings["engine"], file)
                 for preset, file in visuals.preview_images(root, settings["engine"]).items()}
     return {**settings, **({"timing_pending": True} if not result else {}), "plan": plan, "stills": stills,
-            "latest": latest, "previews": previews, "effects_revision": scene.revision if scene else None}
+            "latest": latest, "previews": previews, "effects_revision": scene.revision if scene else None,
+            "effect_enhancement": enhancement}
 
 
 def preview_url(engine: str, file: str) -> str:
@@ -241,6 +257,8 @@ def preview_url(engine: str, file: str) -> str:
 def boot_payload(engines: list) -> dict:
     return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
             "effect_presets": EFFECT_PRESETS,
+            "enhancement_presets": effect_enhancement.CATALOG,
+            "enhancement_max_layers": effect_enhancement.MAX_LAYERS,
             "styles": visuals.STYLE_PRESETS, "style_groups": visuals.STYLE_GROUPS,
             "style_uses": visuals.STYLE_USES, "default_style": visuals.DEFAULT_STYLE,
             "custom_style": visuals.CUSTOM_STYLE, "limits": list(LIMITS),
@@ -307,6 +325,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
 
     runs = VideoRuns(produce, busy=busy, lock=admission_lock,
                      blocked=lambda run: blocked(run.owner, run.storyboard_id) if blocked else None)
+
+    install_effect_routes(app, api=api, export=export, store=store, gpu=gpu, runs=runs,
+                          owner_of=owner_of, session_of=session_of, project=project, payload=payload,
+                          mix_of=mix_of, check_available=check_available, video_settings=video_settings,
+                          plan_payload=plan_payload)
 
     @app.patch(f"{api}/project/video", include_in_schema=False)
     @guarded
@@ -541,8 +564,10 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             scene = None
             if mix_settings and not mix_settings.get("visual_timing_error"):
                 saved = visuals.read_plan(result, settings["limit"])
-                rows = plan_rows(name, saved, float(mix_settings.get("duration") or 0), record, settings)
-                scene = effect_scene(stills_payload(name, record, rows), mix_settings)
+                plan = plan_payload(name, saved, float(mix_settings.get("duration") or 0), record,
+                                    mix_settings.get("voices", {}), root, result, settings)
+                items = effects_pass.inventory(result, root, plan["rows"], plan["subjects"], data)
+                scene = effect_scene(stills_payload(name, record, plan["rows"], items), mix_settings)
             runs.start(run, work)
         return {"video_run": run.public(None)}
 
@@ -575,6 +600,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             return {"message": "Planning can't be stopped; its reply is dropped if you plan again or paste a plan."}
         if run.kind == SAVE:
             return {"message": "Saving to Media can't be stopped; it finishes in a moment."}
+        if run.kind in EFFECT_RUNS:
+            with runs.lock:
+                run.stop_requested = True
+            if interrupt is None or run.job_id is None:
+                return {"message": "Stopping effects enhancement."}
         if interrupt is None or run.job_id is None:
             return {"message": "The run is still starting. Try again in a moment."}
         return {"message": interrupt(session_of(request), family=run.family, job_id=run.job_id)}

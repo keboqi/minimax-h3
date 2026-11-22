@@ -139,6 +139,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         expected_sha256="de3745ceb7d8d5c20898dd8fa3a05f1c0b00089ccd55297b2a8bab95c766b0e0",
         revision="912b6e38b2092ec4d2e86d24183e0d59ea059d48",
     ),
+    "soundstage_sam31": ModelSpec(
+        "Comfy-Org/sam3.1", "checkpoints", "checkpoints/sam3.1_multiplex_fp16.safetensors",
+        "SAM 3.1 Multiplex · ComfyUI",
+        expected_sha256="9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03",
+        revision="5febd4769e8802cdfdb75e1f733abd8c68434a85",
+    ),
     "face_yolov8m": ModelSpec(
         "Bingsu/adetailer", "ultralytics/bbox", "face_yolov8m.pt",
         "ADetailer · YOLOv8m face detector",
@@ -1193,6 +1199,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_regenerate_refiner_16",
     "h3_regenerate_refiner_384",
     "face_yolov8m",
+    "soundstage_sam31",
     "remake_swap_lora",
     "remake_edit_lora",
     *FLUX3_MODEL_KEYS,

@@ -116,6 +116,76 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertEqual(video["plan"], {"rows": [], "subjects": [], "art_style": "", "counts": {}, "stale": False, "saved": False, "saved_settings": None})
         self.assertIsNone(video["latest"])
 
+    def test_effect_enhancement_uses_the_same_text_contract_for_writer_and_paste(self):
+        from PIL import Image
+        from h3_ui.drama3 import effect_regions
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+
+        def call(action, body=None):
+            return self.client.post(f"{API}/project/video/effects/{action}", params=NAME, json=body or {})
+
+        def segment(path, labels, _services, _runtime):
+            manifest = effect_regions.manifest_path(folder, path.name, labels)
+            manifest.parent.mkdir(exist_ok=True)
+            mask = f"{path.name}.{'a' * 32}.region_1.png"
+            Image.new("RGBA", (64, 36), (255, 255, 255, 200)).save(manifest.parent / mask)
+            manifest.write_text(json.dumps([{"id": "region_1", "label": "window", "mask": mask,
+                                             "box": [0, 0, 0.5, 1]}]), encoding="utf-8")
+
+        self.export.deps.generation_services = lambda: None
+        with patch.object(effect_regions, "prepare"), patch.object(effect_regions, "segment", side_effect=segment) as sam:
+            self.ok(call("segment"))
+            self.assertIsNone(self.wait()["error"])
+            self.assertEqual(sam.call_count, 2)
+            self.ok(call("segment"))
+            self.assertEqual(sam.call_count, 2)
+
+        copied = self.ok(call("prompt"))["prompt"]
+        request = json.loads(copied.split("\n\n")[-1])
+        first, second = request["shots"]
+        self.assertEqual(first["regions"][0]["position"], "middle left")
+        stack = [{"preset": "rain", "mode": "inside", "region_id": "region_1"},
+                 {"preset": "cold_tint", "mode": "inside", "region_id": "region_1"}]
+        reply = json.dumps({"revision": request["revision"], "shots": [
+            {"shot_id": first["shot_id"], "action": "replace", "effects": stack},
+            {"shot_id": second["shot_id"], "action": "keep"},
+        ]})
+        pasted = self.ok(call("reply", {"reply": reply}))["video"]["effect_enhancement"]["proposal"]
+        self.assertEqual(pasted["decisions"][0]["effects"], stack)
+        with patch("h3_app.drama3.effect_enhancement.write_prompt", return_value=(reply, "OK")) as writer:
+            self.ok(call("generate", {"writer": {"openai_model": "selected-model",
+                                                   "prompt_writer_backend": "OpenAI-compatible"}}))
+            self.assertIsNone(self.wait()["error"])
+            self.assertEqual(writer.call_args.kwargs["media_values"], [])
+            self.assertEqual(writer.call_args.kwargs["openai_model"], "selected-model")
+            self.assertEqual(json.loads(writer.call_args.kwargs["request_text"]), request)
+        generated = self.project()["video"]["effect_enhancement"]["proposal"]
+        self.assertEqual(pasted["decisions"], generated["decisions"])
+        with patch("h3_ui.drama3.effect_routes.WRITER_BATCH_SIZE", 1), patch(
+            "h3_app.drama3.effect_enhancement.write_prompt", return_value=(reply, "OK")
+        ) as writer:
+            self.ok(call("generate"))
+            self.assertIsNone(self.wait()["error"])
+            self.assertEqual(writer.call_count, 2)
+        generated = self.project()["video"]["effect_enhancement"]["proposal"]
+        self.assertEqual(pasted["decisions"], generated["decisions"])
+        changed = self.ok(call("apply", {"id": generated["id"]}))["video"]
+        self.assertEqual(changed["stills"]["shots"][0]["effects"], ["rain", "cold_tint"])
+        self.assertNotIn("effect_layers", changed["stills"]["shots"][1])
+        self.assertEqual(self.client.get(changed["stills"]["shots"][0]["effect_layers"][0]["mask_url"]).status_code, 200)
+        self.assertEqual(call("reply", {"reply": reply}).status_code, 400)
+        shot = changed["effect_enhancement"]["shots"][0]
+        manually = self.ok(call("shot", {"shot_id": shot["shot_id"], "image": shot["image"], "effects": []}))
+        self.assertEqual(manually["video"]["stills"]["shots"][0]["effect_layers"], [])
+        request = json.loads(self.ok(call("prompt"))["prompt"].split("\n\n")[-1])
+        self.assertEqual([item["shot_id"] for item in request["shots"]], [second["shot_id"]])
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        self.assertNotIn("effect_layers", self.project()["video"]["stills"]["shots"][0])
+
     def test_workshop_draws_gpt_images_before_speech_and_carries_them_to_the_mix(self):
         from PIL import Image
         from h3_ui.drama3.project_visuals import carry_project_stills

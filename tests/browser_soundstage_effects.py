@@ -13,6 +13,7 @@ from unittest.mock import patch
 import wave
 
 from PIL import Image
+from PIL import ImageDraw
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
@@ -59,6 +60,49 @@ def check_webgpu_composite(page):
     page.locator("#composite-probe").evaluate("node => node.remove()")
 
 
+def check_enhancement(page, fixture):
+    from h3_ui.drama3 import effect_regions, visuals
+
+    fixture.runtime.script_dir = Path.cwd()
+    video = fixture.project()["video"]
+    folder = visuals.stills_dir(fixture.mix, fixture.runtime.output_dir)
+    labels = {subject["key"]: subject for subject in video["plan"]["subjects"]}
+    for row in video["plan"]["rows"]:
+        if not row["image_file"]:
+            continue
+        image = row["image_file"]
+        path = effect_regions.manifest_path(folder, image, effect_regions.concepts(row, labels))
+        path.parent.mkdir(exist_ok=True)
+        mask = f"{image}.{'a' * 32}.region_1.png"
+        with Image.open(folder / image) as still:
+            Image.new("RGBA", still.size, (255, 255, 255, 180)).save(path.parent / mask)
+        path.write_text(json.dumps([{"id": "region_1", "label": "window", "mask": mask,
+                                    "box": [0, 0, 0.5, 1]}]), encoding="utf-8")
+    api = f"{API}/project/video/effects"
+    prompt = fixture.ok(fixture.client.post(f"{api}/prompt", params=NAME))["prompt"]
+    request = json.loads(prompt.split("\n\n")[-1])
+    reply = {"revision": request["revision"], "shots": [
+        {"shot_id": shot["shot_id"], "action": "replace" if index == 0 else "keep",
+         "effects": [{"preset": "rain", "mode": "inside", "region_id": "region_1"},
+                     {"preset": "cold_tint", "mode": "inside", "region_id": "region_1"}]}
+        for index, shot in enumerate(request["shots"])
+    ]}
+    page.reload(wait_until="networkidle")
+    page.locator("#step-illustrate").click()
+    page.get_by_role("button", name="Enhance visual effects").click()
+    dialog = page.locator("#effect-pass-dialog")
+    dialog.get_by_label("Pasted effects reply").fill(json.dumps(reply))
+    dialog.get_by_role("button", name="Preview pasted result").click()
+    expect(dialog.get_by_text("1 proposed · 1 kept · 0 skipped")).to_be_visible()
+    expect(dialog.get_by_role("slider", name="Preview time")).to_be_visible()
+    dialog.get_by_role("button", name="Apply all").click()
+    expect(dialog.get_by_role("button", name="Apply all")).to_have_count(0)
+    dialog.get_by_role("button", name="Close").click()
+    page.locator('.shot-row[data-shot="0"]').click()
+    page.locator("#shot-effects").click()
+    expect(dialog.get_by_role("combobox", name="Region")).to_have_count(2)
+
+
 def run(*, webgpu=False):
     fixture = Drama3PageVideoTests()
     fixture.setUp()
@@ -99,6 +143,7 @@ def run(*, webgpu=False):
             page.route("**/soundstage/api/audio?*", lambda route: route.fulfill(body=audio.getvalue(), content_type="audio/wav"))
             url = f"http://127.0.0.1:{port}/soundstage/"
             page.goto(url, wait_until="networkidle")
+            assert not errors, errors
             fullscreen = page.locator("#player-fullscreen")
             expect(fullscreen).to_have_count(0)
             page.locator("#step-illustrate").click()
@@ -401,6 +446,7 @@ def run(*, webgpu=False):
                   return alpha;
                 }""")
                 assert min(alpha) > 0 and max(alpha) - min(alpha) <= 1, alpha
+            check_enhancement(page, fixture)
             assert not errors, errors
             browser.close()
         print(f"PASS ({backend}): effect controls, persistence, animation, seeking, reduced motion, module loading")
@@ -450,6 +496,41 @@ def run_export():
     print("PASS: MP4 frame count, soundtrack, sound-cued flash, and dissolve")
 
 
+def run_masked_export():
+    with TemporaryDirectory() as temp:
+        folder = Path(temp)
+        size = (160, 90)
+        image = folder / "shot.jpg"
+        Image.new("RGB", size, (50, 50, 50)).save(image)
+        masks = folder / ".effect-masks"
+        masks.mkdir()
+        mask = Image.new("RGBA", size)
+        ImageDraw.Draw(mask).rectangle((0, 0, 79, 89), fill="white")
+        mask.save(masks / "left.png")
+        effects = [{"preset": "push_in", "mode": "full_frame"},
+                   *({"preset": "cold_tint", "mode": "inside", "mask_file": "left.png", "feather": 0}
+                     for _ in range(3))]
+        timeline = [
+            {"index": 0, "start": 0, "end": 1 / FPS, "fade": 0,
+             "effects": [layer["preset"] for layer in effects], "effect_layers": effects},
+            {"index": 1, "start": 1 / FPS, "end": 4 / FPS, "fade": 2 / FPS, "effects": []},
+        ]
+        frames = effects_export.capture_frames(folder, timeline, [], [image, image], size, 4)
+        try:
+            stream, count = next(frames)
+            assert count == 4
+            images = [Image.open(BytesIO(b"\xff\xd8" + frame)).copy().convert("RGB")
+                      for frame in stream.read_bytes().split(b"\xff\xd8")[1:]]
+        finally:
+            frames.close()
+        left = [frame.getpixel((18, 45))[2] for frame in images]
+        right = [frame.getpixel((140, 45))[2] for frame in images]
+        assert left[0] > left[2] + 5 and left[2] > left[3] + 5, left
+        assert max(right) - min(right) <= 4, right
+    print("PASS: stacked effects share a mask and fade with their source shot during export")
+
+
 if __name__ == "__main__":
     run(webgpu="--webgpu" in sys.argv)
     run_export()
+    run_masked_export()

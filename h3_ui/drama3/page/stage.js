@@ -72,6 +72,8 @@ export function paintStage({back, front, overlay}, {shot, background, fading, ti
       backEffects, backElapsed: fading ? time - background.start : 0,
       backCueElapsed: cueElapsed(background.cues.flash, time),
       backShotIndex: background.index, backCam,
+      layers: enabled && elapsed >= 0 ? shot.effect_layers : null,
+      backLayers: enabled && fading ? background.effect_layers : null,
     });
   }
 }

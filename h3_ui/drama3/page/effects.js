@@ -290,10 +290,118 @@ export function paintEffectPreview(canvas, image, effects, seconds, duration) {
 let lastPaintArgs = null;
 const paintedOverlays = new WeakSet();
 const dissolveCanvases = new WeakMap();
+const maskImages = new Map();
+const stackBuffers = new WeakMap();
+
+export function preloadEffectMasks(shots) {
+  const urls = new Set(shots.flatMap((shot) => (shot.effect_layers || [])
+    .map((layer) => layer.mask_url).filter(Boolean)));
+  const ready = [...urls].map((url) => {
+    let entry = maskImages.get(url);
+    if (entry) {
+      maskImages.delete(url);
+    } else {
+      const image = new Image();
+      image.src = url;
+      entry = {image, ready: image.decode()};
+    }
+    maskImages.set(url, entry);
+    return entry.ready;
+  });
+  // The player can seek across a long project without holding all decoded masks.
+  while (maskImages.size > 48) maskImages.delete(maskImages.keys().next().value);
+  return Promise.all(ready);
+}
+
+function drawInShot(ctx, image, cam, w, h) {
+  const scale = Math.min(w / image.naturalWidth, h / image.naturalHeight);
+  const width = image.naturalWidth * scale;
+  const height = image.naturalHeight * scale;
+  ctx.translate(w * (0.5 + cam.tx / 100), h * (0.5 + cam.ty / 100));
+  ctx.rotate(cam.angle * Math.PI / 180);
+  ctx.scale(cam.scale, cam.scale);
+  ctx.drawImage(image, -width / 2, -height / 2, width, height);
+}
+
+function paintShotStack(target, scratch, matte, image, layers, seconds, cue, seed, cam) {
+  const {width: w, height: h} = target.canvas;
+  target.fillStyle = "#000";
+  target.fillRect(0, 0, w, h);
+  if (!image?.naturalWidth) return;
+  target.save();
+  if (cam.blur) target.filter = `blur(${cam.blur * 4.5}px)`;
+  drawInShot(target, image, cam, w, h);
+  target.restore();
+  for (const layer of layers) {
+    const {preset, mode, mask_url: url} = layer;
+    const atmosphere = atmosphereEffects.has(preset);
+    if (!atmosphere && !lightEffects.has(preset)) continue;
+    const mask = maskImages.get(url)?.image;
+    if (mode !== "full_frame" && !mask?.naturalWidth) continue;
+    scratch.clearRect(0, 0, w, h);
+    paintLayer2D(scratch, atmosphere ? [preset] : [], atmosphere ? [] : [preset], seconds, cue, w, h, seed, cam);
+    if (mask) {
+      scratch.save();
+      scratch.globalCompositeOperation = mode === "inside" ? "destination-in" : "destination-out";
+      const feather = layer.feather ?? 1;
+      if (feather) scratch.filter = `blur(${feather * Math.max(w, h) / 1280}px)`;
+      // Draw through a full-frame matte so destination-in also clears outside the image rectangle.
+      matte.clearRect(0, 0, w, h);
+      matte.save();
+      drawInShot(matte, mask, cam, w, h);
+      matte.restore();
+      scratch.drawImage(matte.canvas, 0, 0);
+      scratch.restore();
+    }
+    target.save();
+    target.globalAlpha = layer.intensity ?? 1;
+    target.drawImage(scratch.canvas, 0, 0);
+    target.restore();
+  }
+}
+
+function paintEnhancedScene(canvas, scene, effects, t, cue, fading) {
+  clearWebGPU(canvas);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  const width = Math.max(1, Math.round(canvas.clientWidth));
+  const height = Math.max(1, Math.round(canvas.clientHeight));
+  const scale = Math.min(1, 1280 / Math.max(width, height));
+  const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
+  if (!stackBuffers.has(canvas)) {
+    stackBuffers.set(canvas, Array.from({length: 4}, () => canvas.ownerDocument.createElement("canvas").getContext("2d")));
+  }
+  const [back, front, layer, matte] = stackBuffers.get(canvas);
+  for (const context of [ctx, back, front, layer, matte]) sizeCanvas(context.canvas, w, h);
+  const fullFrame = (presets) => presets.map((preset) => ({preset, mode: "full_frame"}));
+  paintShotStack(back, layer, matte, scene.stillBack,
+    fading ? scene.backLayers ?? fullFrame(scene.backEffects) : scene.layers ?? fullFrame(effects),
+    fading ? scene.backElapsed : t, fading ? scene.backCueElapsed : cue,
+    fading ? scene.backShotIndex : scene.shotIndex, fading ? scene.backCam : scene.cam);
+  ctx.drawImage(back.canvas, 0, 0);
+  if (fading) {
+    paintShotStack(front, layer, matte, scene.stillFront, scene.layers ?? fullFrame(effects),
+      t, cue, scene.shotIndex, scene.cam);
+    ctx.save();
+    ctx.globalAlpha = clamp01(scene.fadeMix);
+    ctx.drawImage(front.canvas, 0, 0);
+    ctx.restore();
+  }
+  return true;
+}
+
 export function paintEffects(canvas, effects, seconds, showBackend, scene = null) {
   const { atmospheres, lights } = splitEffects(effects);
   const fading = Boolean(scene?.fading && (scene?.fadeMix ?? 1) < 1);
   const { atmospheres: backAtmospheres, lights: backLights } = splitEffects(fading ? scene?.backEffects : null);
+  if (scene?.layers || (fading && scene?.backLayers)) {
+    lastPaintArgs = null;
+    paintedOverlays.add(canvas);
+    const painted = paintEnhancedScene(canvas, scene, effects, Math.max(0, seconds),
+      Math.max(0, scene.cueElapsed ?? seconds), fading);
+    showBackend?.(painted ? "Canvas 2D" : "Unavailable");
+    return;
+  }
 
   if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length) {
     lastPaintArgs = null;

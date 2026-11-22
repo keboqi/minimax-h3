@@ -40,7 +40,8 @@ from .project_visuals import can_reuse_script, carry_project_stills, planning_mi
 
 STATIC = Path(__file__).with_name("page")
 STATIC_TYPES = {name: "application/javascript" for name in ("app.js", "workspace.js", "saves.js", "transport.js",
-                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "effects.js", "effects_webgpu.js", "effects_picker.js",
+                  "script.js", "scriptview.js", "cast.js", "mix.js", "video.js", "effects.js", "effects_webgpu.js",
+                  "effects_picker.js", "effects_pass.js",
                   "library.js", "project.js", "batch.js", "fullscreen.js", "layout.js", "stage.js")}
 STATIC_TYPES["app.css"] = "text/css"
 STATIC_TYPES.update({f"effect-demo-{kind}.webp": "image/webp" for kind in ("camera", "atmosphere", "lighting")})

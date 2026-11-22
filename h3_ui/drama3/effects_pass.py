@@ -1,0 +1,91 @@
+"""The optional effects pass over the current drawn shot plan."""
+
+from urllib.parse import quote
+
+from h3_app.drama3.effect_enhancement import base_stack, revision
+from . import effect_regions
+from .visuals import stills_dir
+
+
+def inventory(audio, root, rows, subjects, data):
+    saved = data.get("video_effect_stacks") or {}
+    fixes = data.get("video_effect_regions") or {}
+    subjects = {subject["key"]: subject for subject in subjects}
+    folder = stills_dir(audio, root)
+    items = []
+    for row in rows:
+        if not row.get("image_file"):
+            continue
+        shot_id = row["shot_id"]
+        image = row["image_file"]
+        labels = effect_regions.concepts(row, subjects)
+        regions = effect_regions.read_regions(folder, image, labels)
+        entry = saved.get(shot_id) or {}
+        if entry.get("image") != image:
+            entry = {}
+        repaired = fixes.get(shot_id) or {}
+        if regions is not None and repaired.get("image") == image:
+            replacements = repaired.get("regions", {})
+            regions = [replacement if (replacement := replacements.get(region["id"])) and
+                       (folder / effect_regions.MASK_FOLDER / replacement["mask"]).is_file() else region
+                       for region in regions]
+        region_ids = {region["id"] for region in regions or ()}
+        stack = entry.get("effects")
+        if stack is not None and any(layer.get("region_id") not in region_ids
+                                     for layer in stack if "region_id" in layer):
+            stack = None
+        items.append({
+            "shot_id": shot_id, "index": row["index"], "image": image,
+            "start": row["start"], "end": row["end"], "beat": row["beat"],
+            "labels": labels, "regions": regions, "default": base_stack(row["effects"]),
+            "applied": stack, "manual": bool(entry.get("manual") and stack is not None),
+        })
+    return items
+
+
+def prompt_input(items, sounds, include_manual=False):
+    shots = []
+    for item in items:
+        if not item["regions"] or (item["manual"] and not include_manual):
+            continue
+        shots.append({"shot_id": item["shot_id"], "beat": item["beat"],
+                      "effects": item["applied"] if item["applied"] is not None else item["default"],
+                      "sounds": [sound["name"] for sound in sounds
+                                 if sound["start"] is not None and item["start"] <= sound["start"] < item["end"]],
+                      "regions": [effect_regions.describe(region) for region in item["regions"]]})
+    return shots, revision([items, sounds, include_manual])
+
+
+def region_url(project, mask):
+    return f"/soundstage/api/video/effect-mask?name={quote(project)}&file={quote(mask)}"
+
+
+def layer_payload(project, item, stack):
+    masks = {region["id"]: region["mask"] for region in item["regions"] or ()}
+    return [
+        {**layer, "mask_file": masks[layer["region_id"]],
+         "mask_url": region_url(project, masks[layer["region_id"]])} if "region_id" in layer else layer
+        for layer in stack
+    ]
+
+
+def public_pass(project, items, sounds, data):
+    proposal = data.get("video_effect_proposal")
+    if proposal:
+        _, token = prompt_input(items, sounds, proposal["include_manual"])
+        if proposal["revision"] != token:
+            proposal = None
+        else:
+            by_id = {item["shot_id"]: item for item in items}
+            proposal = {**proposal, "decisions": [
+                {**decision, "layers": layer_payload(project, by_id[decision["shot_id"]], decision["effects"])}
+                if decision["action"] == "replace" else decision for decision in proposal["decisions"]
+            ]}
+    return {
+        "shots": [{"shot_id": item["shot_id"], "index": item["index"], "image": item["image"],
+                   "segmented": item["regions"] is not None, "effects": item["applied"],
+                   "manual": item["manual"], "default": item["default"],
+                   "regions": [{**effect_regions.describe(region), "url": region_url(project, region["mask"])}
+                               for region in item["regions"] or ()]} for item in items],
+        "proposal": proposal,
+    }

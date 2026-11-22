@@ -1,5 +1,6 @@
-import {effectsEnabled, effectTrack, lastAtOrBefore} from "./effects.js";
+import {effectsEnabled, effectTrack, lastAtOrBefore, preloadEffectMasks} from "./effects.js";
 import {openEffectsPicker} from "./effects_picker.js";
+import {createEffectsPass} from "./effects_pass.js";
 import {paintStage, showStageStills, stageFrame, stageTimeline} from "./stage.js";
 
 const EMPTY = Object.freeze([]);
@@ -7,7 +8,7 @@ const startOf = (shot) => shot.start;
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
-export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
+export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, effectCall, copyEffectsPrompt, writerService, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
   const canDraw = () => Boolean(state.boot.gpu || state.project?.video?.engine === "gpt_image");
   const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
   const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
@@ -16,6 +17,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const run = state.videoRun;
     return Boolean((!kind && state.run?.active) || (run?.active && (!kind || run.kind === kind)));
   }
+
+  const effectPass = createEffectsPass({state, $, h, call: effectCall, copy: copyEffectsPrompt,
+    writer: writerService, interrupt: interruptVideo, busy: videoRunning});
 
   /** What Video shows: the drawn stills, an older mix's rendered video, or nothing yet. */
   function visualSource() {
@@ -88,6 +92,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
   // The stills on the mix's clock: the shot under the playhead, dissolving over the one before it.
   const preloaded = new Set();
   let timeline = null;
+  let lastMaskShot = null, lastMaskBackground = null;
   let activeShot = -1, lanes = null, list = null;
   let observedOverlay = null;
   const stageResize = typeof ResizeObserver === "function" ? new ResizeObserver(() => sync()) : null;
@@ -132,6 +137,14 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const engine = $("effects-engine");
     const layers = {back, front, overlay};
     const frame = stageFrame(shots, time);
+    if (frame.shot !== lastMaskShot || frame.background !== lastMaskBackground) {
+      lastMaskShot = frame.shot;
+      lastMaskBackground = frame.background;
+      const relevant = [frame.background, ...shots.slice(frame.index, frame.index + 2)];
+      if (relevant.some((shot) => shot.effect_layers?.some((layer) => layer.mask_url))) {
+        preloadEffectMasks(relevant).then(sync, sync);
+      }
+    }
     showStageStills(layers, frame);
     paintStage(layers, frame, enabled, (backend, hasEffects) => {
       if (!engine) return;
@@ -162,7 +175,11 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       }, h("span", {"aria-hidden": "true"}, row.index + 1))));
       lanes.push({name: h("span", {class: "lane-name shot-lane-name"}, "Images"), lane});
     }
-    const effects = effectTrack(h, {shots: rows, presets: state.boot.video?.effect_presets, place,
+    const applied = new Map((state.project.video?.effect_enhancement?.shots || [])
+      .filter((shot) => shot.effects !== null).map((shot) => [shot.index, shot.effects.map((layer) => layer.preset)]));
+    const effectRows = applied.size ? rows.map((row) => applied.has(row.index) ?
+      {...row, effects: applied.get(row.index)} : row) : rows;
+    const effects = effectTrack(h, {shots: effectRows, presets: state.boot.video?.effect_presets, place,
       picked: state.shotPick, pick: (shot) => pickShot(shot.index)});
     if (effects) lanes.push(effects);
     return lanes;
@@ -291,7 +308,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const row = rows[state.shotPick];
     const busy = videoRunning();
     const presets = state.boot.video.effect_presets || {};
-    const effectLabels = (row.effects || []).map((id) => presets[id]?.label).filter(Boolean);
+    const enhancement = video.effect_enhancement?.shots.find((item) => item.index === row.index);
+    const effectIds = enhancement?.effects?.map((layer) => layer.preset) ?? row.effects ?? [];
+    const effectLabels = effectIds.map((id) => presets[id]?.label).filter(Boolean);
     const subjects = new Map(state.project.video.plan.subjects.map((item) => [item.key, item]));
     const step = (by) => pickShot(Math.min(rows.length - 1, Math.max(0, row.index + by)));
     const draw = {drawn: "Draw this shot again", changed: "Redraw with the new prompt", todo: "Draw this shot"}[row.status];
@@ -318,8 +337,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
             onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
         h("button", {type: "button", id: "shot-effects", class: "effect-summary", "aria-haspopup": "dialog",
-          "aria-controls": "effects-dialog", disabled: busy,
-          onclick: () => openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
+          "aria-controls": enhancement?.segmented ? "effect-pass-dialog" : "effects-dialog", disabled: busy,
+          onclick: () => enhancement?.segmented ? effectPass.open(enhancement) :
+            openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
             save: (effects) => editShot({index: row.index, effects}),
             restoreFocus: () => $("shot-effects")?.focus()})},
           h("span", {class: "effect-summary-head"}, h("strong", {}, "Visual effects"),
@@ -521,6 +541,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const [filter, body] = looks ? [null, renderLooks()] : renderShotList(rows);
     main.setAttribute("aria-label", looks ? "Characters and places" : "Shot plan");
     main.replaceChildren(h("div", {class: "card-head"}, views, filter, h("span", {class: "spacer"}),
+      !looks && video.effect_enhancement?.shots.length ? h("button", {type: "button", class: "btn btn-small",
+        "aria-haspopup": "dialog", "aria-controls": "effect-pass-dialog",
+        onclick: () => effectPass.open()}, "Enhance visual effects") : null,
       looks ? h("span", {class: "muted small"}, "Drawn once as references; shots that mention one match it.")
         : rows.length ? h("button", {type: "button", class: "btn btn-small", disabled: videoRunning() || !canDraw() || (!state.project.result && video.engine !== "gpt_image"),
                                      title: "Draw every shot from scratch, with new portraits", onclick: () => drawImages("all")}, "Draw every shot again") : null), body);
@@ -549,7 +572,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     drawButton.disabled = busy || !canDraw();
     drawButton.title = canDraw() ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
-    stop.hidden = !videoRunning("draw") && !videoRunning("preview");
+    stop.hidden = !["draw", "preview", "segment_effects", "enhance_effects", "refine_effect_mask"].some(videoRunning);
     if (busy) {
       title.textContent = {plan: "Planning shots…", draw: "Drawing…", preview: "Drawing style previews…", save: "Saving to Media…"}[run.kind] || "Working…";
       detail.textContent = run.status || "";
@@ -586,6 +609,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (!state.project) return;
     renderPointer();
     renderIllustrate();
+    effectPass.render();
   }
 
   return {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo, renderIllustrate,

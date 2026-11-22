@@ -249,6 +249,16 @@ Visual effects control and an explanation. Explicitly turning Visual effects on 
 motion for that project; turning it off clears the override. Existing plans stay still until
 effects are added or the shots are planned again.
 
+After drawing, **Enhance visual effects** can segment the finished stills in a batch with SAM 3.1
+on the GPU server. The first run downloads the optional SAM checkpoint. Then choose **Generate**
+with the writer selected in Script, or **Copy prompt** and paste the text reply from another
+model. The writer gets text descriptions and positions of the visible regions. Preview the
+proposal and use **Apply all** when ready. A shot can have multiple layers, including several
+on the same object. Layers can fill the frame, stay inside an outline, skip it, or put atmosphere
+behind it. Open the shot's **Visual effects** to reorder layers, adjust their strength, or refine
+a region. Manually edited stacks are skipped on later runs unless you include them. A redrawn shot
+uses its planned effects until the new image is enhanced.
+
 **Save to Media** renders the stage and the finished soundtrack into a 720p MP4 beside the mix
 (1280x720, or 720x1280 for Portrait 9:16). It includes visual effects when the player's
 **Visual effects** control is checked and burns in subtitles at the chosen size when enabled.

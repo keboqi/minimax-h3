@@ -207,12 +207,17 @@ export function startWorkspace() {
       await flushVideo();
       if (owner !== scope()) return null;
       const data = await api(named(path), {method: "POST", body: body ?? {}});
+      if (owner !== scope()) return null;
       if (data.video_run) state.videoRun = data.video_run;
       if (data.video) state.project.video = data.video;
       if (data.message) toast(data.message);
       renderVideo();
       renderSteps();
       renderActions();
+      if (path.startsWith("/project/video/effects/") && data.video) {
+        renderPlayer();
+        sync();
+      }
       if (state.videoRun?.active) pollVideo();
       return data;
     } catch (error) {
@@ -305,6 +310,17 @@ export function startWorkspace() {
       if ($("plan-reply")) $("plan-reply").value = "";
     }
     return Boolean(data);
+  }
+
+  async function copyEffectsPrompt(action, body) {
+    const data = await videoCall(`/project/video/effects/${action}`, body);
+    if (!data?.prompt) return;
+    try {
+      await copyText(data.prompt);
+      toast("Effects prompt copied.");
+    } catch (error) {
+      toast(`Could not copy the prompt: ${error.message}`);
+    }
   }
 
   const pollVideo = poller(async (again) => {
@@ -1438,6 +1454,9 @@ export function startWorkspace() {
     interruptVideo,
     copyPlannerPrompt,
     applyPlannerReply,
+    effectCall: videoCall,
+    copyEffectsPrompt,
+    writerService,
     editShot,
     editSubject,
     show: (...args) => show(...args),

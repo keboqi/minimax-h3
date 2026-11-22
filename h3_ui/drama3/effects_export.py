@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from h3_app.drama3.visuals import FPS
 from h3_app.errors import H3Error
+from .effect_regions import MASK_FOLDER
 
 PAGE = Path(__file__).with_name("page").resolve()
 ORIGIN = "https://soundstage-export.invalid"
@@ -65,7 +66,19 @@ def capture_frames(folder, shots, sounds, images, size, total_frames, progress=N
 
     urls = {image: f"/stills/{i}" for i, image in enumerate(dict.fromkeys(images))}
     images_by_url = {url: image for image, url in urls.items()}
-    timeline = [{**shot, "url": urls[image]} for shot, image in zip(shots, images, strict=True)]
+    masks_by_url = {}
+    timeline = []
+    for shot, image in zip(shots, images, strict=True):
+        entry = {**shot, "url": urls[image]}
+        if "effect_layers" in shot:
+            entry["effect_layers"] = []
+            for layer in shot["effect_layers"]:
+                if mask := layer.get("mask_file"):
+                    path = f"/masks/{mask}"
+                    masks_by_url[path] = Path(image).parent / MASK_FOLDER / mask
+                    layer = {**layer, "mask_url": path}
+                entry["effect_layers"].append(layer)
+        timeline.append(entry)
 
     def serve(route):
         url = route.request.url
@@ -75,6 +88,11 @@ def capture_frames(folder, shots, sounds, images, size, total_frames, progress=N
         path = urlsplit(url).path
         if image := images_by_url.get(path):
             route.fulfill(path=image, content_type="image/png" if image.suffix == ".png" else "image/jpeg")
+        elif mask := masks_by_url.get(path):
+            if mask.is_file():
+                route.fulfill(path=mask, content_type="image/png")
+            else:
+                route.abort()
         else:
             asset = (PAGE / path.lstrip("/")).resolve()
             if asset.is_relative_to(PAGE) and asset.is_file():
