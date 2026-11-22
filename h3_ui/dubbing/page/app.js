@@ -66,6 +66,7 @@ function defaults(boot) {
   return {
     source_language: "Auto-detect", target_language: "English", style: boot.default_style, notes: "",
     pipeline: local(boot.pipelines[0].key, boot.pipelines.find((p) => p.cloud)?.key),
+    moss_backend: boot.moss_backends[0].key,
     translate: true, translator: local(boot.translators[0].key, boot.translators[1].key),
     gemini_model: boot.default_gemini_model, separate: true, separator_model: boot.default_separator, reuse: true,
     aligner: true, merge_gap: 0.35, refine_timestamps: true, translation_context: false,

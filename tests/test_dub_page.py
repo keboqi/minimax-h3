@@ -158,7 +158,7 @@ class WorkshopPageTests(PageTests):
 
         def analyze(*values):
             # Rewrite and the Gemini prompt options reach the handler.
-            self.assertEqual(values[-3:], (True, False, True))
+            self.assertEqual(values[-4:], (True, False, True, ""))
             yield None, None, None, "Transcribing with Gemini", None
             yield analyzed.id, {}, [], "Found 1 line(s).", None
 
@@ -298,6 +298,21 @@ class WorkshopPageTests(PageTests):
 
 class StudioPageTests(PageTests):
     gpu = True
+
+    def test_analysis_page_offers_and_forwards_moss_python(self):
+        boot = self.client.get(f"{API}/boot").json()
+        self.assertEqual(boot["moss_pipeline"], pipeline.PIPELINE_MOSS)
+        self.assertIn({"key": "python", "label": "Python"}, boot["moss_backends"])
+        self.assertIn("moss_backend", boot["project_keys"])
+
+        def analyze(*values):
+            self.assertEqual((values[4], values[-1]), (pipeline.PIPELINE_MOSS, "python"))
+            yield None, None, None, "Finding speakers and transcribing with MOSS", None
+
+        with patch.object(self.handlers, "analyze_source", analyze):
+            self.client.post(f"{API}/analyze", json={"source": str(self.media), "pipeline": pipeline.PIPELINE_MOSS,
+                                                     "moss_backend": "python"}).raise_for_status()
+            self.assertIsNone(self.wait("analyze")["error"])
 
     def test_studio_shares_from_workshop_only(self):
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])

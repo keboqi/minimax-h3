@@ -72,6 +72,7 @@ DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 AUDIO_TOOLS_VENV = ROOT / "audio-tools-venv"
 DUB_TOOLS_VENV = ROOT / "dub-tools-venv"
+MOSS_PYTHON_VENV = ROOT / "moss-python-venv"
 LIP_SYNC_VENV = ROOT / "lip-sync-venv"
 # Nemotron transcription: its vLLM environment in the image, compile caches and logs on the volume.
 NEMOTRON_VENV = ROOT / "nemotron-venv"
@@ -149,6 +150,9 @@ from h3_requirements import (  # noqa: E402
     DUB_TOOLS_READY_MARKER,
     dub_tools_fingerprint,
     dub_tools_install_commands,
+    MOSS_PYTHON_READY_MARKER,
+    moss_python_fingerprint,
+    moss_python_install_commands,
     LIP_SYNC_READY_MARKER,
     lip_sync_fingerprint,
     lip_sync_install_commands,
@@ -782,6 +786,13 @@ image = (
     )
 )
 
+# Keep MOSS Python's Transformers environment in its own layer so the first short
+# clip in a fresh container only needs the model checkpoint from the volume.
+image = image.run_commands(
+    *(shlex.join(command) for command in moss_python_install_commands(MOSS_PYTHON_VENV)),
+    f"echo {moss_python_fingerprint()} > {(MOSS_PYTHON_VENV / MOSS_PYTHON_READY_MARKER).as_posix()}",
+)
+
 # Local bytecode is rewritten by every test run or import. Mounting it changes the
 # function's content hash, which makes Modal discard memory snapshots on each deploy.
 _BYTECODE_IGNORE = ["**/__pycache__", "**/*.pyc"]
@@ -905,6 +916,7 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
             "H3_AUDIO_TOOLS_VENV": AUDIO_TOOLS_VENV.as_posix(),
             "H3_DUB_TOOLS_VENV": DUB_TOOLS_VENV.as_posix(),
+            "H3_MOSS_PYTHON_VENV": MOSS_PYTHON_VENV.as_posix(),
             "H3_LIP_SYNC_VENV": LIP_SYNC_VENV.as_posix(),
             "H3_NEMOTRON_VENV": NEMOTRON_VENV.as_posix(),
             "H3_NEMOTRON_DATA": NEMOTRON_DATA.as_posix(),

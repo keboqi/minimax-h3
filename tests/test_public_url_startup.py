@@ -120,6 +120,7 @@ class PublicUrlStartupTests(unittest.TestCase):
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "service_env")
         namespace = dict(os=os, ROOT=ROOT, COMFY=ROOT, CONFIG=ROOT, OUTPUT=ROOT, DATA=ROOT, COMFY_PORT=8188,
                          DRAMA3_SGLANG_VENV=ROOT, DRAMA3_SGLANG_DATA=ROOT, AUDIO_TOOLS_VENV=ROOT, DUB_TOOLS_VENV=ROOT,
+                         MOSS_PYTHON_VENV=ROOT, LIP_SYNC_VENV=ROOT,
                          NEMOTRON_VENV=ROOT, NEMOTRON_DATA=ROOT, GPT_IMAGE_SECRET_ENVS=(),
                          MODELS=ROOT, VOL="test-volume")
         exec(compile(ast.Module(body=[function], type_ignores=[]), "<modal env>", "exec"), namespace)
@@ -128,3 +129,4 @@ class PublicUrlStartupTests(unittest.TestCase):
         self.assertEqual(environment["GRADIO_SHARE"], "false")
         self.assertEqual(environment["H3_AUDIO_TOOLS_VENV"], ROOT.as_posix())
         self.assertEqual(environment["H3_DUB_TOOLS_VENV"], ROOT.as_posix())
+        self.assertEqual(environment["H3_MOSS_PYTHON_VENV"], ROOT.as_posix())

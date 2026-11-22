@@ -79,6 +79,15 @@ def popen_flags() -> dict:
 
 def reap(process: subprocess.Popen) -> None:
     if process.poll() is None:
+        if os.name == "nt":
+            # The venv launcher has a child interpreter which can still hold CUDA and open files.
+            try:
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], timeout=10,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **popen_flags())
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        if process.poll() is not None:
+            return
         process.terminate()
         try:
             process.wait(timeout=10)
@@ -109,7 +118,12 @@ def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str,
                 return
             while block := reader.read(16384):
                 output = decoder.decode(block)
-                print(output, end="", flush=True)
+                try:
+                    print(output, end="", flush=True)
+                except UnicodeEncodeError:
+                    # Keep the Unicode progress for the UI even on a legacy Windows console.
+                    encoding = sys.stdout.encoding or "ascii"
+                    print(output.encode(encoding, errors="replace").decode(encoding), end="", flush=True)
                 lines = [line.strip() for line in output.replace("\r", "\n").splitlines() if line.strip()]
                 if lines:
                     latest = lines[-1].strip()

@@ -16,7 +16,7 @@ class ModalImageSetupTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         image = Mock()
-        for method in ("entrypoint", "apt_install", "uv_pip_install", "run_commands",
+        for method in ("entrypoint", "apt_install", "uv_pip_install", "run_commands", "env",
                        "add_local_file", "add_local_dir", "run_function"):
             getattr(image, method).return_value = image
         namespace = {"__file__": str(path), "modal": SimpleNamespace(
@@ -43,7 +43,7 @@ class ModalImageSetupTests(unittest.TestCase):
     def test_prebuilt_workers_publish_current_readiness_markers(self):
         for prefix, fingerprint in (("DRAMA3_SGLANG", "drama3_sglang"), ("AUDIO_TOOLS", "audio_tools"),
                                     ("DUB_TOOLS", "dub_tools"), ("LIP_SYNC", "lip_sync"),
-                                    ("NEMOTRON", "nemotron")):
+                                    ("NEMOTRON", "nemotron"), ("MOSS_PYTHON", "moss_python")):
             ns = self.namespace
             marker = (ns[f"{prefix}_VENV"] / ns[f"{prefix}_READY_MARKER"]).as_posix()
             self.assertIn(f"echo {ns[f'{fingerprint}_fingerprint']()} > {marker}", self.commands)

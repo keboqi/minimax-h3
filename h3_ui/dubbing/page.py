@@ -25,7 +25,7 @@ from fastapi import Body, FastAPI, File, Request, UploadFile
 from fastapi.responses import Response
 
 from h3_app.catalog import AUDIO_EXTENSIONS, DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, VIDEO_EXTENSIONS
-from h3_app.dubbing import nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
+from h3_app.dubbing import moss, nemotron, pipeline, projects, review_checks, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
     REPORT_FILE,
@@ -63,7 +63,7 @@ UPLOAD_SUFFIXES = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | {".m4v"}
 DEFAULT_SEPARATOR = "Balanced (BS-Roformer)"
 UPLOAD_DAYS = 14
 # Never kept with a project: API keys. Edited lines and speaker voices live in the session itself.
-PROJECT_KEYS = ("source_language", "target_language", "style", "notes", "pipeline", "translate", "translator",
+PROJECT_KEYS = ("source_language", "target_language", "style", "notes", "pipeline", "moss_backend", "translate", "translator",
                 "gemini_model", "separate", "separator_model", "reuse", "aligner", "merge_gap",
                 "refine_timestamps", "translation_context", "voice_mode", "preset", "timing", "max_speed",
                 "speech_volume", "background_volume", "keep_original", "regenerate", "parallel", "word_timing",
@@ -438,6 +438,9 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                           for key, label, desc in TRANSCRIPTIONS
                           if (gpu or key in pipeline.CLOUD_PIPELINES)
                           and (key != pipeline.PIPELINE_NEMOTRON or nemotron.supported())],
+            "moss_pipeline": pipeline.PIPELINE_MOSS,
+            "moss_backends": [{"key": key, "label": "Python" if key == moss.BACKEND_PYTHON else "SGLang-Omni"}
+                              for key in moss.backends()],
             "translators": [{"key": pipeline.TRANSLATOR_HYMT, "label": "Hy-MT2 1.8B"},
                             {"key": pipeline.TRANSLATOR_GEMINI, "label": "Gemini"}],
             "separators": list(pipeline.SEPARATOR_MODELS), "default_separator": DEFAULT_SEPARATOR,
@@ -761,7 +764,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                   project,
                   body.get("manual_reply") or "", body.get("style") or pipeline.DEFAULT_STYLE,
                   bool(body.get("rewrite", False)), bool(body.get("shorten_lines", False)),
-                  bool(body.get("readings", False))]
+                  bool(body.get("readings", False)), str(body.get("moss_backend") or "")]
         read_frame = reader(3, session_index=0)
 
         def read_analysis(run, update):

@@ -37,6 +37,17 @@ class WorkerEnvironmentTests(unittest.TestCase):
             self.assertIn("Downloading packages", console.getvalue())
             self.assertIn("Installed", log.read_text())
 
+    def test_unicode_progress_survives_a_legacy_console_encoding(self):
+        with TemporaryDirectory() as directory, io.TextIOWrapper(io.BytesIO(), encoding="gbk") as console:
+            log = Path(directory) / "worker.log"
+            updates = []
+            with contextlib.redirect_stdout(console):
+                env.run_process([sys.executable, "-c", "print(chr(0x1F680) + ' loaded')"], log,
+                                timeout=10, label="MOSS", env={"PYTHONIOENCODING": "utf-8"},
+                                report=updates.append)
+            self.assertIn("🚀 loaded", updates[-1])
+            self.assertIn("🚀 loaded", log.read_text(encoding="utf-8"))
+
     def test_failed_setup_keeps_diagnostics_and_reports_log_path(self):
         with TemporaryDirectory() as directory:
             log = Path(directory) / "setup.log"

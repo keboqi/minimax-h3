@@ -7,6 +7,8 @@ Soundstage; the tab only shows it. The hidden endpoints keep Dubbing's published
 
 from __future__ import annotations
 
+from functools import partial
+
 import gradio as gr
 
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS
@@ -79,7 +81,8 @@ def bind_dubbing_api(actions, *, gpu=True):
         dub_outputs = [gr.HTML(), gr.Video(label="Dubbed video"), gr.Audio(label="Dubbed audio", type="filepath"),
                        gr.File(label="Subtitles", file_count="multiple"), gr.Markdown(), gr.State(None),
                        gr.Button(visible=False), gr.File(label="Video with burned-in subtitles"), gr.Markdown()]
-    bind_gpu_action(gr.Button(visible=False).click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
+    analyze = partial(actions.analyze_source, moss_backend="")
+    bind_gpu_action(gr.Button(visible=False).click, owned_generation(analyze, FAMILY_ANALYZE),
                     inputs=analyze_inputs, outputs=analyze_outputs, api_name="dub_analyze_source",
                     show_progress="hidden")
     bind_gpu_action(gr.Button(visible=False).click, owned_generation(actions.generate_dub, FAMILY_DUB),

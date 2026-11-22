@@ -138,6 +138,7 @@ class AnalyzeRequest:
     # misread Chinese characters with pinyin notes for Drama 3.
     shorten_lines: bool = False
     readings: bool = False
+    moss_backend: str = ""
 
 
 @dataclass(frozen=True)
@@ -385,10 +386,10 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         raise H3Error("Enable Qwen3 word timing before refining it with Align.")
     if request.pipeline == PIPELINE_NEMOTRON:
         nemotron.require_supported()
+    key = _transcript_key(request)
     manual = manual_transcript(request.manual_reply) if request.pipeline == PIPELINE_MANUAL else None
     session, earlier, reused = yield from _open_source(request, manual=manual, runtime=runtime, free_gpu=free_gpu,
                                                        hf_token=hf_token)
-    key = _transcript_key(request)
     transcript = _earlier_transcript(earlier, key)
     speech = session.speech_audio
     groups = []
@@ -400,7 +401,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         found = yield from blocking(
             "Finding speakers and transcribing with MOSS",
             lambda report: moss.transcribe(runtime, speech, duration=duration, free_gpu=free_gpu,
-                                           hf_token=hf_token, report=report))
+                                           hf_token=hf_token, report=report, backend=request.moss_backend))
         found = moss_lines(found)
         if not found:
             raise H3Error("No speech was found in this source.")
@@ -502,6 +503,9 @@ def _transcript_key(request: AnalyzeRequest) -> str:
         settings.update(refinement=refinement.REVISION, language=_language(request.source_language))
     if request.pipeline == PIPELINE_MOSS:
         settings.update(model=f"{moss.MODEL_REPO}@{moss.MODEL_REVISION[:12]}")
+        backend = moss.resolve_backend(request.moss_backend)
+        if backend != moss.BACKEND_SGLANG:
+            settings["backend"] = backend
     elif request.pipeline == PIPELINE_NEMOTRON:
         settings.update(model=nemotron.MODEL_REPO)
     elif request.pipeline == PIPELINE_GEMINI:

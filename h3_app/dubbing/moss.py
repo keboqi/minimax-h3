@@ -1,10 +1,9 @@
-"""MOSS-Transcribe-Diarize on SGLang-Omni: Dub & Translate's local transcription that tells speakers apart.
+"""MOSS-Transcribe-Diarize backends for speaker-aware dubbing transcription.
 
-It runs in Drama 3's SGLang-Omni environment (the pinned release serves the model)
-as a second managed server on its own port. Like Drama 3's server it sleeps: once
-an analysis has its lines, the CUDA state moves to host RAM and the next analysis
-wakes it in seconds. Other engines' jobs sleep it too, and an unload stops it.
-One request covers up to 90 minutes and returns ``[Sxx]``-labelled timed segments.
+SGLang runs in Drama 3's environment as a second managed server on its own port.
+Like Drama 3's server, it sleeps after analysis by moving its CUDA state to host
+RAM. The next analysis wakes it in seconds, and an unload stops it.
+The Python backend loads the same checkpoint for one recording at a time.
 """
 
 from __future__ import annotations
@@ -13,11 +12,12 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 from typing import Callable
 
 from h3_app.drama3.serving import environment
-from h3_app.drama3.serving.server import FALLBACK_GPU_GIB, SglangOmniServer, gpu_memory
+from h3_app.drama3.serving.server import FALLBACK_GPU_GIB, SglangOmniServer, gpu_memory, persist_caches
 from h3_app.errors import H3Error
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
@@ -25,6 +25,8 @@ MODEL_REPO = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
 MODEL_REVISION = "704aa4a9c304e8520be88901e0d1960158ef5b15"
 DOWNLOAD_GB = 1.9
 MAX_SECONDS = 90 * 60
+BACKEND_SGLANG = "sglang"
+BACKEND_PYTHON = "python"
 # SGLang's runtime slack (CUDA graphs, activations) comes out of the rest of the free memory.
 MAX_FRACTION = 0.9
 # The job family that uses the server; every other one sleeps it.
@@ -60,7 +62,7 @@ class MossSettings:
         return cls(
             venv=environment.default_venv(runtime.script_dir),
             data_dir=Path(env.get("H3_MOSS_SGLANG_DATA") or drama3_data / "moss"),
-            model_root=Path(env.get("H3_MOSS_SGLANG_MODELS") or runtime.comfy_dir / "models" / "dubbing" / "moss"),
+            model_root=model_root(runtime),
             port=int(env.get("H3_MOSS_SGLANG_PORT", "8097")),
             memory_gib=float(env.get("H3_MOSS_SGLANG_MEMORY_GIB", "19")),
             sleep_mode=env.get("H3_MOSS_SGLANG_SLEEP", env.get("H3_DRAMA3_SGLANG_SLEEP", "auto")).lower(),
@@ -83,7 +85,7 @@ class MossSettings:
 
     @property
     def model_dir(self) -> Path:
-        return self.model_root / f"{MODEL_REPO.replace('/', '--')}--{MODEL_REVISION[:12]}"
+        return model_dir(self.model_root)
 
     @property
     def media_dir(self) -> Path:
@@ -183,18 +185,26 @@ def reply_lines(reply: dict, duration: float | None = None) -> list[dict]:
     return lines or parse_transcript(reply.get("text", ""), duration)
 
 
-def ensure_model(settings: MossSettings, *, token=None, log=print) -> Path:
-    """Download the pinned checkpoint once."""
-    target = settings.model_dir
+def model_dir(root: Path) -> Path:
+    return root / f"{MODEL_REPO.replace('/', '--')}--{MODEL_REVISION[:12]}"
+
+
+def model_root(runtime) -> Path:
+    return Path(os.getenv("H3_MOSS_SGLANG_MODELS") or runtime.comfy_dir / "models" / "dubbing" / "moss")
+
+
+def ensure_model(target: Path, *, token=None, log=print) -> Path:
+    """Download the pinned checkpoint shared by both backends."""
     marker = target / ".h3-complete"
     if marker.is_file():
         return target
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     from huggingface_hub import snapshot_download
 
-    log(f"[moss-serving] Downloading {MODEL_REPO}@{MODEL_REVISION[:12]} (~{DOWNLOAD_GB:.0f} GB, first use only).")
+    log(f"[MOSS] Downloading {MODEL_REPO}@{MODEL_REVISION[:12]} (~{DOWNLOAD_GB:.0f} GB, first use only).")
     snapshot_download(MODEL_REPO, revision=MODEL_REVISION, local_dir=target, token=token)
     marker.write_text(MODEL_REVISION, encoding="utf-8")
+    persist_caches()
     return target
 
 
@@ -256,26 +266,45 @@ def _make_room(settings: MossSettings) -> None:
 
 
 def supported() -> bool:
-    """SGLang-Omni, and so MOSS, runs only on Linux."""
-    return os.name == "posix"
+    """Whether MOSS can use SGLang-Omni."""
+    return sys.platform.startswith("linux")
+
+
+def backends() -> tuple[str, ...]:
+    return (BACKEND_SGLANG, BACKEND_PYTHON) if supported() else (BACKEND_PYTHON,)
+
+
+def resolve_backend(backend: str = "") -> str:
+    available = backends()
+    selected = backend or available[0]
+    if selected not in (BACKEND_SGLANG, BACKEND_PYTHON):
+        raise H3Error(f"Unknown MOSS backend: {selected}.")
+    if selected not in available:
+        raise H3Error("MOSS with SGLang-Omni requires Linux. Choose the Python backend here.")
+    return selected
 
 
 def transcribe(runtime, audio: Path, *, duration: float, free_gpu: Callable[[], None], hf_token=None,
-               report: Callable[[str], None] = lambda _message: None) -> list[dict]:
-    """Timed speaker lines of ``audio``; the server sleeps again once they are back."""
+               report: Callable[[str], None] = lambda _message: None, backend: str = "") -> list[dict]:
+    """Return timed speaker lines from the selected backend."""
     if is_cpu_only():
         raise H3Error(CPU_ONLY_MESSAGE)
-    if not supported():
-        raise H3Error("MOSS runs on SGLang-Omni, which requires Linux. Use Qwen3-ASR or Gemini here.")
+    selected = resolve_backend(backend)
     if duration > MAX_SECONDS:
         raise H3Error(f"MOSS transcribes up to {MAX_SECONDS // 60} minutes at once; this source runs "
                       f"{duration / 60:.0f}. Use Qwen3-ASR or Gemini, or trim the source.")
+    if selected == BACKEND_PYTHON:
+        from . import moss_python
+
+        raw = moss_python.transcribe(runtime, audio, duration=duration, free_gpu=free_gpu,
+                                     hf_token=hf_token, report=report)
+        return parse_transcript(raw, duration)
     settings = MossSettings.from_environment(runtime)
     server = shared_server(settings)
     report("Preparing the SGLang-Omni environment (first use installs it)")
     environment.prepare(settings.venv)
     report("Downloading MOSS-Transcribe-Diarize (first use only)")
-    ensure_model(settings, token=hf_token)
+    ensure_model(settings.model_dir, token=hf_token)
     _make_room(settings)
     server.ensure_ready(free_gpu, report)
     report("Finding speakers and transcribing with MOSS")

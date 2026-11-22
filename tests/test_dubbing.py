@@ -360,6 +360,35 @@ class WorkerHelperTests(unittest.TestCase):
             with self.assertRaisesRegex(H3Error, "up to 90 minutes"):
                 moss.transcribe(runtime, Path("speech.wav"), duration=91 * 60.0, free_gpu=lambda: None)
 
+    def test_moss_python_routes_and_preserves_timestamps_and_speakers(self):
+        from h3_app.dubbing import moss_python
+
+        runtime = runtime_for(Path("/tmp/h3"))
+        audio = Path("speech.wav")
+        free_gpu = lambda: None
+        with patch.object(moss, "supported", return_value=False), \
+                patch.object(moss, "shared_server") as server, \
+                patch.object(moss_python, "transcribe", return_value="[0.2][S02]Hello.[1.6]") as python:
+            lines = moss.transcribe(runtime, audio, duration=2.0, free_gpu=free_gpu)
+            self.assertEqual(lines, [{"start": 0.2, "end": 1.6, "speaker": "S02", "text": "Hello."}])
+            python.assert_called_once_with(runtime, audio, duration=2.0, free_gpu=free_gpu,
+                                           hf_token=None, report=unittest.mock.ANY)
+            with self.assertRaisesRegex(H3Error, "requires Linux"):
+                moss.transcribe(runtime, audio, duration=2.0, free_gpu=free_gpu, backend=moss.BACKEND_SGLANG)
+            server.assert_not_called()
+
+    def test_moss_python_transcript_key_leaves_older_sglang_results_reusable(self):
+        request = pipeline.AnalyzeRequest("speech.wav", pipeline=pipeline.PIPELINE_MOSS)
+        python_request = pipeline.AnalyzeRequest("speech.wav", pipeline=pipeline.PIPELINE_MOSS,
+                                                 moss_backend=moss.BACKEND_PYTHON)
+        with patch.object(moss, "supported", return_value=True):
+            old_key = json.loads(pipeline._transcript_key(request))
+            self.assertNotIn("backend", old_key)
+            self.assertEqual(json.loads(pipeline._transcript_key(python_request)),
+                             {**old_key, "backend": moss.BACKEND_PYTHON})
+        with patch.object(moss, "supported", return_value=False):
+            self.assertEqual(pipeline._transcript_key(request), pipeline._transcript_key(python_request))
+
     def test_other_jobs_stop_the_worker(self):
         with patch.object(tools, "stop") as stop:
             tools.release_for_job("dubbing")

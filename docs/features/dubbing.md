@@ -108,8 +108,9 @@ audible.
   settings below. MOSS-Transcribe-Diarize transcribes the whole recording (up to
   90 minutes) in one pass with speaker labels and timestamps; long turns are
   split into subtitle-sized lines at sentence ends, and Hy-MT2 translates them.
-  It runs on SGLang-Omni, so it needs Linux, like Soundstage (see
-  [Runtime](#runtime)).
+  Choose **Python** under **MOSS backend** for short clips. It runs one
+  recording at a time directly with Transformers. **SGLang-Omni** is the
+  default on Linux and is suited to longer recordings. Windows uses Python.
 - **Nemotron on this server** is for complex conversations where people talk
   over each other. Nemotron 3.5 Transcribe (NVFP4, Blackwell GPUs such as the RTX
   PRO 6000) transcribes up to 60 minutes in one pass and tags each word with its
@@ -533,11 +534,16 @@ choice.
   separate job families: each **Interrupt** stops only its own step. A
   download's Interrupt stops yt-dlp at its next progress update.
 - Speech uses Drama 3 on SGLang-Omni, so dubbing requires Linux, like Soundstage.
-  Transcription with Qwen3-ASR or Gemini, translation and downloads have no such
-  limit.
-- MOSS runs as a second SGLang-Omni server from Drama 3's environment (the
-  pinned SGLang-Omni release serves it), on port 8097 (`H3_MOSS_SGLANG_PORT`).
-  The checkpoint downloads once into `ComfyUI/models/dubbing/moss`. It keeps
+  Transcription with Qwen3-ASR, MOSS (Python) or Gemini, translation and
+  downloads have no such limit.
+- Both MOSS backends share the checkpoint in `ComfyUI/models/dubbing/moss`.
+  Python requires a CUDA GPU. Modal's GPU image includes the Transformers
+  environment. Local installs prepare it on first use in
+  `h3/moss-python-venv` (`H3_MOSS_PYTHON_VENV`). It loads the
+  model for each recording and releases its GPU memory when analysis finishes
+  or is interrupted. [OpenMOSS Python inference](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize#python-usage)
+- MOSS with SGLang-Omni runs as a second server from Drama 3's environment,
+  on port 8097 (`H3_MOSS_SGLANG_PORT`). It keeps
   about 19 GiB (`H3_MOSS_SGLANG_MEMORY_GIB`), index-tts-vllm's 0.20 of an empty
   RTX PRO 6000: room for one 90-minute request's full context, with one request
   at a time. SGLang's `--mem-fraction-static` is a share of the memory free when

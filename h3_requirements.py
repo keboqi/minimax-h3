@@ -458,6 +458,42 @@ def audio_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -
     ]
 
 
+MOSS_PYTHON_READY_MARKER = "h3-moss-python-ready.txt"
+MOSS_PYTHON_VERSION = "3.12"
+MOSS_PYTHON_REVISION = "61bc29cd4120be7b5d3b761b64cd5dff57263642"
+MOSS_PYTHON_REQUIREMENTS = (
+    "moss-transcribe-diarize @ https://github.com/OpenMOSS/MOSS-Transcribe-Diarize"
+    f"/archive/{MOSS_PYTHON_REVISION}.tar.gz",
+    "transformers==5.6.0",
+    f"torch=={TORCH_VERSION}",
+    f"torchaudio=={TORCHAUDIO_VERSION}",
+)
+MOSS_PYTHON_SMOKE = (
+    "import torch; "
+    "from transformers import AutoModelForCausalLM, AutoProcessor; "
+    "from moss_transcribe_diarize.inference_utils import generate_transcription; "
+    "assert torch.version.cuda, 'MOSS Python installed CPU-only Torch'"
+)
+
+
+def moss_python_fingerprint() -> str:
+    import hashlib
+
+    pins = "|".join((MOSS_PYTHON_VERSION, *MOSS_PYTHON_REQUIREMENTS, TORCH_INDEX, MOSS_PYTHON_SMOKE))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def moss_python_install_commands(venv: PurePath, uv: str | list[str] = "uv") -> list[list[str]]:
+    python = str(venv / ("Scripts/python.exe" if isinstance(venv, PureWindowsPath) else "bin/python"))
+    uv = [uv] if isinstance(uv, str) else uv
+    return [
+        [*uv, "venv", "--python", MOSS_PYTHON_VERSION, "--seed", str(venv)],
+        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
+         "--index-strategy", "unsafe-best-match", *MOSS_PYTHON_REQUIREMENTS],
+        [python, "-c", MOSS_PYTHON_SMOKE],
+    ]
+
+
 DUB_TOOLS_READY_MARKER = "h3-dub-tools-ready.txt"
 DUB_TOOLS_PYTHON = "3.12"
 # Dub & Translate's audio-separator, OmniVAD, Qwen3-ASR + ForcedAligner and Hy-MT share

@@ -11,6 +11,8 @@ let planTimer = null;
 const isSame = (app) => app.settings.target_language === app.boot.same;
 const selectedPipeline = (app) => (app.boot.pipelines.find((p) => p.key === app.settings.pipeline)
   || app.boot.pipelines[0]).key;
+const selectedMossBackend = (app) => (app.boot.moss_backends.find((b) => b.key === app.settings.moss_backend)
+  || app.boot.moss_backends[0]).key;
 const gemini = (app) => app.boot.translators[1].key;
 
 function fileCard(source, {replace = true} = {}) {
@@ -178,6 +180,12 @@ function transcription(app) {
           <span class="dot"></span><span><strong>${esc(p.label)}</strong><span class="muted small">${esc(p.desc)}</span></span>
         </button>`).join("")}
       </div>
+      ${pipe === app.boot.moss_pipeline ? `
+        <label class="field inline">MOSS backend
+          <select data-setting="moss_backend">${app.boot.moss_backends.map((b) => `
+            <option value="${esc(b.key)}" ${b.key === selectedMossBackend(app) ? "selected" : ""}>${esc(b.label)}</option>`).join("")}</select>
+          <span class="muted small">Python runs one recording at a time without starting a server. Use it for short clips.</span>
+        </label>` : ""}
       ${manual ? `
         <div class="sub stack-12">
           <strong>Run it yourself in a chat model</strong>
@@ -350,7 +358,8 @@ export function analyzeBody(app, extra = {}) {
   const s = app.settings;
   const same = s.target_language === app.boot.same;
   const style = same && s.rewrite ? s.rewrite_style : s.style;
-  return {...s, style, pipeline: selectedPipeline(app), source: app.source?.path || null,
+  return {...s, style, pipeline: selectedPipeline(app), moss_backend: selectedMossBackend(app),
+    source: app.source?.path || null,
     api_key: app.apiKey, manual_reply: app.manualReply,
     rewrite_by_hand: same && s.rewrite && s.rewrite_by_hand,
     translator: same && s.rewrite_by_hand ? gemini(app) : s.translator,

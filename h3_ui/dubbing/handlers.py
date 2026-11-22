@@ -551,7 +551,7 @@ class DubbingHandlers:
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
                        reuse=True, refine_timestamps=True, translation_context=False, project=None,
                        manual_reply="", style=pipeline.DEFAULT_STYLE, rewrite=False, shorten_lines=False,
-                       readings=False):
+                       readings=False, moss_backend=""):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -565,7 +565,7 @@ class DubbingHandlers:
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
                 str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps),
                 bool(translation_context), str(manual_reply or ""), not self.services.gpu, str(style or ""),
-                bool(rewrite), shorten_lines=bool(shorten_lines), readings=bool(readings))
+                bool(rewrite), shorten_lines=bool(shorten_lines), readings=bool(readings), moss_backend=moss_backend)
             for update in self._cloud(lambda **kw: pipeline.analyze(request, **kw),
                                       without_gpu=transcription in pipeline.CLOUD_PIPELINES):
                 if isinstance(update, pipeline.Analysis):
