@@ -299,6 +299,31 @@ class WorkshopPageTests(PageTests):
 class StudioPageTests(PageTests):
     gpu = True
 
+    def test_subtitle_export_forwards_the_selected_picture(self):
+        created = self.session([])
+        folder = self.runtime.outputs_dir / "dubbing"
+        folder.mkdir(parents=True)
+        video = folder / "finished.mp4"
+        subtitles = folder / "finished.french.srt"
+        for path in (video, subtitles, folder / "finished.lipsync.mp4"):
+            path.touch()
+        sessions.modify(created, lambda current: current.data.update(last_output=str(video)))
+        body = {"session": created.id, "subtitles": "both"}
+
+        with patch.object(self.handlers, "export_subtitles", return_value=iter(())) as export:
+            bad = self.client.post(f"{API}/export", json={**body, "picture": "elsewhere.mp4"}).json()
+            self.assertIn("Choose which picture", bad["error"])
+            export.assert_not_called()
+
+        for selection, lip_sync in (({}, False), ({"picture": "original"}, False), ({"picture": "lipsync"}, True)):
+            with self.subTest(selection=selection), patch.object(self.handlers, "export_subtitles") as export:
+                export.return_value = iter([(str(video), "Done")])
+                response = self.client.post(f"{API}/export", json={**body, **selection})
+                self.assertEqual(response.status_code, 200)
+                self.wait("export", created.id)
+                export.assert_called_once_with({"video": str(video), "subtitles": str(subtitles),
+                                                "mode": "both", "lip_sync": lip_sync})
+
     def test_analysis_page_offers_and_forwards_moss_python(self):
         boot = self.client.get(f"{API}/boot").json()
         self.assertEqual(boot["moss_pipeline"], pipeline.PIPELINE_MOSS)

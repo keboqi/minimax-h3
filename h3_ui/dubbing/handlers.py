@@ -900,7 +900,7 @@ class DubbingHandlers:
             mode = source.get("mode") or "translation"
             yield None, f"Exporting video with burned-in {pipeline.SUBTITLE_MODES.get(mode, mode)} subtitles…"
             path = pipeline.export_subtitled_video(source["video"], source["subtitles"], runtime=self._runtime(),
-                                                   mode=mode)
+                                                   mode=mode, lip_sync=source.get("lip_sync", False))
             yield str(path), "Export saved to Media."
         except Exception as exc:
             yield gr.skip(), self._failed(exc)

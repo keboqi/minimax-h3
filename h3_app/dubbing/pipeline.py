@@ -1384,22 +1384,30 @@ def _video_size(source: Path) -> tuple[int, int] | None:
     return (width, height) if proc.returncode == 0 and width > 0 and height > 0 else None
 
 
-def export_subtitled_video(video: str, subtitles: str, *, runtime, mode: str = "translation") -> Path:
+def export_subtitled_video(
+    video: str, subtitles: str, *, runtime, mode: str = "translation", lip_sync: bool = False,
+) -> Path:
     """Burn a finished dub's subtitles into a new export, preserving its audio tracks.
 
     ``mode`` ("translation", "source" or "both") picks the rows as the result player shows them,
     with word-by-word highlighting where words are aligned. A dub saved without its player burns
-    the plain translated ``subtitles`` file instead.
+    the plain translated ``subtitles`` file instead. ``lip_sync`` selects the companion picture
+    while keeping the base dub's player and subtitle timings.
     """
     if mode not in SUBTITLE_MODES:
         raise H3Error(f"Unknown subtitles choice: {mode}.")
     root = (runtime.outputs_dir / "dubbing").resolve()
-    source, captions = Path(video).resolve(), Path(subtitles).resolve()
-    if (source.parent != root or captions.parent != root or source.suffix != ".mp4"
-            or captions.suffix != ".srt" or not captions.name.startswith(source.stem + ".")
+    dub, captions = Path(video).resolve(), Path(subtitles).resolve()
+    if (dub.parent != root or captions.parent != root or dub.suffix != ".mp4"
+            or captions.suffix != ".srt" or not captions.name.startswith(dub.stem + ".")
             or captions.name.endswith(".original.srt")
-            or not source.is_file() or not captions.is_file()):
+            or not dub.is_file() or not captions.is_file()):
         raise H3Error("Generate a video dub with translated subtitles first; its files must still exist.")
+    source = dub
+    if lip_sync:
+        source = dub.with_name(f"{dub.stem}.lipsync.mp4")
+        if source.resolve() != source or not source.is_file():
+            raise H3Error("Generate lip sync for this dub first; its video must still exist.")
     duration = probe_audio_seconds(source)
     if not duration:
         raise H3Error("Could not read the dubbed video's duration.")
@@ -1409,7 +1417,7 @@ def export_subtitled_video(video: str, subtitles: str, *, runtime, mode: str = "
     # frame still shows the changing subtitles.
     picture = _video_seconds(source)
     overrun = duration - picture if picture else duration
-    player = load_player(source)
+    player = load_player(dub)
     size = _video_size(source) or (1280, 720)
     script = dub_subtitles(player, mode, *size) if player is not None and player.lines else None
     drawn = target.with_name(f".{target.stem}.ass")
@@ -1430,7 +1438,7 @@ def export_subtitled_video(video: str, subtitles: str, *, runtime, mode: str = "
                          action="Exporting video with burned-in subtitles")
     finally:
         drawn.unlink(missing_ok=True)
-    original = read_snapshot(source) or {}
+    original = read_snapshot(source) or read_snapshot(dub) or {}
     write_snapshot(result, {"family": DUB_FAMILY, "source_asset_ids": [original["asset_id"]]
                            if original.get("asset_id") else [], "settings": {
         **original.get("settings", {}), "source": source.name, "burned_subtitles": True,

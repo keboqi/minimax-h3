@@ -1116,11 +1116,12 @@ class HandlerTests(Workspace):
         with patch.object(pipeline, "export_subtitled_video", return_value=Path("export.mp4")) as export:
             updates = list(self.handlers.export_subtitles(source))
         export.assert_called_once_with("finished.mp4", "finished.french.srt", runtime=self.runtime,
-                                       mode="translation")
+                                       mode="translation", lip_sync=False)
         self.assertEqual(updates[-1], ("export.mp4", "Export saved to Media."))
         with patch.object(pipeline, "export_subtitled_video", return_value=Path("export.mp4")) as export:
-            updates = list(self.handlers.export_subtitles({**source, "mode": "both"}))
+            updates = list(self.handlers.export_subtitles({**source, "mode": "both", "lip_sync": True}))
         self.assertEqual(export.call_args.kwargs["mode"], "both")
+        self.assertTrue(export.call_args.kwargs["lip_sync"])
         self.assertIn("translated and original", updates[0][1])
         self.assertIn("Generate a video dub first", list(self.handlers.export_subtitles(None))[-1][1])
         cleared = self.handlers.clear_results()
@@ -2568,6 +2569,19 @@ class DubRenderTests(Workspace):
         both = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime,
                                                mode="both")
         self.assertEqual(pipeline.read_snapshot(both)["settings"]["subtitle_mode"], "both")
+        with self.assertRaisesRegex(pipeline.H3Error, "Generate lip sync"):
+            pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime,
+                                            lip_sync=True)
+        lip_sync = result.video.with_name(f"{result.video.stem}.lipsync.mp4")
+        shutil.copyfile(result.video, lip_sync)
+        with patch.object(pipeline, "_ffmpeg", wraps=pipeline._ffmpeg) as encode:
+            synced_export = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]),
+                                                            runtime=self.runtime, mode="both", lip_sync=True)
+        self.assertEqual(encode.call_args.args[0][:2], ["-i", str(lip_sync)])
+        self.assertEqual(self.streams(synced_export), ["video", "audio", "subtitle", "subtitle"])
+        synced_settings = pipeline.read_snapshot(synced_export)["settings"]
+        self.assertEqual(synced_settings["source"], lip_sync.name)
+        self.assertEqual(synced_settings["subtitle_mode"], "both")
         self.assertEqual(list(both.parent.glob("*.ass")), [])
         with self.assertRaisesRegex(pipeline.H3Error, "Unknown subtitles"):
             pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime,

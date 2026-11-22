@@ -1124,7 +1124,11 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
         mode = str(body.get("subtitles") or "translation")
         if mode not in pipeline.SUBTITLE_MODES:
             raise H3Error("Choose which subtitles to burn in: translation, original or both.")
-        source = {"video": str(result.video), "subtitles": str(result.translated_subtitles), "mode": mode}
+        picture = body.get("picture", "original")
+        if picture not in ("original", "lipsync"):
+            raise H3Error("Choose which picture to export: Original or Lip sync.")
+        source = {"video": str(result.video), "subtitles": str(result.translated_subtitles),
+                  "mode": mode, "lip_sync": picture == "lipsync"}
         return start(request, EXPORT, session_id, "export", handlers.export_subtitles, [source],
                      reader(1, file_index=0), job=False, session_id=session_id)
 

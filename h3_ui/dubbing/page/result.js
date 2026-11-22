@@ -13,13 +13,18 @@ function chips(result) {
   return list.map((item) => `<span class="chip chip-quiet">${esc(item)}</span>`).join("");
 }
 
+function playerVideo(app) {
+  const available = !!app.session?.result?.lip_sync?.output?.inline_url;
+  return available && app.playerView?.video !== "original" ? "lipsync" : "original";
+}
+
 function controls(app, result) {
   const same = app.session.same;
   const hasLipSync = !!result.lip_sync?.output;
   const view = {
     voice: "dub", music: "on", subtitles: "translation",
-    video: hasLipSync ? "lipsync" : "original",
     ...(app.playerView || {}),
+    video: playerVideo(app),
   };
   const button = (group, value, label) => `<button type="button" data-player-control="${group}" data-value="${value}"
     aria-pressed="${view[group] === value}">${label}</button>`;
@@ -79,7 +84,7 @@ function exportCard(app, result) {
   return `
     <section class="card card-pad stack-10" aria-labelledby="bi-h">
       <h2 id="bi-h">Video with subtitles</h2>
-      <p class="muted small">Re-encodes the picture with the subtitles burned in as the player shows them, as a new MP4
+      <p class="muted small">Exports the selected picture with burned-in subtitles as a new MP4
         in Media; aligned words light up as they are spoken. Audio tracks are copied; voices are not generated again.
         The dub itself stays uncaptioned.</p>
       <div class="control"><span class="field-label">Burn in</span><div class="seg" role="group" aria-label="Subtitles to burn in">
@@ -207,11 +212,10 @@ function playerRoot() {
 function applyView(app) {
   const root = playerRoot();
   if (!root) return;
-  const hasLipSync = !!app.session?.result?.lip_sync?.output?.inline_url;
   const view = {
     voice: "dub", music: "on", subtitles: "translation",
-    video: hasLipSync ? "lipsync" : "original",
     ...(app.playerView || {}),
+    video: playerVideo(app),
   };
   const videoEl = root.querySelector("video");
   const lipUrl = app.session?.result?.lip_sync?.output?.inline_url;
@@ -342,7 +346,9 @@ export function bindResult(app) {
       app.focus = Math.max(0, (session.result.failed[0] || 1) - 1);
       app.go("review");
     } else if (action === "jump-failed") jumpTo(session.result.failed[0]);
-    else if (action === "export") app.startRun("export", {session: session.id, subtitles: exportChoice(app)});
+    else if (action === "export") app.startRun("export", {
+      session: session.id, subtitles: exportChoice(app), picture: playerVideo(app),
+    });
     else if (action === "align") app.startRun("align", {session: session.id});
     else if (action === "interrupt") {
       try {

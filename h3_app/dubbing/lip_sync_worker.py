@@ -788,8 +788,8 @@ class Worker:
             pad = [whisper_chunks[-1]] * (len(frames_bgr) - len(whisper_chunks))
             whisper_chunks = list(whisper_chunks) + pad
 
-        active_frames = temporal_opacity_weights(len(frames_bgr), active_start, active_end, ramp_frames=0)
-        tracked_frames = [(idx, box) for idx, box in enumerate(boxes) if box is not None and active_frames[idx]]
+        weights = temporal_opacity_weights(len(frames_bgr), active_start, active_end)
+        tracked_frames = [(idx, box) for idx, box in enumerate(boxes) if box is not None and weights[idx]]
         if not tracked_frames:
             raise RuntimeError("No detected face in active lip-sync frames.")
 
@@ -816,7 +816,7 @@ class Worker:
                         )
                     except Exception:
                         mask, crop_box = None, None
-                    prep_items.append((idx, tracked_box, face_box, mask, crop_box))
+                    prep_items.append((idx, face_box, mask, crop_box))
 
                 latent_batch = torch.cat(latents_list, dim=0).to(device=device, dtype=dtype)
                 audio_tensor = torch.stack(
@@ -829,8 +829,9 @@ class Worker:
                 decoded = vae.decode_latents(pred_latents)
 
                 for item, res_face in zip(prep_items, decoded):
-                    idx, tracked_box, face_box, mask, crop_box = item
+                    idx, face_box, mask, crop_box = item
                     fx1, fy1, fx2, fy2 = face_box
+                    opacity = weights[idx]
                     face_uint8 = np.clip(res_face, 0, 255).astype(np.uint8)
                     resized_face = cv2.resize(face_uint8, (fx2 - fx1, fy2 - fy1))
                     if mask is not None and crop_box is not None:
@@ -842,12 +843,14 @@ class Worker:
                             pass
                         else:
                             if blended is not None:
+                                if opacity < 1.0:
+                                    blended = cv2.addWeighted(frames_bgr[idx], 1.0 - opacity, blended, opacity, 0.0)
                                 out_frames[idx] = blended
                                 continue
                     original = frames_bgr[idx][fy1:fy2, fx1:fx2]
-                    lower_mask = _feathered_lower_face_mask(height, width, tracked_box, feather)
+                    lower_mask = _feathered_lower_face_mask(height, width, (fx1, fy1, fx2, fy2), feather)
                     out_frames[idx][fy1:fy2, fx1:fx2] = _blend_frame(
-                        original, resized_face, lower_mask[fy1:fy2, fx1:fx2], 1.0,
+                        original, resized_face, lower_mask[fy1:fy2, fx1:fx2], opacity,
                     )
 
         _write_cfr_mp4(out_frames, output_path, fps)

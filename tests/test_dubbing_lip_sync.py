@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from threading import Event
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -57,41 +58,57 @@ class LipSyncWorkerRenderTests(unittest.TestCase):
         self.request = {"video_path": "input.mp4", "audio_path": "audio.wav", "output_path": "out.mp4", "fps": 25}
 
     def test_musetalk_renders_with_a_multiframe_whisper_tensor_and_one_composite(self):
+        self.frames.extend(np.full_like(self.frames[0], value) for value in (3, 4))
         audio_processor = Mock()
         audio_processor.get_audio_feature.return_value = (object(), 1920)
         # NumPy rejects boolean conversion of this batch just as Torch does.
-        audio_processor.get_whisper_chunk.return_value = np.zeros((3, 50, 384))
+        audio_processor.get_whisper_chunk.return_value = np.zeros((5, 50, 384))
         vae = Mock()
-        vae.decode_latents.return_value = [np.full_like(frame, 200) for frame in self.frames[:2]]
+        vae.decode_latents.return_value = [np.full_like(frame, 200) for frame in self.frames[:3]]
         bundle = dict(device="cpu", dtype="float32", vae=vae, unet=Mock(), pe=Mock(), whisper=Mock(),
                       audio_processor=audio_processor, face_parser=Mock(), base=self.root)
-        cv2 = SimpleNamespace(resize=lambda frame, *_args, **_kw: frame[:6, :6], INTER_LANCZOS4=1)
+
+        def add_weighted(original, a, rendered, b, offset):
+            return np.rint(original * a + rendered * b + offset).astype(np.uint8)
+
+        cv2 = SimpleNamespace(
+            resize=lambda frame, *_args, **_kw: frame[:6, :6], INTER_LANCZOS4=1,
+            addWeighted=add_weighted,
+        )
         torch = Mock()
         torch.inference_mode.side_effect = contextlib.nullcontext
-        parsed = self.frames[0].copy()
-        parsed[2, 2] = 200
-        blending = SimpleNamespace(get_image_prepare_material=Mock(side_effect=[(object(), object()), (None, None)]),
+        parsed = self.frames[1].copy()
+        parsed[2, 2] = 201
+        blending = SimpleNamespace(get_image_prepare_material=Mock(side_effect=[(object(), object()), (None, None), (None, None)]),
                                    get_image_blending=Mock(return_value=parsed))
         fallback_mask = np.zeros((8, 8, 1), dtype=np.float32)
         fallback_mask[3, 3] = 1.0
         with patch.dict(sys.modules, {"cv2": cv2, "torch": torch, "musetalk.utils.blending": blending}), \
                 patch.object(self.worker, "_load_musetalk", return_value=bundle), \
                 patch.object(lip_sync_worker, "_read_video_frames", return_value=(self.frames, 25)), \
-                patch.object(lip_sync_worker, "_detect_faces_per_frame", return_value=[[self.box]] * 3), \
+                patch.object(lip_sync_worker, "_detect_faces_per_frame", return_value=[[self.box]] * 5), \
                 patch.object(lip_sync_worker, "_feathered_lower_face_mask", return_value=fallback_mask) as fallback, \
                 patch.object(lip_sync_worker, "_write_cfr_mp4") as write:
-            result = self.worker.handle({"op": "render_musetalk", **self.request, "active_end_frame": 2})
-        self.assertEqual(result["frames"], 3)
-        self.assertEqual(len(torch.stack.call_args.args[0]), 2)
+            result = self.worker.handle({"op": "render_musetalk", **self.request,
+                                         "active_start_frame": 1, "active_end_frame": 4, "bbox_shift": 1})
+        self.assertEqual(result["frames"], 5)
+        self.assertEqual(len(torch.stack.call_args.args[0]), 3)
         blending.get_image_blending.assert_called_once()
-        fallback.assert_called_once()
+        self.assertEqual(len(fallback.call_args_list), 2)
+        self.assertTrue(all(call.args == (8, 8, (1, 2, 7, 8), 6) for call in fallback.call_args_list))
         write.assert_called_once()
         frames = write.call_args.args[0]
-        np.testing.assert_array_equal(frames[0], parsed)
-        expected_fallback = self.frames[1].copy()
+        np.testing.assert_array_equal(frames[0], self.frames[0])
+        expected_parsed = self.frames[1].copy()
+        expected_parsed[2, 2] = 101
+        np.testing.assert_array_equal(frames[1], expected_parsed)
+        expected_fallback = self.frames[2].copy()
         expected_fallback[3, 3] = 200
-        np.testing.assert_array_equal(frames[1], expected_fallback)
-        np.testing.assert_array_equal(frames[2], self.frames[2])
+        np.testing.assert_array_equal(frames[2], expected_fallback)
+        expected_fallback = self.frames[3].copy()
+        expected_fallback[3, 3] = 101
+        np.testing.assert_array_equal(frames[3], expected_fallback)
+        np.testing.assert_array_equal(frames[4], self.frames[4])
 
     def test_latentsync_recovers_later_frames_and_leaves_failed_frames_original(self):
         class Processor:
@@ -888,17 +905,21 @@ class LipSyncTests(unittest.TestCase):
         free_gpu = Mock()
         calls: list[tuple[str, dict]] = []
         pad_flags: list[bool] = []
+        progress_seen = Event()
 
         def fake_slice(_source, _window, destination, *, pad=True, **_kw):
             pad_flags.append(pad)
             destination.write_bytes(b"slice")
             return destination
 
-        def fake_worker_run(op, payload, rt, *, free_gpu, hf_token=None, **_kw):
+        def fake_worker_run(op, payload, rt, *, free_gpu, hf_token, report):
             calls.append((op, payload))
             self.assertIs(rt, runtime)
             self.assertIsNotNone(free_gpu)
             self.assertEqual(hf_token, "hf-secret")
+            if op == "render_musetalk":
+                report("Downloading MuseTalk weights")
+                self.assertTrue(progress_seen.wait(5), "worker progress was never yielded")
             out = Path(payload["output_path"])
             out.write_bytes(f"{op}-rendered".encode("utf-8"))
             return {"output_path": str(out), "frames": payload["source_frames"]}
@@ -909,14 +930,17 @@ class LipSyncTests(unittest.TestCase):
 
         with patch("h3_app.dubbing.lip_sync._extract_window_slice", side_effect=fake_slice), \
                 patch("h3_app.dubbing.lip_sync.assemble_lip_sync_video", side_effect=fake_assemble), \
+                patch("h3_app.drama3.serving.generate.HEARTBEAT_SECONDS", 0.01), \
                 patch("h3_app.dubbing.lip_sync.lip_sync_runtime.run", side_effect=fake_worker_run):
             with self.assertRaisesRegex(H3Error, "runtime is not configured"):
                 list(render_dub_lip_sync(dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk"))
 
-            list(render_dub_lip_sync(
+            for update in render_dub_lip_sync(
                 dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk",
                 bbox_shift=4, feather=8, runtime=runtime, free_gpu=free_gpu, hf_token="hf-secret",
-            ))
+            ):
+                if isinstance(update, str) and update.startswith("Downloading MuseTalk weights"):
+                    progress_seen.set()
             self.assertEqual(pad_flags, [False])
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "render_musetalk")

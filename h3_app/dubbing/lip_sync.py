@@ -13,7 +13,7 @@ import shutil
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -22,6 +22,7 @@ from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices, ModelsServices
 from h3_app.jobs import check_cancelled
+from h3_app.llm import decisions
 from h3_app.media_tools import has_encoder, probe_video_metadata
 from h3_app.processes import run_media_process
 from h3_app.provenance import copy_snapshot
@@ -52,7 +53,7 @@ from .lip_sync_match import (
     resolve_uncertain_with_gemini_decision,
     uncertain_assignments,
 )
-from h3_app.llm import decisions
+from .pipeline import blocking
 from .results import PLAYER_DIR, SCAN_CACHE_DIR, load_player, player_folder
 
 _PTS_TIME_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
@@ -708,7 +709,7 @@ def window_cache_key(
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": 6 if engine in ("h3", "musetalk") else 5,
+        "version": {"h3": 6, "musetalk": 7}.get(engine, 5),
         "engine": str(engine),
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [
@@ -1146,6 +1147,7 @@ def _render_window_via_worker(
     runtime: Any,
     free_gpu: Any,
     hf_token: str | None,
+    report: Callable[[str], None],
 ) -> Path:
     payload: dict[str, Any] = {
         "video_path": str(slice_path),
@@ -1172,6 +1174,7 @@ def _render_window_via_worker(
         runtime,
         free_gpu=free_gpu,
         hf_token=hf_token,
+        report=report,
     )
     rendered = Path(reply.get("output_path") or output_path)
     if not rendered.is_file():
@@ -1399,9 +1402,10 @@ def render_dub_lip_sync(
                         feather=feather,
                     )
                 else:
-                    yield f"Rendering lip-sync window {index}/{total} ({engine})"
+                    status = f"Rendering lip-sync window {index}/{total} ({engine})"
+                    yield status
                     check_cancelled()
-                    rendered_path = _render_window_via_worker(
+                    rendered_path = yield from blocking(status, lambda report: _render_window_via_worker(
                         engine=engine,
                         window=window,
                         slice_path=slice_path,
@@ -1415,7 +1419,8 @@ def render_dub_lip_sync(
                         runtime=runtime,
                         free_gpu=free_gpu_cb,
                         hf_token=hf_token,
-                    )
+                        report=report,
+                    ))
                     check_cancelled()
             except Exception as exc:
                 if _is_no_face_error(exc):
