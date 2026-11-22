@@ -545,6 +545,12 @@ LIP_SYNC_REQUIREMENTS = (
     "insightface",
     "onnxruntime-gpu",
     "face-alignment",
+    "decord",
+    "ffmpeg-python",
+    "python_speech_features",
+    "scenedetect",
+    "tiktoken",
+    "more-itertools",
     "pyyaml",
     "tqdm",
 )
@@ -553,7 +559,9 @@ LIP_SYNC_SMOKE = (
     "assert torch.version.cuda, 'Lip-sync runtime installed CPU-only Torch'; "
     "src = os.environ.get('H3_LIP_SYNC_SRC_DIR'); "
     "src and [sys.path.insert(0, os.path.join(src, name)) for name in ('musetalk', 'latentsync')]; "
-    "import musetalk.models.unet, latentsync.models.unet"
+    "import musetalk.models.unet, musetalk.models.vae, musetalk.utils.audio_processor, "
+    "musetalk.utils.face_parsing, musetalk.utils.blending, "
+    "latentsync.models.unet, latentsync.pipelines.lipsync_pipeline, latentsync.whisper.audio2feature"
 )
 
 
