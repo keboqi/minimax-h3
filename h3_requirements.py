@@ -544,6 +544,8 @@ LIP_SYNC_REQUIREMENTS = (
     "flatbuffers",
     "absl-py",
     "attrs",
+    "matplotlib",
+    "sounddevice",
     "protobuf>=4.25.3,<5",
     "insightface",
     "onnxruntime-gpu",
