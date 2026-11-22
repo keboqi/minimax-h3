@@ -43,17 +43,24 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     ...CATEGORIES.map(({id, scene}) => h("option",
       {value: id, selected: !row.image && id === category.id}, `Demo · ${scene}`)));
   const play = h("button", {type: "button", class: "btn btn-small", onclick: playPreview}, "Play preview");
+  const scrubber = h("input", {type: "range", min: 0, max: DURATION, step: 0.02, value: 0,
+    "aria-label": "Preview position", oninput: scrubPreview});
+  const timeLabel = h("span", {class: "mono small muted effect-time"}, `0.0 s / ${DURATION.toFixed(1)} s`);
+  const timeline = h("div", {class: "effect-timeline"}, play, scrubber, timeLabel);
   const hint = h("p", {class: "muted small effect-preview-hint"});
   const sourceStatus = h("p", {class: "muted small effect-preview-hint", role: "status"});
   const grid = h("div", {class: "effect-picker-grid", role: "group"});
   const hoverToggle = h("input", {type: "checkbox", checked: true,
     onchange: () => { if (!hoverToggle.checked) stopHover(); }});
   const tabs = CATEGORIES.map((option) => h("button", {type: "button", "data-kind": option.id,
+    "aria-label": option.label,
     onclick: () => {
       if (category === option) return;
       category = option;
       renderChoices();
-    }}, option.label));
+    }}, h("span", {class: "effect-tab-label"}, option.label),
+    h("span", {class: "effect-tab-sub", "aria-hidden": "true"}, "None")));
+  const reset = h("button", {type: "button", class: "btn", disabled: true, onclick: resetEffects}, "Reset");
   const cancel = h("button", {type: "button", class: "btn", onclick: () => dialog.close()}, "Cancel");
   const apply = h("button", {type: "button", class: "btn btn-primary", disabled: true, onclick: applyEffects}, "Apply effects");
   const error = h("span", {class: "error small", role: "alert"});
@@ -68,6 +75,18 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     play.textContent = "Play preview";
   }
 
+  function setTime(seconds) {
+    const clamped = Math.min(DURATION, Math.max(0, seconds));
+    scrubber.value = String(clamped);
+    timeLabel.textContent = `${clamped.toFixed(1)} s / ${DURATION.toFixed(1)} s`;
+    if (sourceReady) paintEffectPreview(canvas, image, effects(), clamped, DURATION);
+  }
+
+  function scrubPreview() {
+    stopPreview();
+    setTime(Number(scrubber.value));
+  }
+
   function playPreview() {
     const active = effects();
     if (frame !== null) {
@@ -77,12 +96,12 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     const start = performance.now();
     const tick = (now) => {
       const elapsed = Math.min(DURATION, Math.max(0, (now - start) / 1000));
-      paintEffectPreview(canvas, image, active, elapsed, DURATION);
+      setTime(elapsed);
       if (elapsed < DURATION) frame = requestAnimationFrame(tick);
       else stopPreview();
     };
     play.textContent = "Stop preview";
-    paintEffectPreview(canvas, image, active, 0, DURATION);
+    setTime(0);
     frame = requestAnimationFrame(tick);
   }
 
@@ -123,19 +142,47 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   function paintPreview() {
     stopPreview();
     const active = effects();
-    if (sourceReady) paintEffectPreview(canvas, image, active, previewTime(active), DURATION);
+    setTime(previewTime(active));
   }
 
   function updateControls() {
     const active = effects();
+    const unchanged = active.length === initial.length && active.every((id) => initial.includes(id));
     play.disabled = saving || !sourceReady || !active.length;
-    apply.disabled = saving || (active.length === initial.length && active.every((id) => initial.includes(id)));
+    scrubber.disabled = saving || !sourceReady || !active.length;
+    reset.disabled = saving || unchanged;
+    apply.disabled = saving || unchanged;
+  }
+
+  function resetEffects() {
+    if (saving) return;
+    selected.clear();
+    for (const id of initial) {
+      if (presets[id]?.kind) selected.set(presets[id].kind, id);
+    }
+    error.textContent = "";
+    renderSelection();
   }
 
   function renderSelection() {
     const active = effects();
+    for (const tab of tabs) {
+      const id = selected.get(tab.dataset.kind);
+      const sub = tab.querySelector(".effect-tab-sub");
+      if (sub) sub.textContent = id && presets[id] ? presets[id].label : "None";
+    }
     chips.replaceChildren(...(active.length
-      ? active.map((id) => h("span", {class: "chip"}, presets[id].label))
+      ? active.map((id) => {
+        const removeBtn = h("button", {type: "button", class: "effect-chip-remove", "aria-label": `Remove ${presets[id].label}`,
+          onclick: () => {
+            if (saving) return;
+            selected.delete(presets[id].kind);
+            error.textContent = "";
+            renderSelection();
+          }});
+        removeBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+        return h("span", {class: "chip effect-chip-removable"}, presets[id].label, removeBtn);
+      })
       : [h("span", {class: "muted small"}, "No effects selected")]));
     hint.textContent = active.some((id) => FLASHING.has(id)) ? "Playing this preview includes brief flashes." : "";
     markSelection();
@@ -248,14 +295,14 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     h("div", {class: "style-body effects-picker-body"},
       h("section", {class: "effect-preview", "aria-label": "Combined preview"},
         h("div", {class: "effect-preview-controls"},
-          h("label", {class: "field"}, h("span", {class: "label"}, "Preview source"), source), play),
-        stage, chips, sourceStatus, hint),
+          h("label", {class: "field"}, h("span", {class: "label"}, "Preview source"), source)),
+        stage, timeline, chips, sourceStatus, hint),
       h("section", {class: "effect-options", "aria-label": "Effect options"},
         h("div", {class: "effect-options-controls"},
           h("div", {class: "seg effect-categories", role: "group", "aria-label": "Effect categories"}, ...tabs),
           h("label", {class: "check"}, hoverToggle, "Hover previews")),
         grid)),
-    h("div", {class: "drawn-foot"}, error, h("span", {class: "spacer"}), cancel, apply));
+    h("div", {class: "drawn-foot"}, error, h("span", {class: "spacer"}), reset, cancel, apply));
   dialog.oncancel = (event) => { if (saving) event.preventDefault(); };
   const updateMotion = (event) => { if (event.matches) stopPreview(); };
   motion?.addEventListener("change", updateMotion);

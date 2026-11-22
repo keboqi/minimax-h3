@@ -309,8 +309,16 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const busy = videoRunning();
     const presets = state.boot.video.effect_presets || {};
     const enhancement = video.effect_enhancement?.shots.find((item) => item.index === row.index);
-    const effectIds = enhancement?.effects?.map((layer) => layer.preset) ?? row.effects ?? [];
-    const effectLabels = effectIds.map((id) => presets[id]?.label).filter(Boolean);
+    const regionsById = new Map((enhancement?.regions || []).map((r) => [r.id, r.label]));
+    const effectLayers = enhancement?.effects ?? (row.effects || []).map((id) => ({preset: id, mode: "full_frame"}));
+    const effectChips = effectLayers.map((layer) => {
+      const name = presets[layer.preset]?.label;
+      if (!name) return null;
+      const modeLabel = layer.mode && layer.mode !== "full_frame"
+        ? `${layer.mode[0].toUpperCase()}${layer.mode.slice(1)}${regionsById.get(layer.region_id) ? ` ${regionsById.get(layer.region_id)}` : ""}`
+        : "";
+      return modeLabel ? `${name} · ${modeLabel}` : name;
+    }).filter(Boolean);
     const subjects = new Map(state.project.video.plan.subjects.map((item) => [item.key, item]));
     const step = (by) => pickShot(Math.min(rows.length - 1, Math.max(0, row.index + by)));
     const draw = {drawn: "Draw this shot again", changed: "Redraw with the new prompt", todo: "Draw this shot"}[row.status];
@@ -342,10 +350,11 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
             save: (effects) => editShot({index: row.index, effects}),
             restoreFocus: () => $("shot-effects")?.focus()})},
-          h("span", {class: "effect-summary-head"}, h("strong", {}, "Visual effects"),
+          h("span", {class: "effect-summary-head"},
+            h("strong", {}, "Visual effects", effectChips.length > 1 ? h("span", {class: "muted small"}, ` · ${effectChips.length} layers`) : null),
             h("span", {class: "drawn-chip-edit"}, "Edit")),
-          h("span", {class: "effect-summary-chips"}, effectLabels.length
-            ? effectLabels.map((label) => h("span", {class: "chip"}, label))
+          h("span", {class: "effect-summary-chips"}, effectChips.length
+            ? effectChips.map((label) => h("span", {class: "chip"}, label))
             : h("span", {class: "muted small"}, "No effects selected")))),
       h("div", {class: "shot-inspector-foot"},
         h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),

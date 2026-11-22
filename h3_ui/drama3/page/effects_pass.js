@@ -6,15 +6,22 @@ const MODE_LABELS = {full_frame: "Full frame", inside: "Inside", outside: "Outsi
 
 export function createEffectsPass({state, $, h, call, copy, writer, interrupt, busy}) {
   let project, selected, mode, draft, pasted = "", includeManual = false;
-  let before = false, refine, frameTime = 0;
+  let before = false, refine, frameTime = 0, showSegments = false, playFrame = null;
   const dialog = () => $("effect-pass-dialog");
   const panel = () => state.project.video?.effect_enhancement;
   const rowOf = (shot) => state.project.video.plan.rows[shot.index];
-  const button = (label, onclick, disabled = false) => h("button", {type: "button", class: "btn btn-small", onclick, disabled}, label);
+  const button = (label, onclick, disabled = false, extra = "") =>
+    h("button", {type: "button", class: `btn btn-small ${extra}`.trim(), onclick, disabled}, label);
   const api = (action, body = {}) => call(`/project/video/effects/${action}`, body);
   const selectedWriter = () => writer();
 
+  function stopPlayback() {
+    if (playFrame !== null) cancelAnimationFrame(playFrame);
+    playFrame = null;
+  }
+
   function open(shot = null) {
+    stopPlayback();
     if (project !== state.project.name) {
       project = state.project.name;
       pasted = "";
@@ -26,6 +33,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     before = false;
     refine = null;
     frameTime = 0;
+    showSegments = false;
     if (!dialog().open) dialog().showModal();
     render(true);
   }
@@ -35,12 +43,29 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     return effects.map((effect) => ({...effect, mask_url: urls.get(effect.region_id)}));
   }
 
+  function formatLayers(shot, effects, catalog) {
+    const regions = new Map((shot.regions || []).map((r) => [r.id, r.label]));
+    if (!effects?.length) return [h("span", {class: "muted small"}, "No effects")];
+    return effects.map((layer) => {
+      const label = catalog[layer.preset]?.label || layer.preset;
+      const modeText = layer.mode && layer.mode !== FULL_FRAME
+        ? ` · ${MODE_LABELS[layer.mode] || layer.mode}${regions.get(layer.region_id) ? ` ${regions.get(layer.region_id)}` : ""}`
+        : "";
+      return h("span", {class: "chip"}, `${label}${modeText}`);
+    });
+  }
+
   function preview(shot, effects) {
+    stopPlayback();
     const row = rowOf(shot);
     const orientation = state.project.video.orientation;
     const {back, front, overlay} = stageLayers();
     [back, front, overlay].forEach((element) => element.removeAttribute("id"));
-    const stage = h("div", {class: `video-stage pass-preview ${orientation === "portrait" ? "portrait" : ""}`}, back, front, overlay);
+    const segOverlays = showSegments && shot.regions?.length
+      ? shot.regions.map((region) => h("img", {src: region.url, class: "pass-seg-overlay", alt: ""}))
+      : [];
+    const stage = h("div", {class: `video-stage pass-preview ${orientation === "portrait" ? "portrait" : ""}`},
+      back, front, overlay, ...segOverlays);
     const duration = Math.max(0.05, row.end - row.start);
     const sounds = (state.project.result?.sounds || [])
       .filter((sound) => sound.start >= row.start && sound.start < row.end)
@@ -48,16 +73,46 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     const [view] = stageTimeline([{start: 0, end: duration, index: row.index, fade: 0, url: row.image,
       effects: effects.map(({preset}) => preset), effect_layers: effects}], sounds);
     const layers = {back, front, overlay};
+    const formatTime = (t) => `${t.toFixed(1)} s / ${duration.toFixed(1)} s`;
+    const setTime = (t) => {
+      frameTime = Math.min(duration, Math.max(0, t));
+      slider.value = String(frameTime);
+      timeReadout.textContent = formatTime(frameTime);
+      paint();
+    };
+    const timeReadout = h("span", {class: "mono small muted effect-time"}, formatTime(Math.min(frameTime, duration)));
+    const slider = h("input", {type: "range", min: 0, max: duration, step: 0.025, value: Math.min(frameTime, duration),
+      "aria-label": "Preview time", oninput: (event) => {
+        stopPlayback();
+        playBtn.textContent = "Play preview";
+        setTime(Number(event.target.value));
+      }});
+    const playBtn = h("button", {type: "button", class: "btn btn-small", onclick: () => {
+      if (playFrame !== null) {
+        stopPlayback();
+        playBtn.textContent = "Play preview";
+        return;
+      }
+      playBtn.textContent = "Pause";
+      const startOffset = frameTime >= duration ? 0 : frameTime;
+      const started = performance.now() - startOffset * 1000;
+      const tick = (now) => {
+        if (!dialog().open) { stopPlayback(); return; }
+        setTime(((now - started) / 1000) % duration);
+        playFrame = requestAnimationFrame(tick);
+      };
+      playFrame = requestAnimationFrame(tick);
+    }}, "Play preview");
     const paint = () => paintStage(layers, stageFrame([view], Math.min(frameTime, duration)), true);
     showStageStills(layers, stageFrame([view], 0));
     Promise.all([back.decode(), preloadEffectMasks([view])]).then(paint, paint);
     return h("div", {class: "pass-preview-wrap"}, stage,
-      h("input", {type: "range", min: 0, max: duration, step: 0.025, value: Math.min(frameTime, duration),
-        "aria-label": "Preview time", oninput: (event) => { frameTime = Number(event.target.value); paint(); }}));
+      h("div", {class: "effect-timeline"}, playBtn, slider, timeReadout));
   }
 
   function batch() {
     const {shots, proposal} = panel();
+    const catalog = state.boot.video.enhancement_presets || {};
     const segmented = shots.filter((shot) => shot.segmented).length;
     const eligible = shots.some((shot) => shot.regions.length && (!shot.manual || includeManual));
     const locked = busy();
@@ -87,16 +142,32 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       h("button", {type: "button", class: "btn btn-small", id: "check-effect-reply", disabled: locked || !eligible || !pasted.trim(),
         onclick: () => api("reply", {include_manual: includeManual, reply: pasted})}, "Preview pasted result"),
       proposal ? h("section", {class: "pass-proposal"},
-        h("strong", {}, `${changed.length} proposed · ${kept} kept · ${skipped} skipped`),
-        ...items.filter((item) => item.reason).map((item) => h("div", {class: "muted small"},
-          `Shot ${shots.find((shot) => shot.shot_id === item.shot_id).index + 1}. ${item.reason}`)),
+        h("div", {class: "pass-proposal-head"},
+          h("strong", {}, `${changed.length} proposed · ${kept} kept · ${skipped} skipped`),
+          button("Apply all", () => api("apply", {id: proposal.id}), locked || !changed.length, "btn-primary")),
         previewShot ? h("div", {class: "pass-actions"},
           h("select", {"aria-label": "Preview shot", onchange: (event) => { selected = event.target.value; frameTime = 0; render(true); }},
             changed.map((item) => h("option", {value: item.shot_id, selected: item === target},
               `Shot ${shots.find((shot) => shot.shot_id === item.shot_id).index + 1}`))),
           button(before ? "Show proposal" : "Show current", () => { before = !before; render(true); })) : null,
         previewShot ? preview(previewShot, before ? withMasks(previewShot, previewShot.effects ?? previewShot.default) : target.layers) : null,
-        button("Apply all", () => api("apply", {id: proposal.id}), locked || !changed.length)) : null,
+        h("div", {class: "pass-proposal-cards"},
+          ...items.map((item) => {
+            const shot = shots.find((entry) => entry.shot_id === item.shot_id);
+            const current = shot ? (shot.effects ?? shot.default) : [];
+            return h("div", {class: "pass-proposal-card"},
+              h("div", {class: "pass-proposal-card-head"},
+                h("strong", {}, `Shot ${shot ? shot.index + 1 : item.shot_id}`),
+                h("span", {class: `chip ${item.action === "replace" ? "" : "chip-quiet"}`},
+                  item.action === "replace" ? "Proposed" : "Kept")),
+              h("div", {class: "pass-proposal-row"},
+                h("span", {class: "label"}, "Now"),
+                h("span", {class: "effect-summary-chips"}, ...formatLayers(shot || {regions: []}, current, catalog))),
+              item.action === "replace" ? h("div", {class: "pass-proposal-row"},
+                h("span", {class: "label"}, "Suggest"),
+                h("span", {class: "effect-summary-chips"}, ...formatLayers(shot || {regions: []}, item.layers, catalog))) : null,
+              item.reason ? h("p", {class: "muted small"}, item.reason) : null);
+          }))) : null,
     ];
   }
 
@@ -120,7 +191,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
           const result = await api("refine", {shot_id: shot.shot_id, image: shot.image, region_id: region.id,
             include: refine.include, exclude: refine.exclude});
           if (result) { refine = null; render(true); }
-        }, busy() || !refine.include.length)),
+        }, busy() || !refine.include.length, "btn-primary")),
       h("div", {class: "pass-mask", onclick: (event) => {
         if (busy()) return;
         const rect = image.getBoundingClientRect();
@@ -137,6 +208,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
 
   function edit(shot) {
     const catalog = state.boot.video.enhancement_presets;
+    const maxLayers = state.boot.video.enhancement_max_layers || 8;
     const locked = busy();
     const rowKey = {shot_id: shot.shot_id, image: shot.image};
     const swap = (index, other) => {
@@ -144,42 +216,64 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       render(true);
     };
     return [
-      preview(shot, withMasks(shot, draft)),
-      ...draft.map((layer, index) => {
-        const spec = catalog[layer.preset];
-        const select = (name, onchange, options) => h("select", {"aria-label": name, disabled: locked, onchange}, options);
-        return h("div", {class: "pass-layer"},
-          select("Effect", (event) => replaceLayer(index, {preset: event.target.value, mode: FULL_FRAME}),
-            Object.entries(catalog).map(([id, item]) => h("option", {value: id, selected: id === layer.preset}, item.label))),
-          select("Apply", (event) => replaceLayer(index, {mode: event.target.value, region_id: layer.region_id || shot.regions[0]?.id}),
-            spec.modes.filter((way) => way === FULL_FRAME || shot.regions.length)
-              .map((way) => h("option", {value: way, selected: way === layer.mode}, MODE_LABELS[way]))),
-          layer.region_id ? select("Region", (event) => replaceLayer(index, {region_id: event.target.value}),
-            shot.regions.map((region) => h("option", {value: region.id, selected: region.id === layer.region_id},
-              `${region.label} · ${region.position}`))) : null,
-          ...((spec.kind !== "camera") ? [["intensity", 1, 0.05, 1], ...(layer.region_id ? [["feather", 32, 1, 1]] : [])] : [])
-            .map(([key, max, step, fallback]) => h("label", {class: "pass-range"}, key,
-              h("input", {type: "range", min: 0, max, step, value: layer[key] ?? fallback, disabled: locked,
-                onchange: (event) => replaceLayer(index, {[key]: Number(event.target.value)})}))),
-          button("↑", () => swap(index, index - 1), locked || index === 0),
-          button("↓", () => swap(index, index + 1), locked || index === draft.length - 1),
-          button("Remove", () => { draft.splice(index, 1); render(true); }, locked));
-      }),
-      h("div", {class: "pass-actions"},
-        button("Add effect", () => { draft.push({preset: "warm_glow", mode: FULL_FRAME}); render(true); }, locked || draft.length >= state.boot.video.enhancement_max_layers),
-        button("Save shot effects", async () => { if (await api("shot", {...rowKey, effects: draft})) dialog().close(); }, locked),
-        button("Reset to planned effects", async () => { if (await api("shot", {...rowKey, reset: true})) dialog().close(); }, locked)),
-      shot.regions.length && state.boot.gpu ? h("div", {class: "pass-actions"}, "Refine region",
-        ...shot.regions.map((region) => button(`${region.label} · ${region.position}`,
-          () => { refine = {region: region.id, type: "include", include: [], exclude: []}; render(true); }, locked))) : null,
-      refine ? maskEditor(shot) : null,
+      h("div", {class: "effects-picker-body pass-edit-grid"},
+        h("section", {class: "effect-preview", "aria-label": "Layer preview"},
+          h("div", {class: "effect-options-controls"},
+            h("strong", {}, `Shot ${shot.index + 1}`),
+            shot.regions.length ? h("button", {type: "button", class: "btn btn-small", "aria-pressed": String(showSegments),
+              onclick: () => { showSegments = !showSegments; render(true); }},
+            showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null),
+          preview(shot, withMasks(shot, draft)),
+          shot.regions.length && state.boot.gpu ? h("div", {class: "pass-actions"},
+            h("span", {class: "label"}, "Refine segment"),
+            ...shot.regions.map((region) => button(`${region.label} · ${region.position}`,
+              () => { refine = refine?.region === region.id ? null : {region: region.id, type: "include", include: [], exclude: []}; render(true); }, locked))) : null,
+          refine ? maskEditor(shot) : null),
+        h("section", {class: "pass-layers-col", "aria-label": "Effect layers"},
+          h("div", {class: "effect-options-controls"},
+            h("span", {class: "muted small"}, `Layers ${draft.length} / ${maxLayers}`),
+            button("+ Add effect", () => { draft.push({preset: "warm_glow", mode: FULL_FRAME}); render(true); }, locked || draft.length >= maxLayers)),
+          draft.length ? null : h("p", {class: "muted small"}, "No layers. The still plays as is."),
+          ...draft.map((layer, index) => {
+            const spec = catalog[layer.preset];
+            const select = (name, onchange, options) => h("select", {"aria-label": name, disabled: locked, onchange}, options);
+            return h("div", {class: `pass-layer pass-layer-card pass-kind-${spec.kind}`},
+              h("div", {class: "pass-layer-head"},
+                select("Effect", (event) => replaceLayer(index, {preset: event.target.value, mode: FULL_FRAME}),
+                  Object.entries(catalog).map(([id, item]) => h("option", {value: id, selected: id === layer.preset}, item.label))),
+                button("↑", () => swap(index, index - 1), locked || index === 0),
+                button("↓", () => swap(index, index + 1), locked || index === draft.length - 1),
+                button("Remove", () => { draft.splice(index, 1); render(true); }, locked)),
+              h("div", {class: "pass-layer-row"},
+                select("Apply", (event) => replaceLayer(index, {mode: event.target.value, region_id: layer.region_id || shot.regions[0]?.id}),
+                  spec.modes.filter((way) => way === FULL_FRAME || shot.regions.length)
+                    .map((way) => h("option", {value: way, selected: way === layer.mode}, MODE_LABELS[way]))),
+                layer.region_id ? select("Region", (event) => replaceLayer(index, {region_id: event.target.value}),
+                  shot.regions.map((region) => h("option", {value: region.id, selected: region.id === layer.region_id},
+                    `${region.label} · ${region.position}`))) : null),
+              spec.kind !== "camera" ? h("div", {class: "pass-layer-ranges"},
+                ...[["intensity", 1, 0.05, 1, (v) => `${Math.round(v * 100)}%`],
+                  ...(layer.region_id ? [["feather", 32, 1, 1, (v) => `${v} px`]] : [])]
+                  .map(([key, max, step, fallback, fmt]) => {
+                    const val = layer[key] ?? fallback;
+                    const readout = h("span", {class: "mono small"}, fmt(val));
+                    return h("label", {class: "pass-range"},
+                      h("span", {class: "pass-range-head"}, h("span", {}, key), readout),
+                      h("input", {type: "range", min: 0, max, step, value: val, disabled: locked,
+                        oninput: (event) => { readout.textContent = fmt(Number(event.target.value)); },
+                        onchange: (event) => replaceLayer(index, {[key]: Number(event.target.value)})}));
+                  })) : null);
+          }),
+          h("div", {class: "pass-actions pass-layer-foot"},
+            button("Reset to planned effects", async () => { if (await api("shot", {...rowKey, reset: true})) dialog().close(); }, locked),
+            button("Save shot effects", async () => { if (await api("shot", {...rowKey, effects: draft})) dialog().close(); }, locked, "btn-primary"))))
     ];
   }
 
   function render(force = false) {
     const modal = dialog();
     if (!modal?.open) return;
-    if (project !== state.project.name || !panel()) { modal.close(); return; }
+    if (project !== state.project.name || !panel()) { stopPlayback(); modal.close(); return; }
     if (!force && modal.contains(document.activeElement) && document.activeElement.matches("textarea")) return;
     const shot = panel().shots.find((item) => item.shot_id === selected);
     const run = state.videoRun;
@@ -189,10 +283,11 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       h("h2", {id: "effect-pass-title"}, mode === "edit" && shot ? `Shot ${shot.index + 1} effects` : "Enhance visual effects"),
       h("span", {class: "spacer"}),
       running ? button("Interrupt", interrupt) : null,
-      button("Close", () => modal.close())),
+      button("Close", () => { stopPlayback(); modal.close(); })),
     h("div", {class: "style-body pass-body"},
       running ? h("p", {role: "status"}, run.status) : null,
       ...(mode === "edit" && shot ? edit(shot) : batch())));
+    modal.onclose = () => stopPlayback();
     modal.querySelector(".style-body").scrollTop = scroll;
   }
 
