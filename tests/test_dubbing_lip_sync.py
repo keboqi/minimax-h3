@@ -15,6 +15,7 @@ import numpy as np
 from h3_app.dubbing.alignment import FITTED_AUDIO_RATE as RATE
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
+    PLAN_FILE,
     REPORT_FILE,
     assemble_lip_sync_video,
     build_lip_sync_plan_payload,
@@ -346,7 +347,8 @@ class LipSyncTests(unittest.TestCase):
         blend = by_class(graph, "H3LipSyncBlend")
         self.assertEqual(blend["source_crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
         self.assertEqual(blend["generated_crops"], [link_id(graph, "VAEDecode"), 0])
-        self.assertEqual(blend["composite_mask"], [link_id(graph, "H3LowerFaceMask"), 1])
+        self.assertTrue(lower["separate_opacity"])
+        self.assertEqual(blend["composite_mask"], [link_id(graph, "H3LowerFaceMask"), 2])
         stitch = by_class(graph, "H3FaceStitch")
         self.assertEqual(stitch["masks"], [link_id(graph, "H3LowerFaceMask"), 1])
         self.assertEqual(stitch["refined_crops"], [link_id(graph, "H3LipSyncBlend"), 0])
@@ -518,10 +520,11 @@ class LipSyncTests(unittest.TestCase):
             "0": np.ones(round(0.5 * RATE), dtype=np.float32),
             "1": np.ones(round(0.6 * RATE), dtype=np.float32),
         })
-        small_track = FaceTrack(0, 0, 0.1, 0.6, (
+        small_track = FaceTrack(0, 0, 0.1, 0.9, (
             TrackObservation(0.15, (0.1, 0.1, 0.04, 0.04)),
             TrackObservation(0.35, (0.1, 0.1, 0.06, 0.06)),
             TrackObservation(0.55, (0.1, 0.1, 0.20, 0.20)),
+            TrackObservation(0.90, (0.1, 0.1, 0.20, 0.20)),
         ))
         large_track = FaceTrack(1, 1, 1.2, 1.8, (
             TrackObservation(1.3, (0.3, 0.2, 0.25, 0.30)),
@@ -556,6 +559,17 @@ class LipSyncTests(unittest.TestCase):
             dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
         )
         self.assertEqual(plan["window_version"], 3)
+        legacy_windows = [
+            {key: value for key, value in window.items() if key not in {"face_size", "manual"}}
+            for window in plan["windows"]
+        ]
+        (folder / PLAN_FILE).write_text(
+            json.dumps({**plan, "window_version": 2, "windows": legacy_windows}), encoding="utf-8",
+        )
+        upgraded = load_lip_sync_plan(self.dub)
+        self.assertEqual(upgraded["window_version"], 3)
+        self.assertEqual(upgraded["revision"], plan["revision"])
+        self.assertEqual([w["face_size"] for w in upgraded["windows"]], [0.06, 0.34])
         revise_lip_sync_plan(self.dub, plan, {(0, "A"): 0}, reset=set())
         revised = load_lip_sync_plan(self.dub)
         self.assertTrue(revised["windows"][0]["manual"])

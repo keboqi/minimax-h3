@@ -2722,16 +2722,18 @@ class H3LowerFaceMask:
                 "width_scale": ("FLOAT", {"default": 0.82, "min": 0.4, "max": 1.3, "step": 0.02}),
                 "denoise_expand": ("FLOAT", {"default": 1.15, "min": 1.0, "max": 1.6, "step": 0.02}),
                 "jaw_margin": ("FLOAT", {"default": 0.14, "min": 0.0, "max": 0.35, "step": 0.02}),
+                "separate_opacity": ("BOOLEAN", {"default": False}),
             },
         }
 
-    RETURN_TYPES = ("MASK", "MASK")
-    RETURN_NAMES = ("denoise_mask", "composite_mask")
+    RETURN_TYPES = ("MASK", "MASK", "MASK")
+    RETURN_NAMES = ("denoise_mask", "composite_mask", "spatial_mask")
     FUNCTION = "build"
     CATEGORY = "H3/Dubbing"
 
     def build(self, crops, transform, active_start=0, active_end=-1,
-              mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15, jaw_margin=0.14):
+              mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15,
+              jaw_margin=0.14, separate_opacity=False):
         frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
         if frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
@@ -2755,6 +2757,7 @@ class H3LowerFaceMask:
         xx = torch.arange(width, device=device, dtype=torch.float32)[None, :] + 0.5
         denoise_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
         composite_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
+        spatial_mask = torch.zeros_like(composite_mask) if separate_opacity else composite_mask
 
         face_mesh = None
         cv2_mod = None
@@ -2805,30 +2808,26 @@ class H3LowerFaceMask:
                     k_denoise = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (pad_px * 2 + 1, pad_px * 2 + 1))
                     denoise_np = cv2_mod.dilate(poly_mask, k_denoise)
                     denoise_mask[index] = torch.from_numpy(denoise_np).to(device=device, dtype=torch.float32)
-                    if start <= index < end:
+                    if opacity > 0.0:
                         blur_px = max(3, int(round(0.03 * fh)) | 1)
                         comp_np = cv2_mod.GaussianBlur(poly_mask, (blur_px, blur_px), 0)
-                        composite_mask[index] = (
-                            torch.from_numpy(comp_np).to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
-                            * opacity
-                        )
-                    continue
-
-                cx = fx + 0.5 * fw
-                cy = fy + 0.5 * (mouth_top + mouth_bottom) * fh
-                rx = max(1.0, 0.5 * fw * float(width_scale))
-                ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
-
-                rx_d = rx * float(denoise_expand)
-                ry_d = ry * float(denoise_expand)
-                d2_denoise = ((xx - cx) / rx_d) ** 2 + ((yy - cy) / ry_d) ** 2
-                denoise_mask[index] = (d2_denoise <= 1.0).float()
-
-                if start <= index < end:
+                        soft = torch.from_numpy(comp_np).to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
+                else:
+                    cx = fx + 0.5 * fw
+                    cy = fy + 0.5 * (mouth_top + mouth_bottom) * fh
+                    rx = max(1.0, 0.5 * fw * float(width_scale))
+                    ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
                     d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
-                    # Softly taper the outer 25% of the ellipse before H3FaceStitch feathers it.
-                    soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
-                    composite_mask[index] = soft * opacity
+                    denoise_mask[index] = (d2_comp <= float(denoise_expand) ** 2).float()
+                    if opacity > 0.0:
+                        soft = ((1.0 - d2_comp) / 0.25).clamp(0.0, 1.0)
+                if opacity > 0.0:
+                    if separate_opacity:
+                        # Blend the spatial taper in crop space, then fade the patch at stitch time.
+                        spatial_mask[index] = soft
+                        composite_mask[index] = (soft > 1e-4) * opacity
+                    else:
+                        composite_mask[index] = soft * opacity
         finally:
             if face_mesh is not None:
                 try:
@@ -2838,7 +2837,7 @@ class H3LowerFaceMask:
 
         if not (denoise_mask >= 0.5).any() or not (composite_mask > 0.0).any():
             raise ValueError("No detected face frames available in the active lip-sync interval")
-        return denoise_mask, composite_mask
+        return denoise_mask, composite_mask, spatial_mask
 
 
 class H3LipSyncPrepareCrop:

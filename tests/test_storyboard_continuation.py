@@ -121,7 +121,7 @@ class ContinuationGeometryTests(unittest.TestCase):
             "weights": [1.0, 1.0, 0.0, 0.0, 1.0, 1.0],
         }
         build = self.nodes["H3LowerFaceMask"]().build
-        denoise, composite = build(crops, transform, active_start=1, active_end=5)
+        denoise, composite, _ = build(crops, transform, active_start=1, active_end=5)
         self.assertEqual(tuple(denoise.shape), (6, 128, 128))
         self.assertEqual(tuple(composite.shape), (6, 128, 128))
         # Outside active interval: frame 0 and frame 5 composite must be zero.
@@ -138,10 +138,14 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertEqual(float(denoise[1, 82, 64]), 1.0)
         # Denoise mask is strictly wider than composite mask.
         self.assertGreater(int((denoise[1] > 0.5).sum()), int((composite[1] > 0.5).sum()))
-        _, faded = build(crops, {"face_rect": transform["face_rect"]}, active_start=0, active_end=6)
+        _, faded, _ = build(crops, {"face_rect": transform["face_rect"]}, active_start=0, active_end=6)
         torch.testing.assert_close(faded[:, 82, 64], torch.tensor([1/3, 2/3, 1., 1., 2/3, 1/3]))
-        _, single = build(crops, {"face_rect": transform["face_rect"]}, active_start=2, active_end=3)
+        _, single, _ = build(crops, {"face_rect": transform["face_rect"]}, active_start=2, active_end=3)
         self.assertEqual(float(single[2, 82, 64]), 1.0)
+        _, stitch_mask, spatial = build(crops, transform, active_start=1, active_end=5, separate_opacity=True)
+        self.assertEqual(float(spatial[1, 82, 64]), 1.0)
+        self.assertEqual(float(stitch_mask[1, 82, 64]), 0.5)
+        self.assertFalse(torch.any(spatial[0]))
         # All absent raises clearly.
         with self.assertRaisesRegex(ValueError, "No detected face frames"):
             build(crops, {**transform, "absent": [True] * 6})

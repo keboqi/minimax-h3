@@ -653,7 +653,7 @@ def window_cache_key(
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": 3,  # tighter crop, neutralized mouth prep, skin-ring LAB + pyramid blend
+        "version": 4,  # apply temporal and tracking opacity only at stitch time
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [
             window.shot_index, window.speaker, window.first_frame, window.source_frames,
@@ -783,6 +783,11 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
             return None
         if "revision" not in data:
             data["revision"] = hashlib.sha256(raw).hexdigest()
+        if data.get("window_version") == 2:
+            # Use the same window planner for review and render while retaining the saved revision.
+            windows = _reviewed_windows(dub, data, _plan_assignments(data))
+            data.update(window_version=3, windows_count=len(windows),
+                        windows=[asdict(window) for window in windows])
         return data
     except (OSError, ValueError):
         return None

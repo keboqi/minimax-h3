@@ -128,7 +128,7 @@ def build_auto_lip_sync_graph(
 
     masks = graph.add(
         "H3LowerFaceMask", crops=crops, transform=transform,
-        active_start=int(active_start), active_end=int(active_end),
+        active_start=int(active_start), active_end=int(active_end), separate_opacity=True,
     )
     denoise_mask, composite_mask = Graph.out(masks), Graph.out(masks, 1)
     prepared = graph.add(
@@ -164,7 +164,7 @@ def build_auto_lip_sync_graph(
     decoded = graph.add("VAEDecode", samples=Graph.out(video_latent), vae=decoder)
     blended = graph.add(
         "H3LipSyncBlend", source_crops=crops, generated_crops=Graph.out(decoded),
-        composite_mask=composite_mask, color_match=DEFAULT_BLEND_COLOR_MATCH,
+        composite_mask=Graph.out(masks, 2), color_match=DEFAULT_BLEND_COLOR_MATCH,
         sharpen=DEFAULT_BLEND_SHARPEN, pyramid_levels=DEFAULT_PYRAMID_LEVELS,
     )
     stitched = graph.add(

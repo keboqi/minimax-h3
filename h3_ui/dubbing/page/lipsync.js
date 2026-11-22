@@ -158,13 +158,8 @@ function trackMedianHeight(track) {
   return Number.isFinite(boxH) ? boxH : null;
 }
 
-function windowFaceSize(win, plan) {
-  if (typeof win?.face_size === "number" && Number.isFinite(win.face_size)) return win.face_size;
-  const a = (plan?.assignments || []).find((item) => item.shot_index === win.shot_index && item.speaker === win.speaker);
-  if (!a || a.track_id === null || a.track_id === undefined) return null;
-  const shot = (plan?.shots || []).find((s) => s.index === win.shot_index);
-  const track = (shot?.tracks || []).find((t) => t.track_id === a.track_id);
-  return track ? trackMedianHeight(track) : null;
+function windowFaceSize(win) {
+  return typeof win.face_size === "number" && Number.isFinite(win.face_size) ? win.face_size : null;
 }
 
 function isWindowManual(win, plan) {
@@ -182,7 +177,7 @@ function sizeInRange(size) {
 
 function windowInSizeRange(win, plan) {
   if (isWindowManual(win, plan)) return true;
-  return sizeInRange(windowFaceSize(win, plan));
+  return sizeInRange(windowFaceSize(win));
 }
 
 function filteredWindowsInfo(plan) {
@@ -195,7 +190,7 @@ function filteredWindowsInfo(plan) {
 
 function itemFaceSize(it, plan) {
   const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
-  const winSizes = wins.map((w) => windowFaceSize(w, plan)).filter((v) => v !== null);
+  const winSizes = wins.map(windowFaceSize).filter((v) => v !== null);
   if (winSizes.length) {
     winSizes.sort((a, b) => a - b);
     return winSizes[Math.floor(winSizes.length / 2)];
@@ -210,8 +205,7 @@ function itemFaceSize(it, plan) {
 function isItemSizeFiltered(it, plan) {
   if (it.assignment.status !== "matched") return false;
   const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
-  if (wins.length) return wins.every((w) => !windowInSizeRange(w, plan));
-  return !sizeInRange(itemFaceSize(it, plan));
+  return wins.length > 0 && wins.every((w) => !windowInSizeRange(w, plan));
 }
 
 function shotCounts(items) {
@@ -503,6 +497,9 @@ function drawOverlay(app) {
     return;
   }
   const activeTrackId = activeAssign && activeAssign.status !== "off_screen" ? activeAssign.track_id : null;
+  const activeWindow = (plan.windows || []).find((win) =>
+    win.shot_index === shot.index && win.speaker === activeSpeaker && t >= win.start && t < win.end
+  );
 
   // Reuse existing box buttons keyed by shot/track so clicks complete across animation frames.
   const existing = new Map();
@@ -515,11 +512,12 @@ function drawOverlay(app) {
     if (!b) return;
     const [x, y, w, h] = b;
     const isSpeaking = activeTrackId !== null && track.track_id === activeTrackId;
-    const trackSize = trackMedianHeight(track) ?? h;
+    const speakingWindow = isSpeaking ? activeWindow : null;
+    const trackSize = (speakingWindow && windowFaceSize(speakingWindow)) ?? trackMedianHeight(track) ?? h;
     const pct = formatFacePct(trackSize);
-    const outOfRange = !sizeInRange(trackSize);
-    const sizeIgnored = isSpeaking && activeAssign?.status === "matched" && outOfRange;
-    const manualKept = isSpeaking && activeAssign?.status === "manual" && outOfRange;
+    const sizeIgnored = !!speakingWindow && !windowInSizeRange(speakingWindow, plan);
+    const manualKept = !!speakingWindow && isWindowManual(speakingWindow, plan)
+      && !sizeInRange(windowFaceSize(speakingWindow));
     const label = isSpeaking
       ? `${speakerLabel(activeSpeaker)} · ${pct}${sizeIgnored ? " (size ignored)" : manualKept ? " (manual)" : ""}`
       : `Face #${idx + 1} · ${pct}`;
