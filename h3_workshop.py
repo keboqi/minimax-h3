@@ -238,6 +238,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         ),
         "Drama 3 SGLang-Omni checkpoint": ("drama3_sglang_checkpoint",),
         "Drama 3 SGLang-Omni int4 checkpoint": ("drama3_sglang_int4",),
+        "Drama 3 ComfyUI (FP8 + codec)": ("drama3_comfy_fp8", "drama3_comfy_codec"),
+        "Drama 3 ComfyUI (W4A8 + codec)": ("drama3_comfy_w4a8", "drama3_comfy_codec"),
         "Qwen VoiceDesign + Stable Audio": ("qwen_voice_design", "stable_audio3_medium"),
     }
 

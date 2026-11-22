@@ -89,9 +89,14 @@ def qwen_image_model_keys() -> tuple[str, ...]:
 
 
 def drama3_model_keys() -> tuple[str, ...]:
-    from h3_app.workflows.drama3 import drama3_asr_model_keys
+    from h3_app.drama3.serving.config import BACKEND_COMFYUI, load_drama3_settings
+    from h3_app.workflows.drama3 import drama3_asr_model_keys, drama3_comfy_model_keys
 
-    return drama3_asr_model_keys()
+    cfg = load_drama3_settings()
+    keys = list(drama3_asr_model_keys())
+    if cfg.backend == BACKEND_COMFYUI:
+        keys.extend(drama3_comfy_model_keys(cfg.comfy_model))
+    return tuple(dict.fromkeys(keys))
 
 
 def sync_model_files(keys: tuple[str, ...], runtime) -> None:
@@ -156,11 +161,14 @@ def plan(groups: tuple[str, ...], runtime, log_dir: Path, *, files: bool = True,
         steps.append((f"{' + '.join(labels)} model files ({len(unique)})",
                       lambda: sync_model_files(unique, runtime)))
     if "drama3" in groups and others:
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        steps += [
-            ("SGLang-Omni environment", lambda: prepare_sglang(runtime, log_dir / f"sglang_{stamp}.log")),
-            ("Drama 3 checkpoint", lambda: prepare_drama3_checkpoint(runtime)),
-        ]
+        from h3_app.drama3.serving.config import BACKEND_SGLANG, load_drama3_settings
+
+        if load_drama3_settings().backend == BACKEND_SGLANG:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            steps += [
+                ("SGLang-Omni environment", lambda: prepare_sglang(runtime, log_dir / f"sglang_{stamp}.log")),
+                ("Drama 3 checkpoint", lambda: prepare_drama3_checkpoint(runtime)),
+            ]
     return steps
 
 

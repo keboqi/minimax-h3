@@ -124,3 +124,5 @@ class BootstrapServices:
     upscale_selected_input_images: Callable
     soundstage_workspace: tuple | None = None
     storyboard_handlers: Any = None
+    drama3_settings_state: Callable | None = None
+    update_drama3_settings: Callable | None = None

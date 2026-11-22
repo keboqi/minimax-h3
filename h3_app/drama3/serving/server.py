@@ -26,9 +26,11 @@ from requests.adapters import HTTPAdapter
 from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION, DRAMA3_INT4_HF_REPO, DRAMA3_INT4_HF_REVISION
 
 from h3_app.errors import H3Error
-from h3_gpu import default_drama3_checkpoint
+from h3_gpu import default_drama3_checkpoint, is_a100
 
 from . import checkpoint, environment
+
+PREFILL_CUDA_GRAPH_MODES = ("breakable", "disabled")
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # SGLang's own phase timings ("Load weight end. elapsed=12.34 s", "Capture decode
@@ -117,28 +119,43 @@ class ServerSettings:
     request_timeout: float = 900.0
     sleep_mode: str = "auto"
     image_room_gib: float = 48.0
+    # Eager prefill avoids the SM80 prefill CUDA graph capture stall/timeout on A100.
+    prefill_cuda_graph: str = "breakable"
 
     def __post_init__(self):
         if self.sleep_mode not in {"auto", "off"}:
             raise ValueError("H3_DRAMA3_SGLANG_SLEEP must be auto or off")
         if self.checkpoint not in CHECKPOINTS:
             raise ValueError(f"H3_DRAMA3_SGLANG_CHECKPOINT must be one of {', '.join(CHECKPOINTS)}")
+        if self.prefill_cuda_graph not in PREFILL_CUDA_GRAPH_MODES:
+            raise ValueError(f"H3_DRAMA3_SGLANG_PREFILL_GRAPH must be one of {', '.join(PREFILL_CUDA_GRAPH_MODES)}")
 
     @classmethod
     def from_environment(cls, runtime) -> "ServerSettings":
+        from .config import has_persisted_sglang_checkpoint
+
         env = os.environ
         engine_memory = env.get("H3_DRAMA3_SGLANG_ENGINE_MEMORY")
+        persisted_checkpoint = has_persisted_sglang_checkpoint()
+        checkpoint_name = (
+            persisted_checkpoint
+            or env.get("H3_DRAMA3_SGLANG_CHECKPOINT", default_drama3_checkpoint())
+        ).lower()
+        prefill_graph = env.get("H3_DRAMA3_SGLANG_PREFILL_GRAPH", "").strip().lower()
+        if not prefill_graph:
+            prefill_graph = "disabled" if is_a100() else "breakable"
         return cls(
             venv=environment.default_venv(runtime.script_dir),
             data_dir=Path(env.get("H3_DRAMA3_SGLANG_DATA") or runtime.comfy_dir.parent / "drama3-serving"),
             model_root=Path(env.get("H3_DRAMA3_SGLANG_MODELS") or runtime.comfy_dir / "models" / "drama3_serving"),
             port=int(env.get("H3_DRAMA3_SGLANG_PORT", "8096")),
-            checkpoint=env.get("H3_DRAMA3_SGLANG_CHECKPOINT", default_drama3_checkpoint()).lower(),
+            checkpoint=checkpoint_name,
             engine_memory=float(engine_memory) if engine_memory else None,
             codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
             sleep_mode=env.get("H3_DRAMA3_SGLANG_SLEEP", "auto").lower(),
             image_room_gib=float(env.get("H3_DRAMA3_IMAGE_ROOM_GIB", "48")),
+            prefill_cuda_graph=prefill_graph,
         )
 
     @property
@@ -359,8 +376,12 @@ class SglangOmniServer:
         # FlashInfer's JIT modules instead of rebuilding them (minutes each).
         cache = self.settings.runtime_dir / "cache"
         env = environment.install_env(self.settings.venv)
+        startup_timeout = os.getenv("SGLANG_OMNI_STARTUP_TIMEOUT", "").strip()
+        if not startup_timeout:
+            startup_timeout = str(int(max(600, self.settings.start_timeout)))
         env.update(
             HF_HUB_OFFLINE="1",  # the checkpoint is local; never re-resolve it at startup
+            SGLANG_OMNI_STARTUP_TIMEOUT=startup_timeout,
             TORCHINDUCTOR_CACHE_DIR=str(cache / "torchinductor"),
             TRITON_CACHE_DIR=str(cache / "triton"),
             CUDA_CACHE_PATH=str(cache / "cuda"),
@@ -481,6 +502,11 @@ class SglangOmniServer:
         without room for the server then raises instead.
         """
         with self._lock:
+            if isinstance(self.settings, ServerSettings) and is_a100() and self.settings.checkpoint == "fp8":
+                raise H3Error(
+                    "SGLang-Omni's FP8 Drama 3 checkpoint requires an SM89+ GPU and cannot run on A100. "
+                    "Switch to SGLang-Omni INT4 or ComfyUI Drama 3 in System -> Drama 3."
+                )
             if self.running() and not self.sleeping and self.healthy():
                 return  # an awake server's memory is already reserved; ComfyUI keeps its models
             freed = []
@@ -689,9 +715,10 @@ class SglangOmniServer:
             "--vocoder.gpu_memory_fraction", str(settings.codec_memory),
             "--tts_engine.factory.max_running_requests", str(settings.max_seqs),
             # Upstream's defaults: prefill batches up to 2048 tokens and first frames
-            # of up to 16 requests replay as CUDA graphs. Sleep keeps them across
-            # engine switches, so their capture is paid once per cold start.
-            "--tts_engine.engine.cuda_graph_backend_prefill", "breakable",
+            # of up to 16 requests replay as CUDA graphs. A100 defaults prefill to
+            # "disabled" (eager prefill) to prevent SM80 capture stalls; decode CUDA
+            # graphs stay on. Sleep keeps them across engine switches.
+            "--tts_engine.engine.cuda_graph_backend_prefill", settings.prefill_cuda_graph,
             "--tts_engine.factory.first_frame_cuda_graph_max_requests", "16",
             # This route requests complete WAVs, not streaming codec windows.
             "--vocoder.factory.window_cuda_graphs", "false",
@@ -743,15 +770,20 @@ def release_for_job(family: str) -> None:
     """Other engines reclaim the GPU; ComfyUI TTS releases the server itself.
 
     Voice and sound design, Auto's preload and Dub & Translate share the GPU with a
-    loaded server; dubbing's transcription tools release it only when VRAM is short.
-    Image engines share it while the rest of the GPU leaves them enough room.
+    loaded server while SGLang-Omni is the active Drama 3 backend; dubbing's
+    transcription tools release it only when VRAM is short. Image engines share it
+    while the rest of the GPU leaves them enough room.
     """
+    from .config import BACKEND_COMFYUI, load_drama3_settings
+
     if family == "unload":
         stop_all()
     elif family in IMAGE_FAMILIES and image_room_beside_server():
         return
-    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload",
-                        "dubbing_analyze", "dubbing_lines", "dubbing_words", "dubbing"}:
+    elif family in {"drama3", "drama3_voice", "drama3_preload", "dubbing_lines", "dubbing"}:
+        if load_drama3_settings().backend == BACKEND_COMFYUI:
+            release_all()
+    elif family not in {"drama3_sound", "dubbing_analyze", "dubbing_words"}:
         release_all()
 
 

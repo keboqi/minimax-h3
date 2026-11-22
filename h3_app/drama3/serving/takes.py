@@ -34,11 +34,13 @@ def takes_root(runtime) -> Path:
 
 
 def take_key(*, speaker: str, text: str, reference: str, transcript: str, sampling: dict,
-             max_new_tokens: int) -> str:
+             max_new_tokens: int, engine: str | None = None) -> str:
     """``reference`` identifies the voice clip's content (its staged digest)."""
     identity = {"schema": SCHEMA, "speaker": str(speaker), "text": text, "reference": reference,
                 "transcript": transcript, "sampling": {name: sampling[name] for name in sorted(sampling)},
                 "max_new_tokens": int(max_new_tokens)}
+    if isinstance(engine, str) and engine:
+        identity["engine"] = engine
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:32]
 
 

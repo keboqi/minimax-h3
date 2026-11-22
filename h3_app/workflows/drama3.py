@@ -1,10 +1,16 @@
-"""Drama 3 script validation and the Qwen3-ASR transcription graph (ComfyUI-Drama3 revision 67a733a)."""
+"""Drama 3 script validation and ComfyUI graphs (ComfyUI-Drama3 revision cb44d7cb)."""
 
 import re
 
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
-from h3_models import MODEL_SPECS, DRAMA3_ASR_CHOICES, DEFAULT_DRAMA3_ASR
+from h3_models import (
+    DEFAULT_DRAMA3_ASR,
+    DRAMA3_ASR_CHOICES,
+    DRAMA3_COMFY_CODEC_KEY,
+    DRAMA3_COMFY_MODELS,
+    MODEL_SPECS,
+)
 
 MAX_SPEAKER = 15
 SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
@@ -193,3 +199,89 @@ def build_drama3_asr_graph(*, audio, language="auto", model_choice=DEFAULT_DRAMA
                        language=language, context="", max_new_tokens=4096)
     preview = g.add("PreviewAny", source=Graph.out(transcript))
     return g.nodes, preview
+
+
+DRAMA3_COMFY_REQUIRED_NODES = (
+    "Drama3Loader",
+    "Drama3CodecLoader",
+    "Drama3EncodeVoice",
+    "Drama3Generate",
+    "Drama3Decode",
+    "LoadAudio",
+    "SaveAudio",
+)
+
+
+def drama3_comfy_model_keys(model_key: str) -> tuple[str, str]:
+    """Return ``(model_key, codec_key)`` for a validated ComfyUI Drama 3 checkpoint."""
+    if model_key not in DRAMA3_COMFY_MODELS:
+        raise H3Error(f"Choose a valid ComfyUI Drama 3 model (got {model_key!r}).")
+    return (model_key, DRAMA3_COMFY_CODEC_KEY)
+
+
+def _as_speaker_0(text: str) -> str:
+    """Normalize any speaker tags in a single-speaker chunk/transcript to ``<|speaker:0|>``."""
+    return SPEAKER_TAG.sub("<|speaker:0|>", str(text or "")).strip()
+
+
+def build_drama3_comfy_graph(
+    *,
+    text: str,
+    model_file: str,
+    codec_file: str,
+    seed: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    max_frames: int,
+    reference_audio: str | None = None,
+    reference_transcript: str = "",
+    experts: str = "in VRAM",
+    filename_prefix: str = ".processing/drama3_comfy/take",
+) -> tuple[dict, str]:
+    """Build a sequential single-chunk Drama 3 ComfyUI synthesis graph."""
+    from h3_app.drama3.phonemes import to_phoneme_tags
+
+    g = Graph()
+    model = g.add(
+        "Drama3Loader",
+        model_name=model_file,
+        experts=experts,
+        expert_cache_gb=0.0,
+        second_gpu="none",
+        split_layer=0,
+        pin_experts=True,
+    )
+    codec = g.add("Drama3CodecLoader", codec_name=codec_file)
+    formatted_text = to_phoneme_tags(_as_speaker_0(text))
+    generate_inputs = {
+        "model": Graph.out(model),
+        "text": formatted_text,
+        "seed": int(seed),
+        "temperature": float(temperature),
+        "top_p": float(top_p),
+        "top_k": int(top_k),
+        "max_frames": int(max_frames),
+        "split_long_text": False,
+        "speakers": "together",
+        "voice_guidance": 0.0,
+    }
+    if reference_audio:
+        clip = g.add("LoadAudio", audio=str(reference_audio))
+        encoded_voice = g.add(
+            "Drama3EncodeVoice",
+            codec=Graph.out(codec),
+            audio=Graph.out(clip),
+            transcript=SPEAKER_TAG.sub("", str(reference_transcript or "")).strip(),
+        )
+        # ComfyUI V3 Autogrow inputs flatten to "<group>.<prefix><index>" in API prompts.
+        generate_inputs["voices.voice0"] = Graph.out(encoded_voice)
+    codes = g.add("Drama3Generate", **generate_inputs)
+    decoded = g.add(
+        "Drama3Decode",
+        codec=Graph.out(codec),
+        codes=Graph.out(codes),
+        shorten_long_pauses=False,
+    )
+    saved = g.add("SaveAudio", audio=Graph.out(decoded), filename_prefix=filename_prefix)
+    return g.nodes, saved

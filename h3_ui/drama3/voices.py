@@ -51,10 +51,12 @@ class VoiceHandlers:
                 audio, transcript = generate_reference(description, preview_text, language, self._runtime_config(),
                                                        free_gpu=self.free_comfy_vram)
             elif engine == ENGINE_DRAMA3:
+                from h3_app.drama3.serving.config import load_drama3_settings
                 from h3_models import resolve_hf_token
 
+                backend_label = load_drama3_settings().backend_label
                 request = self._drama3_design_request(temperature, top_p, top_k, max_frames)
-                yield gr.skip(), gr.skip(), "Preparing Drama 3 voice design on SGLang-Omni."
+                yield gr.skip(), gr.skip(), f"Preparing Drama 3 voice design on {backend_label}."
                 audio = transcript = None
                 for update in generate_drama3_reference(description, preview_text, request, self._runtime_config(),
                                                         self._generation_services(), free_gpu=self.free_comfy_vram,
@@ -185,13 +187,15 @@ class VoiceHandlers:
 
     def _generate_drama3_designs(self, targets, settings, parallel, updates, frame, failed):
         from h3_app.drama3 import voice_design as drama3_voice_design
+        from h3_app.drama3.serving.config import load_drama3_settings
         from h3_models import resolve_hf_token
 
+        backend_label = load_drama3_settings().backend_label
         _engine, *request_settings = settings
         request = self._drama3_design_request(*request_settings, parallel=parallel)
         for speaker, *_brief in targets:
-            updates[3 * speaker + 2] = "Waiting for Drama 3 voice design on SGLang-Omni…"
-        yield frame(f"Preparing Drama 3 voice design for {len(targets)} speaker(s) on SGLang-Omni.")
+            updates[3 * speaker + 2] = f"Waiting for Drama 3 voice design on {backend_label}…"
+        yield frame(f"Preparing Drama 3 voice design for {len(targets)} speaker(s) on {backend_label}.")
         pending = {speaker for speaker, *_brief in targets}
         try:
             for result in drama3_voice_design.generate_drama3_references(
@@ -208,7 +212,7 @@ class VoiceHandlers:
                     else:
                         failed.append(speaker)
                         updates[3 * speaker + 2] = f"Voice generation failed: {result.error}"
-                    yield frame(f"Designed {len(targets) - len(pending)}/{len(targets)} speaker voices on SGLang-Omni.")
+                    yield frame(f"Designed {len(targets) - len(pending)}/{len(targets)} speaker voices on {backend_label}.")
                 else:
                     yield frame(result.status)
         except JobCancelled:
@@ -249,8 +253,10 @@ class VoiceHandlers:
                     choice=gr.update(choices=[KEEP_SAVED], value=KEEP_SAVED))
         try:
             if engine == drama3_voice_design.ENGINE_DRAMA3:
+                from h3_app.drama3.serving.config import load_drama3_settings
                 from h3_models import resolve_hf_token
 
+                backend_label = load_drama3_settings().backend_label
                 request = self._drama3_design_request(temperature, top_p, top_k, max_frames, parallel)
                 for result in drama3_voice_design.generate_drama3_references(
                         {index: (brief["description"], brief["transcript"]) for index in range(count)},
@@ -263,7 +269,7 @@ class VoiceHandlers:
                         else:
                             errors.append(result.error)
                         yield frame(f"Designed {sum(clip is not None for clip in clips) + len(errors)}/{count} "
-                                    "voices on SGLang-Omni.")
+                                    f"voices on {backend_label}.")
                     else:
                         yield frame(result.status)
             elif engine == drama3_voice_design.ENGINE_QWEN:

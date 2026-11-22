@@ -48,6 +48,8 @@ MOSS_IMAGE_REPO = "Comfy-Org/MOSS-Image"
 MOSS_IMAGE_DMD_REPO = "lodestones/MOSS-Image-SFT-8-steps-dmd"
 MOSS_IMAGE_4STEP_REPO = "akhaliq/MOSS-Image-SFT-4-steps"
 FIBO2_REPO = "Comfy-Org/Fibo-2.0"
+DRAMA3_COMFY_REPO = "PedroMarinhoDev/Drama-3-ComfyUI"
+DRAMA3_COMFY_REVISION = "28eee7f3ef71d7104de710ef956ecbaf793819f6"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -306,6 +308,36 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_0.6b_bf16.safetensors",
         "Qwen3-ASR 0.6B for Drama 3 voice transcripts",
         expected_sha256="eb350ce7510a538eb136d8320db470a0761713c47de6e12b0fca090d4fc15ecf",
+    ),
+    "drama3_comfy_codec": ModelSpec(
+        DRAMA3_COMFY_REPO, "vae", "drama3_codec.safetensors",
+        "Drama 3 DAC Codec for ComfyUI",
+        expected_sha256="4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae",
+        revision=DRAMA3_COMFY_REVISION,
+    ),
+    "drama3_comfy_fp8": ModelSpec(
+        DRAMA3_COMFY_REPO, "diffusion_models", "drama3_fp8experts_bf16.safetensors",
+        "Drama 3 ComfyUI FP8 experts + BF16",
+        expected_sha256="e7c4b4fa46b8d8887d84a02507ea11ff61fabdc046b0849d4ec7442e6280991a",
+        revision=DRAMA3_COMFY_REVISION,
+    ),
+    "drama3_comfy_int8": ModelSpec(
+        DRAMA3_COMFY_REPO, "diffusion_models", "drama3_int8experts_bf16.safetensors",
+        "Drama 3 ComfyUI INT8 experts + BF16",
+        expected_sha256="e2cb0bd0fee81b7405f7d1567eb5149ac2d41075e37d87b91a354e88afaf9f7b",
+        revision=DRAMA3_COMFY_REVISION,
+    ),
+    "drama3_comfy_w6a8": ModelSpec(
+        DRAMA3_COMFY_REPO, "diffusion_models", "drama3_w6a8experts_bf16.safetensors",
+        "Drama 3 ComfyUI W6A8 experts + BF16",
+        expected_sha256="064494693232da96e35626fa13616a165b1a166698788ab8dcbba1ee0a0a8f24",
+        revision=DRAMA3_COMFY_REVISION,
+    ),
+    "drama3_comfy_w4a8": ModelSpec(
+        DRAMA3_COMFY_REPO, "diffusion_models", "drama3_w4a8experts_bf16.safetensors",
+        "Drama 3 ComfyUI W4A8 experts + BF16",
+        expected_sha256="782cfbbdd504b68cc33700cef8066edd8033bb8a811e2e0e645d77a0d72194c9",
+        revision=DRAMA3_COMFY_REVISION,
     ),
     "lightvae_encoder": ModelSpec(
         "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-encoder.safetensors", "LightVAE Lite H3 encoder",
@@ -1143,6 +1175,18 @@ FIBO2_MODEL_KEYS = (
 DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_asr_small"}
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
+DRAMA3_COMFY_CODEC_KEY = "drama3_comfy_codec"
+DRAMA3_COMFY_MODELS = {
+    "drama3_comfy_fp8": "FP8 experts + BF16 (38.6 GB)",
+    "drama3_comfy_int8": "INT8 experts + BF16 (38.7 GB)",
+    "drama3_comfy_w6a8": "W6A8 experts + BF16 (32.7 GB)",
+    "drama3_comfy_w4a8": "W4A8 experts + BF16 (24.6 GB, fastest)",
+}
+DEFAULT_DRAMA3_COMFY_MODEL = "drama3_comfy_fp8"
+DRAMA3_COMFY_MODEL_KEYS = (
+    DRAMA3_COMFY_CODEC_KEY,
+    *DRAMA3_COMFY_MODELS,
+)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_image_dit", "h3_image_vae", "h3_image_upsampler",
     "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
@@ -1155,6 +1199,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *MOSS_IMAGE_MODEL_KEYS,
     *FIBO2_MODEL_KEYS,
     *DRAMA3_ASR_MODEL_KEYS,
+    *DRAMA3_COMFY_MODEL_KEYS,
     "lightvae_encoder",
     "lightvae_decoder",
     "lightvae_decoder_int8",
@@ -2315,7 +2360,7 @@ def selftest() -> None:
         *RELAYVSR_MODEL_KEYS,
         "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
         "pika_flex_fl2va_lora", "pika_flex_ref2va_lora",
-        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
+        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS, *DRAMA3_COMFY_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",
@@ -2570,6 +2615,16 @@ def selftest() -> None:
         "singularity_v2",
     ]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
+    assert DRAMA3_COMFY_CODEC_KEY == "drama3_comfy_codec"
+    assert DEFAULT_DRAMA3_COMFY_MODEL == "drama3_comfy_fp8"
+    assert MODEL_SPECS["drama3_comfy_codec"].repo_id == DRAMA3_COMFY_REPO
+    assert MODEL_SPECS["drama3_comfy_codec"].revision == DRAMA3_COMFY_REVISION
+    assert MODEL_SPECS["drama3_comfy_codec"].folder == "vae"
+    for key in DRAMA3_COMFY_MODELS:
+        assert MODEL_SPECS[key].repo_id == DRAMA3_COMFY_REPO
+        assert MODEL_SPECS[key].revision == DRAMA3_COMFY_REVISION
+        assert MODEL_SPECS[key].folder == "diffusion_models"
+        assert key in LAZY_OPTIONAL_MODEL_KEYS
     print("h3_models selftest OK")
 
 

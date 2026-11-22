@@ -642,11 +642,20 @@ use top-k 30. Saved custom sampling settings remain respected. Zero top-k is sen
 as SGLang's whole-vocabulary value. Dependency revisions live in `h3_sources.py`
 and `h3_requirements.py` rather than in this guide.
 
+Drama 3 supports two global serving backends configured under **System → Drama 3 serving** (persisted server-side for Soundstage, Voice Design, and Dubbing):
+
+- **SGLang-Omni (parallel)**: Best for parallel batch throughput; supports `fp8` (`fishaudio/drama-3`, SM89+) and `int4` (`fishaudio/drama-3-int4`, default on A100). Requires Linux and a CUDA GPU.
+- **ComfyUI (sequential, fast start)**: Uses [`PedroMarinhoDev/Drama-3-ComfyUI`](https://huggingface.co/PedroMarinhoDev/Drama-3-ComfyUI) (`FP8`, `INT8`, `W6A8`, and `W4A8` expert quantizations + `drama3_codec.safetensors`) via the `ComfyUI-Drama3` custom nodes. Generates chunks sequentially one by one, trading parallel batching for fast startup across both A100 and Blackwell GPUs.
+
 SGLang configuration uses these environment variables:
 
 | Variable | Default |
 | --- | --- |
-| `H3_DRAMA3_SGLANG_CHECKPOINT` | `fp8` (official `fishaudio/drama-3`); `int4` for official `fishaudio/drama-3-int4` |
+| `H3_DRAMA3_BACKEND` | `sglang` (`sglang` or `comfyui`) |
+| `H3_DRAMA3_SGLANG_CHECKPOINT` | `fp8` (official `fishaudio/drama-3`); `int4` for official `fishaudio/drama-3-int4` (default on A100) |
+| `H3_DRAMA3_SGLANG_PREFILL_GRAPH` | `disabled` on A100 (eager prefill); `breakable` on Blackwell / default |
+| `H3_DRAMA3_COMFY_MODEL` | `drama3_comfy_fp8` (`drama3_comfy_fp8`, `drama3_comfy_int8`, `drama3_comfy_w6a8`, `drama3_comfy_w4a8`) |
+| `H3_DRAMA3_COMFY_EXPERTS` | `in VRAM` (`in VRAM` or `in RAM`) |
 | `H3_DRAMA3_SGLANG_ENGINE_MEMORY` | the checkpoint's weights plus 12 GiB, as a share of GPU memory |
 | `H3_DRAMA3_SGLANG_CODEC_MEMORY` | `0.08` of GPU memory |
 | `H3_DRAMA3_SGLANG_MAX_SEQS` | `32` |
@@ -682,11 +691,7 @@ log) lists a startup breakdown: when the server first printed output, and
 SGLang's own weight-load and CUDA graph capture timings, each stamped with its
 time since launch. The stage processes start concurrently, so their timings
 overlap.
-The launcher keeps upstream's engine CUDA graphs: decode, breakable prefill
-graphs for batches of up to 2048 tokens, and first-frame graphs for up to 16
-requests. They shorten each line at the cost of a longer cold start and some GPU
-memory; sleep keeps them across engine switches. Streaming vocoder window graphs
-are disabled because the app requests complete WAVs.
+The launcher keeps upstream's decode and first-frame CUDA graphs (up to 16 requests), sets `SGLANG_OMNI_STARTUP_TIMEOUT` to match `start_timeout` (1800 s by default, avoiding 600 s cold-compile stalls), and defaults prefill graphs to `breakable` on Blackwell GPUs and `disabled` (eager prefill) on A100 to prevent SM80 prefill graph capture stalls. Streaming vocoder window graphs are disabled because the app requests complete WAVs.
 
 When another engine needs the GPU, SGLang sleeps instead of stopping: NVIDIA
 CUDA process checkpointing moves every Omni worker's GPU state to host RAM while

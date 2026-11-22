@@ -108,6 +108,22 @@ class WorkspaceStore:
         finally:
             db.close()
 
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        """Read a global workspace setting stored in the ``settings`` table."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row is not None else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Persist a global workspace setting in the ``settings`` table."""
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    def delete_setting(self, key: str) -> None:
+        """Remove a global workspace setting from the ``settings`` table."""
+        with self.connect() as db:
+            db.execute("DELETE FROM settings WHERE key=?", (key,))
+
     def issue_owner(self, owner=None):
         owner = owner or secrets.token_hex(24)
         payload = f"{owner}.{int(time.time()) + OWNER_TTL}"

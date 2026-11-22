@@ -1028,7 +1028,8 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         staged.setdefault(line.reference, speaker.reference(line.reference))
         content = take_store.take_key(speaker=f"dub:{line.segment['speaker']}", text=line.segment["translation"],
                                       reference=staged[line.reference].stem, transcript=line.transcript,
-                                      sampling=sampling, max_new_tokens=speaker.budget(line.segment["translation"]))
+                                      sampling=sampling, max_new_tokens=speaker.budget(line.segment["translation"]),
+                                      engine=getattr(speaker, "take_engine_id", None))
         occurrence = occurrences.get(content, 0)
         occurrences[content] = occurrence + 1
         line.key = take_store.occurrence_key(content, occurrence)
@@ -1097,7 +1098,8 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         # Recorded even when interrupted, so the lines voiced so far keep their marks.
         if outcomes:
             _record_take_problems(session, outcomes)
-    persist_caches()
+    if getattr(speaker, "settings", None) is not None:
+        persist_caches()
     take_store.prune(store)
 
 
@@ -1551,6 +1553,9 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             subtitles.append(path)
     audio_out = _ffmpeg(["-i", str(mix), *OUTPUT_MP3], output_dir / f"{stem}.mp3",
                         action="Encoding the dubbed audio")
+    from h3_app.drama3.serving.config import load_drama3_settings
+
+    drama3_cfg = load_drama3_settings()
     settings = {
         "source": session.data.get("name"), "target_language": label,
         "source_language": session.data.get("source_language", ""), "pipeline": session.data.get("pipeline"),
@@ -1559,6 +1564,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "background_volume": request.background_volume, "lines": len(lines), "dubbed_lines": len(planned),
         "sped_up_lines": sum(line.speed > 1.01 for line in planned), "session": session.id,
         "word_timing": bool(request.word_timing),
+        "drama3_backend": drama3_cfg.backend_label,
+        "drama3_model": drama3_cfg.active_model_key,
         "failed_lines": [{"line_number": line.index + 1, "reason": line.note} for line in kept],
         "speakers": speaker_settings(session),
     }

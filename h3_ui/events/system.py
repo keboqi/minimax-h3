@@ -65,3 +65,32 @@ def bind_system(
         show_progress="hidden",
         trigger_mode="always_last",
     )
+    if services.drama3_settings_state is not None:
+        demo.load(
+            services.drama3_settings_state,
+            outputs=[
+                view.drama3_backend,
+                view.drama3_model,
+                view.drama3_comfy_experts,
+                view.drama3_status,
+            ],
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )
+    if services.update_drama3_settings is not None:
+        drama3_inputs = [view.drama3_backend, view.drama3_model, view.drama3_comfy_experts]
+        drama3_outputs = [view.drama3_model, view.drama3_comfy_experts, view.drama3_status]
+        gr.on(
+            triggers=[
+                view.drama3_backend.input,
+                view.drama3_model.input,
+                view.drama3_comfy_experts.input,
+            ],
+            fn=services.update_drama3_settings,
+            inputs=drama3_inputs,
+            outputs=drama3_outputs,
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )

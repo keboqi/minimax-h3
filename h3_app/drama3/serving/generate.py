@@ -30,6 +30,8 @@ from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 
 from . import audio, environment, rooms, takes as take_store
 from .alignment import take_audio_digest
+from .comfy import ComfyDrama3Server
+from .config import BACKEND_COMFYUI, load_drama3_settings
 from .cue_timing import insert_holds, normalized, resolve_anchor
 from .planner import Chunk, expected_seconds, plan_turns_chunks, spoken_text
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
@@ -165,8 +167,8 @@ def _reference_digest(source: Path) -> str:
     return digest
 
 
-def _staged_reference(path: str, media_dir: Path) -> Path:
-    """Copy a clip under the server's allowed media path, keyed by content."""
+def stage_reference(path: str, media_dir: Path) -> Path:
+    """Copy a clip under a content-keyed staging path."""
     source = Path(path)
     digest = _reference_digest(source)
     target = media_dir / "references" / f"{digest}{source.suffix.lower() or '.wav'}"
@@ -174,6 +176,11 @@ def _staged_reference(path: str, media_dir: Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
     return target
+
+
+def _staged_reference(path: str, media_dir: Path) -> Path:
+    """Copy a clip under the server's allowed media path, keyed by content."""
+    return stage_reference(path, media_dir)
 
 
 def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object]) -> Iterator[GenerationUpdate]:
@@ -214,14 +221,51 @@ def _ready_server(settings, server, label, free_gpu, hf_token, *, evict=True) ->
                                lambda report: server.ensure_ready(free_gpu, report, evict=evict))
 
 
+def _resolve_backend(runtime, *, default_label: str = LABEL):
+    cfg = load_drama3_settings()
+    if cfg.backend == BACKEND_COMFYUI:
+        comfy_server = ComfyDrama3Server(
+            runtime, model_key=cfg.comfy_model, experts=cfg.comfy_experts
+        )
+        return cfg, None, comfy_server, comfy_server.label
+    settings = ServerSettings.from_environment(runtime)
+    return cfg, settings, shared_server(settings), default_label
+
+
+def _ready_backend(cfg, settings, server, label, free_gpu, hf_token,
+                   *, evict=True, warmup=False) -> Iterator[GenerationUpdate]:
+    if cfg.backend == BACKEND_COMFYUI:
+        yield from _with_heartbeat(
+            f"Preparing {label} Drama 3",
+            lambda report: server.ensure_ready(
+                free_gpu, report, hf_token=hf_token, evict=evict, warmup=warmup
+            ),
+        )
+    else:
+        yield from _ready_server(settings, server, label, free_gpu, hf_token, evict=evict)
+
+
+def _worker_count(requested: int, total: int, server) -> int:
+    limit = getattr(server, "max_workers", None)
+    workers = max(1, min(int(requested), total))
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        return min(workers, limit)
+    return workers
+
+
+def _take_engine(server) -> str | None:
+    engine = getattr(server, "take_engine_id", None)
+    return engine if isinstance(engine, str) and engine else None
+
+
 def preload_served(*, runtime, free_gpu: Callable[[], None], hf_token=None,
                    label: str = LABEL) -> Iterator[GenerationUpdate]:
     """Prepare, download and start (or wake) the server before its first request.
 
     The VoiceDesign/Stable Audio worker stays loaded; without room beside it this raises.
     """
-    settings = ServerSettings.from_environment(runtime)
-    yield from _ready_server(settings, shared_server(settings), label, free_gpu, hf_token, evict=False)
+    cfg, settings, server, active_label = _resolve_backend(runtime, default_label=label)
+    yield from _ready_backend(cfg, settings, server, active_label, free_gpu, hf_token, evict=False, warmup=True)
 
 
 @dataclass(frozen=True)
@@ -239,9 +283,8 @@ def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], 
     voice speaks all of it. Yields status updates and one ``DesignedVoice`` per take;
     a failed take does not stop the others.
     """
-    settings = ServerSettings.from_environment(runtime)
-    server = shared_server(settings)
-    yield from _ready_server(settings, server, label, free_gpu, hf_token)
+    cfg, settings, server, label = _resolve_backend(runtime, default_label=label)
+    yield from _ready_backend(cfg, settings, server, label, free_gpu, hf_token)
 
     def synthesize(text: str, target: Path, stopped: threading.Event) -> None:
         payload = server.payload(text=text, reference=None, transcript=None,
@@ -254,10 +297,14 @@ def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], 
         target.write_bytes(audio.encode_wav(samples, rate))
 
     total, done, started = len(takes), 0, time.monotonic()
-    workers = max(1, min(int(parallel), total))
-    yield GenerationUpdate(None, f"Generating {total} voice(s) on {label}, {workers} at a time")
+    workers = _worker_count(parallel, total, server)
+    mode_note = " (sequential)" if workers == 1 and int(parallel) > 1 else ""
+    yield GenerationUpdate(None, f"Generating {total} voice(s) on {label}, {workers} at a time{mode_note}")
     with _request_pool(workers, "drama3-voice") as (pool, stopped):
-        pending = {pool.submit(synthesize, text, target, stopped): key for key, (text, target) in takes.items()}
+        pending = {
+            pool.submit(contextvars.copy_context().run, synthesize, text, target, stopped): key
+            for key, (text, target) in takes.items()
+        }
         while pending:
             finished, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
             job = CURRENT_JOB.get()
@@ -270,7 +317,8 @@ def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], 
                 yield DesignedVoice(pending.pop(future), future.exception())
             yield GenerationUpdate(None, f"Generated {done}/{total} voice(s) on {label} "
                                          f"({time.monotonic() - started:.0f}s)")
-    persist_caches()
+    if settings is not None:
+        persist_caches()
 
 
 def design_voice_served(text: str, target: Path, **kwargs) -> Iterator[GenerationUpdate]:
@@ -818,8 +866,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     Saved takes are reused unless their key is in ``request.regenerate``; with
     ``request.remix_only`` nothing is generated and every take must be saved.
     """
-    settings = ServerSettings.from_environment(runtime)
-    server = shared_server(settings)
+    cfg, settings, server, label = _resolve_backend(runtime, default_label=LABEL)
     started = time.monotonic()
 
     # Basic mode ignores staging, sound, pause and vocal-effect tags the text may still hold.
@@ -869,10 +916,15 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         if missing:
             raise H3Error("No clip for sound(s): " + ", ".join(f'"{name}"' for name in dict.fromkeys(missing)) + ".")
 
-    label = LABEL
+    engine_id = _take_engine(server)
+    stage_ref = (
+        server.stage_reference
+        if cfg.backend == BACKEND_COMFYUI
+        else lambda path: _staged_reference(path, settings.media_dir)
+    )
     # Each request is only the line's text and its speaker's clip with that clip's transcript.
     references = {
-        speaker: (_staged_reference(path, settings.media_dir), SPEAKER_TAG.sub("", transcript).strip())
+        speaker: (stage_ref(path), SPEAKER_TAG.sub("", transcript).strip())
         for speaker, (path, transcript) in references.items()
     }
     sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
@@ -886,7 +938,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     for chunk in chunks:
         content_key = take_store.take_key(
             speaker=chunk.speaker, text=chunk.text, reference=references[chunk.speaker][0].stem,
-            transcript=references[chunk.speaker][1], sampling=sampling, max_new_tokens=budget(chunk))
+            transcript=references[chunk.speaker][1], sampling=sampling, max_new_tokens=budget(chunk),
+            engine=engine_id)
         occurrence = occurrences.get(content_key, 0)
         keys[chunk.index] = take_store.occurrence_key(content_key, occurrence)
         occurrences[content_key] = occurrence + 1
@@ -895,7 +948,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     if getattr(request, "previous_result", "") and not legacy:
         from .incremental import migrate_lines
         migrate_lines(request.previous_result, store, set(keys.values()), references, sampling, budget,
-                      runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
+                      runtime=runtime, free_gpu=free_gpu, hf_token=hf_token, engine=engine_id)
     if forced and not forced & set(keys.values()):
         raise H3Error("That line changed since it was generated. Generate speech, then choose the line again.")
     takes: dict[int, Take] = {}
@@ -933,13 +986,18 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         return Take(chunk, attempt.samples, attempt.rate, attempt.number, attempt.check, attempt.wav)
 
     if pending_chunks:
-        yield from _ready_server(settings, server, label, free_gpu, hf_token)
+        yield from _ready_backend(cfg, settings, server, label, free_gpu, hf_token)
         # The server stays loaded after the job; release_all() frees it for other engines.
         total = len(pending_chunks)
         done_count = 0
-        workers = max(1, min(int(request.parallel), total))
-        with _request_pool(workers, "drama3-sglang") as (pool, stopped):
-            pending = {pool.submit(synthesize, chunk, stopped): chunk for chunk in pending_chunks}
+        workers = _worker_count(request.parallel, total, server)
+        pool_prefix = "drama3-comfy" if cfg.backend == BACKEND_COMFYUI else "drama3-sglang"
+        mode_note = " (sequential)" if workers == 1 and cfg.backend == BACKEND_COMFYUI else ""
+        with _request_pool(workers, pool_prefix) as (pool, stopped):
+            pending = {
+                pool.submit(contextvars.copy_context().run, synthesize, chunk, stopped): chunk
+                for chunk in pending_chunks
+            }
             while pending:
                 done, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
                 job = CURRENT_JOB.get()
@@ -956,8 +1014,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                             take_store.save_take(store, keys[chunk.index], take.wav)
                         except OSError as exc:  # a full disk must not fail the job
                             yield GenerationUpdate(None, f"Could not save take {chunk.index + 1}: {exc}")
-                progress((done_count, total), desc="Generating speech")
-                yield GenerationUpdate(None, f"Generating speech: {done_count}/{total} chunks "
+                progress((done_count, total), desc=f"Generating speech{mode_note}")
+                yield GenerationUpdate(None, f"Generating speech on {label}{mode_note}: {done_count}/{total} chunks "
                                              f"({time.monotonic() - started:.0f}s)")
 
     ordered = [takes[chunk.index] for chunk in chunks]
@@ -1035,7 +1093,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         "family": DRAMA3_FAMILY,
         "settings": {
             "title": title,
-            "backend": LABEL, "temperature": request.temperature,
+            "backend": label, "drama3_model": cfg.active_model_key, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
@@ -1072,7 +1130,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "duration": round(len(joined) / rate, 3),
         },
     })
-    if pending_chunks:
+    if pending_chunks and settings is not None:
         persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
     take_store.prune(store)
     progress(1, desc="Complete")

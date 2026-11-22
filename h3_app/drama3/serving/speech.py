@@ -9,6 +9,7 @@ script generation shares the same primitives in :mod:`.generate`.
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, wait
+import contextvars
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -21,6 +22,8 @@ from h3_app.jobs import CURRENT_JOB
 from h3_app.workflows.drama3 import MAX_FRAMES
 
 from . import generate
+from .comfy import ComfyDrama3Server
+from .config import BACKEND_COMFYUI, load_drama3_settings
 from .server import ServerSettings, SpeechRequestError, persist_caches, shared_server
 
 __all__ = ["LineSpeaker", "SpokenLine", "persist_caches", "run_blocking"]
@@ -45,14 +48,31 @@ class SpokenLine:
 
 
 class LineSpeaker:
-    """The shared SGLang-Omni server, used for one batch of lines."""
+    """The configured Drama 3 backend (SGLang-Omni or ComfyUI), used for one batch of lines."""
 
     def __init__(self, runtime):
-        self.settings = ServerSettings.from_environment(runtime)
-        self.server = shared_server(self.settings)
+        self.global_settings = load_drama3_settings()
+        if self.global_settings.backend == BACKEND_COMFYUI:
+            self.settings = None
+            self.server = ComfyDrama3Server(
+                runtime,
+                model_key=self.global_settings.comfy_model,
+                experts=self.global_settings.comfy_experts,
+            )
+            self.label = self.server.label
+        else:
+            self.settings = ServerSettings.from_environment(runtime)
+            self.server = shared_server(self.settings)
+            self.label = generate.LABEL
+
+    @property
+    def take_engine_id(self) -> str | None:
+        return generate._take_engine(self.server)
 
     def reference(self, path: str | Path) -> Path:
         """A copy of the clip the server may read; its stem identifies the clip's content."""
+        if self.settings is None:
+            return self.server.stage_reference(path)
         return generate._staged_reference(str(path), self.settings.media_dir)
 
     @staticmethod
@@ -61,12 +81,14 @@ class LineSpeaker:
         return generate.frame_budget(text, MAX_FRAMES)
 
     def ready(self, free_gpu: Callable[[], None], hf_token: str | None = None) -> Iterator[GenerationUpdate]:
-        """Prepare, download and start (or wake) the server."""
-        yield from generate._ready_server(self.settings, self.server, generate.LABEL, free_gpu, hf_token)
+        """Prepare, download and start (or wake) the backend."""
+        yield from generate._ready_backend(
+            self.global_settings, self.settings, self.server, self.label, free_gpu, hf_token
+        )
 
     def speak(self, lines: list[tuple[Any, str, Path, str]], *, sampling: dict, parallel: int,
               thread_prefix: str = "drama3-lines", keep_going: bool = False) -> Iterator[list[SpokenLine]]:
-        """Voice ``(key, text, reference, transcript)`` lines, ``parallel`` at a time.
+        """Voice ``(key, text, reference, transcript)`` lines, ``parallel`` at a time (or sequential on ComfyUI).
 
         Yields the lines finished in each heartbeat (possibly none). An Interrupt
         cancels the pending requests. With ``keep_going`` a line the server rejects
@@ -90,9 +112,12 @@ class LineSpeaker:
             problem = "" if attempt.check.ok else attempt.check.reason
             return SpokenLine(key, attempt.wav, attempt.samples, attempt.rate, problem)
 
-        workers = max(1, min(int(parallel), len(lines)))
+        workers = generate._worker_count(parallel, len(lines), self.server)
         with generate._request_pool(workers, thread_prefix) as (pool, stopped):
-            pending = {pool.submit(synthesize, line, stopped): line for line in lines}
+            pending = {
+                pool.submit(contextvars.copy_context().run, synthesize, line, stopped): line
+                for line in lines
+            }
             while pending:
                 finished, _ = wait(pending, timeout=generate.HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
                 job = CURRENT_JOB.get()

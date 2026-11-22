@@ -48,10 +48,11 @@ COMFY_REF = "a277b5bf213e8a44fa34817b7770b54f86ef4cea"
 # Keep these versions aligned with the tagged ComfyUI requirements.
 COMFY_KITCHEN_VERSION = "0.2.41"
 COMFY_FRONTEND_VERSION = "1.59.6"
-# Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
+# Drama 3 speech supports SGLang-Omni or ComfyUI-Drama3; this node pack supplies both
+# Qwen3-ASR transcription nodes and ComfyUI Drama 3 speech generation/codec nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
-# CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
-DRAMA3_REF = "67a733a96890637dc27b1914974ad00c569405fb"
+# 2026-10-29 weights support (line_head.weight), pin_experts, Speed Options, voice_guidance.
+DRAMA3_REF = "cb44d7cbbe80f51611153579df58da69ee9dc01f"
 # Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"
@@ -689,7 +690,7 @@ def selftest() -> None:
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
     assert COMFY_REF == "a277b5bf213e8a44fa34817b7770b54f86ef4cea"
-    assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
+    assert DRAMA3_REF == "cb44d7cbbe80f51611153579df58da69ee9dc01f"
     assert COMFY_KITCHEN_VERSION == "0.2.41"
     assert COMFY_FRONTEND_VERSION == "1.59.6"
     assert WSPROTO_VERSION == "1.2.0"

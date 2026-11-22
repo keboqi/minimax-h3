@@ -63,11 +63,12 @@ def generate_drama3(request, services, runtime, *, progress=no_progress, free_gp
     timings = StageTimings("Drama 3", time.monotonic(), "Validating request")
     try:
         validate_drama3(request)
+        from h3_app.drama3.serving.config import load_drama3_settings
         from h3_app.drama3.serving.generate import generate_drama3_served
         from h3_models import resolve_hf_token
 
         services.models.unload_prompt_rewriter()
-        timings.transition(f"{DRAMA3_BACKEND} Drama 3")
+        timings.transition(f"{load_drama3_settings().backend_label} Drama 3")
         yield from generate_drama3_served(
             request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
             hf_token=resolve_hf_token(), progress=progress,

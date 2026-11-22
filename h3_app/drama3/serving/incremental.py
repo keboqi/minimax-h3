@@ -19,7 +19,7 @@ def _aligned_bounds(take, root, runtime, free_gpu, hf_token):
 
 
 def migrate_lines(previous_result, root, wanted, references, sampling, budget, *, runtime, free_gpu,
-                  hf_token=None):
+                  hf_token=None, engine: str | None = None):
     """Populate unchanged line caches from verified older grouped takes.
 
     Only use a legacy take whose complete generation identity still matches the selected
@@ -40,7 +40,8 @@ def migrate_lines(previous_result, root, wanted, references, sampling, budget, *
         def key_for(text):
             return takes.take_key(speaker=speaker, text=text, reference=reference.stem,
                                   transcript=transcript, sampling=sampling,
-                                  max_new_tokens=budget(SimpleNamespace(text=text)))
+                                  max_new_tokens=budget(SimpleNamespace(text=text)),
+                                  engine=engine)
 
         content = key_for(chunk.get("text", ""))
         occurrence = occurrences.get(content, 0)

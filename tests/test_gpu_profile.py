@@ -101,11 +101,13 @@ print(json.dumps(dict(encoder=UI_DEFAULTS['text_encoder'], offload=UI_DEFAULTS['
     preset=preset_settings('Singularity','Turbo').text_encoder,
     preset_offload=preset_settings('Fast','Turbo').stage_model_offload,
     flux=Flux3Request('test').model_choice, drama=ServerSettings.from_environment(runtime).checkpoint,
+    drama_prefill=ServerSettings.from_environment(runtime).prefill_cuda_graph,
     preload=PRELOAD_MODEL_KEYS, prepare=h3_model_keys(), attention=attention_choices())))
 """
         for profile in ("default", "a100"):
             env = dict(os.environ, H3_GPU_PROFILE=profile)
             env.pop("H3_DRAMA3_SGLANG_CHECKPOINT", None)
+            env.pop("H3_DRAMA3_SGLANG_PREFILL_GRAPH", None)
             result = subprocess.run([sys.executable, "-c", code], env=env, check=True,
                                     capture_output=True, text=True)
             data = json.loads(result.stdout)
@@ -117,6 +119,7 @@ print(json.dumps(dict(encoder=UI_DEFAULTS['text_encoder'], offload=UI_DEFAULTS['
             self.assertEqual(data['preset_offload'], a100)
             self.assertEqual(data['flux'], "INT8 ConvRot (lower VRAM)" if a100 else "NVFP4 (Blackwell)")
             self.assertEqual(data['drama'], "int4" if a100 else "fp8")
+            self.assertEqual(data['drama_prefill'], "disabled" if a100 else "breakable")
             key, other = ("text_encoder_int8", "text_encoder") if a100 else ("text_encoder", "text_encoder_int8")
             for keys in (data['preload'], data['prepare']):
                 self.assertIn(key, keys)

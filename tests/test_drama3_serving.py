@@ -1656,15 +1656,353 @@ class TakeReuseTests(unittest.TestCase):
                     sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30}, max_new_tokens=256)
         key = takes.take_key(**base)
         for change in ({"speaker": 1}, {"text": "Hi!"}, {"reference": "abd"}, {"transcript": "Ref"},
-                       {"sampling": {**base["sampling"], "top_k": 0}}, {"max_new_tokens": 300}):
+                       {"sampling": {**base["sampling"], "top_k": 0}}, {"max_new_tokens": 300},
+                       {"engine": "comfyui:drama3_comfy_w4a8"}):
             with self.subTest(change=change):
                 self.assertNotEqual(takes.take_key(**{**base, **change}), key)
+        self.assertEqual(takes.take_key(**base, engine=None), key)
+        self.assertNotEqual(
+            takes.take_key(**base, engine="comfyui:drama3_comfy_w4a8"),
+            takes.take_key(**base, engine="comfyui:drama3_comfy_fp8"),
+        )
         root = Path(self.temp.name) / "takes"
         takes.save_take(root, key, audio.encode_wav(tone(0.5), RATE))
         takes.prune(root)
         self.assertIsNotNone(takes.load_take(root, key))
         takes.prune(root, now=10**12)
         self.assertIsNone(takes.load_take(root, key))
+
+
+class A100StartupAndComfyGlobalTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.runtime = SimpleNamespace(
+            script_dir=self.root,
+            comfy_dir=self.root / "ComfyUI",
+            comfy_url="http://127.0.0.1:8188",
+            input_dir=self.root / "ComfyUI" / "input",
+            output_dir=self.root / "ComfyUI" / "output",
+            outputs_dir=self.root / "outputs",
+            request_timeout=30.0,
+            generation_timeout=300.0,
+            poll_seconds=0.05,
+        )
+        self.runtime.input_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime.output_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime.outputs_dir.mkdir(parents=True, exist_ok=True)
+
+    def test_a100_prefill_graph_startup_timeout_and_fp8_guard(self):
+        with patch.dict("os.environ", {"H3_GPU_PROFILE": "a100"}, clear=True):
+            a100_settings = server.ServerSettings.from_environment(self.runtime)
+        self.assertEqual(a100_settings.checkpoint, "int4")
+        self.assertEqual(a100_settings.prefill_cuda_graph, "disabled")
+
+        instance = server.SglangOmniServer(a100_settings)
+        cmd = instance.command()
+        self.assertEqual(cmd[cmd.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "disabled")
+        env = instance.server_env()
+        self.assertEqual(env["SGLANG_OMNI_STARTUP_TIMEOUT"], "1800")
+
+        with patch.dict("os.environ", {"H3_GPU_PROFILE": "a100", "H3_DRAMA3_SGLANG_PREFILL_GRAPH": "breakable",
+                                       "SGLANG_OMNI_STARTUP_TIMEOUT": "2400"}, clear=True):
+            override = server.ServerSettings.from_environment(self.runtime)
+            self.assertEqual(override.prefill_cuda_graph, "breakable")
+            self.assertEqual(server.SglangOmniServer(override).server_env()["SGLANG_OMNI_STARTUP_TIMEOUT"], "2400")
+
+        with self.assertRaisesRegex(ValueError, "H3_DRAMA3_SGLANG_PREFILL_GRAPH"):
+            server.ServerSettings(venv=self.root, data_dir=self.root, model_root=self.root,
+                                  prefill_cuda_graph="full")
+
+        with patch.dict("os.environ", {"H3_GPU_PROFILE": "a100"}):
+            fp8_on_a100 = server.SglangOmniServer(server.ServerSettings(
+                venv=self.root, data_dir=self.root, model_root=self.root, checkpoint="fp8"))
+            with self.assertRaisesRegex(H3Error, "SM89\\+"):
+                fp8_on_a100.ensure_ready(MagicMock())
+
+    def test_comfy_graph_builder_reference_and_voice_design(self):
+        from h3_app.workflows.drama3 import build_drama3_comfy_graph
+
+        graph, save_node = build_drama3_comfy_graph(
+            text="<|speaker:2|> 我要去银行{yin2 hang2}。",
+            model_file="drama3_w4a8experts_bf16.safetensors",
+            codec_file="drama3_codec.safetensors",
+            seed=42,
+            temperature=0.9,
+            top_p=0.95,
+            top_k=50,
+            max_frames=512,
+            reference_audio="drama3_comfy_refs/ref.wav",
+            reference_transcript="<|speaker:2|> Reference speech.",
+            experts="in VRAM",
+        )
+        gen = next(node["inputs"] for node in graph.values() if node["class_type"] == "Drama3Generate")
+        enc = next(node["inputs"] for node in graph.values() if node["class_type"] == "Drama3EncodeVoice")
+        dec = next(node["inputs"] for node in graph.values() if node["class_type"] == "Drama3Decode")
+        loader = next(node["inputs"] for node in graph.values() if node["class_type"] == "Drama3Loader")
+        self.assertEqual(graph[save_node]["class_type"], "SaveAudio")
+        self.assertTrue(graph[save_node]["inputs"]["filename_prefix"].startswith(".processing/drama3_comfy/"))
+        self.assertIn("voices.voice0", gen)
+        self.assertFalse(gen["split_long_text"])
+        self.assertEqual(gen["speakers"], "together")
+        self.assertIn("<|speaker:0|>", gen["text"])
+        self.assertIn("<|phoneme_start|>yin2<|phoneme_end|>", gen["text"])
+        self.assertEqual(enc["transcript"], "Reference speech.")
+        self.assertFalse(dec["shorten_long_pauses"])
+        self.assertEqual(loader["experts"], "in VRAM")
+
+        design_graph, _ = build_drama3_comfy_graph(
+            text="[Warm] Hello there.",
+            model_file="drama3_w4a8experts_bf16.safetensors",
+            codec_file="drama3_codec.safetensors",
+            seed=7,
+            temperature=1.0,
+            top_p=0.9,
+            top_k=0,
+            max_frames=300,
+        )
+        types = {node["class_type"] for node in design_graph.values()}
+        self.assertNotIn("LoadAudio", types)
+        self.assertNotIn("Drama3EncodeVoice", types)
+        design_gen = next(node["inputs"] for node in design_graph.values() if node["class_type"] == "Drama3Generate")
+        self.assertNotIn("voices.voice0", design_gen)
+
+    def test_comfy_server_ensure_ready_speech_cleanup_and_retry(self):
+        from h3_app.drama3.serving import comfy as comfy_mod
+        from h3_app.workflows.drama3 import DRAMA3_COMFY_REQUIRED_NODES
+
+        backend = comfy_mod.ComfyDrama3Server(self.runtime, model_key="drama3_comfy_w4a8")
+        free_gpu = MagicMock()
+        info = {name: {} for name in DRAMA3_COMFY_REQUIRED_NODES}
+
+        saved_rel = Path(".processing/drama3_comfy/take_1.flac")
+        saved_file = self.runtime.output_dir / saved_rel
+        saved_file.parent.mkdir(parents=True, exist_ok=True)
+        saved_file.write_bytes(b"fake-flac")
+
+        def fake_submit(graph, _client_id, job=None):
+            save_id = next(nid for nid, node in graph.items() if node["class_type"] == "SaveAudio")
+            history = {
+                "outputs": {
+                    save_id: {"audio": [{"filename": saved_rel.name, "subfolder": ".processing/drama3_comfy", "type": "output"}]}
+                }
+            }
+            return SimpleNamespace(submission=SimpleNamespace(progress=lambda: iter(()), history=lambda: history))
+
+        fake_runner = SimpleNamespace(submit=fake_submit)
+        with patch.object(comfy_mod.ComfyClient, "object_info", return_value=info), \
+                patch.object(comfy_mod, "ensure_models") as ensure, \
+                patch.object(comfy_mod.server, "stop_all") as stop_sglang, \
+                patch.object(comfy_mod.server, "reclaim_audio_tools") as reclaim, \
+                patch.object(comfy_mod, "ExecutionRunner", return_value=fake_runner), \
+                patch.object(audio, "load_audio_file", return_value=np.zeros(100, dtype=np.float32)):
+            backend.ensure_ready(free_gpu, lambda _m: None, warmup=True)
+
+        free_gpu.assert_not_called()
+        stop_sglang.assert_called_once()
+        reclaim.assert_called_once()
+        ensure.assert_called_once()
+        self.assertFalse(saved_file.exists())
+
+        # Silent attempt raises SpeechRequestError(no_audio=True) and retries with a new seed.
+        from h3_app.jobs import CURRENT_JOB, Job
+
+        seeds = []
+        observed_prompt_ids = []
+        saved_file.write_bytes(b"fake-flac-1")
+        samples_seq = iter((np.zeros(0, dtype=np.float32), tone(1.0)))
+
+        def capture_load(_path, _rate, **_kw):
+            return next(samples_seq)
+
+        def recording_submit(graph, _client_id, job=None):
+            self.assertIsNone(job)  # multi-chunk runs do not bloat job.ledger
+            gen = next(node["inputs"] for node in graph.values() if node["class_type"] == "Drama3Generate")
+            seeds.append(gen["seed"])
+            saved_file.write_bytes(b"fake-flac-attempt")
+            save_id = next(nid for nid, node in graph.items() if node["class_type"] == "SaveAudio")
+            history = {
+                "outputs": {
+                    save_id: {"audio": [{"filename": saved_rel.name, "subfolder": ".processing/drama3_comfy", "type": "output"}]}
+                }
+            }
+
+            def progress():
+                current = CURRENT_JOB.get()
+                if current is not None:
+                    observed_prompt_ids.append(current.prompt_id)
+                return iter(())
+
+            res = SimpleNamespace(submission=SimpleNamespace(progress=progress, history=lambda: history))
+            return res
+
+        fake_runner.submit = recording_submit
+        active_job = Job("owner", "drama3")
+        token = CURRENT_JOB.set(active_job)
+        try:
+            with patch.object(comfy_mod, "ExecutionRunner", return_value=fake_runner), \
+                    patch.object(audio, "load_audio_file", side_effect=capture_load):
+                attempt = generate.best_take(
+                    backend, text="Hello world.", reference=None, transcript=None,
+                    max_new_tokens=400, sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 0},
+                    attempts=2, stopped=generate.threading.Event(),
+                )
+        finally:
+            CURRENT_JOB.reset(token)
+        self.assertEqual(attempt.number, 2)
+        self.assertEqual(len(seeds), 2)
+        self.assertNotEqual(seeds[0], seeds[1])
+        self.assertEqual(len(observed_prompt_ids), 2)
+        self.assertTrue(all(observed_prompt_ids))
+        self.assertIsNone(active_job.prompt_id)
+        self.assertEqual(active_job.ledger, [])
+        self.assertFalse(saved_file.exists())
+
+    def test_comfy_backend_runs_sequentially_in_speech_voice_design_and_dubbing(self):
+        import threading
+        from h3_app.drama3 import voice_design as drama3_voice_design
+        from h3_app.drama3.serving import comfy as comfy_mod, speech as speech_mod
+        from h3_app.workflows.drama3 import DRAMA3_COMFY_REQUIRED_NODES
+
+        clip = self.root / "voice.wav"
+        clip.write_bytes(float_wav(tone(1.5)))
+        info = {name: {} for name in DRAMA3_COMFY_REQUIRED_NODES}
+
+        in_flight = 0
+        max_in_flight = 0
+        counter = 0
+        guard = threading.Lock()
+
+        def make_fake_runner():
+            def fake_submit(graph, _cid, job=None):
+                nonlocal in_flight, max_in_flight, counter
+                with guard:
+                    in_flight += 1
+                    max_in_flight = max(max_in_flight, in_flight)
+                    counter += 1
+                    idx = counter
+                try:
+                    import time as _time
+                    _time.sleep(0.02)
+                    saved = self.runtime.output_dir / ".processing" / "drama3_comfy" / f"take_{idx}.flac"
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    saved.write_bytes(b"x")
+                    save_id = next(nid for nid, node in graph.items() if node["class_type"] == "SaveAudio")
+                    history = {"outputs": {save_id: {"audio": [{"filename": saved.name, "subfolder": ".processing/drama3_comfy", "type": "output"}]}}}
+                    return SimpleNamespace(submission=SimpleNamespace(progress=lambda: iter(()), history=lambda: history))
+                finally:
+                    with guard:
+                        in_flight -= 1
+            return SimpleNamespace(submit=fake_submit)
+
+        with patch.dict("os.environ", {"H3_DRAMA3_BACKEND": "comfyui", "H3_DRAMA3_COMFY_MODEL": "drama3_comfy_w4a8",
+                                       "H3_WORKSPACE_DIR": str(self.root / "ws")}), \
+                patch.object(comfy_mod.ComfyClient, "object_info", return_value=info), \
+                patch.object(comfy_mod, "ensure_models"), \
+                patch.object(comfy_mod.server, "stop_all"), \
+                patch.object(comfy_mod.server, "reclaim_audio_tools"), \
+                patch.object(comfy_mod, "ExecutionRunner", side_effect=lambda *_a, **_k: make_fake_runner()), \
+                patch.object(audio, "load_audio_file", side_effect=lambda *_a, **_k: tone(1.0)), \
+                patch.object(audio, "save_mp3"), \
+                patch.object(generate, "write_snapshot") as snap, \
+                patch.object(generate, "persist_caches") as persist:
+            req = Drama3Request("<|speaker:0|> First.\n<|speaker:1|> Second.\n<|speaker:0|> Third.",
+                                ((0, str(clip), "Ref zero."), (1, str(clip), "Ref one.")),
+                                1.0, 0.9, 0, 8192, 8, 0, word_timing=False)
+            updates = list(generate.generate_drama3_served(req, runtime=self.runtime, free_gpu=MagicMock()))
+            self.assertEqual(max_in_flight, 1)
+            self.assertIn("ComfyUI", updates[-1].status)
+            self.assertEqual(snap.call_args.args[1]["settings"]["backend"], "ComfyUI")
+            self.assertEqual(snap.call_args.args[1]["settings"]["drama3_model"], "drama3_comfy_w4a8")
+            persist.assert_not_called()
+
+            # Voice design via ComfyUI also runs sequentially (workers=1).
+            max_in_flight = 0
+            results = [item for item in drama3_voice_design.generate_drama3_references(
+                {0: ("Warm", "Hello one."), 1: ("Calm", "Hello two.")},
+                Drama3Request("", (), 1.0, 0.9, 0, 2000, 8, 0),
+                self.runtime, SimpleNamespace(models=MagicMock()), free_gpu=MagicMock(),
+            ) if isinstance(item, drama3_voice_design.DesignResult)]
+            self.assertEqual(max_in_flight, 1)
+            self.assertTrue(all(res.audio for res in results))
+
+            # Dubbing LineSpeaker via ComfyUI runs sequentially too.
+            max_in_flight = 0
+            speaker = speech_mod.LineSpeaker(self.runtime)
+            self.assertEqual(speaker.take_engine_id, "comfyui:drama3_comfy_w4a8")
+            list(speaker.ready(MagicMock()))
+            ref = speaker.reference(clip)
+            spoken = [line for batch in speaker.speak(
+                [(0, "Line zero.", ref, "Ref zero."), (1, "Line one.", ref, "Ref zero.")],
+                sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 0}, parallel=6,
+            ) for line in batch]
+            self.assertEqual(max_in_flight, 1)
+            self.assertEqual(len(spoken), 2)
+
+    def test_global_drama3_settings_persistence_and_system_ui_updates(self):
+        from h3_app.drama3.serving import config as d3_config
+        from h3_app.jobs import JobCoordinator
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui import application
+
+        store = WorkspaceStore(self.root / "ws_store")
+        jobs = JobCoordinator()
+        jobs.configure(store)
+        try:
+            store.set_setting("custom.key", "custom.val")
+            reopened = WorkspaceStore(store.root)
+            self.assertEqual(reopened.get_setting("custom.key"), "custom.val")
+            reopened.delete_setting("custom.key")
+            self.assertIsNone(reopened.get_setting("custom.key"))
+
+            with patch.object(d3_config, "JOBS", jobs), patch.object(server, "JOBS", jobs, create=True):
+                d3_config.save_drama3_settings(d3_config.Drama3GlobalSettings(
+                    backend="comfyui", sglang_checkpoint="int4",
+                    comfy_model="drama3_comfy_w6a8", comfy_experts="in RAM",
+                ), store=store)
+                loaded = d3_config.load_drama3_settings(store)
+                self.assertEqual(loaded.backend, "comfyui")
+                self.assertEqual(loaded.comfy_model, "drama3_comfy_w6a8")
+                self.assertEqual(loaded.comfy_experts, "in RAM")
+                with patch.dict("os.environ", {}, clear=True):
+                    self.assertEqual(server.ServerSettings.from_environment(self.runtime).checkpoint, "int4")
+
+            # A100 choices omit SGLang FP8 while keeping all 4 ComfyUI checkpoints.
+            with patch.dict("os.environ", {"H3_GPU_PROFILE": "a100"}):
+                self.assertEqual([v for _l, v in d3_config.sglang_model_choices()], ["int4"])
+                self.assertEqual(len(d3_config.comfy_model_choices()), 4)
+                with self.assertRaisesRegex(H3Error, "SM89\\+"):
+                    d3_config.validate_drama3_settings(
+                        d3_config.Drama3GlobalSettings(backend="sglang", sglang_checkpoint="fp8")
+                    )
+
+            # UI update preserves each backend's model and stops SGLang when leaving SGLang.
+            with patch.object(d3_config, "JOBS", jobs), patch.object(server, "stop_all") as stop_sglang:
+                d3_config.save_drama3_settings(d3_config.Drama3GlobalSettings(
+                    backend="sglang", sglang_checkpoint="int4", comfy_model="drama3_comfy_w4a8",
+                ), store=store)
+                model_upd, experts_upd, status = application.update_drama3_settings("comfyui", "int4", "in VRAM")
+                stop_sglang.assert_called_once()
+                self.assertEqual(model_upd["value"], "drama3_comfy_w4a8")
+                self.assertTrue(experts_upd["visible"])
+                self.assertIn("ComfyUI", status)
+                model_back, experts_back, _ = application.update_drama3_settings(
+                    "sglang", "drama3_comfy_w4a8", "in VRAM"
+                )
+                self.assertEqual(model_back["value"], "int4")
+                self.assertFalse(experts_back["visible"])
+
+            # release_for_job releases SGLang when active Drama 3 backend is ComfyUI.
+            with patch.object(d3_config, "JOBS", jobs), patch.object(server, "release_all") as release:
+                d3_config.save_drama3_settings(d3_config.Drama3GlobalSettings(backend="sglang"), store=store)
+                server.release_for_job("drama3")
+                release.assert_not_called()
+                d3_config.save_drama3_settings(d3_config.Drama3GlobalSettings(backend="comfyui"), store=store)
+                server.release_for_job("drama3")
+                release.assert_called_once()
+        finally:
+            jobs.close()
 
 
 if __name__ == "__main__":

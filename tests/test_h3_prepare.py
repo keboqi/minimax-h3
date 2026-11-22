@@ -64,6 +64,18 @@ class GroupTests(unittest.TestCase):
         self.assertTrue(files[0].endswith(")") and "model files" in files[0])
         self.assertEqual(rest, ["SGLang-Omni environment", "Drama 3 checkpoint"])
 
+    def test_comfyui_drama3_prepares_quantized_model_without_sglang(self):
+        with TemporaryDirectory() as directory, patch.dict(
+            "os.environ",
+            {"H3_DRAMA3_BACKEND": "comfyui", "H3_DRAMA3_COMFY_MODEL": "drama3_comfy_w4a8"},
+        ):
+            keys = h3_prepare.drama3_model_keys()
+            self.assertIn("drama3_comfy_w4a8", keys)
+            self.assertIn("drama3_comfy_codec", keys)
+            labels = [label for label, _ in h3_prepare.plan(("drama3",), None, Path(directory))]
+        self.assertEqual(len(labels), 1)
+        self.assertIn("Drama 3 ASR", labels[0])
+
     def test_catalog_only_sync_never_waits_for_a_background_download(self):
         import h3_models
 

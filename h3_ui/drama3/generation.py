@@ -113,28 +113,33 @@ class GenerationHandlers:
         that needs it, which loads it as usual. Yields the preload status.
         """
         from h3_app import audio_tools
+        from h3_app.drama3.serving.config import BACKEND_COMFYUI, load_drama3_settings
         from h3_app.drama3.serving.generate import preload_served
         from h3_app.drama3.voice_design import ENGINE_QWEN
         from h3_models import resolve_hf_token
 
         runtime, hf_token = self._runtime_config(), resolve_hf_token()
+        drama3_cfg = load_drama3_settings()
+        drama3_label = (
+            "ComfyUI Drama 3" if drama3_cfg.backend == BACKEND_COMFYUI else "SGLang-Omni"
+        )
 
         def audio_tool(model):
             if not audio_tools.preload(model, runtime, free_gpu=self.free_comfy_vram, hf_token=hf_token):
                 raise H3Error("no free GPU memory beside the loaded models")
             yield from ()
 
-        def sglang():
+        def drama3_backend():
             for update in preload_served(runtime=runtime, free_gpu=self.free_comfy_vram, hf_token=hf_token):
                 yield update.status
 
         qwen = voice_engine == ENGINE_QWEN
-        # Drama 3 voice design runs on SGLang-Omni, so the server comes first then.
-        steps = [("Qwen VoiceDesign", lambda: audio_tool("voice_design")) if qwen else ("SGLang-Omni", sglang)]
+        # Drama 3 voice design runs on the active Drama 3 backend, so it loads first then.
+        steps = [("Qwen VoiceDesign", lambda: audio_tool("voice_design")) if qwen else (drama3_label, drama3_backend)]
         if script_mode == drama3_writer.DRAMA3_SCRIPT_ADVANCED:
             steps.append(("Stable Audio 3 Medium", lambda: audio_tool("stable_audio")))
         if qwen:
-            steps.append(("SGLang-Omni", sglang))
+            steps.append((drama3_label, drama3_backend))
         ready, skipped = [], []
 
         def status(current=""):

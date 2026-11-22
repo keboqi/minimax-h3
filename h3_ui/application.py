@@ -1042,6 +1042,40 @@ def refresh_backend_views() -> tuple[str, str]:
     return (compact_backend_status(detail), detail)
 
 
+def drama3_settings_state():
+    """Return current global Drama 3 settings updates for System controls."""
+    from h3_app.drama3.serving.config import (
+        BACKEND_COMFYUI,
+        describe_drama3_settings,
+        load_drama3_settings,
+        model_choices_for_backend,
+    )
+
+    cfg = load_drama3_settings()
+    return (
+        cfg.backend,
+        gr.update(choices=model_choices_for_backend(cfg.backend), value=cfg.active_model_key),
+        gr.update(value=cfg.comfy_experts, visible=cfg.backend == BACKEND_COMFYUI),
+        describe_drama3_settings(cfg),
+    )
+
+
+def update_drama3_settings(backend: str, model: str, comfy_experts: str):
+    """Persist global Drama 3 serving settings and update dependent System controls."""
+    from h3_app.drama3.serving.config import (
+        BACKEND_COMFYUI,
+        apply_drama3_settings_update,
+        model_choices_for_backend,
+    )
+
+    saved, status = apply_drama3_settings_update(backend, model, comfy_experts)
+    return (
+        gr.update(choices=model_choices_for_backend(saved.backend), value=saved.active_model_key),
+        gr.update(value=saved.comfy_experts, visible=saved.backend == BACKEND_COMFYUI),
+        status,
+    )
+
+
 def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=None) -> gr.Blocks:
     """Compose the workspace using explicit catalogs and callbacks."""
     from .bootstrap import build_ui as compose_ui
@@ -1093,6 +1127,8 @@ def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=N
             engine_deps=_engine_deps(),
             soundstage_workspace=(JOBS.store, active_runtime.output_dir),
             storyboard_handlers=_storyboard_handlers(),
+            drama3_settings_state=drama3_settings_state,
+            update_drama3_settings=update_drama3_settings,
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=MEDIA.import_gallery_media,
