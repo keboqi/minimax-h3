@@ -541,7 +541,10 @@ LIP_SYNC_REQUIREMENTS = (
     "av",
     "imageio",
     "imageio-ffmpeg",
-    "mediapipe",
+    "flatbuffers",
+    "absl-py",
+    "attrs",
+    "protobuf>=4.25.3,<5",
     "insightface",
     "onnxruntime-gpu",
     "face-alignment",
@@ -554,9 +557,13 @@ LIP_SYNC_REQUIREMENTS = (
     "pyyaml",
     "tqdm",
 )
+LIP_SYNC_MEDIAPIPE_REQUIREMENT = "mediapipe==0.10.21"
 LIP_SYNC_SMOKE = (
     "import os, sys, torch, diffusers, transformers, cv2, mediapipe, insightface; "
     "assert torch.version.cuda, 'Lip-sync runtime installed CPU-only Torch'; "
+    "assert hasattr(mediapipe, 'solutions'), 'mediapipe.solutions is required by LatentSync'; "
+    "mediapipe.solutions.face_mesh.FaceMesh().close(); "
+    "mediapipe.solutions.face_detection.FaceDetection().close(); "
     "src = os.environ.get('H3_LIP_SYNC_SRC_DIR'); "
     "src and [sys.path.insert(0, os.path.join(src, name)) for name in ('musetalk', 'latentsync')]; "
     "import musetalk.models.unet, musetalk.models.vae, musetalk.utils.audio_processor, "
@@ -583,6 +590,7 @@ def lip_sync_fingerprint() -> str:
         LATENTSYNC_REPO,
         LATENTSYNC_REF,
         *LIP_SYNC_REQUIREMENTS,
+        LIP_SYNC_MEDIAPIPE_REQUIREMENT,
         TORCH_INDEX,
         LIP_SYNC_SMOKE,
     ))
@@ -615,6 +623,7 @@ def lip_sync_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> l
         ["git", "-C", latentsync, "checkout", "--detach", LATENTSYNC_REF],
         [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
          "--index-strategy", "unsafe-best-match", *LIP_SYNC_REQUIREMENTS],
+        [*uv, "pip", "install", "--python", python, "--no-deps", LIP_SYNC_MEDIAPIPE_REQUIREMENT],
         [python, "-c", smoke],
     ]
 
