@@ -419,6 +419,118 @@ def _call_with_supported_kwargs(fn, **kwargs):
     return fn(**filtered)
 
 
+def _latentsync_face_crop(frame, box):
+    import numpy as np
+
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = box
+    margin = max(x2 - x1, y2 - y1) // 4
+    left, top = max(0, x1 - margin), max(0, y1 - margin)
+    right, bottom = min(width, x2 + margin), min(height, y2 + margin)
+    if right <= left or bottom <= top:
+        return None
+    crop = np.ascontiguousarray(frame[top:bottom, left:right])
+    return crop, left, top
+
+
+def _latentsync_mesh_alignment(processor, mesh, frame, tracked_crop):
+    """Align a tracked face that LatentSync's detector rejected."""
+    import cv2
+    import numpy as np
+    import torch
+
+    crop, left, top = tracked_crop
+    height, width = crop.shape[:2]
+    faces = mesh.process(crop).multi_face_landmarks
+    if not faces:
+        return None
+    points = faces[0].landmark
+    # LatentSync anchors its affine transform at the eyebrow centers and nose.
+    anchors = []
+    for ids in ((63, 66, 70, 105, 107), (293, 296, 300, 334, 336), (1, 4, 5)):
+        x = sum(points[i].x for i in ids) / len(ids)
+        y = sum(points[i].y for i in ids) / len(ids)
+        anchors.append((left + x * width, top + y * height))
+    landmarks = np.asarray(anchors)
+    if not np.isfinite(landmarks).all() or np.linalg.norm(landmarks[0] - landmarks[1]) < 2:
+        return None
+    face, matrix = processor.restorer.align_warp_face(frame.copy(), landmarks, smooth=True)
+    h, w = face.shape[:2]
+    aligned = cv2.resize(face, (processor.resolution, processor.resolution), interpolation=cv2.INTER_LANCZOS4)
+    return torch.from_numpy(aligned).permute(2, 0, 1), (0, 0, w, h), matrix
+
+
+def _latentsync_native_alignment(processor, frame, tracked_crop):
+    """Restrict upstream detection to the selected face and align in ROI coordinates."""
+    crop, left, top = tracked_crop
+    detector = processor.face_detector
+
+    def detect(_frame):
+        box, landmarks = detector(crop)
+        if box is None:
+            return None, None
+        x1, y1, x2, y2 = box
+        return (x1 + left, y1 + top, x2 + left, y2 + top), landmarks + (left, top)
+
+    processor.face_detector = detect
+    try:
+        return processor.affine_transform(frame)
+    finally:
+        processor.face_detector = detector
+
+
+@contextlib.contextmanager
+def _latentsync_alignment(pipeline, target_boxes, progress):
+    """Give the denoiser a continuous sequence while retaining the missed frame indices."""
+    original = pipeline.affine_transform_video
+    missed = set()
+
+    def align(video_frames):
+        import torch
+
+        fits = {}
+        mesh = None
+        processor = pipeline.image_processor
+        with contextlib.ExitStack() as resources:
+            for idx, (frame, box) in enumerate(zip(video_frames, target_boxes)):
+                if box is None:
+                    continue
+                tracked_crop = _latentsync_face_crop(frame, box)
+                if tracked_crop is None:
+                    continue
+                try:
+                    fits[idx] = _latentsync_native_alignment(processor, frame, tracked_crop)
+                    continue
+                except RuntimeError as exc:
+                    if str(exc).rstrip(".").lower() != "face not detected":
+                        raise
+                if mesh is None:
+                    from mediapipe import solutions
+
+                    mesh = resources.enter_context(solutions.face_mesh.FaceMesh(
+                        static_image_mode=True, max_num_faces=1, min_detection_confidence=0.35,
+                    ))
+                fallback = _latentsync_mesh_alignment(processor, mesh, frame, tracked_crop)
+                if fallback is not None:
+                    fits[idx] = fallback
+        if not fits:
+            raise RuntimeError("No face detected for LatentSync alignment in this window.")
+        missed.update(set(range(len(video_frames))) - fits.keys())
+        if missed:
+            progress(f"LatentSync is keeping {len(missed)} unaligned frame(s) unchanged")
+        # Nearest aligned faces supply temporal context only. The final blend omits these frames.
+        aligned = [fits[idx] if idx in fits else fits[min(fits, key=lambda valid: abs(valid - idx))]
+                   for idx in range(len(video_frames))]
+        faces, boxes, matrices = zip(*aligned)
+        return torch.stack(faces), list(boxes), list(matrices)
+
+    pipeline.affine_transform_video = align
+    try:
+        yield missed
+    finally:
+        pipeline.affine_transform_video = original
+
+
 # ---------------------------------------------------------------------------
 # Lazy weight downloads
 # ---------------------------------------------------------------------------
@@ -666,10 +778,11 @@ class Worker:
 
         self.progress("Extracting Whisper audio features (MuseTalk 1.5)")
         audio_feat, librosa_len = audio_processor.get_audio_feature(str(audio_path))
-        whisper_chunks = audio_processor.get_whisper_chunk(
-            audio_feat, device, dtype, whisper, librosa_len, fps=fps,
-        )
-        if not whisper_chunks:
+        with torch.inference_mode():
+            whisper_chunks = audio_processor.get_whisper_chunk(
+                audio_feat, device, dtype, whisper, librosa_len, fps=fps,
+            )
+        if whisper_chunks is None or len(whisper_chunks) == 0:
             raise RuntimeError("No audio features extracted for MuseTalk window.")
         if len(whisper_chunks) < len(frames_bgr):
             pad = [whisper_chunks[-1]] * (len(frames_bgr) - len(whisper_chunks))
@@ -788,6 +901,8 @@ class Worker:
             rx2 = max(rx1 + 2, rx2 - 1)
         if (ry2 - ry1) % 2:
             ry2 = max(ry1 + 2, ry2 - 1)
+        roi_boxes = [(box[0] - rx1, box[1] - ry1, box[2] - rx1, box[3] - ry1) if box is not None else None
+                     for box in boxes_25]
 
         bundle = self._load_latentsync()
         pipeline = bundle["pipeline"]
@@ -804,7 +919,8 @@ class Worker:
             self.progress(f"Denoising LatentSync 1.6 ({inference_steps} steps, CFG {guidance_scale:.1f})")
             torch.manual_seed(seed)
             generator = torch.Generator(device=pipeline.device).manual_seed(seed)
-            with _cwd(latentsync_dir), torch.inference_mode():
+            with _cwd(latentsync_dir), torch.inference_mode(), \
+                    _latentsync_alignment(pipeline, roi_boxes, self.progress) as missed:
                 _call_with_supported_kwargs(
                     pipeline,
                     video_path=str(roi_in),
@@ -821,29 +937,26 @@ class Worker:
                 )
             synced_roi, _ = _read_video_frames(roi_out)
 
-        synced_25 = []
-        for idx, orig in enumerate(frames_25):
-            canvas = orig.copy()
-            if idx < len(synced_roi) and boxes_25[idx] is not None:
-                patch = synced_roi[idx]
-                if patch.shape[:2] != (ry2 - ry1, rx2 - rx1):
-                    patch = cv2.resize(patch, (rx2 - rx1, ry2 - ry1), interpolation=cv2.INTER_LANCZOS4)
-                canvas[ry1:ry2, rx1:rx2] = patch
-            synced_25.append(canvas)
-
-        idx_25_to_24 = resample_frame_indices(len(synced_25), src_count)
-        idx_box_24 = resample_frame_indices(len(boxes_25), src_count)
+        idx_25_to_24 = resample_frame_indices(len(frames_25), src_count)
         weights_24 = temporal_opacity_weights(src_count, active_start, active_end)
         out_frames = []
-        for idx, orig in enumerate(frames_24):
-            box = boxes_25[idx_box_24[idx]]
-            if box is None or weights_24[idx] <= 0.0:
+        rendered = 0
+        for orig, idx, weight in zip(frames_24, idx_25_to_24, weights_24):
+            box = boxes_25[idx]
+            if box is None or idx in missed or idx >= len(synced_roi) or weight <= 0:
                 out_frames.append(orig)
                 continue
-            cand = synced_25[idx_25_to_24[idx]]
+            patch = synced_roi[idx]
+            if patch.shape[:2] != (ry2 - ry1, rx2 - rx1):
+                patch = cv2.resize(patch, (rx2 - rx1, ry2 - ry1), interpolation=cv2.INTER_LANCZOS4)
+            canvas = frames_25[idx].copy()
+            canvas[ry1:ry2, rx1:rx2] = patch
             mask = _feathered_lower_face_mask(height, width, box, feather)
-            out_frames.append(_blend_frame(orig, cand, mask, weights_24[idx]))
+            out_frames.append(_blend_frame(orig, canvas, mask, weight))
+            rendered += 1
 
+        if not rendered:
+            raise RuntimeError("No face detected for LatentSync alignment in active lip-sync frames.")
         _write_cfr_mp4(out_frames, output_path, src_fps)
         return {"output_path": str(output_path), "frames": len(out_frames)}
 

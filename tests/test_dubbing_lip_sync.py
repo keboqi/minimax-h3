@@ -1,10 +1,12 @@
 """Frozen dialogue and graph wiring for a prepared H3 lip-sync shot."""
 
+import contextlib
 import io
 import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -19,6 +21,7 @@ from h3_app.dubbing.lip_sync import (
     PLAN_FILE,
     REPORT_FILE,
     _extract_window_slice,
+    _is_no_face_error,
     assemble_lip_sync_video,
     build_lip_sync_plan_payload,
     detect_lip_sync_plan,
@@ -41,6 +44,118 @@ from h3_app.jobs import JobCancelled
 from h3_app.media_tools import probe_video_metadata
 from h3_app.workflows.lip_sync import build_auto_lip_sync_graph, build_lip_sync_graph, snap_h3_frames
 from tests.test_face_refine import by_class, link_id, models
+
+
+class LipSyncWorkerRenderTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.worker = lip_sync_worker.Worker(self.root)
+        self.frames = [np.full((8, 8, 3), i, dtype=np.uint8) for i in range(3)]
+        self.box = (1, 1, 7, 7)
+        self.request = {"video_path": "input.mp4", "audio_path": "audio.wav", "output_path": "out.mp4", "fps": 25}
+
+    def test_musetalk_renders_with_a_multiframe_whisper_tensor(self):
+        audio_processor = Mock()
+        audio_processor.get_audio_feature.return_value = (object(), 1920)
+        # NumPy rejects boolean conversion of this batch just as Torch does.
+        audio_processor.get_whisper_chunk.return_value = np.zeros((3, 50, 384))
+        vae = Mock()
+        vae.decode_latents.return_value = self.frames
+        bundle = dict(device="cpu", dtype="float32", vae=vae, unet=Mock(), pe=Mock(), whisper=Mock(),
+                      audio_processor=audio_processor, face_parser=Mock(), base=self.root)
+        cv2 = SimpleNamespace(resize=lambda frame, *_args, **_kw: frame[:6, :6], INTER_LANCZOS4=1)
+        torch = Mock()
+        torch.inference_mode.side_effect = contextlib.nullcontext
+        blending = SimpleNamespace(get_image_prepare_material=Mock(return_value=(None, None)),
+                                   get_image_blending=Mock())
+        with patch.dict(sys.modules, {"cv2": cv2, "torch": torch, "musetalk.utils.blending": blending}), \
+                patch.object(self.worker, "_load_musetalk", return_value=bundle), \
+                patch.object(lip_sync_worker, "_read_video_frames", return_value=(self.frames, 25)), \
+                patch.object(lip_sync_worker, "_detect_faces_per_frame", return_value=[[self.box]] * 3), \
+                patch.object(lip_sync_worker, "_feathered_lower_face_mask"), \
+                patch.object(lip_sync_worker, "_blend_frame", side_effect=lambda orig, *_: orig), \
+                patch.object(lip_sync_worker, "_write_cfr_mp4") as write:
+            result = self.worker.handle({"op": "render_musetalk", **self.request})
+        self.assertEqual(result["frames"], 3)
+        self.assertEqual(len(torch.stack.call_args.args[0]), 3)
+        write.assert_called_once()
+
+    def test_latentsync_recovers_later_frames_and_leaves_failed_frames_original(self):
+        class Processor:
+            resolution = 512
+
+            def __init__(self):
+                self.face_detector = Mock(side_effect=[
+                    (None, None), ((1, 1, 7, 7), np.full((106, 2), 2)), (None, None),
+                ])
+                self.restorer = SimpleNamespace(
+                    align_warp_face=Mock(return_value=(np.zeros((8, 8, 3), dtype=np.uint8), "matrix2")),
+                )
+
+            def affine_transform(self, frame):
+                box, landmarks = self.face_detector(frame)
+                if box is None:
+                    raise RuntimeError("Face not detected")
+                self.native_box, self.native_landmarks = box, landmarks
+                return "face1", "box1", "matrix1"
+
+        class Pipeline:
+            device = "cpu"
+            image_processor = Processor()
+
+            def affine_transform_video(self, _frames):
+                raise AssertionError("Expected the tolerant alignment adapter")
+
+            def __call__(self, **_kwargs):
+                self.alignment = self.affine_transform_video(self.frames)
+
+        self.frames = [np.full((12, 12, 3), i, dtype=np.uint8) for i in range(3)]
+        self.box = (3, 3, 9, 9)
+        pipeline = Pipeline()
+        pipeline.frames = self.frames
+        original = pipeline.affine_transform_video
+        config = SimpleNamespace(data=SimpleNamespace(num_frames=16, resolution=512))
+        bundle = dict(pipeline=pipeline, config=config, dtype="float32", latentsync_dir=self.root)
+        synced = [np.full_like(frame, 255) for frame in self.frames]
+        torch = Mock()
+        torch.inference_mode.side_effect = contextlib.nullcontext
+        torch.stack.side_effect = tuple
+        torch.from_numpy.return_value.permute.return_value = "face2"
+        landmarks = [SimpleNamespace(x=0.5, y=0.55) for _ in range(468)]
+        for indices, x in (((63, 66, 70, 105, 107), 0.25), ((293, 296, 300, 334, 336), 0.75)):
+            for index in indices:
+                landmarks[index] = SimpleNamespace(x=x, y=0.25)
+        mesh = SimpleNamespace(process=Mock(side_effect=[
+            SimpleNamespace(multi_face_landmarks=None),
+            SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=landmarks)]),
+        ]))
+        mediapipe = SimpleNamespace(solutions=SimpleNamespace(
+            face_mesh=SimpleNamespace(FaceMesh=lambda **_kwargs: contextlib.nullcontext(mesh))))
+        cv2 = SimpleNamespace(resize=lambda frame, *_args, **_kw: frame, INTER_LANCZOS4=1)
+        with patch.dict(sys.modules, {"cv2": cv2, "torch": torch, "mediapipe": mediapipe}), \
+                patch.object(self.worker, "_load_latentsync", return_value=bundle), \
+                patch.object(lip_sync_worker, "_read_video_frames", side_effect=[(self.frames, 25), (synced, 25)]), \
+                patch.object(lip_sync_worker, "_detect_faces_per_frame", return_value=[[self.box]] * 3), \
+                patch.object(lip_sync_worker, "_feathered_lower_face_mask"), \
+                patch.object(lip_sync_worker, "_blend_frame", side_effect=lambda _orig, canvas, *_: canvas), \
+                patch.object(lip_sync_worker, "_write_cfr_mp4") as write:
+            result = self.worker.handle({"op": "render_latentsync", **self.request})
+        rendered = write.call_args.args[0]
+        self.assertEqual(result["frames"], 3)
+        self.assertEqual(pipeline.alignment[0], ("face1", "face1", "face2"))
+        processor = pipeline.image_processor
+        self.assertEqual(processor.face_detector.call_count, 3)
+        self.assertTrue(all(call.args[0].shape == (8, 8, 3) for call in processor.face_detector.call_args_list))
+        self.assertEqual(processor.native_box, (3, 3, 9, 9))
+        np.testing.assert_array_equal(processor.native_landmarks, np.full((106, 2), 4))
+        anchors = processor.restorer.align_warp_face.call_args.args[1]
+        np.testing.assert_allclose(anchors, [[4, 4], [8, 4], [6, 6.4]])
+        self.assertEqual(pipeline.affine_transform_video, original)
+        self.assertIs(rendered[0], self.frames[0])
+        np.testing.assert_array_equal(rendered[1:], synced[1:])
+        self.assertTrue(_is_no_face_error(RuntimeError("Face not detected")))
 
 
 class LipSyncTests(unittest.TestCase):

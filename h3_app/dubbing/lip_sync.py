@@ -75,6 +75,7 @@ _NO_FACE_MARKERS = (
     "no detected face",
     "no face detected",
     "no faces detected",
+    "face not detected",
     "no editable pixels",
 )
 
