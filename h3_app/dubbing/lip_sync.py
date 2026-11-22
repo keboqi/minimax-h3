@@ -20,11 +20,12 @@ import numpy as np
 
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
-from h3_app.generation.services import GenerationServices
+from h3_app.generation.services import GenerationServices, ModelsServices
 from h3_app.jobs import check_cancelled
 from h3_app.media_tools import has_encoder, probe_video_metadata
 from h3_app.processes import run_media_process
 from h3_app.provenance import copy_snapshot
+from h3_app.refinement import resolve_face_refinement
 from h3_app.workflows.lip_sync import (
     DEFAULT_AUTO_FEATHER,
     DEFAULT_AUTO_STRENGTH,
@@ -1178,6 +1179,21 @@ def _render_window_via_worker(
     return rendered
 
 
+def _prepare_h3_lip_sync_vaes(services: ModelsServices, models, refinement: dict[str, Any]) -> None:
+    settings = resolve_face_refinement(refinement, models)["settings"]
+    services.ensure_base_video_vae(models)
+    services.ensure_audio_vae(models)
+    encoder, decoder = settings["video_encoder"], settings["lightvae_decoder"]
+    if encoder != "Original" or decoder != "none":
+        services.ensure_lightvae(encoder, decoder)
+    if settings["use_sol_vae"]:
+        services.ensure_int8_video_vae(models, sol=True)
+    elif settings["use_lynnreal_vae"]:
+        services.ensure_int8_video_vae(models, lynnreal=True)
+    elif settings["use_int8_vae"]:
+        services.ensure_int8_video_vae(models)
+
+
 def _render_window_via_comfy(
     *,
     index: int,
@@ -1298,14 +1314,12 @@ def render_dub_lip_sync(
     is_h3 = engine == "h3"
     models = None
     free_gpu_cb = None
+    h3_models_ready = False
     if is_h3:
         if services is None:
             raise H3Error("Generation services are required for H3 lip sync.")
         lip_sync_runtime.stop()
         models = services.models.load_model_config()
-        ensure_keys = getattr(services.models, "ensure_model_keys", None)
-        if callable(ensure_keys):
-            ensure_keys(("face_yolov8m",))
     else:
         if runtime is None:
             raise H3Error("Lip sync runtime is not configured.")
@@ -1364,6 +1378,12 @@ def render_dub_lip_sync(
             try:
                 if is_h3:
                     assert services is not None
+                    if not h3_models_ready:
+                        yield "Preparing H3 lip-sync models"
+                        check_cancelled()
+                        _prepare_h3_lip_sync_vaes(services.models, models, config)
+                        services.models.ensure_model_keys(("face_yolov8m",))
+                        h3_models_ready = True
                     rendered_path = yield from _render_window_via_comfy(
                         index=index,
                         total=total,
@@ -1447,6 +1467,9 @@ def render_lip_sync_preview(*, dub: Path, speaker: str, first_frame: int, crop: 
     dialogue = fitted_dialogue(dub, speaker, first_frame, frames)
     models = services.models.load_model_config()
     config = {**(refinement or {}), "_source_duration": frames / FPS}
+    yield "Preparing H3 lip-sync models"
+    check_cancelled()
+    _prepare_h3_lip_sync_vaes(services.models, models, config)
     client_id = uuid4().hex
     with TemporaryDirectory(prefix="h3-lip-sync-") as directory:
         wav = Path(directory) / "dialogue.wav"

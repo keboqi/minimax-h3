@@ -287,8 +287,9 @@ class LipSyncMatchTests(unittest.TestCase):
             model_cfg = models()
             model_cfg.turbo_lora_for = lambda _m, _v: "pika.safetensors"
             submit_mock = Mock(side_effect=submit)
+            model_services = Mock(load_model_config=Mock(return_value=model_cfg))
             services = SimpleNamespace(
-                models=SimpleNamespace(load_model_config=lambda: model_cfg),
+                models=model_services,
                 media=SimpleNamespace(
                     probe_video_metadata=probe_video_metadata,
                     stage_file=stage,
@@ -304,6 +305,7 @@ class LipSyncMatchTests(unittest.TestCase):
             # Run 1: renders both A (left face) and B (right face).
             list(render_dub_lip_sync(dub=dub, services=services, crop_size=320, scanner=fake_scanner))
             self.assertEqual(submit_mock.call_count, 2)
+            model_services.ensure_base_video_vae.assert_called_once_with(model_cfg)
             # Left box center = (0.2*320, 0.4*240) = (64, 96); Right box center = (0.8*320, 0.4*240) = (256, 96).
             self.assertEqual(submitted_targets, [(64, 96), (256, 96)])
             report1 = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
@@ -311,8 +313,10 @@ class LipSyncMatchTests(unittest.TestCase):
 
             # Run 2: identical inputs -> 100% cache hit, zero ComfyUI submissions!
             submit_mock.reset_mock()
+            model_services.ensure_base_video_vae.reset_mock()
             list(render_dub_lip_sync(dub=dub, services=services, crop_size=320, scanner=fake_scanner))
             self.assertEqual(submit_mock.call_count, 0)
+            model_services.ensure_base_video_vae.assert_not_called()
             report2 = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
             self.assertEqual((report2["total_windows"], report2["cached_windows"], report2["rendered_windows"]), (2, 2, 0))
 
@@ -389,7 +393,7 @@ class LipSyncMatchTests(unittest.TestCase):
             model_cfg = models()
             model_cfg.turbo_lora_for = lambda _m, _v: "pika.safetensors"
             services = SimpleNamespace(
-                models=SimpleNamespace(load_model_config=lambda: model_cfg),
+                models=Mock(load_model_config=Mock(return_value=model_cfg)),
                 media=SimpleNamespace(
                     probe_video_metadata=probe_video_metadata,
                     stage_file=stage,

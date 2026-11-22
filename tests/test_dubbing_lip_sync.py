@@ -178,6 +178,10 @@ class LipSyncTests(unittest.TestCase):
         })
         self.models = models()
         self.models.turbo_lora_for = lambda _mode, _variant: "pika.safetensors"
+        self.model_services = SimpleNamespace(
+            load_model_config=lambda: self.models, ensure_base_video_vae=Mock(), ensure_audio_vae=Mock(),
+            ensure_lightvae=Mock(), ensure_int8_video_vae=Mock(), ensure_model_keys=Mock(),
+        )
 
     def test_dialogue_starts_at_the_fitted_time_and_excludes_other_speakers(self):
         dialogue = fitted_dialogue(self.dub, "A", first_frame=4, frames=8)
@@ -216,10 +220,11 @@ class LipSyncTests(unittest.TestCase):
 
         def submit(graph, client_id):
             self.assertTrue(by_class(graph, "SaveVideo")["filename_prefix"].endswith(client_id))
+            self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
             return client_id
 
         services = SimpleNamespace(
-            models=SimpleNamespace(load_model_config=lambda: self.models),
+            models=self.model_services,
             media=SimpleNamespace(probe_video_metadata=Mock(return_value=SimpleNamespace(
                 fps=24, width=640, height=640, frame_count=22)), stage_file=stage,
                 resolve_output=lambda history, _: Path(f"{history}_00001_.mp4")),
@@ -234,6 +239,7 @@ class LipSyncTests(unittest.TestCase):
         services.execution.submit_prompt.reset_mock()
         preview = render_lip_sync_preview(**options)
         self.assertEqual(next(preview), "Checking the lip-sync window")
+        self.assertEqual(next(preview), "Preparing H3 lip-sync models")
         self.assertEqual(next(preview), "Rendering the H3 mouth patch")
         with patch("h3_app.dubbing.lip_sync.check_cancelled", side_effect=JobCancelled("Stopped")):
             with self.assertRaises(JobCancelled):
@@ -574,6 +580,13 @@ class LipSyncTests(unittest.TestCase):
             def submit(graph, client_id):
                 video_name = by_class(graph, "LoadVideo")["file"]
                 expected_frames = by_class(graph, "MiniMaxH3ImageToVideo")["length"]
+                self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
+                self.model_services.ensure_audio_vae.assert_called_once_with(self.models)
+                self.model_services.ensure_lightvae.assert_called_once_with("LightVAE Lite", "none")
+                self.model_services.ensure_model_keys.assert_called_once_with(("face_yolov8m",))
+                self.assertEqual(by_class(graph, "VAELoader")["vae_name"], self.models.video_vae)
+                self.assertEqual(by_class(graph, "LightVAELoader")["encoder"],
+                                 "lightvae-lite-h3-encoder.safetensors")
                 slice_meta = probe_video_metadata(staged_videos[video_name])
                 self.assertEqual(slice_meta.frame_count, expected_frames)
                 self.assertEqual((slice_meta.frame_count - 5) % 17, 0)
@@ -584,7 +597,7 @@ class LipSyncTests(unittest.TestCase):
                 return client_id
 
             services = SimpleNamespace(
-                models=SimpleNamespace(load_model_config=lambda: self.models),
+                models=self.model_services,
                 media=SimpleNamespace(
                     probe_video_metadata=probe_video_metadata,
                     stage_file=stage,
@@ -604,6 +617,8 @@ class LipSyncTests(unittest.TestCase):
             with patch("h3_app.dubbing.lip_sync.get_or_scan_source") as rescan:
                 updates = list(render_dub_lip_sync(
                     dub=dub, services=services, crop_size=320, reviewed_plan=load_lip_sync_plan(dub),
+                    refinement={"video_encoder": "LightVAE Lite", "lightvae_decoder": "none",
+                                "use_sol_vae": False, "use_int8_vae": False, "use_lynnreal_vae": False},
                 ))
                 rescan.assert_not_called()
             assembled = updates[-1]
@@ -759,7 +774,7 @@ class LipSyncTests(unittest.TestCase):
                 return destination
 
             services = SimpleNamespace(
-                models=SimpleNamespace(load_model_config=lambda: self.models),
+                models=self.model_services,
                 media=SimpleNamespace(
                     stage_file=lambda p, _cat: Path(p).name,
                     resolve_output=lambda h, _: rendered_files[h],
