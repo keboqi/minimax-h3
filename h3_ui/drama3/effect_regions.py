@@ -19,6 +19,7 @@ MASK_OUTPUT_NODE = "H3SaveDetectedMasks"
 MASK_FOLDER = ".effect-masks"
 OBJECTS = ("window", "door", "lamp", "candle", "screen", "mirror", "fire", "tree",
            "vehicle", "sign", "table", "chair", "book", "cup", "microphone", "telephone")
+MERGE_LABELS = frozenset({"window", "lamp", "candle", "fire", "tree"})
 MAX_REGIONS = 12
 
 
@@ -26,18 +27,20 @@ def concepts(row, subjects):
     descriptions = []
     for key in row.get("subjects", []):
         subject = subjects.get(key)
-        if subject:
+        if not subject or subject.get("kind") == "locations":
+            continue
+        if subject.get("kind") == "props":
+            descriptions.append(key.replace("_", " ").lower())
+        else:
             words = subject["anchor"].split(",")
             name = key.replace("_", " ").casefold()
             phrase = next((part.strip() for part in words if part.strip() and part.strip().casefold() != name), "")
             if phrase:
-                descriptions.append(" ".join(phrase.split()[:8]).lower())
-            if subject["kind"] == "props":
-                descriptions.append(key.replace("_", " ").lower())
+                descriptions.append(phrase.lower())
     text = " ".join((row.get("prompt", ""), row.get("beat", ""),
                      *(subjects[key]["anchor"] for key in row.get("subjects", []) if key in subjects))).lower()
     detected_words = [label for label in OBJECTS if re.search(rf"\b{label}(?:s|es)?\b", text)]
-    return list(dict.fromkeys([*descriptions, "person", *detected_words, "window", "door", "lamp", "screen"]))[:12]
+    return list(dict.fromkeys([*descriptions, "person", *detected_words, "window", "door", "lamp"]))[:MAX_REGIONS]
 
 
 def manifest_path(folder, image, labels):
@@ -89,6 +92,32 @@ def _same_mask(first, second):
     return bool(union and overlap / union >= 0.8)
 
 
+def _valid_mask(mask, total_pixels, filter_full_frame):
+    box = mask.point(lambda n: 255 if n >= 128 else 0).getbbox()
+    if not box:
+        return None
+    area = (box[2] - box[0]) * (box[3] - box[1])
+    if area < total_pixels * 0.0005 or (filter_full_frame and area >= total_pixels * 0.96):
+        return None
+    return box
+
+
+def _collect_masks(assets, output_folder, total_pixels, *, merge, filter_full_frame):
+    masks = []
+    for asset in assets:
+        name = Path(asset["filename"]).name
+        with Image.open(output_folder / name) as image:
+            mask = image.convert("L")
+        if _valid_mask(mask, total_pixels, filter_full_frame):
+            masks.append(mask)
+    if merge and len(masks) > 1:
+        combined = masks[0]
+        for extra in masks[1:]:
+            combined = ImageChops.lighter(combined, extra)
+        return [combined]
+    return masks
+
+
 def segment(path, labels, services, runtime, *, clicks=None):
     """Commit a complete manifest only after all of its masks have been written."""
     folder = path.parent
@@ -109,12 +138,12 @@ def segment(path, labels, services, runtime, *, clicks=None):
         with TemporaryDirectory(dir=manifest.parent) as temporary:
             scratch = Path(temporary)
             for node, label in outputs.items():
-                for asset in (history.get("outputs", {}).get(node) or {}).get("images", []):
-                    name = Path(asset["filename"]).name
-                    with Image.open(output_folder / name) as image:
-                        mask = image.convert("L")
-                    box = mask.point(lambda n: 255 if n >= 128 else 0).getbbox()
-                    if not box or (box[2] - box[0]) * (box[3] - box[1]) < width * height * 0.0005:
+                assets = (history.get("outputs", {}).get(node) or {}).get("images", [])
+                for mask in _collect_masks(assets, output_folder, width * height,
+                                           merge=clicks is None and label in MERGE_LABELS,
+                                           filter_full_frame=clicks is None):
+                    box = _valid_mask(mask, width * height, clicks is None)
+                    if not box:
                         continue
                     small = mask.resize((96, 96)).point(lambda n: 255 if n >= 128 else 0)
                     if any(_same_mask(small, other) for other in seen):

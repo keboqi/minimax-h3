@@ -76,3 +76,54 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
 
             self.assertEqual(effect_regions.segment(still, ["person"], services, runtime), [])
             self.assertEqual(effect_regions.read_regions(root, still.name, ["person"]), [])
+
+    def test_concepts_skip_locations_and_unconditional_screen(self):
+        row = {"subjects": ["elena", "brass_console", "watchroom"], "prompt": "Inside @watchroom, @elena checks @brass_console.", "beat": "Inspection"}
+        subjects = {
+            "elena": {"kind": "characters", "anchor": "Elena, a woman in her thirties, navy jacket"},
+            "brass_console": {"kind": "props", "anchor": "heavy riveted brass console with analog dial"},
+            "watchroom": {"kind": "locations", "anchor": "circular stone watchroom"},
+        }
+        labels = effect_regions.concepts(row, subjects)
+        self.assertIn("brass console", labels)
+        self.assertNotIn("circular stone watchroom", labels)
+        self.assertNotIn("screen", labels)
+
+    def test_merges_multiple_windows_and_skips_full_frame_noise(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            still = root / "shot.jpg"
+            Image.new("RGB", (48, 32)).save(still)
+
+            def submit(graph, client):
+                outputs = {}
+                for node, spec in graph.items():
+                    if spec["class_type"] != effect_regions.MASK_OUTPUT_NODE:
+                        continue
+                    mask = graph[spec["inputs"]["masks"][0]]
+                    text = graph[mask["inputs"]["conditioning"][0]]["inputs"]["text"]
+                    outputs[node] = {"images": []}
+                    folder = root / "h3" / "soundstage_masks" / client
+                    folder.mkdir(parents=True, exist_ok=True)
+                    if text == "window":
+                        for i, rect in enumerate(((0, 0, 9, 15), (38, 0, 47, 15))):
+                            p = folder / f"w{i}.png"
+                            img = Image.new("L", (48, 32))
+                            ImageDraw.Draw(img).rectangle(rect, fill=255)
+                            img.save(p)
+                            outputs[node]["images"].append({"filename": p.name})
+                    elif text == "door":
+                        p = folder / "full.png"
+                        Image.new("L", (48, 32), 255).save(p)
+                        outputs[node]["images"].append({"filename": p.name})
+                return {"outputs": outputs}
+
+            services = SimpleNamespace(
+                media=SimpleNamespace(stage_file=Mock(return_value="shot.jpg")),
+                execution=SimpleNamespace(submit_prompt=submit, poll_comfy_progress=Mock(return_value=[]),
+                                          wait_for_history=lambda prompt: prompt),
+            )
+            regions = effect_regions.segment(still, ["window", "door"], services, SimpleNamespace(output_dir=root))
+            self.assertEqual(len(regions), 1)
+            self.assertEqual(regions[0]["label"], "window")
+            self.assertEqual(regions[0]["box"], [0.0, 0.0, 1.0, 0.5])

@@ -5,9 +5,9 @@ Pictures should amplify the feeling of a moment, not just restate its words.
 
 TIMING
 For every request, cues are ordered dialogue lines. Use each
-shot's "cue" (zero-based index in cues) and "offset" (fraction through that cue, from 0 inclusive
+shot's "cue" (zero-based index in cues, strictly 0 through cues.length - 1 — never the shot number) and "offset" (fraction through that cue, from 0 inclusive
 to 1 exclusive) instead of "start". Begin at cue 0, offset 0 and advance strictly through the
-script. Split lines into multiple beats with fractional offsets when useful. Do not invent seconds.
+script. When you split one cue into multiple shots, keep the same "cue" and advance "offset" (or use "phase":"after"); never increment "cue" past the last index in cues. Do not invent seconds.
 When timing="anchored", the cue timestamps and separate sounds list are pacing context only;
 still return cue and offset anchors, never fixed start times. When timing="untimed", no audio
 exists yet. These anchors will resolve against each generated or edited mix later. Follow the same shot range,
@@ -121,4 +121,4 @@ Empty characters, props or locations objects are valid. Inside strings, use sing
 of double quotes, and never use line breaks.
 Before returning the JSON, check each visible character's description against their Cast voice
 for explicit age and gender. Check that each shot uses the correct character keys, assignments
-and visible headcount.
+and visible headcount, and verify that every shot's "cue" is a valid zero-based index in cues (0 to cues.length - 1) and never exceeds the final cue index.
