@@ -529,7 +529,10 @@ import {
     }
   };
 
-  const pulse = async () => {
+  let pulseInFlight = false;
+  const pulseNow = async () => {
+    if (pulseInFlight) return;
+    pulseInFlight = true;
     try {
       const frame = window.frameElement;
       if (!document.hidden && (!frame || frame.offsetParent !== null)) {
@@ -541,6 +544,10 @@ import {
         }
       }
     } catch { /* The next pulse tries again. */ }
+    finally { pulseInFlight = false; }
+  };
+  const pulse = async () => {
+    await pulseNow();
     setTimeout(pulse, PULSE_MS);
   };
 
@@ -1625,6 +1632,20 @@ import {
     new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"]});
     document.addEventListener("toggle", queueFit, true);
     window.addEventListener("resize", queueFit);
+    try {
+      const frame = window.frameElement;
+      if (frame) {
+        let shown = frame.getClientRects().length > 0;
+        new window.parent.ResizeObserver(() => {
+          const visible = frame.getClientRects().length > 0;
+          if (visible && !shown) {
+            queueFit();
+            if (state.boot) pulseNow();
+          }
+          shown = visible;
+        }).observe(frame);
+      }
+    } catch { /* Framed by another origin. */ }
     try {
       state.boot = await request("GET", "/boot");
       $("workshop-note").hidden = gpu();

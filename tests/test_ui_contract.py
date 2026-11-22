@@ -757,6 +757,12 @@ class UiContractTests(unittest.TestCase):
         )
 
         self.assertIs(engine["props"]["show_label"], False)
+        self.assertEqual(engine_tabs["props"].get("overflow_behavior"), "wrap")
+        self.assertEqual(self.demo.blocks[engine["id"]].preprocess("ltx"), "ltx")
+        self.assertFalse(any(
+            [engine["id"], "change"] in dep.get("targets", [])
+            for dep in self.config["dependencies"]
+        ))
         self.assertTrue(contains(self.find_layout_node(header["id"]), engine_bar["id"]))
         self.assertTrue(contains(self.find_layout_node(engine_bar["id"]), engine["id"]))
         self.assertFalse(contains(create_tab, engine["id"]))
@@ -780,7 +786,7 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertEqual([c._id for c in select_task.outputs[:2]], [engine["id"], engine_bar["id"]])
         session = self.restored_session()
-        for task_name, expected in (("Video", True), ("Image", False), ("Audio / Music", False),
+        for task_name, expected in (("Image", False), ("Video", True), ("Audio / Music", False),
                                     ("Remake", False), ("Storyboard", False), ("TTS", False), ("Dub", False)):
             args = [deepcopy(component.value) for component in select_task.inputs]
             args[0] = task_name
@@ -789,17 +795,22 @@ class UiContractTests(unittest.TestCase):
             result = select_task.fn(*args)
             self.assertIs(result[0]["visible"], expected, task_name)
             self.assertIs(result[1]["visible"], expected, task_name)
+            self.assertEqual(result[4], {"__type__": "update"}, task_name)
+            saved = next(v for v in result if isinstance(v, dict) and "values" in v)
+            self.assertEqual(saved["values"]["workspace.task"], task_name, task_name)
 
         output_ids = [component._id for component in self.restore.outputs]
         engine_idx = output_ids.index(engine["id"])
         bar_idx = output_ids.index(engine_bar["id"])
-        for task_name, expected in (("Remake", False), ("Video", True)):
+        for task_name, expected in (("Remake", False), ("Video", True), ("Image", False)):
             args = [deepcopy(component.value) for component in self.restore.inputs]
             args[0] = {"schema_version": 12, "values": {"workspace.task": task_name, "workspace.engine": engines_for_task(task_name)[0].id}}
-            args[-1] = type(args[-1])()
+            restore_session = type(args[-1])()
+            args[-1] = restore_session
             restored = self.restore.fn(*args)
             self.assertIs(restored[engine_idx]["visible"], expected, task_name)
             self.assertIs(restored[bar_idx]["visible"], expected, task_name)
+            self.assertIsNotNone(restore_session.memory, task_name)
 
         depth = 0
         for line in H3_WORKSPACE_CSS.splitlines():

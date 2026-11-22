@@ -39,15 +39,109 @@ GENERATE_SHORTCUT_JS = """
 """
 
 # The top bar's tasks stand in for the hidden Create tab: picking one, even the
-# current task, opens Create from Media, Jobs or any other tab.
+# current task, opens Create from Media, Jobs or any other tab and switches the
+# active Create page immediately without waiting for a server round trip.
 TASK_OPENS_CREATE_JS = """
 () => {
   if (window.h3TaskOpensCreate) return;
   window.h3TaskOpensCreate = true;
+  const TAB_FOR_TASK = {
+    "Image": "image",
+    "Audio / Music": "song",
+    "Remake": "remake",
+    "Storyboard": "storyboard",
+    "TTS": "drama3",
+    "Dub": "dub",
+  };
+  const VIDEO_TABS = new Set(["h3", "ltx"]);
+  const currentVideoEngine = () => {
+    const checked = document.querySelector('.h3-workspace .h3-engine-bar input[type="radio"]:checked');
+    if (checked && VIDEO_TABS.has(checked.value)) {
+      window.__h3VideoEngine = checked.value;
+      return checked.value;
+    }
+    const activeTab = document.querySelector('#h3-engine-tabs [role="tab"][aria-selected="true"]');
+    const tabId = activeTab?.getAttribute("data-tab-id");
+    if (tabId && VIDEO_TABS.has(tabId)) {
+      window.__h3VideoEngine = tabId;
+      return tabId;
+    }
+    return window.__h3VideoEngine || "h3";
+  };
+  const selectTab = (selector) => {
+    const tab = document.querySelector(selector);
+    if (tab && tab.getAttribute("aria-selected") !== "true") {
+      tab.click();
+      return true;
+    }
+    return false;
+  };
+  const selectEngineTab = (tabId) => {
+    if (!tabId) return false;
+    window.__h3DesiredEngineTab = tabId;
+    return selectTab(`#h3-engine-tabs [role="tab"][data-tab-id="${tabId}"]`);
+  };
+  let lastInputTarget = null;
+  document.addEventListener("input", (event) => {
+    lastInputTarget = event.target;
+  }, true);
+  let pendingTaskValue = null;
+  let pendingObserver = null;
+  const watchPendingTask = () => {
+    if (pendingObserver) return;
+    const root = document.querySelector(".h3-workspace .h3-task-picker");
+    if (!root) return;
+    pendingObserver = new MutationObserver(() => {
+      if (!pendingTaskValue) return;
+      const input = [...root.querySelectorAll('input[type="radio"]')].find((item) => item.value === pendingTaskValue);
+      if (!input || input.disabled) return;
+      const value = pendingTaskValue;
+      pendingTaskValue = null;
+      const targetTab = value === "Video" ? currentVideoEngine() : TAB_FOR_TASK[value];
+      selectTab('#h3-main-tabs [role="tab"][data-tab-id="create"]');
+      selectEngineTab(targetTab);
+      if (!input.checked) input.click();
+      else input.dispatchEvent(new Event("input", {bubbles: true}));
+    });
+    pendingObserver.observe(root, {subtree: true, attributes: true, attributeFilter: ["disabled"]});
+  };
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".h3-workspace-header .h3-task-picker label")) return;
-    const create = document.querySelector('#h3-main-tabs [role="tab"][data-tab-id="create"]');
-    if (create && create.getAttribute("aria-selected") !== "true") create.click();
+    const engineLabel = event.target.closest?.(".h3-workspace .h3-engine-bar label");
+    if (engineLabel) {
+      const engineInput = engineLabel.querySelector('input[type="radio"]');
+      if (engineInput && VIDEO_TABS.has(engineInput.value)) {
+        window.__h3VideoEngine = engineInput.value;
+        const taskInput = document.querySelector('.h3-workspace .h3-task-picker input[type="radio"]:checked');
+        if (!taskInput || taskInput.value === "Video") {
+          selectEngineTab(engineInput.value);
+        }
+      }
+      return;
+    }
+    const label = event.target.closest?.(".h3-workspace .h3-task-picker label");
+    if (!label) return;
+    selectTab('#h3-main-tabs [role="tab"][data-tab-id="create"]');
+    const input = label.querySelector('input[type="radio"]');
+    if (!input) return;
+    const value = input.value;
+    const targetTab = value === "Video" ? currentVideoEngine() : TAB_FOR_TASK[value];
+    if (input.disabled) {
+      pendingTaskValue = value;
+      watchPendingTask();
+      selectEngineTab(targetTab);
+      return;
+    }
+    pendingTaskValue = null;
+    const switchedTab = selectEngineTab(targetTab);
+    const sawInput = lastInputTarget === input;
+    lastInputTarget = null;
+    queueMicrotask(() => {
+      const fired = sawInput || lastInputTarget === input;
+      lastInputTarget = null;
+      if (input.disabled) return;
+      if (!input.checked) input.click();
+      else if (switchedTab && !fired) input.dispatchEvent(new Event("input", {bubbles: true}));
+    });
   });
 }
 """
@@ -260,7 +354,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             validate_path=services.gallery_media_download_path,
             page_targets={**remake_media_targets(engine_handlers["remake"]),
                           "Song · Visual inspiration": song_pages.receive, **ltx_media_targets(ltx_pages)},
-            apply_on=[app_views.create_tab.select] if app_views.create_tab is not None else [],
+            apply_on=[app_views.create_tab.select] if app_views.create_tab is not None and destinations else [],
         )
         from .media.page import MediaPageState, install_media_page
 

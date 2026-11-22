@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from contextlib import nullcontext
 from typing import Callable
 import gradio as gr
-from h3_app.capabilities import engines_for_task, TASKS
+from h3_app.capabilities import ENGINES, engines_for_task, TASKS
 
 
 H3_FRAME = ('<iframe class="h3-video-frame" src="/h3/" title="MiniMax H3" '
@@ -88,10 +88,28 @@ FORMAT_LAYOUT_OUTPUTS = (
     ("audio_output", 9),
     ("resolution_info", 14),
 )
-# Dubbing has no H3 output; its task keeps the H3 settings on Video.
+# Soundstage and Dubbing have no H3 output; their tasks keep the H3 settings on Video.
 FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "Remake": "Video", "Storyboard": "Video",
-                   "TTS": "Audio", "Dub": "Video"}
+                   "TTS": "Video", "Dub": "Video"}
 TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dubbing"}
+
+
+_ENGINE_IDS = frozenset(engine.id for engine in ENGINES)
+
+
+class _EngineRadio(gr.Radio):
+    """Engine picker whose choices change per task without rejecting in-flight engine selections."""
+
+    def get_block_name(self) -> str:
+        return "radio"
+
+    def get_block_class(self) -> str:
+        return "radio"
+
+    def preprocess(self, payload):
+        if payload in _ENGINE_IDS or payload is None:
+            return payload
+        return super().preprocess(payload)
 
 
 def create_app_views(*, summary_root=None, task_root=None, engine_root=None, include_models: bool = False) -> AppViews:
@@ -119,7 +137,7 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
         )
 
     def engine_picker():
-        return gr.Radio(
+        return _EngineRadio(
             [(e.label, e.id) for e in engines_for_task("Video")],
             value="h3",
             label="Engine",
@@ -146,7 +164,7 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
             if engine_root is None:
                 with gr.Row(elem_classes=["h3-engine-bar"]) as engine_bar:
                     engine = engine_picker()
-            with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
+            with gr.Tabs(selected="h3", elem_id="h3-engine-tabs", overflow_behavior="wrap") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     # Everything people do happens on the page at /h3/ (h3/page.py), outside Gradio.
                     gr.HTML(H3_FRAME)
@@ -258,18 +276,24 @@ def bind_workspace_navigation(
     layout_outputs = tuple(components[name] for name, _ in FORMAT_LAYOUT_OUTPUTS)
     no_preferences = (gr.skip(),) if preferences is not None else ()
 
+    def skip_settings(session):
+        updates = [gr.skip() for _ in (*controller.outputs, *layout_outputs)]
+        if controller.preference_index is not None:
+            updates[controller.preference_index] = session.remember()
+        return updates
+
     def output_intent(task, settings_memory, values, snap=True):
         """Settings and result-format presentation for the task's output.
 
         Restoration keeps the saved dimensions; only a task switch realigns
         them for the new result format.
         """
-        if task in PAGE_TABS:
-            # Image and Song have their own composers; visiting them must not rewrite Video settings.
-            return [gr.skip() for _ in (*controller.outputs, *layout_outputs)]
         values = list(values)
         session = values[-1]
-        desired = FORMAT_FOR_TASK[task]
+        if task in PAGE_TABS and snap:
+            # Image and Song have their own composers; visiting them must not rewrite Video settings.
+            return skip_settings(session)
+        desired = "Video" if task in PAGE_TABS else FORMAT_FOR_TASK[task]
         settled = (session.memory or settings_memory or {}).get("values", {})
 
         def browser(name):
@@ -277,6 +301,9 @@ def bind_workspace_navigation(
 
         def value(name):
             return settled.get(name, browser(name))
+
+        if snap and session.memory is not None and desired == value("result_format"):
+            return skip_settings(session)
 
         overrides = {"result_format": desired}
         layout = None

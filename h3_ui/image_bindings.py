@@ -108,7 +108,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
         return gr.update(maximum=limit, value=max(1, min(current, limit)))
 
     gr.on(
-        triggers=[view.gpt_image_models.change, view.gpt_image_endpoints.change, demo.load],
+        triggers=[view.gpt_image_models.change, view.gpt_image_endpoints.change],
         fn=gpt_batch_limit,
         inputs=[view.gpt_image_models, view.gpt_image_endpoints, view.batch_counts["gpt_image"]],
         outputs=view.batch_counts["gpt_image"],
@@ -137,7 +137,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             return gr.skip(), gr.skip()
         return gr.update(visible=engine != "moss_image"), gr.update(visible=engine != "moss_image")
 
-    gr.on(triggers=[app_views.engine.change, demo.load], fn=edit_actions, inputs=app_views.engine,
+    gr.on(triggers=[app_views.engine.input], fn=edit_actions, inputs=app_views.engine,
           outputs=[mode, view.result_edit_actions], trigger_mode="always_last", **QUIET)
 
     layout_outputs = [reference_panel, prompt, *size_groups.values(), *option_groups.values(),
@@ -158,7 +158,7 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             *(gr.update(interactive=editing) for _ in cache_controls),
         )
 
-    gr.on(triggers=[app_views.engine.change, mode.change, demo.load], fn=layout,
+    gr.on(triggers=[app_views.engine.input, mode.change], fn=layout,
           inputs=[app_views.engine, mode], outputs=layout_outputs, trigger_mode="always_last", **QUIET)
 
     def readiness_state(engine, intent, text, paths, variant, fibo_model, separate, backend,
@@ -201,7 +201,8 @@ def bind_image_workspace(view, app_views, engine_views, handlers, h3, deps, demo
             gr.update(interactive=engine in {"h3", "qwen", "flux3", "moss_image"} and not (editing and engine == "moss_image")),
         )
 
-    gr.on(triggers=[component.change for component in state_inputs] + [demo.load], fn=readiness_state,
+    state_triggers = [app_views.engine.input, *(component.change for component in state_inputs[1:])]
+    gr.on(triggers=state_triggers, fn=readiness_state,
           inputs=state_inputs, outputs=[guidance, readiness, run, enhance],
           trigger_mode="always_last", **QUIET)
 

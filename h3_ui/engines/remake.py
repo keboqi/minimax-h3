@@ -923,10 +923,10 @@ def _bind_edit_bridge(button, target: EditTarget, label: str, handlers: RemakeHa
             if path:
                 target.receive(owner, path)
 
-        step = button.click(_with_request(hand_over, 0), outputs=None, api_name=False, show_progress="hidden")
+        step = button.click(_with_request(hand_over, 0), outputs=None, queue=False, api_name=False, show_progress="hidden")
         step.then(None, js=open_engine_js("Image", ""), queue=False, api_name=False)
         return
-    step = button.click(_with_request(outgoing, 0), outputs=target.picture, api_name=False, show_progress="hidden")
+    step = button.click(_with_request(outgoing, 0), outputs=target.picture, queue=False, api_name=False, show_progress="hidden")
     if target.mode is not None:
         step = step.then(lambda: target.mode_value, outputs=target.mode, queue=False, api_name=False,
                          show_progress="hidden")

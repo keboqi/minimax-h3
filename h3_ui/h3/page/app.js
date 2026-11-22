@@ -13,7 +13,10 @@
   const completedEnhancements = new Set();
   const take = (answer) => {
     if (!answer) return;
-    if (answer.state) app.s = answer.state;
+    if (answer.state) {
+      app.s = answer.state;
+      if (!promptDirty) app.saved = answer.state.prompt;
+    }
     if (answer.runs) app.runs = answer.runs;
     if (answer.progress) app.progress = answer.progress;
     if (answer.files) app.files = answer.files;
@@ -419,12 +422,18 @@
 
   // Prompt ------------------------------------------------------------------
   let promptTimer;
+  let promptDirty = false;
   let pendingSave = Promise.resolve();
   const savePrompt = async () => {
+    const hadTimer = Boolean(promptTimer);
     clearTimeout(promptTimer);
+    promptTimer = null;
     const sent = $("prompt").value;
+    if (!promptDirty && !hadTimer && app.s && sent === app.saved) return pendingSave;
+    promptDirty = false;
     const save = pendingSave.then(async () => {
       const answer = await post("/prompt", {prompt: sent});
+      app.saved = sent;
       // Typing may have gone on while the save was in flight; the newer text stays.
       if ($("prompt").value === sent) take(answer);
     });
@@ -433,6 +442,7 @@
   };
   const promptEdited = () => {
     app.s.prompt = $("prompt").value;
+    promptDirty = true;
     clearTimeout(promptTimer);
     promptTimer = setTimeout(guard(savePrompt), 500);
     renderReadiness();
@@ -440,6 +450,7 @@
   };
   const renderPrompt = () => {
     if (document.activeElement !== $("prompt") && $("prompt").value !== app.s.prompt) $("prompt").value = app.s.prompt;
+    app.saved ??= app.s.prompt;
     const run = app.runs.enhance;
     $("writer-line").textContent = w("prompt_writer_backend");
     $("enhance").disabled = Boolean(run?.active);
@@ -704,6 +715,17 @@
     new MutationObserver(queueFit).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"]});
     document.addEventListener("toggle", queueFit, true);
     window.addEventListener("resize", queueFit);
+    try {
+      const frame = window.frameElement;
+      if (frame) {
+        let shown = frame.getClientRects().length > 0;
+        new window.parent.ResizeObserver(() => {
+          const visible = frame.getClientRects().length > 0;
+          if (visible && !shown) queueFit();
+          shown = visible;
+        }).observe(frame);
+      }
+    } catch { /* Framed by another origin. */ }
     try {
       app.boot = await request("GET", "/boot");
       app.input.model = app.boot.default_seedvr2 || app.boot.choices.seedvr2_model[0] || "";

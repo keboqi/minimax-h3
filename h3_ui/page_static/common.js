@@ -114,13 +114,23 @@
       const page = window.parent.document;
       const find = (selector, text) => [...page.querySelectorAll(selector)].find((item) => item.textContent.trim() === text)?.querySelector("input");
       if (window.parent === window || !page.querySelector(".h3-task-picker")) throw new Error();
+      const ENGINE_TABS = {"MiniMax H3": "h3", "LTX 2.5": "ltx"};
+      const TASK_TABS = {"Image": "image", "Song": "song", "Audio / Music": "song", "Remake": "remake",
+                         "Storyboard": "storyboard", "Soundstage": "drama3", "TTS": "drama3", "Dubbing": "dub", "Dub": "dub"};
+      const targetTab = (task === "Video" && ENGINE_TABS[label]) || TASK_TABS[task] || ENGINE_TABS[label];
+      if (task === "Video" && ENGINE_TABS[label]) window.parent.__h3VideoEngine = ENGINE_TABS[label];
+      if (targetTab) window.parent.__h3DesiredEngineTab = targetTab;
       const taskInput = find(".h3-task-picker label", task);
       const create = page.querySelector('#h3-main-tabs [role="tab"][data-tab-id="create"]');
+      if (create && create.getAttribute("aria-selected") !== "true") create.click();
+      const tab = targetTab && page.querySelector(`#h3-engine-tabs [role="tab"][data-tab-id="${targetTab}"]`);
+      if (tab && tab.getAttribute("aria-selected") !== "true") tab.click();
       const needsTask = Boolean(taskInput && (!taskInput.checked || (create && create.getAttribute("aria-selected") !== "true")));
       if (needsTask) taskInput.click();
       const choose = (tries) => {
+        if (tab && tab.getAttribute("aria-selected") !== "true") tab.click();
         const found = find(".h3-engine-bar label", label);
-        if (found) { if (!found.checked) found.click(); }
+        if (found && !found.disabled) { if (!found.checked) found.click(); }
         else if (tries > 0) setTimeout(() => choose(tries - 1), 100);
       };
       if (needsTask) setTimeout(() => choose(50), 50);

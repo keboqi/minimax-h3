@@ -111,7 +111,8 @@ def _bind_thumbnails(files, tags=None):
     gallery = gr.Gallery(label=REMOVE_THUMBNAILS, interactive=False, allow_preview=False, columns=4,
                          fit_columns=False, height="auto", object_fit="cover", buttons=[], visible=False,
                          elem_classes=["h3-input-thumbnails", *(["h3-tagged-thumbnails"] if tag else [])])
-    gr.on([control.change for control in (files, *components)],
+    triggers = [files.change, *(control.input if isinstance(control, gr.Radio) else control.change for control in components)]
+    gr.on(triggers,
           lambda paths, *values: _thumbnail_update(tag, paths, *values),
           inputs=[files, *components], outputs=gallery, queue=False, api_name=False, show_progress="hidden",
           trigger_mode="always_last")
@@ -322,8 +323,8 @@ def build_media_image_destinations(view, destinations, *, validate_path, page_ta
         return answer[0] if len(answer) == 1 else answer
 
     for trigger in apply_on:
-        trigger(apply_pending, inputs=target_inputs, outputs=outputs, queue=True, concurrency_id="h3-settings",
-                concurrency_limit=1, api_name=False, show_progress="hidden")
+        trigger(apply_pending, inputs=target_inputs, outputs=outputs, queue=False,
+                api_name=False, show_progress="hidden")
     return SimpleNamespace(names=[*destinations, *page_targets], queue=queue)
 
 
