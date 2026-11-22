@@ -509,6 +509,108 @@ def dub_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> 
     ]
 
 
+LIP_SYNC_READY_MARKER = "h3-lip-sync-ready.txt"
+LIP_SYNC_PYTHON = "3.12"
+MUSETALK_REPO = "https://github.com/TMElyralab/MuseTalk.git"
+MUSETALK_REF = "2536eaf06b85f775d8e04b7fd81bf6699155a58d"
+LATENTSYNC_REPO = "https://github.com/bytedance/LatentSync.git"
+LATENTSYNC_REF = "a229c3948406bc2cf6eaf4873e662e70c6a04746"
+# MuseTalk 1.5 and LatentSync 1.6 share one CUDA 13 environment on diffusers 0.32.2
+# (ComfyUI uses >=0.36). MuseTalk's OpenMMLab detection is replaced by MediaPipe /
+# InsightFace so no mmcv/mmdet/mmpose C++ extensions are built against Torch 2.11.
+LIP_SYNC_REQUIREMENTS = (
+    f"torch=={TORCH_VERSION}",
+    f"torchvision=={TORCHVISION_VERSION}",
+    f"torchaudio=={TORCHAUDIO_VERSION}",
+    f"numpy=={NUMPY_VERSION}",
+    f"scipy=={SCIPY_VERSION}",
+    "diffusers==0.32.2",
+    "transformers>=4.46,<5",
+    "accelerate>=0.34",
+    "huggingface-hub>=0.34,<1",
+    "hf-xet>=1.1",
+    "einops",
+    "omegaconf",
+    f"opencv-python-headless=={OPENCV_VERSION}",
+    "pillow<13",
+    "soundfile",
+    "librosa",
+    "safetensors",
+    "timm",
+    "kornia",
+    "av",
+    "imageio",
+    "imageio-ffmpeg",
+    "mediapipe",
+    "insightface",
+    "onnxruntime-gpu",
+    "face-alignment",
+    "pyyaml",
+    "tqdm",
+)
+LIP_SYNC_SMOKE = (
+    "import os, sys, torch, diffusers, transformers, cv2, mediapipe, insightface; "
+    "assert torch.version.cuda, 'Lip-sync runtime installed CPU-only Torch'; "
+    "src = os.environ.get('H3_LIP_SYNC_SRC_DIR'); "
+    "src and [sys.path.insert(0, os.path.join(src, name)) for name in ('musetalk', 'latentsync')]; "
+    "import musetalk.models.unet, latentsync.models.unet"
+)
+
+
+def lip_sync_src_dirs(venv: str | Path) -> tuple[Path, Path, Path]:
+    """Return ``(src_root, musetalk_dir, latentsync_dir)`` beside ``venv``."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    source_root = base.with_name(base.name + "-src")
+    return source_root, source_root / "musetalk", source_root / "latentsync"
+
+
+def lip_sync_fingerprint() -> str:
+    """Match first-use installs and the prebuilt Modal lip-sync environment."""
+    import hashlib
+
+    pins = "|".join((
+        LIP_SYNC_PYTHON,
+        MUSETALK_REPO,
+        MUSETALK_REF,
+        LATENTSYNC_REPO,
+        LATENTSYNC_REF,
+        *LIP_SYNC_REQUIREMENTS,
+        TORCH_INDEX,
+        LIP_SYNC_SMOKE,
+    ))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def lip_sync_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Install steps for the MuseTalk 1.5 + LatentSync 1.6 worker environment."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
+    source_root, musetalk_dir, latentsync_dir = lip_sync_src_dirs(base)
+    musetalk = str(musetalk_dir)
+    latentsync = str(latentsync_dir)
+    clear_sources = (
+        "import pathlib, shutil; "
+        f"[shutil.rmtree(p, ignore_errors=True) for p in (pathlib.Path({musetalk!r}), pathlib.Path({latentsync!r}))]; "
+        f"pathlib.Path({str(source_root)!r}).mkdir(parents=True, exist_ok=True)"
+    )
+    smoke = (
+        f"import os; os.environ['H3_LIP_SYNC_SRC_DIR'] = {str(source_root)!r}; "
+        f"{LIP_SYNC_SMOKE}"
+    )
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", LIP_SYNC_PYTHON, "--seed", str(base)],
+        [python, "-c", clear_sources],
+        ["git", "clone", "--filter=blob:none", MUSETALK_REPO, musetalk],
+        ["git", "-C", musetalk, "checkout", "--detach", MUSETALK_REF],
+        ["git", "clone", "--filter=blob:none", LATENTSYNC_REPO, latentsync],
+        ["git", "-C", latentsync, "checkout", "--detach", LATENTSYNC_REF],
+        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
+         "--index-strategy", "unsafe-best-match", *LIP_SYNC_REQUIREMENTS],
+        [python, "-c", smoke],
+    ]
+
+
 def selftest() -> None:
     import tempfile
     from unittest.mock import patch
@@ -591,6 +693,12 @@ def selftest() -> None:
         assert probe_comfy_workflow("http://127.0.0.1:7860/comfyui/") == 2
         workflow_url = request.call_args.args[0]
         assert "/api/userdata/workflows%2FLTX%202.5%2F" in workflow_url
+    assert len(lip_sync_fingerprint()) == 64
+    cmds = lip_sync_install_commands(Path("/opt/h3/lip-sync-venv"))
+    assert cmds[0][:2] == ["uv", "venv"]
+    assert any("git" in cmd and MUSETALK_REPO in cmd for cmd in cmds)
+    assert any("git" in cmd and LATENTSYNC_REPO in cmd for cmd in cmds)
+    assert any("diffusers==0.32.2" in cmd for cmd in cmds)
     print("h3_requirements selftest OK")
 
 

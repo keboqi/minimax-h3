@@ -34,6 +34,8 @@ from h3_app.dubbing.lip_sync import (
     load_manual_overrides,
     revise_lip_sync_plan,
     validate_face_size_range,
+    validate_lip_sync_engine,
+    validate_lip_sync_options,
 )
 from h3_app.dubbing.results import TRACKS, load_player, load_result, player_folder
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
@@ -235,6 +237,7 @@ def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
             "rendered_windows": report.get("rendered_windows", 0),
             "uncertain_count": report.get("uncertain_count", 0),
             "backend": report.get("backend", "none"),
+            "engine": report.get("engine", "h3"),
         } if isinstance(report, dict) else None,
     }
 
@@ -963,8 +966,19 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                 track_id = item.get("track_id")
                 overrides.append((int(item["shot_index"]), str(item["speaker"]),
                                   None if track_id is None else int(track_id)))
+        engine = body.get("engine")
+        if engine is not None:
+            engine = validate_lip_sync_engine(engine)
         strength = body.get("strength")
         feather = body.get("feather")
+        validated_options = validate_lip_sync_options(
+            bbox_shift=body.get("bbox_shift"),
+            inference_steps=body.get("inference_steps"),
+            guidance_scale=body.get("guidance_scale"),
+        )
+        bbox_shift = validated_options.get("bbox_shift")
+        inference_steps = validated_options.get("inference_steps")
+        guidance_scale = validated_options.get("guidance_scale")
         raw_min = body.get("min_face_size")
         raw_max = body.get("max_face_size")
         if raw_min is not None or raw_max is not None:
@@ -994,6 +1008,10 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                     gemini_api_key=body.get("api_key"),
                     min_face_size=raw_min,
                     max_face_size=raw_max,
+                    engine=engine,
+                    bbox_shift=bbox_shift,
+                    inference_steps=inference_steps,
+                    guidance_scale=guidance_scale,
                 ),
                 values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
             )

@@ -538,6 +538,69 @@ class StudioPageTests(PageTests):
 
         self.assertEqual(received, [(0.1, 0.8), (0.4, 0.9)])
 
+    def test_lip_sync_endpoint_validates_and_forwards_engine_options(self):
+        import json as _json
+        from h3_app.dubbing.results import player_folder
+
+        created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True)
+        dub_video = out_dir / "clip.mp4"
+        dub_video.write_bytes(b"mp4")
+        folder = player_folder(dub_video)
+        folder.mkdir(parents=True)
+        (folder / "alignment.json").write_text("{}", encoding="utf-8")
+        (folder / "alignment.npz").write_bytes(b"npz")
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        bad = self.client.post(f"{API}/lip-sync", json={"session": created.id, "engine": "unknown"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("Unsupported lip-sync engine", bad.json()["error"])
+        for invalid in (
+            {"inference_steps": "abc"},
+            {"guidance_scale": True},
+            {"bbox_shift": "bad"},
+        ):
+            bad_opt = self.client.post(f"{API}/lip-sync", json={"session": created.id, **invalid})
+            self.assertEqual(bad_opt.status_code, 400)
+
+        forwarded: list[dict] = []
+
+        def fake_render(**kwargs):
+            forwarded.append({
+                "engine": kwargs.get("engine"),
+                "bbox_shift": kwargs.get("bbox_shift"),
+                "inference_steps": kwargs.get("inference_steps"),
+                "guidance_scale": kwargs.get("guidance_scale"),
+                "runtime": kwargs.get("runtime"),
+            })
+            out = dub_video.with_name("clip.lipsync.mp4")
+            out.write_bytes(b"mp4-lipsync")
+            yield out
+
+        def run_job(_run, _owner, _session, _family, values, callback):
+            return callback(*_json.loads(_json.dumps(values)))
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", run_job), \
+                patch("h3_ui.dubbing.handlers.render_dub_lip_sync", fake_render):
+            ok = self.client.post(f"{API}/lip-sync", json={
+                "session": created.id,
+                "engine": "latentsync",
+                "bbox_shift": 99,
+                "inference_steps": 120,
+                "guidance_scale": 5.0,
+            })
+            self.assertEqual(ok.status_code, 200)
+            self.assertIsNone(self.wait("lip-sync", created.id)["error"])
+
+        self.assertEqual(len(forwarded), 1)
+        self.assertEqual(forwarded[0]["engine"], "latentsync")
+        self.assertEqual(forwarded[0]["bbox_shift"], 15)
+        self.assertEqual(forwarded[0]["inference_steps"], 50)
+        self.assertEqual(forwarded[0]["guidance_scale"], 3.0)
+        self.assertIs(forwarded[0]["runtime"], self.runtime)
+
 
 if __name__ == "__main__":
     unittest.main()

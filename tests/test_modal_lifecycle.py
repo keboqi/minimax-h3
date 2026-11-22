@@ -42,7 +42,8 @@ class ModalImageSetupTests(unittest.TestCase):
 
     def test_prebuilt_workers_publish_current_readiness_markers(self):
         for prefix, fingerprint in (("DRAMA3_SGLANG", "drama3_sglang"), ("AUDIO_TOOLS", "audio_tools"),
-                                    ("DUB_TOOLS", "dub_tools"), ("NEMOTRON", "nemotron")):
+                                    ("DUB_TOOLS", "dub_tools"), ("LIP_SYNC", "lip_sync"),
+                                    ("NEMOTRON", "nemotron")):
             ns = self.namespace
             marker = (ns[f"{prefix}_VENV"] / ns[f"{prefix}_READY_MARKER"]).as_posix()
             self.assertIn(f"echo {ns[f'{fingerprint}_fingerprint']()} > {marker}", self.commands)

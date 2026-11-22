@@ -20,7 +20,13 @@ import gradio as gr
 from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
-from h3_app.dubbing.lip_sync import detect_lip_sync_plan, load_lip_sync_plan, render_dub_lip_sync
+from h3_app.dubbing.lip_sync import (
+    detect_lip_sync_plan,
+    load_lip_sync_plan,
+    render_dub_lip_sync,
+    validate_lip_sync_engine,
+    validate_lip_sync_options,
+)
 from h3_app.dubbing.results import load_result
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices
@@ -797,8 +803,9 @@ class DubbingHandlers:
 
     def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None,
                        expected_video=None, reviewed_revision=None, *,
-                       min_face_size=None, max_face_size=None, gemini_api_key=None):
-        """Run automatic one-click H3 lip sync on the session's latest completed video dub."""
+                       min_face_size=None, max_face_size=None, gemini_api_key=None,
+                       engine=None, bbox_shift=None, inference_steps=None, guidance_scale=None):
+        """Run automatic one-click lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
                 raise H3Error("Lip sync runs in Studio.")
@@ -815,7 +822,13 @@ class DubbingHandlers:
                 reviewed_plan = load_lip_sync_plan(dub)
                 if reviewed_plan is None or reviewed_plan["revision"] != reviewed_revision:
                     raise H3Error("The lip-sync plan changed. Review the updated face assignments.")
-            extra = {}
+            extra = validate_lip_sync_options(
+                bbox_shift=bbox_shift,
+                inference_steps=inference_steps,
+                guidance_scale=guidance_scale,
+            )
+            if engine is not None:
+                extra["engine"] = validate_lip_sync_engine(engine)
             if strength is not None:
                 extra["strength"] = max(0.2, min(1.0, float(strength)))
             if feather is not None:
@@ -833,6 +846,7 @@ class DubbingHandlers:
                 visual_speakers=(session.data.get("transcript") or {}).get("visual_speakers"),
                 source_video=session.path("source") if session.data.get("video") else None,
                 gemini_api_key=gemini_api_key, reviewed_plan=reviewed_plan,
+                runtime=self._runtime(), free_gpu=self.services.free_gpu, hf_token=self._hf_token(),
                 **extra,
             ):
                 if isinstance(update, Path):

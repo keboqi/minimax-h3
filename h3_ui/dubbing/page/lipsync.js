@@ -4,6 +4,11 @@ import {api} from "./api.js";
 import {esc, icon, plural, toast} from "./ui.js";
 
 const SIZE_PRESETS = [[0, 100, "All"], [8, 100, "8%+"], [15, 100, "15%+"], [25, 100, "25%+"]];
+const ENGINE_OPTIONS = [
+  ["h3", "MiniMax H3", "Output keeps <strong>Dubbed audio only</strong> · MediaPipe landmark mouth mask"],
+  ["musetalk", "MuseTalk 1.5 · Fast", "Output keeps <strong>Dubbed audio only</strong> · MuseTalk 1.5 fast single-step inpainting"],
+  ["latentsync", "LatentSync 1.6 · Quality", "Output keeps <strong>Dubbed audio only</strong> · LatentSync 1.6 (512×512 Whisper diffusion)"],
+];
 
 const lsState = {
   targetKey: null,
@@ -15,8 +20,12 @@ const lsState = {
   filter: "all",
   selectedShot: 0,
   selectedSpeaker: null,
+  engine: "h3",
   strength: 0.70,
   feather: 6,
+  bboxShift: 0,
+  inferenceSteps: 20,
+  guidanceScale: 1.5,
   minFaceSize: 0,
   maxFaceSize: 100,
   rafId: null,
@@ -256,6 +265,48 @@ function renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount) {
   return `<strong>${confirmedCount}</strong> matched · <strong>${uncertainCount}</strong> needs check · <strong>${offCount}</strong> off-screen (${esc(winText)})`;
 }
 
+function formatSettingOut(key, value) {
+  if (key === "strength") return Number(value).toFixed(2);
+  if (key === "guidanceScale") return Number(value).toFixed(1);
+  if (key === "bboxShift") return `${value > 0 ? "+" : ""}${value} px`;
+  if (key === "inferenceSteps") return `${value} steps`;
+  return `${value} px`;
+}
+
+function engineSettingsHtml() {
+  const feather = `
+    <label class="field">
+      <span class="field-label">Mask feather <span class="mono" data-ls-out="feather">${formatSettingOut("feather", lsState.feather)}</span></span>
+      <input type="range" min="2" max="16" step="1" value="${lsState.feather}" data-ls-setting="feather">
+    </label>`;
+  if (lsState.engine === "musetalk") {
+    return `
+      <label class="field">
+        <span class="field-label">Mouth box shift <span class="mono" data-ls-out="bboxShift">${formatSettingOut("bboxShift", lsState.bboxShift)}</span></span>
+        <input type="range" min="-15" max="15" step="1" value="${lsState.bboxShift}" data-ls-setting="bboxShift">
+      </label>
+      ${feather}`;
+  }
+  if (lsState.engine === "latentsync") {
+    return `
+      <label class="field">
+        <span class="field-label">Diffusion steps <span class="mono" data-ls-out="inferenceSteps">${formatSettingOut("inferenceSteps", lsState.inferenceSteps)}</span></span>
+        <input type="range" min="10" max="40" step="5" value="${lsState.inferenceSteps}" data-ls-setting="inferenceSteps">
+      </label>
+      <label class="field">
+        <span class="field-label">Guidance scale <span class="mono" data-ls-out="guidanceScale">${formatSettingOut("guidanceScale", lsState.guidanceScale)}</span></span>
+        <input type="range" min="1.0" max="3.0" step="0.1" value="${lsState.guidanceScale}" data-ls-setting="guidanceScale">
+      </label>
+      ${feather}`;
+  }
+  return `
+    <label class="field">
+      <span class="field-label">Denoise strength <span class="mono" data-ls-out="strength">${formatSettingOut("strength", lsState.strength)}</span></span>
+      <input type="range" min="0.25" max="0.90" step="0.05" value="${lsState.strength}" data-ls-setting="strength">
+    </label>
+    ${feather}`;
+}
+
 function renderLockedReason(ls, app, plan) {
   if (!ls.ready) return "Generate this dub again to save its fitted dialogue.";
   if (!app.boot.lip_sync) return "Open this dub in Studio to render lip sync.";
@@ -373,17 +424,18 @@ export function renderLipSync(app) {
               <div class="row align-center row-wrap">
                 <h3>Render settings</h3>
                 <span class="spacer"></span>
-                <span class="muted small">Output keeps <strong>Dubbed audio only</strong> · MediaPipe landmark mouth mask</span>
+                <span class="muted small">${(ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2]}</span>
+              </div>
+              <div class="row align-center row-wrap">
+                <span class="field-label">Engine</span>
+                <div class="seg" role="group" aria-label="Lip-sync engine">
+                  ${ENGINE_OPTIONS.map(([id, label]) => `
+                    <button type="button" data-ls-engine="${id}" aria-pressed="${lsState.engine === id}">${esc(label)}</button>
+                  `).join("")}
+                </div>
               </div>
               <div class="ls-settings-row">
-                <label class="field">
-                  <span class="field-label">Denoise strength <span class="mono" data-ls-out="strength">${lsState.strength.toFixed(2)}</span></span>
-                  <input type="range" min="0.25" max="0.90" step="0.05" value="${lsState.strength}" data-ls-setting="strength">
-                </label>
-                <label class="field">
-                  <span class="field-label">Mask feather <span class="mono" data-ls-out="feather">${lsState.feather} px</span></span>
-                  <input type="range" min="2" max="16" step="1" value="${lsState.feather}" data-ls-setting="feather">
-                </label>
+                ${engineSettingsHtml()}
               </div>
               <div class="field ls-range-field">
                 <div class="row align-center row-wrap">
@@ -695,6 +747,28 @@ export function bindLipSync(app) {
   const screen = document.getElementById("screen");
   screen.addEventListener("click", async (event) => {
     if (app.screen !== "lipsync" || !app.session) return;
+    const engineBtn = event.target.closest("[data-ls-engine]");
+    if (engineBtn) {
+      const nextEngine = engineBtn.dataset.lsEngine;
+      if (nextEngine && nextEngine !== lsState.engine) {
+        const video = document.getElementById("ls-video");
+        const savedTime = video ? video.currentTime : null;
+        const wasPaused = video ? video.paused : true;
+        lsState.engine = nextEngine;
+        app.render();
+        const nextVideo = document.getElementById("ls-video");
+        if (nextVideo && savedTime !== null) {
+          const restore = () => {
+            nextVideo.currentTime = savedTime;
+            if (!wasPaused) nextVideo.play().catch(() => {});
+            drawOverlay(app);
+          };
+          if (nextVideo.readyState >= 1) restore();
+          else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
+        }
+      }
+      return;
+    }
     const preset = event.target.closest("[data-ls-size-preset]");
     if (preset) {
       const [lo, hi] = preset.dataset.lsSizePreset.split(",").map(Number);
@@ -748,8 +822,12 @@ export function bindLipSync(app) {
         ...target,
         plan_revision: revision,
         api_key: app.apiKey,
+        engine: lsState.engine,
         strength: lsState.strength,
         feather: lsState.feather,
+        bbox_shift: lsState.bboxShift,
+        inference_steps: lsState.inferenceSteps,
+        guidance_scale: lsState.guidanceScale,
         min_face_size: lsState.minFaceSize / 100,
         max_face_size: lsState.maxFaceSize / 100,
       });
@@ -793,6 +871,6 @@ export function bindLipSync(app) {
     const key = el.dataset.lsSetting;
     lsState[key] = Number(el.value);
     const out = document.querySelector(`[data-ls-out="${key}"]`);
-    if (out) out.textContent = key === "strength" ? lsState[key].toFixed(2) : `${lsState[key]} px`;
+    if (out) out.textContent = formatSettingOut(key, lsState[key]);
   });
 }

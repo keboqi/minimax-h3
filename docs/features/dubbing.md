@@ -416,8 +416,20 @@ Open **Lip sync** on a completed video dub. Choose **Auto detect faces & speaker
 then select a speaker in the shot list to jump to their turn. Click a face box or
 use the face buttons to correct the match. **Off-screen / Skip** keeps the original
 picture, and **Restore automatic match** removes a manual choice. Review uncertain
-turns, including fitted speech that crosses a cut. Studio renders confirmed windows
-with **Confirm & render lip sync** and reuses unchanged rendered windows. The separate
+turns, including fitted speech that crosses a cut.
+
+Before rendering, choose an **Engine** in **Render settings**:
+
+- **MiniMax H3** (default): runs H3's ComfyUI lower-face inpainting graph with
+  **Denoise strength** and **Mask feather**, matching full-scene lighting well.
+- **MuseTalk 1.5 · Fast**: single-step 256×256 latent inpainting for fast batch
+  dubbing, with **Mouth box shift** (`-15` to `+15 px`) and **Mask feather**.
+- **LatentSync 1.6 · Quality**: 512×512 Whisper-conditioned latent diffusion
+  trained specifically for video-to-video lip sync, with **Diffusion steps**,
+  **Guidance scale**, and **Mask feather**.
+
+Studio renders confirmed windows with **Confirm & render lip sync** and caches
+unchanged rendered windows separately per engine and settings. The separate
 `.lipsync.mp4` preserves the dubbed audio, optional original soundtrack and subtitles.
 
 ## 5 · Result
@@ -546,6 +558,13 @@ choice.
   soon as the words are back. The first start compiles FlashInfer's NVFP4
   kernels with CUDA 13's nvcc. A reply without valid word timings, or cut off,
   fails the analysis so it can be retried.
+- Lip-sync engines **MuseTalk 1.5** and **LatentSync 1.6** run in `h3/lip-sync-venv`
+  (`H3_LIP_SYNC_VENV`, pinned in `h3_requirements.py` with `diffusers==0.32.2` and
+  source checkouts beside it under `h3/lip-sync-venv-src`), separate from ComfyUI's
+  `>=0.36` environment and installed on first use with `uv` or baked into the Modal
+  image. Model checkpoints download lazily on first use into
+  `ComfyUI/models/dubbing/lip_sync`, and the worker exits automatically whenever H3,
+  Drama 3, or other GPU jobs claim the GPU.
 - Sessions (source copy, soundtrack and stems, references, lines) live in
   `.h3-workspace/dubbing/<session>`. Sessions untouched for 14 days are removed
   when a new one starts.

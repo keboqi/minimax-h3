@@ -37,6 +37,7 @@ from h3_app.workflows.lip_sync import (
     validate_lip_sync_window,
 )
 
+from . import lip_sync_runtime
 from .alignment import FITTED_AUDIO_RATE, open_alignment
 from .lip_sync_match import (
     ActiveSpeakerScanner,
@@ -60,6 +61,11 @@ DEFAULT_MAX_GAP_SECONDS = 0.8
 DEFAULT_MAX_WINDOW_SECONDS = 12.0
 DEFAULT_MIN_FACE_SIZE = 0.0
 DEFAULT_MAX_FACE_SIZE = 1.0
+LIP_SYNC_ENGINES = ("h3", "musetalk", "latentsync")
+DEFAULT_LIP_SYNC_ENGINE = "h3"
+DEFAULT_MUSETALK_BBOX_SHIFT = 0
+DEFAULT_LATENTSYNC_STEPS = 20
+DEFAULT_LATENTSYNC_GUIDANCE = 1.5
 _MIN_TURN_SECONDS = 1.0 / FPS
 WINDOW_CACHE_DIR = "lip_sync_cache"
 REPORT_FILE = "lip_sync_report.json"
@@ -71,6 +77,43 @@ _NO_FACE_MARKERS = (
     "no faces detected",
     "no editable pixels",
 )
+
+
+def validate_lip_sync_engine(engine: str | None) -> str:
+    """Validate and normalize a lip-sync rendering engine name."""
+    normalized = DEFAULT_LIP_SYNC_ENGINE if engine is None else str(engine).strip().lower()
+    if normalized not in LIP_SYNC_ENGINES:
+        raise H3Error(f"Unsupported lip-sync engine: {engine!r}. Choose one of {', '.join(LIP_SYNC_ENGINES)}.")
+    return normalized
+
+
+def _finite_number(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise H3Error(f"{name} must be a number.")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise H3Error(f"{name} must be a number.") from exc
+    if not math.isfinite(parsed):
+        raise H3Error(f"{name} must be a finite number.")
+    return parsed
+
+
+def validate_lip_sync_options(
+    *,
+    bbox_shift: Any = None,
+    inference_steps: Any = None,
+    guidance_scale: Any = None,
+) -> dict[str, Any]:
+    """Validate and clamp optional engine-specific lip-sync parameters."""
+    options: dict[str, Any] = {}
+    if bbox_shift is not None:
+        options["bbox_shift"] = max(-15, min(15, int(round(_finite_number(bbox_shift, "Mouth box shift")))))
+    if inference_steps is not None:
+        options["inference_steps"] = max(5, min(50, int(round(_finite_number(inference_steps, "Diffusion steps")))))
+    if guidance_scale is not None:
+        options["guidance_scale"] = max(1.0, min(3.0, _finite_number(guidance_scale, "Guidance scale")))
+    return options
 
 
 @dataclass(frozen=True)
@@ -500,9 +543,17 @@ def plan_lip_sync_windows(
     return windows
 
 
-def _extract_window_slice(source: Path, window: LipSyncWindow, destination: Path, *, timeout: int = 180) -> Path:
-    """Slice a single 24 fps CFR video window, cloning the last frame to match H3's 17k+5 grid."""
-    pad_frames = max(0, window.render_frames - window.source_frames)
+def _extract_window_slice(
+    source: Path,
+    window: LipSyncWindow,
+    destination: Path,
+    *,
+    pad: bool = True,
+    timeout: int = 180,
+) -> Path:
+    """Slice a single 24 fps CFR video window, optionally cloning trailing frames to H3's grid."""
+    target_frames = window.render_frames if pad else window.source_frames
+    pad_frames = max(0, target_frames - window.source_frames) if pad else 0
     duration = max(window.source_frames / FPS, window.end - window.start)
     # Fast-seek 2s before the window, then frame-accurately trim inside the filtergraph
     # so the slice aligns to the exact same frame as assemble_lip_sync_video.
@@ -522,7 +573,7 @@ def _extract_window_slice(source: Path, window: LipSyncWindow, destination: Path
         "-i", str(source),
         "-an", "-sn",
         "-vf", ",".join(filters),
-        "-frames:v", str(window.render_frames),
+        "-frames:v", str(target_frames),
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "14",
         "-pix_fmt", "yuv420p",
         str(destination),
@@ -649,11 +700,14 @@ def window_cache_key(
     strength: float,
     seed: int,
     refinement: dict[str, Any],
+    engine: str = DEFAULT_LIP_SYNC_ENGINE,
+    engine_options: dict[str, Any] | None = None,
 ) -> str:
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": 4,  # apply temporal and tracking opacity only at stitch time
+        "version": 5,  # engine-namespaced per-window render cache
+        "engine": str(engine),
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [
             window.shot_index, window.speaker, window.first_frame, window.source_frames,
@@ -664,6 +718,8 @@ def window_cache_key(
         "refinement": refinement,
         "dialogue_sha256": hashlib.sha256(np.ascontiguousarray(dialogue).tobytes()).hexdigest(),
     }
+    if engine_options:
+        payload["engine_options"] = engine_options
     raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
 
@@ -733,6 +789,7 @@ def _save_lip_sync_report(
     *,
     output: Path,
     backend: str,
+    engine: str = DEFAULT_LIP_SYNC_ENGINE,
     total_windows: int,
     cached_windows: int,
     skipped_windows: int,
@@ -746,6 +803,7 @@ def _save_lip_sync_report(
     report = {
         "output": output.name,
         "backend": backend,
+        "engine": engine,
         "total_windows": total_windows,
         "cached_windows": cached_windows,
         "rendered_windows": max(0, total_windows - cached_windows - skipped_windows),
@@ -1052,10 +1110,124 @@ def detect_lip_sync_plan(
     yield plan
 
 
+def _engine_options(
+    engine: str,
+    *,
+    feather: int,
+    bbox_shift: int,
+    inference_steps: int,
+    guidance_scale: float,
+) -> dict[str, Any]:
+    if engine == "musetalk":
+        return {"feather": int(feather), "bbox_shift": int(bbox_shift)}
+    if engine == "latentsync":
+        return {
+            "feather": int(feather),
+            "inference_steps": int(inference_steps),
+            "guidance_scale": round(float(guidance_scale), 4),
+        }
+    return {}
+
+
+def _render_window_via_worker(
+    *,
+    engine: str,
+    window: LipSyncWindow,
+    slice_path: Path,
+    wav_path: Path,
+    output_path: Path,
+    feather: int,
+    seed: int,
+    bbox_shift: int,
+    inference_steps: int,
+    guidance_scale: float,
+    runtime: Any,
+    free_gpu: Any,
+    hf_token: str | None,
+) -> Path:
+    payload: dict[str, Any] = {
+        "video_path": str(slice_path),
+        "audio_path": str(wav_path),
+        "output_path": str(output_path),
+        "source_frames": window.source_frames,
+        "fps": FPS,
+        "active_start_frame": window.active_start_frame,
+        "active_end_frame": window.active_end_frame,
+        "face_target": list(window.face_target) if window.face_target is not None else None,
+        "feather": int(feather),
+    }
+    if engine == "musetalk":
+        payload["bbox_shift"] = int(bbox_shift)
+    else:
+        payload.update(
+            seed=int(seed),
+            inference_steps=int(inference_steps),
+            guidance_scale=float(guidance_scale),
+        )
+    reply = lip_sync_runtime.run(
+        f"render_{engine}",
+        payload,
+        runtime,
+        free_gpu=free_gpu,
+        hf_token=hf_token,
+    )
+    rendered = Path(reply.get("output_path") or output_path)
+    if not rendered.is_file():
+        raise H3Error(f"Lip-sync worker completed {engine}, but its output could not be located.")
+    return rendered
+
+
+def _render_window_via_comfy(
+    *,
+    index: int,
+    total: int,
+    window: LipSyncWindow,
+    slice_path: Path,
+    wav_path: Path,
+    services: GenerationServices,
+    models: Any,
+    config: dict[str, Any],
+    crop_size: int,
+    seed: int,
+    strength: float,
+    feather: int,
+) -> Iterator[str]:
+    staged_video = services.media.stage_file(str(slice_path), "lip_sync")
+    staged_dialogue = services.media.stage_file(str(wav_path), "lip_sync")
+    client_id = uuid4().hex
+    graph = build_auto_lip_sync_graph(
+        video=staged_video,
+        dialogue=staged_dialogue,
+        frames=window.render_frames,
+        models=models,
+        refinement=config,
+        output_prefix=f"dubbing/.lip-sync-window/{client_id}",
+        crop_size=crop_size,
+        seed=seed,
+        strength=strength,
+        active_start=window.active_start_frame,
+        active_end=window.active_end_frame,
+        face_target=window.face_target,
+        feather=feather,
+    )
+    yield f"Rendering lip-sync window {index}/{total}"
+    check_cancelled()
+    queued_at = time.time()
+    prompt_id = services.execution.submit_prompt(graph, client_id)
+    for stage, _completed, _total, _step, _step_total in services.execution.poll_comfy_progress(prompt_id, graph):
+        check_cancelled()
+        yield f"Window {index}/{total}: {stage}"
+    rendered_path = services.media.resolve_output(services.execution.wait_for_history(prompt_id), queued_at)
+    check_cancelled()
+    if not rendered_path.name.startswith(f"{client_id}_"):
+        raise H3Error(f"Window {index}/{total} finished, but its output could not be located.")
+    return rendered_path
+
+
 def render_dub_lip_sync(
     *,
     dub: Path,
-    services: GenerationServices,
+    services: GenerationServices | None,
     speaker: str | None = None,
     refinement: dict[str, Any] | None = None,
     crop_size: int = DEFAULT_CROP_SIZE,
@@ -1074,9 +1246,25 @@ def render_dub_lip_sync(
     source_video: Path | None = None,
     min_face_size: float | None = None,
     max_face_size: float | None = None,
+    engine: str = DEFAULT_LIP_SYNC_ENGINE,
+    bbox_shift: int = DEFAULT_MUSETALK_BBOX_SHIFT,
+    inference_steps: int = DEFAULT_LATENTSYNC_STEPS,
+    guidance_scale: float = DEFAULT_LATENTSYNC_GUIDANCE,
+    runtime: Any = None,
+    free_gpu: Any = None,
+    hf_token: str | None = None,
 ) -> Iterator[str | Path]:
-    """Automatically scan shots, match speakers, render H3 mouth patches (cached per window), and assemble MP4."""
+    """Automatically scan shots, match speakers, render lip-sync patches (cached per window), and assemble MP4."""
     check_cancelled()
+    engine = validate_lip_sync_engine(engine)
+    validated_options = validate_lip_sync_options(
+        bbox_shift=bbox_shift,
+        inference_steps=inference_steps,
+        guidance_scale=guidance_scale,
+    )
+    bbox_shift = validated_options["bbox_shift"]
+    inference_steps = validated_options["inference_steps"]
+    guidance_scale = validated_options["guidance_scale"]
     min_size, max_size = validate_face_size_range(min_face_size, max_face_size)
     if reviewed_plan is None:
         for update in detect_lip_sync_plan(
@@ -1106,10 +1294,22 @@ def render_dub_lip_sync(
     if filtered_windows > 0:
         yield f"Filtered {filtered_windows} window(s) outside face size range ({len(windows)} to render)"
 
-    models = services.models.load_model_config()
-    ensure_keys = getattr(services.models, "ensure_model_keys", None)
-    if callable(ensure_keys):
-        ensure_keys(("face_yolov8m",))
+    is_h3 = engine == "h3"
+    models = None
+    free_gpu_cb = None
+    if is_h3:
+        if services is None:
+            raise H3Error("Generation services are required for H3 lip sync.")
+        lip_sync_runtime.stop()
+        models = services.models.load_model_config()
+        ensure_keys = getattr(services.models, "ensure_model_keys", None)
+        if callable(ensure_keys):
+            ensure_keys(("face_yolov8m",))
+    else:
+        if runtime is None:
+            raise H3Error("Lip sync runtime is not configured.")
+        free_gpu_cb = free_gpu or (services.models.unload_comfy_models if services is not None else (lambda: None))
+
     rendered_windows: list[tuple[LipSyncWindow, Path]] = []
     cached_hits = 0
     skipped_windows = 0
@@ -1120,18 +1320,33 @@ def render_dub_lip_sync(
         total = len(windows)
         for index, window in enumerate(windows, start=1):
             check_cancelled()
-            dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, window.render_frames)
+            frame_count = window.render_frames if is_h3 else window.source_frames
+            dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, frame_count)
             config = {
                 **(refinement or {}),
-                "_source_duration": window.render_frames / FPS,
+                "_source_duration": frame_count / FPS,
                 "_feather": int(feather),
             }
+            options = None if is_h3 else _engine_options(
+                engine,
+                feather=feather,
+                bbox_shift=bbox_shift,
+                inference_steps=inference_steps,
+                guidance_scale=guidance_scale,
+            )
             window_seed = seed + window.first_frame
             cache_path = None
             if use_cache:
                 key = window_cache_key(
-                    dub, window, dialogue,
-                    crop_size=crop_size, strength=strength, seed=window_seed, refinement=config,
+                    dub,
+                    window,
+                    dialogue,
+                    crop_size=crop_size if is_h3 else 0,
+                    strength=strength if is_h3 else 0.0,
+                    seed=window_seed,
+                    refinement=config,
+                    engine=engine,
+                    engine_options=options,
                 )
                 cache_path = cache_dir / f"{key}.mp4"
                 if cache_path.is_file() and cache_path.stat().st_size > 0:
@@ -1143,44 +1358,51 @@ def render_dub_lip_sync(
             yield f"Preparing lip-sync window {index}/{total}"
             wav_path = work_dir / f"window_{index:03d}.wav"
             wav_path.write_bytes(encode_wav(dialogue, FITTED_AUDIO_RATE))
-            slice_path = _extract_window_slice(dub, window, work_dir / f"window_{index:03d}.mp4")
+            slice_path = _extract_window_slice(dub, window, work_dir / f"window_{index:03d}.mp4", pad=is_h3)
 
-            staged_video = services.media.stage_file(str(slice_path), "lip_sync")
-            staged_dialogue = services.media.stage_file(str(wav_path), "lip_sync")
-            client_id = uuid4().hex
-            graph = build_auto_lip_sync_graph(
-                video=staged_video,
-                dialogue=staged_dialogue,
-                frames=window.render_frames,
-                models=models,
-                refinement=config,
-                output_prefix=f"dubbing/.lip-sync-window/{client_id}",
-                crop_size=crop_size,
-                seed=window_seed,
-                strength=strength,
-                active_start=window.active_start_frame,
-                active_end=window.active_end_frame,
-                face_target=window.face_target,
-                feather=feather,
-            )
-            yield f"Rendering lip-sync window {index}/{total}"
-            check_cancelled()
-            queued_at = time.time()
             try:
-                prompt_id = services.execution.submit_prompt(graph, client_id)
-                for stage, _completed, _total, _step, _step_total in services.execution.poll_comfy_progress(prompt_id, graph):
+                if is_h3:
+                    assert services is not None
+                    rendered_path = yield from _render_window_via_comfy(
+                        index=index,
+                        total=total,
+                        window=window,
+                        slice_path=slice_path,
+                        wav_path=wav_path,
+                        services=services,
+                        models=models,
+                        config=config,
+                        crop_size=crop_size,
+                        seed=window_seed,
+                        strength=strength,
+                        feather=feather,
+                    )
+                else:
+                    yield f"Rendering lip-sync window {index}/{total} ({engine})"
                     check_cancelled()
-                    yield f"Window {index}/{total}: {stage}"
-                rendered_path = services.media.resolve_output(services.execution.wait_for_history(prompt_id), queued_at)
+                    rendered_path = _render_window_via_worker(
+                        engine=engine,
+                        window=window,
+                        slice_path=slice_path,
+                        wav_path=wav_path,
+                        output_path=work_dir / f"rendered_{index:03d}.mp4",
+                        feather=feather,
+                        seed=window_seed,
+                        bbox_shift=bbox_shift,
+                        inference_steps=inference_steps,
+                        guidance_scale=guidance_scale,
+                        runtime=runtime,
+                        free_gpu=free_gpu_cb,
+                        hf_token=hf_token,
+                    )
+                    check_cancelled()
             except Exception as exc:
                 if _is_no_face_error(exc):
                     skipped_windows += 1
                     yield f"Window {index}/{total}: no face detected, keeping original frames"
                     continue
                 raise
-            check_cancelled()
-            if not rendered_path.name.startswith(f"{client_id}_"):
-                raise H3Error(f"Window {index}/{total} finished, but its output could not be located.")
+
             if cache_path is not None:
                 try:
                     rendered_path = _store_cached_window(rendered_path, cache_path)
@@ -1195,7 +1417,7 @@ def render_dub_lip_sync(
         destination = output or dub.with_name(f"{dub.stem}.lipsync.mp4")
         assembled = assemble_lip_sync_video(dub, rendered_windows, destination)
         _save_lip_sync_report(
-            dub, output=assembled, backend=backend,
+            dub, output=assembled, backend=backend, engine=engine,
             total_windows=len(windows), cached_windows=cached_hits,
             skipped_windows=skipped_windows, assignments=assignments,
             filtered_windows=filtered_windows, face_size_range=(min_size, max_size),

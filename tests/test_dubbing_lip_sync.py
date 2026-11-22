@@ -1,5 +1,6 @@
 """Frozen dialogue and graph wiring for a prepared H3 lip-sync shot."""
 
+import io
 import json
 from pathlib import Path
 import shutil
@@ -17,6 +18,7 @@ from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
     PLAN_FILE,
     REPORT_FILE,
+    _extract_window_slice,
     assemble_lip_sync_video,
     build_lip_sync_plan_payload,
     detect_lip_sync_plan,
@@ -28,8 +30,11 @@ from h3_app.dubbing.lip_sync import (
     render_lip_sync_preview,
     revise_lip_sync_plan,
     validate_face_size_range,
+    validate_lip_sync_engine,
+    window_cache_key,
 )
 from h3_app.dubbing.lip_sync_match import FaceTrack, Shot, ShotSpeakerAssignment, SourceScan, TrackObservation
+from h3_app.dubbing import lip_sync_worker
 from h3_app.dubbing.results import player_folder
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
@@ -685,3 +690,192 @@ class LipSyncTests(unittest.TestCase):
                 report2 = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
                 self.assertEqual(report2["total_windows"], 1)
                 self.assertEqual(report2["filtered_windows"], 1)
+
+    def test_validate_engine_and_cache_key_isolation(self):
+        self.assertEqual(validate_lip_sync_engine(None), "h3")
+        self.assertEqual(validate_lip_sync_engine(" MuseTalk "), "musetalk")
+        self.assertEqual(validate_lip_sync_engine("LATENTSYNC"), "latentsync")
+        with self.assertRaisesRegex(H3Error, "Unsupported lip-sync engine"):
+            validate_lip_sync_engine("ltx25")
+
+        win = LipSyncWindow("A", 0.0, 0.5, 0.0, 0.5, 0, 12, 22, 0, 12, (320, 240, 6), 0, 0.25, False)
+        audio = np.ones(12000, dtype=np.float32)
+        common = dict(crop_size=640, strength=0.7, seed=0, refinement={"_feather": 6})
+        k_h3 = window_cache_key(self.dub, win, audio, engine="h3", **common)
+        k_mt_0 = window_cache_key(self.dub, win, audio, engine="musetalk", engine_options={"bbox_shift": 0}, **common)
+        k_mt_5 = window_cache_key(self.dub, win, audio, engine="musetalk", engine_options={"bbox_shift": 5}, **common)
+        k_ls_20 = window_cache_key(
+            self.dub, win, audio, engine="latentsync", engine_options={"inference_steps": 20, "guidance_scale": 1.5}, **common
+        )
+        k_ls_30 = window_cache_key(
+            self.dub, win, audio, engine="latentsync", engine_options={"inference_steps": 30, "guidance_scale": 1.5}, **common
+        )
+        self.assertEqual(len({k_h3, k_mt_0, k_mt_5, k_ls_20, k_ls_30}), 5)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_extract_window_slice_pad_false_keeps_exact_source_frames(self):
+        root = self.dub.parent
+        src = root / "src.mp4"
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=2.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src),
+        ], check=True)
+        win = LipSyncWindow("A", 0.0, 0.5, 0.0, 0.5, 0, 12, 22, 0, 12)
+        unpadded = _extract_window_slice(src, win, root / "unpadded.mp4", pad=False)
+        padded = _extract_window_slice(src, win, root / "padded.mp4", pad=True)
+        self.assertEqual(probe_video_metadata(unpadded).frame_count, 12)
+        self.assertEqual(probe_video_metadata(padded).frame_count, 22)
+
+    def test_render_dub_lip_sync_dispatches_musetalk_and_latentsync_with_cache(self):
+        folder = player_folder(self.dub)
+        lines = [{"speaker": "A", "start": 0.1, "end": 0.6}]
+        spoken = {"0": [0.1, 0.6]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{"0": np.ones(round(0.5 * RATE), dtype=np.float32)})
+        track = FaceTrack(0, 0, 0.1, 0.6, (TrackObservation(0.35, (0.2, 0.2, 0.3, 0.3)),))
+        scan = SourceScan("fp", 1.5, 640, 480, 24.0, (), (Shot(0, 0.0, 1.5, (track,)),), "yolo-mediapipe")
+        assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "matched", 0, (0.35, 0.35), 0.35, "yolo-mediapipe", 0.9),
+        }
+        windows = plan_lip_sync_windows(
+            self.dub, 1.5, video_size=(640, 480), assignments=assignments, tracks={(0, 0): track}, require_assignment=True,
+        )
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
+        )
+        runtime = SimpleNamespace(output_dir=self.dub.parent, comfy_dir=self.dub.parent, script_dir=self.dub.parent)
+        free_gpu = Mock()
+        calls: list[tuple[str, dict]] = []
+        pad_flags: list[bool] = []
+
+        def fake_slice(_source, _window, destination, *, pad=True, **_kw):
+            pad_flags.append(pad)
+            destination.write_bytes(b"slice")
+            return destination
+
+        def fake_worker_run(op, payload, rt, *, free_gpu, hf_token=None, **_kw):
+            calls.append((op, payload))
+            self.assertIs(rt, runtime)
+            self.assertIsNotNone(free_gpu)
+            self.assertEqual(hf_token, "hf-secret")
+            out = Path(payload["output_path"])
+            out.write_bytes(f"{op}-rendered".encode("utf-8"))
+            return {"output_path": str(out), "frames": payload["source_frames"]}
+
+        def fake_assemble(_dub, rendered, destination, **_kw):
+            destination.write_bytes(b"assembled")
+            return destination
+
+        with patch("h3_app.dubbing.lip_sync._extract_window_slice", side_effect=fake_slice), \
+                patch("h3_app.dubbing.lip_sync.assemble_lip_sync_video", side_effect=fake_assemble), \
+                patch("h3_app.dubbing.lip_sync.lip_sync_runtime.run", side_effect=fake_worker_run):
+            with self.assertRaisesRegex(H3Error, "runtime is not configured"):
+                list(render_dub_lip_sync(dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk"))
+
+            list(render_dub_lip_sync(
+                dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk",
+                bbox_shift=4, feather=8, runtime=runtime, free_gpu=free_gpu, hf_token="hf-secret",
+            ))
+            self.assertEqual(pad_flags, [False])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "render_musetalk")
+            self.assertEqual(calls[0][1]["bbox_shift"], 4)
+            self.assertEqual(calls[0][1]["feather"], 8)
+            self.assertEqual(calls[0][1]["source_frames"], windows[0].source_frames)
+            self.assertEqual(calls[0][1]["face_target"], list(windows[0].face_target))
+            report = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
+            self.assertEqual(report["engine"], "musetalk")
+
+            # Second MuseTalk run with identical settings reuses cache without invoking worker.
+            list(render_dub_lip_sync(
+                dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk",
+                bbox_shift=4, feather=8, runtime=runtime, free_gpu=free_gpu, hf_token="hf-secret",
+            ))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))["cached_windows"], 1)
+
+            # Switching to LatentSync misses MuseTalk cache and passes diffusion parameters.
+            list(render_dub_lip_sync(
+                dub=self.dub, services=None, reviewed_plan=plan, engine="latentsync",
+                inference_steps=30, guidance_scale=2.0, feather=10, runtime=runtime, free_gpu=free_gpu, hf_token="hf-secret",
+            ))
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[1][0], "render_latentsync")
+            self.assertEqual(calls[1][1]["inference_steps"], 30)
+            self.assertEqual(calls[1][1]["guidance_scale"], 2.0)
+            self.assertEqual(calls[1][1]["feather"], 10)
+            self.assertEqual(json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))["engine"], "latentsync")
+
+            # No-face error skips gracefully and fails when zero windows render.
+            with patch("h3_app.dubbing.lip_sync.lip_sync_runtime.run", side_effect=RuntimeError("No detected face")):
+                with self.assertRaisesRegex(H3Error, "No faces were detected"):
+                    list(render_dub_lip_sync(
+                        dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk",
+                        use_cache=False, runtime=runtime, free_gpu=free_gpu,
+                    ))
+
+    def test_lip_sync_worker_pure_helpers_and_serve_protocol(self):
+        # select_target_face anchors on face_target and tracks across frames even with another face.
+        detections = [
+            [(10, 10, 110, 110), (400, 100, 500, 200)],
+            [(12, 12, 112, 112), (404, 102, 504, 202)],
+            [],  # brief occlusion
+            [(408, 104, 508, 204), (14, 14, 114, 114)],
+        ]
+        tracked = lip_sync_worker.select_target_face(detections, (452, 152, 1))
+        self.assertEqual(tracked[0], (400, 100, 500, 200))
+        self.assertEqual(tracked[1], (404, 102, 504, 202))
+        self.assertIsNone(tracked[2])
+        self.assertEqual(tracked[3], (408, 104, 508, 204))
+        self.assertEqual(lip_sync_worker.select_target_face([[], []], (100, 100, 0)), [None, None])
+
+        # Largest face chosen when face_target is None.
+        largest = lip_sync_worker.select_target_face(
+            [[(0, 0, 40, 40), (200, 200, 360, 360)], [(0, 0, 42, 42), (204, 204, 364, 364)]], None
+        )
+        self.assertEqual(largest, [(200, 200, 360, 360), (204, 204, 364, 364)])
+
+        # temporal_opacity_weights ramps at padded boundaries and keeps full-span active frames at 1.0.
+        padded_weights = lip_sync_worker.temporal_opacity_weights(12, 3, 9, ramp_frames=3)
+        self.assertEqual(padded_weights[:3], [0.0, 0.0, 0.0])
+        self.assertEqual(padded_weights[9:], [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(padded_weights[3], 1 / 3, places=4)
+        self.assertAlmostEqual(padded_weights[4], 2 / 3, places=4)
+        self.assertEqual(padded_weights[5:7], [1.0, 1.0])
+        self.assertAlmostEqual(padded_weights[7], 2 / 3, places=4)
+        self.assertAlmostEqual(padded_weights[8], 1 / 3, places=4)
+        self.assertEqual(lip_sync_worker.temporal_opacity_weights(5, 0, -1, ramp_frames=3), [1.0] * 5)
+
+        # resample_frame_indices maps endpoints and preserves monotonicity.
+        idx_up = lip_sync_worker.resample_frame_indices(24, 25)
+        self.assertEqual((len(idx_up), idx_up[0], idx_up[-1]), (25, 0, 23))
+        self.assertEqual(idx_up, sorted(idx_up))
+        self.assertEqual(lip_sync_worker.resample_frame_indices(10, 10), list(range(10)))
+
+        # serve() JSON-line loop handles progress, ok replies, and errors.
+        requests = [
+            json.dumps({"id": 1, "op": "render_musetalk", "progress": True}) + "\n",
+            json.dumps({"id": 2, "op": "unload"}) + "\n",
+            json.dumps({"id": 3, "op": "bogus"}) + "\n",
+        ]
+        replies = io.StringIO()
+
+        def fake_handle(worker_self, req):
+            if req["op"] == "render_musetalk":
+                worker_self.progress("Synthesizing")
+                worker_self._models["musetalk_v15"] = object()
+                return {"output_path": "out.mp4", "frames": 12}
+            if req["op"] == "unload":
+                return worker_self._unload(req.get("model"))
+            raise ValueError("bad op")
+
+        with patch.object(lip_sync_worker.Worker, "handle", fake_handle):
+            lip_sync_worker.serve(str(self.dub.parent), requests=requests, replies=replies)
+        lines = [json.loads(line) for line in replies.getvalue().splitlines()]
+        self.assertEqual(lines[0], {"id": 1, "event": "progress", "status": "Synthesizing"})
+        self.assertTrue(lines[1]["ok"])
+        self.assertEqual(lines[1]["loaded"], ["musetalk_v15"])
+        self.assertTrue(lines[2]["ok"])
+        self.assertEqual(lines[2]["loaded"], [])
+        self.assertFalse(lines[3]["ok"])
+        self.assertIn("ValueError: bad op", lines[3]["error"])

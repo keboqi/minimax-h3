@@ -72,6 +72,7 @@ DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 AUDIO_TOOLS_VENV = ROOT / "audio-tools-venv"
 DUB_TOOLS_VENV = ROOT / "dub-tools-venv"
+LIP_SYNC_VENV = ROOT / "lip-sync-venv"
 # Nemotron transcription: its vLLM environment in the image, compile caches and logs on the volume.
 NEMOTRON_VENV = ROOT / "nemotron-venv"
 NEMOTRON_DATA = DATA / "nemotron-serving"
@@ -148,6 +149,9 @@ from h3_requirements import (  # noqa: E402
     DUB_TOOLS_READY_MARKER,
     dub_tools_fingerprint,
     dub_tools_install_commands,
+    LIP_SYNC_READY_MARKER,
+    lip_sync_fingerprint,
+    lip_sync_install_commands,
     NEMOTRON_READY_MARKER,
     nemotron_fingerprint,
     nemotron_install_commands,
@@ -728,6 +732,14 @@ image = image.run_commands(
     f"{(DUB_TOOLS_VENV / DUB_TOOLS_READY_MARKER).as_posix()}",
 )
 
+# MuseTalk 1.5 and LatentSync 1.6 lip-sync backends share one isolated diffusers 0.32.2
+# environment beside ComfyUI. Model checkpoints download lazily on first use.
+image = image.run_commands(
+    *(f"CC=gcc CXX=g++ {shlex.join(command)}" for command in lip_sync_install_commands(LIP_SYNC_VENV)),
+    f"echo {lip_sync_fingerprint()} > "
+    f"{(LIP_SYNC_VENV / LIP_SYNC_READY_MARKER).as_posix()}",
+)
+
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
         image = image.add_local_file(
@@ -893,6 +905,7 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
             "H3_AUDIO_TOOLS_VENV": AUDIO_TOOLS_VENV.as_posix(),
             "H3_DUB_TOOLS_VENV": DUB_TOOLS_VENV.as_posix(),
+            "H3_LIP_SYNC_VENV": LIP_SYNC_VENV.as_posix(),
             "H3_NEMOTRON_VENV": NEMOTRON_VENV.as_posix(),
             "H3_NEMOTRON_DATA": NEMOTRON_DATA.as_posix(),
             "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
