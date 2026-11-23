@@ -71,3 +71,69 @@ test("Illustrate reloads untimed project plans and returns from Characters & pla
     if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument;
   }
 });
+
+test("How it's drawn shows Generate missing depth beside Depth model when stills lack depth", () => {
+  const oldWindow = globalThis.window, oldDocument = globalThis.document;
+  globalThis.window = {};
+  globalThis.document = {activeElement: null};
+  try {
+    const h = (tag, attrs = {}, ...children) => ({tag, ...attrs,
+      children: children.flat(Infinity).filter((child) => child != null && child !== false)});
+    const surfaces = new Map();
+    const $ = (id) => {
+      if (!surfaces.has(id)) surfaces.set(id, {children: [], open: id === "style-dialog",
+        contains: () => false,
+        querySelector: (selector) => selector === ".style-body" ? {scrollTop: 0} : null,
+        setAttribute(key, value) { this[key] = value; },
+        replaceChildren(...nodes) { this.children = nodes; }});
+      return surfaces.get(id);
+    };
+    const walk = (node) => typeof node === "object" ? [node, ...(node.children || []).flatMap(walk)] : [];
+    const text = (node) => typeof node === "object" ? (node.children || []).map(text).join("") : String(node);
+    const calls = [];
+    const state = {
+      boot: {
+        gpu: true,
+        video: {
+          engines: [{id: "qwen", label: "Qwen Image"}],
+          depth_models: [{id: "depthpro2-s", label: "Depth Pro 2 Small"}, {id: "depthpro2-l", label: "Depth Pro 2 Large"}],
+          default_depth_model: "depthpro2-s",
+          styles: {}, style_groups: [], style_uses: {}, custom_style: "Custom", limits: [1, 64],
+        },
+      },
+      project: {
+        name: "History",
+        result: {file: "mix.mp3"},
+        video: {
+          engine: "qwen", depth_model: "depthpro2-s", depth_missing: 2,
+          preset: "Custom", style: "", orientation: "landscape", limit: 2, continuity: false,
+          previews: {}, plan: {rows: [], subjects: []},
+        },
+      },
+      screen: "illustrate",
+      illustrateView: "shots",
+      shotPick: 0,
+      shotFilter: "all",
+    };
+    const video = createVideo({state, $, h, generateDepth: () => calls.push("depth")});
+    const depthButton = () => walk($("style-dialog")).find((node) => node.tag === "button" && text(node).includes("Generate missing depth"));
+
+    video.renderVideo();
+    assert.equal(text(depthButton()), "Generate missing depth (2)");
+    assert.equal(depthButton().disabled, false);
+    depthButton().onclick();
+    assert.deepEqual(calls, ["depth"]);
+
+    state.boot.gpu = false;
+    video.renderVideo();
+    assert.equal(depthButton().disabled, true);
+
+    state.boot.gpu = true;
+    state.project.video.depth_missing = 0;
+    video.renderVideo();
+    assert.equal(depthButton(), undefined);
+  } finally {
+    if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
+    if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument;
+  }
+});

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraFilter, cameraMotion, cameraTransform, cueElapsed, effectCues, effectsEnabled, paintEffects, preloadEffectDepths} from "../h3_ui/drama3/page/effects.js";
-import {layersToSets, setsToLayers} from "../h3_ui/drama3/page/effects_pass.js";
+import {cameraFilter, cameraMotion, cameraTransform, colorizeDepthRgba, cueElapsed, effectCues, effectsEnabled, paintEffects, preloadEffectDepths} from "../h3_ui/drama3/page/effects.js";
+import {createEffectsPass, layersToSets, setsToLayers} from "../h3_ui/drama3/page/effects_pass.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
@@ -400,5 +400,79 @@ test("camera-only shots with depth stay Camera only when WebGPU is unavailable",
     depthMeta: {inv_min: 0, inv_max: 0.5, depth_strength: 1},
   });
   assert.deepEqual(backends, [null]);
+});
+
+test("colorizeDepthRgba maps near inverse depth to bright warm tones and far depth to dark indigo", () => {
+  const pixels = new Uint8ClampedArray([
+    255, 255, 0, 255, // nearest (u = 1)
+    0, 0, 255, 255,   // farthest / sky (u = 0)
+  ]);
+  colorizeDepthRgba(pixels);
+  // Nearest pixel: bright warm yellow
+  assert.ok(pixels[0] > 240 && pixels[1] > 230 && pixels[3] === 255);
+  // Farthest pixel: deep dark indigo
+  assert.ok(pixels[4] < 25 && pixels[5] < 20 && pixels[6] > 30 && pixels[7] === 255);
+});
+
+test("shot effects edit popup toggles Show depth / Hide depth alongside Show segments", (t) => {
+  const makeNode = (tag) => ({
+    tag, style: {}, dataset: {}, children: [],
+    removeAttribute() {}, setAttribute(k, v) { this[k] = v; },
+    decode: () => Promise.resolve(),
+    getContext: () => null,
+    replaceChildren(...nodes) { this.children = nodes; },
+    querySelector: (selector) => selector === ".style-body" ? {scrollTop: 0} : null,
+    showModal() { this.open = true; },
+    close() { this.open = false; },
+  });
+  const previousDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const previousImg = Object.getOwnPropertyDescriptor(globalThis, "Image");
+  Object.defineProperty(globalThis, "document", {value: {createElement: makeNode}, configurable: true});
+  Object.defineProperty(globalThis, "Image", {value: class { set src(v) { this._src = v; } decode() { return Promise.resolve(); } }, configurable: true});
+  t.after(() => {
+    previousDoc ? Object.defineProperty(globalThis, "document", previousDoc) : delete globalThis.document;
+    previousImg ? Object.defineProperty(globalThis, "Image", previousImg) : delete globalThis.Image;
+  });
+
+  const h = (tag, attrs = {}, ...children) => ({tag, ...attrs,
+    children: children.flat(Infinity).filter((child) => child != null && child !== false)});
+  const walk = (node) => typeof node === "object" ? [node, ...(node.children || []).flatMap(walk)] : [];
+  const text = (node) => typeof node === "object" ? (node.children || []).map(text).join("") : String(node);
+  const dialog = makeNode("dialog");
+  const $ = (id) => id === "effect-pass-dialog" ? dialog : null;
+  const shot = {
+    shot_id: "shot_1", index: 0, image: "shot_1.jpg", segmented: true,
+    regions: [{id: "r1", label: "person", position: "center", url: "/mask/r1.png"}],
+    effects: [], default: [],
+  };
+  const state = {
+    boot: {gpu: true, video: {enhancement_presets: {}, enhancement_max_layers: 16}},
+    project: {
+      name: "History",
+      result: {sounds: []},
+      video: {
+        orientation: "landscape",
+        plan: {rows: [{index: 0, start: 0, end: 4, image: "/still/shot_1.jpg"}]},
+        stills: {shots: [{index: 0, shot_id: "shot_1", depth_url: "/depth/shot_1.png", depth_meta: {inv_min: 0, inv_max: 0.5}}]},
+        effect_enhancement: {shots: [shot]},
+      },
+    },
+  };
+  const pass = createEffectsPass({state, $, h, call: () => {}, copy: () => {}, writer: () => ({}), interrupt: () => {}, busy: () => false});
+  pass.open(shot);
+
+  const depthBtn = () => walk(dialog).find((n) => n.tag === "button" && (text(n) === "Show depth" || text(n) === "Hide depth"));
+  const stage = () => walk(dialog).find((n) => typeof n.class === "string" && n.class.includes("video-stage"));
+  assert.equal(text(depthBtn()), "Show depth");
+  assert.equal(stage()["data-show-depth"], "false");
+  assert.ok(walk(stage()).some((n) => n.class === "pass-depth-overlay"));
+
+  depthBtn().onclick();
+  assert.equal(text(depthBtn()), "Hide depth");
+  assert.equal(stage()["data-show-depth"], "true");
+
+  depthBtn().onclick();
+  assert.equal(text(depthBtn()), "Show depth");
+  assert.equal(stage()["data-show-depth"], "false");
 });
 

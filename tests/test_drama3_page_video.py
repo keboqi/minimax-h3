@@ -1385,6 +1385,38 @@ class Drama3PageVideoTests(unittest.TestCase):
             item.write_text(json.dumps(payload), encoding="utf-8")
         self.assertNotEqual(self.project()["video"]["effects_revision"], rev_before)
 
+    def test_generate_missing_depth_endpoint_and_model_switch(self):
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+
+        # Draw without depth services (simulating a historical project drawn before depth existed).
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual(self.project()["video"]["depth_missing"], 2)
+
+        # Enable GPU depth services and backfill missing depth via POST /project/video/depth.
+        self.export.deps.generation_services = lambda: self._depth_services(self.runtime.output_dir)
+        started = self.ok(self.client.post(f"{API}/project/video/depth", params=NAME))
+        self.assertEqual(started["video_run"]["kind"], "depth")
+        finished = self.wait()
+        self.assertIsNone(finished["error"])
+        self.assertEqual(finished["status"], "Depth maps ready (2).")
+        self.assertEqual(self.project()["video"]["depth_missing"], 0)
+
+        # Calling again when nothing is missing returns immediately with a message.
+        noop = self.ok(self.client.post(f"{API}/project/video/depth", params=NAME))
+        self.assertIn("already has depth", noop["message"])
+
+        # Switching Depth model makes the existing stills missing for the new model so they can be regenerated.
+        switched = self.ok(self.client.patch(f"{API}/project/video", params=NAME,
+                                             json={"video_depth_model": "depthpro2-l"}))["video"]
+        self.assertEqual(switched["depth_model"], "depthpro2-l")
+        self.assertEqual(switched["depth_missing"], 2)
+
+        self.ok(self.client.post(f"{API}/project/video/depth", params=NAME))
+        self.assertIsNone(self.wait()["error"])
+        self.assertEqual(self.project()["video"]["depth_missing"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

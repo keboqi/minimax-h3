@@ -250,8 +250,10 @@ motion for that project; turning it off clears the override. Existing plans stay
 effects are added or the shots are planned again.
 
 After drawing, Sound Stage automatically estimates metric depth maps using Apple Depth Pro 2 on the GPU
-server (configured with **Depth model** in **How it's drawn**, defaulting to `depthpro2-s`). Missing
-depth maps are also backfilled automatically when running **Enhance visual effects** or **Save to Media**
+server (configured with **Depth model** in **How it's drawn**, defaulting to `depthpro2-s`). For older
+projects drawn before depth was added, or after switching **Depth model**, use **Generate missing depth**
+beside **Depth model** in **How it's drawn** to estimate depth for the drawn stills without redrawing.
+Missing depth maps are also backfilled automatically when running **Enhance visual effects** or **Save to Media**
 on the GPU server. Depth automatically enhances full-frame camera moves with 2.5D parallax and
 thin-lens optical rack focus, gives fog/smoke/underwater/sunbeams depth attenuation and occlusion, adds
 3D normal relighting for warm glow and flicker, and lets **Enhance visual effects** occlude **Behind**

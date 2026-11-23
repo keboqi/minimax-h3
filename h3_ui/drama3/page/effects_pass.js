@@ -1,4 +1,4 @@
-import {preloadEffectDepths, preloadEffectMasks} from "./effects.js";
+import {paintDepthVisualization, preloadEffectDepths, preloadEffectMasks} from "./effects.js";
 import {EFFECT_CATEGORIES, openEffectPresetPopup} from "./effects_picker.js";
 import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} from "./stage.js";
 
@@ -101,11 +101,15 @@ function setAccentColor(set, colors, catalog) {
 
 export function createEffectsPass({state, $, h, call, copy, writer, interrupt, busy}) {
   let project, selected, mode, draftSets, pasted = "", includeManual = false;
-  let before = false, refine, frameTime = 0, showSegments = false, playFrame = null;
+  let before = false, refine, frameTime = 0, showSegments = false, showDepth = false, playFrame = null;
   const dialog = () => $("effect-pass-dialog");
   const presetDialog = () => $("effect-preset-dialog");
   const panel = () => state.project.video?.effect_enhancement;
   const rowOf = (shot) => state.project.video.plan.rows[shot.index];
+  const stillOf = (shot) => {
+    const row = rowOf(shot);
+    return (state.project.video?.stills?.shots || []).find((item) => item.index === row?.index || item.shot_id === shot.shot_id);
+  };
   const button = (label, onclick, disabled = false, extra = "") =>
     h("button", {type: "button", class: `btn btn-small ${extra}`.trim(), onclick, disabled}, label);
   const api = (action, body = {}) => call(`/project/video/effects/${action}`, body);
@@ -152,6 +156,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     refine = null;
     frameTime = 0;
     showSegments = false;
+    showDepth = false;
     if (!dialog().open) dialog().showModal();
     render(true);
   }
@@ -203,18 +208,22 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
         style: {"--seg-color": regionColor(index), "--seg-mask": maskUrl(region.url)},
       }))
       : [];
+    const stillShot = stillOf(shot);
+    const depthUrl = stillShot?.depth_url ?? null;
+    const depthOverlay = depthUrl ? h("canvas", {class: "pass-depth-overlay", "aria-hidden": "true"}) : null;
     const stage = h("div", {
       class: `video-stage pass-preview ${orientation === "portrait" ? "portrait" : ""}${activeRegion ? " has-focus-region" : ""}`,
       "data-show-segments": String(showSegments),
-    }, back, front, overlay, ...segOverlays);
+      "data-show-depth": String(Boolean(showDepth && depthUrl)),
+    }, back, front, overlay, depthOverlay, ...segOverlays);
+    if (showDepth && depthOverlay) paintDepthVisualization(depthOverlay, depthUrl);
     const duration = Math.max(0.05, row.end - row.start);
     const sounds = (state.project.result?.sounds || [])
       .filter((sound) => sound.start >= row.start && sound.start < row.end)
       .map((sound) => ({...sound, start: sound.start - row.start}));
-    const stillShot = (state.project.video?.stills?.shots || []).find((item) => item.index === row.index || item.shot_id === shot.shot_id);
     const [view] = stageTimeline([{start: 0, end: duration, index: row.index, fade: 0, url: row.image,
       effects: effects.map(({preset}) => preset), effect_layers: effects,
-      depth_url: stillShot?.depth_url ?? null,
+      depth_url: depthUrl,
       depth_meta: stillShot?.depth_meta ?? null}], sounds);
     const layers = {back, front, overlay};
     const formatTime = (t) => `${t.toFixed(1)} s / ${duration.toFixed(1)} s`;
@@ -675,14 +684,19 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     };
     const flatLayers = setsToLayers(draftSets, catalog);
     const countEffects = flatLayers.length;
+    const hasDepth = Boolean(stillOf(shot)?.depth_url);
     return [
       h("div", {class: "effects-picker-body pass-edit-grid"},
         h("section", {class: "effect-preview", "aria-label": "Layer preview"},
           h("div", {class: "effect-options-controls"},
             h("strong", {}, `Shot ${shot.index + 1}`),
-            shot.regions.length ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle", "aria-pressed": String(showSegments),
-              onclick: () => { showSegments = !showSegments; render(true); }},
-            showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null),
+            shot.regions.length || hasDepth ? h("div", {class: "pass-preview-toggles"},
+              hasDepth ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle", "aria-pressed": String(showDepth),
+                onclick: () => { showDepth = !showDepth; render(true); }},
+              showDepth ? "Hide depth" : "Show depth") : null,
+              shot.regions.length ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle", "aria-pressed": String(showSegments),
+                onclick: () => { showSegments = !showSegments; render(true); }},
+              showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null) : null),
           preview(shot, withMasks(shot, flatLayers)),
           shot.regions.length || canRefine ? h("div", {class: "pass-segments"},
             h("div", {class: "pass-segments-head"},

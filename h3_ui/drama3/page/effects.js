@@ -340,6 +340,49 @@ export function preloadEffectDepths(shots) {
   return preloadImagePool(depthImages, (shots || []).map((shot) => shot?.depth_url), { swallowErrors: true });
 }
 
+const DEPTH_PALETTE = [
+  [13, 8, 41],
+  [92, 26, 122],
+  [184, 55, 90],
+  [240, 124, 46],
+  [252, 242, 156],
+];
+
+/** Convert RG8-encoded inverse-depth RGBA pixels in-place into a readable near-bright false-color map. */
+export function colorizeDepthRgba(data) {
+  const maxIdx = DEPTH_PALETTE.length - 1;
+  for (let i = 0; i < data.length; i += 4) {
+    const u = ((data[i] << 8) | data[i + 1]) / 65535;
+    const t = Math.pow(Math.max(0, Math.min(1, u)), 0.7) * maxIdx;
+    const lo = Math.min(maxIdx - 1, Math.floor(t));
+    const f = t - lo;
+    const a = DEPTH_PALETTE[lo];
+    const b = DEPTH_PALETTE[lo + 1];
+    data[i] = Math.round(a[0] + (b[0] - a[0]) * f);
+    data[i + 1] = Math.round(a[1] + (b[1] - a[1]) * f);
+    data[i + 2] = Math.round(a[2] + (b[2] - a[2]) * f);
+    data[i + 3] = 255;
+  }
+  return data;
+}
+
+/** Decode and paint a shot's RG8 depth PNG onto ``canvas`` as a false-color depth overlay. */
+export async function paintDepthVisualization(canvas, depthUrl) {
+  if (!canvas || !depthUrl) return false;
+  await preloadEffectDepths([{ depth_url: depthUrl }]);
+  const img = depthImages.get(depthUrl)?.image;
+  if (!img?.naturalWidth || !img?.naturalHeight) return false;
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext?.("2d", { willReadFrequently: true });
+  if (!ctx) return false;
+  ctx.drawImage(img, 0, 0);
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  colorizeDepthRgba(frame.data);
+  ctx.putImageData(frame, 0, 0);
+  return true;
+}
+
 export function preloadEffectMasks(shots) {
   return preloadImagePool(maskImages, (shots || []).flatMap((shot) => (shot?.effect_layers || []).flatMap(layerMaskUrls)));
 }

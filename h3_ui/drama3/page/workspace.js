@@ -231,6 +231,8 @@ export function startWorkspace() {
   const drawImages = (only = "missing") => videoCall("/project/video/draw", {only});
   /** Draw style previews with the project's image model: "missing" or a list of preset names. */
   const drawPreviews = (presets = "missing") => videoCall("/project/video/preview", {presets});
+  /** Estimate missing depth maps for drawn stills with the selected depth model. */
+  const generateDepth = () => videoCall("/project/video/depth", {});
 
   /** Change the plan (a shot's prompt or transition, or how a subject looks); drawn shots it touches show as changed. */
   function editPlan(path, body) {
@@ -1451,6 +1453,7 @@ export function startWorkspace() {
     planShots,
     drawImages,
     drawPreviews,
+    generateDepth,
     interruptVideo,
     copyPlannerPrompt,
     applyPlannerReply,

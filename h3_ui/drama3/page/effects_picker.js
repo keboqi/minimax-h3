@@ -1,4 +1,4 @@
-import {paintEffectPreview} from "./effects.js";
+import {paintDepthVisualization, paintEffectPreview} from "./effects.js";
 
 const CATEGORIES = [
   {id: "camera", label: "Camera movement", scene: "Forest bridge"},
@@ -69,7 +69,7 @@ function createHoverController(canPlay) {
   return {playHover, stopHover};
 }
 
-export function openEffectsPicker({h, dialog, row, orientation, presets, save, restoreFocus}) {
+export function openEffectsPicker({h, dialog, row, orientation, presets, depthUrl = null, save, restoreFocus}) {
   const initial = row.effects || [];
   const selected = new Map(initial.map((id) => [presets[id]?.kind, id]));
   const choices = Object.entries(presets);
@@ -78,6 +78,8 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   let frame = null;
   let sourceReady = false;
   let sourceRequest = 0;
+  let showDepth = false;
+  let depthPainted = false;
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 
   const title = h("h2", {id: "effects-title"}, `Visual effects · Shot ${row.index + 1}`);
@@ -86,7 +88,10 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   const chips = h("div", {class: "effect-summary-chips", "aria-live": "polite"});
   const image = h("img", {alt: ""});
   const canvas = h("canvas", {width: 640, height: 360, "aria-hidden": "true"});
-  const stage = h("div", {class: "effect-preview-frame"}, image, canvas);
+  const depthCanvas = depthUrl ? h("canvas", {class: "pass-depth-overlay", "aria-hidden": "true"}) : null;
+  const stage = h("div", {class: "effect-preview-frame", "data-show-depth": "false"}, image, canvas, depthCanvas);
+  const depthToggle = depthUrl ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle",
+    "aria-pressed": "false", onclick: toggleDepth}, "Show depth") : null;
   const shotLabel = `Shot ${row.index + 1}`;
   const shotOption = h("option", {value: "shot", selected: Boolean(row.image), disabled: !row.image},
     row.image ? shotLabel : `${shotLabel} · No image yet`);
@@ -197,6 +202,25 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     setTime(previewTime(active));
   }
 
+  function syncDepthOverlay() {
+    if (!depthToggle || !depthCanvas) return;
+    const isShot = source.value === "shot";
+    const visible = Boolean(showDepth && isShot);
+    stage.dataset.showDepth = String(visible);
+    depthToggle.disabled = saving || !isShot;
+    depthToggle.setAttribute("aria-pressed", String(visible));
+    depthToggle.textContent = visible ? "Hide depth" : "Show depth";
+    if (visible && !depthPainted) {
+      depthPainted = true;
+      paintDepthVisualization(depthCanvas, depthUrl);
+    }
+  }
+
+  function toggleDepth() {
+    showDepth = !showDepth;
+    syncDepthOverlay();
+  }
+
   function updateControls() {
     const active = effects();
     const unchanged = active.length === initial.length && active.every((id) => initial.includes(id));
@@ -204,6 +228,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     scrubber.disabled = saving || !sourceReady || !active.length;
     reset.disabled = saving || unchanged;
     apply.disabled = saving || unchanged;
+    syncDepthOverlay();
   }
 
   function resetEffects() {
@@ -309,7 +334,8 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     h("div", {class: "style-body effects-picker-body"},
       h("section", {class: "effect-preview", "aria-label": "Combined preview"},
         h("div", {class: "effect-preview-controls"},
-          h("label", {class: "field"}, h("span", {class: "label"}, "Preview source"), source)),
+          h("label", {class: "field"}, h("span", {class: "label"}, "Preview source"), source),
+          depthToggle),
         stage, timeline, chips, sourceStatus, hint),
       h("section", {class: "effect-options", "aria-label": "Effect options"},
         h("div", {class: "effect-options-controls"},

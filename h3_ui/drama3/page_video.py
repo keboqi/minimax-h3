@@ -49,7 +49,7 @@ LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
 SUBTITLE_SIZES = (50, 200, 10)
 VIDEO_RANGES = {"video_limit": LIMITS, "video_subtitle_size": SUBTITLE_SIZES}
-PLAN, DRAW, SAVE, PREVIEW = "plan", "draw", "save", "preview"
+PLAN, DRAW, SAVE, PREVIEW, DEPTH = "plan", "draw", "save", "preview", "depth"
 VideoRun = PageRun
 
 
@@ -261,6 +261,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
     stills = None
     scene = None
     enhancement = None
+    depth_missing = 0
     if result or data.get("visual_plan"):
         try:
             audio, mix_settings = planning_mix(name, data, result, export, store=store, result_snapshot=result_snapshot)
@@ -268,7 +269,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
             # A cleared script must remain editable even when it still has an old plan.
             return {**settings, "timing_pending": not bool(result),
                     "plan": {**plan, "saved": bool(data.get("visual_plan")), "error": str(exc)},
-                    "stills": None, "latest": None, "previews": {}}
+                    "stills": None, "latest": None, "previews": {}, "depth_missing": 0}
         timing_error = mix_settings.get("visual_timing_error")
         saved = visuals.read_plan(audio)
         current = saved if saved is not None and saved.get("limit") == settings["limit"] else None
@@ -287,8 +288,12 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
                                        depth_model=settings["depth_model"])
         sounds = timeline_payload(mix_settings)["sounds"] if items else []
         enhancement = effects_pass.public_pass(name, items, sounds, data)
+        folder = visuals.stills_dir(audio, root)
+        if record:
+            images = [item["image"] for item in record["shots"] if item.get("image")]
+            depth_missing = len(effect_depth.missing_stills(folder, images, settings["depth_model"]))
         stills = stills_payload(name, record, plan["rows"], items,
-                                folder=visuals.stills_dir(audio, root),
+                                folder=folder,
                                 depth_model=settings["depth_model"],
                                 style_preset=settings["preset"])
         scene = effect_scene(stills, mix_settings)
@@ -304,7 +309,8 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
     previews = {preset: preview_url(settings["engine"], file)
                 for preset, file in visuals.preview_images(root, settings["engine"]).items()}
     return {**settings, **({"timing_pending": True} if not result else {}), "plan": plan, "stills": stills,
-            "latest": latest, "previews": previews, "effects_revision": scene.revision if scene else None,
+            "latest": latest, "previews": previews, "depth_missing": depth_missing,
+            "effects_revision": scene.revision if scene else None,
             "effect_enhancement": enhancement}
 
 
@@ -379,7 +385,10 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
             pass
         if count and run.kind != SAVE:
-            run.status = f"{previous_status} Depth maps ready ({count})." if previous_status else f"Depth maps ready ({count})."
+            if run.kind == DEPTH:
+                run.status = f"Depth maps ready ({count})."
+            else:
+                run.status = f"{previous_status} Depth maps ready ({count})." if previous_status else f"Depth maps ready ({count})."
             run.revision += 1
         elif previous_status:
             run.status = previous_status
@@ -623,6 +632,43 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         values = [settings["engine"], json.dumps(presets), *export.values(owner)]
         return start_drawing(request, owner, name, PREVIEW, export.preview, visuals.PREVIEW_INPUT_NAMES, values)
 
+    @app.post(f"{api}/project/video/depth", include_in_schema=False)
+    @guarded
+    def generate_depth(name: str, request: Request):
+        """Estimate missing Depth Pro 2 depth maps for the mix's drawn stills using the selected Depth model."""
+        if not gpu:
+            raise H3Error("Open Sound Stage on the GPU server to estimate depth.")
+        get_services = getattr(export.deps, "generation_services", None)
+        if not callable(get_services) or get_services() is None:
+            raise H3Error("Depth estimation isn't available here.")
+        owner = owner_of(request)
+        session = session_of(request)
+        root = export.deps.runtime_config().output_dir
+        with runs.lock:
+            check_available(owner, name)
+            data, result = project(name)
+            if not result:
+                raise H3Error("Speak the project and draw shots first.")
+            settings = video_settings(data, export.engines)
+            record = visuals.read_stills(result, root)
+            if record is None or not record.get("shots"):
+                raise H3Error("Draw the shots first: depth is estimated from the drawn images.")
+            folder = visuals.stills_dir(result, root)
+            images = [item["image"] for item in record["shots"] if item.get("image")]
+            missing = effect_depth.missing_stills(folder, images, settings["depth_model"])
+            if not missing:
+                return {**payload(owner, name), "message": "Every drawn shot already has depth for this model."}
+            run = VideoRun(owner, name, DEPTH)
+            run.status = "Estimating shot depth with Depth Pro 2…"
+
+            def work(run):
+                count = ensure_depth_for_mix(run, owner, session, result, settings["depth_model"])
+                if not count and not run.stop_requested:
+                    run.status = "Every drawn shot already has depth for this model."
+
+            runs.start(run, work)
+        return {"video_run": run.public(None)}
+
     @app.get(f"{api}/video/preview", include_in_schema=False)
     def preview_file(engine: str, file: str, request: Request):
         """A kept style preview; only files the model's previews record names."""
@@ -729,11 +775,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             return {"message": "Planning can't be stopped; its reply is dropped if you plan again or paste a plan."}
         if run.kind == SAVE:
             return {"message": "Saving to Media can't be stopped; it finishes in a moment."}
-        if run.kind in EFFECT_RUNS:
+        if run.kind in EFFECT_RUNS or run.kind == DEPTH:
             with runs.lock:
                 run.stop_requested = True
             if interrupt is None or run.job_id is None:
-                return {"message": "Stopping effects enhancement."}
+                return {"message": "Stopping depth estimation." if run.kind == DEPTH else "Stopping effects enhancement."}
         if interrupt is None or run.job_id is None:
             return {"message": "The run is still starting. Try again in a moment."}
         return {"message": interrupt(session_of(request), family=run.family, job_id=run.job_id)}

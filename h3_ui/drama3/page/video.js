@@ -8,7 +8,7 @@ const startOf = (shot) => shot.start;
 
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
-export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, interruptVideo, copyPlannerPrompt, applyPlannerReply, effectCall, copyEffectsPrompt, writerService, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
+export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, generateDepth, interruptVideo, copyPlannerPrompt, applyPlannerReply, effectCall, copyEffectsPrompt, writerService, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
   const canDraw = () => Boolean(state.boot.gpu || state.project?.video?.engine === "gpt_image");
   const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
   const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
@@ -60,7 +60,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       return h("a", {class: "btn btn-small", id: "video-file", href: video.latest.url, download: video.latest.file,
                      title: "This video is in Media too."}, "Download video");
     }
-    return h("button", {type: "button", class: "btn btn-small", id: "video-file", disabled: saving || videoRunning("draw"),
+    return h("button", {type: "button", class: "btn btn-small", id: "video-file", disabled: saving || videoRunning("draw") || videoRunning("depth"),
                         title: "Render a 720p video with the mix from these images, with the selected visual effects and subtitles, and add it to Media",
                         onclick: () => saveVideoToMedia(includeEffects)}, saving ? "Saving to Media…" : "Save to Media");
   }
@@ -355,10 +355,14 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
         h("button", {type: "button", id: "shot-effects", class: "effect-summary", "aria-haspopup": "dialog",
           "aria-controls": enhancement?.segmented ? "effect-pass-dialog" : "effects-dialog", disabled: busy,
-          onclick: () => enhancement?.segmented ? effectPass.open(enhancement) :
+          onclick: () => {
+            if (enhancement?.segmented) { effectPass.open(enhancement); return; }
+            const stillShot = (video.stills?.shots || []).find((item) => item.index === row.index || item.shot_id === row.shot_id);
             openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
-            save: (effects) => editShot({index: row.index, effects}),
-            restoreFocus: () => $("shot-effects")?.focus()})},
+              depthUrl: stillShot?.depth_url ?? null,
+              save: (effects) => editShot({index: row.index, effects}),
+              restoreFocus: () => $("shot-effects")?.focus()});
+          }},
           h("span", {class: "effect-summary-head"},
             h("strong", {}, "Visual effects", effectChips.length > 1 ? h("span", {class: "muted small"}, ` · ${effectChips.length} layers`) : null),
             h("span", {class: "drawn-chip-edit"}, "Edit")),
@@ -464,10 +468,13 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     if (!force && dialog.contains(document.activeElement) && document.activeElement.matches("textarea, input[type=text]")) return;
     const busy = videoRunning();
     const drawing = videoRunning("preview");
+    const estimatingDepth = videoRunning("depth");
+    const dialogRunning = drawing || estimatingDepth;
     const previews = video.previews || {};
     const missing = Object.keys(boot.styles).filter((name) => !previews[name]).length;
+    const depthMissing = Number(video.depth_missing || 0);
     const rows = rowsOf();
-    const status = drawing ? state.videoRun.status : busy ? "Wait for the current planning, drawing or saving to finish." :
+    const status = dialogRunning ? state.videoRun.status : busy ? "Wait for the current planning, drawing or saving to finish." :
       "Style and frame apply when drawing, to the same shot plan; Minimum shots applies when planning.";
     const later = () => setTimeout(() => renderDrawing(), 0);
     const limitCount = h("span", {class: "num small"}, video.limit);
@@ -478,16 +485,31 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       h("div", {class: "library-head"},
         h("div", {class: "style-head-text"}, h("h2", {id: "style-title"}, "How it's drawn"),
           h("span", {class: "muted small"}, status)),
-        drawing ? h("button", {type: "button", class: "btn btn-small", onclick: interruptVideo}, "Interrupt") : null,
+        dialogRunning ? h("button", {type: "button", class: "btn btn-small", onclick: interruptVideo}, "Interrupt") : null,
         h("button", {type: "button", class: "btn btn-icon", "aria-label": "Close", onclick: () => dialog.close()}, "×")),
       h("div", {class: "style-body"},
         h("section", {class: "drawn-basics", "aria-label": "Model and shots"},
           videoField("Image model", h("select", {disabled: busy, onchange: (event) => saveVideo({video_engine: event.target.value})},
             boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
             "Draws with the Image tab's settings for that model."),
-          boot.depth_models?.length ? videoField("Depth model", h("select", {disabled: busy, onchange: (event) => saveVideo({video_depth_model: event.target.value})},
-            boot.depth_models.map((item) => h("option", {value: item.id, selected: item.id === (video.depth_model || boot.default_depth_model)}, item.label))),
-            "Depth Pro 2 runs automatically after drawing to enhance focus, parallax, atmosphere, and lighting.") : null,
+          boot.depth_models?.length ? h("div", {class: "field"},
+            h("label", {class: "label", for: "video-depth-model"}, "Depth model"),
+            h("div", {class: "depth-row"},
+              h("select", {id: "video-depth-model", disabled: busy, onchange: (event) => saveVideo({video_depth_model: event.target.value})},
+                boot.depth_models.map((item) => h("option", {value: item.id, selected: item.id === (video.depth_model || boot.default_depth_model)}, item.label))),
+              depthMissing || estimatingDepth ? h("button", {
+                type: "button",
+                class: "btn btn-small",
+                disabled: busy || !state.boot.gpu,
+                title: state.boot.gpu
+                  ? `Estimate depth for ${plural(depthMissing, "drawn shot")} missing depth for this model`
+                  : "Open Sound Stage on the GPU server to estimate depth.",
+                onclick: () => generateDepth(),
+              }, estimatingDepth ? "Estimating depth…" : `Generate missing depth (${depthMissing})`) : null),
+            h("span", {class: "muted small"},
+              depthMissing
+                ? `${plural(depthMissing, "drawn shot")} missing depth for this model. Switching models lets you regenerate depth without redrawing.`
+                : "Depth Pro 2 runs automatically after drawing to enhance focus, parallax, atmosphere, and lighting.")) : null,
           h("div", {class: "field"}, h("span", {class: "label"}, "Frame"),
             h("div", {class: "seg", role: "group", "aria-label": "Frame"}, Object.entries(FRAMES).map(([id, label]) => h("button", {
               type: "button", "aria-pressed": String(video.orientation === id), disabled: busy,
@@ -593,12 +615,12 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     drawButton.disabled = busy || !canDraw();
     drawButton.title = canDraw() ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
-    stop.hidden = !["draw", "preview", "segment_effects", "enhance_effects", "refine_effect_mask"].some(videoRunning);
+    stop.hidden = !["draw", "preview", "depth", "segment_effects", "enhance_effects", "refine_effect_mask"].some(videoRunning);
     if (busy) {
-      title.textContent = {plan: "Planning shots…", draw: "Drawing…", preview: "Drawing style previews…", save: "Saving to Media…"}[run.kind] || "Working…";
+      title.textContent = {plan: "Planning shots…", draw: "Drawing…", preview: "Drawing style previews…", depth: "Estimating depth…", save: "Saving to Media…"}[run.kind] || "Working…";
       detail.textContent = run.status || "";
     } else if (run?.error) {
-      title.textContent = {plan: "Planning stopped", save: "Saving stopped", preview: "Style previews stopped"}[run.kind] || "Drawing stopped";
+      title.textContent = {plan: "Planning stopped", save: "Saving stopped", preview: "Style previews stopped", depth: "Depth estimation stopped"}[run.kind] || "Drawing stopped";
       detail.textContent = run.error;
       detail.classList.add("error");
     } else if (!rows.length) {
