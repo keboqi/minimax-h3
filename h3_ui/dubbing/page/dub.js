@@ -70,6 +70,7 @@ function timingPicture(index) {
 
 function settings(app) {
   const s = app.settings;
+  const voiceModes = app.session?.voice_modes || app.boot.voice_modes;
   const match = matchKey(app);
   const timing = selectedTiming(app);
   return `
@@ -81,10 +82,11 @@ function settings(app) {
         <h3>Voices</h3>
         <div class="row row-wrap gap-32">
           <div class="field">Clone from
-            ${seg("voice_mode", app.boot.voice_modes.map((mode) => [mode, mode === "One voice per speaker" ? "One per speaker" : mode]), s.voice_mode, {label: "Clone from"})}
+            ${seg("voice_mode", voiceModes.map((mode) => [mode, mode === "One voice per speaker" ? "One per speaker" : mode]), s.voice_mode, {label: "Clone from"})}
             <span class="muted small">${{
               "Each line's own voice": "Keeps each line's delivery. Lines under 2 s use their speaker's clip.",
               "Nearest clean voice": "Clones overlapping or short lines from the same speaker's closest solo passage. Needs accurate speaker labels.",
+              "Separate overlapping voices": "Uses isolated speech from the line when it can verify the speaker. Otherwise uses the nearest clean voice.",
               "One voice per speaker": "Each speaker's best clip (3–15 s). Steadier.",
             }[s.voice_mode] || ""}</span>
           </div>

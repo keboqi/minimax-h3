@@ -118,19 +118,18 @@ def manual_transcript(reply: str) -> dict:
     if not str(reply or "").strip():
         raise H3Error("Paste the chat model's JSON reply first.")
     try:
-        found, speakers = segment_tools.parse_transcript_reply(reply)
+        transcript = segment_tools.parse_transcript(reply)
     except ValueError as exc:
         raise H3Error(f"The pasted reply could not be read: {exc}") from exc
-    if not found:
+    if not transcript["segments"]:
         raise H3Error("The pasted reply has no timed lines.")
     # Keep observations with the source transcript so editing the dialogue cannot
     # accidentally move a face hint to a different speaker or line.
     visual_speakers = []
-    for segment in found:
+    for segment in transcript["segments"]:
         hint = segment.pop("visual_speaker", None)
         if hint is not None:
             visual_speakers.append({"speaker": segment["speaker"], **hint})
-    transcript = {"segments": found, "speakers": speakers}
     if visual_speakers:
         transcript["visual_speakers"] = visual_speakers
     return transcript

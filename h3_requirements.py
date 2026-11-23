@@ -496,11 +496,14 @@ def moss_python_install_commands(venv: PurePath, uv: str | list[str] = "uv") -> 
 
 DUB_TOOLS_READY_MARKER = "h3-dub-tools-ready.txt"
 DUB_TOOLS_PYTHON = "3.12"
+SR_CORRNET_REVISION = "7340365b9cc9a021bf7d400f52fce4b88593b67a"
 # Dub & Translate's audio-separator, OmniVAD, Qwen3-ASR + ForcedAligner and Hy-MT share
 # one interpreter. qwen-asr pins Transformers 4.57.6 (and audio-separator needs NumPy 2),
 # so neither fits ComfyUI's environment or the VoiceDesign/Stable Audio one.
 DUB_TOOLS_REQUIREMENTS = (
     "qwen-asr==0.0.6",
+    "sr-corrnet-ss @ https://github.com/dmlguq456/SR_CorrNet_SS/archive/"
+    f"{SR_CORRNET_REVISION}.tar.gz",
     "omnivad==0.2.13",
     "audio-separator==0.48.0",
     # audio-separator imports audioread but no longer gets it: librosa 0.11 made it optional.
@@ -516,12 +519,13 @@ DUB_TOOLS_REQUIREMENTS = (
 DUB_TOOLS_SMOKE = (
     "import torch, soundfile, librosa, hf_xet; "
     "from qwen_asr import Qwen3ASRModel; "
+    "from sr_corrnet import SSInference; "
     "from omnivad import OmniVAD; "
     "from audio_separator.separator import Separator; "
     "from audio_separator.separator.architectures import mdx_separator, mdxc_separator; "
     "from transformers import AutoModelForCausalLM; "
     "assert torch.version.cuda, 'Dubbing tools installed CPU-only Torch'; "
-    "assert callable(Qwen3ASRModel.transcribe)"
+    "assert callable(Qwen3ASRModel.transcribe) and callable(SSInference.process_waveform)"
 )
 
 

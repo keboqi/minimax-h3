@@ -28,6 +28,12 @@ import traceback
 ASR_ID = "Qwen/Qwen3-ASR-1.7B"
 ALIGNER_ID = "Qwen/Qwen3-ForcedAligner-0.6B"
 TRANSLATOR_ID = "tencent/Hy-MT2-1.8B"
+OVERLAP_MODELS = {
+    2: ("shinuh/sr-corrnet-ss-1ch-wsj-fix-2spk", "dc64cd6f194180abfeff6979f38d2f5ab5fd8c81"),
+    3: ("shinuh/sr-corrnet-ss-1ch-wsj-var-2-3spk", "e523bd393c18db36257c5095b64d57709fa9dafb"),
+    4: ("shinuh/sr-corrnet-ss-1ch-wsj-var-2-5spk", "e92af46a2bc3b7f53c14a951c4cc551abea6d637"),
+}
+OVERLAP_MODELS[5] = OVERLAP_MODELS[4]
 SEPARATOR_MODELS = {
     "Fast (UVR-MDX-NET)": "UVR-MDX-NET-Inst_full_292.onnx",
     "Balanced (BS-Roformer)": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
@@ -41,6 +47,15 @@ ALIGNMENT_TIME_TOLERANCE = ALIGNMENT_TIME_STEP + 1e-6
 ALIGNMENT_LANGUAGES = dict(zip(
     ("zh", "en", "yue", "fr", "de", "it", "ja", "ko", "pt", "ru", "es"),
     ("Chinese", "English", "Cantonese", "French", "German", "Italian", "Japanese", "Korean", "Portuguese", "Russian", "Spanish")))
+_ALIGNMENT_NAMES = {name.casefold(): name for name in ALIGNMENT_LANGUAGES.values()}
+
+
+def alignment_language(requested: str | None) -> str | None:
+    """Canonical ForcedAligner language name, '' for auto-detect, or None if unsupported."""
+    key = str(requested or "").strip().casefold()
+    if key in {"", "auto", "auto-detect", "unknown"}:
+        return ""
+    return ALIGNMENT_LANGUAGES.get(key) or _ALIGNMENT_NAMES.get(key)
 # OmniVAD spans closer than this are one utterance; longer ones are cut at aligned sentence ends.
 VAD_MERGE_GAP = 0.35
 MAX_LINE_SECONDS = 12.0
@@ -325,6 +340,10 @@ class Worker:
         op = request.get("op")
         if op == "separate":
             return self.separate(request)
+        if op == "separate_overlap":
+            return self.separate_overlap(request)
+        if op == "transcribe_stems":
+            return self.transcribe_stems(request)
         if op == "align_lines":
             return self.align_lines(request)
         if op == "align_words":
@@ -381,6 +400,108 @@ class Worker:
             raise RuntimeError(f"audio-separator returned unexpected stems: {files}")
         return found
 
+    def separate_overlap(self, request: dict) -> dict:
+        import yaml
+        from huggingface_hub import hf_hub_download
+        from sr_corrnet import SSInference
+
+        count = int(request["speaker_count"])
+        repo, revision = OVERLAP_MODELS[count]
+        key = f"sr-corrnet:{repo}"
+        if key not in self.models:
+            self.progress(f"Loading or downloading SR-CorrNet for {count} speakers")
+            for name in self.loaded:
+                if name.startswith("sr-corrnet:"):
+                    self.unload(name)
+            config_path = Path(hf_hub_download(repo, "config.yaml", revision=revision))
+            weights = hf_hub_download(repo, "model.pt", revision=revision)
+            # Upstream opens YAML paths with the locale encoding. The published configs are UTF-8.
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.models[key] = SSInference.from_pretrained(config=config, checkpoint_path=weights, device=self.device())
+        paths = []
+        for audio in request["windows"]:
+            try:
+                paths.append(self._separate_overlap_window(self.models[key], count, audio))
+            except (OSError, RuntimeError, ValueError):
+                traceback.print_exc()
+                paths.append(None)
+        return {"stems": paths}
+
+    def _separate_overlap_window(self, model, count: int, audio: str) -> list[str]:
+        import librosa
+        import numpy as np
+        import soundfile
+
+        rate = model.engine.fs
+        samples, _ = librosa.load(audio, sr=rate, mono=True)
+        if len(samples) < rate // 4 or not np.isfinite(samples).all():
+            return []
+        scale = float(samples.std())
+        if scale < 1e-4:
+            return []
+        torch = self.torch()
+        with torch.inference_mode():
+            stems = model.process_waveform(torch.from_numpy(samples), n_spks=torch.tensor(count))["waveforms"]
+        if len(stems) != count:
+            return []
+        paths = []
+        for index, stem in enumerate(stems):
+            pcm = stem.detach().float().cpu().numpy()
+            # iSTFT can drop up to a hop from the end. Keep all stems on the input time grid.
+            if pcm.ndim != 1 or abs(len(pcm) - len(samples)) > rate * .05 or not np.isfinite(pcm).all():
+                return []
+            # The waveform API normalizes the mixture internally. Restore its approximate level.
+            pcm = librosa.util.fix_length(pcm, size=len(samples)) * scale
+            if np.sqrt(np.mean(pcm ** 2)) < .001:
+                return []
+            pcm /= max(1.0, float(np.max(np.abs(pcm))) / .98)
+            path = Path(audio).with_suffix(f".stem{index}.wav")
+            soundfile.write(path, pcm, rate, subtype="PCM_16")
+            paths.append(str(path))
+        return paths
+
+    def transcribe_stems(self, request: dict) -> dict:
+        import soundfile
+
+        clips = request["clips"]
+        resolved = alignment_language(request.get("language"))
+        if resolved is None:
+            return {"words": [[] for _ in clips]}
+        language = resolved or None
+        model = self._asr(True)
+
+        def words(result, duration: float) -> list[dict]:
+            stamps = getattr(result, "time_stamps", None)
+            items = list(getattr(stamps, "items", None) or stamps or [])
+            if not items or not str(result.text or "").strip():
+                return []
+            return aligned_clip_words(result.text, [
+                {"text": str(item.text), "start": float(item.start_time), "end": float(item.end_time)}
+                for item in items
+            ], duration)
+
+        try:
+            results = model.transcribe(audio=clips, language=language, return_time_stamps=True)
+        except Exception:
+            # One unsupported language or bad stem should not discard the rest of the batch.
+            results = [None] * len(clips)
+        found = []
+        for index, clip in enumerate(clips):
+            try:
+                result = results[index] if index < len(results) else None
+                if result is None:
+                    result = model.transcribe(audio=clip, language=language, return_time_stamps=True)[0]
+                duration = soundfile.info(clip).duration
+            except (OSError, RuntimeError, TypeError, ValueError, IndexError):
+                traceback.print_exc()
+                found.append(None)
+                continue
+            try:
+                found.append(words(result, duration))
+            except (TypeError, ValueError, AttributeError):
+                found.append([])
+        return {"words": found}
+
     # -- transcription ------------------------------------------------------
 
     def _asr(self, aligner: bool):
@@ -425,16 +546,17 @@ class Worker:
             self.progress(f"Timing words in clips {first + 1}-{batch[-1] + 1} of {len(clips)}")
             languages = []
             detect = []
-            names = {name.casefold(): name for name in ALIGNMENT_LANGUAGES.values()}
             for position, index in enumerate(batch):
                 requested = str(clips[index].get("language") or "").strip()
-                language = ALIGNMENT_LANGUAGES.get(requested.casefold()) or names.get(requested.casefold(), "")
-                languages.append(language)
-                if not language:
-                    if requested.casefold() not in {"", "auto", "auto-detect", "unknown"}:
-                        errors[index] = f"Word alignment does not support language: {requested}"
-                    else:
-                        detect.append((position, index))
+                resolved = alignment_language(requested)
+                if resolved is None:
+                    languages.append("")
+                    errors[index] = f"Word alignment does not support language: {requested}"
+                elif resolved == "":
+                    languages.append("")
+                    detect.append((position, index))
+                else:
+                    languages.append(resolved)
             try:
                 detected = model.transcribe(audio=[clips[index]["audio"] for _, index in detect],
                                             return_time_stamps=False) if detect else []

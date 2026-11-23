@@ -11,16 +11,26 @@ from h3_app.llm import gemini
 
 from . import segments as segment_tools
 
+TRANSCRIBE_PROMPT_REVISION = 2
 TRANSCRIBE_PROMPT = (
     "You are a professional interpreter and diarization analyst. Transcribe every line of speech in this "
     "{media}{translate_clause} {non_speech}"
     "Conversations can switch speakers without a pause: detect each change by voice (pitch, timbre, accent, "
     "cadence) and never put two speakers in one segment. {speaker_cues}"
-    "Return JSON only, with two keys. \"speakers\": an array in order of first appearance, each with \"id\" "
+    "Listen for interruptions, backchannels and simultaneous speech. Give each speaking voice its own "
+    "segment with its actual start and end, even when its timestamps intersect another speaker's. "
+    "Keep the words with the speaker who said them and include only audible words. "
+    "Return JSON only, with three keys. \"speakers\": an array in order of first appearance, each with \"id\" "
     "(speaker1, speaker2, ...) and \"description\" (at most 12 words: gender, approximate age, tone). "
     "\"segments\": an array of utterances, each with \"start\" and \"end\" (mm:ss.mmm with milliseconds), "
     "\"speaker\" (an id from speakers), \"source_text\" (the original-language words) and \"translated_text\""
-    "{translated_clause}. "
+    "{translated_clause}. \"overlaps\": an array of intervals of actual simultaneous speech, each with "
+    "\"start\", \"end\" (same timestamp format and media timeline) and \"speakers\" (the active speaker IDs). "
+    "Split an overlap when the set of active speakers changes, and exclude pauses where only one voice "
+    "is talking. Include a distinct speaker in the overlap even when their words are unintelligible. "
+    "For example, if speaker1 talks from 00:10.100 to 00:12.500 and speaker2 from 00:11.250 "
+    "to 00:13.000, keep both segments and report their overlap from 00:11.250 to 00:12.500. "
+    "Use an empty overlaps array when there is no simultaneous speech. "
     "Timestamps cut the audio for voice cloning, so they must be exact: start at the first syllable, end at "
     "the last, with no padding and no rounding to whole seconds. Keep each segment under about 12 seconds, "
     "splitting long speeches at sentence ends.{style}{notes}{shorten}{readings}"
@@ -150,8 +160,8 @@ def transcribe_prompt(*, target_language: str, translate: bool, ignore_non_speec
 
 def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, translate: bool,
                ignore_non_speech: bool, notes: str = "", style: str = "", shorten: bool = False,
-               readings: bool = False) -> tuple[list[dict], dict[str, str], str]:
-    """Segments, speaker descriptions and the raw reply for one audio file."""
+               readings: bool = False) -> dict:
+    """Transcribe one audio file with speaker descriptions and overlap intervals."""
     key = gemini.api_key(api_key)
     prompt = transcribe_prompt(target_language=target_language, translate=translate,
                                ignore_non_speech=ignore_non_speech, notes=notes, style=style, shorten=shorten,
@@ -160,12 +170,12 @@ def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, t
         raw = _generate(session, _model(model), [{"text": prompt}, session.file_part(Path(audio))],
                         json_reply=True)
     try:
-        found, speakers = segment_tools.parse_transcript_reply(raw)
+        transcript = segment_tools.parse_transcript(raw)
     except ValueError as exc:
         raise H3Error(f"Gemini's transcript could not be read: {exc}") from exc
-    if not found:
+    if not transcript["segments"]:
         raise H3Error("Gemini found no speech in this audio.")
-    return found, speakers, raw
+    return transcript
 
 
 def translation_prompt(texts: list[str], *, target_language: str, source_language: str = "", notes: str = "",

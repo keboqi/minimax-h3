@@ -235,6 +235,9 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
     app.linesRequest = null;
     if (session && !keepSettings) app.settings.voice_mode = session.voice_default;
   }
+  if (session?.pipeline && session.voice_modes && !session.voice_modes.includes(app.settings.voice_mode)) {
+    app.settings.voice_mode = session.voice_default;
+  }
   app.linesSignature = signature;
   if (typeof focus === "number") app.focus = focus;
   const count = session?.board.lines.length || 0;

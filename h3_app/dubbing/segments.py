@@ -154,9 +154,17 @@ def parse_transcript_reply(text: str) -> tuple[list[dict], dict[str, str]]:
 
     Accepts ``{"speakers": [...], "segments": [...]}`` or a bare segment array.
     """
+    transcript = parse_transcript(text)
+    return transcript["segments"], transcript["speakers"]
+
+
+def parse_transcript(text: str) -> dict:
     data = _json_payload(text)
     speakers: dict[str, str] = {}
+    transcript = {"speakers": speakers}
     if isinstance(data, dict):
+        if isinstance(data.get("overlaps"), list):
+            transcript["overlaps"] = data["overlaps"]
         for index, entry in enumerate(data.get("speakers") or [], 1):
             entry = entry if isinstance(entry, dict) else {"description": str(entry)}
             key = speaker_id(entry.get("id") or entry.get("speaker") or entry.get("name"), index)
@@ -167,7 +175,40 @@ def parse_transcript_reply(text: str) -> tuple[list[dict], dict[str, str]]:
     found = normalize(data)
     for segment in found:
         segment["translation"] = keep_valid_notes(segment["translation"])
-    return found, speakers
+    return {**transcript, "segments": found}
+
+
+def transcript_overlaps(raw: list, speakers: set[str], duration: float = 0.0) -> list[dict]:
+    """Validated Gemini overlap hints on the media timeline."""
+    def timestamp(value: Any) -> float | None:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return float(value) if math.isfinite(value) and value >= 0 else None
+            except OverflowError:
+                return None
+        if isinstance(value, str) and re.fullmatch(r"\d+(?::\d+){0,2}(?:[.,]\d+)?s?", value.strip()):
+            parsed = parse_time(value)
+            if parsed is not None and math.isfinite(parsed):
+                return parsed
+        return None
+
+    found = {}
+    for row in raw:
+        if not isinstance(row, dict) or not isinstance(row.get("speakers"), list):
+            continue
+        ids = row["speakers"]
+        if not all(isinstance(speaker, str) and speaker.strip() for speaker in ids):
+            continue
+        ids = tuple(sorted({speaker_id(speaker) for speaker in ids}))
+        if not set(ids).issubset(speakers):
+            continue
+        start, end = timestamp(row.get("start")), timestamp(row.get("end"))
+        if start is None or end is None:
+            continue
+        start, end = round(start, 3), round(end, 3)
+        if end > start and len(ids) >= 2 and (not duration or end <= duration):
+            found[start, end, ids] = {"start": start, "end": end, "speakers": list(ids)}
+    return [found[key] for key in sorted(found)]
 
 
 def parse_translation_reply(text: str, count: int) -> list[str]:

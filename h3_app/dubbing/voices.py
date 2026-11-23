@@ -8,16 +8,20 @@ from h3_app.errors import H3Error
 
 from . import nemotron, segments as segment_tools, session as sessions
 
+PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
 PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
 PIPELINE_NEMOTRON = "Local: Nemotron Transcribe + Hy-MT"
 PIPELINE_GEMINI = "Gemini (cloud)"
 PIPELINE_MANUAL = "Chat model (paste its reply)"
+PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL)
 SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL})
+OVERLAP_PIPELINES = frozenset({PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL})
 
 VOICE_LINE = "Each line's own voice"
 VOICE_NEAREST = "Nearest clean voice"
 VOICE_SPEAKER = "One voice per speaker"
-VOICE_MODES = (VOICE_LINE, VOICE_NEAREST, VOICE_SPEAKER)
+VOICE_OVERLAP = "Separate overlapping voices"
+VOICE_MODES = (VOICE_LINE, VOICE_NEAREST, VOICE_SPEAKER, VOICE_OVERLAP)
 
 MIN_REFERENCE_SECONDS = 2.0
 REFERENCE_RANGE = (3.0, 15.0)
@@ -62,6 +66,16 @@ def speaker_activity(session: sessions.Session) -> dict[str, list[tuple[float, f
                 activity.setdefault(str(speaker), []).append((float(span[0]), float(span[1])))
             except (IndexError, TypeError, ValueError):
                 continue
+    for hint in transcript.get("overlaps") or ():
+        if not isinstance(hint, dict):
+            continue
+        try:
+            start, end = float(hint["start"]), float(hint["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end > start:
+            for speaker in hint.get("speakers") or ():
+                activity.setdefault(segment_tools.speaker_id(speaker), []).append((start, end))
     for line in [*(transcript.get("segments") or []), *session.segments]:
         try:
             activity.setdefault(segment_tools.speaker_id(line.get("speaker")), []).append(
@@ -69,6 +83,12 @@ def speaker_activity(session: sessions.Session) -> dict[str, list[tuple[float, f
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
     return activity
+
+
+def overlap_references_available(session: sessions.Session) -> bool:
+    transcript = session.data.get("transcript")
+    return (session.data.get("pipeline") in OVERLAP_PIPELINES
+            and isinstance(transcript, dict) and bool(transcript.get("segments")))
 
 
 def _clean(activity: dict[str, list[tuple[float, float]]], speaker: str, start: float, end: float) -> bool:

@@ -173,8 +173,9 @@ class SameLanguageAnalysis(Workspace):
 
     def test_gemini_transcribes_only(self):
         with patch.object(pipeline.gemini, "transcribe",
-                          return_value=([{"start": 0.2, "end": 2.6, "speaker": "speaker1",
-                                          "source": "Hello.", "translation": ""}], {"speaker1": ""}, "")) as call:
+                          return_value={"segments": [{"start": 0.2, "end": 2.6, "speaker": "speaker1",
+                                                      "source": "Hello.", "translation": ""}],
+                                        "speakers": {"speaker1": ""}}) as call:
             result = self.analyze(pipeline=pipeline.PIPELINE_GEMINI, gemini_model="gemini-x")
         self.assertFalse(call.call_args.kwargs["translate"])
         self.assertEqual(lines_of(result.session), [("Hello.", False)])

@@ -7,9 +7,8 @@ import zipfile
 
 import numpy as np
 
+from .pcm import FITTED_AUDIO_RATE as FITTED_AUDIO_RATE
 from .results import player_folder
-
-FITTED_AUDIO_RATE = 44100
 
 
 @contextmanager

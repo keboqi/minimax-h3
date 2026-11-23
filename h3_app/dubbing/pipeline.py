@@ -18,8 +18,8 @@ from contextlib import closing
 import contextvars
 from dataclasses import dataclass
 import hashlib
-import heapq
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -34,46 +34,94 @@ import wave
 
 import numpy as np
 
-from h3_app.burned_subtitles import DUB_SOURCE, DUB_TRANSLATION, Line, ass_subtitles, word_pieces
 from h3_app.catalog import VIDEO_EXTENSIONS
 from h3_app.drama3.phonemes import strip_notes
 from h3_app.errors import H3Error
-from h3_app.jobs import JobCancelled
+from h3_app.jobs import JobCancelled, check_cancelled
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
 from . import gemini, moss, nemotron, refinement, segments as segment_tools, session as sessions, tools, tools_worker
-from .alignment import FITTED_AUDIO_RATE as RATE, open_alignment
+from .alignment import open_alignment
+from .pcm import FITTED_AUDIO_RATE as RATE, read_slice, write_wav as _write_wav
 from .results import DUB_FAMILY, PLAYER_DIR, Player, load_player, player_folder, prune_players as _prune_players, save_player
 from .segments import TARGET_LANGUAGES as TARGET_LANGUAGES
 from .text import (
-    DEFAULT_REWRITE_STYLE, DEFAULT_STYLE, REWRITE_STYLES, SAME_LANGUAGE, SUBTITLE_MODES,
-    TAKE_PROBLEMS, TIMING_PROBLEMS, TRANSLATION_STYLES,
-    _filter_path, _language_code, _line_marks, _output_stem, _save_marks, _stored_marks,
-    _take_mark, apply_same_language_rule, dub_label, dub_language, dub_subtitles,
-    kept_original, length_advice, long_lines, manual_transcript, moss_lines,
-    rewrite_style_text, same_language, spoken_language, style_text, subtitle_lines,
-    take_problems, timing_problems, translation_advice, translation_issues, unchanged,
+    DEFAULT_REWRITE_STYLE as DEFAULT_REWRITE_STYLE,
+    DEFAULT_STYLE,
+    REWRITE_STYLES as REWRITE_STYLES,
+    SAME_LANGUAGE,
+    SUBTITLE_MODES,
+    TAKE_PROBLEMS,
+    TIMING_PROBLEMS,
+    TRANSLATION_STYLES as TRANSLATION_STYLES,
+    _filter_path,
+    _language_code,
+    _output_stem,
+    _save_marks,
+    _stored_marks,
+    _take_mark,
+    apply_same_language_rule as apply_same_language_rule,
+    dub_label,
+    dub_language,
+    dub_subtitles,
+    kept_original,
+    length_advice,
+    long_lines as long_lines,
+    manual_transcript,
+    moss_lines,
+    rewrite_style_text,
+    same_language,
+    spoken_language,
+    style_text,
+    subtitle_lines,
+    take_problems,
+    timing_problems as timing_problems,
+    translation_advice,
+    translation_issues as translation_issues,
+    unchanged,
 )
 from .timing import (
-    LINE_GAP, SMART_DELAY, SMART_GAP, SMART_LEAD, SMART_PAUSE, SMART_SPEED, TEMPO_WARNING,
-    TIMINGS, TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, SmartPlacement, Timed,
-    atempo_chain, slot_end, smart_layout, smart_note,
+    SMART_DELAY as SMART_DELAY,
+    SMART_PAUSE,
+    TEMPO_WARNING,
+    TIMINGS as TIMINGS,
+    TIMING_MATCH as TIMING_MATCH,
+    TIMING_NATURAL,
+    TIMING_SMART,
+    Timed,
+    atempo_chain,
+    slot_end,
+    smart_layout,
+    smart_note,
 )
 from .voices import (
-    MIN_REFERENCE_SECONDS, ORIGINAL_VOICE, REFERENCE_PAD, REFERENCE_RANGE, SPEAKER_PIPELINES,
-    SPEAKER_VOLUME, VOICE_LINE, VOICE_MODES, VOICE_NEAREST, VOICE_SPEAKER,
-    _clean, _native_words, _speaker_volume, _trimmed, clean_lines, default_voice_mode,
-    nearest_clean, session_speakers, set_speaker, speaker_activity, speaker_reference,
-    speaker_settings, speaker_settings_available,
+    MIN_REFERENCE_SECONDS,
+    ORIGINAL_VOICE,
+    PIPELINE_GEMINI as PIPELINE_GEMINI,
+    PIPELINE_LOCAL as PIPELINE_LOCAL,
+    PIPELINE_MANUAL as PIPELINE_MANUAL,
+    PIPELINE_MOSS as PIPELINE_MOSS,
+    PIPELINE_NEMOTRON as PIPELINE_NEMOTRON,
+    PIPELINES as PIPELINES,
+    REFERENCE_PAD,
+    VOICE_LINE,
+    VOICE_MODES as VOICE_MODES,
+    VOICE_NEAREST,
+    VOICE_OVERLAP,
+    _native_words,
+    _trimmed,
+    clean_lines,
+    default_voice_mode,
+    nearest_clean,
+    overlap_references_available,
+    session_speakers as session_speakers,
+    set_speaker as set_speaker,
+    speaker_activity,
+    speaker_reference,
+    speaker_settings,
+    speaker_settings_available as speaker_settings_available,
 )
-
-PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
-PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
-PIPELINE_NEMOTRON = "Local: Nemotron Transcribe + Hy-MT"
-PIPELINE_GEMINI = "Gemini (cloud)"
-PIPELINE_MANUAL = "Chat model (paste its reply)"
-PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI, PIPELINE_MANUAL)
 # Transcriptions that need no GPU on this server, so Workshop can run them.
 CLOUD_PIPELINES = frozenset({PIPELINE_GEMINI, PIPELINE_MANUAL})
 TRANSLATOR_HYMT = "Hy-MT 1.8B (local)"
@@ -233,31 +281,10 @@ def _to_pcm(source: Path, target: Path, *, channels: int = 2, action: str) -> Pa
                    target, action=action)
 
 
-def read_slice(path: Path, start: float, end: float) -> np.ndarray:
-    """Mono float32 samples of a 16-bit PCM WAV between two times, without reading the whole file."""
-    with wave.open(str(path), "rb") as source:
-        rate, channels, frames = source.getframerate(), source.getnchannels(), source.getnframes()
-        first = max(0, min(frames, int(round(start * rate))))
-        last = max(first, min(frames, int(round(end * rate))))
-        source.setpos(first)
-        pcm = np.frombuffer(source.readframes(last - first), dtype="<i2").astype(np.float32) / 32768.0
-    if channels > 1:
-        pcm = pcm[: len(pcm) // channels * channels].reshape(-1, channels).mean(axis=1)
-    return pcm if rate == RATE else _resample(pcm, rate, RATE)
-
-
 def _resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
     from h3_app.drama3.serving.audio import resample_audio
 
     return resample_audio(samples, source_rate, target_rate)
-
-
-def _write_wav(samples: np.ndarray, rate: int, target: Path) -> Path:
-    from h3_app.drama3.serving.audio import encode_wav
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(encode_wav(samples, rate))
-    return target
 
 
 def _language(value: str) -> str:
@@ -426,7 +453,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         transcript = manual
     elif request.pipeline == PIPELINE_GEMINI:
         upload = _speech_mp3(session)
-        found, speakers, _raw = yield from blocking(
+        transcript = yield from blocking(
             f"Transcribing{' and translating' if request.translate and not same else ''} with "
             f"{request.gemini_model}",
             lambda _report: gemini.transcribe(upload, model=request.gemini_model, api_key=request.api_key,
@@ -435,7 +462,6 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                                               ignore_non_speech=request.ignore_non_speech,
                                               notes=request.notes, style=style_text(request.style),
                                               shorten=request.shorten_lines, readings=request.readings))
-        transcript = {"segments": found, "speakers": speakers}
     else:
         reply = yield from blocking(
             "Finding speech and transcribing with Qwen3-ASR",
@@ -456,6 +482,13 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and "refinement" not in transcript:
         transcript = yield from _refine_timestamps(
             session, transcript, groups, runtime=runtime)
+    if "overlaps" in transcript:
+        transcript = dict(transcript)
+        raw = transcript.pop("overlaps")
+        speakers = set(transcript["speakers"]) | {line["speaker"] for line in transcript["segments"]}
+        validated = segment_tools.transcript_overlaps(raw, speakers, session.data.get("duration") or 0.0)
+        if validated or not raw:
+            transcript["overlaps"] = validated
     # Kept as transcribed, before edits and later translations, for the next analysis of this file.
     session.data["transcript"] = {**transcript, "key": key}
     session.segments, session.data["speakers"] = transcript["segments"], dict(transcript["speakers"])
@@ -511,7 +544,8 @@ def _transcript_key(request: AnalyzeRequest) -> str:
     elif request.pipeline == PIPELINE_GEMINI:
         # Gemini translates as it transcribes, except when the language stays the same.
         translating = request.translate and str(request.target_language or "").strip() != SAME_LANGUAGE
-        settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
+        settings.update(model=request.gemini_model, prompt_revision=gemini.TRANSCRIBE_PROMPT_REVISION,
+                        ignore_non_speech=bool(request.ignore_non_speech),
                         target=str(request.target_language or "").strip() if translating else "")
         if translating and str(request.notes or "").strip():
             settings["notes"] = str(request.notes).strip()
@@ -830,17 +864,26 @@ def _reference_clip(session: sessions.Session, segment: dict) -> Path:
     return target
 
 
-def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtime=None) -> list[_Line]:
+def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtime=None, *,
+          isolated: dict[int, tuple[Path, str]] | None = None,
+          clean: set[int] | None = None,
+          chosen_voices: dict[str, str] | None = None) -> list[_Line]:
     """Each line to voice with its reference: a saved voice chosen for its speaker, else a clip of the source."""
     from h3_app.drama3.speakers import load_speaker
 
     lines = session.segments
     planned = []
     speaker_refs: dict[str, tuple[Path, str]] = {}
-    chosen_voices = {speaker: entry["voice"] for speaker, entry in speaker_settings(session).items()
-                     if entry["voice"] != ORIGINAL_VOICE}
+    if chosen_voices is None:
+        chosen_voices = {speaker: entry["voice"] for speaker, entry in speaker_settings(session).items()
+                         if entry["voice"] != ORIGINAL_VOICE}
     saved_refs: dict[str, tuple[Path, str]] = {}
-    clean = clean_lines(lines, speaker_activity(session)) if voice_mode == VOICE_NEAREST else set()
+    nearby = voice_mode in (VOICE_NEAREST, VOICE_OVERLAP)
+    if nearby and clean is None:
+        clean = clean_lines(lines, speaker_activity(session))
+    elif not nearby:
+        clean = set()
+    isolated = isolated or {}
     for index in indices:
         segment = lines[index]
         if not segment["translation"]:
@@ -855,7 +898,9 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtim
                     raise H3Error(f"{exc} Choose another voice for {segment['speaker']} under Speakers.") from exc
                 saved_refs[voice] = (preset.audio, preset.transcript)
             reference = saved_refs[voice]
-        elif voice_mode == VOICE_NEAREST:
+        elif nearby and index not in clean and index in isolated:
+            reference = isolated[index]
+        elif nearby:
             best = nearest_clean(lines, index, clean)
             if best is None:
                 # No clean speech from this speaker anywhere: the line's own audio, cross-talk and all.
@@ -876,6 +921,37 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtim
             reference = speaker_refs[speaker]
         planned.append(_Line(index, segment, *reference))
     return planned
+
+
+def _prepare_plan(session, indices, voice_mode, *, runtime, free_gpu, hf_token):
+    if voice_mode != VOICE_OVERLAP:
+        return _plan(session, indices, voice_mode, runtime), ""
+    if not overlap_references_available(session):
+        return (_plan(session, indices, default_voice_mode(session.data.get("pipeline")), runtime),
+                "Overlap references require a speaker transcript from Nemotron, Gemini, or a pasted reply.")
+    from . import overlap
+
+    lines = session.segments
+    chosen_voices = {speaker: entry["voice"] for speaker, entry in speaker_settings(session).items()
+                     if entry["voice"] != ORIGINAL_VOICE}
+    clean = clean_lines(lines, speaker_activity(session))
+    candidates = {index: lines[index] for index in indices
+                  if index not in clean and lines[index]["source"] and lines[index]["translation"]
+                  and lines[index]["speaker"] not in chosen_voices}
+    if not candidates or not overlap.has_overlap_candidates(session, candidates):
+        return _plan(session, indices, voice_mode, runtime, clean=clean, chosen_voices=chosen_voices), ""
+    try:
+        isolated, message = yield from blocking(
+            "Preparing isolated voice references",
+            lambda report: overlap.prepare(session, candidates, runtime, free_gpu=free_gpu, hf_token=hf_token,
+                                           report=report))
+    except JobCancelled:
+        raise
+    except OSError:
+        check_cancelled()
+        logging.getLogger(__name__).exception("Could not prepare isolated voice reference files")
+        isolated, message = {}, "Could not prepare isolated voice files. Used nearest clean voice behavior."
+    return _plan(session, indices, voice_mode, runtime, isolated=isolated, clean=clean, chosen_voices=chosen_voices), message
 
 
 def _stretch(samples: np.ndarray, rate: int, tempo: float, cache: Path | None = None) -> np.ndarray:
@@ -1152,14 +1228,16 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     lines = session.segments
     if not 0 <= index < len(lines):
         raise H3Error(f"No line {index + 1}; the table has {len(lines)} line(s).")
-    planned = _plan(session, [index], request.voice_mode, runtime)
+    planned, reference_note = yield from _prepare_plan(
+        session, [index], request.voice_mode, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     if not planned:
         raise H3Error(f"Line {index + 1} has no translation to speak.")
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     line = planned[0]
     if line.note == KEPT_ORIGINAL:
         kept = original_line(request.session_id, index, runtime=runtime)
-        yield LinePreview(kept.rate, kept.samples, f"Line {index + 1}: {KEPT_ORIGINAL}. Playing the original.")
+        message = f"Line {index + 1}: {KEPT_ORIGINAL}. Playing the original."
+        yield LinePreview(kept.rate, kept.samples, " ".join(filter(None, (message, reference_note))))
         return
     if line.take is None or not len(line.take):
         raise H3Error(f"Line {index + 1}: {line.note or 'no audio was generated'}. Try New take again, "
@@ -1179,7 +1257,7 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     if not note and abs(speed - 1.0) > 0.01:
         details.append(f"{'sped up' if speed > 1 else 'slowed to'} {speed:.2f}x")
     details += [part for part in (note, line.note) if part]
-    yield LinePreview(RATE, fitted, " · ".join(details) + ".")
+    yield LinePreview(RATE, fitted, " ".join(filter(None, (" · ".join(details) + ".", reference_note))))
 
 
 def _speech_track(session: sessions.Session, planned: list[_Line], request: DubRequest,
@@ -1499,7 +1577,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     if not chosen:
         raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
     duration = float(session.data.get("duration") or 0.0) or max(s["end"] for s in lines) + 1.0
-    planned = _plan(session, chosen, request.voice_mode, runtime)
+    planned, reference_note = yield from _prepare_plan(
+        session, chosen, request.voice_mode, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
     # Lines Drama 3 cannot voice keep their original voice; any other failure stops the dub.
@@ -1674,7 +1753,10 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         message += f"; matched to the original timing ({sped} sped up, {slowed} slowed down)"
     if notes:
         message += ".\n\nCheck: " + "; ".join(notes[:12]) + ("; …" if len(notes) > 12 else "")
-    yield Dub(session, audio_out, video_out, subtitles, message + ("" if notes else "."), player)
+    message += "" if notes else "."
+    if reference_note:
+        message += "\n\n" + reference_note
+    yield Dub(session, audio_out, video_out, subtitles, message, player)
 
 
 def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Iterator[str | WordAlignment]:

@@ -41,7 +41,7 @@ from h3_app.dubbing.results import TRACKS, load_player, load_result, player_fold
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS, JobCancelled
+from h3_app.jobs import JobCancelled
 
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from ..job_bindings import owned_generation
@@ -402,6 +402,8 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                 "same": pipeline.same_language(session), "rewrite": bool(data.get("rewrite")),
                 "rewrite_style": data.get("rewrite_style") or "", "pipeline": data.get("pipeline") or "",
                 "voice_default": pipeline.default_voice_mode(data.get("pipeline")),
+                "voice_modes": [mode for mode in pipeline.VOICE_MODES
+                                if mode != pipeline.VOICE_OVERLAP or pipeline.overlap_references_available(session)],
                 "source": source, "board": lines_payload(session),
                 "speakers": speakers, "readiness": readiness_payload(session),
                 "result": result_payload(session, include_player=include_player),

@@ -338,6 +338,13 @@ original, or change its volume. Changes save at once.
   words and diarization), so a line moved to another speaker still counts as
   cross-talk. It needs accurate speaker labels, which is why other transcribers
   do not default to it.
+  *Separate overlapping voices* is available for Nemotron, Gemini, and pasted
+  speaker transcripts. On Preview or Generate Dub, SR-CorrNet isolates overlapping
+  windows with two to five speakers. A local ASR checks the words and timing of
+  each stem before it can be used as a clone reference. If isolation or attribution
+  fails, the line uses *Nearest clean voice* behavior. A saved speaker voice still
+  takes priority. The Gemini API and Copy Prompt workflows both ask for separate
+  overlapping utterances and the times when those voices are speaking together.
 - **Delivery**: Strict, Balance (default) or Expressive Drama 3 sampling.
 - **Timing**:
   - *Smart timing* (default) keeps each take as Drama 3 spoke it whenever it

@@ -299,6 +299,16 @@ class WorkshopPageTests(PageTests):
 class StudioPageTests(PageTests):
     gpu = True
 
+    def test_overlap_reference_mode_follows_the_session_transcriber(self):
+        rows = [{"start": 0, "end": 3, "speaker": "speaker1", "source": "Hello there."}]
+        for transcriber, supported in ((pipeline.PIPELINE_NEMOTRON, True), (pipeline.PIPELINE_GEMINI, True),
+                                       (pipeline.PIPELINE_MANUAL, True), (pipeline.PIPELINE_MOSS, False)):
+            with self.subTest(transcriber=transcriber):
+                created = self.session(rows, pipeline=transcriber, transcript={"segments": rows})
+                saved = self.client.get(f"{API}/session", params={"id": created.id}).json()["session"]
+                self.assertEqual(pipeline.VOICE_OVERLAP in saved["voice_modes"], supported)
+                self.assertEqual(saved["voice_default"], pipeline.default_voice_mode(transcriber))
+
     def test_subtitle_export_forwards_the_selected_picture(self):
         created = self.session([])
         folder = self.runtime.outputs_dir / "dubbing"
