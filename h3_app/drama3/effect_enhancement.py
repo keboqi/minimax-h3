@@ -42,64 +42,85 @@ def layer_region_ids(layer):
     return []
 
 
+def _layer_region_target(layer, mode, regions):
+    if mode == FULL_FRAME:
+        return {}
+    if "region_id" in layer and "region_ids" in layer:
+        raise H3Error("Specify either region_id or region_ids for an effect layer.")
+    if "region_ids" in layer:
+        raw_ids = layer.get("region_ids")
+        if not isinstance(raw_ids, list) or not raw_ids or any(
+            not isinstance(rid, str) or rid not in regions for rid in raw_ids
+        ):
+            raise H3Error("An effect targets a region outside this shot.")
+        ids = list(dict.fromkeys(raw_ids))
+    else:
+        region = layer.get("region_id")
+        if not isinstance(region, str) or region not in regions:
+            raise H3Error("An effect targets a region outside this shot.")
+        ids = [region]
+    return {"region_id": ids[0]} if len(ids) == 1 else {"region_ids": ids}
+
+
 def check_stack(value, regions):
-    if not isinstance(value, list) or len(value) > MAX_LAYERS:
+    if not isinstance(value, list):
         raise H3Error(f"Use an ordered list of up to {MAX_LAYERS} effect layers.")
     stack = []
     camera = False
     for layer in value:
         if not isinstance(layer, dict):
             raise H3Error("Each effect layer must be an object.")
-        preset, mode = layer.get("preset"), layer.get("mode")
-        if not isinstance(preset, str) or preset not in CATALOG or mode not in CATALOG[preset]["modes"]:
-            raise H3Error("An effect uses an unknown preset or unsupported application mode.")
-        spec = CATALOG[preset]
-        if spec["kind"] == "camera":
-            if camera:
-                raise H3Error("Use one camera move per shot.")
-            camera = True
-        clean = {"preset": preset, "mode": mode}
-        if mode != FULL_FRAME:
-            if "region_id" in layer and "region_ids" in layer:
-                raise H3Error("Specify either region_id or region_ids for an effect layer.")
-            if "region_ids" in layer:
-                raw_ids = layer.get("region_ids")
-                if not isinstance(raw_ids, list) or not raw_ids or any(
-                    not isinstance(rid, str) or rid not in regions for rid in raw_ids
-                ):
-                    raise H3Error("An effect targets a region outside this shot.")
-                ids = list(dict.fromkeys(raw_ids))
-            else:
-                region = layer.get("region_id")
-                if not isinstance(region, str) or region not in regions:
-                    raise H3Error("An effect targets a region outside this shot.")
-                ids = [region]
-            if len(ids) == 1:
-                clean["region_id"] = ids[0]
-            else:
-                clean["region_ids"] = ids
-        if spec["kind"] != "camera":
-            limits = (("intensity", 1), ("feather", 32)) if mode != FULL_FRAME else (("intensity", 1),)
-            for key, maximum in limits:
-                if key not in layer:
-                    continue
-                number = layer[key]
-                if type(number) not in (int, float) or not 0 <= number <= maximum or not isfinite(number):
-                    raise H3Error(f"Effect {key} must be between 0 and {maximum}.")
-                clean[key] = number
-        stack.append(clean)
+        if "preset" in layer and "presets" in layer:
+            raise H3Error("Specify either preset or presets for an effect layer.")
+        if "presets" in layer:
+            raw_presets = layer.get("presets")
+            if not isinstance(raw_presets, list) or not raw_presets:
+                raise H3Error("An effect uses an unknown preset or unsupported application mode.")
+            preset_list = raw_presets
+        else:
+            preset_list = [layer.get("preset")]
+        mode = layer.get("mode")
+        for preset in preset_list:
+            if not isinstance(preset, str) or preset not in CATALOG or mode not in CATALOG[preset]["modes"]:
+                raise H3Error("An effect uses an unknown preset or unsupported application mode.")
+        target = _layer_region_target(layer, mode, regions)
+        for preset in preset_list:
+            spec = CATALOG[preset]
+            if spec["kind"] == "camera":
+                if camera:
+                    raise H3Error("Use one camera move per shot.")
+                camera = True
+            clean = {"preset": preset, "mode": mode, **target}
+            if spec["kind"] != "camera":
+                limits = (("intensity", 1), ("feather", 32)) if mode != FULL_FRAME else (("intensity", 1),)
+                for key, maximum in limits:
+                    if key not in layer:
+                        continue
+                    number = layer[key]
+                    if type(number) not in (int, float) or not 0 <= number <= maximum or not isfinite(number):
+                        raise H3Error(f"Effect {key} must be between 0 and {maximum}.")
+                    clean[key] = number
+            stack.append(clean)
+            if len(stack) > MAX_LAYERS:
+                raise H3Error(f"Use an ordered list of up to {MAX_LAYERS} effect layers.")
     return stack
 
 
 def request_text(shots, token):
-    return json.dumps({"revision": token, "max_layers_per_shot": MAX_LAYERS,
-                       "application_modes": MODES, "presets": CATALOG,
-                       "optional_layer_fields": {
-                           "intensity": "0–1",
-                           "feather": "0–32 pixels",
-                           "region_ids": "list of region IDs to share one masked effect across multiple regions",
-                       },
-                       "shots": shots}, ensure_ascii=False)
+    return json.dumps({
+        "revision": token,
+        "max_layers_per_shot": MAX_LAYERS,
+        "application_modes": MODES,
+        "presets": CATALOG,
+        "layer_fields": {
+            "preset_or_presets": "single preset ID (`preset`) or ordered list (`presets`) sharing the same mode, target, intensity, and feather",
+            "mode": "full_frame, inside, outside, or behind",
+            "region_id_or_region_ids": "required when mode != full_frame; single ID (`region_id`) or list of IDs (`region_ids`) combined into one mask",
+            "intensity": "optional 0–1 for non-camera presets",
+            "feather": "optional 0–32 pixels for masked non-camera presets",
+        },
+        "shots": shots,
+    }, ensure_ascii=False)
 
 
 def prompt_path(runtime):

@@ -982,6 +982,83 @@ class Drama3PageVideoTests(unittest.TestCase):
             ),
             [{"preset": "rain", "mode": "full_frame", "intensity": 0.5}],
         )
+        self.assertEqual(
+            effect_enhancement.check_stack(
+                [{"presets": ["push_in", "lightning", "rain"], "mode": "full_frame", "intensity": 0.7}],
+                regions,
+            ),
+            [
+                {"preset": "push_in", "mode": "full_frame"},
+                {"preset": "lightning", "mode": "full_frame", "intensity": 0.7},
+                {"preset": "rain", "mode": "full_frame", "intensity": 0.7},
+            ],
+        )
+        self.assertEqual(
+            effect_enhancement.check_stack(
+                [{"presets": ["rain", "cold_tint"], "mode": "inside", "region_ids": ["region_1", "region_2"],
+                  "intensity": 0.8, "feather": 4}],
+                regions,
+            ),
+            [
+                {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"], "intensity": 0.8, "feather": 4},
+                {"preset": "cold_tint", "mode": "inside", "region_ids": ["region_1", "region_2"], "intensity": 0.8, "feather": 4},
+            ],
+        )
+        for bad in (
+            [{"preset": "rain", "presets": ["rain"], "mode": "full_frame"}],
+            [{"presets": [], "mode": "full_frame"}],
+            [{"presets": ["push_in", "rain"], "mode": "inside", "region_ids": ["region_1", "region_2"]}],
+            [{"presets": ["push_in", "pull_out"], "mode": "full_frame"}],
+            [{"presets": ["rain", "cold_tint"], "mode": "behind", "region_id": "region_1"}],
+            [{"presets": ["rain"] * (effect_enhancement.MAX_LAYERS + 1), "mode": "full_frame"}],
+        ):
+            with self.assertRaises(H3Error):
+                effect_enhancement.check_stack(bad, regions)
+
+        shots_input = [
+            {
+                "shot_id": "shot_1",
+                "effects": [],
+                "regions": [{"id": "region_1"}, {"id": "region_2"}],
+            },
+            {
+                "shot_id": "shot_2",
+                "effects": [
+                    {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+                    {"preset": "cold_tint", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+                ],
+                "regions": [{"id": "region_1"}, {"id": "region_2"}],
+            },
+        ]
+        reply_json = json.dumps({
+            "revision": "rev-1",
+            "shots": [
+                {
+                    "shot_id": "shot_1",
+                    "action": "replace",
+                    "effects": [{"presets": ["rain", "cold_tint"], "mode": "inside", "region_ids": ["region_1", "region_2"]}],
+                },
+                {
+                    "shot_id": "shot_2",
+                    "action": "replace",
+                    "effects": [{"presets": ["rain", "cold_tint"], "mode": "inside", "region_ids": ["region_1", "region_2"]}],
+                },
+            ],
+        })
+        self.assertEqual(
+            effect_enhancement.check_reply(reply_json, shots_input, "rev-1"),
+            [
+                {
+                    "shot_id": "shot_1",
+                    "action": "replace",
+                    "effects": [
+                        {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+                        {"preset": "cold_tint", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+                    ],
+                },
+                {"shot_id": "shot_2", "action": "keep"},
+            ],
+        )
 
         self.runtime.script_dir = Path.cwd()
         self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
