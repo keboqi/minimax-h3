@@ -27,6 +27,7 @@ from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject
 from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot
+from h3_models import DEFAULT_SOUNDSTAGE_DEPTH_MODEL, SOUNDSTAGE_DEPTH_MODEL_KEYS, SOUNDSTAGE_DEPTH_MODEL_LABELS
 
 from ..job_bindings import owned_generation
 from ..page_runs import Runs, guarded
@@ -37,11 +38,12 @@ from .page_common import (PageRun, apply_fields, file_response, found, not_found
 from .page_music import applied_music, mixed_audio, music_mix_id
 from .page_store import editing, project_lock
 from .stage_video import latest_export
-from . import effects_pass, visuals
+from . import effect_depth, effects_pass, visuals
 from .project_visuals import planning_mix, save_project_plan
 
-VIDEO_FIELDS = {"video_engine": str, "video_style": str, "video_limit": int, "video_continuity": bool,
-                "video_orientation": str, "video_subtitles": bool, "video_subtitle_size": int, "video_effects": bool,
+VIDEO_FIELDS = {"video_engine": str, "video_depth_model": str, "video_style": str, "video_limit": int,
+                "video_continuity": bool, "video_orientation": str, "video_subtitles": bool,
+                "video_subtitle_size": int, "video_effects": bool,
                 "video_effects_override_reduced_motion": bool}
 LIMITS = (1, 64)
 # The subtitles' size on the video, in percent of their usual size: lowest, highest, step.
@@ -78,7 +80,8 @@ def video_settings(data: dict, engines: list) -> dict:
     if engine not in engine_ids:
         engine = engine_ids[0] if engine_ids else None
     limit = int(data.get("video_limit") or 16)
-    return {"engine": engine, "style": style, "preset": visuals.preset_for(style), "limit": limit,
+    return {"engine": engine, "depth_model": effect_depth.normalize_depth_model(data.get("video_depth_model")),
+            "style": style, "preset": visuals.preset_for(style), "limit": limit,
             "orientation": visuals.orientation_of(data.get("video_orientation")),
             "continuity": data.get("video_continuity") is True,
             "subtitles": data.get("video_subtitles") is not False,
@@ -87,7 +90,39 @@ def video_settings(data: dict, engines: list) -> dict:
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
-def stills_payload(name: str, record: dict | None, rows=(), enhancement=()) -> dict | None:
+def _refine_subject_meta(meta: dict | None, enhanced: dict | None) -> dict | None:
+    """Anchor subject_z and subject_uv to the closest detected person region when available."""
+    if meta is None:
+        return None
+    person_regions = [
+        region for region in (enhanced.get("regions") if enhanced else None) or ()
+        if region.get("label") == "person" and region.get("depth_m") is not None
+    ]
+    if not person_regions:
+        return meta
+    primary = min(person_regions, key=lambda r: float(r["depth_m"]))
+    person_z = float(primary["depth_m"])
+    if 0.2 <= person_z <= 50.0:
+        meta["subject_z"] = round(person_z, 3)
+        box = primary.get("box")
+        if isinstance(box, list) and len(box) == 4:
+            meta["subject_uv"] = [
+                round((box[0] + box[2]) * 0.5, 4),
+                round((box[1] + box[3]) * 0.5, 4),
+            ]
+    return meta
+
+
+def stills_payload(
+    name: str,
+    record: dict | None,
+    rows=(),
+    enhancement=(),
+    *,
+    folder=None,
+    depth_model: str | None = None,
+    style_preset: str | None = None,
+) -> dict | None:
     """The stills the page slides along the mix: each image's time and the seconds it dissolves in."""
     if not record:
         return None
@@ -115,6 +150,23 @@ def stills_payload(name: str, record: dict | None, rows=(), enhancement=()) -> d
         if enhanced and enhanced["image"] == item["image"] and enhanced["applied"] is not None:
             shot["effect_layers"] = effects_pass.layer_payload(name, enhanced, enhanced["applied"])
             shot["effects"] = [layer["preset"] for layer in shot["effect_layers"]]
+        if folder is not None:
+            depth_png = None
+            raw_meta = None
+            if enhanced and enhanced["image"] == item["image"] and enhanced.get("depth_file"):
+                depth_png = enhanced["depth_file"]
+                raw_meta = enhanced.get("depth_meta")
+            else:
+                depth_entry = effect_depth.read_depth(folder, item["image"], depth_model)
+                if depth_entry is not None:
+                    depth_png = depth_entry["png"]
+                    raw_meta = depth_entry["meta"]
+            if depth_png and raw_meta is not None:
+                shot["depth_file"] = depth_png
+                shot["depth_url"] = effect_depth.depth_url(name, depth_png)
+                shot["depth_meta"] = _refine_subject_meta(
+                    effect_depth.effective_meta(raw_meta, style_preset), enhanced
+                )
         shots.append(shot)
     return {"revision": record["revision"], "shots": shots,
             "orientation": visuals.orientation_of(record.get("orientation"))}
@@ -231,10 +283,14 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
         if timing_error:
             plan.update(rows=[], subjects=[], counts={}, error=timing_error)
         items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data,
-                                       speech=shot_speech_cues(mix_settings) if plan["rows"] else ())
+                                       speech=shot_speech_cues(mix_settings) if plan["rows"] else (),
+                                       depth_model=settings["depth_model"])
         sounds = timeline_payload(mix_settings)["sounds"] if items else []
         enhancement = effects_pass.public_pass(name, items, sounds, data)
-        stills = stills_payload(name, record, plan["rows"], items)
+        stills = stills_payload(name, record, plan["rows"], items,
+                                folder=visuals.stills_dir(audio, root),
+                                depth_model=settings["depth_model"],
+                                style_preset=settings["preset"])
         scene = effect_scene(stills, mix_settings)
         video = project_export(audio, data)
         if video is not None:
@@ -258,6 +314,9 @@ def preview_url(engine: str, file: str) -> str:
 
 def boot_payload(engines: list) -> dict:
     return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
+            "depth_models": [{"id": key, "label": SOUNDSTAGE_DEPTH_MODEL_LABELS[key]}
+                             for key in SOUNDSTAGE_DEPTH_MODEL_KEYS],
+            "default_depth_model": DEFAULT_SOUNDSTAGE_DEPTH_MODEL,
             "effect_presets": EFFECT_PRESETS,
             "enhancement_presets": effect_enhancement.CATALOG,
             "enhancement_max_layers": effect_enhancement.MAX_LAYERS,
@@ -285,6 +344,46 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         data, result = project(name)
         audio, settings = planning_mix(name, data, result, export, strict=strict, store=store)
         return data, audio, settings, video_settings(data, export.engines)
+
+    def ensure_depth_for_mix(run, owner, session, audio, depth_model):
+        if not gpu or run.stop_requested:
+            return 0
+        get_services = getattr(export.deps, "generation_services", None)
+        services = get_services() if callable(get_services) else None
+        if services is None:
+            return 0
+        runtime = export.deps.runtime_config()
+        record = visuals.read_stills(audio, runtime.output_dir)
+        if not record:
+            return 0
+        folder = visuals.stills_dir(audio, runtime.output_dir)
+        images = [item["image"] for item in record["shots"] if item.get("image")]
+        missing = effect_depth.missing_stills(folder, images, depth_model)
+        if not missing:
+            return 0
+        previous_status = run.status
+        count = 0
+
+        def generate_depth():
+            nonlocal count
+
+            def on_progress(index, total):
+                run.status = f"Estimating depth for shot {index}/{total} with Depth Pro 2…"
+
+            count = effect_depth.ensure_stills_depth(
+                folder, missing, depth_model, services, runtime, on_progress=on_progress
+            )
+            yield run.status
+
+        callback = owned_generation(generate_depth, "drama3_visuals")
+        for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
+            pass
+        if count and run.kind != SAVE:
+            run.status = f"{previous_status} Depth maps ready ({count})." if previous_status else f"Depth maps ready ({count})."
+            run.revision += 1
+        elif previous_status:
+            run.status = previous_status
+        return count
 
     def produce(run, owner, name, session, body):
         """Auto's illustration step, sharing its run, cancellation and GPU job identity."""
@@ -319,11 +418,13 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             return
         current = video_payload(name, project(name)[0], str(audio), export, store=store)
         if current["plan"]["rows"] and not any(current["plan"]["counts"].get(k) for k in ("changed", "todo")):
+            ensure_depth_for_mix(run, owner, session, audio, settings["depth_model"])
             return
         run.stage, run.status, run.job_id = "illustrate", "Drawing illustrations…", None
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
                   settings["orientation"], json.dumps("missing"), *export.values(owner)]
         drawing_job(export, run, owner, session, export.generate, visuals.VIDEO_INPUT_NAMES, values)
+        ensure_depth_for_mix(run, owner, session, audio, settings["depth_model"])
 
     runs = VideoRuns(produce, busy=busy, lock=admission_lock,
                      blocked=lambda run: blocked(run.owner, run.storyboard_id) if blocked else None)
@@ -339,14 +440,19 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         with editing(store, name) as data:
             apply_fields(data, body, VIDEO_FIELDS, VIDEO_RANGES,
                          choices={"video_engine": [key for _, key in export.engines],
+                                  "video_depth_model": list(SOUNDSTAGE_DEPTH_MODEL_KEYS),
                                   "video_orientation": list(visuals.ORIENTATIONS)})
         return payload(owner_of(request), name)
 
-    def start_drawing(request: Request, owner: str, name: str, kind: str, generate, input_names, values):
+    def start_drawing(request: Request, owner: str, name: str, kind: str, generate, input_names, values,
+                      *, depth_context=None):
         """Run ``generate`` on the GPU job path as the mix's ``kind`` run, following its status."""
         session = session_of(request)
         def work(run):
             drawing_job(export, run, owner, session, generate, input_names, values)
+            if depth_context is not None and not run.stop_requested:
+                audio_path, depth_model = depth_context
+                ensure_depth_for_mix(run, owner, session, audio_path, depth_model)
 
         run = VideoRun(owner, name, kind)
         run.status = "Waiting for image generation…"
@@ -490,7 +596,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                   settings["orientation"], json.dumps(only), *export.values(owner)]
         generate = (partial(export.generate, mix=(audio, _mix_settings))
                     if settings["engine"] == "gpt_image" else export.generate)
-        return start_drawing(request, owner, name, DRAW, generate, visuals.VIDEO_INPUT_NAMES, values)
+        return start_drawing(request, owner, name, DRAW, generate, visuals.VIDEO_INPUT_NAMES, values,
+                             depth_context=(audio, settings["depth_model"]))
 
     @app.post(f"{api}/project/video/preview", include_in_schema=False)
     @guarded
@@ -532,6 +639,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     def save(name: str, request: Request, body: dict = Body(default={})):
         """Render the current stage, mix and chosen subtitles into a video in Media."""
         owner = owner_of(request)
+        session = session_of(request)
         root = export.deps.runtime_config().output_dir
         run = VideoRun(owner, name, SAVE)
         run.status = "Rendering the video for Media…"
@@ -539,14 +647,32 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         def progress(frame, total):
             run.status = f"Rendering visual effects for Media… {frame * 100 // total}%"
 
+        def build_scene(current_plan):
+            items = effects_pass.inventory(
+                result, root, current_plan["rows"], current_plan["subjects"], data,
+                speech=shot_speech_cues(mix_settings) if current_plan["rows"] else (),
+                depth_model=settings["depth_model"],
+            )
+            return effect_scene(
+                stills_payload(name, record, current_plan["rows"], items,
+                               folder=folder, depth_model=settings["depth_model"],
+                               style_preset=settings["preset"]),
+                mix_settings,
+            )
+
         def work(run):
+            current_scene = scene
+            if gpu and current_scene is not None and plan is not None:
+                added = ensure_depth_for_mix(run, owner, session, result, settings["depth_model"])
+                if added > 0:
+                    current_scene = build_scene(plan)
             options = {}
             soundtrack = applied_music(data)
             if music_mix_id(soundtrack):
                 with project_lock(name):
                     options["soundtrack"] = mixed_audio(result, soundtrack, music_clips)
                 options["music"] = soundtrack
-            video = visuals.render_stills(result, root, subtitles=subtitles, scene=scene, progress=progress, **options)
+            video = visuals.render_stills(result, root, subtitles=subtitles, scene=current_scene, progress=progress, **options)
             run.status = f"Saved {video.name} to Media."
             run.revision += 1
 
@@ -563,13 +689,14 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
             if record is None:
                 raise H3Error("Draw the images first: the video is rendered from them.")
             subtitles = settings["subtitle_size"] if settings["subtitles"] else 0
+            folder = visuals.stills_dir(result, root)
+            plan = None
             scene = None
             if mix_settings and not mix_settings.get("visual_timing_error"):
                 saved = visuals.read_plan(result, settings["limit"])
                 plan = plan_payload(name, saved, float(mix_settings.get("duration") or 0), record,
                                     mix_settings.get("voices", {}), root, result, settings)
-                items = effects_pass.inventory(result, root, plan["rows"], plan["subjects"], data)
-                scene = effect_scene(stills_payload(name, record, plan["rows"], items), mix_settings)
+                scene = build_scene(plan)
             runs.start(run, work)
         return {"video_run": run.public(None)}
 

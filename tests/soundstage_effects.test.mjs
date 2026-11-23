@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraFilter, cameraMotion, cameraTransform, cueElapsed, effectCues, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {cameraFilter, cameraMotion, cameraTransform, cueElapsed, effectCues, effectsEnabled, paintEffects, preloadEffectDepths} from "../h3_ui/drama3/page/effects.js";
 import {layersToSets, setsToLayers} from "../h3_ui/drama3/page/effects_pass.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
@@ -362,5 +362,43 @@ test("effect sets group shared targets/settings, separate differing ones, and en
     setsToLayers([{mode: "inside", region_ids: [], presets: ["rain"], feather: 6}], catalog),
     [{preset: "rain", mode: "full_frame"}],
   );
+});
+
+test("preloadEffectDepths caches URLs and settles cleanly on decode errors", async (t) => {
+  const created = [];
+  class FakeImage {
+    set src(value) {
+      this._src = value;
+      created.push(value);
+    }
+    get src() { return this._src; }
+    decode() {
+      return this._src.includes("broken") ? Promise.reject(new Error("bad depth png")) : Promise.resolve();
+    }
+  }
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "Image");
+  Object.defineProperty(globalThis, "Image", {value: FakeImage, configurable: true});
+  t.after(() => previous ? Object.defineProperty(globalThis, "Image", previous) : delete globalThis.Image);
+
+  await preloadEffectDepths([
+    {depth_url: "/depth/shot_1.png"},
+    {depth_url: "/depth/shot_1.png"},
+    {depth_url: "/depth/broken.png"},
+    {depth_url: null},
+  ]);
+  assert.deepEqual(created, ["/depth/shot_1.png", "/depth/broken.png"]);
+});
+
+test("camera-only shots with depth stay Camera only when WebGPU is unavailable", () => {
+  const clears = [];
+  const ctx = {clearRect: (...args) => clears.push(args)};
+  const canvas = {clientWidth: 320, clientHeight: 180, width: 320, height: 180, getContext: () => ctx};
+  const backends = [];
+  paintEffects(canvas, ["push_in"], 0.5, (backend) => backends.push(backend), {
+    cam: {tx: 0, ty: 0, scale: 1.04, shake: 0, angle: 0, blur: 0},
+    depthUrl: "/depth/shot_1.png",
+    depthMeta: {inv_min: 0, inv_max: 0.5, depth_strength: 1},
+  });
+  assert.deepEqual(backends, [null]);
 });
 

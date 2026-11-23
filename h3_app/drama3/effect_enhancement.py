@@ -15,7 +15,7 @@ MODES = {
     FULL_FRAME: "Apply to the whole shot.",
     "inside": "Apply inside the selected silhouette.",
     "outside": "Apply everywhere outside the selected silhouette.",
-    "behind": "Show the effect around the selected foreground silhouette, with the object occluding it.",
+    "behind": "Show the effect behind the selected foreground or midground silhouette using its metric depth so closer objects occlude it.",
 }
 CATALOG = {
     key: {**preset, "modes": [FULL_FRAME] + (

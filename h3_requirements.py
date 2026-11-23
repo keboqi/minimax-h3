@@ -40,6 +40,8 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Deno (from PyPI) runs yt-dlp's YouTube challenge solver without a system runtime.
 VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 PLAYWRIGHT_REQUIREMENT = "playwright==1.62.0"  # Soundstage stage-frame capture.
+TIMM_REQUIREMENT = "timm>=1.0.27,<1.1"
+DEPTH_PRO2_EXTRA_REQUIREMENTS = ("pillow-heif>=0.20", "av>=14.1")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "3a23f333537d9a715aad7ce79af8d9ec891d9ad8"  # v1.104.0 + native Core compatibility
 

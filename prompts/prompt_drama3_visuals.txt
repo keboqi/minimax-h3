@@ -81,14 +81,25 @@ Do not invent someone operating or watching an object to make it feel dramatic. 
 part, unnamed person or crowd is intentionally visible, describe that presence instead; an absent
 character tag by itself is not an instruction to exclude people.
 
-Give every shot a finished setting, not a vague backdrop: name at least two or three specific
-background elements (walls, furniture, windows, trees, sky, street signs without lettering) with
-their material, color and light. Keep their structure coherent and recognizable while giving the
-focal action priority. Choose depth of field for the shot: broader clarity for an establishing view,
-gentler background detail for a medium shot, and selective focus for a close-up. Do not routinely
-request deep focus or equal sharpness across the frame. Describe weathering and wetness sparingly;
-avoid piling granular surface detail and hard highlights onto every object. A finished setting
-can have quiet surfaces, soft light and atmospheric depth without losing its geometry.
+Give every shot a finished setting, not a vague backdrop, staged in three readable depth planes so
+both the composition and automated depth-based effects work cleanly: when it serves the beat, anchor
+a subtle near-foreground framing element (such as a doorway edge, railing, shoulder, or prop), place
+the focal subject cleanly separated in the midground rather than pressed flat against a close wall,
+and name at least two or three specific receding background elements (walls, arches, windows, trees,
+sky, street signs without lettering) with their material, color and light.
+Compose cleanly for animated effects rather than baking static overlays into the still:
+- Keep focus crisp enough across depth planes that metric depth reads cleanly: on any shot using
+  rack_focus, draw BOTH the near-foreground anchor and the focal subject behind it sharply and in
+  focus (never ask for heavy background blur or extreme shallow depth of field in the image, because
+  playback pulls optical thin-lens focus dynamically across the depth map and cannot unblur
+  baked-in blur). On other shots, prefer natural clarity across planes without heavy artificial
+  bokeh, cluttered grain, or busy textures on every surface.
+- When assigning live atmosphere (fog, smoke, underwater, rain, snow, petals, embers, dust,
+  fireflies), show physical scene cues (wet pavement, puddles, frost, damp stone, glowing hearth coals,
+  receding corridors, deep reef contours) while keeping the air clear and static haze light—never
+  paint static rain streaks, snow walls, or opaque fog over faces where 3D particles and volumetric
+  depth fog will render. Describe weathering and wetness sparingly so silhouettes and depth geometry
+  stay crisp.
 Exception: when the mix is an explainer, lesson, presentation or business talk rather than a story,
 show one idea per shot through a few recognizable people and objects on a simple, uncluttered
 setting, with room left around them for text added later.
@@ -97,11 +108,20 @@ Describe a single frame, never panels, a grid or a before-and-after. Show what i
 action, expression and staging: no text, captions, speech bubbles or lettering.
 
 PLAYBACK EFFECTS
+Every drawn still automatically receives a 3D metric depth map on the server, and Sound Stage
+renders playback and video export using that depth (2.5D camera parallax, thin-lens optical rack
+focus, distance-graduated volumetric fog/smoke/underwater, 3D depth-occluded particles,
+ray-marched sunbeams, and 3D surface-normal relighting). Co-design each shot's staging in "prompt"
+and its "effects" array together so the still gives the depth renderer clean planes and anchors to
+work with (while still describing one still frame—never asking the image model to animate it).
+
 Give every shot an "effects" array, using IDs from the request's effect_presets dictionary.
 Choose at most one camera move (push_in, pull_out, pan_left, pan_right, pan_up, pan_down, subtle_sway, impact_shake, dutch_tilt, rack_focus), one atmosphere overlay (rain, snow, fog, dust, embers, sunbeams, smoke, petals, underwater, fireflies), and one lighting/framing overlay (lightning, flash, warm_glow, cold_tint, flicker, vignette, film_grain, dream_bloom, scanlines, spotlight) per shot; [] means a still image.
 Decide what the viewer should notice at this beat and when the audio lets them notice it. A held expression, decisive framing or a quiet line can carry the beat with effects: []. Keep weather and light coherent across adjacent shots while conditions hold. Layer effects only when each has a distinct job.
-- Use push_in to direct attention, pull_out to reveal context, and a pan to guide the eye toward a detail already in the frame. Leave room around faces, hands and objects that must stay visible. Use subtle_sway for an intentional handheld viewpoint and rack_focus for a detail that resolves at shot start.
-- Give atmosphere and light a visible source or viewpoint. Dust belongs in a lit dusty space, flicker where firelight reaches the subject, and scanlines on a display or screen viewpoint. Use lightning for an established storm. Its pulses are independent of the audio.
+- Parallax camera moves (push_in, pull_out, pan_left, pan_right, pan_up, pan_down, subtle_sway, dutch_tilt): stage distinct near, midground, and far background planes with the focal subject near center as the parallax pivot, and leave breathing room around faces, hands, and frame edges. Use push_in to direct attention, pull_out to reveal receding context, a pan to guide the eye across elements already in frame, and subtle_sway or dutch_tilt for an intentional handheld or uneven viewpoint.
+- Optical rack_focus: pair with compositions that place a crisp near-foreground anchor (prop, doorway, foliage, shoulder) in front of a crisp focal subject at another depth so focus pulls visibly between planes at shot start; avoid heavy baked-in blur in the prompt.
+- Depth atmosphere: give atmosphere and light a real spatial source or receding vista. Pair fog, smoke, and underwater with open receding depth (streets, hallways, clearings, deep water) and restrained static haze; pair rain, snow, petals, embers, dust, and fireflies with separated foreground/midground/background silhouettes so 3D particles drift in front of and behind objects; pair sunbeams with a visible bright upper sky opening, high window, archway, or canopy gap broken by silhouettes so depth-occluded shafts stream through the gaps.
+- 3D normal lighting and framing: pair warm_glow and flicker with a visible warm practical light source in the scene (lantern, candle, lamp, hearth, brazier, warm doorway, neon sign) near sculpted faces or surfaces turned toward it, since playback anchors 3D normal warmth and contact shadows to the scene's warm light source; pair lightning with visible upper storm sky or tall windows behind darker foreground silhouettes; pair spotlight with a focal subject separated in depth from a darker surround; use scanlines only on a display or screen viewpoint.
 - Use impact_shake for a physical shock and flash for a burst of light or a deliberately emphasized reveal. Both fire at shot start and again at every non-looping sound onset inside the shot, including quiet Foley. There is no per-sound selector. Check the sounds list or script cues before assigning a pulse. For a single pulse, use a short shot starting on the intended beat with no later one-shots inside it. If the timing cannot isolate it, use a cut or a gentler effect. Avoid stacking or repeating pulses across neighboring shots.
 - Use a cut when a reveal needs a clear boundary. Use dissolve when the images should overlap, such as a gradual change of time or a memory. Give the outgoing image time to clear before the new detail needs to read. Set transition separately from effects.
 These are reusable animations applied during page playback, not image generation instructions.
@@ -112,7 +132,7 @@ Return a single JSON object in this shape:
  "props":{"old_radio":"bakelite radio, cracked cream casing, round brass dial"},
  "locations":{"station":"shuttered train station, iron canopy, a dark clock above the doors"},
  "shots":[{"cue":0,"offset":0,"transition":"cut","effects":["push_in","rain"],"beat":"Mara waits outside the locked station.",
- "prompt":"A wide, cold shot from across the square... @mara(collar turned up against the rain) shelters beneath the clock of @station(doors chained)."}]}
+ "prompt":"A wide, cold shot from across the dark square past a slick iron bollard in the near left foreground: @mara(center midground, damp ochre coat, shoulders hunched beside a glowing platform lantern) waits beneath the deep receding canopy of @station(wet stone steps, chained doors, dark clock overhead); clear evening air, puddle reflections."}]}
 Start the first shot at cue 0, offset 0. Use strictly increasing anchors in dialogue order.
 For a pause or sound-only tail after a cue, optionally use "phase":"after" with offset as a
 fraction of the gap from that cue's end to the next cue's start (or the mix's end for the last cue).

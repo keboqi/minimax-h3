@@ -249,6 +249,15 @@ Visual effects control and an explanation. Explicitly turning Visual effects on 
 motion for that project; turning it off clears the override. Existing plans stay still until
 effects are added or the shots are planned again.
 
+After drawing, Sound Stage automatically estimates metric depth maps using Apple Depth Pro 2 on the GPU
+server (configured with **Depth model** in **How it's drawn**, defaulting to `depthpro2-s`). Missing
+depth maps are also backfilled automatically when running **Enhance visual effects** or **Save to Media**
+on the GPU server. Depth automatically enhances full-frame camera moves with 2.5D parallax and
+thin-lens optical rack focus, gives fog/smoke/underwater/sunbeams depth attenuation and occlusion, adds
+3D normal relighting for warm glow and flicker, and lets **Enhance visual effects** occlude **Behind**
+atmospheres accurately using each SAM 3.1 segment's metric distance (`depth_m`) in both WebGPU
+playback and headless export.
+
 After drawing, **Enhance visual effects** can segment the finished stills in a batch with SAM 3.1
 on the GPU server. The first run downloads the optional SAM checkpoint. Then choose **Generate**
 with the writer selected in Script, or **Copy prompt** and paste the text reply from another

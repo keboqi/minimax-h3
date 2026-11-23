@@ -74,6 +74,10 @@ export function paintStage({back, front, overlay}, {shot, background, fading, ti
       backShotIndex: background.index, backCam,
       layers: enabled && elapsed >= 0 ? shot.effect_layers : null,
       backLayers: enabled && fading ? background.effect_layers : null,
+      depthUrl: shot.depth_url || null,
+      depthMeta: shot.depth_meta || null,
+      backDepthUrl: fading ? (background.depth_url || null) : null,
+      backDepthMeta: fading ? (background.depth_meta || null) : null,
     });
   }
 }

@@ -49,6 +49,8 @@ from h3_sources import (
     SPECTRUM_MOSS_REPO,
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
+    DEPTH_PRO2_REF,
+    DEPTH_PRO2_REPO,
 )
 from h3_models import prune_hf_cache, read_json, sync_models, write_json_atomic
 from h3_node_patches import (
@@ -68,6 +70,8 @@ from h3_requirements import (
     GRADIO_VERSION,
     PEDALBOARD_VERSION,
     PLAYWRIGHT_REQUIREMENT,
+    TIMM_REQUIREMENT,
+    DEPTH_PRO2_EXTRA_REQUIREMENTS,
     ULTRALYTICS_VERSION,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     HUGGINGFACE_HUB_REQUIREMENT,
@@ -110,7 +114,10 @@ def _setup_inputs() -> dict[str, str]:
     paths = (Path(__file__).resolve(), SCRIPT_DIR / "h3_requirements.py",
              SCRIPT_DIR / "h3_sources.py", SCRIPT_DIR / "h3_node_patches.py", SCRIPT_DIR / "h3_gpu.py",
              BUNDLED_ACCEL_NODE)
-    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    inputs = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    inputs["depth_pro2_ref"] = DEPTH_PRO2_REF
+    inputs["timm_requirement"] = TIMM_REQUIREMENT
+    return inputs
 
 
 def _repository_state(dest: Path, required_paths: tuple[str, ...]) -> dict:
@@ -796,6 +803,7 @@ def install_environment(comfy: Path) -> None:
             f"pedalboard=={PEDALBOARD_VERSION}",
             f"ultralytics=={ULTRALYTICS_VERSION}",
             "Pillow>=10",
+            *DEPTH_PRO2_EXTRA_REQUIREMENTS,
             *VIDEO_DOWNLOAD_REQUIREMENTS,
             PLAYWRIGHT_REQUIREMENT,
             "--constraint",
@@ -1010,7 +1018,8 @@ def sync_external_nodes(
     )
     # --no-deps deliberately protects the pinned CUDA/Torch stack, so install
     # the one dependency expressed only through transformers' `timm` extra.
-    uv_pip("timm>=0.9.16,<2", no_deps=True)
+    uv_pip(TIMM_REQUIREMENT, no_deps=True)
+    uv_pip(f"git+{DEPTH_PRO2_REPO}@{DEPTH_PRO2_REF}", no_deps=True)
     # Keep Kornia on the version checked with the current LTXVideo source.
     uv_pip(
         f"kornia=={KORNIA_VERSION}",

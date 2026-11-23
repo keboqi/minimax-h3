@@ -1,4 +1,4 @@
-import {effectsEnabled, effectTrack, lastAtOrBefore, preloadEffectMasks} from "./effects.js";
+import {effectsEnabled, effectTrack, lastAtOrBefore, preloadEffectDepths, preloadEffectMasks} from "./effects.js";
 import {openEffectsPicker} from "./effects_picker.js";
 import {createEffectsPass} from "./effects_pass.js";
 import {paintStage, showStageStills, stageFrame, stageTimeline} from "./stage.js";
@@ -141,8 +141,15 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       lastMaskShot = frame.shot;
       lastMaskBackground = frame.background;
       const relevant = [frame.background, ...shots.slice(frame.index, frame.index + 2)];
+      const assetLoads = [];
       if (relevant.some((shot) => shot.effect_layers?.some((layer) => layer.mask_url || layer.mask_urls?.length))) {
-        preloadEffectMasks(relevant).then(sync, sync);
+        assetLoads.push(preloadEffectMasks(relevant));
+      }
+      if (relevant.some((shot) => shot.depth_url)) {
+        assetLoads.push(preloadEffectDepths(relevant));
+      }
+      if (assetLoads.length) {
+        Promise.all(assetLoads).then(sync, sync);
       }
     }
     showStageStills(layers, frame);
@@ -478,6 +485,9 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
           videoField("Image model", h("select", {disabled: busy, onchange: (event) => saveVideo({video_engine: event.target.value})},
             boot.engines.map((engine) => h("option", {value: engine.id, selected: engine.id === video.engine}, engine.label))),
             "Draws with the Image tab's settings for that model."),
+          boot.depth_models?.length ? videoField("Depth model", h("select", {disabled: busy, onchange: (event) => saveVideo({video_depth_model: event.target.value})},
+            boot.depth_models.map((item) => h("option", {value: item.id, selected: item.id === (video.depth_model || boot.default_depth_model)}, item.label))),
+            "Depth Pro 2 runs automatically after drawing to enhance focus, parallax, atmosphere, and lighting.") : null,
           h("div", {class: "field"}, h("span", {class: "label"}, "Frame"),
             h("div", {class: "seg", role: "group", "aria-label": "Frame"}, Object.entries(FRAMES).map(([id, label]) => h("button", {
               type: "button", "aria-pressed": String(video.orientation === id), disabled: busy,

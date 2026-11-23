@@ -31,3 +31,5 @@ SPECTRUM_MOSS_REF = "1e5eb359160b50be02ff95d1a93f22af2947888c"  # required sampl
 SPECTRUM_MOSS_REPO = "https://github.com/Rkkss/ComfyUI-Spectrum-MOSS.git"
 VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
+DEPTH_PRO2_REF = "aa389cbb0b74341664ed663a0966c859905cd6c0"
+DEPTH_PRO2_REPO = "https://github.com/apple-aiml-research/ml-depth-pro-2.git"

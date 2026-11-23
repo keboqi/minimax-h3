@@ -1,8 +1,9 @@
-import {preloadEffectMasks} from "./effects.js";
+import {preloadEffectDepths, preloadEffectMasks} from "./effects.js";
 import {EFFECT_CATEGORIES, openEffectPresetPopup} from "./effects_picker.js";
 import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} from "./stage.js";
 
 const FULL_FRAME = "full_frame";
+const MAX_TOTAL_REGIONS = 24;
 const MODE_LABELS = {full_frame: "Full frame", inside: "Inside", outside: "Outside", behind: "Behind"};
 const SEG_COLORS = 12;
 const regionColor = (index) => `var(--seg-${index % SEG_COLORS})`;
@@ -157,10 +158,13 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
 
   function withMasks(shot, effects) {
     const urls = new Map(shot.regions.map((region) => [region.id, region.url]));
+    const depths = new Map(shot.regions.filter((region) => region.depth_m != null).map((region) => [region.id, region.depth_m]));
     return effects.map((effect) => {
       const ids = layerRegions(effect);
-      if (ids.length > 1) return {...effect, mask_urls: ids.map((id) => urls.get(id)).filter(Boolean)};
-      if (ids.length === 1) return {...effect, mask_url: urls.get(ids[0])};
+      const depthVals = ids.map((id) => depths.get(id)).filter((value) => value != null);
+      const depthExtra = depthVals.length ? {region_depth_m: Math.min(...depthVals)} : {};
+      if (ids.length > 1) return {...effect, ...depthExtra, mask_urls: ids.map((id) => urls.get(id)).filter(Boolean)};
+      if (ids.length === 1) return {...effect, ...depthExtra, mask_url: urls.get(ids[0])};
       return effect;
     });
   }
@@ -207,8 +211,11 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     const sounds = (state.project.result?.sounds || [])
       .filter((sound) => sound.start >= row.start && sound.start < row.end)
       .map((sound) => ({...sound, start: sound.start - row.start}));
+    const stillShot = (state.project.video?.stills?.shots || []).find((item) => item.index === row.index || item.shot_id === shot.shot_id);
     const [view] = stageTimeline([{start: 0, end: duration, index: row.index, fade: 0, url: row.image,
-      effects: effects.map(({preset}) => preset), effect_layers: effects}], sounds);
+      effects: effects.map(({preset}) => preset), effect_layers: effects,
+      depth_url: stillShot?.depth_url ?? null,
+      depth_meta: stillShot?.depth_meta ?? null}], sounds);
     const layers = {back, front, overlay};
     const formatTime = (t) => `${t.toFixed(1)} s / ${duration.toFixed(1)} s`;
     const setTime = (t) => {
@@ -240,7 +247,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     }}, "Play preview");
     const paint = () => paintStage(layers, stageFrame([view], Math.min(frameTime, duration)), true);
     showStageStills(layers, stageFrame([view], 0));
-    Promise.all([back.decode(), preloadEffectMasks([view])]).then(paint, paint);
+    Promise.all([back.decode(), preloadEffectMasks([view]), preloadEffectDepths([view])]).then(paint, paint);
     return h("div", {class: "pass-preview-wrap"}, stage,
       h("div", {class: "effect-timeline"}, playBtn, slider, timeReadout));
   }
@@ -411,9 +418,10 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
   }
 
   function maskEditor(shot) {
-    const region = shot.regions.find((item) => item.id === refine.region);
-    if (!region) return null;
-    const color = regionColorMap(shot).get(region.id);
+    const isAdd = refine.mode === "add";
+    const region = isAdd ? null : shot.regions.find((item) => item.id === refine.region);
+    if (!isAdd && !region) return null;
+    const color = isAdd ? regionColor(shot.regions.length) : regionColorMap(shot).get(region.id);
     const portrait = state.project.video.orientation === "portrait";
     const image = h("img", {src: rowOf(shot).image, alt: "Shot to segment"});
     const addPoint = (event, type) => {
@@ -431,14 +439,39 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       h("div", {class: "pass-mask-head"},
         h("span", {class: "pass-mask-title", style: color ? {"--seg-color": color} : undefined},
           h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
-          h("span", {class: "pass-seg-text"}, `Refining: ${region.label} · ${region.position}`)),
+          h("span", {class: "pass-seg-text"}, isAdd ? "New segment" : `Refining: ${region.label} · ${region.position}`)),
         button("Done", () => { refine = null; render(true); }, busy())),
+      isAdd ? h("input", {
+        type: "text",
+        class: "pass-mask-label",
+        "aria-label": "Segment label",
+        placeholder: "Label (optional, e.g. lantern)",
+        maxLength: 48,
+        value: refine.label,
+        disabled: busy(),
+        oninput: (event) => { refine.label = event.target.value; },
+      }) : null,
       h("div", {class: "pass-actions"},
         h("select", {"aria-label": "Point type", onchange: (event) => { refine.type = event.target.value; }},
           h("option", {value: "include", selected: refine.type === "include"}, "Include point"),
           h("option", {value: "exclude", selected: refine.type === "exclude"}, "Exclude point")),
         button("Clear points", () => { refine.include = []; refine.exclude = []; render(true); }, busy()),
-        button("Update mask", async () => {
+        button(isAdd ? "Add segment" : "Update mask", async () => {
+          if (isAdd) {
+            const prevIds = new Set(shot.regions.map((item) => item.id));
+            const result = await api("region", {
+              shot_id: shot.shot_id,
+              image: shot.image,
+              label: refine.label,
+              include: refine.include,
+              exclude: refine.exclude,
+            });
+            if (result) {
+              refine = {...refine, pendingFrom: prevIds, include: [], exclude: []};
+              render(true);
+            }
+            return;
+          }
           const result = await api("refine", {shot_id: shot.shot_id, image: shot.image, region_id: region.id,
             include: refine.include, exclude: refine.exclude});
           if (result) {
@@ -446,12 +479,14 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
             render(true);
           }
         }, busy() || !refine.include.length, "btn-primary")),
-      h("p", {class: "muted small"}, "Click to place selected point · right-click to exclude · then click Update mask."),
+      h("p", {class: "muted small"}, isAdd
+        ? "Click to place selected point · right-click to exclude · then click Add segment."
+        : "Click to place selected point · right-click to exclude · then click Update mask."),
       h("div", {
         class: `pass-mask${portrait ? " portrait" : ""}`,
         onclick: (event) => addPoint(event, refine.type),
         oncontextmenu: (event) => { event.preventDefault(); addPoint(event, "exclude"); },
-      }, image, h("div", {class: "pass-mask-overlay", "aria-hidden": "true",
+      }, image, isAdd ? null : h("div", {class: "pass-mask-overlay", "aria-hidden": "true",
         style: {"--seg-color": color || "var(--accent)", "--seg-mask": maskUrl(region.url)}}),
       ...["include", "exclude"].flatMap((type) => refine[type].map(([x, y]) =>
         h("span", {class: `pass-point ${type}`, style: {left: `${x * 100}%`, top: `${y * 100}%`}}, type === "include" ? "+" : "−")))));
@@ -649,10 +684,12 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
               onclick: () => { showSegments = !showSegments; render(true); }},
             showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null),
           preview(shot, withMasks(shot, flatLayers)),
-          shot.regions.length ? h("div", {class: "pass-segments"},
+          shot.regions.length || canRefine ? h("div", {class: "pass-segments"},
             h("div", {class: "pass-segments-head"},
               h("span", {class: "label"}, `Segments (${shot.regions.length})`),
-              h("span", {class: "muted small"}, canRefine ? "Hover to highlight · click to refine" : "Hover to highlight")),
+              h("span", {class: "muted small"}, shot.regions.length
+                ? (canRefine ? "Hover to highlight · click to refine" : "Hover to highlight")
+                : "No auto-detected segments · add one with points")),
             h("div", {class: "pass-seg-list"},
               ...shot.regions.map((region, index) => h("button", {
                 type: "button",
@@ -660,19 +697,33 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
                 style: {"--seg-color": regionColor(index)},
                 title: `${region.label} · ${region.position}`,
                 disabled: locked,
-                "aria-pressed": canRefine ? String(refine?.region === region.id) : undefined,
+                "aria-pressed": canRefine ? String(refine?.mode === "refine" && refine?.region === region.id) : undefined,
                 onmouseenter: () => setFocusRegions(region.id),
                 onmouseleave: () => setFocusRegions(null),
                 onfocus: () => setFocusRegions(region.id),
                 onblur: () => setFocusRegions(null),
                 onclick: canRefine ? () => {
-                  refine = refine?.region === region.id ? null : {region: region.id, type: "include", include: [], exclude: []};
+                  refine = refine?.mode === "refine" && refine?.region === region.id
+                    ? null
+                    : {mode: "refine", region: region.id, type: "include", include: [], exclude: []};
                   render(true);
                 } : undefined,
               },
               h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
               h("span", {class: "pass-seg-text"}, region.label),
-              h("span", {class: "pass-seg-pos"}, `· ${region.position}`))))) : null,
+              h("span", {class: "pass-seg-pos"}, `· ${region.position}`))),
+              canRefine ? h("button", {
+                type: "button",
+                class: "pass-seg-chip pass-seg-add",
+                disabled: locked || shot.regions.length >= MAX_TOTAL_REGIONS,
+                "aria-pressed": String(refine?.mode === "add"),
+                onclick: () => {
+                  refine = refine?.mode === "add"
+                    ? null
+                    : {mode: "add", region: null, label: "", type: "include", include: [], exclude: []};
+                  render(true);
+                },
+              }, "+ Add segment") : null)) : null,
           refine ? maskEditor(shot) : null),
         h("section", {class: "pass-layers-col", "aria-label": "Effect sets"},
           h("div", {class: "effect-options-controls"},
@@ -702,10 +753,18 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     if (!modal?.open) return;
     if (project !== state.project.name || !panel()) { stopPlayback(); closePresetDialog(); modal.close(); return; }
     if (!force && presetDialog()?.open) return;
-    if (!force && modal.contains(document.activeElement) && document.activeElement.matches("textarea")) return;
+    if (!force && modal.contains(document.activeElement) && document.activeElement.matches("textarea, input[type='text']")) return;
     const shot = panel().shots.find((item) => item.shot_id === selected);
     const run = state.videoRun;
     const running = run?.active && ["segment_effects", "enhance_effects", "refine_effect_mask"].includes(run.kind);
+    if (mode === "edit" && shot && refine?.mode === "add" && refine.pendingFrom) {
+      const added = shot.regions.find((region) => !refine.pendingFrom.has(region.id));
+      if (added) {
+        refine = {mode: "refine", region: added.id, type: "include", include: [], exclude: []};
+      } else if (!running) {
+        delete refine.pendingFrom;
+      }
+    }
     const scroll = modal.querySelector(".style-body")?.scrollTop ?? 0;
     modal.replaceChildren(h("div", {class: "library-head"},
       h("h2", {id: "effect-pass-title"}, mode === "edit" && shot ? `Shot ${shot.index + 1} effects` : "Enhance visual effects"),

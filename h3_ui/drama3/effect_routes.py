@@ -14,7 +14,7 @@ from h3_app.jobs import check_cancelled
 
 from ..job_bindings import owned_generation
 from ..page_runs import guarded
-from . import effect_regions, effects_pass, visuals
+from . import effect_depth, effect_regions, effects_pass, visuals
 from .page_common import PageRun, file_response, found, not_found, run_job, timeline_payload, writer_service
 from .page_store import editing
 from .project_visuals import planning_mix
@@ -22,6 +22,7 @@ from .project_visuals import planning_mix
 SEGMENT, ENHANCE, REFINE_MASK = "segment_effects", "enhance_effects", "refine_effect_mask"
 EFFECT_RUNS = (SEGMENT, ENHANCE, REFINE_MASK)
 WRITER_BATCH_SIZE = 24
+MAX_TOTAL_REGIONS = 24
 
 
 def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, session_of, project, payload,
@@ -42,7 +43,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
         plan = plan_payload(name, saved, float(mix.get("duration") or 0), record, mix.get("voices", {}),
                             root, audio, settings)
         items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data,
-                                       speech=shot_speech_cues(mix))
+                                       speech=shot_speech_cues(mix), depth_model=settings["depth_model"])
         if not items:
             raise H3Error("Draw the shots before enhancing their effects.")
         return visuals.stills_dir(audio, root), items, timeline_payload(mix)["sounds"]
@@ -68,8 +69,15 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
         if not gpu:
             raise H3Error("Open Sound Stage on the GPU server to run SAM 3.1.")
         folder, items, _ = effect_inputs(name)
+        depth_model = video_settings(project(name)[0], export.engines)["depth_model"]
         pending = {(item["image"], tuple(item["labels"])) for item in items if item["regions"] is None}
-        if not pending:
+        get_services = getattr(export.deps, "generation_services", None)
+        has_depth_services = callable(get_services) and get_services() is not None
+        depth_images = (
+            effect_depth.missing_stills(folder, [item["image"] for item in items], depth_model)
+            if has_depth_services else []
+        )
+        if not pending and not depth_images:
             return {**payload(owner_of(request), name), "message": "Shot regions are already available."}
         owner, session = owner_of(request), session_of(request)
         runtime = export.deps.runtime_config()
@@ -79,27 +87,40 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
 
             def generate():
                 services = export.deps.generation_services()
-                effect_regions.prepare(services)
-                for index, (image, labels) in enumerate(sorted(pending), 1):
-                    run.status = f"Segmenting shot {index}/{len(pending)} with SAM 3.1…"
-                    check_cancelled()
-                    try:
-                        effect_regions.segment(folder / image, labels, services, runtime)
-                    except (H3Error, OSError) as exc:
+                if pending:
+                    effect_regions.prepare(services)
+                    for index, (image, labels) in enumerate(sorted(pending), 1):
+                        run.status = f"Segmenting shot {index}/{len(pending)} with SAM 3.1…"
                         check_cancelled()
-                        failures.append(str(exc))
+                        try:
+                            effect_regions.segment(folder / image, labels, services, runtime)
+                        except (H3Error, OSError) as exc:
+                            check_cancelled()
+                            failures.append(str(exc))
+                        yield run.status
+                if depth_images:
+                    def on_depth_progress(index, total):
+                        run.status = f"Estimating depth for shot {index}/{total} with Depth Pro 2…"
+
+                    effect_depth.ensure_stills_depth(
+                        folder, depth_images, depth_model, services, runtime, on_progress=on_depth_progress
+                    )
                     yield run.status
 
             callback = owned_generation(generate, "drama3_visuals")
             for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
                 pass
-            if len(failures) == len(pending):
+            if pending and len(failures) == len(pending):
                 raise H3Error(f"SAM 3.1 could not segment these shots. {failures[0]}")
-            run.status = f"Processed {len(pending) - len(failures)} shots."
-            if failures:
-                run.status += f" {len(failures)} failed and can be retried."
+            if pending:
+                run.status = f"Processed {len(pending) - len(failures)} shots."
+                if failures:
+                    run.status += f" {len(failures)} failed and can be retried."
+            else:
+                run.status = "Depth maps ready for visual effects."
 
-        return start_effect_job(request, name, SEGMENT, "Preparing SAM 3.1…", work)
+        status = "Preparing SAM 3.1…" if pending else "Estimating shot depth with Depth Pro 2…"
+        return start_effect_job(request, name, SEGMENT, status, work)
 
     def current_prompt(name, include_manual, editing_data=None):
         _, items, sounds = effect_inputs(name, editing_data)
@@ -212,11 +233,29 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
                 stacks[item["shot_id"]] = {"image": item["image"], "effects": stack, "manual": True}
         return payload(owner, name)
 
+    def parse_mask_clicks(image_path, body):
+        from PIL import Image
+
+        with Image.open(image_path) as source:
+            width, height = source.size
+        clicks = {}
+        for key in ("include", "exclude"):
+            raw = body.get(key)
+            points = [] if raw is None else raw
+            if not isinstance(points, list) or len(points) > 32 or any(
+                not isinstance(p, list) or len(p) != 2 or
+                any(type(n) not in (int, float) or not 0 <= n <= 1 for n in p) for p in points
+            ):
+                raise H3Error("Mask points must be inside the image.")
+            clicks[key] = [{"x": min(width - 1, int(x * width)), "y": min(height - 1, int(y * height))}
+                           for x, y in points]
+        if not clicks["include"]:
+            raise H3Error("Add at least one Include point inside the object.")
+        return clicks
+
     @app.post(f"{api}/project/video/effects/refine", include_in_schema=False)
     @guarded
     def refine_effect_mask(name: str, request: Request, body: dict = Body(...)):
-        from PIL import Image
-
         if not gpu:
             raise H3Error("Open Sound Stage on the GPU server to refine a mask.")
         owner, session = owner_of(request), session_of(request)
@@ -227,20 +266,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
             raise H3Error("Choose a region to refine.")
         runtime = export.deps.runtime_config()
         image = folder / item["image"]
-        with Image.open(image) as source:
-            width, height = source.size
-        clicks = {}
-        for key in ("include", "exclude"):
-            points = body.get(key) or []
-            if not isinstance(points, list) or len(points) > 32 or any(
-                not isinstance(p, list) or len(p) != 2 or
-                any(type(n) not in (int, float) or not 0 <= n <= 1 for n in p) for p in points
-            ):
-                raise H3Error("Mask points must be inside the image.")
-            clicks[key] = [{"x": min(width - 1, int(x * width)), "y": min(height - 1, int(y * height))}
-                           for x, y in points]
-        if not clicks["include"]:
-            raise H3Error("Add at least one Include point inside the object.")
+        clicks = parse_mask_clicks(image, body)
 
         def work(run):
             def generate():
@@ -267,6 +293,59 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
 
         return start_effect_job(request, name, REFINE_MASK, "Refining the mask…", work)
 
+    @app.post(f"{api}/project/video/effects/region", include_in_schema=False)
+    @guarded
+    def add_effect_region(name: str, request: Request, body: dict = Body(...)):
+        if not gpu:
+            raise H3Error("Open Sound Stage on the GPU server to add a segment.")
+        owner, session = owner_of(request), session_of(request)
+        folder, items, _ = effect_inputs(name)
+        item = find_effect_shot(items, body)
+        if item["regions"] is None:
+            raise H3Error("Segment the shot before adding a custom segment.")
+        if len(item["regions"]) >= MAX_TOTAL_REGIONS:
+            raise H3Error(f"A shot can have at most {MAX_TOTAL_REGIONS} segments.")
+        raw_label = body.get("label")
+        if raw_label is not None and not isinstance(raw_label, str):
+            raise H3Error("Segment label must be text.")
+        label = " ".join((raw_label or "").split())[:48]
+        runtime = export.deps.runtime_config()
+        image = folder / item["image"]
+        clicks = parse_mask_clicks(image, body)
+
+        def work(run):
+            def generate():
+                services = export.deps.generation_services()
+                effect_regions.prepare(services)
+                created = effect_regions.segment(image, [label or "segment"], services, runtime, clicks=clicks)
+                if not created:
+                    raise H3Error("SAM 3.1 found no mask for those points.")
+                check_cancelled()
+                with editing(store, name) as data:
+                    _, current, _ = effect_inputs(name, data)
+                    current_item = find_effect_shot(current, body)
+                    if current_item["regions"] is None:
+                        raise H3Error("Segment the shot before adding a custom segment.")
+                    fixes = data.setdefault("video_effect_regions", {})
+                    entry = fixes.get(item["shot_id"]) or {}
+                    regions = entry.get("regions", {}) if entry.get("image") == item["image"] else {}
+                    used_ids = {r["id"] for r in current_item["regions"]} | set(regions)
+                    next_num = 1
+                    while f"custom_{next_num}" in used_ids:
+                        next_num += 1
+                    new_id = f"custom_{next_num}"
+                    final_label = label or f"segment {next_num}"
+                    fixes[item["shot_id"]] = {"image": item["image"], "regions": {
+                        **regions, new_id: {**created[0], "id": new_id, "label": final_label}}}
+                yield "Added segment."
+
+            callback = owned_generation(generate, "drama3_visuals")
+            for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
+                pass
+            run.status = "Added segment."
+
+        return start_effect_job(request, name, REFINE_MASK, "Creating the mask…", work)
+
     @app.get(f"{api}/video/effect-mask", include_in_schema=False)
     def effect_mask(name: str, file: str, request: Request):
         with found():
@@ -279,4 +358,18 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
         if not match or not record or not any(shot["image"] == match[1] for shot in record["shots"]):
             raise not_found()
         return file_response(visuals.stills_dir(audio, root) / effect_regions.MASK_FOLDER / file,
+                             media_type="image/png", cache="private, max-age=31536000, immutable")
+
+    @app.get(f"{api}/video/effect-depth", include_in_schema=False)
+    def effect_depth_map(name: str, file: str, request: Request):
+        with found():
+            owner_of(request)
+            data, result = project(name)
+            audio, _ = planning_mix(name, data, result, export, store=store)
+        match = re.fullmatch(r"([\w-]+\.(?:jpg|jpeg|png))\.[0-9a-f]{16}\.depth\.png", file)
+        root = export.deps.runtime_config().output_dir
+        record = visuals.read_stills(audio, root)
+        if not match or not record or not any(shot["image"] == match[1] for shot in record["shots"]):
+            raise not_found()
+        return file_response(visuals.stills_dir(audio, root) / effect_depth.DEPTH_FOLDER / file,
                              media_type="image/png", cache="private, max-age=31536000, immutable")

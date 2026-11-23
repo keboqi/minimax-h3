@@ -1,4 +1,4 @@
-import { ATMO_IDS, LIGHT_IDS, clearWebGPU, gpuStatus, probeWebGPU, renderWebGPU } from "./effects_webgpu.js";
+import { ATMO_IDS, LIGHT_IDS, clearWebGPU, gpuStatus, probeWebGPU, renderWebGPU, renderWebGPULayers } from "./effects_webgpu.js";
 
 // Animation derives from media time: pausing freezes it; seeking reconstructs it.
 const fraction = (value) => value - Math.floor(value);
@@ -288,30 +288,60 @@ export function paintEffectPreview(canvas, image, effects, seconds, duration) {
 }
 
 let lastPaintArgs = null;
+const repaintLast = () => { if (lastPaintArgs?.[0]?.isConnected) paintEffects(...lastPaintArgs); };
 const paintedOverlays = new WeakSet();
 const dissolveCanvases = new WeakMap();
 const maskImages = new Map();
+const depthImages = new Map();
 const stackBuffers = new WeakMap();
 
 const layerMaskUrls = (layer) => layer.mask_urls?.length ? layer.mask_urls : (layer.mask_url ? [layer.mask_url] : []);
 
-export function preloadEffectMasks(shots) {
-  const urls = new Set(shots.flatMap((shot) => (shot.effect_layers || []).flatMap(layerMaskUrls)));
-  const ready = [...urls].map((url) => {
-    let entry = maskImages.get(url);
+const readyDepthImage = (url) => {
+  const image = url ? depthImages.get(url)?.image : null;
+  return image?.complete && image.naturalWidth > 0 ? image : null;
+};
+
+const camMovesForDepth = (cam, list) => Boolean(
+  list?.includes?.("rack_focus") ||
+  (cam && (cam.blur || cam.shake ||
+    Math.abs(cam.tx || 0) > 0.001 || Math.abs(cam.ty || 0) > 0.001 ||
+    Math.abs((cam.scale ?? 1) - 1) > 0.001 || Math.abs(cam.angle || 0) > 0.001))
+);
+
+const MAX_CACHED_IMAGES = 48;
+
+function preloadImagePool(pool, urls, { swallowErrors = false } = {}) {
+  const ready = [...new Set(urls.filter(Boolean))].map((url) => {
+    let entry = pool.get(url);
     if (entry) {
-      maskImages.delete(url);
+      pool.delete(url);
     } else {
       const image = new Image();
       image.src = url;
-      entry = {image, ready: image.decode()};
+      const decoded = image.decode();
+      entry = { image, ready: swallowErrors ? decoded.catch(() => null) : decoded };
     }
-    maskImages.set(url, entry);
+    pool.set(url, entry);
     return entry.ready;
   });
-  // The player can seek across a long project without holding all decoded masks.
-  while (maskImages.size > 48) maskImages.delete(maskImages.keys().next().value);
+  // The player can seek across a long project without holding all decoded assets.
+  while (pool.size > MAX_CACHED_IMAGES) pool.delete(pool.keys().next().value);
   return Promise.all(ready);
+}
+
+const attachLayerAssets = (items) => (items || []).map((layer) => {
+  const maskUrls = layerMaskUrls(layer);
+  const imgs = maskUrls.map((url) => maskImages.get(url)?.image).filter((img) => img?.naturalWidth);
+  return { ...layer, maskUrls, maskImages: imgs };
+});
+
+export function preloadEffectDepths(shots) {
+  return preloadImagePool(depthImages, (shots || []).map((shot) => shot?.depth_url), { swallowErrors: true });
+}
+
+export function preloadEffectMasks(shots) {
+  return preloadImagePool(maskImages, (shots || []).flatMap((shot) => (shot?.effect_layers || []).flatMap(layerMaskUrls)));
 }
 
 function drawInShot(ctx, image, cam, w, h) {
@@ -398,16 +428,46 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
   const { atmospheres, lights } = splitEffects(effects);
   const fading = Boolean(scene?.fading && (scene?.fadeMix ?? 1) < 1);
   const { atmospheres: backAtmospheres, lights: backLights } = splitEffects(fading ? scene?.backEffects : null);
+  const width = Math.max(1, Math.round(canvas.clientWidth));
+  const height = Math.max(1, Math.round(canvas.clientHeight));
+  const t = Math.max(0, seconds);
+  const cueT = Math.max(0, scene?.cueElapsed ?? t);
+  const depthImage = readyDepthImage(scene?.depthUrl);
+  const backDepthImage = fading ? readyDepthImage(scene?.backDepthUrl) : null;
+
   if (scene?.layers || (fading && scene?.backLayers)) {
-    lastPaintArgs = null;
     paintedOverlays.add(canvas);
-    const painted = paintEnhancedScene(canvas, scene, effects, Math.max(0, seconds),
-      Math.max(0, scene.cueElapsed ?? seconds), fading);
+    lastPaintArgs = [canvas, effects, seconds, showBackend, scene];
+    if (gpuStatus() === "idle" || gpuStatus() === "ready") {
+      probeWebGPU(repaintLast);
+    }
+    const gpuLayers = attachLayerAssets(scene?.layers);
+    const gpuBackLayers = fading ? attachLayerAssets(scene?.backLayers) : null;
+    const gpuScene = {
+      ...scene,
+      fading,
+      cueElapsed: cueT,
+      depthImage,
+      backDepthImage,
+      layers: gpuLayers,
+      backLayers: gpuBackLayers,
+    };
+    if (renderWebGPULayers(canvas, gpuLayers, t, width, height, gpuScene)) {
+      showBackend?.("WebGPU");
+      return;
+    }
+    clearWebGPU(canvas);
+    const painted = paintEnhancedScene(canvas, scene, effects, t, cueT, fading);
     showBackend?.(painted ? "Canvas 2D" : "Unavailable");
     return;
   }
 
-  if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length) {
+  const hasDepthCam = Boolean(
+    (depthImage && (scene?.depthMeta?.depth_strength ?? 1) > 0.01 && camMovesForDepth(scene?.cam, effects)) ||
+    (fading && backDepthImage && (scene?.backDepthMeta?.depth_strength ?? 1) > 0.01 && camMovesForDepth(scene?.backCam, scene?.backEffects))
+  );
+
+  if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length && !hasDepthCam) {
     lastPaintArgs = null;
     if (paintedOverlays.delete(canvas)) {
       clearWebGPU(canvas);
@@ -416,16 +476,10 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     showBackend?.(null);
     return;
   }
-  const width = Math.max(1, Math.round(canvas.clientWidth));
-  const height = Math.max(1, Math.round(canvas.clientHeight));
   paintedOverlays.add(canvas);
-  const t = Math.max(0, seconds);
-  const cueT = Math.max(0, scene?.cueElapsed ?? t);
   lastPaintArgs = [canvas, effects, seconds, showBackend, scene];
   if (gpuStatus() === "idle") {
-    probeWebGPU(() => {
-      if (lastPaintArgs?.[0].isConnected) paintEffects(...lastPaintArgs);
-    });
+    probeWebGPU(repaintLast);
   }
   const atmoId = ATMO_IDS[atmospheres[0]] || 0;
   const lightId = LIGHT_IDS[lights[0]] || 0;
@@ -437,6 +491,10 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     cueElapsed: cueT,
     backAtmoId,
     backLightId,
+    depthImage,
+    backDepthImage,
+    rackActive: Boolean(effects?.includes?.("rack_focus")),
+    backRackActive: Boolean(fading && scene.backEffects?.includes?.("rack_focus")),
   } : null;
   if (
     atmospheres.length <= 1 &&
@@ -453,6 +511,13 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     return;
   }
   clearWebGPU(canvas);
+  if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length) {
+    if (paintedOverlays.delete(canvas)) {
+      canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    showBackend?.(null);
+    return;
+  }
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     showBackend?.("Unavailable");

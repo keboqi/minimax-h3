@@ -9,14 +9,14 @@
 <script type="module">
   import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} from "./stage.js";
   import {probeWebGPU} from "./effects_webgpu.js";
-  import {preloadEffectMasks} from "./effects.js";
+  import {preloadEffectDepths, preloadEffectMasks} from "./effects.js";
 
   const layers = stageLayers();
   document.querySelector(".stills").append(...Object.values(layers));
   let timeline, lastShot, lastBackground;
   window.prepareStage = async ({shots, sounds}) => {
     timeline = stageTimeline(shots, sounds);
-    await probeWebGPU();
+    await probeWebGPU(undefined, {layers: true});
   };
   window.paintFrame = async (time) => {
     const frame = stageFrame(timeline, time);
@@ -24,6 +24,7 @@
     const assets = changed.map(image => image.decode());
     if (frame.shot !== lastShot || frame.background !== lastBackground) {
       assets.push(preloadEffectMasks([frame.shot, frame.background]));
+      assets.push(preloadEffectDepths([frame.shot, frame.background]));
       lastShot = frame.shot;
       lastBackground = frame.background;
     }

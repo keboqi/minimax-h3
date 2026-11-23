@@ -802,6 +802,9 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
   background: color-mix(in srgb, var(--seg-color) 20%, var(--surface)); }
 .pass-seg-chip[aria-pressed="true"] { border-color: var(--seg-color);
   background: color-mix(in srgb, var(--seg-color) 24%, var(--surface)); box-shadow: inset 0 0 0 1px var(--seg-color); }
+.pass-seg-add { --seg-color: var(--accent); border-style: dashed; background: var(--surface); color: var(--muted); }
+.pass-seg-add:hover:not(:disabled), .pass-seg-add:focus-visible { color: var(--accent); }
+.pass-seg-add[aria-pressed="true"] { color: var(--accent); border-style: solid; }
 .pass-seg-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--seg-color);
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--seg-color) 40%, transparent); }
 .pass-seg-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -815,6 +818,8 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
 .pass-proposal-row .label { min-width: 56px; }
 .pass-mask-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .pass-mask-title { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; font-weight: 600; color: var(--seg-color, var(--text)); }
+.pass-mask-label { width: 100%; min-width: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13.5px; }
 .pass-mask { position: relative; justify-self: start; width: min(100%, 480px); line-height: 0; cursor: crosshair; }
 .pass-mask.portrait { width: min(100%, 214px); }
 .pass-mask img { display: block; width: 100%; height: auto; }

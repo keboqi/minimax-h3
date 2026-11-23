@@ -613,6 +613,13 @@ def rebind_stills(audio, root, shots, *, previous_audio=None, previous_shots=Non
             else []
         )
         dst_masks = destination / ".effect-masks"
+        src_depths = folder / ".effect-depth"
+        depth_files = (
+            [entry for entry in src_depths.iterdir() if not entry.is_symlink() and entry.is_file()]
+            if src_depths.is_dir()
+            else []
+        )
+        dst_depths = destination / ".effect-depth"
         for index, image in enumerate(images):
             target = destination / image.name
             copyfile(image, target)
@@ -621,6 +628,10 @@ def rebind_stills(audio, root, shots, *, previous_audio=None, previous_shots=Non
                 if mask_file.name.startswith(prefix):
                     dst_masks.mkdir(parents=True, exist_ok=True)
                     copyfile(mask_file, dst_masks / mask_file.name)
+            for depth_file in depth_files:
+                if depth_file.name.startswith(prefix):
+                    dst_depths.mkdir(parents=True, exist_ok=True)
+                    copyfile(depth_file, dst_depths / depth_file.name)
             images[index] = target
     drawings = [Shot(shot.first, shot.frames, shot.dissolve, item.get("prompt", ""),
                      shot.beat, id=shot.id) for shot, item in pairs]

@@ -624,3 +624,33 @@ class IllustratedMixTests(unittest.TestCase):
             self.assertGreater(green, max(red, blue) + 60)
             red, green, blue = pixels[-3:]
             self.assertGreater(blue, max(red, green) + 60)
+
+    def test_prompts_and_presets_encode_depth_aware_shot_design(self):
+        from h3_app.drama3 import effect_enhancement
+        from h3_app.drama3.visual_plan import full_plan_prompt
+
+        visuals_prompt = Path("prompts/prompt_drama3_visuals.txt").read_text(encoding="utf-8")
+        self.assertIn("three readable depth planes", visuals_prompt)
+        self.assertIn("on any shot using", visuals_prompt)
+        self.assertIn("rack_focus", visuals_prompt)
+        self.assertIn("visible warm practical light source", visuals_prompt)
+        self.assertIn("bright upper sky opening", visuals_prompt)
+        self.assertIn("keeping the air clear", visuals_prompt)
+        self.assertNotIn("Do not routinely\nrequest deep focus", visuals_prompt)
+        self.assertNotIn("art_style", visuals_prompt)
+        self.assertNotIn("art_direction", visuals_prompt)
+
+        effects_prompt = Path("prompts/prompt_soundstage_effects.txt").read_text(encoding="utf-8")
+        for token in ("depth_summary", "depth_m", "depth_band", '"behind"', '"inside"', '"outside"', "max_layers_per_shot"):
+            self.assertIn(token, effects_prompt)
+
+        settings = {"duration": 8, "title": "Night", "chunks": [{"name": "Ana", "text": "Look.", "start": 0, "end": 2}]}
+        runtime = SimpleNamespace(prompt_systems={"Drama 3 visuals": Path("prompts/prompt_drama3_visuals.txt")})
+        plan_req = json.loads(full_plan_prompt(settings, 1, runtime=runtime).split("\n\n----- USER REQUEST -----\n\n")[1])
+        self.assertIn("depth parallax", plan_req["effect_presets"]["push_in"]["description"])
+        self.assertIn("Optical focus pull", plan_req["effect_presets"]["rack_focus"]["description"])
+        self.assertIn("metric depth", effect_enhancement.MODES["behind"])
+
+        effects_req = json.loads(effect_enhancement.request_text([], "rev-1"))
+        self.assertIn("metric depth", effects_req["application_modes"]["behind"])
+        self.assertIn("Depth-occluded", effects_req["presets"]["sunbeams"]["description"])

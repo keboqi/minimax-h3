@@ -145,6 +145,41 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         expected_sha256="9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03",
         revision="5febd4769e8802cdfdb75e1f733abd8c68434a85",
     ),
+    "soundstage_depthpro2_s": ModelSpec(
+        "apple/DepthPro2-S", "depth_pro_2", "model.safetensors",
+        "Depth Pro 2 Small · Soundstage",
+        local_filename="depthpro2_s.safetensors",
+        expected_sha256="583c4d630779fd231f969c738733624963ad34bd3c29f9c64088257e3436f97c",
+        revision="903a1c1ade918831d138adcc4aedbcc8f4da0078",
+    ),
+    "soundstage_depthpro2_b": ModelSpec(
+        "apple/DepthPro2-B", "depth_pro_2", "model.safetensors",
+        "Depth Pro 2 Base · Soundstage",
+        local_filename="depthpro2_b.safetensors",
+        expected_sha256="244ff85e0d9bde6e0f985de1c61420abc4c2110265b495c974556225ac2b60ed",
+        revision="85e67fdfb7f5b36a6f6c4495e6789d331b1d8a04",
+    ),
+    "soundstage_depthpro2_l": ModelSpec(
+        "apple/DepthPro2-L", "depth_pro_2", "model.safetensors",
+        "Depth Pro 2 Large · Soundstage",
+        local_filename="depthpro2_l.safetensors",
+        expected_sha256="d799d8a91f2e8dc91715f9b33a405a1ff0727212041d206ebbb04e6c1424ff9f",
+        revision="849dc5461267e0bc006ec63ab46920ea1ed98702",
+    ),
+    "soundstage_depthpro2_h": ModelSpec(
+        "apple/DepthPro2-H", "depth_pro_2", "model.safetensors",
+        "Depth Pro 2 Huge+ · Soundstage",
+        local_filename="depthpro2_h.safetensors",
+        expected_sha256="cfc532336019abd2128b04be2c2967175522e46de69222ef72b87c6675ee3b17",
+        revision="68426c789f75a7c760273e857222625b4fe69576",
+    ),
+    "soundstage_depthpro2_focal": ModelSpec(
+        "apple/DepthPro2-focal", "depth_pro_2", "model.safetensors",
+        "Depth Pro 2 Focal Estimator · Soundstage",
+        local_filename="depthpro2_focal.safetensors",
+        expected_sha256="8f567d1c97ff916137288668f6bd306ce2094da2e2b852b0e4539dbb139c8c86",
+        revision="622659d44a2002cf9ae4333f2569afa938290d9a",
+    ),
     "face_yolov8m": ModelSpec(
         "Bingsu/adetailer", "ultralytics/bbox", "face_yolov8m.pt",
         "ADetailer · YOLOv8m face detector",
@@ -1193,6 +1228,20 @@ DRAMA3_COMFY_MODEL_KEYS = (
     DRAMA3_COMFY_CODEC_KEY,
     *DRAMA3_COMFY_MODELS,
 )
+SOUNDSTAGE_DEPTH_MODEL_KEYS = {
+    "depthpro2-s": "soundstage_depthpro2_s",
+    "depthpro2-b": "soundstage_depthpro2_b",
+    "depthpro2-l": "soundstage_depthpro2_l",
+    "depthpro2-h": "soundstage_depthpro2_h",
+}
+SOUNDSTAGE_DEPTH_MODEL_LABELS = {
+    "depthpro2-s": "Depth Pro 2 Small (~97 MB, fastest)",
+    "depthpro2-b": "Depth Pro 2 Base (~386 MB, balanced)",
+    "depthpro2-l": "Depth Pro 2 Large (~1.3 GB, sharper edges)",
+    "depthpro2-h": "Depth Pro 2 Huge+ (~3.5 GB, max detail)",
+}
+SOUNDSTAGE_DEPTH_FOCAL_KEY = "soundstage_depthpro2_focal"
+DEFAULT_SOUNDSTAGE_DEPTH_MODEL = "depthpro2-s"
 LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_image_dit", "h3_image_vae", "h3_image_upsampler",
     "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
@@ -1200,6 +1249,8 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_regenerate_refiner_384",
     "face_yolov8m",
     "soundstage_sam31",
+    *SOUNDSTAGE_DEPTH_MODEL_KEYS.values(),
+    SOUNDSTAGE_DEPTH_FOCAL_KEY,
     "remake_swap_lora",
     "remake_edit_lora",
     *FLUX3_MODEL_KEYS,
@@ -2393,6 +2444,9 @@ def selftest() -> None:
         "h3_regenerate_refiner_16",
         "h3_regenerate_refiner_384",
         "face_yolov8m",
+        "soundstage_sam31",
+        *SOUNDSTAGE_DEPTH_MODEL_KEYS.values(),
+        SOUNDSTAGE_DEPTH_FOCAL_KEY,
         "remake_swap_lora",
         "remake_edit_lora",
         "video_vae_trt_encoder",
@@ -2631,6 +2685,11 @@ def selftest() -> None:
         assert MODEL_SPECS[key].repo_id == DRAMA3_COMFY_REPO
         assert MODEL_SPECS[key].revision == DRAMA3_COMFY_REVISION
         assert MODEL_SPECS[key].folder == "diffusion_models"
+        assert key in LAZY_OPTIONAL_MODEL_KEYS
+    assert DEFAULT_SOUNDSTAGE_DEPTH_MODEL == "depthpro2-s"
+    assert SOUNDSTAGE_DEPTH_FOCAL_KEY in LAZY_OPTIONAL_MODEL_KEYS
+    for key in SOUNDSTAGE_DEPTH_MODEL_KEYS.values():
+        assert MODEL_SPECS[key].folder == "depth_pro_2"
         assert key in LAZY_OPTIONAL_MODEL_KEYS
     print("h3_models selftest OK")
 

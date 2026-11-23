@@ -24,7 +24,8 @@ from tests.test_drama3_page_video import API, NAME, PLAN, Drama3PageVideoTests
 
 def check_webgpu_composite(page):
     sizes = page.evaluate("""async () => {
-      const {renderWebGPU, ATMO_IDS, LIGHT_IDS} = await import('/soundstage/effects_webgpu.js');
+      const {probeWebGPU, renderWebGPU, ATMO_IDS, LIGHT_IDS} = await import('/soundstage/effects_webgpu.js');
+      await probeWebGPU();
       const host = document.createElement('canvas');
       const probe = document.createElement('div');
       probe.id = 'composite-probe';
@@ -58,6 +59,144 @@ def check_webgpu_composite(page):
     red, green, blue = frame.getpixel((4, 4))
     assert red < 100 and 125 <= green <= 130 and blue == 0, (red, green, blue)
     page.locator("#composite-probe").evaluate("node => node.remove()")
+
+
+def _encode_split_depth_png(size=(160, 90), z_left=1.5, z_right=25.0):
+    img = Image.new("RGB", size)
+    inv_min, inv_max = 0.0, 1.0 / 1.2
+    half_w = size[0] // 2
+
+    def pack(z):
+        u = max(0.0, min(1.0, ((1.0 / z) - inv_min) / (inv_max - inv_min)))
+        q = int(round(u * 65535.0))
+        return (q >> 8, q & 0xFF, 0)
+
+    px_left, px_right = pack(z_left), pack(z_right)
+    pixels = [px_left if x < half_w else px_right for _y in range(size[1]) for x in range(size[0])]
+    img.putdata(pixels)
+    return img, {
+        "inv_min": inv_min, "inv_max": inv_max, "width": size[0], "height": size[1],
+        "f_px": float(max(size) * 1.1), "depth_strength": 1.0, "parallax_scale": 1.0,
+        "z_p10": z_left, "z_p25": z_left, "z_p50": 4.0, "z_p90": z_right,
+        "subject_z": z_left, "subject_uv": [0.25, 0.5], "rack_start_z": z_right,
+        "warm_anchor": {"u": 0.5, "v": 0.5, "z": 3.0, "strength": 0.5},
+        "sky_dir": {"u": 0.5, "v": 0.1},
+    }
+
+
+def _to_data_url(image):
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _row_contrast(rgb_img, x0, x1, y):
+    vals = [sum(rgb_img.getpixel((x, y))) / 3.0 for x in range(x0, x1)]
+    return sum(abs(vals[i + 1] - vals[i]) for i in range(len(vals) - 1)) / max(1, len(vals) - 1)
+
+
+def check_webgpu_depth_and_layers(page):
+    depth_img, depth_meta = _encode_split_depth_png((160, 90), z_left=1.5, z_right=25.0)
+    dark_img = Image.new("RGB", (160, 90), (24, 24, 24))
+    stripe_img = Image.new("RGB", (160, 90))
+    stripe_img.putdata([
+        ((235, 235, 235) if (x // 3) % 2 == 0 else (20, 20, 20))
+        for _y in range(90) for x in range(160)
+    ])
+    left_mask = Image.new("RGBA", (160, 90), (0, 0, 0, 0))
+    ImageDraw.Draw(left_mask).rectangle((0, 0, 79, 89), fill=(255, 255, 255, 255))
+
+    urls = {
+        "depth": _to_data_url(depth_img),
+        "dark": _to_data_url(dark_img),
+        "stripe": _to_data_url(stripe_img),
+        "mask": _to_data_url(left_mask),
+    }
+    fog_meta = {**depth_meta, "subject_z": 3.2}
+    page.evaluate("""async ({urls}) => {
+      const {probeWebGPU} = await import('/soundstage/effects_webgpu.js');
+      await probeWebGPU(undefined, {layers: true});
+      const probe = document.createElement('div');
+      probe.id = 'depth-probe';
+      probe.style = 'position: fixed; top: 0; left: 0; z-index: 9999; width: 160px; height: 90px';
+      const host = document.createElement('canvas');
+      probe.append(host);
+      document.body.append(probe);
+      async function load(src) {
+        const im = new Image();
+        im.src = src;
+        await im.decode();
+        return im;
+      }
+      window.__depthProbe = {
+        host,
+        depth: await load(urls.depth),
+        dark: await load(urls.dark),
+        stripe: await load(urls.stripe),
+        mask: await load(urls.mask),
+      };
+    }""", {"urls": urls})
+
+    # 1) Volumetric Beer-Lambert fog: far right (25m) is noticeably brighter/foggier than near left (1.5m).
+    assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPU, ATMO_IDS}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, ATMO_IDS.fog, 0, 1.5, 160, 90, {
+        stillBack: p.dark, depthImage: p.depth, depthMeta: meta,
+      });
+    })""", {"meta": fog_meta})
+    fog_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    w, h = fog_frame.size
+    left_luma = sum(sum(fog_frame.getpixel((x, y))) / 3.0 for x in range(w // 8, w * 3 // 8, 4) for y in range(h // 2, h * 7 // 8, 4))
+    right_luma = sum(sum(fog_frame.getpixel((x, y))) / 3.0 for x in range(w * 5 // 8, w * 7 // 8, 4) for y in range(h // 2, h * 7 // 8, 4))
+    assert right_luma > left_luma + 50, (left_luma, right_luma)
+
+    # 2) Optical thin-lens rack_focus: focus near left (blur=0) keeps left stripes sharper; blur=1 flips focus to far right.
+    assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPU}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, 0, 0, 1.0, 160, 90, {
+        stillBack: p.stripe, depthImage: p.depth, depthMeta: meta, rackActive: true,
+        cam: {tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 0},
+      });
+    })""", {"meta": depth_meta})
+    near_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    near_left_c = _row_contrast(near_frame, w // 6, w * 2 // 5, h // 2)
+    near_right_c = _row_contrast(near_frame, w * 3 // 5, w * 5 // 6, h // 2)
+    assert near_left_c > near_right_c + 15, (near_left_c, near_right_c)
+
+    assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPU}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, 0, 0, 0.05, 160, 90, {
+        stillBack: p.stripe, depthImage: p.depth, depthMeta: meta, rackActive: true,
+        cam: {tx: 0, ty: 0, scale: 1, shake: 0, angle: 0, blur: 1.0},
+      });
+    })""", {"meta": depth_meta})
+    far_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    far_left_c = _row_contrast(far_frame, w // 6, w * 2 // 5, h // 2)
+    far_right_c = _row_contrast(far_frame, w * 3 // 5, w * 5 // 6, h // 2)
+    assert far_right_c > far_left_c + 15, (far_left_c, far_right_c)
+
+    # 3) Unified SAM renderWebGPULayers: inside cold_tint on left + behind fog (region_depth_m=3.0).
+    assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPULayers}) => {
+      const p = window.__depthProbe;
+      const layers = [
+        {preset: 'cold_tint', mode: 'inside', intensity: 1, feather: 0, maskImages: [p.mask], maskUrls: ['left']},
+        {preset: 'fog', mode: 'behind', intensity: 1, feather: 0, region_depth_m: 3.0, maskImages: [p.mask], maskUrls: ['left']},
+        {preset: 'fog', mode: 'behind', intensity: 1, feather: 0, region_depth_m: 3.0, maskImages: [p.mask], maskUrls: ['left']},
+      ];
+      return renderWebGPULayers(p.host, layers, 1.5, 160, 90, {
+        stillBack: p.dark, depthImage: p.depth, depthMeta: meta, layers,
+      });
+    })""", {"meta": fog_meta})
+    layer_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    lr, _lg, lb = layer_frame.getpixel((w // 4, h // 2))
+    rr, rg, rb = layer_frame.getpixel((w * 3 // 4, h * 3 // 4))
+    assert lb > lr + 4, (lr, lb)
+    assert (rr + rg + rb) / 3.0 > 28, (rr, rg, rb)
+
+    page.evaluate("""() => {
+      delete window.__depthProbe;
+      document.getElementById('depth-probe')?.remove();
+    }""")
 
 
 def check_enhancement(page, fixture):
@@ -119,6 +258,18 @@ def check_enhancement(page, fixture):
     assert abs(mask_box["y"] - img_box["y"]) <= 1, (mask_box, img_box)
     mask_box_el.click(position={"x": 40, "y": 40})
     mask_box_el.click(button="right", position={"x": 80, "y": 40})
+    expect(dialog.locator(".pass-point.include")).to_have_count(1)
+    expect(dialog.locator(".pass-point.exclude")).to_have_count(1)
+    dialog.get_by_role("button", name="Done").click()
+
+    # Verify adding a new segment with label and include/exclude points.
+    dialog.get_by_role("button", name="+ Add segment").click()
+    expect(dialog.locator(".pass-mask-overlay")).to_have_count(0)
+    dialog.get_by_label("Segment label").fill("lantern")
+    add_mask_el = dialog.locator(".pass-mask")
+    add_mask_el.locator("img").evaluate("img => img.decode()")
+    add_mask_el.click(position={"x": 45, "y": 45})
+    add_mask_el.click(button="right", position={"x": 90, "y": 45})
     expect(dialog.locator(".pass-point.include")).to_have_count(1)
     expect(dialog.locator(".pass-point.exclude")).to_have_count(1)
     dialog.get_by_role("button", name="Done").click()
@@ -563,6 +714,7 @@ def run(*, webgpu=False):
             expect(effect).to_have_text("Slow push in · Rain · Lightning")
             if webgpu:
                 check_webgpu_composite(page)
+                check_webgpu_depth_and_layers(page)
             if backend == "Canvas 2D":
                 alpha = page.evaluate("""async () => {
                   const {paintEffects} = await import('/soundstage/effects.js');
@@ -683,7 +835,39 @@ def run_masked_export():
     print("PASS: stacked effects share multi-region union masks and fade with their source shot during export")
 
 
+def run_depth_export():
+    with TemporaryDirectory() as temp:
+        folder = Path(temp)
+        size = (160, 90)
+        image = folder / "shot.png"
+        Image.new("RGB", size, (24, 24, 24)).save(image)
+        depth_img, depth_meta = _encode_split_depth_png(size, z_left=1.5, z_right=25.0)
+        depth_meta = {**depth_meta, "subject_z": 3.2}
+        depth_dir = folder / ".effect-depth"
+        depth_dir.mkdir()
+        depth_file = f"{image.name}.{'a' * 16}.depth.png"
+        depth_img.save(depth_dir / depth_file)
+        timeline = [{
+            "index": 0, "start": 0, "end": 2 / FPS, "fade": 0, "effects": ["fog"],
+            "depth_file": depth_file, "depth_meta": depth_meta,
+        }]
+        frames = effects_export.capture_frames(folder, timeline, [], [image], size, 2)
+        try:
+            stream, count = next(frames)
+            assert count == 2
+            exported = [Image.open(BytesIO(b"\xff\xd8" + frame)).copy().convert("RGB")
+                        for frame in stream.read_bytes().split(b"\xff\xd8")[1:]]
+        finally:
+            frames.close()
+        rgb = exported[1]
+        left_luma = sum(sum(rgb.getpixel((x, y))) / 3.0 for x in range(20, 60, 4) for y in range(45, 80, 4))
+        right_luma = sum(sum(rgb.getpixel((x, y))) / 3.0 for x in range(100, 140, 4) for y in range(45, 80, 4))
+        assert right_luma > left_luma + 50, (left_luma, right_luma)
+    print("PASS: depth-enhanced export serves /depth maps and applies volumetric fog")
+
+
 if __name__ == "__main__":
     run(webgpu="--webgpu" in sys.argv)
     run_export()
     run_masked_export()
+    run_depth_export()

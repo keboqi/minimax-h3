@@ -3671,6 +3671,262 @@ class H3SaveDetectedMasks:
         return {"ui": SaveImage().save_images(images, filename_prefix)["ui"]}
 
 
+_DEPTH_PRO2_LOCK = threading.Lock()
+_DEPTH_PRO2_MODEL_CACHE: dict[str, object] = {}
+
+
+def _encode_depthpro2_artifacts(depth_np, rgb_np, f_px, preset):
+    """Pack metric depth into lossless 16-bit RG8+sky PNG and auto-derived scene anchors."""
+    import numpy as np
+    from PIL import Image
+
+    depth_arr = np.asarray(depth_np, dtype=np.float32)
+    height, width = int(depth_arr.shape[0]), int(depth_arr.shape[1])
+    rgb_arr = np.asarray(rgb_np, dtype=np.uint8)
+
+    sky_mask = (~np.isfinite(depth_arr)) | (depth_arr <= 0.0) | (depth_arr > 150.0)
+    sky_depth = np.where((~np.isfinite(depth_arr)) | (depth_arr <= 0.0), 150.0, depth_arr)
+    sky_float = np.clip((sky_depth - 60.0) / 90.0, 0.0, 1.0).astype(np.float32)
+    sky_u8 = np.rint(sky_float * 255.0).astype(np.uint8)
+    inv = np.where(sky_mask, 0.0, 1.0 / np.clip(depth_arr, 0.05, 150.0)).astype(np.float32)
+
+    valid_mask = ~sky_mask
+    valid_count = int(valid_mask.sum())
+    if valid_count >= 16:
+        valid_inv = inv[valid_mask]
+        valid_z = np.clip(depth_arr[valid_mask], 0.1, 150.0)
+        inv_min = 0.0
+        inv_max = float(max(float(np.percentile(valid_inv, 99.5)), 1e-3))
+        z_p10, z_p25, z_p50, z_p75, z_p90 = [
+            float(v) for v in np.percentile(valid_z, (10.0, 25.0, 50.0, 75.0, 90.0))
+        ]
+    else:
+        inv_min, inv_max = 0.0, 1.0
+        z_p10, z_p25, z_p50, z_p75, z_p90 = 2.0, 4.0, 8.0, 16.0, 32.0
+        valid_z = np.array([z_p50], dtype=np.float32)
+
+    u = np.clip((inv - inv_min) / (inv_max - inv_min), 0.0, 1.0).astype(np.float32)
+    q = np.rint(u * 65535.0).astype(np.uint16)
+    r_ch = (q >> 8).astype(np.uint8)
+    g_ch = (q & 0xFF).astype(np.uint8)
+    png_image = Image.fromarray(np.stack((r_ch, g_ch, sky_u8), axis=-1), mode="RGB")
+
+    # Subsample to a bounded analysis grid for deterministic, sub-millisecond anchor extraction.
+    scale = min(1.0, 160.0 / max(width, height))
+    aw = max(16, int(round(width * scale)))
+    ah = max(16, int(round(height * scale)))
+    ys = np.linspace(0, height - 1, ah).astype(np.intp)
+    xs = np.linspace(0, width - 1, aw).astype(np.intp)
+    u_s = u[np.ix_(ys, xs)]
+    z_s = np.clip(depth_arr[np.ix_(ys, xs)], 0.1, 150.0)
+    valid_s = valid_mask[np.ix_(ys, xs)]
+    sky_s = sky_float[np.ix_(ys, xs)]
+    rgb_s = np.asarray(rgb_arr[np.ix_(ys, xs)], dtype=np.float32) / 255.0
+    gx = (np.arange(aw, dtype=np.float32) + 0.5) / aw
+    gy = (np.arange(ah, dtype=np.float32) + 0.5) / ah
+    uu, vv = np.meshgrid(gx, gy)
+
+    su, sv, subject_z = 0.5, 0.46, z_p50
+    if int(valid_s.sum()) >= 16:
+        salience = np.exp(-(((uu - 0.5) ** 2) / 0.09 + ((vv - 0.46) ** 2) / 0.11)) * (0.5 + 0.5 * u_s)
+        salience = np.where(valid_s, salience, 0.0)
+        lo_u, hi_u = [float(v) for v in np.percentile(u_s[valid_s], (20.0, 92.0))]
+        if hi_u - lo_u > 1e-4:
+            hist, edges = np.histogram(
+                u_s[valid_s], bins=32, range=(lo_u, hi_u), weights=salience[valid_s]
+            )
+            peak = int(np.argmax(hist))
+            target_u = 0.5 * float(edges[peak] + edges[peak + 1])
+            in_bin = valid_s & (u_s >= edges[peak]) & (u_s <= edges[peak + 1] + 1e-6)
+            w_bin = np.where(in_bin, salience, 0.0)
+            w_sum = float(w_bin.sum())
+            if w_sum > 1e-6:
+                su = float((uu * w_bin).sum() / w_sum)
+                sv = float((vv * w_bin).sum() / w_sum)
+            subject_inv = inv_min + target_u * (inv_max - inv_min)
+        else:
+            subject_inv = float(np.median(inv[valid_mask]))
+        subject_z = float(min(150.0, max(0.1, 1.0 / max(subject_inv, 1e-4))))
+
+    fg_frac = float((valid_z < subject_z * 0.68).mean()) if valid_count >= 16 else 0.0
+    if z_p10 < subject_z * 0.62 and fg_frac >= 0.04:
+        rack_start_z = float(z_p10)
+    else:
+        rack_start_z = float(min(150.0, max(z_p75, subject_z * 1.9)))
+
+    luma = 0.299 * rgb_s[..., 0] + 0.587 * rgb_s[..., 1] + 0.114 * rgb_s[..., 2]
+    warm = np.where(
+        valid_s,
+        np.clip(rgb_s[..., 0] - rgb_s[..., 2], 0.0, 1.0)
+        * np.clip(rgb_s[..., 0] - 0.45 * rgb_s[..., 1], 0.0, 1.0)
+        * (luma ** 2),
+        0.0,
+    )
+    wu, wv, wz, warm_strength = 0.5, 0.62, float(min(150.0, subject_z * 0.9)), 0.45
+    if int(valid_s.sum()) >= 16:
+        warm_valid = warm[valid_s]
+        thresh = float(np.percentile(warm_valid, 98.5))
+        top_mask = valid_s & (warm >= max(thresh, 1e-6))
+        if top_mask.any():
+            mean_top_warm = float(warm[top_mask].mean())
+            if mean_top_warm > 0.02:
+                w_warm = np.where(top_mask, warm, 0.0)
+                w_sum = float(w_warm.sum())
+                if w_sum > 1e-6:
+                    wu = float((uu * w_warm).sum() / w_sum)
+                    wv = float((vv * w_warm).sum() / w_sum)
+                    wz = float(np.median(z_s[top_mask]))
+                    warm_strength = float(min(1.0, mean_top_warm * 8.0))
+
+    upper = vv <= 0.55
+    sky_w = np.where(upper, (0.7 * sky_s + 0.3 * (1.0 - u_s)) * (luma ** 2), 0.0)
+    sky_w_sum = float(sky_w.sum())
+    if sky_w_sum > max(0.05, 0.002 * sky_w.size):
+        sky_u = float((uu * sky_w).sum() / sky_w_sum)
+        sky_v = float((vv * sky_w).sum() / sky_w_sum)
+    else:
+        sky_u, sky_v = 0.26, 0.12
+
+    log_span = math.log(max(z_p90, 0.2) / max(z_p10, 0.1))
+    auto_strength = round(min(1.0, max(0.0, (log_span - 0.15) / 0.85)), 3)
+    focal_px = float(f_px) if (f_px is not None and math.isfinite(float(f_px)) and float(f_px) > 1.0) else max(width, height) * 1.1
+
+    meta = {
+        "version": 1,
+        "preset": str(preset),
+        "width": width,
+        "height": height,
+        "f_px": round(focal_px, 2),
+        "inv_min": round(inv_min, 6),
+        "inv_max": round(inv_max, 6),
+        "is_metric": True,
+        "z_p10": round(z_p10, 3),
+        "z_p25": round(z_p25, 3),
+        "z_p50": round(z_p50, 3),
+        "z_p75": round(z_p75, 3),
+        "z_p90": round(z_p90, 3),
+        "sky_fraction": round(float(sky_mask.mean()), 4),
+        "subject_z": round(subject_z, 3),
+        "subject_uv": [round(su, 4), round(sv, 4)],
+        "rack_start_z": round(rack_start_z, 3),
+        "warm_anchor": {"u": round(wu, 4), "v": round(wv, 4), "z": round(wz, 3), "strength": round(warm_strength, 3)},
+        "sky_dir": {"u": round(sky_u, 4), "v": round(sky_v, 4)},
+        "auto_strength": auto_strength,
+    }
+    return png_image, meta
+
+
+class H3EstimateDepthPro2:
+    """Estimate metric depth maps and scene anchors for Soundstage stills using Depth Pro 2."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "preset": (["depthpro2-s", "depthpro2-b", "depthpro2-l", "depthpro2-h"],),
+                "model_name": ("STRING", {"default": "depthpro2_s.safetensors"}),
+                "focal_model_name": ("STRING", {"default": "depthpro2_focal.safetensors"}),
+                "filename_prefix": ("STRING", {"default": "h3/soundstage_depth/depth"}),
+            }
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "estimate"
+    OUTPUT_NODE = True
+    CATEGORY = "H3/Effects"
+
+    @staticmethod
+    def _resolve_weight(name: str) -> str:
+        base_dir = os.path.realpath(os.path.join(folder_paths.models_dir, "depth_pro_2"))
+        clean = os.path.basename(str(name or "").strip())
+        if not clean:
+            raise ValueError("Depth Pro 2 checkpoint filename must not be empty.")
+        resolved = os.path.realpath(os.path.join(base_dir, clean))
+        if os.path.commonpath((base_dir, resolved)) != base_dir or not os.path.isfile(resolved):
+            raise FileNotFoundError(f"Missing Depth Pro 2 checkpoint: {resolved}")
+        return resolved
+
+    @staticmethod
+    def _load_model(preset: str, model_path: str, focal_path: str, precision: torch.dtype):
+        from depth_pro_2.model import PRESETS, DepthPro2
+        from safetensors.torch import load_file
+
+        if preset not in PRESETS:
+            raise ValueError(f"Unknown Depth Pro 2 preset: {preset}")
+        key = f"{preset}|{model_path}|{focal_path}|{precision}"
+        with _DEPTH_PRO2_LOCK:
+            cached = _DEPTH_PRO2_MODEL_CACHE.get("entry")
+            if cached is not None and cached[0] == key:
+                return cached[1]
+            _DEPTH_PRO2_MODEL_CACHE.clear()
+            cfg = PRESETS[preset]
+            model = DepthPro2(
+                backbone_preset=cfg.backbone_preset,
+                reassembled_blocks=cfg.reassembled_blocks,
+                cross_frame_blocks=cfg.cross_frame_blocks,
+                dims_reassemble=cfg.dims_reassemble,
+                dim_decoder=cfg.dim_decoder,
+                fov=True,
+                precision=precision,
+            )
+            state_dict = dict(load_file(model_path))
+            fov_state = load_file(focal_path)
+            state_dict.update({f"fov.{k}": v for k, v in fov_state.items()})
+            model.load_state_dict(state_dict, strict=True)
+            model.eval()
+            _DEPTH_PRO2_MODEL_CACHE["entry"] = (key, model)
+            return model
+
+    def estimate(self, image, preset, model_name, focal_model_name, filename_prefix):
+        from depth_pro_2.model import to_normalized_tensor
+
+        model_path = self._resolve_weight(model_name)
+        focal_path = self._resolve_weight(focal_model_name)
+        device = comfy.model_management.get_torch_device()
+        precision = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        model = self._load_model(preset, model_path, focal_path, precision)
+
+        results = []
+        full_output_folder, filename, counter, subfolder, _prefix = folder_paths.get_save_image_path(
+            str(filename_prefix), folder_paths.get_output_directory(), int(image.shape[2]), int(image.shape[1])
+        )
+        os.makedirs(full_output_folder, exist_ok=True)
+        with _DEPTH_PRO2_LOCK:
+            try:
+                model = model.to(device).eval()
+                batch_uint8 = (
+                    image[..., :3].detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8).cpu().numpy()
+                )
+                with torch.no_grad():
+                    for index in range(batch_uint8.shape[0]):
+                        rgb_np = batch_uint8[index]
+                        tensor = to_normalized_tensor(rgb_np, device)
+                        prediction = model.infer(tensor, f_px=None)
+                        depth_np = prediction["depth"].detach().float().cpu().numpy()
+                        focal_t = prediction.get("focallength_px")
+                        f_px = (
+                            float(focal_t.detach().float().cpu().item())
+                            if focal_t is not None
+                            else float(max(rgb_np.shape[0], rgb_np.shape[1]) * 1.1)
+                        )
+                        png_img, meta = _encode_depthpro2_artifacts(depth_np, rgb_np, f_px, preset)
+                        out_name = f"{filename}_{counter + index:05}_.png"
+                        png_img.save(os.path.join(full_output_folder, out_name), format="PNG", compress_level=6)
+                        results.append({
+                            "filename": out_name,
+                            "subfolder": subfolder,
+                            "type": "output",
+                            "meta": meta,
+                        })
+            finally:
+                try:
+                    model.to("cpu")
+                finally:
+                    comfy.model_management.soft_empty_cache()
+        return {"ui": {"depth_maps": results}}
+
+
 NODE_CLASS_MAPPINGS = {
     "H3ContinuationPrefix": H3ContinuationPrefix,
     "H3SaveAVLatent": H3SaveAVLatent,
@@ -3707,6 +3963,7 @@ NODE_CLASS_MAPPINGS = {
     "H3RefinementCompilerGuard": H3RefinementCompilerGuard,
     "H3SaveVideoNVENC": H3SaveVideoNVENC,
     "H3SaveDetectedMasks": H3SaveDetectedMasks,
+    "H3EstimateDepthPro2": H3EstimateDepthPro2,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -3735,6 +3992,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3RefinementCompilerGuard": "MiniMax H3 Refinement Compiler Guard",
     "H3SaveVideoNVENC": "MiniMax H3 Save Video (Auto H.264)",
     "H3SaveDetectedMasks": "H3 Save Detected Masks",
+    "H3EstimateDepthPro2": "Soundstage Estimate Depth Pro 2",
     "H3LipSyncMask": "MiniMax H3 Lip Sync Latent Mask",
     "H3LowerFaceMask": "MiniMax H3 Lower-Face Mouth Mask",
     "H3LipSyncPrepareCrop": "MiniMax H3 Lip Sync Prepare Crop",

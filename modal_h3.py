@@ -140,6 +140,8 @@ from h3_sources import (  # noqa: E402
     SPECTRUM_MOSS_REPO,
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
+    DEPTH_PRO2_REF,
+    DEPTH_PRO2_REPO,
 )
 from h3_requirements import (  # noqa: E402
     DRAMA3_SGLANG_READY_MARKER,
@@ -161,6 +163,8 @@ from h3_requirements import (  # noqa: E402
     nemotron_fingerprint,
     nemotron_install_commands,
     PLAYWRIGHT_REQUIREMENT,
+    TIMM_REQUIREMENT,
+    DEPTH_PRO2_EXTRA_REQUIREMENTS,
     VIDEO_DOWNLOAD_REQUIREMENTS,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
@@ -484,6 +488,7 @@ def build(revision: str) -> None:
         f"pedalboard=={PEDALBOARD_VERSION}",
         f"ultralytics=={ULTRALYTICS_VERSION}",
         "Pillow>=10",
+        *DEPTH_PRO2_EXTRA_REQUIREMENTS,
         *VIDEO_DOWNLOAD_REQUIREMENTS,
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
@@ -622,7 +627,11 @@ def build(revision: str) -> None:
     )
     _run(
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
-        "timm>=0.9.16,<2",
+        TIMM_REQUIREMENT,
+    )
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
+        f"git+{DEPTH_PRO2_REPO}@{DEPTH_PRO2_REF}",
     )
     controlnet_import = subprocess.run(
         [
@@ -637,6 +646,23 @@ def build(revision: str) -> None:
         raise RuntimeError(
             "ControlNet Aux dependency verification failed: "
             + (controlnet_import.stderr or controlnet_import.stdout).strip()
+        )
+    depth_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from depth_pro_2.model import PRESETS, DepthPro2, to_normalized_tensor; "
+                "import pillow_heif, timm; assert 'depthpro2-s' in PRESETS; print(timm.__version__)"
+            ),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    if depth_import.returncode != 0:
+        raise RuntimeError(
+            "Depth Pro 2 dependency verification failed: "
+            + (depth_import.stderr or depth_import.stdout).strip()
         )
     # Custom-node requirements must not drift the pinned Torch/NumPy ABI.
     _run(

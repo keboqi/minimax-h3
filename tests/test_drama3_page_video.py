@@ -1118,6 +1118,273 @@ class Drama3PageVideoTests(unittest.TestCase):
         )
         self.assertIsNone(empty_regions[0]["applied"])
 
+    def test_add_effect_region_with_points(self):
+        from PIL import Image, ImageDraw
+        from h3_ui.drama3 import effect_regions
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+        project = self.project()["video"]
+        shot0 = project["effect_enhancement"]["shots"][0]
+        shot1 = project["effect_enhancement"]["shots"][1]
+
+        def call(action, body=None):
+            return self.client.post(f"{API}/project/video/effects/{action}", params=NAME, json=body or {})
+
+        # Unsegmented shots cannot add custom segments yet.
+        self.assertEqual(
+            call("region", {"shot_id": shot0["shot_id"], "image": shot0["image"], "include": [[0.5, 0.5]]}).status_code,
+            400,
+        )
+
+        # Auto-segment: shot 0 gets no detected regions; shot 1 gets one window region.
+        def auto_segment(path, labels, _services, _runtime):
+            manifest = effect_regions.manifest_path(folder, path.name, labels)
+            manifest.parent.mkdir(exist_ok=True)
+            if path.name == shot0["image"]:
+                manifest.write_text("[]", encoding="utf-8")
+                return []
+            mask = f"{path.name}.{'a' * 32}.region_1.png"
+            Image.new("RGBA", (64, 36), (255, 255, 255, 200)).save(manifest.parent / mask)
+            regions = [{"id": "region_1", "label": "window", "mask": mask, "box": [0, 0, 0.5, 1]}]
+            manifest.write_text(json.dumps(regions), encoding="utf-8")
+            return regions
+
+        self.export.deps.generation_services = lambda: None
+        with patch.object(effect_regions, "prepare"), patch.object(effect_regions, "segment", side_effect=auto_segment):
+            self.ok(call("segment"))
+            self.assertIsNone(self.wait()["error"])
+
+        # Validation failures.
+        self.assertEqual(
+            call("region", {"shot_id": shot0["shot_id"], "image": shot0["image"], "include": []}).status_code,
+            400,
+        )
+        self.assertEqual(
+            call("region", {"shot_id": shot0["shot_id"], "image": shot0["image"], "include": [[1.2, 0.5]]}).status_code,
+            400,
+        )
+        self.assertEqual(
+            call("region", {"shot_id": shot0["shot_id"], "image": shot0["image"],
+                            "label": 123, "include": [[0.5, 0.5]]}).status_code,
+            400,
+        )
+
+        # Non-GPU server rejects point-based segment creation.
+        no_gpu_app = FastAPI()
+        install_owner_cookie(no_gpu_app, self.store)
+        no_gpu_handlers = Drama3Handlers(Drama3Services(lambda: self.runtime, None, None, None))
+        install_soundstage_page(no_gpu_app, Drama3Actions.of(no_gpu_handlers, interrupt=None), store=self.store,
+                                output_dir=self.runtime.output_dir, takes_dir=lambda: self.root / "takes",
+                                runtime_config=lambda: self.runtime, gpu=False, video_export=self.export)
+        no_gpu_client = TestClient(no_gpu_app)
+        self.assertEqual(
+            no_gpu_client.post(
+                f"{API}/project/video/effects/region", params=NAME,
+                json={"shot_id": shot0["shot_id"], "image": shot0["image"], "include": [[0.5, 0.5]]},
+            ).status_code,
+            400,
+        )
+
+        # Add a custom segment with include/exclude points on shot 0 (0 auto-detected regions).
+        calls = []
+
+        def click_segment(path, labels, _services, _runtime, *, clicks=None):
+            calls.append((labels, clicks))
+            mask_dir = folder / effect_regions.MASK_FOLDER
+            mask_dir.mkdir(exist_ok=True)
+            mask = f"{path.name}.{uuid.uuid4().hex}.region_1.png"
+            img = Image.new("RGBA", (64, 36), (0, 0, 0, 0))
+            box = (16, 9, 47, 26) if len(calls) == 1 else (0, 0, 15, 17)
+            ImageDraw.Draw(img).rectangle(box, fill=(255, 255, 255, 255))
+            img.save(mask_dir / mask)
+            return [{"id": "region_1", "label": labels[0], "mask": mask,
+                     "box": [round(n / d, 4) for n, d in zip(box, (64, 36, 64, 36))]}]
+
+        with patch.object(effect_regions, "prepare"), patch.object(effect_regions, "segment", side_effect=click_segment):
+            self.ok(call("region", {
+                "shot_id": shot0["shot_id"], "image": shot0["image"],
+                "label": "  lantern  ", "include": [[0.5, 0.5]], "exclude": [[0.1, 0.1]],
+            }))
+            self.assertIsNone(self.wait()["error"])
+            self.ok(call("region", {
+                "shot_id": shot0["shot_id"], "image": shot0["image"],
+                "label": "", "include": [[0.2, 0.2]], "exclude": [],
+            }))
+            self.assertIsNone(self.wait()["error"])
+
+        self.assertEqual(calls[0], (["lantern"], {"include": [{"x": 32, "y": 18}], "exclude": [{"x": 6, "y": 3}]}))
+        self.assertEqual(calls[1], (["segment"], {"include": [{"x": 12, "y": 7}], "exclude": []}))
+
+        regions = self.project()["video"]["effect_enhancement"]["shots"][0]["regions"]
+        self.assertEqual([r["id"] for r in regions], ["custom_1", "custom_2"])
+        self.assertEqual([r["label"] for r in regions], ["lantern", "segment 2"])
+        self.assertEqual(regions[0]["position"], "middle center")
+        for region in regions:
+            self.assertEqual(self.client.get(region["url"]).status_code, 200)
+
+        # Custom segments work in manual effect stacks and in enhancement prompts.
+        saved = self.ok(call("shot", {
+            "shot_id": shot0["shot_id"], "image": shot0["image"],
+            "effects": [{"preset": "rain", "mode": "inside", "region_id": "custom_1"}],
+        }))["video"]
+        self.assertEqual(self.client.get(saved["stills"]["shots"][0]["effect_layers"][0]["mask_url"]).status_code, 200)
+        prompt_payload = json.loads(self.ok(call("prompt", {"include_manual": True}))["prompt"].split("\n\n")[-1])
+        self.assertEqual([s["shot_id"] for s in prompt_payload["shots"]], [shot0["shot_id"], shot1["shot_id"]])
+        self.assertEqual([r["id"] for r in prompt_payload["shots"][0]["regions"]], ["custom_1", "custom_2"])
+
+        # Custom segments can also be refined afterwards while keeping their ID, label, and sibling regions.
+        with patch.object(effect_regions, "prepare"), patch.object(effect_regions, "segment", side_effect=click_segment):
+            self.ok(call("refine", {
+                "shot_id": shot0["shot_id"], "image": shot0["image"],
+                "region_id": "custom_1", "include": [[0.25, 0.25]], "exclude": [],
+            }))
+            self.assertIsNone(self.wait()["error"])
+
+        after_refine = self.project()["video"]["effect_enhancement"]["shots"][0]["regions"]
+        self.assertEqual([(r["id"], r["label"]) for r in after_refine], [("custom_1", "lantern"), ("custom_2", "segment 2")])
+        self.assertNotEqual(after_refine[0]["url"], regions[0]["url"])
+        self.assertEqual(after_refine[1]["url"], regions[1]["url"])
+        self.assertEqual(self.client.get(after_refine[0]["url"]).status_code, 200)
+
+    def _depth_services(self, root):
+        from PIL import Image
+
+        def submit(graph, client):
+            outputs = {}
+            out_dir = root / "h3" / "soundstage_depth" / client
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for node, spec in graph.items():
+                if spec["class_type"] == "H3EstimateDepthPro2":
+                    out_file = out_dir / "depth_00001_.png"
+                    Image.new("RGB", (64, 36), (120, 40, 0)).save(out_file)
+                    meta = {
+                        "version": 1, "preset": spec["inputs"]["preset"],
+                        "width": 64, "height": 36, "f_px": 96.0,
+                        "inv_min": 0.0, "inv_max": 0.8, "is_metric": True,
+                        "z_p10": 1.6, "z_p25": 2.4, "z_p50": 4.2, "z_p75": 8.0, "z_p90": 18.0,
+                        "sky_fraction": 0.1, "subject_z": 4.0, "subject_uv": [0.5, 0.45],
+                        "rack_start_z": 1.6, "warm_anchor": {"u": 0.5, "v": 0.6, "z": 3.5, "strength": 0.5},
+                        "sky_dir": {"u": 0.3, "v": 0.1}, "auto_strength": 0.9,
+                    }
+                    outputs[node] = {"depth_maps": [{"filename": out_file.name, "meta": meta}]}
+            return {"outputs": outputs}
+
+        return SimpleNamespace(
+            models=SimpleNamespace(ensure_model_keys=lambda keys: None),
+            media=SimpleNamespace(stage_file=lambda path, *args, **kwargs: Path(path).name),
+            execution=SimpleNamespace(
+                object_info=lambda: {"H3EstimateDepthPro2": {}},
+                submit_prompt=submit,
+                poll_comfy_progress=lambda *args, **kwargs: [],
+                wait_for_history=lambda prompt: prompt,
+            ),
+        )
+
+    def test_depth_model_setting_validation(self):
+        boot = self.ok(self.client.get(f"{API}/boot"))["video"]
+        self.assertEqual(boot["default_depth_model"], "depthpro2-s")
+        self.assertEqual([item["id"] for item in boot["depth_models"]],
+                         ["depthpro2-s", "depthpro2-b", "depthpro2-l", "depthpro2-h"])
+        self.assertEqual(self.project()["video"]["depth_model"], "depthpro2-s")
+
+        updated = self.ok(self.client.patch(f"{API}/project/video", params=NAME,
+                                            json={"video_depth_model": "depthpro2-l"}))["video"]
+        self.assertEqual(updated["depth_model"], "depthpro2-l")
+        refused = self.client.patch(f"{API}/project/video", params=NAME,
+                                    json={"video_depth_model": "invalid-depth"})
+        self.assertEqual(refused.status_code, 400)
+
+    def test_auto_depth_after_draw_and_backfill_on_save_and_segment(self):
+        from PIL import Image
+        from h3_ui.drama3 import effect_depth, effect_regions, effects_pass
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        self.export.deps.generation_services = lambda: self._depth_services(self.runtime.output_dir)
+
+        self.ok(self.client.post(f"{API}/project/video/draw", params=NAME))
+        self.assertIsNone(self.wait()["error"])
+
+        video = self.project()["video"]
+        shot0 = video["stills"]["shots"][0]
+        self.assertIn("depth_file", shot0)
+        self.assertIn("depth_meta", shot0)
+        self.assertEqual(shot0["depth_meta"]["depth_strength"], 0.9)
+        self.assertEqual(self.client.get(shot0["depth_url"]).status_code, 200)
+        self.assertEqual(
+            self.client.get(f"{API}/video/effect-depth", params={"name": "Night Market", "file": "../bad.png"}).status_code,
+            404,
+        )
+
+        # Remove .effect-depth sidecars and verify POST /project/video/save backfills them before render_stills.
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+        depth_dir = folder / effect_depth.DEPTH_FOLDER
+        for item in depth_dir.iterdir():
+            item.unlink()
+        self.assertIsNone(effect_depth.read_depth(folder, shot0["depth_file"].split(".", 1)[0] + ".jpg", exact=True))
+
+        captured_scenes = []
+
+        def fake_render_stills(audio, root, *, subtitles=0, scene=None, progress=None, **options):
+            captured_scenes.append(scene)
+            out = folder / "out.mp4"
+            out.write_bytes(b"mp4")
+            return out
+
+        self.ok(self.client.patch(f"{API}/project/video/shot", params=NAME, json={"index": 0, "effects": ["push_in", "fog"]}))
+        with patch.object(visuals, "render_stills", side_effect=fake_render_stills):
+            self.ok(self.client.post(f"{API}/project/video/save", params=NAME, json={}))
+            self.assertIsNone(self.wait()["error"])
+
+        self.assertEqual(len(captured_scenes), 1)
+        self.assertIsNotNone(captured_scenes[0])
+        self.assertIn("depth_file", captured_scenes[0].shots[0])
+        self.assertIn("depth_meta", captured_scenes[0].shots[0])
+
+        # Delete sidecars again and verify POST /project/video/effects/segment backfills depth alongside SAM.
+        for item in depth_dir.iterdir():
+            item.unlink()
+
+        def fake_segment(path, labels, _services, _runtime):
+            manifest = effect_regions.manifest_path(folder, path.name, labels)
+            manifest.parent.mkdir(exist_ok=True)
+            mask = f"{path.name}.{'c' * 32}.region_1.png"
+            Image.new("RGBA", (64, 36), (255, 255, 255, 255)).save(manifest.parent / mask)
+            regions = [{"id": "region_1", "label": "person", "mask": mask, "box": [0.1, 0.2, 0.3, 0.9]}]
+            manifest.write_text(json.dumps(regions), encoding="utf-8")
+            return regions
+
+        with patch.object(effect_regions, "prepare"), patch.object(effect_regions, "segment", side_effect=fake_segment):
+            self.ok(self.client.post(f"{API}/project/video/effects/segment", params=NAME))
+            self.assertIsNone(self.wait()["error"])
+
+        refreshed = self.project()["video"]
+        rev_before = refreshed["effects_revision"]
+        # Person SAM region refines subject_z and subject_uv on depth_meta and adds depth_m to prompt_input.
+        refreshed_shot0 = refreshed["stills"]["shots"][0]
+        self.assertLess(refreshed_shot0["depth_meta"]["subject_z"], 3.5)
+        self.assertEqual(refreshed_shot0["depth_meta"]["subject_uv"], [0.2, 0.55])
+
+        data, _ = self.store.soundstage_project("Night Market")
+        rows = refreshed["plan"]["rows"]
+        subjects = refreshed["plan"]["subjects"]
+        items = effects_pass.inventory(self.mix, self.runtime.output_dir, rows, subjects, data, depth_model="depthpro2-s")
+        prompt_shots, _ = effects_pass.prompt_input(items, [])
+        self.assertIn("depth_summary", prompt_shots[0])
+        self.assertIn("depth_m", prompt_shots[0]["regions"][0])
+        self.assertIn("depth_band", prompt_shots[0]["regions"][0])
+
+        # Changing depth artifact updates EffectScene revision.
+        for item in depth_dir.glob("*.depth.json"):
+            payload = json.loads(item.read_text(encoding="utf-8"))
+            payload["rack_start_z"] = 9.5
+            payload["z_p90"] = 29.0
+            item.write_text(json.dumps(payload), encoding="utf-8")
+        self.assertNotEqual(self.project()["video"]["effects_revision"], rev_before)
+
 
 if __name__ == "__main__":
     unittest.main()

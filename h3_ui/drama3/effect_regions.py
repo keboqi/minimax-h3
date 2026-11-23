@@ -210,8 +210,15 @@ def segment(path, labels, services, runtime, *, clicks=None):
             output_folder.rmdir()
 
 
-def describe(region):
+def describe(region, depth=None):
     x0, y0, x1, y1 = region["box"]
     column = ("left", "center", "right")[min(2, int((x0 + x1) * 1.5))]
     row = ("upper", "middle", "lower")[min(2, int((y0 + y1) * 1.5))]
-    return {key: region[key] for key in ("id", "label", "box")} | {"position": f"{row} {column}"}
+    described = {key: region[key] for key in ("id", "label", "box")} | {"position": f"{row} {column}"}
+    if depth is None:
+        for key in ("depth_m", "depth_band"):
+            if key in region:
+                described[key] = region[key]
+    else:
+        described.update(depth)
+    return described
