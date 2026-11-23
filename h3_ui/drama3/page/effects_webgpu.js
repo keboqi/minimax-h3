@@ -47,6 +47,13 @@ struct Uniforms {
   backDepthAnchors1: vec4f,
   // x: intensity, y: maskMode (0=full_frame,1=inside,2=outside,3=behind), z: maskRefZ, w: hasMask
   layerParams: vec4f,
+  // x: lightningCueTime (< 0 uses periodic storm clock), y: backLightningCueTime, z: 0, w: 0
+  lightningParams: vec4f,
+};
+
+struct LayerOut {
+  over: vec4f,
+  screen: vec3f,
 };
 
 struct DepthParams {
@@ -162,6 +169,17 @@ fn blendScreen(dst: vec4f, srcRgb: vec3f, srcA: f32) -> vec4f {
   return vec4f(rgb, outA);
 }
 
+fn addScreen(scr: vec3f, srcRgb: vec3f, srcA: f32) -> vec3f {
+  let a = clamp(srcA, 0.0, 1.0);
+  return clamp(scr + srcRgb * a * (vec3f(1.0) - scr), vec3f(0.0), vec3f(1.0));
+}
+
+fn mirrorClampUv(rawUv: vec2f) -> vec2f {
+  let r = abs(rawUv);
+  let m = vec2f(1.0) - abs(vec2f(1.0) - clamp(r, vec2f(0.0), vec2f(1.999)));
+  return clamp(m, vec2f(0.001), vec2f(0.999));
+}
+
 fn invSmooth(low: f32, high: f32, x: f32) -> f32 {
   return 1.0 - smoothstep(low, high, x);
 }
@@ -252,7 +270,8 @@ fn cameraUv(uv: vec2f, cam: vec4f, angleRad: f32, aspect: f32) -> vec2f {
 }
 
 // Compute object-fit: contain UV and inside-frame mask for a texture of size texSize inside resolution.
-fn containUv(uv: vec2f, res: vec2f, texSize: vec2f) -> vec3f {
+// Uses mirrored UV clamping inside a small overscan margin so transient shake/tilt/distortion never flashes black borders.
+fn containUvRaw(uv: vec2f, res: vec2f, texSize: vec2f) -> vec3f {
   let stageAspect = res.x / max(1.0, res.y);
   let texAspect = texSize.x / max(1.0, texSize.y);
   var scale = vec2f(1.0, 1.0);
@@ -263,10 +282,15 @@ fn containUv(uv: vec2f, res: vec2f, texSize: vec2f) -> vec3f {
   }
   let cuv = (uv - vec2f(0.5)) / scale + vec2f(0.5);
   let inside = select(0.0, 1.0, cuv.x >= 0.0 && cuv.x <= 1.0 && cuv.y >= 0.0 && cuv.y <= 1.0);
-  return vec3f(clamp(cuv, vec2f(0.0), vec2f(1.0)), inside);
+  return vec3f(cuv, inside);
 }
 
-// 4-step iterative subject_z-pivoted 2.5D parallax relief mapping.
+fn containUv(uv: vec2f, res: vec2f, texSize: vec2f) -> vec3f {
+  let raw = containUvRaw(uv, res, texSize);
+  return vec3f(mirrorClampUv(raw.xy), raw.z);
+}
+
+// 4-step iterative subject_z-pivoted 2.5D parallax relief mapping with silhouette depth-gradient damping.
 fn parallaxContainUv(
   camUv: vec2f,
   res: vec2f,
@@ -275,33 +299,43 @@ fn parallaxContainUv(
   dp: DepthParams,
   cam: vec4f
 ) -> vec3f {
-  let base = containUv(camUv, res, texSize);
+  let rawBase = containUvRaw(camUv, res, texSize);
+  let insideOverscan = select(0.0, 1.0, rawBase.x >= -0.045 && rawBase.x <= 1.045 && rawBase.y >= -0.045 && rawBase.y <= 1.045);
+  let baseUv = mirrorClampUv(rawBase.xy);
   let strength = dp.depthStrength * dp.parallaxScale;
-  if (dp.hasDepth <= 0.5 || strength <= 0.01 || base.z <= 0.5) {
-    return base;
+  if (dp.hasDepth <= 0.5 || strength <= 0.01 || insideOverscan <= 0.5) {
+    return vec3f(baseUv, rawBase.z);
   }
   let panVec = -cam.xy;
   let dolly = cam.z - 1.0;
   if (abs(panVec.x) + abs(panVec.y) + abs(dolly) <= 0.0005) {
-    return base;
+    return vec3f(baseUv, rawBase.z);
   }
   let invSpan = max(0.08, dp.invMax - dp.invMin);
+  let stepUv = vec2f(2.5) / max(vec2f(64.0), texSize);
+  let invL = 1.0 / max(decodeDepthFast(depthTex, baseUv - vec2f(stepUv.x, 0.0), dp).x, 0.2);
+  let invR = 1.0 / max(decodeDepthFast(depthTex, baseUv + vec2f(stepUv.x, 0.0), dp).x, 0.2);
+  let invU = 1.0 / max(decodeDepthFast(depthTex, baseUv - vec2f(0.0, stepUv.y), dp).x, 0.2);
+  let invD = 1.0 / max(decodeDepthFast(depthTex, baseUv + vec2f(0.0, stepUv.y), dp).x, 0.2);
+  let edgeJump = (abs(invR - invL) + abs(invD - invU)) / invSpan;
+  let edgeDamp = 1.0 - 0.62 * smoothstep(0.22, 0.75, edgeJump);
+
   let invPivot = 1.0 / max(dp.subjectZ, 0.25);
-  var pUv = base.xy;
-  let maxShift = 0.022 * strength;
+  var pUv = baseUv;
+  let maxShift = 0.022 * strength * edgeDamp;
   for (var step: i32 = 0; step < 4; step++) {
     let z = decodeDepthFast(depthTex, pUv, dp).x;
     let invZ = 1.0 / max(z, 0.2);
     let relInv = clamp((invZ - invPivot) / invSpan, -0.65, 1.0);
-    let radial = (base.xy - dp.subjectUv) * (dolly * 0.35);
-    var shift = (panVec * 0.72 - radial) * relInv * strength;
+    let radial = (baseUv - dp.subjectUv) * (dolly * 0.35);
+    var shift = (panVec * 0.72 - radial) * relInv * strength * edgeDamp;
     let lenS = length(shift);
-    if (lenS > maxShift) {
+    if (lenS > maxShift && lenS > 1e-6) {
       shift = shift * (maxShift / lenS);
     }
-    pUv = clamp(base.xy + shift, vec2f(0.001), vec2f(0.999));
+    pUv = mirrorClampUv(baseUv + shift);
   }
-  return vec3f(pUv, base.z);
+  return vec3f(pUv, rawBase.z);
 }
 
 fn particleVis(zScene: f32, planeZ: f32, dp: DepthParams) -> f32 {
@@ -421,16 +455,22 @@ fn fireflyLayer(uv: vec2f, aspect: f32, t: f32, grid: f32, radius: f32) -> vec4f
   return out;
 }
 
-fn lightningEnvelope(t: f32, shotSeed: f32) -> vec2f {
-  let seedOffset = select(0.0, fract(sin(shotSeed * 91.7 + 13.3) * 43758.5453) * 4.5, shotSeed > 0.0);
+fn lightningEnvelope(t: f32, shotSeed: f32, lightCueT: f32) -> vec2f {
   let boltX = select(0.52, 0.22 + fract(sin(shotSeed * 47.3) * 43758.5453) * 0.56, shotSeed > 0.0);
+  if (lightCueT >= 0.0) {
+    let primary = max(0.0, 1.0 - abs(lightCueT - 0.08) / 0.08) * 0.36;
+    let echo = max(0.0, 1.0 - abs(lightCueT - 0.24) / 0.09) * 0.18;
+    let tail = max(0.0, 1.0 - lightCueT / 0.55) * 0.08;
+    return vec2f(max(max(primary, echo), tail), boltX);
+  }
+  let seedOffset = select(0.0, fract(sin(shotSeed * 91.7 + 13.3) * 43758.5453) * 4.5, shotSeed > 0.0);
   let phase = (t + seedOffset) % 7.0;
   let primary = max(0.0, 1.0 - abs(phase - 0.12) / 0.12) * 0.32;
   let echo = max(0.0, 1.0 - abs(phase - 0.30) / 0.08) * 0.14;
   return vec2f(max(primary, echo), boltX);
 }
 
-fn computeDistortion(sceneUv: vec2f, aspect: f32, t: f32, cueT: f32, atmo: u32, light: u32, shake: f32, shotSeed: f32) -> vec3f {
+fn computeDistortion(sceneUv: vec2f, aspect: f32, t: f32, cueT: f32, lightCueT: f32, atmo: u32, light: u32, shake: f32, shotSeed: f32) -> vec3f {
   var offset = vec2f(0.0);
   var ca = shake * 0.0065;
   let auv = vec2f(sceneUv.x * aspect, sceneUv.y);
@@ -451,7 +491,7 @@ fn computeDistortion(sceneUv: vec2f, aspect: f32, t: f32, cueT: f32, atmo: u32, 
   }
 
   if (light == 1u) {
-    let env = lightningEnvelope(t, shotSeed);
+    let env = lightningEnvelope(t, shotSeed, lightCueT);
     ca = max(ca, env.x * 0.011);
   } else if (light == 2u) {
     let a = max(0.0, 1.0 - cueT / 0.45);
@@ -475,6 +515,71 @@ fn computeDistortion(sceneUv: vec2f, aspect: f32, t: f32, cueT: f32, atmo: u32, 
   return vec3f(offset, ca);
 }
 
+fn effectNeedsBloom(atmo: u32, light: u32, distCa: f32, cueT: f32) -> bool {
+  return (light == 1u && distCa > 0.0) || (light == 2u && cueT < 0.45) ||
+    light == 3u || light == 5u || light == 8u || light == 10u || atmo == 6u || atmo == 9u;
+}
+
+fn applyHighlightBloom(
+  rgb_in: vec3f,
+  blur: vec3f,
+  t: f32,
+  cueT: f32,
+  lightCueT: f32,
+  atmo: u32,
+  light: u32,
+  shotSeed: f32,
+  weight: f32
+) -> vec3f {
+  var rgb = rgb_in;
+  let w = clamp(weight, 0.0, 1.0);
+  let luma = dot(blur, vec3f(0.299, 0.587, 0.114));
+  let highlight = blur * smoothstep(0.42, 0.92, luma);
+  if (light == 8u) {
+    let pulse = 0.34 + sin(t * 0.55) * 0.06;
+    rgb = mix(rgb, blur, 0.14 * w);
+    rgb += highlight * vec3f(1.05, 0.88, 1.02) * (pulse * w);
+  } else if (light == 3u) {
+    let pulse = 0.24 + sin(t * 0.8) * 0.06;
+    rgb += highlight * vec3f(1.08, 0.82, 0.52) * (pulse * w);
+  } else if (light == 5u) {
+    let wave = 0.5 + 0.3 * sin(t * 7.3) + 0.2 * sin(t * 13.1);
+    rgb += highlight * vec3f(1.1, 0.72, 0.35) * ((0.12 + wave * 0.22) * w);
+  } else if (light == 1u) {
+    let env = lightningEnvelope(t, shotSeed, lightCueT);
+    rgb += highlight * vec3f(0.85, 0.94, 1.15) * (env.x * 1.4 * w);
+  } else if (light == 2u) {
+    let a = max(0.0, 1.0 - cueT / 0.45);
+    rgb += highlight * vec3f(1.0, 0.98, 0.95) * (a * 0.36 * w);
+  } else if (light == 10u) {
+    rgb += highlight * vec3f(1.05, 0.95, 0.78) * (0.22 * w);
+  }
+  if (atmo == 6u) {
+    rgb += highlight * vec3f(1.05, 0.92, 0.68) * (0.18 * w);
+  } else if (atmo == 9u) {
+    rgb += highlight * vec3f(0.45, 0.92, 1.05) * (0.16 * w);
+  }
+  return rgb;
+}
+
+fn applyColorGrade(rgb_in: vec3f, uv: vec2f, res: vec2f, t: f32, light: u32, weight: f32) -> vec3f {
+  var rgb = rgb_in;
+  let w = clamp(weight, 0.0, 1.0);
+  if (light == 4u) {
+    let luma = dot(rgb, vec3f(0.299, 0.587, 0.114));
+    let cool = mix(vec3f(0.14, 0.28, 0.52), vec3f(0.74, 0.86, 1.02), luma);
+    let shadowWeight = (0.22 - 0.08 * smoothstep(0.55, 0.95, luma)) * w;
+    rgb = mix(rgb, cool, shadowWeight);
+  } else if (light == 7u) {
+    let luma = dot(rgb, vec3f(0.299, 0.587, 0.114));
+    let midWeight = 0.35 + 2.6 * luma * (1.0 - luma);
+    let frame = floor(t * 24.0);
+    let g = hash21(floor(uv * res * 0.5) + vec2f(frame * 13.7, frame * 7.3)) - 0.5;
+    rgb = clamp(rgb + vec3f(g * 0.11 * midWeight * w), vec3f(0.0), vec3f(1.0));
+  }
+  return rgb;
+}
+
 // Sample a still texture with 2.5D parallax, optical thin-lens rack-focus bokeh, UV refraction, CA, bloom, and grading.
 fn sampleScene(
   tex: texture_2d<f32>,
@@ -488,6 +593,7 @@ fn sampleScene(
   rackActive: f32,
   t: f32,
   cueT: f32,
+  lightCueT: f32,
   atmo: u32,
   light: u32,
   shotSeed: f32,
@@ -495,24 +601,24 @@ fn sampleScene(
   applyGrading: bool
 ) -> vec4f {
   let aspect = res.x / max(1.0, res.y);
+  let frameMask = containUvRaw(uv, res, texSize).z;
   let camUv = cameraUv(uv, cam, angleRad, aspect);
-  let dist = computeDistortion(camUv, aspect, t, cueT, atmo, light, cam.w, shotSeed);
+  let dist = computeDistortion(camUv, aspect, t, cueT, lightCueT, atmo, light, cam.w, shotSeed);
   let warpedUv = camUv + dist.xy;
   let mapped = parallaxContainUv(warpedUv, res, texSize, depthTex, dp, cam);
   let tuv = mapped.xy;
-  let inside = mapped.z;
+  let inside = select(mapped.z, frameMask, cam.z >= 0.999);
 
   let radial = (uv - vec2f(0.5)) * dist.z;
   var rgb = textureSampleLevel(tex, texSampler, tuv, 0.0).rgb;
   if (dist.z > 0.0001) {
-    rgb.r = textureSampleLevel(tex, texSampler, clamp(tuv + radial, vec2f(0.0), vec2f(1.0)), 0.0).r;
-    rgb.b = textureSampleLevel(tex, texSampler, clamp(tuv - radial, vec2f(0.0), vec2f(1.0)), 0.0).b;
+    rgb.r = textureSampleLevel(tex, texSampler, mirrorClampUv(tuv + radial), 0.0).r;
+    rgb.b = textureSampleLevel(tex, texSampler, mirrorClampUv(tuv - radial), 0.0).b;
   }
 
   let hasDepth = dp.hasDepth > 0.5 && dp.depthStrength > 0.01;
   let opticalDof = hasDepth && (camBlur > 0.001 || rackActive > 0.5);
-  let needsBloom = applyGrading && ((light == 1u && dist.z > 0.0) || (light == 2u && cueT < 0.45) ||
-    light == 3u || light == 5u || light == 8u || light == 10u || atmo == 6u || atmo == 9u);
+  let needsBloom = applyGrading && effectNeedsBloom(atmo, light, dist.z, cueT);
 
   if ((needsBloom || camBlur > 0.001 || opticalDof) && inside > 0.0) {
     let texel = vec2f(1.0) / max(vec2f(64.0), res * 0.45);
@@ -536,7 +642,7 @@ fn sampleScene(
       var dofSum = vec3f(0.0);
       var dofWeight = 0.0001;
       for (var i: i32 = 0; i < 12; i++) {
-        let sUv = clamp(tuv + vogel[i] * dofRadius, vec2f(0.0), vec2f(1.0));
+        let sUv = mirrorClampUv(tuv + vogel[i] * dofRadius);
         let tapRgb = textureSampleLevel(tex, texSampler, sUv, 0.0).rgb;
         let tapZ = decodeDepthFast(depthTex, sUv, dp).x;
         let tapCoc = clamp(abs(1.0 / max(tapZ, 0.1) - invF) / invSpread, 0.0, 1.0);
@@ -550,7 +656,7 @@ fn sampleScene(
     } else {
       let maxRadius = texel * (6.5 + camBlur * 16.5);
       for (var i: i32 = 0; i < 12; i++) {
-        blur += textureSampleLevel(tex, texSampler, clamp(tuv + vogel[i] * maxRadius, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
+        blur += textureSampleLevel(tex, texSampler, mirrorClampUv(tuv + vogel[i] * maxRadius), 0.0).rgb;
       }
       blur *= (1.0 / 12.0);
       if (camBlur > 0.001) {
@@ -559,58 +665,24 @@ fn sampleScene(
     }
 
     if (applyGrading) {
-      let luma = dot(blur, vec3f(0.299, 0.587, 0.114));
-      let highlight = blur * smoothstep(0.42, 0.92, luma);
-      if (light == 8u) {
-        let pulse = 0.34 + sin(t * 0.55) * 0.06;
-        rgb = mix(rgb, blur, 0.14);
-        rgb += highlight * vec3f(1.05, 0.88, 1.02) * pulse;
-      } else if (light == 3u) {
-        let pulse = 0.24 + sin(t * 0.8) * 0.06;
-        rgb += highlight * vec3f(1.08, 0.82, 0.52) * pulse;
-      } else if (light == 5u) {
-        let wave = 0.5 + 0.3 * sin(t * 7.3) + 0.2 * sin(t * 13.1);
-        rgb += highlight * vec3f(1.1, 0.72, 0.35) * (0.12 + wave * 0.22);
-      } else if (light == 1u) {
-        let env = lightningEnvelope(t, shotSeed);
-        rgb += highlight * vec3f(0.85, 0.94, 1.15) * (env.x * 1.4);
-      } else if (light == 2u) {
-        let a = max(0.0, 1.0 - cueT / 0.45);
-        rgb += highlight * vec3f(1.0, 0.98, 0.95) * (a * 0.36);
-      } else if (light == 10u) {
-        rgb += highlight * vec3f(1.05, 0.95, 0.78) * 0.22;
-      } else if (atmo == 6u) {
-        rgb += highlight * vec3f(1.05, 0.92, 0.68) * 0.18;
-      } else if (atmo == 9u) {
-        rgb += highlight * vec3f(0.45, 0.92, 1.05) * 0.16;
-      }
+      rgb = applyHighlightBloom(rgb, blur, t, cueT, lightCueT, atmo, light, shotSeed, 1.0);
     }
   }
 
   if (inside > 0.0 && applyGrading) {
-    if (light == 4u) {
-      let luma = dot(rgb, vec3f(0.299, 0.587, 0.114));
-      let cool = mix(vec3f(0.14, 0.28, 0.52), vec3f(0.74, 0.86, 1.02), luma);
-      let shadowWeight = 0.22 - 0.08 * smoothstep(0.55, 0.95, luma);
-      rgb = mix(rgb, cool, shadowWeight);
-    } else if (light == 7u) {
-      let luma = dot(rgb, vec3f(0.299, 0.587, 0.114));
-      let midWeight = 0.35 + 2.6 * luma * (1.0 - luma);
-      let frame = floor(t * 24.0);
-      let g = hash21(floor(uv * res * 0.5) + vec2f(frame * 13.7, frame * 7.3)) - 0.5;
-      rgb = clamp(rgb + vec3f(g * 0.11 * midWeight), vec3f(0.0), vec3f(1.0));
-    }
+    rgb = applyColorGrade(rgb, uv, res, t, light, 1.0);
   }
 
   return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)) * inside, inside);
 }
 
-// Render one shot's procedural atmosphere + lighting layer with optional Depth Pro 2 spatial/volumetric/normal enhancement.
+// Render one shot's procedural atmosphere + lighting layer into separate occlusion-over and emissive-screen components.
 fn renderLayer(
   screenUv: vec2f,
   res: vec2f,
   t: f32,
   cueT: f32,
+  lightCueT: f32,
   atmo: u32,
   light: u32,
   cam: vec4f,
@@ -620,11 +692,12 @@ fn renderLayer(
   depthTex: texture_2d<f32>,
   texSize: vec2f,
   dp: DepthParams
-) -> vec4f {
+) -> LayerOut {
   let aspect = res.x / max(1.0, res.y);
   let worldUv = cameraUv(screenUv, cam, angleRad, aspect);
   let wAuv = vec2f(worldUv.x * aspect, worldUv.y);
-  var out = vec4f(0.0);
+  var over = vec4f(0.0);
+  var scr = vec3f(0.0);
 
   let ds = select(0.0, dp.depthStrength, dp.hasDepth > 0.5);
   var zScene = dp.subjectZ;
@@ -652,11 +725,11 @@ fn renderLayer(
     let r2 = rainLayer(worldUv + vec2f(0.37, 0.19), t, vec2f(36.0 * aspect, 11.0), 3.5, 0.24) * select(1.0, particleVis(zScene, zMid, dp), useD);
     let r3 = rainLayer(worldUv + vec2f(0.71, 0.43), t, vec2f(62.0 * aspect, 19.0), 2.3, 0.22) * select(1.0, particleVis(zScene, zFar, dp), useD);
     let rainA = clamp(r1 * 0.34 + r2 * 0.24 + r3 * 0.15, 0.0, 0.62);
-    out = blendOver(out, vec3f(0.77, 0.87, 0.97), rainA);
+    over = blendOver(over, vec3f(0.77, 0.87, 0.97), rainA);
     let mistNoise = 0.85 + 0.3 * noise2(vec2f(wAuv.x * 3.0 + t * 0.25, worldUv.y * 4.0));
     let groundFog = select(1.0, 0.35 + 0.65 * smoothstep(zNear, zFar, zScene), useD);
     let mist = smoothstep(0.66, 1.0, screenUv.y) * 0.13 * mistNoise * groundFog;
-    out = blendOver(out, vec3f(0.72, 0.80, 0.88), mist);
+    over = blendOver(over, vec3f(0.72, 0.80, 0.88), mist);
   } else if (atmo == 2u) { // Z-stratified 3-plane snow
     let s0 = particleDots(worldUv + vec2f(0.19, 0.71), aspect, t, 6.5, 0.78, 0.75, 0.21, 2.7);
     let s1 = particleDots(worldUv, aspect, t, 11.0, 0.55, 0.55, 0.16, 2.2);
@@ -665,7 +738,7 @@ fn renderLayer(
     let v1 = select(1.0, particleVis(zScene, zMid, dp), useD);
     let v2 = select(1.0, particleVis(zScene, zFar, dp), useD);
     let snowA = clamp(s0.x * 0.42 * v0 + s1.x * 0.70 * v1 + s2.x * 0.42 * v2, 0.0, 0.88);
-    out = blendOver(out, vec3f(0.95, 0.98, 1.0), snowA);
+    over = blendOver(over, vec3f(0.95, 0.98, 1.0), snowA);
   } else if (atmo == 3u) { // Beer-Lambert volumetric fog
     let n1 = fbm(wAuv * 2.1 + vec2f(t * 0.06, sin(t * 0.12) * 0.05));
     let n2 = fbm(wAuv * 3.6 + vec2f(-t * 0.04, 2.4));
@@ -680,13 +753,13 @@ fn renderLayer(
       let volumetric = smoothstep(0.22, 0.78, n1 * 0.65 + n2 * 0.35) * (0.25 + 0.75 * smoothstep(0.10, 0.95, worldUv.y)) * beer * skyAtten * 0.62;
       density = mix(legacyDensity, volumetric, ds);
     }
-    out = blendOver(out, vec3f(0.84, 0.90, 0.93), density);
+    over = blendOver(over, vec3f(0.84, 0.90, 0.93), density);
   } else if (atmo == 4u) { // Z-stratified floating dust
     let d1 = particleDots(worldUv, aspect, t, 9.5, -0.14, 0.65, 0.11, 2.3);
     let d2 = particleDots(worldUv + vec2f(0.29, 0.53), aspect, t, 14.5, -0.10, 0.50, 0.08, 2.1);
     let vis1 = select(1.0, particleVis(zScene, zNear, dp), useD);
     let vis2 = select(1.0, particleVis(zScene, zFar, dp), useD);
-    out = blendScreen(out, vec3f(1.0, 0.91, 0.72), clamp(d1.x * 0.42 * vis1 + d2.x * 0.30 * vis2, 0.0, 0.6));
+    scr = addScreen(scr, vec3f(1.0, 0.91, 0.72), clamp(d1.x * 0.42 * vis1 + d2.x * 0.30 * vis2, 0.0, 0.6));
   } else if (atmo == 5u) { // Z-occluded glowing embers
     let e1 = particleDots(worldUv, aspect, t, 10.5, -0.85, 0.75, 0.15, 2.6);
     let e2 = particleDots(worldUv + vec2f(0.31, 0.17), aspect, t, 16.0, -0.62, 0.6, 0.11, 2.4);
@@ -695,7 +768,7 @@ fn renderLayer(
     let flicker = 0.72 + 0.28 * sin(t * 9.5 + (e1.y + e2.y) * 12.0);
     let emberA = clamp((e1.x * 0.9 * vis1 + e2.x * 0.6 * vis2) * flicker, 0.0, 1.0);
     let emberRgb = mix(vec3f(1.0, 0.38, 0.10), vec3f(1.0, 0.84, 0.38), clamp(e1.y + e2.y, 0.0, 1.0));
-    out = blendScreen(out, emberRgb, emberA);
+    scr = addScreen(scr, emberRgb, emberA);
   } else if (atmo == 6u) { // Depth-occluded ray-marched sunbeams
     let skyOrigin = select(vec2f(0.24, 0.05), dp.skyDir, useD);
     let sunPos = select(vec2f(0.24 * aspect, -0.18), vec2f(skyOrigin.x * aspect, skyOrigin.y - 0.10), useD);
@@ -726,7 +799,7 @@ fn renderLayer(
       shafts = baseShafts * mix(1.0, depthMix, ds * 0.85);
     }
     let sourceGlow = invSmooth(0.0, 0.95 * aspect, dist) * 0.14;
-    out = blendScreen(out, vec3f(1.0, 0.92, 0.74), clamp(shafts * 0.36 + sourceGlow, 0.0, 0.56));
+    scr = addScreen(scr, vec3f(1.0, 0.92, 0.74), clamp(shafts * 0.36 + sourceGlow, 0.0, 0.56));
   } else if (atmo == 7u) { // Depth-anchored plumes of smoke
     let s1 = fbm(wAuv * 2.6 + vec2f(sin(t * 0.25) * 0.15, t * 0.18));
     let s2 = fbm(wAuv * 4.8 + vec2f(-t * 0.08, t * 0.26));
@@ -739,14 +812,14 @@ fn renderLayer(
       let vol = smoothstep(0.30, 0.82, s1 * 0.6 + s2 * 0.4) * smoothstep(0.0, 0.88, worldUv.y) * clamp(beer + midPlume, 0.0, 1.0) * 0.50;
       density = mix(legacyDensity, vol, ds);
     }
-    out = blendOver(out, vec3f(0.46, 0.49, 0.54), density);
+    over = blendOver(over, vec3f(0.46, 0.49, 0.54), density);
   } else if (atmo == 8u) { // Z-stratified 3D tumbling petals
     let pMid = petalLayer(worldUv, aspect, t, 8.2, 0.34, 0.42, 1.0);
     let pNear = petalLayer(worldUv + vec2f(0.37, 0.21), aspect, t, 5.4, 0.46, 0.56, 1.18);
     let visMid = select(1.0, particleVis(zScene, zMid, dp), useD);
     let visNear = select(1.0, particleVis(zScene, zNear, dp), useD);
-    out = blendOver(out, pMid.rgb, pMid.a * visMid);
-    out = blendOver(out, pNear.rgb, pNear.a * visNear);
+    over = blendOver(over, pMid.rgb, pMid.a * visMid);
+    over = blendOver(over, pNear.rgb, pNear.a * visNear);
   } else if (atmo == 9u) { // Beer-Lambert underwater attenuation + upward-normal caustics + Z-occluded bubbles
     let c1 = fbm(wAuv * 3.8 + vec2f(t * 0.16, -t * 0.11));
     let c2 = fbm(wAuv * 4.2 + vec2f(-t * 0.14, t * 0.18));
@@ -758,27 +831,27 @@ fn renderLayer(
       let shallowFade = exp(-max(0.0, zScene - dp.zP10) / max(4.0, dp.zP90 * 0.9));
       causticWeight *= mix(1.0, upMask * (0.4 + 0.8 * shallowFade), ds);
       let absT = 1.0 - exp(-0.95 * max(0.0, zScene - dp.zP10) / max(3.0, mix(dp.zP50, dp.zP90, 0.5)));
-      out = blendOver(out, vec3f(0.04, 0.32, 0.46), absT * ds * 0.44);
+      over = blendOver(over, vec3f(0.04, 0.32, 0.46), absT * ds * 0.44);
     }
-    out = blendScreen(out, vec3f(0.42, 0.90, 1.0), causticRidge * causticWeight);
+    scr = addScreen(scr, vec3f(0.42, 0.90, 1.0), causticRidge * causticWeight);
     let b1 = particleDots(worldUv, aspect, t, 10.0, -0.58, 0.72, 0.14, 1.85);
     let b2 = particleDots(worldUv + vec2f(0.33, 0.27), aspect, t, 16.5, -0.42, 0.55, 0.10, 1.75);
     let vis1 = select(1.0, particleVis(zScene, zNear, dp), useD);
     let vis2 = select(1.0, particleVis(zScene, zMid, dp), useD);
     let bubbleA = clamp(b1.x * 0.68 * vis1 + b2.x * 0.45 * vis2, 0.0, 0.82);
-    out = blendScreen(out, vec3f(0.80, 0.96, 1.0), bubbleA);
+    scr = addScreen(scr, vec3f(0.80, 0.96, 1.0), bubbleA);
   } else if (atmo == 10u) { // Z-stratified fireflies
     let f1 = fireflyLayer(worldUv, aspect, t, 6.2, 0.16);
     let f2 = fireflyLayer(worldUv + vec2f(0.43, 0.29), aspect, t * 0.85, 9.5, 0.12);
     let vis1 = select(1.0, particleVis(zScene, zNear, dp), useD);
     let vis2 = select(1.0, particleVis(zScene, zMid, dp), useD);
-    out = blendScreen(out, f2.rgb, f2.a * vis2);
-    out = blendScreen(out, f1.rgb, f1.a * vis1);
+    scr = addScreen(scr, f2.rgb, f2.a * vis2);
+    scr = addScreen(scr, f1.rgb, f1.a * vis1);
   }
 
   // --- Lighting & Framing Pass ---
   if (light == 1u) { // Sky-masked storm lightning + cool foreground rim
-    let env = lightningEnvelope(t, shotSeed);
+    let env = lightningEnvelope(t, shotSeed, lightCueT);
     let a = env.x;
     let boltX = env.y;
     let skyAnchor = select(vec2f(boltX, 0.16), vec2f(mix(boltX, dp.skyDir.x, 0.45), dp.skyDir.y), useD);
@@ -791,7 +864,7 @@ fn renderLayer(
       let skyBoost = mix(0.45, 1.25, max(skyScene, smoothstep(dp.subjectZ, dp.zP90, zScene)));
       lightA = clamp(lightA * mix(1.0, skyBoost + topRim * 0.4, ds), 0.0, 0.72);
     }
-    out = blendScreen(out, vec3f(0.88, 0.93, 1.0), lightA);
+    scr = addScreen(scr, vec3f(0.88, 0.93, 1.0), lightA);
   } else if (light == 2u) { // Flash (distance inverse-square falloff when depth present)
     let baseA = max(0.0, 1.0 - cueT / 0.45) * 0.35;
     var falloff = 1.0;
@@ -800,7 +873,7 @@ fn renderLayer(
       let ratio = refZ / max(0.4, zScene);
       falloff = mix(1.0, clamp(0.3 + 0.85 * ratio * ratio, 0.25, 1.35), ds);
     }
-    out = blendScreen(out, vec3f(0.94, 0.96, 1.0), clamp(baseA * falloff, 0.0, 0.55));
+    scr = addScreen(scr, vec3f(0.94, 0.96, 1.0), clamp(baseA * falloff, 0.0, 0.55));
   } else if (light == 3u || light == 5u) { // warm_glow / flicker: 3D Lambertian + 6-step contact shadows around warm_anchor
     let isFlicker = light == 5u;
     let wave = 0.5 + 0.3 * sin(t * 7.3) + 0.2 * sin(t * 13.1);
@@ -837,8 +910,8 @@ fn renderLayer(
       contrib = mix(contrib, clamp(halo * 0.45 + relit * 1.15, 0.0, 0.48), ds);
     }
     let tint = select(vec3f(1.0, 0.72, 0.38), vec3f(1.0, 0.64, 0.28), isFlicker);
-    out = blendScreen(out, tint, contrib);
-  } else if (light == 4u) { // cold_tint (preserves full wash when !hasBaseTex for masked layers, adds depth cool wash)
+    scr = addScreen(scr, tint, contrib);
+  } else if (light == 4u) { // cold_tint
     let pulse = 0.09 + sin(t * 0.5) * 0.02;
     let edge = smoothstep(0.15, 1.05, length(screenUv - vec2f(0.5, 0.4)));
     var strength = select(mix(0.35, 1.0, edge) * 1.35, edge * 0.65, hasBaseTex);
@@ -846,16 +919,16 @@ fn renderLayer(
       let farGain = mix(0.85, 1.45, smoothstep(dp.subjectZ * 0.8, dp.zP90, zScene));
       strength *= mix(1.0, farGain, ds * 0.55);
     }
-    out = blendOver(out, vec3f(0.24, 0.44, 0.78), strength * pulse);
+    over = blendOver(over, vec3f(0.24, 0.44, 0.78), strength * pulse);
   } else if (light == 6u) { // vignette (screen-space)
     let d = length((screenUv - 0.5) * vec2f(1.15, 1.0));
     let vig = smoothstep(0.28, 0.82, d) * 0.56;
-    out = blendOver(out, vec3f(0.0, 0.0, 0.0), vig);
-  } else if (light == 7u && !hasBaseTex) { // film_grain
+    over = blendOver(over, vec3f(0.0, 0.0, 0.0), vig);
+  } else if (light == 7u && !hasBaseTex) { // film_grain overlay fallback
     let frame = floor(t * 24.0);
     let g = hash21(floor(screenUv * res * 0.5) + vec2f(frame * 13.7, frame * 7.3)) - 0.5;
     let grainRgb = select(vec3f(0.0), vec3f(1.0), g > 0.0);
-    out = blendOver(out, grainRgb, abs(g) * 0.14);
+    over = blendOver(over, grainRgb, abs(g) * 0.14);
   } else if (light == 8u) { // dream_bloom (depth-graduated dreamy halation behind foreground)
     let pulse = 0.14 + sin(t * 0.55) * 0.03;
     let c1 = vec2f(0.5 + sin(t * 0.25) * 0.05, 0.44 + cos(t * 0.2) * 0.04);
@@ -868,13 +941,13 @@ fn renderLayer(
       let bgBloom = mix(0.65, 1.35, smoothstep(dp.subjectZ * 0.85, dp.zP90, zScene));
       dream = clamp(dream * mix(1.0, bgBloom, ds * 0.75), 0.0, 0.44);
     }
-    out = blendScreen(out, vec3f(0.98, 0.87, 0.96), dream);
+    scr = addScreen(scr, vec3f(0.98, 0.87, 0.96), dream);
   } else if (light == 9u) { // scanlines (screen-space)
     let line = 0.5 - 0.5 * cos(screenUv.y * res.y * 3.14159);
     let bar = invSmooth(0.0, 0.08, abs(fract(screenUv.y - t * 0.08) - 0.5));
     let crtVig = smoothstep(0.42, 0.92, length((screenUv - 0.5) * vec2f(1.1, 1.05))) * 0.22;
-    out = blendOver(out, vec3f(0.03, 0.07, 0.11), clamp(line * 0.16 + crtVig, 0.0, 0.45));
-    out = blendScreen(out, vec3f(0.35, 0.85, 0.95), bar * 0.07);
+    over = blendOver(over, vec3f(0.03, 0.07, 0.11), clamp(line * 0.16 + crtVig, 0.0, 0.45));
+    scr = addScreen(scr, vec3f(0.35, 0.85, 0.95), bar * 0.07);
   } else if (light == 10u) { // spotlight anchored near subjectUv with Z-pool falloff
     let baseX = 0.5 + sin(t * 0.28) * 0.035;
     let swayX = select(baseX, mix(baseX, dp.subjectUv.x + sin(t * 0.28) * 0.025, 0.75), useD);
@@ -889,15 +962,27 @@ fn renderLayer(
       lit *= mix(1.0, 0.45 + 0.55 * zPool, ds * 0.8);
     }
     let shade = (1.0 - lit) * 0.56;
-    out = blendOver(out, vec3f(0.02, 0.03, 0.05), shade);
-    out = blendScreen(out, vec3f(1.0, 0.94, 0.80), lit * 0.14);
+    over = blendOver(over, vec3f(0.02, 0.03, 0.05), shade);
+    scr = addScreen(scr, vec3f(1.0, 0.94, 0.80), lit * 0.14);
   }
 
-  return vec4f(out.rgb, clamp(out.a, 0.0, 1.0));
+  return LayerOut(vec4f(over.rgb, clamp(over.a, 0.0, 1.0)), scr);
 }
 
-fn compositeOverBase(base: vec4f, layer: vec4f) -> vec4f {
-  return vec4f(layer.rgb + base.rgb * (1.0 - layer.a), 1.0);
+fn applyLayerToBase(base: vec4f, lo: LayerOut, weight: f32) -> vec4f {
+  let w = clamp(weight, 0.0, 1.0);
+  let overA = clamp(lo.over.a * w, 0.0, 1.0);
+  var rgb = lo.over.rgb * w + base.rgb * (1.0 - overA);
+  let scr = clamp(lo.screen * w, vec3f(0.0), vec3f(1.0));
+  rgb = rgb + scr * (vec3f(1.0) - rgb);
+  return vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)) * base.a, base.a);
+}
+
+fn flattenLayerOverlay(lo: LayerOut) -> vec4f {
+  let scrA = max(lo.screen.r, max(lo.screen.g, lo.screen.b));
+  let rgb = clamp(lo.over.rgb + lo.screen * (vec3f(1.0) - lo.over.rgb), vec3f(0.0), vec3f(1.0));
+  let a = clamp(lo.over.a + scrA * (1.0 - lo.over.a), 0.0, 1.0);
+  return vec4f(rgb, a);
 }
 
 // Entry 1: Single-pass standard shots and cross-dissolves.
@@ -919,6 +1004,8 @@ fn fs(in: VSOut) -> @location(0) vec4f {
   let backCueT = max(0.0, u.cueParams.y);
   let rackActive = u.cueParams.z;
   let backRackActive = u.cueParams.w;
+  let lightCueT = u.lightningParams.x;
+  let backLightCueT = u.lightningParams.y;
   let atmo = u.effectIds.x;
   let light = u.effectIds.y;
   let backAtmo = u.effectIds.z;
@@ -930,48 +1017,51 @@ fn fs(in: VSOut) -> @location(0) vec4f {
   if (texMode >= 1.5) {
     let backDp = backDepthParams();
     let backLayer = renderLayer(
-      uv, res, backT, backCueT, backAtmo, backLight, u.backCam, backCamAngle,
+      uv, res, backT, backCueT, backLightCueT, backAtmo, backLight, u.backCam, backCamAngle,
       backShotSeed, true, backDepthTex, u.texSizes.xy, backDp
     );
     let frontLayer = renderLayer(
-      uv, res, t, cueT, atmo, light, u.cam, camAngle,
+      uv, res, t, cueT, lightCueT, atmo, light, u.cam, camAngle,
       shotSeed, true, frontDepthTex, u.texSizes.zw, frontDp
     );
     let backBase = sampleScene(
       backTex, backDepthTex, u.texSizes.xy, uv, res, u.backCam, backCamAngle, backCamBlur, backRackActive,
-      backT, backCueT, backAtmo, backLight, backShotSeed, backDp, true
+      backT, backCueT, backLightCueT, backAtmo, backLight, backShotSeed, backDp, true
     );
     let frontBase = sampleScene(
       frontTex, frontDepthTex, u.texSizes.zw, uv, res, u.cam, camAngle, camBlur, rackActive,
-      t, cueT, atmo, light, shotSeed, frontDp, true
+      t, cueT, lightCueT, atmo, light, shotSeed, frontDp, true
     );
-    return mix(compositeOverBase(backBase, backLayer), compositeOverBase(frontBase, frontLayer), fadeMix);
+    let compBack = vec4f(applyLayerToBase(backBase, backLayer, 1.0).rgb, 1.0);
+    let compFront = vec4f(applyLayerToBase(frontBase, frontLayer, 1.0).rgb, 1.0);
+    return mix(compBack, compFront, fadeMix);
   }
 
   let frontLayer = renderLayer(
-    uv, res, t, cueT, atmo, light, u.cam, camAngle,
+    uv, res, t, cueT, lightCueT, atmo, light, u.cam, camAngle,
     shotSeed, hasBaseTex, backDepthTex, u.texSizes.xy, frontDp
   );
   if (hasBaseTex) {
     let base = sampleScene(
       backTex, backDepthTex, u.texSizes.xy, uv, res, u.cam, camAngle, camBlur, rackActive,
-      t, cueT, atmo, light, shotSeed, frontDp, true
+      t, cueT, lightCueT, atmo, light, shotSeed, frontDp, true
     );
-    return compositeOverBase(base, frontLayer);
+    return vec4f(applyLayerToBase(base, frontLayer, 1.0).rgb, 1.0);
   }
+  let frontOverlay = flattenLayerOverlay(frontLayer);
   if (fadeMix < 1.0) {
     let backDp = backDepthParams();
     let backLayer = renderLayer(
-      uv, res, backT, backCueT, backAtmo, backLight, u.backCam, backCamAngle,
+      uv, res, backT, backCueT, backLightCueT, backAtmo, backLight, u.backCam, backCamAngle,
       backShotSeed, false, backDepthTex, u.texSizes.xy, backDp
     );
-    return mix(backLayer, frontLayer, fadeMix);
+    return mix(flattenLayerOverlay(backLayer), frontOverlay, fadeMix);
   }
 
-  return frontLayer;
+  return frontOverlay;
 }
 
-// Entry 2 (Unified SAM Layer Pass 1): Base still with 2.5D parallax and optical rack-focus.
+// Entry 2 (Unified SAM Layer Pass 1): Base still with 2.5D parallax, camera shake CA, and optical rack-focus.
 @fragment
 fn fsBase(in: VSOut) -> @location(0) vec4f {
   let dp = frontDepthParams();
@@ -979,21 +1069,29 @@ fn fsBase(in: VSOut) -> @location(0) vec4f {
   let t = max(0.0, u.timeParams.z);
   let base = sampleScene(
     backTex, backDepthTex, u.texSizes.xy, in.uv, res, u.cam, u.camExtra.x, u.camExtra.y, u.cueParams.z,
-    t, max(0.0, u.cueParams.x), 0u, 0u, u.mixParams.y, dp, false
+    t, max(0.0, u.cueParams.x), u.lightningParams.x, 0u, 0u, u.mixParams.y, dp, false
   );
-  return vec4f(base.rgb, 1.0);
+  return vec4f(base.rgb, base.a);
 }
 
-// Entry 3 (Unified SAM Layer Pass 2): Per-layer masked & depth-occluded effect blended over shot RT.
+// Entry 3 (Unified SAM Layer Pass 2): Ping-pong masked & depth-occluded layer with live RT refraction, bloom, and screen/over compositing.
 @fragment
 fn fsLayer(in: VSOut) -> @location(0) vec4f {
   let res = u.timeParams.xy;
   let aspect = res.x / max(1.0, res.y);
   let dp = frontDepthParams();
+  let t = max(0.0, u.timeParams.z);
+  let cueT = max(0.0, u.cueParams.x);
+  let lightCueT = u.lightningParams.x;
+  let shotSeed = u.mixParams.y;
+  let atmo = u.effectIds.x;
+  let light = u.effectIds.y;
+
+  let dst = textureSampleLevel(backTex, texSampler, in.uv, 0.0);
   let camUv = cameraUv(in.uv, u.cam, u.camExtra.x, aspect);
   let mapped = parallaxContainUv(camUv, res, u.texSizes.xy, backDepthTex, dp, u.cam);
   let tuv = mapped.xy;
-  let inside = mapped.z;
+  let inside = max(mapped.z, dst.a);
 
   let intensity = clamp(u.layerParams.x, 0.0, 1.0);
   let maskMode = u.layerParams.y;
@@ -1020,15 +1118,48 @@ fn fsLayer(in: VSOut) -> @location(0) vec4f {
 
   let weight = maskW * intensity;
   if (weight <= 0.001) {
-    return vec4f(0.0);
+    return dst;
   }
 
-  let layer = renderLayer(
-    in.uv, res, max(0.0, u.timeParams.z), max(0.0, u.cueParams.x),
-    u.effectIds.x, u.effectIds.y, u.cam, u.camExtra.x, u.mixParams.y,
-    false, backDepthTex, u.texSizes.xy, dp
+  var rgb = dst.rgb;
+  if (inside > 0.0) {
+    let dist = computeDistortion(camUv, aspect, t, cueT, lightCueT, atmo, light, 0.0, shotSeed);
+    let wOff = dist.xy * weight;
+    let wCa = dist.z * weight;
+    let sampleUv = clamp(in.uv + wOff, vec2f(0.001), vec2f(0.999));
+    if (abs(wOff.x) + abs(wOff.y) > 0.00005 || wCa > 0.0001) {
+      rgb = textureSampleLevel(backTex, texSampler, sampleUv, 0.0).rgb;
+      if (wCa > 0.0001) {
+        let radial = (in.uv - vec2f(0.5)) * wCa;
+        rgb.r = textureSampleLevel(backTex, texSampler, clamp(sampleUv + radial, vec2f(0.001), vec2f(0.999)), 0.0).r;
+        rgb.b = textureSampleLevel(backTex, texSampler, clamp(sampleUv - radial, vec2f(0.001), vec2f(0.999)), 0.0).b;
+      }
+    }
+
+    if (effectNeedsBloom(atmo, light, dist.z, cueT)) {
+      let texel = vec2f(1.0) / max(vec2f(64.0), res * 0.45);
+      let rBlur = texel * 6.5;
+      var taps = array<vec2f, 6>(
+        vec2f( 0.340,  0.427), vec2f(-0.618, -0.105), vec2f( 0.564, -0.391),
+        vec2f(-0.181,  0.719), vec2f(-0.426, -0.663), vec2f( 0.831,  0.145)
+      );
+      var blur = vec3f(0.0);
+      for (var i: i32 = 0; i < 6; i++) {
+        blur += textureSampleLevel(backTex, texSampler, clamp(sampleUv + taps[i] * rBlur, vec2f(0.001), vec2f(0.999)), 0.0).rgb;
+      }
+      blur *= (1.0 / 6.0);
+      rgb = applyHighlightBloom(rgb, blur, t, cueT, lightCueT, atmo, light, shotSeed, weight);
+    }
+
+    rgb = applyColorGrade(rgb, in.uv, res, t, light, weight);
+  }
+
+  let lo = renderLayer(
+    in.uv, res, t, cueT, lightCueT, atmo, light, u.cam, u.camExtra.x, shotSeed,
+    true, backDepthTex, u.texSizes.xy, dp
   );
-  return layer * weight;
+  let composited = applyLayerToBase(vec4f(clamp(rgb, vec3f(0.0), vec3f(1.0)), max(inside, dst.a)), lo, weight);
+  return vec4f(composited.rgb, max(composited.a, dst.a));
 }
 
 // Entry 4 (Unified SAM Layer Pass 3): Present single RT or cross-dissolve backRT -> frontRT to swapchain.
@@ -1037,13 +1168,13 @@ fn fsComposite(in: VSOut) -> @location(0) vec4f {
   let backSample = textureSampleLevel(backTex, texSampler, in.uv, 0.0);
   if (u.mixParams.w >= 1.5) {
     let frontSample = textureSampleLevel(frontTex, texSampler, in.uv, 0.0);
-    return mix(backSample, frontSample, clamp(u.mixParams.x, 0.0, 1.0));
+    return vec4f(mix(backSample.rgb, frontSample.rgb, clamp(u.mixParams.x, 0.0, 1.0)), 1.0);
   }
-  return backSample;
+  return vec4f(backSample.rgb, 1.0);
 }
 `;
 
-const UNIFORM_STRUCT_BYTES = 304;
+const UNIFORM_STRUCT_BYTES = 320;
 const UNIFORM_STRIDE = 512;
 const UNIFORM_SLOT_FLOATS = UNIFORM_STRIDE / 4;
 const MAX_UNIFORM_SLOTS = 48;
@@ -1083,8 +1214,10 @@ const textureSlots = {
 };
 
 const renderTargets = {
-  back: null,
-  front: null,
+  backA: null,
+  backB: null,
+  frontA: null,
+  frontB: null,
 };
 
 const maskTextureCache = new Map();
@@ -1158,17 +1291,7 @@ async function ensureLayerPipelines() {
       device.createRenderPipelineAsync({
         layout,
         vertex: { module, entryPoint: "vs" },
-        fragment: {
-          module,
-          entryPoint: "fsLayer",
-          targets: [{
-            format: "rgba8unorm",
-            blend: {
-              color: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
-              alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
-            },
-          }],
-        },
+        fragment: { module, entryPoint: "fsLayer", targets: [{ format: "rgba8unorm" }] },
         primitive: { topology: "triangle-list" },
       }),
       device.createRenderPipelineAsync({
@@ -1431,6 +1554,16 @@ export function clearWebGPU(hostCanvas) {
   if (hostCanvas.style) hostCanvas.style.visibility = "visible";
 }
 
+export function destroyWebGPUCanvas(hostCanvas) {
+  const gpuCanvas = getGpuCanvas(hostCanvas, false);
+  if (gpuCanvas) {
+    if (configuredCanvas === gpuCanvas) configuredCanvas = null;
+    try { gpuCanvas.getContext("webgpu")?.unconfigure?.(); } catch { /* ignore */ }
+    gpuCanvas.remove();
+  }
+  if (hostCanvas?.style) hostCanvas.style.visibility = "visible";
+}
+
 let configuredCanvas = null;
 function prepareContext(hostCanvas, w, h) {
   const gpuCanvas = getGpuCanvas(hostCanvas, true);
@@ -1493,6 +1626,7 @@ function writeShotUniformSlot(slotIdx, {
   w, h, seconds, backSeconds = 0, fadeMix = 1, shotSeed = 0, backShotSeed = 0, texMode = 0,
   cam = IDENTITY_CAM, backCam = IDENTITY_CAM, backW = w, backH = h, frontW = w, frontH = h,
   cueTime = seconds, backCueTime = backSeconds, rackActive = 0, backRackActive = 0,
+  lightningCueTime = -1, backLightningCueTime = -1,
   atmoId = 0, lightId = 0, backAtmoId = 0, backLightId = 0,
   depthMeta = null, hasDepth = false, backDepthMeta = null, hasBackDepth = false,
   intensity = 1, maskMode = 0, maskRefZ = 0, hasMask = false,
@@ -1545,6 +1679,11 @@ function writeShotUniformSlot(slotIdx, {
   uniformFloats[b + 73] = maskMode;
   uniformFloats[b + 74] = maskRefZ;
   uniformFloats[b + 75] = hasMask ? 1 : 0;
+
+  uniformFloats[b + 76] = lightningCueTime;
+  uniformFloats[b + 77] = backLightningCueTime;
+  uniformFloats[b + 78] = 0;
+  uniformFloats[b + 79] = 0;
 }
 
 const IMAGE_ATMOSPHERE = new Set(["rain", "fog", "sunbeams", "smoke", "underwater"].map((id) => ATMO_IDS[id]));
@@ -1614,7 +1753,8 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
 
   const texMode = front ? 2 : back ? 1 : 0;
   if (texMode) {
-    const ratio = Math.min(globalThis.devicePixelRatio || 1, 1280 / Math.max(w, h));
+    const maxDim = Math.min(1920, Math.max(1280, back?.width || 0, back?.height || 0, front?.width || 0, front?.height || 0));
+    const ratio = Math.min(globalThis.devicePixelRatio || 1, maxDim / Math.max(w, h));
     w = Math.max(1, Math.round(w * ratio));
     h = Math.max(1, Math.round(h * ratio));
   } else {
@@ -1644,6 +1784,8 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
     frontH: front?.height ?? h,
     cueTime: scene?.cueElapsed ?? seconds,
     backCueTime: scene?.backCueElapsed ?? (scene?.backElapsed ?? 0),
+    lightningCueTime: scene?.lightningCueElapsed ?? -1,
+    backLightningCueTime: scene?.backLightningCueElapsed ?? -1,
     rackActive,
     backRackActive,
     atmoId,
@@ -1694,6 +1836,16 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
 
 const MASK_MODE_IDS = { full_frame: 0, inside: 1, outside: 2, behind: 3 };
 
+export function warmWebGPUAssets(hostDoc, layers) {
+  if (gpuState !== "ready" || !gpuDevice || !hostDoc || !Array.isArray(layers)) return;
+  for (const layer of layers) {
+    const mode = MASK_MODE_IDS[layer?.mode || "full_frame"] ?? 0;
+    if (mode > 0 && layer?.maskImages?.length) {
+      syncMaskTexture(hostDoc, layer.maskImages, layer.feather, layer.maskUrls);
+    }
+  }
+}
+
 export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = null) {
   if (gpuState !== "ready" || !gpuDevice) return false;
   if (!gpuBasePipeline || !gpuLayerPipeline || !gpuCompositePipeline) {
@@ -1704,13 +1856,6 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
   const backSrc = readyStill(scene?.stillBack);
   const frontSrc = fading && readyStill(scene?.stillFront);
   if (!backSrc || (fading && !frontSrc)) return false;
-
-  const ratio = Math.min(globalThis.devicePixelRatio || 1, 1280 / Math.max(w, h));
-  w = Math.max(1, Math.round(w * ratio));
-  h = Math.max(1, Math.round(h * ratio));
-  const target = prepareContext(hostCanvas, w, h);
-  if (!target) return false;
-  const { gpuCanvas, ctx } = target;
 
   let stillBack, stillFront = null, backDepth = null, frontDepth = null;
   try {
@@ -1735,15 +1880,24 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
     return false;
   }
 
-  const rtBack = syncRenderTarget("back", w, h);
-  const rtFront = fading ? syncRenderTarget("front", w, h) : null;
+  const maxDim = Math.min(1920, Math.max(1280, stillBack.width, stillBack.height, stillFront?.width || 0, stillFront?.height || 0));
+  const ratio = Math.min(globalThis.devicePixelRatio || 1, maxDim / Math.max(w, h));
+  w = Math.max(1, Math.round(w * ratio));
+  h = Math.max(1, Math.round(h * ratio));
+  const target = prepareContext(hostCanvas, w, h);
+  if (!target) return false;
+  const { gpuCanvas, ctx } = target;
+
   let nextSlot = 0;
   const passOps = [];
 
-  function scheduleShot(rt, stillSlot, depthSlot, depthMeta, cam, shotT, shotCueT, shotSeed, shotLayers) {
+  function scheduleShot(prefix, stillSlot, depthSlot, depthMeta, cam, shotT, shotCueT, shotLightCueT, shotSeed, shotLayers) {
+    const rtA = syncRenderTarget(`${prefix}A`, w, h);
+    let currentRt = rtA;
+    let scratchRt = null;
     const rackActive = Boolean((shotLayers || []).some((l) => l.preset === "rack_focus"));
     const baseSlot = nextSlot++;
-    if (baseSlot >= MAX_UNIFORM_SLOTS) return false;
+    if (baseSlot >= MAX_UNIFORM_SLOTS) return null;
     writeShotUniformSlot(baseSlot, {
       w, h,
       seconds: shotT,
@@ -1754,12 +1908,13 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
       backW: stillSlot.width,
       backH: stillSlot.height,
       cueTime: shotCueT,
+      lightningCueTime: shotLightCueT,
       rackActive,
       depthMeta,
       hasDepth: Boolean(depthSlot),
     });
     const baseBind = createLayerBindGroup(stillSlot.view, null, depthSlot?.view, null, null);
-    passOps.push({ kind: "base", rtView: rt.view, slot: baseSlot, bindGroup: baseBind });
+    passOps.push({ kind: "base", rtView: currentRt.view, slot: baseSlot, bindGroup: baseBind });
 
     for (const layer of shotLayers || []) {
       const preset = layer.preset;
@@ -1767,7 +1922,9 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
       const lightId = LIGHT_IDS[preset] || 0;
       if (!atmoId && !lightId) continue;
       const slot = nextSlot++;
-      if (slot >= MAX_UNIFORM_SLOTS) return false;
+      if (slot >= MAX_UNIFORM_SLOTS) return null;
+      if (!scratchRt) scratchRt = syncRenderTarget(`${prefix}B`, w, h);
+      const dstRt = currentRt === rtA ? scratchRt : rtA;
       const maskModeName = layer.mode || "full_frame";
       const maskMode = MASK_MODE_IDS[maskModeName] ?? 0;
       let maskEntry = null;
@@ -1784,6 +1941,7 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
         backW: stillSlot.width,
         backH: stillSlot.height,
         cueTime: shotCueT,
+        lightningCueTime: shotLightCueT,
         rackActive,
         atmoId,
         lightId,
@@ -1794,27 +1952,29 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
         maskRefZ: layer.region_depth_m ?? 0,
         hasMask: Boolean(maskEntry),
       });
-      const layerBind = createLayerBindGroup(stillSlot.view, null, depthSlot?.view, null, maskEntry?.view);
-      passOps.push({ kind: "layer", rtView: rt.view, slot, bindGroup: layerBind });
+      const layerBind = createLayerBindGroup(currentRt.view, stillSlot.view, depthSlot?.view, null, maskEntry?.view);
+      passOps.push({ kind: "layer", rtView: dstRt.view, slot, bindGroup: layerBind });
+      currentRt = dstRt;
     }
-    return true;
+    return currentRt.view;
   }
 
   const backLayers = fading ? (scene.backLayers ?? []) : (layers ?? []);
   const backCam = fading ? (scene.backCam || IDENTITY_CAM) : (scene?.cam || IDENTITY_CAM);
   const backT = fading ? Math.max(0, scene.backElapsed ?? 0) : Math.max(0, seconds);
   const backCueT = fading ? Math.max(0, scene.backCueElapsed ?? backT) : Math.max(0, scene?.cueElapsed ?? seconds);
+  const backLightCueT = fading ? (scene.backLightningCueElapsed ?? -1) : (scene?.lightningCueElapsed ?? -1);
   const backSeed = fading ? (scene.backShotIndex ?? 0) : (scene?.shotIndex ?? 0);
   const backMeta = fading ? (scene.backDepthMeta ?? scene.depthMeta) : scene?.depthMeta;
 
-  if (!scheduleShot(rtBack, stillBack, backDepth, backMeta, backCam, backT, backCueT, backSeed, backLayers)) {
-    return false;
-  }
+  const finalBackView = scheduleShot("back", stillBack, backDepth, backMeta, backCam, backT, backCueT, backLightCueT, backSeed, backLayers);
+  if (!finalBackView) return false;
+
+  let finalFrontView = null;
   if (fading) {
-    if (!scheduleShot(rtFront, stillFront, frontDepth, scene?.depthMeta, scene?.cam, Math.max(0, seconds),
-      Math.max(0, scene?.cueElapsed ?? seconds), scene?.shotIndex ?? 0, layers ?? [])) {
-      return false;
-    }
+    finalFrontView = scheduleShot("front", stillFront, frontDepth, scene?.depthMeta, scene?.cam, Math.max(0, seconds),
+      Math.max(0, scene?.cueElapsed ?? seconds), scene?.lightningCueElapsed ?? -1, scene?.shotIndex ?? 0, layers ?? []);
+    if (!finalFrontView) return false;
   }
 
   const presentSlot = nextSlot++;
@@ -1825,7 +1985,7 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
     fadeMix: fading ? Math.max(0, Math.min(1, scene?.fadeMix ?? 1)) : 1,
     texMode: fading ? 2 : 1,
   });
-  const presentBind = createLayerBindGroup(rtBack.view, fading ? rtFront.view : null, null, null, null);
+  const presentBind = createLayerBindGroup(finalBackView, finalFrontView, null, null, null);
 
   gpuDevice.queue.writeBuffer(gpuUniformBuffer, 0, uniformBytes, 0, nextSlot * UNIFORM_STRIDE);
 
@@ -1835,7 +1995,7 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
       colorAttachments: [{
         view: op.rtView,
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
-        loadOp: op.kind === "base" ? "clear" : "load",
+        loadOp: "clear",
         storeOp: "store",
       }],
     });

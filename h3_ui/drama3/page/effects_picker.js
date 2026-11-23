@@ -1,4 +1,4 @@
-import {paintDepthVisualization, paintEffectPreview} from "./effects.js";
+import {clearEffectPreview, paintDepthVisualization, paintEffectPreview, preloadEffectDepths} from "./effects.js";
 
 const CATEGORIES = [
   {id: "camera", label: "Camera movement", scene: "Forest bridge"},
@@ -69,7 +69,7 @@ function createHoverController(canPlay) {
   return {playHover, stopHover};
 }
 
-export function openEffectsPicker({h, dialog, row, orientation, presets, depthUrl = null, save, restoreFocus}) {
+export function openEffectsPicker({h, dialog, row, orientation, presets, depthUrl = null, depthMeta = null, save, restoreFocus}) {
   const initial = row.effects || [];
   const selected = new Map(initial.map((id) => [presets[id]?.kind, id]));
   const choices = Object.entries(presets);
@@ -136,7 +136,17 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, depthUr
     const clamped = Math.min(DURATION, Math.max(0, seconds));
     scrubber.value = String(clamped);
     timeLabel.textContent = `${clamped.toFixed(1)} s / ${DURATION.toFixed(1)} s`;
-    if (sourceReady) paintEffectPreview(canvas, image, effects(), clamped, DURATION);
+    if (sourceReady) {
+      const isShot = source.value === "shot";
+      if (!isShot) clearEffectPreview(canvas);
+      paintEffectPreview(canvas, image, effects(), clamped, DURATION, isShot ? {
+        useWebGPU: true,
+        shotIndex: row.index,
+        depthUrl,
+        depthMeta,
+        onReady: () => { if (dialog.open && sourceReady && source.value === "shot") setTime(Number(scrubber.value)); },
+      } : null);
+    }
   }
 
   function scrubPreview() {
@@ -349,10 +359,16 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, depthUr
   dialog.onclose = () => {
     stopPreview();
     stopHover();
+    clearEffectPreview(canvas);
     sourceRequest++;
     motion?.removeEventListener("change", updateMotion);
     restoreFocus();
   };
+  if (depthUrl) {
+    preloadEffectDepths([{depth_url: depthUrl}]).then(() => {
+      if (dialog.open && sourceReady && source.value === "shot") setTime(Number(scrubber.value));
+    });
+  }
   renderChoices();
   renderSelection();
   loadPreviewSource();

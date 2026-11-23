@@ -1,4 +1,14 @@
-import { ATMO_IDS, LIGHT_IDS, clearWebGPU, gpuStatus, probeWebGPU, renderWebGPU, renderWebGPULayers } from "./effects_webgpu.js";
+import {
+  ATMO_IDS,
+  LIGHT_IDS,
+  clearWebGPU,
+  destroyWebGPUCanvas,
+  gpuStatus,
+  probeWebGPU,
+  renderWebGPU,
+  renderWebGPULayers,
+  warmWebGPUAssets,
+} from "./effects_webgpu.js";
 
 // Animation derives from media time: pausing freezes it; seeking reconstructs it.
 const fraction = (value) => value - Math.floor(value);
@@ -10,8 +20,9 @@ const IDENTITY_CAMERA = Object.freeze({ tx: 0, ty: 0, scale: 1, shake: 0, angle:
 
 function rackBlurDecay(p, t) {
   const time = t ?? p * 4;
-  if (time < 0 || time >= 0.95) return 0;
-  return round3(Math.pow(1 - time / 0.95, 2));
+  if (time < 0 || time >= 1.1) return 0;
+  if (time <= 0.08) return 1;
+  return round3(0.5 + 0.5 * Math.cos(Math.PI * ((time - 0.08) / 1.02)));
 }
 
 // Single source of truth for camera kinematics; drives both CSS transforms and WebGPU/Canvas2D camera coupling.
@@ -199,19 +210,52 @@ export function lastAtOrBefore(items, time, startOf) {
 
 const timestamp = (time) => time;
 const SETTLED_CUE_SECONDS = 1;
+const FOCUS_PULL_SECONDS = 0.85;
+const cueTimeOf = (cue) => cue.time;
+
+const LOUD_IMPACT_RE = /\b(thunder|lightning|explosion|blast|crash|shatter|smash|slam|gunshot|shot|bang|boom|punch|strike|hit|impact|thud|roar|cannon|bolt|crack)\b|(雷|爆炸|轰|碎|砸|撞|枪|炮|劈|震|击)/i;
+const SUBTLE_FOLEY_RE = /\b(footsteps?|steps?|walk(?:ing)?|cloth|rustl(?:e|ing)|fabric|breath(?:ing|e)?|sigh(?:ing)?|inhale|exhale|whisper|page|paper|book|turn(?:ing)?|cup|glass|sip|pour|tea|coffee|key(?:s|board)?|typ(?:e|ing)|click|tick(?:ing)?|clock|drip(?:ping)?|water\s*drop|pen|scribbl|chair|creak|birds?|chirp|cricket|wind|breeze|rain\s*ambience|hum|murmur)\b|(脚步|衣袖|摩擦|呼吸|叹气|叹息|翻页|书页|茶杯|水滴|滴答|键盘|轻声|低语|鸟鸣|微风)/i;
+const THUNDER_SOUND_RE = /\b(thunder(?:clap|storm|bolt)?|lightning(?:\s*bolt|\s*strike)?|peal\s+of\s+thunder|storm\s+crack)\b|(雷声|惊雷|闷雷|雷鸣|闪电|霹雳|打雷)/i;
+
+export function isSubtleFoleySound(sound) {
+  if (!sound) return false;
+  const label = `${sound.name || ""} ${sound.description || ""}`.replace(/[_-]+/g, " ").trim();
+  if (label && LOUD_IMPACT_RE.test(label)) return false;
+  if (label && SUBTLE_FOLEY_RE.test(label)) return true;
+  const vol = Number(sound.volume);
+  return Number.isFinite(vol) && vol < 0.72;
+}
+
+export function isThunderSound(sound) {
+  if (!sound || sound.loop) return false;
+  const label = `${sound.name || ""} ${sound.description || ""}`.replace(/[_-]+/g, " ").trim();
+  return Boolean(label && THUNDER_SOUND_RE.test(label));
+}
+
 export function effectCues(shots, sounds) {
-  const onsets = (sounds || []).filter((sound) => sound?.start != null && !sound.loop)
-    .map((sound) => Number(sound.start)).filter(Number.isFinite).sort((a, b) => a - b);
+  const nonLoop = (sounds || []).filter((sound) => sound?.start != null && !sound.loop && Number.isFinite(Number(sound.start)));
+  const onsets = nonLoop
+    .filter((sound) => !isSubtleFoleySound(sound))
+    .map((sound) => Number(sound.start))
+    .sort((a, b) => a - b);
+  const thunderOnsets = nonLoop
+    .filter(isThunderSound)
+    .map((sound) => Number(sound.start))
+    .sort((a, b) => a - b);
   let lastFlash = -Infinity;
-  return shots.map(({start, end, effects}) => {
-    const shake = effects.includes("impact_shake"), flash = effects.includes("flash");
+  let lastLightning = -Infinity;
+  return shots.map(({start, end, effects, effect_layers: layers}) => {
+    const hasPreset = (id) => Boolean(effects?.includes?.(id) || layers?.some?.((l) => l?.preset === id));
+    const shake = hasPreset("impact_shake");
+    const flash = hasPreset("flash");
+    const lightning = hasPreset("lightning");
     const candidates = shake || flash ? [start] : [];
     if (candidates.length) {
       for (let i = lastAtOrBefore(onsets, start, timestamp) + 1; i < onsets.length && onsets[i] < end; i++) {
         candidates.push(onsets[i]);
       }
     }
-    return {
+    const cueObj = {
       shake: shake ? candidates : [],
       // Coalesce dense cues across cuts as well as within a shot. The pulse lasts 0.45s.
       flash: flash ? candidates.filter((onset) => {
@@ -220,12 +264,57 @@ export function effectCues(shots, sounds) {
         return true;
       }) : [],
     };
+    if (lightning && thunderOnsets.length) {
+      const bolts = [];
+      for (let i = Math.max(0, lastAtOrBefore(thunderOnsets, start - 0.2, timestamp) + 1); i < thunderOnsets.length && thunderOnsets[i] < end; i++) {
+        const onset = Math.max(start, thunderOnsets[i]);
+        if (onset < lastLightning + 0.45) continue;
+        lastLightning = onset;
+        bolts.push(onset);
+      }
+      if (bolts.length) cueObj.lightning = bolts;
+    }
+    return cueObj;
   });
 }
 
 export function cueElapsed(cues, time) {
   const index = lastAtOrBefore(cues, time, timestamp);
   return index < 0 ? SETTLED_CUE_SECONDS : time - cues[index];
+}
+
+export function lightningCueElapsed(cues, time) {
+  if (!cues?.length) return -1;
+  const leadTime = time + 0.06;
+  const index = lastAtOrBefore(cues, leadTime, timestamp);
+  return index < 0 ? 99 : leadTime - cues[index];
+}
+
+export function resolveFocusDepthMeta(depthMeta, focusCues, elapsed) {
+  if (!depthMeta || !Array.isArray(focusCues) || focusCues.length < 2) return depthMeta;
+  const t = Math.max(0, Number(elapsed) || 0);
+  const idx = lastAtOrBefore(focusCues, t, cueTimeOf);
+  if (idx <= 0) {
+    const first = focusCues[0];
+    return {
+      ...depthMeta,
+      subject_z: first.z ?? depthMeta.subject_z,
+      subject_uv: first.uv ?? depthMeta.subject_uv,
+    };
+  }
+  const prev = focusCues[idx - 1];
+  const curr = focusCues[idx];
+  const p = easeInOut((t - curr.time) / FOCUS_PULL_SECONDS);
+  const invPrev = 1 / Math.max(0.2, prev.z ?? depthMeta.subject_z ?? 4);
+  const invCurr = 1 / Math.max(0.2, curr.z ?? depthMeta.subject_z ?? 4);
+  const z = round3(1 / Math.max(1e-4, invPrev + (invCurr - invPrev) * p));
+  const prevUv = prev.uv ?? depthMeta.subject_uv ?? [0.5, 0.46];
+  const currUv = curr.uv ?? depthMeta.subject_uv ?? [0.5, 0.46];
+  const uv = [
+    round3(prevUv[0] + (currUv[0] - prevUv[0]) * p),
+    round3(prevUv[1] + (currUv[1] - prevUv[1]) * p),
+  ];
+  return { ...depthMeta, subject_z: z, subject_uv: uv };
 }
 
 export function cameraTransform(effects, progress, seconds) {
@@ -274,13 +363,50 @@ function splitEffects(list) {
   return layers;
 }
 
-// Preview canvases stay independent of the player's WebGPU surface and clock.
-export function paintEffectPreview(canvas, image, effects, seconds, duration) {
+export function clearEffectPreview(canvas) {
+  if (!canvas) return;
+  destroyWebGPUCanvas(canvas);
+}
+
+// Preview canvases stay independent of the player's clock; shot previews can opt into WebGPU + Depth Pro 2.
+export function paintEffectPreview(canvas, image, effects, seconds, duration, options = null) {
   const {atmospheres, lights} = splitEffects(effects);
   const camera = cameraFrame(effects, seconds / duration, seconds);
   image.style.transform = camera.css;
   image.style.filter = camera.filter;
-  const ctx = canvas.getContext("2d");
+  if (options?.useWebGPU) {
+    const atmoId = ATMO_IDS[atmospheres[0]] || 0;
+    const lightId = LIGHT_IDS[lights[0]] || 0;
+    const depthImage = readyDepthImage(options.depthUrl);
+    const hasDepthCam = Boolean(
+      depthImage && (options.depthMeta?.depth_strength ?? 1) > 0.01 && camMovesForDepth(camera, effects)
+    );
+    if (
+      (atmoId || lightId || hasDepthCam) &&
+      atmospheres.length <= 1 &&
+      lights.length <= 1 &&
+      (!atmospheres.length || atmoId) &&
+      (!lights.length || lightId)
+    ) {
+      if (gpuStatus() === "idle") probeWebGPU(options.onReady);
+      const w = Math.max(1, Math.round(canvas.clientWidth || canvas.width || 640));
+      const h = Math.max(1, Math.round(canvas.clientHeight || canvas.height || 360));
+      const t = Math.max(0, seconds);
+      if (renderWebGPU(canvas, atmoId, lightId, t, w, h, {
+        stillBack: image,
+        cam: camera,
+        shotIndex: options.shotIndex ?? 0,
+        cueElapsed: t,
+        depthImage,
+        depthMeta: options.depthMeta ?? null,
+        rackActive: Boolean(effects?.includes?.("rack_focus")),
+      })) {
+        return;
+      }
+    }
+    clearWebGPU(canvas);
+  }
+  const ctx = canvas.getContext("2d", {willReadFrequently: true});
   if (!ctx) return;
   const {width, height} = canvas;
   ctx.clearRect(0, 0, width, height);
@@ -387,6 +513,14 @@ export function preloadEffectMasks(shots) {
   return preloadImagePool(maskImages, (shots || []).flatMap((shot) => (shot?.effect_layers || []).flatMap(layerMaskUrls)));
 }
 
+export function warmUpcomingShot(hostDoc, shot) {
+  if (!hostDoc || !shot?.effect_layers?.length) return false;
+  const layers = attachLayerAssets(shot.effect_layers);
+  if (!layers.some((layer) => layer.maskImages?.length)) return false;
+  warmWebGPUAssets(hostDoc, layers);
+  return true;
+}
+
 function drawInShot(ctx, image, cam, w, h) {
   const scale = Math.min(w / image.naturalWidth, h / image.naturalHeight);
   const width = image.naturalWidth * scale;
@@ -397,7 +531,7 @@ function drawInShot(ctx, image, cam, w, h) {
   ctx.drawImage(image, -width / 2, -height / 2, width, height);
 }
 
-function paintShotStack(target, scratch, matte, image, layers, seconds, cue, seed, cam) {
+function paintShotStack(target, scratch, matte, image, layers, seconds, cue, seed, cam, lightCue = -1) {
   const {width: w, height: h} = target.canvas;
   target.fillStyle = "#000";
   target.fillRect(0, 0, w, h);
@@ -414,7 +548,7 @@ function paintShotStack(target, scratch, matte, image, layers, seconds, cue, see
     const masks = urls.map((url) => maskImages.get(url)?.image).filter((img) => img?.naturalWidth);
     if (mode !== "full_frame" && !masks.length) continue;
     scratch.clearRect(0, 0, w, h);
-    paintLayer2D(scratch, atmosphere ? [preset] : [], atmosphere ? [] : [preset], seconds, cue, w, h, seed, cam);
+    paintLayer2D(scratch, atmosphere ? [preset] : [], atmosphere ? [] : [preset], seconds, cue, w, h, seed, cam, lightCue);
     if (mode !== "full_frame" && masks.length) {
       scratch.save();
       scratch.globalCompositeOperation = mode === "inside" ? "destination-in" : "destination-out";
@@ -451,14 +585,17 @@ function paintEnhancedScene(canvas, scene, effects, t, cue, fading) {
   const [back, front, layer, matte] = stackBuffers.get(canvas);
   for (const context of [ctx, back, front, layer, matte]) sizeCanvas(context.canvas, w, h);
   const fullFrame = (presets) => presets.map((preset) => ({preset, mode: "full_frame"}));
+  const lightCue = scene?.lightningCueElapsed ?? -1;
+  const backLightCue = scene?.backLightningCueElapsed ?? -1;
   paintShotStack(back, layer, matte, scene.stillBack,
     fading ? scene.backLayers ?? fullFrame(scene.backEffects) : scene.layers ?? fullFrame(effects),
     fading ? scene.backElapsed : t, fading ? scene.backCueElapsed : cue,
-    fading ? scene.backShotIndex : scene.shotIndex, fading ? scene.backCam : scene.cam);
+    fading ? scene.backShotIndex : scene.shotIndex, fading ? scene.backCam : scene.cam,
+    fading ? backLightCue : lightCue);
   ctx.drawImage(back.canvas, 0, 0);
   if (fading) {
     paintShotStack(front, layer, matte, scene.stillFront, scene.layers ?? fullFrame(effects),
-      t, cue, scene.shotIndex, scene.cam);
+      t, cue, scene.shotIndex, scene.cam, lightCue);
     ctx.save();
     ctx.globalAlpha = clamp01(scene.fadeMix);
     ctx.drawImage(front.canvas, 0, 0);
@@ -573,6 +710,7 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
 
   const shotSeed = scene?.shotIndex ?? 0;
   const cam = scene?.cam || null;
+  const lightCueT = scene?.lightningCueElapsed ?? -1;
   if (fading) {
     let buffer = dissolveCanvases.get(canvas);
     if (!buffer) {
@@ -584,14 +722,15 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
     const fadeMix = clamp01(scene.fadeMix ?? 1);
     const backT = Math.max(0, scene.backElapsed ?? 0);
     const backCueT = Math.max(0, scene.backCueElapsed ?? backT);
+    const backLightCueT = scene.backLightningCueElapsed ?? -1;
     // Add the weighted premultiplied layers so identical effects retain their opacity.
     withComposite(ctx, "lighter", () => {
       blendLayer2D(ctx, layer, backAtmospheres, backLights, backT, backCueT, 1 - fadeMix,
-        scene.backShotIndex ?? 0, scene.backCam);
-      blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, fadeMix, shotSeed, cam);
+        scene.backShotIndex ?? 0, scene.backCam, backLightCueT);
+      blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, fadeMix, shotSeed, cam, lightCueT);
     });
   } else {
-    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam);
+    paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam, lightCueT);
   }
   showBackend?.("Canvas 2D");
 }
@@ -605,16 +744,16 @@ const ATMO_PAINTERS = {
   fireflies: (_effect, ctx, t, w, h, sx, sy) => paintFireflies(ctx, t, w, h, sx, sy),
 };
 
-function blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, weight, shotSeed, cam) {
+function blendLayer2D(ctx, layer, atmospheres, lights, t, cueT, weight, shotSeed, cam, lightCueT = -1) {
   if (!weight || (!atmospheres.length && !lights.length)) return;
   const {width, height} = layer.canvas;
   layer.clearRect(0, 0, width, height);
-  paintLayer2D(layer, atmospheres, lights, t, cueT, width, height, shotSeed, cam);
+  paintLayer2D(layer, atmospheres, lights, t, cueT, width, height, shotSeed, cam, lightCueT);
   ctx.globalAlpha = weight;
   ctx.drawImage(layer.canvas, 0, 0);
 }
 
-function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam) {
+function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam, lightCueT = -1) {
   const shiftX = cam ? (cam.tx || 0) * 0.01 * w : 0;
   const shiftY = cam ? (cam.ty || 0) * 0.01 * h : 0;
   for (const effect of atmospheres) {
@@ -622,7 +761,7 @@ function paintLayer2D(ctx, atmospheres, lights, t, cueT, w, h, shotSeed, cam) {
     painter(effect, ctx, t, w, h, shiftX, shiftY);
   }
   for (const effect of lights) {
-    paintLight(ctx, effect, t, cueT, w, h, shotSeed, shiftX, shiftY);
+    paintLight(ctx, effect, t, cueT, w, h, shotSeed, shiftX, shiftY, lightCueT);
   }
 }
 
@@ -758,19 +897,24 @@ function paintScanlines(ctx, t, _cueT, w, h) {
   ctx.fillRect(0, barY, w, Math.max(4, h * 0.04));
 }
 
-function paintSurgeFlash(effect, ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) {
-  // Lightning pulses once every 7s, below three flashes per second, with a brief secondary echo.
+function paintSurgeFlash(effect, ctx, t, cueT, w, h, shotSeed, shiftX, shiftY, lightCueT = -1) {
+  // Lightning syncs to thunder sound cues when present, or pulses once every 7s otherwise.
   // Flash uses cueT so it can trigger on one-shot sound cues as well as at shot start.
   const seedOffset = shotSeed > 0 ? fraction(Math.sin(shotSeed * 91.7 + 13.3) * 43758.5453) * 4.5 : 0;
   const boltX = shotSeed > 0 ? 0.22 + fraction(Math.sin(shotSeed * 47.3) * 43758.5453) * 0.56 : 0.52;
-  const phase = effect === "flash" ? cueT : (t + seedOffset) % 7;
-  const primary = effect === "flash"
-    ? Math.max(0, 1 - phase / 0.45) * 0.35
-    : Math.max(0, 1 - Math.abs(phase - 0.12) / 0.12) * 0.32;
-  const echo = effect === "lightning"
-    ? Math.max(0, 1 - Math.abs(phase - 0.30) / 0.08) * 0.14
-    : 0;
-  const alpha = Math.max(primary, echo);
+  let alpha = 0;
+  if (effect === "flash") {
+    alpha = Math.max(0, 1 - cueT / 0.45) * 0.35;
+  } else if (lightCueT >= 0) {
+    const primary = Math.max(0, 1 - Math.abs(lightCueT - 0.05) / 0.11) * 0.34;
+    const echo = Math.max(0, 1 - Math.abs(lightCueT - 0.22) / 0.09) * 0.16;
+    alpha = Math.max(primary, echo);
+  } else {
+    const phase = (t + seedOffset) % 7;
+    const primary = Math.max(0, 1 - Math.abs(phase - 0.12) / 0.12) * 0.32;
+    const echo = Math.max(0, 1 - Math.abs(phase - 0.30) / 0.08) * 0.14;
+    alpha = Math.max(primary, echo);
+  }
   withComposite(ctx, "screen", () => {
     if (effect === "lightning" && alpha > 0 && ctx.createRadialGradient) {
       const bx = w * boltX + shiftX;
@@ -795,12 +939,12 @@ const LIGHT_PAINTERS = {
   film_grain: paintFilmGrain,
   dream_bloom: paintDreamBloom,
   scanlines: paintScanlines,
-  lightning: (ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) => paintSurgeFlash("lightning", ctx, t, cueT, w, h, shotSeed, shiftX, shiftY),
+  lightning: (ctx, t, cueT, w, h, shotSeed, shiftX, shiftY, lightCueT) => paintSurgeFlash("lightning", ctx, t, cueT, w, h, shotSeed, shiftX, shiftY, lightCueT),
   flash: (ctx, t, cueT, w, h, shotSeed, shiftX, shiftY) => paintSurgeFlash("flash", ctx, t, cueT, w, h, shotSeed, shiftX, shiftY),
 };
 
-function paintLight(ctx, effect, t, cueT, w, h, shotSeed = 0, shiftX = 0, shiftY = 0) {
-  LIGHT_PAINTERS[effect]?.(ctx, t, cueT, w, h, shotSeed, shiftX, shiftY);
+function paintLight(ctx, effect, t, cueT, w, h, shotSeed = 0, shiftX = 0, shiftY = 0, lightCueT = -1) {
+  LIGHT_PAINTERS[effect]?.(ctx, t, cueT, w, h, shotSeed, shiftX, shiftY, lightCueT);
 }
 
 function paintCloud(effect, ctx, t, w, h, shiftX = 0, shiftY = 0) {

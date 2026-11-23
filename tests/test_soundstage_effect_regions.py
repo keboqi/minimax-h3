@@ -201,3 +201,22 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
             new_folder = visuals.stills_dir(new_audio, root)
             self.assertEqual(effect_regions.read_regions(new_folder, image_name, ["person"]), regions)
             self.assertFalse((new_folder / effect_regions.MASK_FOLDER / "other.jpg.1234567890abcdef.json").exists())
+
+    def test_concepts_extract_cjk_objects_and_map_non_ascii_characters_to_english_sam_labels(self):
+        row = {
+            "subjects": ["lin", "chen", "lantern_prop"],
+            "prompt": "@lin 站在木窗户旁，手提纸灯笼望向火焰。",
+            "beat": "雨夜窗边",
+        }
+        subjects = {
+            "lin": {"kind": "characters", "anchor": "林晚，二十多岁的年轻女子，身穿深蓝风衣"},
+            "chen": {"kind": "characters", "anchor": "陈默，中年男子，灰色大衣"},
+            "lantern_prop": {"kind": "props", "anchor": "旧纸灯笼"},
+        }
+        labels = effect_regions.concepts(row, subjects)
+        self.assertIn("woman", labels)
+        self.assertIn("man", labels)
+        self.assertIn("window", labels)
+        self.assertIn("lamp", labels)
+        self.assertIn("fire", labels)
+        self.assertTrue(all(label.isascii() for label in labels), labels)

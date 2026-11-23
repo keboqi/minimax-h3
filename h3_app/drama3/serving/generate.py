@@ -552,7 +552,9 @@ Spans = dict[int | tuple[str, int], tuple[int, int, list[tuple[int, int]] | dict
 
 def _sound_span(node: SoundNode, length: int) -> tuple[tuple[str, int], tuple[int, int, dict]]:
     """A ``spans`` entry for a sound cue playing ``length`` samples from where its block starts."""
-    info = {"name": node.name or node.description, "description": node.description, "loop": node.loop}
+    gain = round(float(node.volume * audio.distance_gain(node.distance)), 3)
+    info = {"name": node.name or node.description, "description": node.description, "loop": node.loop,
+            **({"volume": gain} if gain != 1.0 else {})}
     return ("sound", id(node)), (0, length, info)
 
 

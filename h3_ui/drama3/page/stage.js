@@ -1,4 +1,12 @@
-import {cameraFrame, cueElapsed, effectCues, lastAtOrBefore, paintEffects} from "./effects.js";
+import {
+  cameraFrame,
+  cueElapsed,
+  effectCues,
+  lastAtOrBefore,
+  lightningCueElapsed,
+  paintEffects,
+  resolveFocusDepthMeta,
+} from "./effects.js";
 
 const EMPTY = Object.freeze([]);
 const startOf = (shot) => shot.start;
@@ -64,20 +72,29 @@ export function paintStage({back, front, overlay}, {shot, background, fading, ti
   const backCam = paintCamera(back, background, fading ? backEffects : effects, time);
   const cam = fading ? paintCamera(front, shot, effects, time) : backCam;
   if (overlay) {
+    const backElapsed = fading ? time - background.start : 0;
+    const depthMeta = shot.depth_meta
+      ? resolveFocusDepthMeta(shot.depth_meta, shot.focus_cues, elapsed)
+      : null;
+    const backDepthMeta = fading && background.depth_meta
+      ? resolveFocusDepthMeta(background.depth_meta, background.focus_cues, backElapsed)
+      : null;
     paintEffects(overlay, effects, elapsed, (backend) => {
       showBackend?.(backend, Boolean(effects.length || backEffects.length));
     }, {
       shotIndex: shot.index, cam, stillBack: back, stillFront: front, fading, fadeMix,
       cueElapsed: cueElapsed(shot.cues.flash, time),
-      backEffects, backElapsed: fading ? time - background.start : 0,
+      lightningCueElapsed: lightningCueElapsed(shot.cues.lightning, time),
+      backEffects, backElapsed,
       backCueElapsed: cueElapsed(background.cues.flash, time),
+      backLightningCueElapsed: fading ? lightningCueElapsed(background.cues.lightning, time) : -1,
       backShotIndex: background.index, backCam,
       layers: enabled && elapsed >= 0 ? shot.effect_layers : null,
       backLayers: enabled && fading ? background.effect_layers : null,
       depthUrl: shot.depth_url || null,
-      depthMeta: shot.depth_meta || null,
+      depthMeta,
       backDepthUrl: fading ? (background.depth_url || null) : null,
-      backDepthMeta: fading ? (background.depth_meta || null) : null,
+      backDepthMeta,
     });
   }
 }

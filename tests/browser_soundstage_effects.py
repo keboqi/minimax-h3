@@ -193,6 +193,38 @@ def check_webgpu_depth_and_layers(page):
     assert lb > lr + 4, (lr, lb)
     assert (rr + rg + rb) / 3.0 > 28, (rr, rg, rb)
 
+    # 4) Emissive screen presets (warm_glow + sunbeams) never darken bright highlights, and thunder-synced lightning respects cue time.
+    bright_url = _to_data_url(Image.new("RGB", (160, 90), (235, 235, 235)))
+    assert page.evaluate("""async ({brightUrl}) => {
+      const {renderWebGPU, ATMO_IDS, LIGHT_IDS} = await import('/soundstage/effects_webgpu.js');
+      const p = window.__depthProbe;
+      const bright = new Image();
+      bright.src = brightUrl;
+      await bright.decode();
+      p.bright = bright;
+      return renderWebGPU(p.host, ATMO_IDS.sunbeams, LIGHT_IDS.warm_glow, 1.0, 160, 90, {stillBack: bright});
+    }""", {"brightUrl": bright_url})
+    bright_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    br, bg, bb = bright_frame.getpixel((w // 2, h // 2))
+    assert br >= 234 and bg >= 234 and bb >= 234, (br, bg, bb)
+
+    assert page.evaluate("""() => import('/soundstage/effects_webgpu.js').then(({renderWebGPU, LIGHT_IDS}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, 0, LIGHT_IDS.lightning, 0.12, 160, 90, {
+        stillBack: p.dark, lightningCueElapsed: 99,
+      });
+    })""")
+    pre_thunder = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    assert page.evaluate("""() => import('/soundstage/effects_webgpu.js').then(({renderWebGPU, LIGHT_IDS}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, 0, LIGHT_IDS.lightning, 1.8, 160, 90, {
+        stillBack: p.dark, lightningCueElapsed: 0.05,
+      });
+    })""")
+    on_thunder = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    assert sum(pre_thunder.getpixel((w // 2, h // 4))) < 90, pre_thunder.getpixel((w // 2, h // 4))
+    assert sum(on_thunder.getpixel((w // 2, h // 4))) > 240, on_thunder.getpixel((w // 2, h // 4))
+
     page.evaluate("""() => {
       delete window.__depthProbe;
       document.getElementById('depth-probe')?.remove();

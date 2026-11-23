@@ -385,6 +385,45 @@ class StillsTests(unittest.TestCase):
         folder = visuals.stills_dir(self.audio, self.root)
         self.assertTrue(all((folder / row["image"]).is_file() for row in after["shots"]))
 
+    def test_possessive_kinship_gender_occluded_portrait_skip_and_plan_floor_reuse(self):
+        from h3_app.drama3 import voice_looks
+
+        self.assertEqual(
+            voice_looks.gender("Mara, a woman in her thirties wearing her father's heavy wool coat"),
+            "female",
+        )
+        self.assertEqual(
+            voice_looks.gender("林晚，身穿父亲旧大衣的年轻女子"),
+            "female",
+        )
+        self.assertEqual(
+            voice_looks.conflicts(
+                "Mara, a woman in her thirties wearing her father's heavy wool coat",
+                "Warm adult female contralto voice",
+            ),
+            [],
+        )
+
+        # Plan with 3 shots continues satisfying limit=2 without becoming stale, while limit=4 requires replanning.
+        visuals.write_plan(self.audio, "comic", 3, PLAN)
+        self.assertIsNotNone(visuals.read_plan(self.audio, limit=2))
+        self.assertIsNotNone(visuals.read_plan(self.audio, limit=3))
+        self.assertIsNone(visuals.read_plan(self.audio, limit=4))
+
+        # Silhouette / back-turned character state skips front-portrait face matching while visible shots still match.
+        back_plan = edit_shot(PLAN, 0, prompt="@mia(seen from behind in silhouette) looks over @market.")
+        write_snapshot(self.audio, {"family": DRAMA3_FAMILY, "settings": {"duration": 4.0}})
+        visuals.write_plan(self.audio, "comic", 3, back_plan)
+        deps = SimpleNamespace(resolve_result=lambda _name: str(self.audio),
+                               runtime_config=lambda: SimpleNamespace(output_dir=self.root))
+        made = iter(range(50))
+        controller = Mock(fields={})
+        controller.generate.side_effect = lambda *args: [([str(self.png(f"occ-{next(made)}"))], "Complete")]
+        drain(visuals.draw_stills(controller, deps, self.audio.name, "qwen", "comic", 3, True, "landscape"))
+        modes = [call.args[1] for call in controller.generate.call_args_list]
+        # 1 portrait + shot 0 (Text to image only, no Image edit!) + shot 1 (Text to image + Image edit) + shot 2 (Text to image)
+        self.assertEqual(modes, ["Text to image", "Text to image", "Text to image", "Image edit", "Text to image"])
+
 
 if __name__ == "__main__":
     unittest.main()

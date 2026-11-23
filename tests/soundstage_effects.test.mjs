@@ -1,6 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cameraFilter, cameraMotion, cameraTransform, colorizeDepthRgba, cueElapsed, effectCues, effectsEnabled, paintEffects, preloadEffectDepths} from "../h3_ui/drama3/page/effects.js";
+import {
+  cameraFilter,
+  cameraMotion,
+  cameraTransform,
+  colorizeDepthRgba,
+  cueElapsed,
+  effectCues,
+  effectsEnabled,
+  isSubtleFoleySound,
+  isThunderSound,
+  lightningCueElapsed,
+  paintEffects,
+  preloadEffectDepths,
+  resolveFocusDepthMeta,
+} from "../h3_ui/drama3/page/effects.js";
 import {createEffectsPass, layersToSets, setsToLayers} from "../h3_ui/drama3/page/effects_pass.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
@@ -474,5 +488,60 @@ test("shot effects edit popup toggles Show depth / Hide depth alongside Show seg
   depthBtn().onclick();
   assert.equal(text(depthBtn()), "Show depth");
   assert.equal(stage()["data-show-depth"], "false");
+});
+
+test("subtle Foley and quiet sounds are suppressed while thunder cues sync lightning", () => {
+  assert.equal(isSubtleFoleySound({name: "soft_footsteps", start: 1.0}), true);
+  assert.equal(isSubtleFoleySound({name: "脚步声", start: 1.5}), true);
+  assert.equal(isSubtleFoleySound({name: "distant_knock", start: 2.0, volume: 0.5}), true);
+  assert.equal(isSubtleFoleySound({name: "door_slam", start: 2.5, volume: 0.6}), false);
+  assert.equal(isThunderSound({name: "thunderclap", start: 3.0}), true);
+  assert.equal(isThunderSound({name: "惊雷", start: 3.5}), true);
+  assert.equal(isThunderSound({name: "thunder_bed", start: 0, loop: true}), false);
+
+  const shots = [
+    {start: 0, end: 5, effects: ["impact_shake", "flash", "lightning"]},
+    {start: 5, end: 9, effects: ["lightning"]},
+  ];
+  const sounds = [
+    {name: "soft_footsteps", start: 1.0, loop: false},
+    {name: "page_turn", description: "paper rustle", start: 1.8, loop: false},
+    {name: "thunderclap", start: 2.5, loop: false},
+    {name: "gunshot", start: 3.6, loop: false},
+  ];
+  const [first, second] = effectCues(shots, sounds);
+  assert.deepEqual(first.shake, [0, 2.5, 3.6]);
+  assert.deepEqual(first.flash, [0, 2.5, 3.6]);
+  assert.deepEqual(first.lightning, [2.5]);
+  assert.equal("lightning" in second, false, "shots without thunder fall back to periodic lightning");
+
+  assert.equal(lightningCueElapsed(undefined, 6.0), -1);
+  assert.equal(lightningCueElapsed(first.lightning, 1.0), 99, "stays dark prior to first thunder strike");
+  assert.ok(Math.abs(lightningCueElapsed(first.lightning, 2.49) - 0.05) < 1e-6, "optical flash leads acoustic thunder by 60ms");
+});
+
+test("rack_focus S-curve holds initial defocus plateau and resolveFocusDepthMeta pulls focus across speakers", () => {
+  assert.equal(cameraMotion(["rack_focus"], 0.02, 0.05).blur, 1);
+  const midBlur = cameraMotion(["rack_focus"], 0.25, 0.59).blur;
+  assert.ok(midBlur > 0.45 && midBlur < 0.55, `expected cosine midpoint ~0.5, got ${midBlur}`);
+  assert.equal(cameraMotion(["rack_focus"], 0.8, 1.1).blur, 0);
+
+  const baseMeta = {subject_z: 3.0, subject_uv: [0.5, 0.45], rack_start_z: 10.0};
+  const focusCues = [
+    {time: 0, z: 2.0, uv: [0.25, 0.5]},
+    {time: 2.0, z: 8.0, uv: [0.75, 0.4]},
+  ];
+  const startMeta = resolveFocusDepthMeta(baseMeta, focusCues, 0.5);
+  assert.equal(startMeta.subject_z, 2.0);
+  assert.deepEqual(startMeta.subject_uv, [0.25, 0.5]);
+
+  const midPull = resolveFocusDepthMeta(baseMeta, focusCues, 2.425);
+  // Midpoint in diopters between 1/2.0 (0.5) and 1/8.0 (0.125) is 0.3125 -> z = 3.2m.
+  assert.ok(Math.abs(midPull.subject_z - 3.2) < 0.05, `expected diopter midpoint ~3.2m, got ${midPull.subject_z}`);
+  assert.ok(Math.abs(midPull.subject_uv[0] - 0.5) < 0.02);
+
+  const settledPull = resolveFocusDepthMeta(baseMeta, focusCues, 3.2);
+  assert.equal(settledPull.subject_z, 8.0);
+  assert.deepEqual(settledPull.subject_uv, [0.75, 0.4]);
 });
 

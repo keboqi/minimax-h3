@@ -142,9 +142,21 @@ def timeline_payload(settings: dict) -> dict:
                       "words": None if pieces is None else {
                           "lead": pieces[0], "items": [{"text": piece, "start": s, "end": e}
                                                        for piece, s, e in pieces[1]]}})
+    raw_sounds = [s for s in (settings.get("sounds") or ()) if isinstance(s, dict) and s.get("start") is not None]
+    sound_items = []
+    for index, (name, loop, start, end) in enumerate(sounds):
+        raw = raw_sounds[index] if index < len(raw_sounds) else {}
+        desc = str(raw.get("description") or "").strip()
+        vol = raw.get("volume")
+        item: dict[str, Any] = {"name": name, "loop": loop, "start": start, "end": end}
+        if desc and desc != name:
+            item["description"] = desc
+        if isinstance(vol, (int, float)) and not isinstance(vol, bool):
+            item["volume"] = round(float(vol), 3)
+        sound_items.append(item)
     return {
         "duration": float(settings.get("duration") or 0),
         "speakers": [{"name": name, "tone": tone, "pan": pan} for name, (tone, pan) in tones.items()],
         "lines": lines,
-        "sounds": [{"name": name, "loop": loop, "start": start, "end": end} for name, loop, start, end in sounds],
+        "sounds": sound_items,
     }

@@ -179,6 +179,78 @@ class SoundStageEffectDepthTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded["png"], png_path.name)
 
+    def test_effective_meta_separates_rack_start_diopters_and_caches_region_depth_stats(self):
+        meta = effect_depth.effective_meta({
+            "inv_min": 0.05, "inv_max": 0.8, "z_p10": 3.0, "z_p90": 15.0,
+            "subject_z": 3.2, "rack_start_z": 3.1, "auto_strength": 1.0,
+        })
+        self.assertGreaterEqual(abs((1.0 / meta["subject_z"]) - (1.0 / meta["rack_start_z"])), 0.119)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            depth_dir = root / effect_depth.DEPTH_FOLDER
+            mask_dir = root / ".effect-masks"
+            depth_dir.mkdir()
+            mask_dir.mkdir()
+            Image.new("RGB", (32, 18), (128, 0, 0)).save(depth_dir / "depth.png")
+            Image.new("RGBA", (32, 18), (255, 255, 255, 255)).save(mask_dir / "mask.png")
+            entry = {"png": "depth.png", "meta": {"inv_min": 0.1, "inv_max": 0.5, "z_p25": 2.5, "z_p75": 6.0}}
+            effect_depth._decoded_depth_grid.cache_clear()
+            effect_depth._cached_region_depth_stats.cache_clear()
+            with patch.object(effect_depth.Image, "open", wraps=Image.open) as spy_open:
+                first = effect_depth.region_depth_stats(root, entry, "mask.png")
+                second = effect_depth.region_depth_stats(root, entry, "mask.png")
+            self.assertIsNotNone(first)
+            self.assertEqual(first, second)
+            self.assertEqual(spy_open.call_count, 2)
+
+    def test_ensure_stills_depth_batches_same_size_stills_when_image_batch_available(self):
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            names = []
+            for idx in range(3):
+                p = folder / f"shot_{idx}.jpg"
+                Image.new("RGB", (48, 32), (20 * idx, 40, 60)).save(p)
+                names.append(p.name)
+
+            submitted_graphs = []
+
+            def submit(graph, client):
+                submitted_graphs.append(graph)
+                out_dir = folder / "h3" / "soundstage_depth" / client
+                out_dir.mkdir(parents=True, exist_ok=True)
+                outputs = {}
+                for node_id, spec in graph.items():
+                    if spec["class_type"] == effect_depth.DEPTH_NODE:
+                        maps = []
+                        for i in range(3):
+                            fn = f"depth_{i}.png"
+                            Image.new("RGB", (48, 32), (80 + i * 10, 0, 0)).save(out_dir / fn)
+                            maps.append({"filename": fn, "meta": {"inv_min": 0.05, "inv_max": 0.6, "subject_z": 3.0 + i}})
+                        outputs[node_id] = {"depth_maps": maps}
+                return {"outputs": outputs}
+
+            services = SimpleNamespace(
+                models=SimpleNamespace(ensure_model_keys=Mock()),
+                media=SimpleNamespace(stage_file=lambda p, *a, **kw: Path(p).name),
+                execution=SimpleNamespace(
+                    object_info=lambda: {effect_depth.DEPTH_NODE: {}, "ImageBatch": {}},
+                    submit_prompt=submit,
+                    poll_comfy_progress=Mock(return_value=[]),
+                    wait_for_history=lambda h: h,
+                ),
+            )
+            done = effect_depth.ensure_stills_depth(
+                folder, names, "depthpro2-s", services, SimpleNamespace(output_dir=folder)
+            )
+            self.assertEqual(done, 3)
+            self.assertEqual(len(submitted_graphs), 1)
+            self.assertTrue(any(spec["class_type"] == "ImageBatch" for spec in submitted_graphs[0].values()))
+            for idx, name in enumerate(names):
+                loaded = effect_depth.read_depth(folder, name, "depthpro2-s", exact=True)
+                self.assertIsNotNone(loaded)
+                self.assertEqual(loaded["meta"]["subject_z"], 3.0 + idx)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,12 +30,31 @@ _AGE_WORDS = [
 ]
 
 
-def gender(text):
-    """``male``, ``female`` or None when the text states neither, or both."""
+_POSSESSIVE_KIN = re.compile(
+    r"\b(?:father|mother|grandfather|grandmother|grandpa|grandma|brother|sister|husband|wife|son|daughter|uncle|aunt)(?:'s|’s)\b"
+    r"|(?:父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|弟弟|姐姐|妹妹|丈夫|妻子|儿子|女儿)的"
+    r"|(?:身穿|穿着|披着|戴着|手持|手拿|拿着|怀揣)(?:[^，。；,;]{0,4})?(?:父亲|母亲|爷爷|奶奶|外公|外婆|哥哥|弟弟|姐姐|妹妹|丈夫|妻子|儿子|女儿)",
+    flags=re.IGNORECASE,
+)
+_SECONDARY_CLAUSE = re.compile(
+    r"\b(?:wearing|holding|carrying|clutching|dressed\s+in|resembling|reminding)\b|[;；]",
+    flags=re.IGNORECASE,
+)
+
+
+def _clause_gender(text):
     words = set(re.findall(r"[a-z]+", text.lower()))
     male = bool(words & _MALE) or any(mark in text for mark in _ZH_MALE)
     female = bool(words & _FEMALE) or any(mark in text for mark in _ZH_FEMALE)
     return "male" if male and not female else "female" if female and not male else None
+
+
+def gender(text):
+    """``male``, ``female`` or None when the text states neither, or both."""
+    cleaned = _POSSESSIVE_KIN.sub(" ", str(text or ""))
+    lead = _SECONDARY_CLAUSE.split(cleaned, maxsplit=1)[0]
+    found = _clause_gender(lead)
+    return found if found is not None or lead == cleaned else _clause_gender(cleaned)
 
 
 def age(text):

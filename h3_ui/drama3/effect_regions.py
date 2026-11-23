@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageChops
 
+from h3_app.drama3 import voice_looks
 from h3_app.drama3.effect_enhancement import revision
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
@@ -19,6 +20,24 @@ MASK_OUTPUT_NODE = "H3SaveDetectedMasks"
 MASK_FOLDER = ".effect-masks"
 OBJECTS = ("window", "door", "lamp", "candle", "screen", "mirror", "fire", "tree",
            "vehicle", "sign", "table", "chair", "book", "cup", "microphone", "telephone")
+_CJK_OBJECT_PATTERNS = (
+    ("window", r"窗户|窗子|舷窗|窗框|落地窗|天窗|窗外|窗前|窗边|窗台"),
+    ("door", r"大门|木门|铁门|舱门|房门|车门|拱门|门口|门框|门帘"),
+    ("lamp", r"灯笼|台灯|路灯|壁灯|吊灯|油灯|提灯|汽灯|霓虹灯|探照灯|车灯|灯光"),
+    ("candle", r"蜡烛|烛火|烛台|烛光"),
+    ("screen", r"屏幕|显示器|监视器|荧光屏|电脑屏|手机屏|大屏"),
+    ("mirror", r"镜子|铜镜|后视镜|穿衣镜|玻璃镜"),
+    ("fire", r"火焰|篝火|炉火|炭火|火把|火苗|火光|壁炉|火盆"),
+    ("tree", r"大树|古树|松树|柳树|竹林|树林|树枝|树干|树冠"),
+    ("vehicle", r"汽车|轿车|卡车|列车|火车|电车|船只|渔船|木船|潜艇|飞船|马车"),
+    ("sign", r"招牌|路牌|指示牌|告示牌|灯牌|站牌"),
+    ("table", r"桌子|木桌|书桌|餐桌|茶几|案几|柜台|讲台|工作台"),
+    ("chair", r"椅子|木椅|长椅|扶手椅|座椅|板凳"),
+    ("book", r"书本|古籍|书籍|卷宗|笔记本|日记本|账本|书册"),
+    ("cup", r"茶杯|酒杯|水杯|咖啡杯|瓷杯|玻璃杯|茶碗"),
+    ("microphone", r"麦克风|话筒|广播话筒"),
+    ("telephone", r"电话|听筒|话机|对讲机|步话机"),
+)
 MERGE_LABELS = frozenset({"window", "lamp", "candle", "fire", "tree"})
 MAX_REGIONS = 12
 
@@ -32,14 +51,26 @@ def concepts(row, subjects):
         if subject.get("kind") == "props":
             descriptions.append(key.replace("_", " ").lower())
         else:
-            words = subject["anchor"].split(",")
+            anchor = str(subject.get("anchor") or "")
+            words = anchor.split(",")
             name = key.replace("_", " ").casefold()
             phrase = next((part.strip() for part in words if part.strip() and part.strip().casefold() != name), "")
-            if phrase:
+            if phrase and phrase.isascii():
                 descriptions.append(phrase.lower())
-    text = " ".join((row.get("prompt", ""), row.get("beat", ""),
-                     *(subjects[key]["anchor"] for key in row.get("subjects", []) if key in subjects))).lower()
-    detected_words = [label for label in OBJECTS if re.search(rf"\b{label}(?:s|es)?\b", text)]
+            elif phrase:
+                sex = voice_looks.gender(anchor)
+                if sex == "female":
+                    descriptions.append("woman")
+                elif sex == "male":
+                    descriptions.append("man")
+    raw_text = " ".join((row.get("prompt", ""), row.get("beat", ""),
+                         *(subjects[key]["anchor"] for key in row.get("subjects", []) if key in subjects)))
+    text = raw_text.lower()
+    detected_words = [
+        label for label in OBJECTS
+        if re.search(rf"\b{label}(?:s|es)?\b", text)
+        or any(target == label and re.search(pattern, raw_text) for target, pattern in _CJK_OBJECT_PATTERNS)
+    ]
     return list(dict.fromkeys([*descriptions, "person", *detected_words, "window", "door", "lamp"]))[:MAX_REGIONS]
 
 

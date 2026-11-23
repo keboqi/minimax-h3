@@ -1,4 +1,4 @@
-import {effectsEnabled, effectTrack, lastAtOrBefore, preloadEffectDepths, preloadEffectMasks} from "./effects.js";
+import {effectsEnabled, effectTrack, lastAtOrBefore, preloadEffectDepths, preloadEffectMasks, warmUpcomingShot} from "./effects.js";
 import {openEffectsPicker} from "./effects_picker.js";
 import {createEffectsPass} from "./effects_pass.js";
 import {paintStage, showStageStills, stageFrame, stageTimeline} from "./stage.js";
@@ -91,6 +91,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
 
   // The stills on the mix's clock: the shot under the playhead, dissolving over the one before it.
   const preloaded = new Set();
+  const warmedShots = new WeakSet();
   let timeline = null;
   let lastMaskShot = null, lastMaskBackground = null;
   let activeShot = -1, lanes = null, list = null;
@@ -164,6 +165,10 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     for (let i = frame.index + 1; i < Math.min(shots.length, frame.index + 3); i++) {
       const {url} = shots[i];
       if (!preloaded.has(url)) { preloaded.add(url); new Image().src = url; }
+    }
+    const nextShot = shots[frame.index + 1];
+    if (enabled && overlay?.ownerDocument && nextShot?.effect_layers?.length && !warmedShots.has(nextShot) && nextShot.start - time <= 1.5) {
+      if (warmUpcomingShot(overlay.ownerDocument, nextShot)) warmedShots.add(nextShot);
     }
   }
 
@@ -360,6 +365,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             const stillShot = (video.stills?.shots || []).find((item) => item.index === row.index || item.shot_id === row.shot_id);
             openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
               depthUrl: stillShot?.depth_url ?? null,
+              depthMeta: stillShot?.depth_meta ?? null,
               save: (effects) => editShot({index: row.index, effects}),
               restoreFocus: () => $("shot-effects")?.focus()});
           }},

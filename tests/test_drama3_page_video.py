@@ -1417,6 +1417,51 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertIsNone(self.wait()["error"])
         self.assertEqual(self.project()["video"]["depth_missing"], 0)
 
+    def test_sam_regions_refine_warm_and_sky_anchors_and_emit_dialogue_focus_cues(self):
+        from h3_ui.drama3 import page_video
+
+        meta = {
+            "subject_z": 4.0,
+            "subject_uv": [0.5, 0.5],
+            "sky_fraction": 0.02,
+            "warm_anchor": {"u": 0.5, "v": 0.6, "z": 4.0, "strength": 0.4},
+            "sky_dir": {"u": 0.5, "v": 0.1},
+        }
+        enhanced = {
+            "regions": [
+                {"id": "p_near", "label": "person", "depth_m": 1.8, "box": [0.08, 0.2, 0.36, 0.92]},
+                {"id": "p_far", "label": "person", "depth_m": 5.4, "box": [0.62, 0.24, 0.88, 0.88]},
+                {"id": "r_lamp", "label": "lamp", "depth_m": 2.6, "box": [0.44, 0.30, 0.56, 0.50]},
+                {"id": "r_win", "label": "window", "depth_m": 9.0, "box": [0.70, 0.06, 0.94, 0.42]},
+            ]
+        }
+        refined = page_video._refine_subject_meta(meta, enhanced)
+        self.assertEqual(refined["subject_z"], 1.8)
+        self.assertEqual(refined["warm_anchor"], {"u": 0.5, "v": 0.4, "z": 2.6, "strength": 0.9})
+        self.assertEqual(refined["sky_dir"]["u"], 0.82)
+        self.assertLess(refined["sky_dir"]["v"], 0.22)
+
+        timeline = {
+            "speakers": [
+                {"name": "Mia", "pan": -0.35},
+                {"name": "Leo", "pan": 0.35},
+            ],
+            "lines": [
+                {"speaker": "Mia", "start": 0.1, "end": 1.8},
+                {"speaker": "Leo", "start": 2.1, "end": 4.2},
+                {"speaker": "Mia", "start": 4.5, "end": 5.8},
+            ],
+        }
+        cues = page_video._shot_focus_cues({"start": 0.0, "end": 6.5}, enhanced, timeline)
+        self.assertEqual(
+            cues,
+            [
+                {"time": 0.0, "z": 1.8, "uv": [0.22, 0.56]},
+                {"time": 2.1, "z": 5.4, "uv": [0.75, 0.56]},
+                {"time": 4.5, "z": 1.8, "uv": [0.22, 0.56]},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

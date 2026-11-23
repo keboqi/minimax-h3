@@ -90,27 +90,147 @@ def video_settings(data: dict, engines: list) -> dict:
             "subtitle_size": int(data.get("video_subtitle_size") or 100)}
 
 
+_WARM_SOURCE_PRIORITY = {"fire": 0, "candle": 1, "lamp": 2}
+_NARRATOR_LABELS = frozenset({"narrator", "旁白", "storyteller", "story teller"})
+
+
+def _region_center(region: dict) -> tuple[float, float] | None:
+    box = region.get("box")
+    if isinstance(box, list) and len(box) == 4:
+        return (round((box[0] + box[2]) * 0.5, 4), round((box[1] + box[3]) * 0.5, 4))
+    return None
+
+
 def _refine_subject_meta(meta: dict | None, enhanced: dict | None) -> dict | None:
-    """Anchor subject_z and subject_uv to the closest detected person region when available."""
+    """Anchor subject, warm practical light, and sky/window opening to detected SAM regions."""
     if meta is None:
         return None
+    regions = (enhanced.get("regions") if enhanced else None) or ()
+    if not regions:
+        return meta
+
     person_regions = [
-        region for region in (enhanced.get("regions") if enhanced else None) or ()
+        region for region in regions
         if region.get("label") == "person" and region.get("depth_m") is not None
     ]
-    if not person_regions:
-        return meta
-    primary = min(person_regions, key=lambda r: float(r["depth_m"]))
-    person_z = float(primary["depth_m"])
-    if 0.2 <= person_z <= 50.0:
-        meta["subject_z"] = round(person_z, 3)
-        box = primary.get("box")
-        if isinstance(box, list) and len(box) == 4:
-            meta["subject_uv"] = [
-                round((box[0] + box[2]) * 0.5, 4),
-                round((box[1] + box[3]) * 0.5, 4),
-            ]
+    if person_regions:
+        primary = min(person_regions, key=lambda r: float(r["depth_m"]))
+        person_z = float(primary["depth_m"])
+        if 0.2 <= person_z <= 50.0:
+            meta["subject_z"] = round(person_z, 3)
+            center = _region_center(primary)
+            if center is not None:
+                meta["subject_uv"] = [center[0], center[1]]
+
+    warm_candidates = [
+        region for region in regions
+        if region.get("label") in _WARM_SOURCE_PRIORITY
+        and region.get("depth_m") is not None
+        and _region_center(region) is not None
+        and 0.15 <= float(region["depth_m"]) <= 60.0
+    ]
+    if warm_candidates:
+        warm_best = min(
+            warm_candidates,
+            key=lambda r: (_WARM_SOURCE_PRIORITY[r["label"]], float(r["depth_m"])),
+        )
+        wu, wv = _region_center(warm_best)
+        meta["warm_anchor"] = {
+            "u": wu,
+            "v": wv,
+            "z": round(float(warm_best["depth_m"]), 3),
+            "strength": 0.9,
+        }
+
+    if float(meta.get("sky_fraction") or 0.0) < 0.08:
+        opening_candidates = [
+            region for region in regions
+            if region.get("label") in ("window", "door")
+            and _region_center(region) is not None
+            and _region_center(region)[1] <= 0.62
+        ]
+        if opening_candidates:
+            top_opening = min(opening_candidates, key=lambda r: _region_center(r)[1])
+            box = top_opening["box"]
+            ou = round((box[0] + box[2]) * 0.5, 4)
+            ov = round(max(0.04, box[1] * 0.65 + box[3] * 0.35), 4)
+            meta["sky_dir"] = {"u": ou, "v": ov}
+
     return meta
+
+
+def _shot_focus_cues(shot: dict, enhanced: dict | None, timeline: dict | None) -> list[dict] | None:
+    """Derive automatic speaker-turn optical focus pulls when >=2 depth-separated people speak."""
+    if not enhanced or not timeline:
+        return None
+    person_regions = [
+        region for region in (enhanced.get("regions") or ())
+        if region.get("label") == "person"
+        and region.get("depth_m") is not None
+        and _region_center(region) is not None
+        and 0.2 <= float(region["depth_m"]) <= 50.0
+    ]
+    if len(person_regions) < 2:
+        return None
+    zs = [float(r["depth_m"]) for r in person_regions]
+    if max(zs) - min(zs) < 0.8 or abs((1.0 / min(zs)) - (1.0 / max(zs))) < 0.08:
+        return None
+
+    start, end = float(shot["start"]), float(shot["end"])
+    if end - start < 1.6:
+        return None
+    lines = [
+        line for line in (timeline.get("lines") or ())
+        if line.get("speaker")
+        and str(line["speaker"]).strip().casefold() not in _NARRATOR_LABELS
+        and float(line["end"]) > start + 0.15
+        and float(line["start"]) < end - 0.35
+    ]
+    turns: list[tuple[str, float]] = []
+    for line in lines:
+        spk = str(line["speaker"]).strip()
+        if not turns or turns[-1][0].casefold() != spk.casefold():
+            turns.append((spk, max(start, float(line["start"]))))
+    distinct_speakers = list(dict.fromkeys(spk.casefold() for spk, _ in turns))
+    if len(distinct_speakers) < 2:
+        return None
+
+    speaker_pans = {
+        str(item["name"]).casefold(): float(item["pan"])
+        for item in (timeline.get("speakers") or ())
+        if item.get("name") and isinstance(item.get("pan"), (int, float))
+    }
+    selected_regions = sorted(person_regions, key=lambda r: float(r["depth_m"]))[:len(distinct_speakers)]
+    if (
+        len(distinct_speakers) >= 2
+        and all(spk in speaker_pans for spk in distinct_speakers[:2])
+        and abs(speaker_pans[distinct_speakers[0]] - speaker_pans[distinct_speakers[1]]) >= 0.1
+    ):
+        ordered_speakers = sorted(distinct_speakers[:len(selected_regions)], key=lambda s: speaker_pans[s])
+        ordered_regions = sorted(selected_regions, key=lambda r: _region_center(r)[0])
+        mapping = dict(zip(ordered_speakers, ordered_regions))
+    else:
+        mapping = dict(zip(distinct_speakers, selected_regions))
+
+    cues = []
+    last_target = None
+    for index, (spk, turn_start) in enumerate(turns):
+        region = mapping.get(spk.casefold())
+        if region is None:
+            continue
+        rel_time = 0.0 if index == 0 else round(turn_start - start, 3)
+        if index > 0 and not (0.55 <= rel_time <= (end - start) - 0.45):
+            continue
+        if last_target == region["id"]:
+            continue
+        last_target = region["id"]
+        cu, cv = _region_center(region)
+        cues.append({
+            "time": rel_time,
+            "z": round(float(region["depth_m"]), 3),
+            "uv": [cu, cv],
+        })
+    return cues if len(cues) >= 2 else None
 
 
 def stills_payload(
@@ -122,6 +242,7 @@ def stills_payload(
     folder=None,
     depth_model: str | None = None,
     style_preset: str | None = None,
+    timeline: dict | None = None,
 ) -> dict | None:
     """The stills the page slides along the mix: each image's time and the seconds it dissolves in."""
     if not record:
@@ -167,6 +288,9 @@ def stills_payload(
                 shot["depth_meta"] = _refine_subject_meta(
                     effect_depth.effective_meta(raw_meta, style_preset), enhanced
                 )
+                focus_cues = _shot_focus_cues(shot, enhanced, timeline)
+                if focus_cues:
+                    shot["focus_cues"] = focus_cues
         shots.append(shot)
     return {"revision": record["revision"], "shots": shots,
             "orientation": visuals.orientation_of(record.get("orientation"))}
@@ -272,7 +396,7 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
                     "stills": None, "latest": None, "previews": {}, "depth_missing": 0}
         timing_error = mix_settings.get("visual_timing_error")
         saved = visuals.read_plan(audio)
-        current = saved if saved is not None and saved.get("limit") == settings["limit"] else None
+        current = saved if saved is not None and visuals.plan_satisfies_limit(saved, settings["limit"]) else None
         duration = float(mix_settings.get("duration") or 0)
         record = visuals.read_stills(audio, root)
         voices = mix_settings["voices"] if current else {}
@@ -286,7 +410,8 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
         items = effects_pass.inventory(audio, root, plan["rows"], plan["subjects"], data,
                                        speech=shot_speech_cues(mix_settings) if plan["rows"] else (),
                                        depth_model=settings["depth_model"])
-        sounds = timeline_payload(mix_settings)["sounds"] if items else []
+        mix_timeline = timeline_payload(mix_settings) if (items or record) else None
+        sounds = mix_timeline["sounds"] if (items and mix_timeline) else []
         enhancement = effects_pass.public_pass(name, items, sounds, data)
         folder = visuals.stills_dir(audio, root)
         if record:
@@ -295,7 +420,8 @@ def video_payload(name: str, data: dict, result, export, *, store=None, result_s
         stills = stills_payload(name, record, plan["rows"], items,
                                 folder=folder,
                                 depth_model=settings["depth_model"],
-                                style_preset=settings["preset"])
+                                style_preset=settings["preset"],
+                                timeline=mix_timeline)
         scene = effect_scene(stills, mix_settings)
         video = project_export(audio, data)
         if video is not None:
@@ -699,10 +825,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
                 speech=shot_speech_cues(mix_settings) if current_plan["rows"] else (),
                 depth_model=settings["depth_model"],
             )
+            mix_timeline = timeline_payload(mix_settings)
             return effect_scene(
                 stills_payload(name, record, current_plan["rows"], items,
                                folder=folder, depth_model=settings["depth_model"],
-                               style_preset=settings["preset"]),
+                               style_preset=settings["preset"], timeline=mix_timeline),
                 mix_settings,
             )
 

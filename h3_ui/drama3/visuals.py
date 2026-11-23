@@ -99,6 +99,31 @@ def orientation_of(value):
     return value if value in ORIENTATIONS else "landscape"
 
 
+_OCCLUDED_FACE_STATE = re.compile(
+    r"\b(?:silhouette(?:d)?|in\s+silhouette|from\s+behind|seen\s+from\s+behind|back\s+turned|"
+    r"back\s+to\s+(?:the\s+)?(?:camera|viewer)|facing\s+away|hands?\s+only|"
+    r"only\s+(?:his|her|their)\s+hands?|feet\s+only|shadow\s+only|cast\s+shadow)\b"
+    r"|(?:背影|剪影|背对(?:镜头|画面|观众)?|仅见双手|双手特写|只见双手|只见手|仅有影子)",
+    flags=re.IGNORECASE,
+)
+
+
+def visible_face_references(shot):
+    """Keep portrait matching only for characters whose shot state does not explicitly hide their face."""
+    tagged = shot.tagged or ""
+    if not tagged:
+        return shot.references
+    kept = []
+    for key in shot.references:
+        matches = re.findall(rf"{re.escape(key)}⟦{re.escape(key)}⟧\s*\(([^)]*)\)", tagged)
+        if matches:
+            states = [part.split(";", 1)[1].strip() if ";" in part else "" for part in matches]
+            if states and all(state and _OCCLUDED_FACE_STATE.search(state) for state in states):
+                continue
+        kept.append(key)
+    return tuple(kept)
+
+
 def character_match_request(engine, scene, portraits, shot, captured):
     """A bounded identity edit, without re-captioning the scene or asking for a style render.
 
@@ -239,7 +264,7 @@ def illustrate_shots(controller, engine, shots, captured, use_references, finish
     portraits = portraits or {}
     options = dict(captured)
     widescreen(engine, options, orientation)
-    cast = list(dict.fromkeys(key for shot in shots for key in shot.references if key in portraits)) if use_references else []
+    cast = list(dict.fromkeys(key for shot in shots for key in visible_face_references(shot) if key in portraits)) if use_references else []
     missing = [key for key in cast if not drawn.get(key) or not Path(drawn[key]).is_file()]
 
     def portrait_task(key):
@@ -300,7 +325,7 @@ def _illustrate_shots_serial(controller, engine, shots, captured, use_references
     limit = reference_limit(engine, captured.get("qwen__turbo_variant", "Off")) if use_references else 0
     slots = max(0, limit - 1)  # The scene itself takes the first input.
     portraits = portraits or {}
-    cast = list(dict.fromkeys(key for shot in shots for key in shot.references if key in portraits))
+    cast = list(dict.fromkeys(key for shot in shots for key in visible_face_references(shot) if key in portraits))
     drawn = {}
     if slots:
         square = {**captured}
@@ -321,7 +346,7 @@ def _illustrate_shots_serial(controller, engine, shots, captured, use_references
     images = []
     done = finished["shots"]
     for index, shot in enumerate(shots):
-        who = {key: drawn[key] for key in shot.references if key in drawn}
+        who = {key: drawn[key] for key in visible_face_references(shot) if key in drawn}
         who = dict(list(who.items())[:slots])
         label = f"Shot {index + 1} of {len(shots)}"
         details = {}
@@ -375,8 +400,19 @@ def write_plan(audio, style, limit, plan):
     temporary.replace(path)
 
 
+def plan_satisfies_limit(saved, limit=None) -> bool:
+    """True when ``saved`` was made for ``limit`` or already holds at least ``limit`` shots."""
+    if limit is None:
+        return True
+    target = int(limit)
+    if saved.get("limit") == target:
+        return True
+    shots = (saved.get("plan") or {}).get("shots")
+    return isinstance(shots, list) and len(shots) >= target
+
+
 def read_plan(audio, limit=None):
-    """The plan saved with this mix, or None; with ``limit``, only a plan made for that Minimum shots.
+    """The plan saved with this mix, or None; with ``limit``, any plan meeting that Minimum shots.
     The art direction and frame are added when drawing, so any of them use the same plan."""
     try:
         saved = json.loads(plan_path(audio).read_text(encoding="utf-8"))
@@ -384,7 +420,7 @@ def read_plan(audio, limit=None):
         return None
     if not isinstance(saved, dict) or not isinstance(saved.get("plan"), dict):
         return None
-    if limit is not None and saved.get("limit") != int(limit):
+    if not plan_satisfies_limit(saved, limit):
         return None
     return saved
 
