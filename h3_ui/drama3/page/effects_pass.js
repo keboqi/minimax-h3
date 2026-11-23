@@ -3,6 +3,10 @@ import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} fro
 
 const FULL_FRAME = "full_frame";
 const MODE_LABELS = {full_frame: "Full frame", inside: "Inside", outside: "Outside", behind: "Behind"};
+const SEG_COLORS = 12;
+const regionColor = (index) => `var(--seg-${index % SEG_COLORS})`;
+const regionColorMap = (shot) => new Map((shot?.regions || []).map((region, index) => [region.id, regionColor(index)]));
+const maskUrl = (url) => `url("${String(url).replace(/["\\]/g, "\\$&")}")`;
 
 export function createEffectsPass({state, $, h, call, copy, writer, interrupt, busy}) {
   let project, selected, mode, draft, pasted = "", includeManual = false;
@@ -18,6 +22,16 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
   function stopPlayback() {
     if (playFrame !== null) cancelAnimationFrame(playFrame);
     playFrame = null;
+  }
+
+  function setFocusRegion(regionId) {
+    const stage = dialog()?.querySelector(".pass-preview");
+    if (!stage) return;
+    const active = regionId || refine?.region || "";
+    stage.classList.toggle("has-focus-region", Boolean(active));
+    stage.querySelectorAll(".pass-seg-overlay").forEach((overlay) => {
+      overlay.classList.toggle("is-focused", overlay.dataset.regionId === active);
+    });
   }
 
   function open(shot = null) {
@@ -45,13 +59,18 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
 
   function formatLayers(shot, effects, catalog) {
     const regions = new Map((shot.regions || []).map((r) => [r.id, r.label]));
+    const colors = regionColorMap(shot);
     if (!effects?.length) return [h("span", {class: "muted small"}, "No effects")];
     return effects.map((layer) => {
       const label = catalog[layer.preset]?.label || layer.preset;
+      const regionName = regions.get(layer.region_id);
       const modeText = layer.mode && layer.mode !== FULL_FRAME
-        ? ` · ${MODE_LABELS[layer.mode] || layer.mode}${regions.get(layer.region_id) ? ` ${regions.get(layer.region_id)}` : ""}`
+        ? ` · ${MODE_LABELS[layer.mode] || layer.mode}${regionName ? ` ${regionName}` : ""}`
         : "";
-      return h("span", {class: "chip"}, `${label}${modeText}`);
+      const color = layer.mode !== FULL_FRAME ? colors.get(layer.region_id) : null;
+      return h("span", {class: "chip"},
+        color ? h("span", {class: "pass-seg-dot", style: {"--seg-color": color}, "aria-hidden": "true"}) : null,
+        `${label}${modeText}`);
     });
   }
 
@@ -61,11 +80,19 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     const orientation = state.project.video.orientation;
     const {back, front, overlay} = stageLayers();
     [back, front, overlay].forEach((element) => element.removeAttribute("id"));
-    const segOverlays = showSegments && shot.regions?.length
-      ? shot.regions.map((region) => h("img", {src: region.url, class: "pass-seg-overlay", alt: ""}))
+    const activeRegion = refine?.region || "";
+    const segOverlays = shot.regions?.length
+      ? shot.regions.map((region, index) => h("div", {
+        class: `pass-seg-overlay${region.id === activeRegion ? " is-focused" : ""}`,
+        "data-region-id": region.id,
+        "aria-hidden": "true",
+        style: {"--seg-color": regionColor(index), "--seg-mask": maskUrl(region.url)},
+      }))
       : [];
-    const stage = h("div", {class: `video-stage pass-preview ${orientation === "portrait" ? "portrait" : ""}`},
-      back, front, overlay, ...segOverlays);
+    const stage = h("div", {
+      class: `video-stage pass-preview ${orientation === "portrait" ? "portrait" : ""}${activeRegion ? " has-focus-region" : ""}`,
+      "data-show-segments": String(showSegments),
+    }, back, front, overlay, ...segOverlays);
     const duration = Math.max(0.05, row.end - row.start);
     const sounds = (state.project.result?.sounds || [])
       .filter((sound) => sound.start >= row.start && sound.start < row.end)
@@ -180,8 +207,14 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
   function maskEditor(shot) {
     const region = shot.regions.find((item) => item.id === refine.region);
     if (!region) return null;
+    const color = regionColorMap(shot).get(region.id);
     const image = h("img", {src: rowOf(shot).image, alt: "Shot to segment"});
     return h("div", {class: "pass-proposal"},
+      h("div", {class: "pass-mask-head"},
+        h("span", {class: "pass-mask-title", style: color ? {"--seg-color": color} : undefined},
+          h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
+          h("span", {class: "pass-seg-text"}, `Refining: ${region.label} · ${region.position}`)),
+        button("Done", () => { refine = null; render(true); }, busy())),
       h("div", {class: "pass-actions"},
         h("select", {"aria-label": "Point type", onchange: (event) => { refine.type = event.target.value; }},
           h("option", {value: "include", selected: refine.type === "include"}, "Include point"),
@@ -201,7 +234,8 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
           refine[refine.type].push([x, y]);
           render(true);
         }
-      }}, image, h("img", {src: region.url, class: "pass-mask-overlay", alt: ""}),
+      }}, image, h("div", {class: "pass-mask-overlay", "aria-hidden": "true",
+        style: {"--seg-color": color || "var(--accent)", "--seg-mask": maskUrl(region.url)}}),
       ...["include", "exclude"].flatMap((type) => refine[type].map(([x, y]) =>
         h("span", {class: `pass-point ${type}`, style: {left: `${x * 100}%`, top: `${y * 100}%`}}, type === "include" ? "+" : "−")))));
   }
@@ -210,6 +244,8 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     const catalog = state.boot.video.enhancement_presets;
     const maxLayers = state.boot.video.enhancement_max_layers || 8;
     const locked = busy();
+    const canRefine = Boolean(state.boot.gpu);
+    const colors = regionColorMap(shot);
     const rowKey = {shot_id: shot.shot_id, image: shot.image};
     const swap = (index, other) => {
       [draft[index], draft[other]] = [draft[other], draft[index]];
@@ -220,14 +256,34 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
         h("section", {class: "effect-preview", "aria-label": "Layer preview"},
           h("div", {class: "effect-options-controls"},
             h("strong", {}, `Shot ${shot.index + 1}`),
-            shot.regions.length ? h("button", {type: "button", class: "btn btn-small", "aria-pressed": String(showSegments),
+            shot.regions.length ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle", "aria-pressed": String(showSegments),
               onclick: () => { showSegments = !showSegments; render(true); }},
             showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null),
           preview(shot, withMasks(shot, draft)),
-          shot.regions.length && state.boot.gpu ? h("div", {class: "pass-actions"},
-            h("span", {class: "label"}, "Refine segment"),
-            ...shot.regions.map((region) => button(`${region.label} · ${region.position}`,
-              () => { refine = refine?.region === region.id ? null : {region: region.id, type: "include", include: [], exclude: []}; render(true); }, locked))) : null,
+          shot.regions.length ? h("div", {class: "pass-segments"},
+            h("div", {class: "pass-segments-head"},
+              h("span", {class: "label"}, `Segments (${shot.regions.length})`),
+              h("span", {class: "muted small"}, canRefine ? "Hover to highlight · click to refine" : "Hover to highlight")),
+            h("div", {class: "pass-seg-list"},
+              ...shot.regions.map((region, index) => h("button", {
+                type: "button",
+                class: "pass-seg-chip",
+                style: {"--seg-color": regionColor(index)},
+                title: `${region.label} · ${region.position}`,
+                disabled: locked,
+                "aria-pressed": canRefine ? String(refine?.region === region.id) : undefined,
+                onmouseenter: () => setFocusRegion(region.id),
+                onmouseleave: () => setFocusRegion(null),
+                onfocus: () => setFocusRegion(region.id),
+                onblur: () => setFocusRegion(null),
+                onclick: canRefine ? () => {
+                  refine = refine?.region === region.id ? null : {region: region.id, type: "include", include: [], exclude: []};
+                  render(true);
+                } : undefined,
+              },
+              h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
+              h("span", {class: "pass-seg-text"}, region.label),
+              h("span", {class: "pass-seg-pos"}, `· ${region.position}`))))) : null,
           refine ? maskEditor(shot) : null),
         h("section", {class: "pass-layers-col", "aria-label": "Effect layers"},
           h("div", {class: "effect-options-controls"},
@@ -236,8 +292,13 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
           draft.length ? null : h("p", {class: "muted small"}, "No layers. The still plays as is."),
           ...draft.map((layer, index) => {
             const spec = catalog[layer.preset];
+            const layerColor = layer.region_id ? colors.get(layer.region_id) : null;
             const select = (name, onchange, options) => h("select", {"aria-label": name, disabled: locked, onchange}, options);
-            return h("div", {class: `pass-layer pass-layer-card pass-kind-${spec.kind}`},
+            return h("div", {
+              class: `pass-layer pass-layer-card pass-kind-${spec.kind}`,
+              onmouseenter: layer.region_id ? () => setFocusRegion(layer.region_id) : undefined,
+              onmouseleave: layer.region_id ? () => setFocusRegion(null) : undefined,
+            },
               h("div", {class: "pass-layer-head"},
                 select("Effect", (event) => replaceLayer(index, {preset: event.target.value, mode: FULL_FRAME}),
                   Object.entries(catalog).map(([id, item]) => h("option", {value: id, selected: id === layer.preset}, item.label))),
@@ -248,9 +309,11 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
                 select("Apply", (event) => replaceLayer(index, {mode: event.target.value, region_id: layer.region_id || shot.regions[0]?.id}),
                   spec.modes.filter((way) => way === FULL_FRAME || shot.regions.length)
                     .map((way) => h("option", {value: way, selected: way === layer.mode}, MODE_LABELS[way]))),
-                layer.region_id ? select("Region", (event) => replaceLayer(index, {region_id: event.target.value}),
-                  shot.regions.map((region) => h("option", {value: region.id, selected: region.id === layer.region_id},
-                    `${region.label} · ${region.position}`))) : null),
+                layer.region_id ? h("div", {class: "pass-region-wrap", style: {"--seg-color": layerColor || "var(--accent)"}},
+                  h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
+                  select("Region", (event) => replaceLayer(index, {region_id: event.target.value}),
+                    shot.regions.map((region) => h("option", {value: region.id, selected: region.id === layer.region_id},
+                      `${region.label} · ${region.position}`)))) : null),
               spec.kind !== "camera" ? h("div", {class: "pass-layer-ranges"},
                 ...[["intensity", 1, 0.05, 1, (v) => `${Math.round(v * 100)}%`],
                   ...(layer.region_id ? [["feather", 32, 1, 1, (v) => `${v} px`]] : [])]
