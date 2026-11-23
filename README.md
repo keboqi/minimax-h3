@@ -357,6 +357,21 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
+For fast CPU-only deployment focused on project review, media browsing, and
+backup/transfer without building the GPU image, FFmpeg, Playwright, or URL
+downloaders, deploy the standalone minimal Workshop script instead:
+
+```bash
+modal deploy modal_workshop.py
+```
+
+`modal_workshop.py` deploys a separate Modal app (`minimax-h3-workshop` by
+default, endpoint label `workshop-cpu`) attached to the same shared volume
+(`minimax-h3-data`) so it does not overwrite `modal_h3.py`'s endpoints. Secrets
+are optional (`H3_MODAL_HF_SECRET` is only attached when set), and
+`H3_MODAL_WORKSHOP_APP_NAME`, `H3_MODAL_WORKSHOP_LABEL`, and `H3_MODAL_VOLUME`
+override the defaults.
+
 Deployment exposes four independent URLs: `workshop` for the CPU-only
 **Prism Workshop**, and three GPU endpoints that serve Prism Studio (`h3`,
 `h3-video`, and `h3-soundstage`; see **Preloaded endpoints** below). Open the **workshop** URL

@@ -12,13 +12,25 @@ from h3_requirements import (
 )
 
 
+# Bare minimum needed to serve the Workshop UI on CPU for project review,
+# media browsing, and backup/transfer without browser capture or URL downloaders.
+WORKSHOP_MINIMAL_REQUIREMENTS = (
+    # requests: the Drama 3 SGLang-Omni downloader module imports it.
+    f"gradio=={GRADIO_VERSION}",
+    HUGGINGFACE_HUB_REQUIREMENT,
+    "requests>=2.32",
+    # websocket-client, aiohttp: shared media controller and routes;
+    # wsproto: the Gradio queue's WebSocket transport, as in Studio.
+    "websocket-client>=1.8",
+    "aiohttp>=3.11,<4",
+    f"wsproto=={WSPROTO_VERSION}",
+)
+
 WORKSHOP_REQUIREMENTS = (
     *VIDEO_DOWNLOAD_REQUIREMENTS,
     PLAYWRIGHT_REQUIREMENT,
-    # requests: the Drama 3 SGLang-Omni downloader module imports it.
-    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32", "json-repair>=0.60",
+    *WORKSHOP_MINIMAL_REQUIREMENTS[:3],
+    "json-repair>=0.60",
     "openai>=3.16.2,<4",  # Workshop's OpenAI-compatible prompt writer.
-    # websocket-client, aiohttp: shared media controller and routes;
-    # wsproto: the Gradio queue's WebSocket transport, as in Studio.
-    "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
+    *WORKSHOP_MINIMAL_REQUIREMENTS[3:],
 )
