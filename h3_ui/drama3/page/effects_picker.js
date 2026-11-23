@@ -5,6 +5,7 @@ const CATEGORIES = [
   {id: "atmosphere", label: "Atmosphere", scene: "Twilight street"},
   {id: "lighting", label: "Lighting & framing", scene: "Lantern-lit cabin"},
 ];
+export const EFFECT_CATEGORIES = CATEGORIES;
 const DURATION = 3;
 const FLASHING = new Set(["lightning", "flash"]);
 const demo = (kind) => new URL(`./effect-demo-${kind}.webp`, import.meta.url).href;
@@ -17,6 +18,57 @@ function previewTime(effects) {
   return 1.8;
 }
 
+function paintCardPreview(overlay, still, id, time) {
+  const effect = id ? [id] : [];
+  paintEffectPreview(overlay, still, effect, time, DURATION);
+  if (id === "vignette") overlay.style.opacity = String(Math.min(1, time / 0.6));
+}
+
+function cardPlayback(kind, id) {
+  return {loops: (kind === "camera" && id !== "subtle_sway") || id === "vignette", once: FLASHING.has(id)};
+}
+
+function createHoverController(canPlay) {
+  let hover = null;
+
+  function stopHover() {
+    if (!hover) return;
+    cancelAnimationFrame(hover.frame);
+    hover.card.removeAttribute("data-playing");
+    hover.paint(hover.posterTime);
+    hover = null;
+  }
+
+  async function playHover(event, still, paint, posterTime, {loops, once}) {
+    if (event.pointerType === "touch" || !canPlay()) return;
+    stopHover();
+    const preview = {card: event.currentTarget, paint, posterTime, frame: 0};
+    hover = preview;
+    try {
+      if (!still.complete || !still.naturalWidth) await still.decode();
+    } catch {
+      if (hover === preview) stopHover();
+      return;
+    }
+    if (hover !== preview) return;
+
+    const started = performance.now();
+    const tick = (now) => {
+      if (hover !== preview) return;
+      const elapsed = Math.max(0, (now - started) / 1000);
+      const time = loops ? elapsed % DURATION : elapsed;
+      paint(once ? Math.min(DURATION, time) : time);
+      if (!once || elapsed < DURATION) preview.frame = requestAnimationFrame(tick);
+      else preview.card.removeAttribute("data-playing");
+    };
+    preview.card.setAttribute("data-playing", "");
+    paint(0);
+    preview.frame = requestAnimationFrame(tick);
+  }
+
+  return {playHover, stopHover};
+}
+
 export function openEffectsPicker({h, dialog, row, orientation, presets, save, restoreFocus}) {
   const initial = row.effects || [];
   const selected = new Map(initial.map((id) => [presets[id]?.kind, id]));
@@ -24,7 +76,6 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   let category = CATEGORIES.find(({id}) => selected.has(id)) || CATEGORIES[0];
   let saving = false;
   let frame = null;
-  let hover = null;
   let sourceReady = false;
   let sourceRequest = 0;
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -52,6 +103,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   const grid = h("div", {class: "effect-picker-grid", role: "group"});
   const hoverToggle = h("input", {type: "checkbox", checked: true,
     onchange: () => { if (!hoverToggle.checked) stopHover(); }});
+  const {playHover, stopHover} = createHoverController(() => hoverToggle.checked && !saving);
   const tabs = CATEGORIES.map((option) => h("button", {type: "button", "data-kind": option.id,
     "aria-label": option.label,
     onclick: () => {
@@ -197,40 +249,6 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     }
   }
 
-  function stopHover() {
-    if (!hover) return;
-    cancelAnimationFrame(hover.frame);
-    hover.card.removeAttribute("data-playing");
-    hover.paint(hover.posterTime);
-    hover = null;
-  }
-
-  async function playHover(event, still, paint, posterTime, {loops, once}) {
-    if (event.pointerType === "touch" || !hoverToggle.checked || saving) return;
-    stopHover();
-    const preview = {card: event.currentTarget, paint, posterTime, frame: 0};
-    hover = preview;
-    try {
-      if (!still.complete || !still.naturalWidth) await still.decode();
-    } catch {
-      if (hover === preview) stopHover();
-      return;
-    }
-    if (hover !== preview) return;
-
-    const started = performance.now();
-    const tick = (now) => {
-      const elapsed = Math.max(0, (now - started) / 1000);
-      const time = loops ? elapsed % DURATION : elapsed;
-      paint(once ? Math.min(DURATION, time) : time);
-      if (!once || elapsed < DURATION) preview.frame = requestAnimationFrame(tick);
-      else preview.card.removeAttribute("data-playing");
-    };
-    preview.card.setAttribute("data-playing", "");
-    paint(0);
-    preview.frame = requestAnimationFrame(tick);
-  }
-
   function renderChoices() {
     stopHover();
     const {id: kind, label} = category;
@@ -242,13 +260,9 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
     grid.replaceChildren(...options.map(([id, preset]) => {
       const still = h("img", {src: scene, alt: "", loading: "lazy"});
       const overlay = h("canvas", {width: 256, height: 144, "aria-hidden": "true"});
-      const effect = id ? [id] : [];
-      const posterTime = previewTime(effect);
-      const paint = (time) => {
-        paintEffectPreview(overlay, still, effect, time, DURATION);
-        if (id === "vignette") overlay.style.opacity = String(Math.min(1, time / 0.6));
-      };
-      const playback = {loops: (kind === "camera" && id !== "subtle_sway") || id === "vignette", once: FLASHING.has(id)};
+      const posterTime = previewTime(id ? [id] : []);
+      const paint = (time) => paintCardPreview(overlay, still, id, time);
+      const playback = cardPlayback(kind, id);
       if (id) paint(posterTime);
       return h("button", {type: "button", class: "style-card effect-choice", "data-effect": id,
         "aria-label": preset.label, "aria-description": preset.description,
@@ -317,4 +331,161 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, save, r
   renderSelection();
   loadPreviewSource();
   dialog.showModal();
+}
+
+export function openEffectPresetPopup({
+  h,
+  dialog,
+  presets,
+  title,
+  subtitle = "",
+  currentPreset = "",
+  usedPresets = new Set(),
+  blockedKinds = {},
+  shotImage = "",
+  initialCategory = "",
+  onSelect,
+  restoreFocus = () => {},
+}) {
+  const choices = Object.entries(presets);
+  const blockedReasons = {...blockedKinds};
+  const defaultCategory = () => presets[currentPreset]?.kind
+    || CATEGORIES.find(({id}) => !blockedReasons[id])?.id
+    || "atmosphere";
+  let activeCategory = initialCategory === "all" || CATEGORIES.some(({id}) => id === initialCategory)
+    ? initialCategory
+    : defaultCategory();
+  let useShot = false;
+  let picked = null;
+  const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+
+  const titleEl = h("h2", {id: "effect-preset-title"}, title);
+  const close = h("button", {type: "button", class: "btn btn-icon", "aria-label": "Close",
+    onclick: () => dialog.close()}, "×");
+  const hoverToggle = h("input", {type: "checkbox", checked: true,
+    onchange: () => { if (!hoverToggle.checked) stopHover(); }});
+  const {playHover, stopHover} = createHoverController(() => hoverToggle.checked);
+  const categoryButtons = [{id: "all", label: "All"}, ...CATEGORIES].map(({id, label}) =>
+    h("button", {
+      type: "button",
+      "data-kind": id,
+      "aria-pressed": String(activeCategory === id),
+      onclick: () => {
+        if (activeCategory === id) return;
+        activeCategory = id;
+        renderGrid();
+      },
+    }, label));
+  const bgButtons = shotImage
+    ? [
+      h("button", {type: "button", "data-bg": "demo", "aria-pressed": "true", onclick: () => {
+        if (!useShot) return;
+        useShot = false;
+        renderGrid();
+      }}, "Demo scenes"),
+      h("button", {type: "button", "data-bg": "shot", "aria-pressed": "false", onclick: () => {
+        if (useShot) return;
+        useShot = true;
+        renderGrid();
+      }}, "This shot"),
+    ]
+    : null;
+  const content = h("div", {class: "effect-preset-content"});
+
+  function renderCategoryNotice(kind) {
+    if (!blockedReasons[kind]) return null;
+    return h("p", {class: "effect-preset-note"}, blockedReasons[kind]);
+  }
+
+  function renderCard([id, preset]) {
+    const isCurrent = id === currentPreset;
+    const isUsed = !isCurrent && usedPresets.has(id);
+    const disabled = Boolean(blockedReasons[preset.kind]);
+    const still = h("img", {src: useShot && shotImage ? shotImage : demo(preset.kind), alt: "", loading: "lazy"});
+    const overlay = h("canvas", {width: 256, height: 144, "aria-hidden": "true"});
+    const posterTime = previewTime([id]);
+    const paint = (time) => paintCardPreview(overlay, still, id, time);
+    paint(posterTime);
+    const badges = isCurrent || isUsed
+      ? h("span", {class: "effect-preset-badges", "aria-hidden": "true"},
+        isCurrent ? h("span", {class: "effect-preset-badge is-current"}, "Current") : null,
+        isUsed ? h("span", {class: "effect-preset-badge"}, "In stack") : null)
+      : null;
+    const playback = cardPlayback(preset.kind, id);
+    return h("button", {
+      type: "button",
+      class: `style-card effect-choice pass-preset-card pass-kind-${preset.kind}`,
+      "data-effect": id,
+      "aria-label": preset.label,
+      "aria-description": preset.description,
+      "aria-pressed": String(isCurrent),
+      disabled,
+      onpointerenter: disabled ? null : (event) => playHover(event, still, paint, posterTime, playback),
+      onpointerleave: disabled ? null : stopHover,
+      onpointercancel: disabled ? null : stopHover,
+      onclick: () => {
+        if (disabled) return;
+        stopHover();
+        picked = id;
+        dialog.close();
+        onSelect(id);
+      },
+    },
+    h("span", {
+      class: useShot && shotImage ? "effect-preview-frame effect-preview-shot" : "effect-preview-frame",
+      "aria-hidden": "true",
+    }, still, overlay, badges),
+    h("strong", {class: "style-name"}, preset.label),
+    h("span", {class: "muted small"}, preset.description));
+  }
+
+  function renderGrid() {
+    stopHover();
+    for (const button of categoryButtons) {
+      button.setAttribute("aria-pressed", String(button.dataset.kind === activeCategory));
+    }
+    if (bgButtons) {
+      bgButtons[0].setAttribute("aria-pressed", String(!useShot));
+      bgButtons[1].setAttribute("aria-pressed", String(useShot));
+    }
+    if (activeCategory === "all") {
+      content.replaceChildren(...CATEGORIES.map((cat) => h("section", {class: "style-group"},
+        h("h4", {}, cat.label),
+        renderCategoryNotice(cat.id),
+        h("div", {class: "effect-preset-grid", role: "group", "aria-label": cat.label},
+          ...choices.filter(([, preset]) => preset.kind === cat.id).map(renderCard)))));
+      return;
+    }
+    const cat = CATEGORIES.find(({id}) => id === activeCategory) || CATEGORIES[0];
+    content.replaceChildren(
+      renderCategoryNotice(cat.id),
+      h("div", {class: "effect-preset-grid", role: "group", "aria-label": cat.label},
+        ...choices.filter(([, preset]) => preset.kind === cat.id).map(renderCard)));
+  }
+
+  dialog.replaceChildren(
+    h("div", {class: "library-head"},
+      h("div", {class: "style-head-text"}, titleEl, subtitle ? h("span", {class: "muted small"}, subtitle) : null),
+      close),
+    h("div", {class: "style-body effect-preset-body"},
+      h("div", {class: "effect-preset-toolbar"},
+        h("div", {class: "seg effect-preset-categories", role: "group", "aria-label": "Effect categories"}, ...categoryButtons),
+        h("div", {class: "effect-preset-tools"},
+          bgButtons ? h("div", {class: "seg effect-preset-bg", role: "group", "aria-label": "Preview background"}, ...bgButtons) : null,
+          h("label", {class: "check"}, hoverToggle, "Hover previews"))),
+      content),
+    h("div", {class: "drawn-foot"},
+      h("span", {class: "muted small"}, "Hover any preview to animate · click to choose"),
+      h("span", {class: "spacer"}),
+      h("button", {type: "button", class: "btn", onclick: () => dialog.close()}, "Cancel")));
+
+  const updateMotion = (event) => { if (event.matches) stopHover(); };
+  motion?.addEventListener("change", updateMotion);
+  dialog.onclose = () => {
+    stopHover();
+    motion?.removeEventListener("change", updateMotion);
+    restoreFocus(picked);
+  };
+  renderGrid();
+  if (!dialog.open) dialog.showModal();
 }

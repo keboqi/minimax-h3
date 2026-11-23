@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {cameraFilter, cameraMotion, cameraTransform, cueElapsed, effectCues, effectsEnabled, paintEffects} from "../h3_ui/drama3/page/effects.js";
+import {layersToSets, setsToLayers} from "../h3_ui/drama3/page/effects_pass.js";
 import {ATMO_IDS, LIGHT_IDS} from "../h3_ui/drama3/page/effects_webgpu.js";
 import {createVideo} from "../h3_ui/drama3/page/video.js";
 
@@ -303,5 +304,63 @@ test("reused still URLs can have different effects on each shot", (t) => {
   assert.equal(back.style.transform, "scale(1)");
   paintStills(4);
   assert.equal(back.style.transform, "scale(1.08)");
+});
+
+test("effect sets group shared targets/settings, separate differing ones, and enforce full-frame camera", () => {
+  const catalog = {
+    push_in: {kind: "camera", modes: ["full_frame"]},
+    pull_out: {kind: "camera", modes: ["full_frame"]},
+    rain: {kind: "atmosphere", modes: ["full_frame", "inside", "outside", "behind"]},
+    fog: {kind: "atmosphere", modes: ["full_frame", "inside", "outside", "behind"]},
+    lightning: {kind: "lighting", modes: ["full_frame", "inside", "outside"]},
+    cold_tint: {kind: "lighting", modes: ["full_frame", "inside", "outside"]},
+  };
+
+  const fullFrameCombo = [
+    {preset: "push_in", mode: "full_frame"},
+    {preset: "lightning", mode: "full_frame", intensity: 0.7},
+    {preset: "rain", mode: "full_frame", intensity: 0.7},
+  ];
+  const sets1 = layersToSets(fullFrameCombo, catalog);
+  assert.deepEqual(sets1, [
+    {mode: "full_frame", region_ids: [], presets: ["push_in", "lightning", "rain"], intensity: 0.7, feather: undefined},
+  ]);
+  assert.deepEqual(setsToLayers(sets1, catalog), fullFrameCombo);
+
+  const differentIntensitiesAndFeathers = [
+    {preset: "rain", mode: "full_frame", intensity: 0.7},
+    {preset: "fog", mode: "full_frame", intensity: 0.4},
+    {preset: "rain", mode: "inside", region_id: "region_1", feather: 1},
+    {preset: "cold_tint", mode: "inside", region_id: "region_1", feather: 8},
+  ];
+  const sets2 = layersToSets(differentIntensitiesAndFeathers, catalog);
+  assert.equal(sets2.length, 4);
+  assert.deepEqual(setsToLayers(sets2, catalog), differentIntensitiesAndFeathers);
+
+  const multiRegion = [
+    {preset: "rain", mode: "inside", region_ids: ["region_1", "region_2"]},
+    {preset: "cold_tint", mode: "inside", region_ids: ["region_1", "region_2"]},
+  ];
+  const sets3 = layersToSets(multiRegion, catalog);
+  assert.deepEqual(sets3, [
+    {mode: "inside", region_ids: ["region_1", "region_2"], presets: ["rain", "cold_tint"], intensity: undefined, feather: undefined},
+  ]);
+  assert.deepEqual(setsToLayers(sets3, catalog), multiRegion);
+
+  // Camera presets always flatten as full_frame with no region_id, region_ids, intensity, or feather.
+  assert.deepEqual(
+    setsToLayers([{mode: "inside", region_ids: ["region_1", "region_2"], presets: ["pull_out"], intensity: 0.5, feather: 10}], catalog),
+    [{preset: "pull_out", mode: "full_frame"}],
+  );
+  // Single region canonicalizes to region_id.
+  assert.deepEqual(
+    setsToLayers([{mode: "inside", region_ids: ["region_1"], presets: ["rain"]}], catalog),
+    [{preset: "rain", mode: "inside", region_id: "region_1"}],
+  );
+  // Empty region_ids on a masked set falls back cleanly to full_frame without feather.
+  assert.deepEqual(
+    setsToLayers([{mode: "inside", region_ids: [], presets: ["rain"], feather: 6}], catalog),
+    [{preset: "rain", mode: "full_frame"}],
+  );
 });
 

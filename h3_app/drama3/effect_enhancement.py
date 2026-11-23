@@ -9,7 +9,7 @@ from h3_app.prompt_writers.common import read_system_prompt, write_prompt
 from .visual_effects import EFFECT_PRESETS
 from .visual_plan import _reply_json
 
-MAX_LAYERS = 8
+MAX_LAYERS = 16
 FULL_FRAME = "full_frame"
 MODES = {
     FULL_FRAME: "Apply to the whole shot.",
@@ -34,6 +34,14 @@ def base_stack(effects):
     return [{"preset": preset, "mode": FULL_FRAME} for preset in effects]
 
 
+def layer_region_ids(layer):
+    if isinstance(layer.get("region_ids"), list):
+        return [rid for rid in layer["region_ids"] if isinstance(rid, str)]
+    if isinstance(layer.get("region_id"), str):
+        return [layer["region_id"]]
+    return []
+
+
 def check_stack(value, regions):
     if not isinstance(value, list) or len(value) > MAX_LAYERS:
         raise H3Error(f"Use an ordered list of up to {MAX_LAYERS} effect layers.")
@@ -52,12 +60,27 @@ def check_stack(value, regions):
             camera = True
         clean = {"preset": preset, "mode": mode}
         if mode != FULL_FRAME:
-            region = layer.get("region_id")
-            if not isinstance(region, str) or region not in regions:
-                raise H3Error("An effect targets a region outside this shot.")
-            clean["region_id"] = region
+            if "region_id" in layer and "region_ids" in layer:
+                raise H3Error("Specify either region_id or region_ids for an effect layer.")
+            if "region_ids" in layer:
+                raw_ids = layer.get("region_ids")
+                if not isinstance(raw_ids, list) or not raw_ids or any(
+                    not isinstance(rid, str) or rid not in regions for rid in raw_ids
+                ):
+                    raise H3Error("An effect targets a region outside this shot.")
+                ids = list(dict.fromkeys(raw_ids))
+            else:
+                region = layer.get("region_id")
+                if not isinstance(region, str) or region not in regions:
+                    raise H3Error("An effect targets a region outside this shot.")
+                ids = [region]
+            if len(ids) == 1:
+                clean["region_id"] = ids[0]
+            else:
+                clean["region_ids"] = ids
         if spec["kind"] != "camera":
-            for key, maximum in (("intensity", 1), ("feather", 32)):
+            limits = (("intensity", 1), ("feather", 32)) if mode != FULL_FRAME else (("intensity", 1),)
+            for key, maximum in limits:
                 if key not in layer:
                     continue
                 number = layer[key]
@@ -71,7 +94,11 @@ def check_stack(value, regions):
 def request_text(shots, token):
     return json.dumps({"revision": token, "max_layers_per_shot": MAX_LAYERS,
                        "application_modes": MODES, "presets": CATALOG,
-                       "optional_layer_fields": {"intensity": "0–1", "feather": "0–32 pixels"},
+                       "optional_layer_fields": {
+                           "intensity": "0–1",
+                           "feather": "0–32 pixels",
+                           "region_ids": "list of region IDs to share one masked effect across multiple regions",
+                       },
                        "shots": shots}, ensure_ascii=False)
 
 

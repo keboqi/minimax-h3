@@ -2,10 +2,20 @@
 
 from urllib.parse import quote
 
-from h3_app.drama3.effect_enhancement import base_stack, revision
+from h3_app.drama3.effect_enhancement import FULL_FRAME, base_stack, layer_region_ids, revision
 from h3_app.drama3.serving.planner import spoken_text
 from . import effect_regions
 from .visuals import stills_dir
+
+
+def _stack_regions_valid(stack, region_ids):
+    for layer in stack:
+        if layer.get("mode", FULL_FRAME) == FULL_FRAME:
+            continue
+        ids = layer_region_ids(layer)
+        if not ids or any(rid not in region_ids for rid in ids):
+            return False
+    return True
 
 
 def inventory(audio, root, rows, subjects, data, *, speech=()):
@@ -32,8 +42,7 @@ def inventory(audio, root, rows, subjects, data, *, speech=()):
                        for region in regions]
         region_ids = {region["id"] for region in regions or ()}
         stack = entry.get("effects")
-        if stack is not None and any(layer.get("region_id") not in region_ids
-                                     for layer in stack if "region_id" in layer):
+        if stack is not None and not _stack_regions_valid(stack, region_ids):
             stack = None
         items.append({
             "shot_id": shot_id, "index": row["index"], "image": image,
@@ -65,11 +74,24 @@ def region_url(project, mask):
 
 def layer_payload(project, item, stack):
     masks = {region["id"]: region["mask"] for region in item["regions"] or ()}
-    return [
-        {**layer, "mask_file": masks[layer["region_id"]],
-         "mask_url": region_url(project, masks[layer["region_id"]])} if "region_id" in layer else layer
-        for layer in stack
-    ]
+    payload = []
+    for layer in stack:
+        ids = layer_region_ids(layer)
+        if len(ids) > 1:
+            payload.append({
+                **layer,
+                "mask_files": [masks[rid] for rid in ids],
+                "mask_urls": [region_url(project, masks[rid]) for rid in ids],
+            })
+        elif len(ids) == 1:
+            payload.append({
+                **layer,
+                "mask_file": masks[ids[0]],
+                "mask_url": region_url(project, masks[ids[0]]),
+            })
+        else:
+            payload.append(layer)
+    return payload
 
 
 def public_pass(project, items, sounds, data):

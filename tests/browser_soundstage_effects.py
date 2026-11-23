@@ -73,11 +73,15 @@ def check_enhancement(page, fixture):
         image = row["image_file"]
         path = effect_regions.manifest_path(folder, image, effect_regions.concepts(row, labels))
         path.parent.mkdir(exist_ok=True)
-        mask = f"{image}.{'a' * 32}.region_1.png"
+        mask1 = f"{image}.{'a' * 32}.region_1.png"
+        mask2 = f"{image}.{'b' * 32}.region_2.png"
         with Image.open(folder / image) as still:
-            Image.new("RGBA", still.size, (255, 255, 255, 180)).save(path.parent / mask)
-        path.write_text(json.dumps([{"id": "region_1", "label": "window", "mask": mask,
-                                    "box": [0, 0, 0.5, 1]}]), encoding="utf-8")
+            Image.new("RGBA", still.size, (255, 255, 255, 180)).save(path.parent / mask1)
+            Image.new("RGBA", still.size, (255, 255, 255, 180)).save(path.parent / mask2)
+        path.write_text(json.dumps([
+            {"id": "region_1", "label": "window", "mask": mask1, "box": [0, 0, 0.4, 1]},
+            {"id": "region_2", "label": "lamp", "mask": mask2, "box": [0.6, 0, 1, 1]},
+        ]), encoding="utf-8")
     api = f"{API}/project/video/effects"
     prompt = fixture.ok(fixture.client.post(f"{api}/prompt", params=NAME))["prompt"]
     request = json.loads(prompt.split("\n\n")[-1])
@@ -100,7 +104,137 @@ def check_enhancement(page, fixture):
     dialog.get_by_role("button", name="Close").click()
     page.locator('.shot-row[data-shot="0"]').click()
     page.locator("#shot-effects").click()
-    expect(dialog.get_by_role("combobox", name="Region")).to_have_count(2)
+
+    # Verify mask refine overlay/click alignment and right-click exclude.
+    dialog.locator(".pass-seg-chip").first.click()
+    mask_box_el = dialog.locator(".pass-mask")
+    mask_img_el = mask_box_el.locator("img")
+    mask_img_el.evaluate("img => img.decode()")
+    mask_box = mask_box_el.bounding_box()
+    img_box = mask_img_el.bounding_box()
+    assert mask_box and img_box
+    assert abs(mask_box["width"] - img_box["width"]) <= 1, (mask_box, img_box)
+    assert abs(mask_box["height"] - img_box["height"]) <= 1, (mask_box, img_box)
+    assert abs(mask_box["x"] - img_box["x"]) <= 1, (mask_box, img_box)
+    assert abs(mask_box["y"] - img_box["y"]) <= 1, (mask_box, img_box)
+    mask_box_el.click(position={"x": 40, "y": 40})
+    mask_box_el.click(button="right", position={"x": 80, "y": 40})
+    expect(dialog.locator(".pass-point.include")).to_have_count(1)
+    expect(dialog.locator(".pass-point.exclude")).to_have_count(1)
+    dialog.get_by_role("button", name="Done").click()
+
+    # Grouped multi-effect + multi-object set.
+    expect(dialog.get_by_text("1 set · 2 / 16 effects")).to_be_visible()
+    set0 = dialog.locator('.pass-set-card[data-set-index="0"]')
+    set0_effects = set0.get_by_role("combobox", name="Effect")
+    expect(set0_effects).to_have_count(2)
+    assert set0_effects.nth(0).locator("optgroup").count() == 3
+    set0_effects.nth(0).select_option("snow")
+    expect(set0_effects.nth(0)).to_have_value("snow")
+
+    preset_dialog = page.locator("#effect-preset-dialog")
+    set0.locator('.pass-effect-row[data-effect-index="0"]').get_by_role("button", name="Previews").click()
+    expect(preset_dialog).to_be_visible()
+    expect(dialog).to_be_visible()
+    expect(preset_dialog.get_by_role("button", name="Atmosphere", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(preset_dialog.get_by_role("button", name="Snow", exact=True)).to_have_attribute("aria-pressed", "true")
+    rain_card = preset_dialog.get_by_role("button", name="Rain", exact=True)
+    rain_canvas = rain_card.locator("canvas")
+    rain_poster = rain_canvas.evaluate("canvas => canvas.toDataURL()")
+    rain_card.hover()
+    expect(rain_card).to_have_attribute("data-playing", "")
+    page.wait_for_function(
+        """poster => document.querySelector('#effect-preset-dialog [data-effect="rain"] canvas').toDataURL() !== poster""",
+        arg=rain_poster,
+    )
+    shot_image = video["plan"]["rows"][0]["image"]
+    preset_dialog.get_by_role("button", name="This shot", exact=True).click()
+    expect(rain_card.locator("img")).to_have_attribute("src", shot_image)
+    preset_dialog.get_by_role("button", name="Demo scenes", exact=True).click()
+    assert (rain_card.locator("img").get_attribute("src") or "").endswith("effect-demo-atmosphere.webp")
+    rain_card.click()
+    expect(preset_dialog).to_be_hidden()
+    expect(set0_effects.nth(0)).to_have_value("rain")
+
+    set0.get_by_role("combobox", name="Add object").select_option("region_2")
+    expect(set0.locator(".pass-region-chip")).to_have_count(2)
+
+    set0.get_by_role("button", name="+ Add effect").click()
+    expect(preset_dialog).to_be_visible()
+    preset_dialog.get_by_role("button", name="Camera movement", exact=True).click()
+    expect(preset_dialog.get_by_role("button", name="Slow push in", exact=True)).to_be_disabled()
+    expect(preset_dialog.get_by_text("Camera moves apply to Full frame only.")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(preset_dialog).to_be_hidden()
+
+    # Full frame set with Camera + Lightning + Rain sharing intensity.
+    dialog.get_by_role("button", name="+ Add effect set").click()
+    expect(preset_dialog).to_be_visible()
+    expect(preset_dialog.get_by_role("heading", name="Add effect set")).to_be_visible()
+    push_card = preset_dialog.get_by_role("button", name="Slow push in", exact=True)
+    push_image = push_card.locator("img")
+    push_poster = push_image.get_attribute("style")
+    push_card.hover()
+    expect(push_card).to_have_attribute("data-playing", "")
+    page.wait_for_function(
+        """poster => document.querySelector('#effect-preset-dialog [data-effect="push_in"] img').getAttribute('style') !== poster""",
+        arg=push_poster,
+    )
+    push_card.click()
+    expect(preset_dialog).to_be_hidden()
+    expect(dialog.get_by_text("2 sets · 3 / 16 effects")).to_be_visible()
+
+    set1 = dialog.locator('.pass-set-card[data-set-index="1"]')
+    set1.get_by_role("button", name="+ Add effect").click()
+    expect(preset_dialog).to_be_visible()
+    preset_dialog.get_by_role("button", name="Lighting & framing", exact=True).click()
+    preset_dialog.get_by_role("button", name="Lightning", exact=True).click()
+    expect(preset_dialog).to_be_hidden()
+
+    set1.get_by_role("button", name="+ Add effect").click()
+    expect(preset_dialog).to_be_visible()
+    preset_dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+    preset_dialog.get_by_role("button", name="Rain", exact=True).click()
+    expect(preset_dialog).to_be_hidden()
+    expect(dialog.get_by_text("2 sets · 5 / 16 effects")).to_be_visible()
+
+    set1.get_by_role("slider", name="intensity").fill("0.7")
+    expect(set1.get_by_text("70%")).to_be_visible()
+    set1_apply = set1.get_by_role("combobox", name="Apply")
+    for mode in ("inside", "outside", "behind"):
+        assert set1_apply.locator(f'option[value="{mode}"]').is_disabled()
+    expect(set1.get_by_text("Camera moves apply to Full frame only.")).to_be_visible()
+    assert set0_effects.nth(0).locator('optgroup[label="Camera movement"]').is_disabled()
+    assert not set1.get_by_role("combobox", name="Effect").nth(0).locator('optgroup[label="Camera movement"]').is_disabled()
+
+    # Separate set with different intensity.
+    dialog.get_by_role("button", name="+ Add effect set").click()
+    expect(preset_dialog).to_be_visible()
+    preset_dialog.get_by_role("button", name="Atmosphere", exact=True).click()
+    preset_dialog.get_by_role("button", name="Fog", exact=True).click()
+    expect(preset_dialog).to_be_hidden()
+    set2 = dialog.locator('.pass-set-card[data-set-index="2"]')
+    set2.get_by_role("slider", name="intensity").fill("0.4")
+    expect(set2.get_by_text("40%")).to_be_visible()
+
+    with page.expect_response(lambda response: "/project/video/effects/shot" in response.url and response.request.method == "POST"):
+        dialog.get_by_role("button", name="Save shot effects").click()
+    expect(dialog).to_be_hidden()
+    page.wait_for_load_state("networkidle")
+    saved_effects = fixture.project()["video"]["effect_enhancement"]["shots"][0]["effects"]
+    assert saved_effects == [
+        {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+        {"preset": "cold_tint", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+        {"preset": "push_in", "mode": "full_frame"},
+        {"preset": "lightning", "mode": "full_frame", "intensity": 0.7},
+        {"preset": "rain", "mode": "full_frame", "intensity": 0.7},
+        {"preset": "fog", "mode": "full_frame", "intensity": 0.4},
+    ], saved_effects
+
+    page.locator("#shot-effects").click()
+    expect(dialog.get_by_text("3 sets · 6 / 16 effects")).to_be_visible()
+    dialog.get_by_role("button", name="Close").click()
+    expect(dialog).to_be_hidden()
 
 
 def run(*, webgpu=False):
@@ -504,30 +638,49 @@ def run_masked_export():
         Image.new("RGB", size, (50, 50, 50)).save(image)
         masks = folder / ".effect-masks"
         masks.mkdir()
-        mask = Image.new("RGBA", size)
-        ImageDraw.Draw(mask).rectangle((0, 0, 79, 89), fill="white")
-        mask.save(masks / "left.png")
-        effects = [{"preset": "push_in", "mode": "full_frame"},
-                   *({"preset": "cold_tint", "mode": "inside", "mask_file": "left.png", "feather": 0}
-                     for _ in range(3))]
-        timeline = [
-            {"index": 0, "start": 0, "end": 1 / FPS, "fade": 0,
-             "effects": [layer["preset"] for layer in effects], "effect_layers": effects},
-            {"index": 1, "start": 1 / FPS, "end": 4 / FPS, "fade": 2 / FPS, "effects": []},
-        ]
-        frames = effects_export.capture_frames(folder, timeline, [], [image, image], size, 4)
-        try:
-            stream, count = next(frames)
-            assert count == 4
-            images = [Image.open(BytesIO(b"\xff\xd8" + frame)).copy().convert("RGB")
-                      for frame in stream.read_bytes().split(b"\xff\xd8")[1:]]
-        finally:
-            frames.close()
-        left = [frame.getpixel((18, 45))[2] for frame in images]
-        right = [frame.getpixel((140, 45))[2] for frame in images]
+        left_mask = Image.new("RGBA", size)
+        ImageDraw.Draw(left_mask).rectangle((0, 0, 49, 89), fill="white")
+        left_mask.save(masks / "left.png")
+        right_mask = Image.new("RGBA", size)
+        ImageDraw.Draw(right_mask).rectangle((110, 0, 159, 89), fill="white")
+        right_mask.save(masks / "right.png")
+
+        def render_frames(effects):
+            timeline = [
+                {"index": 0, "start": 0, "end": 1 / FPS, "fade": 0,
+                 "effects": [layer["preset"] for layer in effects], "effect_layers": effects},
+                {"index": 1, "start": 1 / FPS, "end": 4 / FPS, "fade": 2 / FPS, "effects": []},
+            ]
+            frames = effects_export.capture_frames(folder, timeline, [], [image, image], size, 4)
+            try:
+                stream, count = next(frames)
+                assert count == 4
+                return [Image.open(BytesIO(b"\xff\xd8" + frame)).copy().convert("RGB")
+                        for frame in stream.read_bytes().split(b"\xff\xd8")[1:]]
+            finally:
+                frames.close()
+
+        inside_images = render_frames([
+            {"preset": "push_in", "mode": "full_frame"},
+            *({"preset": "cold_tint", "mode": "inside", "mask_files": ["left.png", "right.png"], "feather": 0}
+              for _ in range(3)),
+        ])
+        left = [frame.getpixel((18, 45))[2] for frame in inside_images]
+        center = [frame.getpixel((80, 45))[2] for frame in inside_images]
+        right = [frame.getpixel((140, 45))[2] for frame in inside_images]
         assert left[0] > left[2] + 5 and left[2] > left[3] + 5, left
-        assert max(right) - min(right) <= 4, right
-    print("PASS: stacked effects share a mask and fade with their source shot during export")
+        assert right[0] > right[2] + 5 and right[2] > right[3] + 5, right
+        assert max(center) - min(center) <= 4, center
+
+        outside_images = render_frames([
+            *({"preset": "cold_tint", "mode": "outside", "mask_files": ["left.png", "right.png"], "feather": 0}
+              for _ in range(3)),
+        ])
+        out_left = outside_images[0].getpixel((18, 45))[2]
+        out_center = outside_images[0].getpixel((80, 45))[2]
+        out_right = outside_images[0].getpixel((140, 45))[2]
+        assert out_center > out_left + 10 and out_center > out_right + 10, (out_left, out_center, out_right)
+    print("PASS: stacked effects share multi-region union masks and fade with their source shot during export")
 
 
 if __name__ == "__main__":

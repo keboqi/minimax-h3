@@ -141,7 +141,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
       lastMaskShot = frame.shot;
       lastMaskBackground = frame.background;
       const relevant = [frame.background, ...shots.slice(frame.index, frame.index + 2)];
-      if (relevant.some((shot) => shot.effect_layers?.some((layer) => layer.mask_url))) {
+      if (relevant.some((shot) => shot.effect_layers?.some((layer) => layer.mask_url || layer.mask_urls?.length))) {
         preloadEffectMasks(relevant).then(sync, sync);
       }
     }
@@ -314,8 +314,10 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     const effectChips = effectLayers.map((layer) => {
       const name = presets[layer.preset]?.label;
       if (!name) return null;
+      const rids = layer.region_ids?.length ? layer.region_ids : (layer.region_id ? [layer.region_id] : []);
+      const names = rids.map((id) => regionsById.get(id)).filter(Boolean);
       const modeLabel = layer.mode && layer.mode !== "full_frame"
-        ? `${layer.mode[0].toUpperCase()}${layer.mode.slice(1)}${regionsById.get(layer.region_id) ? ` ${regionsById.get(layer.region_id)}` : ""}`
+        ? `${layer.mode[0].toUpperCase()}${layer.mode.slice(1)}${names.length ? ` ${names.join(" + ")}` : ""}`
         : "";
       return modeLabel ? `${name} · ${modeLabel}` : name;
     }).filter(Boolean);

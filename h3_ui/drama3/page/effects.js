@@ -293,9 +293,10 @@ const dissolveCanvases = new WeakMap();
 const maskImages = new Map();
 const stackBuffers = new WeakMap();
 
+const layerMaskUrls = (layer) => layer.mask_urls?.length ? layer.mask_urls : (layer.mask_url ? [layer.mask_url] : []);
+
 export function preloadEffectMasks(shots) {
-  const urls = new Set(shots.flatMap((shot) => (shot.effect_layers || [])
-    .map((layer) => layer.mask_url).filter(Boolean)));
+  const urls = new Set(shots.flatMap((shot) => (shot.effect_layers || []).flatMap(layerMaskUrls)));
   const ready = [...urls].map((url) => {
     let entry = maskImages.get(url);
     if (entry) {
@@ -333,23 +334,26 @@ function paintShotStack(target, scratch, matte, image, layers, seconds, cue, see
   drawInShot(target, image, cam, w, h);
   target.restore();
   for (const layer of layers) {
-    const {preset, mode, mask_url: url} = layer;
+    const {preset, mode} = layer;
     const atmosphere = atmosphereEffects.has(preset);
     if (!atmosphere && !lightEffects.has(preset)) continue;
-    const mask = maskImages.get(url)?.image;
-    if (mode !== "full_frame" && !mask?.naturalWidth) continue;
+    const urls = layerMaskUrls(layer);
+    const masks = urls.map((url) => maskImages.get(url)?.image).filter((img) => img?.naturalWidth);
+    if (mode !== "full_frame" && !masks.length) continue;
     scratch.clearRect(0, 0, w, h);
     paintLayer2D(scratch, atmosphere ? [preset] : [], atmosphere ? [] : [preset], seconds, cue, w, h, seed, cam);
-    if (mask) {
+    if (mode !== "full_frame" && masks.length) {
       scratch.save();
       scratch.globalCompositeOperation = mode === "inside" ? "destination-in" : "destination-out";
       const feather = layer.feather ?? 1;
       if (feather) scratch.filter = `blur(${feather * Math.max(w, h) / 1280}px)`;
       // Draw through a full-frame matte so destination-in also clears outside the image rectangle.
       matte.clearRect(0, 0, w, h);
-      matte.save();
-      drawInShot(matte, mask, cam, w, h);
-      matte.restore();
+      for (const mask of masks) {
+        matte.save();
+        drawInShot(matte, mask, cam, w, h);
+        matte.restore();
+      }
       scratch.drawImage(matte.canvas, 0, 0);
       scratch.restore();
     }

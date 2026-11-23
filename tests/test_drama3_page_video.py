@@ -943,6 +943,104 @@ class Drama3PageVideoTests(unittest.TestCase):
             refused = self.client.post(f"{API}/project/video/draw", params=NAME, json={"only": only})
             self.assertIn("missing ones", refused.json()["error"])
 
+    def test_multi_region_effect_enhancement_contract_and_inventory(self):
+        from PIL import Image
+        from h3_app.drama3 import effect_enhancement
+        from h3_app.errors import H3Error
+        from h3_ui.drama3 import effect_regions, effects_pass
+
+        regions = {"region_1", "region_2"}
+        self.assertEqual(
+            effect_enhancement.check_stack(
+                [{"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2", "region_1"]}],
+                regions,
+            ),
+            [{"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]}],
+        )
+        self.assertEqual(
+            effect_enhancement.check_stack(
+                [{"preset": "rain", "mode": "inside", "region_ids": ["region_1"]}],
+                regions,
+            ),
+            [{"preset": "rain", "mode": "inside", "region_id": "region_1"}],
+        )
+        for bad in (
+            [{"preset": "rain", "mode": "inside", "region_ids": ["region_1", "missing"]}],
+            [{"preset": "rain", "mode": "inside", "region_ids": []}],
+            [{"preset": "rain", "mode": "inside", "region_id": "region_1", "region_ids": ["region_1", "region_2"]}],
+            [{"preset": "push_in", "mode": "inside", "region_ids": ["region_1", "region_2"]}],
+        ):
+            with self.assertRaises(H3Error):
+                effect_enhancement.check_stack(bad, regions)
+
+        ten_layers = [{"preset": "rain", "mode": "full_frame", "intensity": 0.1 * i} for i in range(1, 11)]
+        self.assertEqual(len(effect_enhancement.check_stack(ten_layers, regions)), 10)
+        self.assertEqual(
+            effect_enhancement.check_stack(
+                [{"preset": "rain", "mode": "full_frame", "intensity": 0.5, "feather": 8}],
+                regions,
+            ),
+            [{"preset": "rain", "mode": "full_frame", "intensity": 0.5}],
+        )
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+        project = self.project()["video"]
+        labels_by_key = {s["key"]: s for s in project["plan"]["subjects"]}
+        row0 = project["plan"]["rows"][0]
+        manifest = effect_regions.manifest_path(folder, row0["image_file"], effect_regions.concepts(row0, labels_by_key))
+        manifest.parent.mkdir(exist_ok=True)
+        mask1 = f"{row0['image_file']}.{'a' * 32}.region_1.png"
+        mask2 = f"{row0['image_file']}.{'b' * 32}.region_2.png"
+        for mask in (mask1, mask2):
+            Image.new("RGBA", (64, 36), (255, 255, 255, 200)).save(manifest.parent / mask)
+        manifest.write_text(json.dumps([
+            {"id": "region_1", "label": "window", "mask": mask1, "box": [0, 0, 0.4, 1]},
+            {"id": "region_2", "label": "lamp", "mask": mask2, "box": [0.6, 0, 1, 1]},
+        ]), encoding="utf-8")
+
+        shot0 = self.project()["video"]["effect_enhancement"]["shots"][0]
+        saved = self.ok(self.client.post(
+            f"{API}/project/video/effects/shot",
+            params=NAME,
+            json={
+                "shot_id": shot0["shot_id"],
+                "image": shot0["image"],
+                "effects": [
+                    {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+                    {"preset": "push_in", "mode": "full_frame"},
+                ],
+            },
+        ))["video"]
+        layer0 = saved["stills"]["shots"][0]["effect_layers"][0]
+        self.assertEqual(layer0["mask_files"], [mask1, mask2])
+        self.assertEqual(len(layer0["mask_urls"]), 2)
+        for url in layer0["mask_urls"]:
+            self.assertEqual(self.client.get(url).status_code, 200)
+
+        data, _ = self.store.soundstage_project("Night Market")
+        items = effects_pass.inventory(self.mix, self.runtime.output_dir, project["plan"]["rows"], project["plan"]["subjects"], data)
+        self.assertEqual(items[0]["applied"], [
+            {"preset": "rain", "mode": "inside", "region_ids": ["region_1", "region_2"]},
+            {"preset": "push_in", "mode": "full_frame"},
+        ])
+        manifest.write_text(json.dumps([{"id": "region_1", "label": "window", "mask": mask1, "box": [0, 0, 0.4, 1]}]), encoding="utf-8")
+        invalidated = effects_pass.inventory(self.mix, self.runtime.output_dir, project["plan"]["rows"], project["plan"]["subjects"], data)
+        self.assertIsNone(invalidated[0]["applied"])
+
+        corrupt_data = {
+            **data,
+            "video_effect_stacks": {
+                shot0["shot_id"]: {"image": shot0["image"], "effects": [{"preset": "rain", "mode": "inside", "region_ids": []}]},
+            },
+        }
+        empty_regions = effects_pass.inventory(
+            self.mix, self.runtime.output_dir, project["plan"]["rows"], project["plan"]["subjects"], corrupt_data,
+        )
+        self.assertIsNone(empty_regions[0]["applied"])
+
 
 if __name__ == "__main__":
     unittest.main()

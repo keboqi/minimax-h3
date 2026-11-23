@@ -73,7 +73,14 @@ def capture_frames(folder, shots, sounds, images, size, total_frames, progress=N
         if "effect_layers" in shot:
             entry["effect_layers"] = []
             for layer in shot["effect_layers"]:
-                if mask := layer.get("mask_file"):
+                if files := layer.get("mask_files"):
+                    paths = []
+                    for mask in files:
+                        path = f"/masks/{mask}"
+                        masks_by_url[path] = Path(image).parent / MASK_FOLDER / mask
+                        paths.append(path)
+                    layer = {**layer, "mask_urls": paths}
+                elif mask := layer.get("mask_file"):
                     path = f"/masks/{mask}"
                     masks_by_url[path] = Path(image).parent / MASK_FOLDER / mask
                     layer = {**layer, "mask_url": path}
