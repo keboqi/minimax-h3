@@ -19,7 +19,8 @@ NAMES = {
     "h3_apply_continuation", "H3ContinuationPrefix", "h3_storyboard_latent_path",
     "H3SaveAVLatent", "H3LoadAVLatent",
     "H3_TAIL_FRAMES", "h3_tail_latent_steps", "h3_tail_pixels", "h3_tail_wave", "H3EncodeAVTail", "H3LipSyncMask",
-    "H3LowerFaceMask", "H3LipSyncPrepareCrop", "H3LipSyncBlend",
+    "_LOWER_FACE_LANDMARKS", "_mediapipe_mouth_polygon",
+    "H3LowerFaceMask", "H3LipSyncPrepareCrop", "H3LipSyncSelectRefFrames", "H3LipSyncBlend",
 }
 
 
@@ -178,9 +179,85 @@ class ContinuationGeometryTests(unittest.TestCase):
             _, hard, _ = build(crops, transform, stitch_feather=0)
 
         self.assertTrue((composite[0, 32:52, 20:44] == 1).all())
-        self.assertAlmostEqual(float(composite[0, 31, 32]), 2 / 3)
+        self.assertAlmostEqual(float(composite[0, 31, 32]), 5 / 6)
+        self.assertAlmostEqual(float(composite[0, 27, 32]), 1 / 6)
         self.assertFalse(torch.any(composite[denoise == 0]))
         torch.testing.assert_close(hard[0], torch.from_numpy(polygon))
+
+    def test_lower_face_mask_edge_ramp_roll_clip_and_landmark_interpolation(self):
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest("OpenCV is required for landmark mask geometry tests")
+
+        crops = torch.zeros((8, 64, 64, 3))
+        polygon = crops[0, ..., 0].numpy().copy()
+        polygon[32:52, 20:44] = 1.0
+        transform = {"face_rect": [(8.0, 8.0, 48.0, 48.0)] * 8, "boxes": [(0, 0, 64, 64)] * 8}
+        mesh = SimpleNamespace(close=lambda: None)
+        mediapipe = SimpleNamespace(solutions=SimpleNamespace(face_mesh=SimpleNamespace(FaceMesh=lambda **_: mesh)))
+        build = self.nodes["H3LowerFaceMask"]().build
+        with patch.dict(sys.modules, {"cv2": cv2, "mediapipe": mediapipe}), \
+                patch.dict(self.nodes, {"_mediapipe_mouth_polygon": lambda *_args, **_kwargs: polygon}):
+            _, ramped, _ = build(crops, transform, active_start=1, active_end=7, stitch_feather=6, edge_ramp=3)
+            _, edge_start, _ = build(crops, transform, active_start=0, active_end=8, stitch_feather=6, edge_ramp=3)
+
+        self.assertEqual(float(ramped[0, 40, 32]), 0.0)
+        self.assertAlmostEqual(float(ramped[1, 40, 32]), 0.25, places=5)
+        self.assertAlmostEqual(float(ramped[2, 40, 32]), 0.75, places=5)
+        self.assertAlmostEqual(float(ramped[3, 40, 32]), 1.0, places=5)
+        self.assertAlmostEqual(float(ramped[4, 40, 32]), 1.0, places=5)
+        self.assertAlmostEqual(float(ramped[5, 40, 32]), 0.75, places=5)
+        self.assertAlmostEqual(float(ramped[6, 40, 32]), 0.25, places=5)
+        self.assertEqual(float(ramped[7, 40, 32]), 0.0)
+        self.assertAlmostEqual(float(edge_start[0, 40, 32]), 1.0, places=5)
+        self.assertAlmostEqual(float(edge_start[7, 40, 32]), 1.0, places=5)
+
+        # Roll-tilted subnasale clip: head rolled so left eye (0.25, 0.35) is lower than right eye (0.65, 0.15).
+        # An upper-lip point at (0.60, 0.37) is above nose.y (0.40) horizontally, yet below the tilted nose line!
+        lm = [SimpleNamespace(x=0.5, y=0.55) for _ in range(468)]
+        lm[33] = SimpleNamespace(x=0.25, y=0.35)
+        lm[263] = SimpleNamespace(x=0.65, y=0.15)
+        lm[2] = SimpleNamespace(x=0.50, y=0.40)
+        lm[1] = SimpleNamespace(x=0.50, y=0.35)
+        lm[13] = SimpleNamespace(x=0.55, y=0.52)
+        lm[14] = SimpleNamespace(x=0.55, y=0.56)
+        lm[152] = SimpleNamespace(x=0.65, y=0.78)
+        for idx in self.nodes["_LOWER_FACE_LANDMARKS"]:
+            lm[idx] = SimpleNamespace(x=0.55, y=0.58)
+        lm[61] = SimpleNamespace(x=0.45, y=0.54)
+        lm[291] = SimpleNamespace(x=0.62, y=0.37)
+        lm[37] = SimpleNamespace(x=0.60, y=0.37)
+        lm[148] = SimpleNamespace(x=0.58, y=0.74)
+        fake_face = SimpleNamespace(multi_face_landmarks=[SimpleNamespace(landmark=lm)])
+        mesh_proc = SimpleNamespace(process=lambda _img: fake_face, close=lambda: None)
+        tilted = self.nodes["_mediapipe_mouth_polygon"](
+            crops[0, ..., :3].numpy().astype("uint8"), 100, 100, mesh_proc, jaw_margin=0.06,
+        )
+        self.assertIsNotNone(tilted)
+        # Pixel (x=59, y=38) lies above horizontal nose_y=40 yet inside the rolled lip polygon.
+        self.assertEqual(float(tilted[38, 59]), 1.0)
+
+        # 2-frame MediaPipe dropout interpolation (frames 0, 1, 4 valid -> frames 2, 3 bridged).
+        crops5 = torch.zeros((5, 64, 64, 3))
+        t5 = {"face_rect": [(8.0, 8.0, 48.0, 48.0)] * 5, "boxes": [(0, 0, 64, 64)] * 5}
+        seq = [fake_face, fake_face, SimpleNamespace(multi_face_landmarks=None), SimpleNamespace(multi_face_landmarks=None), fake_face]
+        idx_iter = iter(seq)
+        mesh_gap = SimpleNamespace(process=lambda _img: next(idx_iter), close=lambda: None)
+        mediapipe_gap = SimpleNamespace(solutions=SimpleNamespace(face_mesh=SimpleNamespace(FaceMesh=lambda **_: mesh_gap)))
+        seen_overrides = []
+        orig_poly = self.nodes["_mediapipe_mouth_polygon"]
+
+        def spy_poly(*args, **kwargs):
+            seen_overrides.append(kwargs.get("pts_override") is not None)
+            return orig_poly(*args, **kwargs)
+
+        with patch.dict(sys.modules, {"cv2": cv2, "mediapipe": mediapipe_gap}), \
+                patch.dict(self.nodes, {"_mediapipe_mouth_polygon": spy_poly}):
+            _, gap_comp, _ = build(crops5, t5, stitch_feather=4, edge_ramp=0)
+        self.assertEqual(seen_overrides, [True] * 5)
+        self.assertTrue((gap_comp[2] > 0).any())
+        self.assertTrue((gap_comp[3] > 0).any())
 
     def test_lip_sync_prepare_crop_neutralizes_core_and_preserves_context(self):
         crops = torch.full((2, 96, 96, 3), 0.2)
@@ -241,6 +318,107 @@ class ContinuationGeometryTests(unittest.TestCase):
         self.assertTrue(torch.equal(out_torch[1, :18, :], src[1, :18, :]))
         ring_mean_torch = out_torch[1, 26:32, 26:32, :].mean(dim=(0, 1))
         self.assertAlmostEqual(float(ring_mean_torch[0]), float(src[1, 26:32, 26:32, 0].mean()), delta=0.05)
+
+    def test_lip_sync_blend_match_only_and_temporal_smoothing(self):
+        import builtins
+
+        src = torch.zeros((5, 96, 96, 3), dtype=torch.float32)
+        src[..., 0], src[..., 1], src[..., 2] = 0.75, 0.55, 0.45
+        src[:, ::2, ::2, :] += 0.03
+        mask = torch.zeros((5, 96, 96), dtype=torch.float32)
+        mask[1:, 24:72, 24:72] = 1.0  # frame 0 inactive; frames 1..4 active
+
+        gen = src.clone()
+        # Shift generated frames 1..4 cooler; inject a single-frame red spike on frame 2 outside core;
+        # put a dark inner mouth cavity inside core and a distinct sentinel outside mask.
+        gen[1:, :, :, 0] = (src[1:, :, :, 0] - 0.18).clamp(0.0, 1.0)
+        gen[1:, :, :, 1] = (src[1:, :, :, 1] + 0.06).clamp(0.0, 1.0)
+        gen[1:, :, :, 2] = (src[1:, :, :, 2] + 0.12).clamp(0.0, 1.0)
+        gen[2, :, :, 0] = (src[2, :, :, 0] - 0.40).clamp(0.0, 1.0)
+        gen[1:, 40:56, 40:56, :] = 0.02
+        gen[1:, 4:10, 4:10, :] = 0.12  # sentinel outside core and exterior ring
+
+        blend_fn = self.nodes["H3LipSyncBlend"]().blend
+        (out,) = blend_fn(src, gen, mask, color_match=1.0, sharpen=0.35, match_only=True, temporal_smooth=5)
+        (out_unsmoothed,) = blend_fn(src, gen, mask, color_match=1.0, sharpen=0.35, match_only=True, temporal_smooth=1)
+
+        # Inactive frame 0 stays generated_crops untouched; sentinel outside mask is NOT blended back to src.
+        self.assertTrue(torch.equal(out[0], gen[0]))
+        self.assertFalse(torch.allclose(out[1, 4:10, 4:10, :], src[1, 4:10, 4:10, :]))
+        # Core skin around dark mouth cavity matches source warmth; dark cavity stays dark.
+        skin_sample = out[1, 26:32, 26:32, :].mean(dim=(0, 1))
+        self.assertAlmostEqual(float(skin_sample[0]), float(src[1, 26:32, 26:32, 0].mean()), delta=0.06)
+        self.assertLess(float(out[1, 46:50, 46:50, :].mean()), 0.25)
+        # Temporal smoothing attenuates frame 2's isolated shift spike vs unsmoothed.
+        f2_err_smooth = abs(float(out[2, 26:32, 26:32, 0].mean() - src[2, 26:32, 26:32, 0].mean()))
+        f1_shift = float(out[1, 26:32, 26:32, 0].mean() - out_unsmoothed[1, 26:32, 26:32, 0].mean())
+        self.assertNotEqual(f1_shift, 0.0)
+        self.assertLess(f2_err_smooth, 0.16)
+
+        real_import = builtins.__import__
+
+        def no_cv2(name, *args, **kwargs):
+            if name == "cv2":
+                raise ImportError("cv2 disabled")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=no_cv2):
+            (out_torch,) = blend_fn(src, gen, mask, color_match=1.0, sharpen=0.35, match_only=True, temporal_smooth=5)
+            (out_torch_unsmoothed,) = blend_fn(
+                src, gen, mask, color_match=1.0, sharpen=0.35, match_only=True, temporal_smooth=1
+            )
+        self.assertTrue(torch.equal(out_torch[0], gen[0]))
+        self.assertAlmostEqual(
+            float(out_torch_unsmoothed[1, 26:32, 26:32, 0].mean()),
+            float(src[1, 26:32, 26:32, 0].mean()),
+            delta=0.06,
+        )
+        self.assertNotEqual(
+            float(out_torch[1, 26:32, 26:32, 0].mean() - out_torch_unsmoothed[1, 26:32, 26:32, 0].mean()),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            float(out_torch[1, 26:32, 26:32, 0].mean()),
+            float(src[1, 26:32, 26:32, 0].mean()),
+            delta=0.10,
+        )
+        self.assertLess(
+            abs(float(out_torch[2, 26:32, 26:32, 0].mean() - src[2, 26:32, 26:32, 0].mean())),
+            0.18,
+        )
+
+    def test_lip_sync_select_ref_frames_picks_sharp_neutral_and_open(self):
+        crops = torch.full((6, 64, 64, 3), 0.5)
+        # Frame 1: sharp face pattern + uniform resting mouth strip (y 38..49).
+        crops[1, 10:54, 10:54:2, :] = 0.9
+        crops[1, 38:50, 20:44, :] = 0.55
+        # Frame 2: sharp face pattern + open mouth contrast in mouth strip.
+        crops[2, 10:54, 10:54:2, :] = 0.9
+        crops[2, 40:44, 22:42, :] = 0.05
+        crops[2, 44:48, 22:42, :] = 0.95
+        # Frame 3 (absent) and frames 4..5 (padded tail beyond source_frames=4) have extreme contrast to ignore.
+        crops[3:, :, ::2, :] = 1.0
+        crops[3:, 40:46, :, :] = 0.0
+
+        transform = {
+            "source_frames": 4,
+            "absent": [False, False, False, True, False, False],
+            "detected": [True, True, True, True, True, True],
+            "face_rect": [(12.0, 12.0, 40.0, 40.0)] * 6,
+        }
+        select = self.nodes["H3LipSyncSelectRefFrames"]().select
+        with patch.dict(sys.modules, {"mediapipe": SimpleNamespace()}):
+            ref_neutral, ref_open = select(crops, transform)
+        torch.testing.assert_close(ref_neutral[0], crops[1])
+        torch.testing.assert_close(ref_open[0], crops[2])
+
+        # Identical mouth openness across valid sharp frames still picks two distinct temporal frames.
+        flat_crops = crops[:3].clone()
+        flat_crops[2] = crops[1].clone()
+        with patch.dict(sys.modules, {"mediapipe": SimpleNamespace()}):
+            n2, o2 = select(flat_crops, {**transform, "source_frames": 3, "absent": [False] * 3, "detected": [True] * 3})
+        self.assertEqual(n2.shape, (1, 64, 64, 3))
+        self.assertEqual(o2.shape, (1, 64, 64, 3))
 
     def test_short_source_or_target_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "at least 5"):

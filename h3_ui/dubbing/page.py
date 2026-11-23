@@ -303,7 +303,14 @@ def _step(status: str) -> str | None:
     return presenters.step_for_status(status)
 
 
-def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool = True, interrupt=None) -> None:
+def install_dubbing_page(
+    app: FastAPI,
+    handlers: DubbingHandlers,
+    *,
+    gpu: bool = True,
+    interrupt=None,
+    h3_values: Callable[[str], Any] | None = None,
+) -> None:
     """Serve the page at ``/dubbing/`` and its API under ``/dubbing/api``."""
     admission_lock = RLock()
     lip_sync_available = bool(gpu and handlers.services.generation_services is not None)
@@ -990,6 +997,12 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
             min_size, max_size = validate_face_size_range(raw_min, raw_max)
         else:
             min_size, max_size = 0.0, 1.0
+        h3_refinement = None
+        if h3_values is not None and (engine or "h3") == "h3":
+            from h3_app.refinement import H3_REFINEMENT_FIELDS
+
+            raw_h3 = h3_values(owner_of(request)) or {}
+            h3_refinement = {name: raw_h3[name] for name in H3_REFINEMENT_FIELDS if name in raw_h3}
         with admission_lock:
             _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
             values = [session_id, overrides, strength, feather]
@@ -1017,6 +1030,7 @@ def install_dubbing_page(app: FastAPI, handlers: DubbingHandlers, *, gpu: bool =
                     bbox_shift=bbox_shift,
                     inference_steps=inference_steps,
                     guidance_scale=guidance_scale,
+                    refinement=h3_refinement,
                 ),
                 values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
             )

@@ -15,12 +15,20 @@ FRAME_STRIDE = 17
 MAX_FRAMES = 362
 DEFAULT_CROP_SIZE = 640
 DEFAULT_LIP_SYNC_CROP_FACTOR = 1.65
-DEFAULT_AUTO_STRENGTH = 0.70
+DEFAULT_AUTO_STRENGTH = 0.58
 DEFAULT_AUTO_FEATHER = 6
+DEFAULT_EDGE_RAMP = 3
 DEFAULT_NEUTRALIZE_MOUTH = 0.65
+DEFAULT_BLEND_COLOR_MATCH = 0.85
+DEFAULT_BLEND_SHARPEN = 0.35
+DEFAULT_BLEND_TEMPORAL_SMOOTH = 5
 LIP_SYNC_PROMPT = (
     "Preserve the source shot, framing, identity, lighting and expression. "
     "Synchronize the speaker's mouth and jaw to the supplied dialogue."
+)
+LIP_SYNC_REF_PROMPT = (
+    "Preserve the exact speaker identity, facial structure, lip shape, teeth, skin texture and lighting "
+    "from <Picture 1> and <Picture 2>. Synchronize the speaker's mouth and jaw to the supplied dialogue."
 )
 
 
@@ -106,7 +114,7 @@ def build_auto_lip_sync_graph(
     track_inputs = dict(
         images=Graph.out(source), detector=FACE_DETECTOR, confidence=0.35,
         crop_factor=DEFAULT_LIP_SYNC_CROP_FACTOR, canvas_width=crop_size, canvas_height=crop_size,
-        canvas_mode="manual", smooth_window=21, size_smooth_window=51,
+        canvas_mode="manual", smooth_window=11, size_smooth_window=31,
         smooth_method="gaussian", size_mode="per_frame",
         identity_track=False, cut_detection="none", absent_shots="off",
     )
@@ -125,9 +133,10 @@ def build_auto_lip_sync_graph(
 
     masks = graph.add(
         "H3LowerFaceMask", crops=crops, transform=transform,
-        active_start=int(active_start), active_end=int(active_end), stitch_feather=int(feather),
+        active_start=int(active_start), active_end=int(active_end),
+        separate_opacity=True, stitch_feather=int(feather), edge_ramp=DEFAULT_EDGE_RAMP,
     )
-    denoise_mask, composite_mask = Graph.out(masks), Graph.out(masks, 1)
+    denoise_mask, composite_mask, spatial_mask = Graph.out(masks), Graph.out(masks, 1), Graph.out(masks, 2)
     prepared = graph.add(
         "H3LipSyncPrepareCrop", crops=crops, denoise_mask=denoise_mask,
         strength=DEFAULT_NEUTRALIZE_MOUTH,
@@ -136,10 +145,29 @@ def build_auto_lip_sync_graph(
     model, clip, encoder, decoder, audio_vae, schedule_model = add_refinement_stack(
         graph, models, config, crop_size, crop_size,
     )
-    inputs = dict(clip=clip, vae=encoder, prompt=LIP_SYNC_PROMPT, width=crop_size, height=crop_size, length=frames)
     reference = settings["mode"] == "Reference media"
+    inputs = dict(
+        clip=clip, vae=encoder,
+        prompt=LIP_SYNC_REF_PROMPT if reference else LIP_SYNC_PROMPT,
+        width=crop_size, height=crop_size, length=frames,
+    )
     if reference:
-        inputs.update(audio_vae=audio_vae, ref_image_size=settings["ref_image_size"])
+        refs = graph.add("H3LipSyncSelectRefFrames", crops=crops, transform=transform)
+        inputs.update(
+            audio_vae=audio_vae,
+            ref_image_size=settings["ref_image_size"],
+            **{
+                "ref_images.ref_image_0": Graph.out(refs, 0),
+                "ref_images.ref_image_1": Graph.out(refs, 1),
+            },
+        )
+    else:
+        if int(active_start) >= 3:
+            inputs["first_frame"] = Graph.out(graph.add("ImageFromBatch", image=crops, batch_index=0, length=1))
+        if 0 < int(active_end) <= int(frames) - 3:
+            inputs["last_frame"] = Graph.out(graph.add(
+                "ImageFromBatch", image=crops, batch_index=int(frames) - 1, length=1,
+            ))
     conditioning = graph.add("MiniMaxH3ReferenceToVideo" if reference else "MiniMaxH3ImageToVideo", **inputs)
     injected = graph.add(
         "H3InjectVideoLatent", av_latent=Graph.out(conditioning, 1),
@@ -159,8 +187,14 @@ def build_auto_lip_sync_graph(
                         latent_image=latent)
     video_latent = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(sampled))
     decoded = graph.add("VAEDecode", samples=Graph.out(video_latent), vae=decoder)
+    blended = graph.add(
+        "H3LipSyncBlend", source_crops=crops, generated_crops=Graph.out(decoded),
+        composite_mask=spatial_mask, color_match=DEFAULT_BLEND_COLOR_MATCH,
+        sharpen=DEFAULT_BLEND_SHARPEN, match_only=True,
+        temporal_smooth=DEFAULT_BLEND_TEMPORAL_SMOOTH,
+    )
     stitched = graph.add(
-        "H3FaceStitch", base_images=Graph.out(source), refined_crops=Graph.out(decoded), transform=transform,
+        "H3FaceStitch", base_images=Graph.out(source), refined_crops=Graph.out(blended), transform=transform,
         paste_region="face_ellipse", mask_dilation=0, feather=0, colour_match=0.0, blend=1.0,
         undetected_frames="skip", masks=composite_mask, feather_scales_with_crop=True,
     )

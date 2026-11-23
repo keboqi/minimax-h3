@@ -804,7 +804,8 @@ class DubbingHandlers:
     def lip_sync_video(self, session_id, manual_overrides=None, strength=None, feather=None,
                        expected_video=None, reviewed_revision=None, *,
                        min_face_size=None, max_face_size=None, gemini_api_key=None,
-                       engine=None, bbox_shift=None, inference_steps=None, guidance_scale=None):
+                       engine=None, bbox_shift=None, inference_steps=None, guidance_scale=None,
+                       refinement: dict[str, Any] | None = None):
         """Run automatic one-click lip sync on the session's latest completed video dub."""
         try:
             if self.services.generation_services is None:
@@ -837,6 +838,8 @@ class DubbingHandlers:
                 extra["min_face_size"] = min_face_size
             if max_face_size is not None:
                 extra["max_face_size"] = max_face_size
+            if refinement is not None:
+                extra["refinement"] = refinement
             if isinstance(manual_overrides, list):
                 manual_overrides = {(shot, speaker): track_id for shot, speaker, track_id in manual_overrides}
             for update in render_dub_lip_sync(

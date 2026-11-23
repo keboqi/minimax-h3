@@ -2667,35 +2667,73 @@ _LOWER_FACE_LANDMARKS = (
 )
 
 
-def _mediapipe_mouth_polygon(frame_rgb_uint8, width, height, face_mesh, target_center=(0.5, 0.5), jaw_margin=0.14):
+def _mediapipe_mouth_polygon(
+    frame_rgb_uint8,
+    width,
+    height,
+    face_mesh,
+    target_center=(0.5, 0.5),
+    jaw_margin=0.06,
+    *,
+    pts_override=None,
+):
     """Return a binary (H, W) float32 polygon mask over the real mouth/jaw landmarks, or None."""
     try:
         import cv2
         import numpy as np
     except ImportError:
         return None
-    result = face_mesh.process(frame_rgb_uint8)
-    faces = getattr(result, "multi_face_landmarks", None)
-    if not faces:
-        return None
-    # Pick the face closest to the tracked face_rect center.
-    tx, ty = target_center
-    best = min(
-        faces,
-        key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2,
-    )
-    nose_bottom_y = float(best.landmark[2].y) * height
-    chin_y = float(best.landmark[152].y) * height
-    mouth_mid_y = 0.5 * (float(best.landmark[13].y) + float(best.landmark[14].y)) * height
-    jaw_pad = max(0.0, float(jaw_margin)) * max(4.0, chin_y - nose_bottom_y)
+    if pts_override is None:
+        result = face_mesh.process(frame_rgb_uint8)
+        faces = getattr(result, "multi_face_landmarks", None)
+        if not faces:
+            return None
+        # Pick the face closest to the tracked face_rect center.
+        tx, ty = target_center
+        best = min(
+            faces,
+            key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2,
+        )
+        lm = {
+            idx: (float(best.landmark[idx].x), float(best.landmark[idx].y))
+            for idx in set(_LOWER_FACE_LANDMARKS) | {2, 13, 14, 33, 263, 152}
+        }
+    else:
+        lm = pts_override
+
+    p_nose = np.array([lm[2][0] * width, lm[2][1] * height], dtype=np.float32)
+    p_chin = np.array([lm[152][0] * width, lm[152][1] * height], dtype=np.float32)
+    p_mouth = np.array([
+        0.5 * (lm[13][0] + lm[14][0]) * width,
+        0.5 * (lm[13][1] + lm[14][1]) * height,
+    ], dtype=np.float32)
+    eye_vec = np.array([
+        (lm[263][0] - lm[33][0]) * width,
+        (lm[263][1] - lm[33][1]) * height,
+    ], dtype=np.float32)
+    eye_len = float(np.linalg.norm(eye_vec))
+    if eye_len > 1e-3:
+        u = eye_vec / eye_len
+        n = np.array([-u[1], u[0]], dtype=np.float32)
+    else:
+        n = np.array([0.0, 1.0], dtype=np.float32)
+    if float(np.dot(p_chin - p_nose, n)) < 0.0:
+        n = -n
+
+    nose_to_chin = max(4.0, float(np.dot(p_chin - p_nose, n)))
+    jaw_pad = max(0.0, float(jaw_margin)) * nose_to_chin
+    mouth_proj = float(np.dot(p_mouth - p_nose, n))
     pts_list = []
     for i in _LOWER_FACE_LANDMARKS:
-        px = float(best.landmark[i].x) * width
-        py = float(best.landmark[i].y) * height
-        if py > mouth_mid_y:
-            py += jaw_pad
-        py = max(nose_bottom_y, min(float(height - 1), py))
-        px = max(0.0, min(float(width - 1), px))
+        pt = np.array([lm[i][0] * width, lm[i][1] * height], dtype=np.float32)
+        proj = float(np.dot(pt - p_nose, n))
+        if proj > mouth_proj:
+            pt = pt + jaw_pad * n
+            proj = float(np.dot(pt - p_nose, n))
+        if proj < 0.0:
+            pt = pt - proj * n
+        px = max(0.0, min(float(width - 1), float(pt[0])))
+        py = max(0.0, min(float(height - 1), float(pt[1])))
         pts_list.append([px, py])
     pts = np.array(pts_list, dtype=np.float32)
     hull = cv2.convexHull(pts).astype(np.int32)
@@ -2721,10 +2759,12 @@ class H3LowerFaceMask:
                 "mouth_bottom": ("FLOAT", {"default": 1.02, "min": 0.6, "max": 1.35, "step": 0.01}),
                 "width_scale": ("FLOAT", {"default": 0.82, "min": 0.4, "max": 1.3, "step": 0.02}),
                 "denoise_expand": ("FLOAT", {"default": 1.15, "min": 1.0, "max": 1.6, "step": 0.02}),
-                "jaw_margin": ("FLOAT", {"default": 0.14, "min": 0.0, "max": 0.35, "step": 0.02}),
+                "jaw_margin": ("FLOAT", {"default": 0.06, "min": 0.0, "max": 0.35, "step": 0.02}),
                 "separate_opacity": ("BOOLEAN", {"default": False}),
                 "stitch_feather": ("INT", {"default": -1, "min": -1, "max": 64,
                     "tooltip": "Feather only the edge of the mouth patch, in source pixels. -1 uses the legacy mask."}),
+                "edge_ramp": ("INT", {"default": 0, "min": 0, "max": 12,
+                    "tooltip": "Cosine temporal fade frames at active lip-sync boundaries in single-composite mode."}),
             },
         }
 
@@ -2733,9 +2773,70 @@ class H3LowerFaceMask:
     FUNCTION = "build"
     CATEGORY = "H3/Dubbing"
 
+    @staticmethod
+    def _extract_smoothed_landmarks(
+        crops, face_rects, frames, width, height, face_mesh, eligible_indices,
+    ):
+        import numpy as np
+
+        lm_ids = tuple(dict.fromkeys((*_LOWER_FACE_LANDMARKS, 2, 13, 14, 33, 263, 152)))
+        raw = {}
+        for index in eligible_indices:
+            if index < len(face_rects):
+                fx, fy, fw, fh = (float(v) for v in face_rects[index])
+            else:
+                fx, fy, fw, fh = width * 0.25, height * 0.25, width * 0.5, height * 0.5
+            if fw <= 1.0 or fh <= 1.0:
+                continue
+            try:
+                frame_np = (crops[index, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
+                result = face_mesh.process(frame_np)
+                faces = getattr(result, "multi_face_landmarks", None)
+                if not faces:
+                    continue
+                tx, ty = ((fx + 0.5 * fw) / width, (fy + 0.5 * fh) / height)
+                best = min(faces, key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2)
+                raw[index] = np.array(
+                    [[float(best.landmark[idx].x), float(best.landmark[idx].y)] for idx in lm_ids],
+                    dtype=np.float32,
+                )
+            except Exception:
+                continue
+
+        # Linearly interpolate short 1-3 frame MediaPipe misses across eligible frames.
+        eligible_set = set(eligible_indices)
+        interp = dict(raw)
+        valid_sorted = sorted(raw)
+        for a, b in zip(valid_sorted, valid_sorted[1:]):
+            gap = b - a - 1
+            if 1 <= gap <= 3 and all(k in eligible_set for k in range(a + 1, b)):
+                for k in range(a + 1, b):
+                    alpha = float(k - a) / float(b - a)
+                    interp[k] = (1.0 - alpha) * raw[a] + alpha * raw[b]
+
+        # 3-frame [0.25, 0.5, 0.25] temporal smoothing across contiguous detections.
+        smoothed = {}
+        for index in interp:
+            acc = 0.5 * interp[index]
+            w_sum = 0.5
+            if (index - 1) in interp:
+                acc = acc + 0.25 * interp[index - 1]
+                w_sum += 0.25
+            if (index + 1) in interp:
+                acc = acc + 0.25 * interp[index + 1]
+                w_sum += 0.25
+            arr = acc / w_sum
+            smoothed[index] = {
+                lm_id: (float(arr[pos, 0]), float(arr[pos, 1]))
+                for pos, lm_id in enumerate(lm_ids)
+            }
+        return smoothed
+
     def build(self, crops, transform, active_start=0, active_end=-1,
               mouth_top=0.52, mouth_bottom=1.02, width_scale=0.82, denoise_expand=1.15,
-              jaw_margin=0.14, separate_opacity=False, stitch_feather=-1):
+              jaw_margin=0.06, separate_opacity=False, stitch_feather=-1, edge_ramp=0):
+        import math
+
         frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
         if frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("H3LowerFaceMask requires a non-empty crop batch")
@@ -2763,6 +2864,17 @@ class H3LowerFaceMask:
         composite_mask = torch.zeros((frames, height, width), device=device, dtype=torch.float32)
         spatial_mask = torch.zeros_like(composite_mask) if separate_opacity else composite_mask
 
+        active_vec = [
+            not (index < len(absent) and absent[index])
+            and (bool(detected[index]) if index < len(detected) else True)
+            and (start <= index < end)
+            for index in range(frames)
+        ]
+        eff_edge_ramp = (
+            max(1, min(int(edge_ramp), (end - start + 1) // 2))
+            if single_composite and int(edge_ramp) > 0 and start < end else 0
+        )
+
         face_mesh = None
         cv2_mod = None
         try:
@@ -2778,6 +2890,22 @@ class H3LowerFaceMask:
             face_mesh = None
 
         try:
+            eligible_indices = [
+                index for index in range(denoise_start, denoise_end)
+                if not (index < len(absent) and absent[index])
+                and (
+                    (bool(detected[index]) if index < len(detected) else True)
+                    or (float(weights[index]) if index < len(weights) else 1.0) > 0.0
+                )
+            ]
+            has_mesh_process = face_mesh is not None and hasattr(face_mesh, "process")
+            smoothed_lms = (
+                self._extract_smoothed_landmarks(
+                    crops, face_rects, frames, width, height, face_mesh, eligible_indices,
+                )
+                if has_mesh_process else {}
+            )
+
             for index in range(frames):
                 if index < denoise_start or index >= denoise_end:
                     continue
@@ -2788,7 +2916,23 @@ class H3LowerFaceMask:
                 if not is_detected and weight <= 0.0:
                     continue
                 if single_composite:
-                    opacity = float(is_detected and start <= index < end)
+                    if not active_vec[index]:
+                        opacity = 0.0
+                    elif eff_edge_ramp > 0:
+                        d_left = eff_edge_ramp
+                        for step in range(1, eff_edge_ramp):
+                            if index - step >= 0 and not active_vec[index - step]:
+                                d_left = step
+                                break
+                        d_right = eff_edge_ramp
+                        for step in range(1, eff_edge_ramp):
+                            if index + step < frames and not active_vec[index + step]:
+                                d_right = step
+                                break
+                        ramp_t = min(1.0, min(d_left, d_right) / float(eff_edge_ramp))
+                        opacity = 0.5 - 0.5 * math.cos(math.pi * ramp_t)
+                    else:
+                        opacity = 1.0
                     source_h = float(boxes[index][3]) if index < len(boxes) else height
                     feather_px = stitch_feather * height / max(1.0, source_h)
                 else:
@@ -2802,18 +2946,23 @@ class H3LowerFaceMask:
                     continue
 
                 poly_mask = None
-                if face_mesh is not None:
+                if face_mesh is not None and (not has_mesh_process or index in smoothed_lms):
                     try:
                         frame_np = (crops[index, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
                         target_center = ((fx + 0.5 * fw) / width, (fy + 0.5 * fh) / height)
                         poly_mask = _mediapipe_mouth_polygon(
-                            frame_np, width, height, face_mesh, target_center, jaw_margin=jaw_margin,
+                            frame_np, width, height, face_mesh, target_center,
+                            jaw_margin=jaw_margin, pts_override=smoothed_lms.get(index),
                         )
                     except Exception:
                         poly_mask = None
 
                 if poly_mask is not None and cv2_mod is not None:
-                    pad_px = max(3, int(round(0.04 * fh * max(1.0, float(denoise_expand)))))
+                    base_pad = max(3, int(round(0.04 * fh * max(1.0, float(denoise_expand)))))
+                    if single_composite and feather_px > 0.0:
+                        pad_px = max(base_pad, math.ceil(feather_px) + 2)
+                    else:
+                        pad_px = base_pad
                     k_denoise = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (pad_px * 2 + 1, pad_px * 2 + 1))
                     denoise_np = cv2_mod.dilate(poly_mask, k_denoise)
                     denoise_mask[index] = torch.from_numpy(denoise_np).to(device=device, dtype=torch.float32)
@@ -2836,10 +2985,13 @@ class H3LowerFaceMask:
                     rx = max(1.0, 0.5 * fw * float(width_scale))
                     ry = max(1.0, 0.5 * fh * float(mouth_bottom - mouth_top))
                     d2_comp = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
-                    denoise_mask[index] = (d2_comp <= float(denoise_expand) ** 2).float()
+                    effective_expand = float(denoise_expand)
+                    if single_composite and feather_px > 0.0:
+                        effective_expand = max(effective_expand, 1.0 + feather_px / max(1.0, min(rx, ry)) + 0.05)
+                    denoise_mask[index] = (d2_comp <= effective_expand ** 2).float()
                     if opacity > 0.0:
                         if single_composite:
-                            edge_width = min(feather_px / min(rx, ry), float(denoise_expand) - 1.0)
+                            edge_width = min(feather_px / min(rx, ry), effective_expand - 1.0)
                             if edge_width > 0.0:
                                 soft = ((1.0 + edge_width - d2_comp.sqrt()) / edge_width).clamp(0.0, 1.0)
                             else:
@@ -2948,6 +3100,126 @@ class H3LipSyncPrepareCrop:
         return (out,)
 
 
+class H3LipSyncSelectRefFrames:
+    """Pick the sharpest resting-mouth and open-mouth source crops for H3 identity conditioning."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "crops": ("IMAGE",),
+                "transform": ("H3FACEXFORM",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE")
+    RETURN_NAMES = ("ref_neutral", "ref_open")
+    FUNCTION = "select"
+    CATEGORY = "H3/Dubbing"
+
+    def select(self, crops, transform):
+        import math
+
+        frames, height, width = int(crops.shape[0]), int(crops.shape[1]), int(crops.shape[2])
+        if frames <= 0 or height <= 0 or width <= 0:
+            raise ValueError("H3LipSyncSelectRefFrames requires a non-empty crop batch")
+
+        source_frames = int(transform.get("source_frames") or frames)
+        limit = max(1, min(frames, source_frames))
+        absent = transform.get("absent") or []
+        detected = transform.get("detected") or []
+        face_rects = transform.get("face_rect") or []
+
+        candidates = [
+            i for i in range(limit)
+            if (i >= len(absent) or not absent[i]) and (i >= len(detected) or bool(detected[i]))
+        ]
+        if not candidates:
+            candidates = list(range(limit))
+
+        face_mesh = None
+        try:
+            import mediapipe as mp
+            if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_mesh"):
+                face_mesh = mp.solutions.face_mesh.FaceMesh(
+                    static_image_mode=True, max_num_faces=2, refine_landmarks=False,
+                    min_detection_confidence=0.35,
+                )
+        except Exception:
+            face_mesh = None
+
+        lap_kernel = torch.tensor(
+            [[[[0.0, 1.0, 0.0], [1.0, -4.0, 1.0], [0.0, 1.0, 0.0]]]],
+            device=crops.device, dtype=torch.float32,
+        )
+        scored = []
+        try:
+            for idx in candidates:
+                if idx < len(face_rects):
+                    fx, fy, fw, fh = (float(v) for v in face_rects[idx])
+                else:
+                    fx, fy, fw, fh = width * 0.25, height * 0.25, width * 0.5, height * 0.5
+                x0 = max(0, min(width - 2, int(round(fx))))
+                y0 = max(0, min(height - 2, int(round(fy))))
+                x1 = max(x0 + 2, min(width, int(round(fx + fw))))
+                y1 = max(y0 + 2, min(height, int(round(fy + fh))))
+                roi = crops[idx, y0:y1, x0:x1, :3].float()
+                luma = 0.299 * roi[..., 0] + 0.587 * roi[..., 1] + 0.114 * roi[..., 2]
+                if luma.shape[0] >= 3 and luma.shape[1] >= 3:
+                    lap = F.conv2d(luma.unsqueeze(0).unsqueeze(0), lap_kernel)
+                    sharpness = float(lap.var(unbiased=False).item())
+                else:
+                    sharpness = 0.0
+
+                openness = None
+                if face_mesh is not None:
+                    try:
+                        frame_np = (crops[idx, ..., :3].detach().cpu().clamp(0, 1).numpy() * 255.0).astype("uint8")
+                        result = face_mesh.process(frame_np)
+                        faces = getattr(result, "multi_face_landmarks", None)
+                        if faces:
+                            tx, ty = ((fx + 0.5 * fw) / width, (fy + 0.5 * fh) / height)
+                            best = min(faces, key=lambda f: (f.landmark[1].x - tx) ** 2 + (f.landmark[1].y - ty) ** 2)
+                            top, bot = best.landmark[13], best.landmark[14]
+                            left, right = best.landmark[78], best.landmark[308]
+                            mouth_w = math.hypot(right.x - left.x, right.y - left.y)
+                            if mouth_w > 1e-4:
+                                openness = math.hypot(bot.x - top.x, bot.y - top.y) / mouth_w
+                    except Exception:
+                        openness = None
+                if openness is None:
+                    rh, rw = luma.shape
+                    my0 = max(0, min(rh - 2, int(round(0.60 * rh))))
+                    my1 = max(my0 + 2, min(rh, int(round(0.85 * rh))))
+                    mx0 = max(0, min(rw - 2, int(round(0.25 * rw))))
+                    mx1 = max(mx0 + 2, min(rw, int(round(0.75 * rw))))
+                    strip = luma[my0:my1, mx0:mx1]
+                    v_grad = float((strip[1:, :] - strip[:-1, :]).abs().mean().item())
+                    spread = float(strip.std(unbiased=False).item())
+                    openness = v_grad + spread
+                scored.append((idx, sharpness, float(openness)))
+        finally:
+            if face_mesh is not None:
+                try:
+                    face_mesh.close()
+                except Exception:
+                    pass
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        sharp_pool = scored[: max(1, (len(scored) + 1) // 2)]
+        idx_neutral = min(sharp_pool, key=lambda item: item[2])[0]
+        idx_open = max(sharp_pool, key=lambda item: item[2])[0]
+        if idx_open == idx_neutral and len(sharp_pool) > 1:
+            idx_open = max(
+                (item for item in sharp_pool if item[0] != idx_neutral),
+                key=lambda item: (abs(item[0] - idx_neutral), item[1]),
+            )[0]
+        return (
+            crops[idx_neutral : idx_neutral + 1, ..., :3].clone(),
+            crops[idx_open : idx_open + 1, ..., :3].clone(),
+        )
+
+
 class H3LipSyncBlend:
     """Skin-ring LAB color match, adaptive high-pass detail match, and Laplacian pyramid blend."""
 
@@ -2963,6 +3235,8 @@ class H3LipSyncBlend:
                 "color_match": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "sharpen": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "pyramid_levels": ("INT", {"default": 3, "min": 1, "max": 5, "step": 1}),
+                "match_only": ("BOOLEAN", {"default": False}),
+                "temporal_smooth": ("INT", {"default": 1, "min": 1, "max": 15, "step": 2}),
             },
         }
 
@@ -3155,8 +3429,115 @@ class H3LipSyncBlend:
         blended = self._laplacian_blend_torch(src_t, gen_sharp, mask_t, levels)
         return torch.where(mask_t[..., None] > 1e-4, blended, src_t)
 
+    @classmethod
+    def _exterior_skin_ring_np(cls, mask_np, cv2_mod):
+        core = mask_np > 0.5
+        if not core.any():
+            core = mask_np > 0.05
+        if not core.any():
+            return core
+        ys, xs = core.nonzero()
+        span = max(8, int(max(ys.max() - ys.min() + 1, xs.max() - xs.min() + 1)))
+        r_out = max(4, int(round(0.12 * span)))
+        k_out = cv2_mod.getStructuringElement(cv2_mod.MORPH_ELLIPSE, (2 * r_out + 1, 2 * r_out + 1))
+        dilated = cv2_mod.dilate(core.astype("uint8"), k_out) > 0
+        ring = dilated & (~core)
+        if int(ring.sum()) >= 32:
+            return ring
+        return cls._skin_ring_np(mask_np, cv2_mod)
+
+    @classmethod
+    def _exterior_skin_ring_torch(cls, mask_t):
+        core = mask_t > 0.5
+        if not core.any():
+            core = mask_t > 0.05
+        if not core.any():
+            return core
+        nz = torch.nonzero(core, as_tuple=False)
+        span = max(8, int(max(nz[:, 0].max() - nz[:, 0].min() + 1, nz[:, 1].max() - nz[:, 1].min() + 1)))
+        r_out = max(4, int(round(0.12 * span)))
+        dilated = F.max_pool2d(core.float()[None, None], kernel_size=2 * r_out + 1, stride=1, padding=r_out) > 0.5
+        ring = dilated.squeeze(0).squeeze(0) & (~core)
+        if int(ring.sum()) >= 32:
+            return ring
+        return cls._skin_ring_torch(mask_t)
+
+    @staticmethod
+    def _smooth_stat_vectors(stats, window):
+        import math
+
+        k = max(1, int(window))
+        if k <= 1:
+            return stats
+        radius = k // 2
+        sigma = max(1.0, radius * 0.6)
+        valid = sorted(stats)
+        if len(valid) <= 1:
+            return stats
+        dim = len(stats[valid[0]])
+        out = {}
+        for idx in valid:
+            acc = [0.0] * dim
+            w_sum = 0.0
+            for j in range(idx - radius, idx + radius + 1):
+                item = stats.get(j)
+                if item is None:
+                    continue
+                w = math.exp(-0.5 * ((j - idx) / sigma) ** 2)
+                for d in range(dim):
+                    acc[d] += w * item[d]
+                w_sum += w
+            out[idx] = [v / w_sum for v in acc] if w_sum > 0.0 else stats[idx]
+        return out
+
+    def _apply_match_np(self, src_np, gen_np, gen_lab, stat_vec, cm, sh, cv2_mod):
+        s_mean = stat_vec[0:3]
+        s_std = stat_vec[3:6]
+        g_mean = stat_vec[6:9]
+        g_std = stat_vec[9:12]
+        src_energy, gen_energy = stat_vec[12], stat_vec[13]
+
+        gen_cm = gen_np
+        if cm > 0.0:
+            matched_lab = gen_lab.copy()
+            for ch in range(3):
+                scale = self._clamped_std_scale(s_std[ch], g_std[ch])
+                matched_lab[..., ch] = (gen_lab[..., ch] - g_mean[ch]) * scale + s_mean[ch]
+            matched_lab[..., 0] = matched_lab[..., 0].clip(0.0, 100.0)
+            matched_lab[..., 1:] = matched_lab[..., 1:].clip(-127.0, 127.0)
+            matched_rgb = cv2_mod.cvtColor(matched_lab, cv2_mod.COLOR_LAB2RGB).clip(0.0, 1.0)
+            gen_cm = gen_np * (1.0 - cm) + matched_rgb * cm
+
+        if sh <= 0.0:
+            return gen_cm
+        gain = self._adaptive_sharpen_gain(sh, src_energy, gen_energy)
+        detail = gen_cm - cv2_mod.GaussianBlur(gen_cm, (0, 0), 1.2, borderType=cv2_mod.BORDER_REFLECT_101)
+        return (gen_cm + gain * detail).clip(0.0, 1.0)
+
+    def _apply_match_torch(self, gen_t, stat_vec, cm, sh):
+        s_mean = stat_vec[0:3]
+        s_std = stat_vec[3:6]
+        g_mean = stat_vec[6:9]
+        g_std = stat_vec[9:12]
+        src_energy, gen_energy = stat_vec[12], stat_vec[13]
+
+        gen_cm = gen_t
+        if cm > 0.0:
+            matched = gen_t.clone()
+            for ch in range(3):
+                scale = self._clamped_std_scale(s_std[ch], g_std[ch])
+                matched[..., ch] = ((gen_t[..., ch] - g_mean[ch]) * scale + s_mean[ch]).clamp(0.0, 1.0)
+            gen_cm = gen_t * (1.0 - cm) + matched * cm
+
+        if sh <= 0.0:
+            return gen_cm
+        gain = self._adaptive_sharpen_gain(sh, src_energy, gen_energy)
+        d_blur = self._torch_gaussian_blur(gen_cm.permute(2, 0, 1).unsqueeze(0), 1.2).squeeze(0).permute(1, 2, 0)
+        return (gen_cm + gain * (gen_cm - d_blur)).clamp(0.0, 1.0)
+
     def blend(self, source_crops, generated_crops, composite_mask,
-              color_match=0.85, sharpen=0.35, pyramid_levels=3):
+              color_match=0.85, sharpen=0.35, pyramid_levels=3,
+              match_only=False, temporal_smooth=1):
         if (tuple(source_crops.shape[:3]) != tuple(generated_crops.shape[:3])
                 or tuple(source_crops.shape[:3]) != tuple(composite_mask.shape[:3])):
             raise ValueError("H3LipSyncBlend requires source_crops, generated_crops, and composite_mask with matching dimensions")
@@ -3171,6 +3552,84 @@ class H3LipSyncBlend:
             _np = None
 
         frames = int(source_crops.shape[0])
+        if match_only:
+            out = generated_crops.clone()
+            if cm <= 0.0 and sh <= 0.0:
+                return (out,)
+            raw_stats = {}
+            cached_frames = {}
+            for index in range(frames):
+                mask_t = composite_mask[index].float().clamp(0.0, 1.0)
+                if float(mask_t.max()) <= 1e-4:
+                    continue
+                if _cv2 is not None and _np is not None:
+                    src_np = source_crops[index, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype("float32")
+                    gen_np = generated_crops[index, ..., :3].detach().cpu().clamp(0.0, 1.0).numpy().astype("float32")
+                    mask_np = mask_t.detach().cpu().numpy().astype("float32")
+                    ring = self._exterior_skin_ring_np(mask_np, _cv2)
+                    if not ring.any():
+                        continue
+                    src_lab = _cv2.cvtColor(src_np, _cv2.COLOR_RGB2LAB)
+                    gen_lab = _cv2.cvtColor(gen_np, _cv2.COLOR_RGB2LAB)
+                    s_mean = [float(src_lab[..., ch][ring].mean()) for ch in range(3)]
+                    s_std = [float(src_lab[..., ch][ring].std()) for ch in range(3)]
+                    g_mean = [float(gen_lab[..., ch][ring].mean()) for ch in range(3)]
+                    g_std = [float(gen_lab[..., ch][ring].std()) for ch in range(3)]
+                    if sh > 0.0:
+                        gen_cm_raw = gen_np
+                        if cm > 0.0:
+                            m_lab = gen_lab.copy()
+                            for ch in range(3):
+                                sc = self._clamped_std_scale(s_std[ch], g_std[ch])
+                                m_lab[..., ch] = (gen_lab[..., ch] - g_mean[ch]) * sc + s_mean[ch]
+                            m_lab[..., 0] = m_lab[..., 0].clip(0.0, 100.0)
+                            m_lab[..., 1:] = m_lab[..., 1:].clip(-127.0, 127.0)
+                            gen_cm_raw = gen_np * (1.0 - cm) + _cv2.cvtColor(m_lab, _cv2.COLOR_LAB2RGB).clip(0.0, 1.0) * cm
+                        src_hp = src_np - _cv2.GaussianBlur(src_np, (0, 0), 1.5, borderType=_cv2.BORDER_REFLECT_101)
+                        gen_hp = gen_cm_raw - _cv2.GaussianBlur(gen_cm_raw, (0, 0), 1.5, borderType=_cv2.BORDER_REFLECT_101)
+                        src_e, gen_e = float(src_hp[ring].std()), float(gen_hp[ring].std())
+                    else:
+                        src_e, gen_e = 0.0, 0.0
+                    raw_stats[index] = [*s_mean, *s_std, *g_mean, *g_std, src_e, gen_e]
+                    cached_frames[index] = (src_np, gen_np, gen_lab)
+                else:
+                    src_t = source_crops[index, ..., :3].float().clamp(0.0, 1.0)
+                    gen_t = generated_crops[index, ..., :3].float().clamp(0.0, 1.0)
+                    ring = self._exterior_skin_ring_torch(mask_t)
+                    if not ring.any():
+                        continue
+                    s_mean = [float(src_t[..., ch][ring].mean()) for ch in range(3)]
+                    s_std = [float(src_t[..., ch][ring].std(unbiased=False)) for ch in range(3)]
+                    g_mean = [float(gen_t[..., ch][ring].mean()) for ch in range(3)]
+                    g_std = [float(gen_t[..., ch][ring].std(unbiased=False)) for ch in range(3)]
+                    if sh > 0.0:
+                        gen_cm_raw = gen_t
+                        if cm > 0.0:
+                            matched = gen_t.clone()
+                            for ch in range(3):
+                                sc = self._clamped_std_scale(s_std[ch], g_std[ch])
+                                matched[..., ch] = ((gen_t[..., ch] - g_mean[ch]) * sc + s_mean[ch]).clamp(0.0, 1.0)
+                            gen_cm_raw = gen_t * (1.0 - cm) + matched * cm
+                        src_b = self._torch_gaussian_blur(src_t.permute(2, 0, 1).unsqueeze(0), 1.5).squeeze(0).permute(1, 2, 0)
+                        gen_b = self._torch_gaussian_blur(gen_cm_raw.permute(2, 0, 1).unsqueeze(0), 1.5).squeeze(0).permute(1, 2, 0)
+                        src_e = float((src_t - src_b)[ring].std(unbiased=False))
+                        gen_e = float((gen_cm_raw - gen_b)[ring].std(unbiased=False))
+                    else:
+                        src_e, gen_e = 0.0, 0.0
+                    raw_stats[index] = [*s_mean, *s_std, *g_mean, *g_std, src_e, gen_e]
+                    cached_frames[index] = gen_t
+            smooth_stats = self._smooth_stat_vectors(raw_stats, temporal_smooth)
+            for index, stat_vec in smooth_stats.items():
+                if _cv2 is not None and _np is not None:
+                    src_np, gen_np, gen_lab = cached_frames[index]
+                    matched = self._apply_match_np(src_np, gen_np, gen_lab, stat_vec, cm, sh, _cv2)
+                    out[index, ..., :3] = torch.from_numpy(matched).to(device=generated_crops.device, dtype=generated_crops.dtype)
+                else:
+                    gen_t = cached_frames[index]
+                    matched_t = self._apply_match_torch(gen_t, stat_vec, cm, sh)
+                    out[index, ..., :3] = matched_t.to(dtype=generated_crops.dtype)
+            return (out,)
+
         out = source_crops.clone()
         for index in range(frames):
             mask_t = composite_mask[index].float().clamp(0.0, 1.0)
@@ -3224,6 +3683,7 @@ NODE_CLASS_MAPPINGS = {
     "H3LipSyncMask": H3LipSyncMask,
     "H3LowerFaceMask": H3LowerFaceMask,
     "H3LipSyncPrepareCrop": H3LipSyncPrepareCrop,
+    "H3LipSyncSelectRefFrames": H3LipSyncSelectRefFrames,
     "H3LipSyncBlend": H3LipSyncBlend,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
@@ -3278,5 +3738,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3LipSyncMask": "MiniMax H3 Lip Sync Latent Mask",
     "H3LowerFaceMask": "MiniMax H3 Lower-Face Mouth Mask",
     "H3LipSyncPrepareCrop": "MiniMax H3 Lip Sync Prepare Crop",
+    "H3LipSyncSelectRefFrames": "MiniMax H3 Lip Sync Reference Frames",
     "H3LipSyncBlend": "MiniMax H3 Lip Sync Blend",
 }

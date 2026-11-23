@@ -34,6 +34,7 @@ from h3_app.dubbing.lip_sync import (
     plan_lip_sync_windows,
     render_dub_lip_sync,
     render_lip_sync_preview,
+    resolve_lip_sync_crop_size,
     revise_lip_sync_plan,
     validate_face_size_range,
     validate_lip_sync_engine,
@@ -536,10 +537,14 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(track["cut_detection"], "none")
         self.assertEqual(track["absent_shots"], "off")
         self.assertEqual(track["crop_factor"], 1.65)
+        self.assertEqual((track["smooth_window"], track["size_smooth_window"]), (11, 31))
         lower = by_class(graph, "H3LowerFaceMask")
         self.assertEqual(lower["crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
         self.assertEqual(lower["transform"], [link_id(graph, "H3FaceTrackCrop"), 1])
         self.assertEqual((lower["active_start"], lower["active_end"]), (4, 60))
+        self.assertTrue(lower["separate_opacity"])
+        self.assertEqual(lower["stitch_feather"], 6)
+        self.assertEqual(lower["edge_ramp"], 3)
         prep = by_class(graph, "H3LipSyncPrepareCrop")
         self.assertEqual(prep["crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
         self.assertEqual(prep["denoise_mask"], [link_id(graph, "H3LowerFaceMask"), 0])
@@ -547,11 +552,18 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(inject["images"], [link_id(graph, "H3LipSyncPrepareCrop"), 0])
         mask = by_class(graph, "H3LipSyncMask")
         self.assertEqual(mask["mouth_mask"], [link_id(graph, "H3LowerFaceMask"), 0])
-        self.assertEqual(lower["stitch_feather"], 6)
-        self.assertNotIn("H3LipSyncBlend", {node["class_type"] for node in graph.values()})
+        fl2va = by_class(graph, "MiniMaxH3ImageToVideo")
+        self.assertIn("first_frame", fl2va)
+        self.assertIn("last_frame", fl2va)
+        blend = by_class(graph, "H3LipSyncBlend")
+        self.assertEqual(blend["source_crops"], [link_id(graph, "H3FaceTrackCrop"), 0])
+        self.assertEqual(blend["generated_crops"], [link_id(graph, "VAEDecode"), 0])
+        self.assertEqual(blend["composite_mask"], [link_id(graph, "H3LowerFaceMask"), 2])
+        self.assertTrue(blend["match_only"])
+        self.assertEqual(blend["temporal_smooth"], 5)
         stitch = by_class(graph, "H3FaceStitch")
         self.assertEqual(stitch["masks"], [link_id(graph, "H3LowerFaceMask"), 1])
-        self.assertEqual(stitch["refined_crops"], [link_id(graph, "VAEDecode"), 0])
+        self.assertEqual(stitch["refined_crops"], [link_id(graph, "H3LipSyncBlend"), 0])
         self.assertEqual(stitch["feather"], 0)
         self.assertTrue(stitch["feather_scales_with_crop"])
         self.assertEqual(stitch["undetected_frames"], "skip")
@@ -563,6 +575,20 @@ class LipSyncTests(unittest.TestCase):
             refinement={}, output_prefix="auto",
         )
         self.assertEqual(by_class(default_graph, "H3FaceTrackCrop")["select"], "largest_face")
+        default_fl2va = by_class(default_graph, "MiniMaxH3ImageToVideo")
+        self.assertNotIn("first_frame", default_fl2va)
+        self.assertNotIn("last_frame", default_fl2va)
+
+        ref_graph = build_auto_lip_sync_graph(
+            video="slice.mp4", dialogue="dialogue.wav", frames=73, models=self.models,
+            refinement={"mode": "Reference media"}, output_prefix="auto", active_start=4, active_end=60,
+        )
+        refs = by_class(ref_graph, "H3LipSyncSelectRefFrames")
+        self.assertEqual(refs["crops"], [link_id(ref_graph, "H3FaceTrackCrop"), 0])
+        ref2v = by_class(ref_graph, "MiniMaxH3ReferenceToVideo")
+        self.assertEqual(ref2v["ref_images.ref_image_0"], [link_id(ref_graph, "H3LipSyncSelectRefFrames"), 0])
+        self.assertEqual(ref2v["ref_images.ref_image_1"], [link_id(ref_graph, "H3LipSyncSelectRefFrames"), 1])
+        self.assertEqual(ref2v["ref_image_size"], "match")
 
     def test_auto_graph_uses_ui_default_singularity_profile_when_available(self):
         from h3_app.model_types import ModelConfig, ModelProfile
@@ -776,7 +802,7 @@ class LipSyncTests(unittest.TestCase):
         plan = build_lip_sync_plan_payload(
             dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
         )
-        self.assertEqual(plan["window_version"], 3)
+        self.assertEqual(plan["window_version"], 4)
         legacy_windows = [
             {key: value for key, value in window.items() if key not in {"face_size", "manual"}}
             for window in plan["windows"]
@@ -785,9 +811,14 @@ class LipSyncTests(unittest.TestCase):
             json.dumps({**plan, "window_version": 2, "windows": legacy_windows}), encoding="utf-8",
         )
         upgraded = load_lip_sync_plan(self.dub)
-        self.assertEqual(upgraded["window_version"], 3)
+        self.assertEqual(upgraded["window_version"], 4)
         self.assertEqual(upgraded["revision"], plan["revision"])
         self.assertEqual([w["face_size"] for w in upgraded["windows"]], [0.06, 0.34])
+        (folder / PLAN_FILE).write_text(
+            json.dumps({**plan, "window_version": 3}), encoding="utf-8",
+        )
+        upgraded_v3 = load_lip_sync_plan(self.dub)
+        self.assertEqual(upgraded_v3["window_version"], 4)
         revise_lip_sync_plan(self.dub, plan, {(0, "A"): 0}, reset=set())
         revised = load_lip_sync_plan(self.dub)
         self.assertTrue(revised["windows"][0]["manual"])
@@ -1183,3 +1214,35 @@ class LipSyncTests(unittest.TestCase):
                 frames, get_analyzer=Mock(side_effect=RuntimeError("no insightface")),
             )
         self.assertEqual(partial, [[(10, 10, 30, 30)], [], [(12, 10, 32, 30)]])
+
+    def test_plan_windows_covers_silent_original_speech_tails_without_clobbering_other_speakers(self):
+        folder = player_folder(self.dub)
+        samples = lambda s, e: round(e * RATE) - round(s * RATE)
+        (folder / "alignment.json").write_text(json.dumps({
+            "lines": [
+                {"speaker": "A", "start": 0.2, "end": 2.2},
+                {"speaker": "B", "start": 1.6, "end": 2.5},
+            ],
+            "spoken": {"0": [0.4, 1.2], "1": [1.5, 2.5]},
+        }), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.full(samples(0.4, 1.2), 0.25, dtype=np.float32),
+            "1": np.full(samples(1.5, 2.5), 0.35, dtype=np.float32),
+        })
+        windows = plan_lip_sync_windows(self.dub, video_duration=3.0, context_seconds=0.0)
+        self.assertEqual([(w.speaker, round(w.active_start, 2), round(w.active_end, 2)) for w in windows], [
+            ("A", 0.2, 1.5),
+            ("B", 1.5, 2.5),
+        ])
+
+    def test_resolve_lip_sync_crop_size_scales_closeups_and_respects_custom_override(self):
+        small = LipSyncWindow("A", 0.0, 1.0, 0.0, 1.0, 0, 24, 39, 0, 24, None, 0, 0.30, False)
+        medium = LipSyncWindow("A", 0.0, 1.0, 0.0, 1.0, 0, 24, 39, 0, 24, None, 0, 0.40, False)
+        closeup = LipSyncWindow("A", 0.0, 1.0, 0.0, 1.0, 0, 24, 39, 0, 24, None, 0, 0.30, False)
+        unmeasured = LipSyncWindow("A", 0.0, 1.0, 0.0, 1.0, 0, 24, 39, 0, 24, None, 0, None, False)
+
+        self.assertEqual(resolve_lip_sync_crop_size(small, (1920, 1080)), 640)
+        self.assertEqual(resolve_lip_sync_crop_size(medium, (1920, 1080)), 768)
+        self.assertEqual(resolve_lip_sync_crop_size(closeup, (3840, 2160)), 960)
+        self.assertEqual(resolve_lip_sync_crop_size(unmeasured, (3840, 2160)), 640)
+        self.assertEqual(resolve_lip_sync_crop_size(medium, (1920, 1080), base_crop_size=320), 320)

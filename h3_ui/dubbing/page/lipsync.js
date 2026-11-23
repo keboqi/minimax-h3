@@ -21,7 +21,7 @@ const lsState = {
   selectedShot: 0,
   selectedSpeaker: null,
   engine: "h3",
-  strength: 0.70,
+  strength: 0.58,
   feather: 6,
   bboxShift: 0,
   inferenceSteps: 20,

@@ -651,6 +651,86 @@ class StudioPageTests(PageTests):
         self.assertEqual(forwarded[0]["guidance_scale"], 3.0)
         self.assertIs(forwarded[0]["runtime"], self.runtime)
 
+    def test_lip_sync_endpoint_forwards_h3_settings_for_h3_engine_only(self):
+        import json as _json
+        from h3_app.refinement import H3_REFINEMENT_FIELDS
+        from h3_app.dubbing.results import player_folder
+
+        created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True)
+        dub_video = out_dir / "clip.mp4"
+        dub_video.write_bytes(b"mp4")
+        folder = player_folder(dub_video)
+        folder.mkdir(parents=True)
+        (folder / "alignment.json").write_text("{}", encoding="utf-8")
+        (folder / "alignment.npz").write_bytes(b"npz")
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        sample_h3 = {
+            "mode": "Reference media",
+            "attention_mode": "Sage 2",
+            "video_encoder": "Original",
+            "use_sol_vae": False,
+            "prompt": "ignored-extra-field",
+        }
+        seen_owners = []
+        app = FastAPI()
+        store = JOBS.store
+        install_owner_cookie(app, store)
+
+        def read_h3(owner):
+            seen_owners.append(owner)
+            return sample_h3
+
+        install_dubbing_page(app, self.handlers, gpu=self.gpu, h3_values=read_h3)
+        client = TestClient(app)
+
+        forwarded = []
+
+        def fake_render(**kwargs):
+            forwarded.append((kwargs.get("engine"), kwargs.get("refinement")))
+            out = dub_video.with_name("clip.lipsync.mp4")
+            out.write_bytes(b"mp4-lipsync")
+            yield out
+
+        def run_job(_run, _owner, _session, _family, values, callback):
+            return callback(*_json.loads(_json.dumps(values)))
+
+        with patch("h3_ui.dubbing.page.owned_generation", lambda callback, family: callback), \
+                patch("h3_ui.dubbing.page.run_job", run_job), \
+                patch("h3_ui.dubbing.handlers.render_dub_lip_sync", fake_render):
+            res_h3 = client.post(f"{API}/lip-sync", json={"session": created.id})
+            self.assertEqual(res_h3.status_code, 200)
+            for _ in range(100):
+                run = client.get(f"{API}/run", params={"session": created.id}).json()["runs"]["lip-sync"]
+                if run and not run["active"]:
+                    break
+                time.sleep(0.05)
+
+            res_h3_explicit = client.post(f"{API}/lip-sync", json={"session": created.id, "engine": "h3"})
+            self.assertEqual(res_h3_explicit.status_code, 200)
+            for _ in range(100):
+                run = client.get(f"{API}/run", params={"session": created.id}).json()["runs"]["lip-sync"]
+                if run and not run["active"]:
+                    break
+                time.sleep(0.05)
+
+            res_mt = client.post(f"{API}/lip-sync", json={"session": created.id, "engine": "musetalk"})
+            self.assertEqual(res_mt.status_code, 200)
+            for _ in range(100):
+                run = client.get(f"{API}/run", params={"session": created.id}).json()["runs"]["lip-sync"]
+                if run and not run["active"]:
+                    break
+                time.sleep(0.05)
+
+        self.assertEqual(len(seen_owners), 2)
+        expected = {name: sample_h3[name] for name in H3_REFINEMENT_FIELDS if name in sample_h3}
+        self.assertIsNone(forwarded[0][0])
+        self.assertEqual(forwarded[0][1], expected)
+        self.assertEqual(forwarded[1], ("h3", expected))
+        self.assertEqual(forwarded[2], ("musetalk", None))
+
 
 if __name__ == "__main__":
     unittest.main()

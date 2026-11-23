@@ -33,6 +33,7 @@ from h3_app.workflows.lip_sync import (
     DEFAULT_AUTO_FEATHER,
     DEFAULT_AUTO_STRENGTH,
     DEFAULT_CROP_SIZE,
+    DEFAULT_LIP_SYNC_CROP_FACTOR,
     FPS,
     MAX_FRAMES,
     build_auto_lip_sync_graph,
@@ -384,6 +385,49 @@ def _best_in_window_hint(
     return min(candidates, key=lambda item: abs(float(item["time"]) - mid_time))
 
 
+def _subtract_intervals(
+    start: float,
+    end: float,
+    blocked: Sequence[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    pieces = [(start, end)]
+    for b_start, b_end in blocked:
+        next_pieces: list[tuple[float, float]] = []
+        for left, right in pieces:
+            if b_end <= left + 1e-6 or b_start >= right - 1e-6:
+                next_pieces.append((left, right))
+            else:
+                if b_start - left >= _MIN_TURN_SECONDS:
+                    next_pieces.append((left, b_start))
+                if right - b_end >= _MIN_TURN_SECONDS:
+                    next_pieces.append((b_end, right))
+        pieces = next_pieces
+        if not pieces:
+            break
+    return pieces
+
+
+def resolve_lip_sync_crop_size(
+    window: LipSyncWindow,
+    video_size: tuple[int, int] | None,
+    base_crop_size: int = DEFAULT_CROP_SIZE,
+) -> int:
+    """Scale H3 lip-sync crop canvas up for large close-ups unless a custom crop size was requested."""
+    if (
+        int(base_crop_size) != DEFAULT_CROP_SIZE
+        or window.face_size is None
+        or video_size is None
+        or video_size[1] <= 0
+    ):
+        return int(base_crop_size)
+    needed = float(window.face_size) * float(video_size[1]) * DEFAULT_LIP_SYNC_CROP_FACTOR
+    if needed <= 640:
+        return 640
+    if needed <= 768:
+        return 768
+    return 960
+
+
 def plan_lip_sync_windows(
     dub: Path,
     video_duration: float,
@@ -410,6 +454,7 @@ def plan_lip_sync_windows(
 
     try:
         raw_turns: list[tuple[float, float, str, dict[str, Any] | None, tuple[dict[str, Any], ...]]] = []
+        raw_silent: list[tuple[float, float, str, dict[str, Any] | None, tuple[dict[str, Any], ...]]] = []
         with open_alignment(dub) as (saved, clips):
             lines = saved["lines"]
             saved_hints = list(saved.get("visual_speakers") or ())
@@ -427,14 +472,28 @@ def plan_lip_sync_windows(
                     _line_visual_hints(line, line_speaker, start, end, effective_hints)
                     if use_visual_hints else (None, ())
                 )
+                hint_dict = hint if isinstance(hint, dict) else None
                 clamped_start = max(0.0, float(start))
                 clamped_end = min(float(video_duration), float(end))
                 if clamped_end - clamped_start < _MIN_TURN_SECONDS:
                     continue
                 raw_turns.append((
                     clamped_start, clamped_end, line_speaker,
-                    hint if isinstance(hint, dict) else None, all_hints,
+                    hint_dict, all_hints,
                 ))
+                orig_start, orig_end = line.get("start"), line.get("end")
+                if (
+                    not isinstance(orig_start, bool) and not isinstance(orig_end, bool)
+                    and isinstance(orig_start, (int, float)) and isinstance(orig_end, (int, float))
+                    and math.isfinite(orig_start) and math.isfinite(orig_end)
+                    and 0.0 <= float(orig_start) < float(orig_end)
+                ):
+                    o_start = max(0.0, float(orig_start))
+                    o_end = min(float(video_duration), float(orig_end))
+                    if clamped_start - o_start >= _MIN_TURN_SECONDS:
+                        raw_silent.append((o_start, clamped_start, line_speaker, hint_dict, all_hints))
+                    if o_end - clamped_end >= _MIN_TURN_SECONDS:
+                        raw_silent.append((clamped_end, o_end, line_speaker, hint_dict, all_hints))
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise H3Error("Saved fitted dialogue is missing or unreadable. Generate this dub again.") from exc
 
@@ -461,6 +520,27 @@ def plan_lip_sync_windows(
     shot_turns = _drop_cross_speaker_overlaps(shot_turns)
     if not shot_turns:
         return []
+
+    # Cover silent original-speech leads/tails where nobody else is audibly speaking in the dub,
+    # so the source mouth does not flap silently on translated lines that start late or finish early.
+    if raw_silent:
+        audible_spans = [(left, right) for left, right, _, _, _ in raw_turns]
+        silent_turns: list[_Turn] = []
+        for s_start, s_end, s_speaker, hint, all_hints in raw_silent:
+            for left, right in _subtract_intervals(s_start, s_end, audible_spans):
+                for shot_index, (shot_start, shot_end) in shots:
+                    s_left = max(left, shot_start)
+                    s_right = min(right, shot_end)
+                    if s_right - s_left < _MIN_TURN_SECONDS:
+                        continue
+                    silent_turns.append(_Turn(
+                        speaker=s_speaker, start=s_left, end=s_right,
+                        shot_start=shot_start, shot_end=shot_end, shot_index=shot_index,
+                        visual_hint=hint, visual_hints=all_hints,
+                    ))
+        silent_turns = _drop_cross_speaker_overlaps(silent_turns)
+        if silent_turns:
+            shot_turns = sorted([*shot_turns, *silent_turns], key=lambda item: (item.start, item.end, item.speaker))
 
     # Group consecutive turns of the same speaker within the same shot, then split overly long groups.
     grouped: list[_Turn] = []
@@ -752,7 +832,7 @@ def window_cache_key(
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
     stat = dub.stat()
     payload = {
-        "version": {"h3": 6, "musetalk": 7}.get(engine, 5),
+        "version": {"h3": 7, "musetalk": 7}.get(engine, 5),
         "engine": str(engine),
         "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
         "window": [
@@ -887,10 +967,10 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
             return None
         if "revision" not in data:
             data["revision"] = hashlib.sha256(raw).hexdigest()
-        if data.get("window_version") == 2:
+        if data.get("window_version") in (2, 3):
             # Use the same window planner for review and render while retaining the saved revision.
             windows = _reviewed_windows(dub, data, _plan_assignments(data))
-            data.update(window_version=3, windows_count=len(windows),
+            data.update(window_version=4, windows_count=len(windows),
                         windows=[asdict(window) for window in windows])
         return data
     except (OSError, ValueError):
@@ -967,7 +1047,7 @@ def build_lip_sync_plan_payload(
         "width": int(scan.width),
         "height": int(scan.height),
         "fps": round(float(scan.fps), 3),
-        "window_version": 3,
+        "window_version": 4,
         "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
@@ -1061,7 +1141,7 @@ def revise_lip_sync_plan(
     windows = _reviewed_windows(dub, plan, assignments, visual_speakers=hints)
     _save_lip_sync_plan(dub, {
         **plan, "revision": uuid4().hex, "automatic_assignments": automatic,
-        "window_version": 3, "windows_count": len(windows),
+        "window_version": 4, "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
         "assignments": [item.to_dict() for item in assignments.values()],
@@ -1367,7 +1447,7 @@ def render_dub_lip_sync(
         yield "Using reviewed face assignments"
     assignments = _plan_assignments(reviewed_plan)
     backend = reviewed_plan["backend"]
-    if reviewed_plan.get("window_version") == 3 and "windows" in reviewed_plan:
+    if reviewed_plan.get("window_version") in (3, 4) and "windows" in reviewed_plan:
         windows = [LipSyncWindow(**w) for w in reviewed_plan["windows"] if speaker is None or w["speaker"] == speaker]
     else:
         windows = _reviewed_windows(dub, reviewed_plan, assignments, visual_speakers=visual_speakers, speaker=speaker)
@@ -1399,6 +1479,8 @@ def render_dub_lip_sync(
     cached_hits = 0
     skipped_windows = 0
     cache_dir = _window_cache_dir(dub)
+    plan_w, plan_h = reviewed_plan.get("width"), reviewed_plan.get("height")
+    video_size = (int(plan_w), int(plan_h)) if plan_w and plan_h else None
 
     with TemporaryDirectory(prefix="h3-lip-sync-auto-") as directory:
         work_dir = Path(directory)
@@ -1406,7 +1488,7 @@ def render_dub_lip_sync(
         for index, window in enumerate(windows, start=1):
             check_cancelled()
             frame_count = window.render_frames if is_h3 else window.source_frames
-            dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, frame_count)
+            dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, frame_count, allow_silence=True)
             config = {
                 **(refinement or {}),
                 "_source_duration": frame_count / FPS,
@@ -1419,6 +1501,7 @@ def render_dub_lip_sync(
                 inference_steps=inference_steps,
                 guidance_scale=guidance_scale,
             )
+            effective_crop_size = resolve_lip_sync_crop_size(window, video_size, crop_size) if is_h3 else 0
             window_seed = seed + window.first_frame
             cache_path = None
             if use_cache:
@@ -1426,7 +1509,7 @@ def render_dub_lip_sync(
                     dub,
                     window,
                     dialogue,
-                    crop_size=crop_size if is_h3 else 0,
+                    crop_size=effective_crop_size,
                     strength=strength if is_h3 else 0.0,
                     seed=window_seed,
                     refinement=config,
@@ -1463,7 +1546,7 @@ def render_dub_lip_sync(
                         services=services,
                         models=models,
                         config=config,
-                        crop_size=crop_size,
+                        crop_size=effective_crop_size,
                         seed=window_seed,
                         strength=strength,
                         feather=feather,
