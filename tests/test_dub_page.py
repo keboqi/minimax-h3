@@ -226,10 +226,49 @@ class WorkshopPageTests(PageTests):
         self.assertIn("filename*=utf-8''", download.headers["content-disposition"])
 
     def test_studio_only_steps_say_where_to_go(self):
+        import json as _json
+        from h3_app.dubbing.lip_sync import PLAN_FILE
+
         created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
         for path, body in (("preview", {"session": created.id, "line": 0}), ("dub", {"session": created.id}),
                            ("align", {"session": created.id})):
             self.assertIn("Studio", self.client.post(f"{API}/{path}", json=body).json()["error"])
+
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True)
+        dub_video = out_dir / "workshop.mp4"
+        dub_video.write_bytes(b"mp4-dub")
+        folder = player_folder(dub_video)
+        folder.mkdir(parents=True)
+        lines = [{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}]
+        spoken = {"0": [0, 1]}
+        (folder / "alignment.json").write_text(_json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        (folder / "alignment.npz").write_bytes(b"npz")
+        plan = {
+            "video": dub_video.name,
+            "revision": "imported-rev",
+            "backend": "yolo-motion",
+            "duration": 1.0,
+            "cuts": [],
+            "width": 160,
+            "height": 120,
+            "fps": 24.0,
+            "window_version": 4,
+            "windows_count": 0,
+            "windows": [],
+            "shots": [{"index": 0, "start": 0.0, "end": 1.0, "tracks": [{"track_id": 2, "box": [0.1, 0.1, 0.3, 0.4], "obs": [[0.5, 0.1, 0.1, 0.3, 0.4, 0.8]]}]}],
+            "assignments": [{"shot_index": 0, "speaker": "speaker1", "status": "uncertain", "track_id": None, "face_center": None, "reference_time": 0.5, "source": "none", "confidence": 0.0, "reason": ""}],
+            "turns": [{"start": 0.0, "end": 1.0, "speaker": "speaker1", "text": "Salut"}],
+        }
+        (folder / PLAN_FILE).write_text(_json.dumps(plan), encoding="utf-8")
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        for endpoint in ("lip-sync-detect", "lip-sync"):
+            refused = self.client.post(f"{API}/{endpoint}", json={"session": created.id})
+            self.assertEqual(refused.status_code, 400)
+            self.assertIn("Studio", refused.json()["error"])
+        self.assertEqual(self.client.get(f"{API}/lip-sync-plan", params={"session": created.id}).json()["plan"]["revision"],
+                         "imported-rev")
 
     def test_prompts_by_hand(self):
         created = self.session([{"start": 0, "end": 1.5, "speaker": "speaker1", "source": "Hello there.",

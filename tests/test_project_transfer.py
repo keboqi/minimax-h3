@@ -1026,3 +1026,139 @@ def test_local_project_manage_routes_and_ui_callbacks(tmp_path: Path):
         assert rem_name == "Alpha Stage"
         assert len(list_local_projects(store, runtime)) == 1
         demo.close()
+
+
+def test_dubbing_transfer_preserves_lipsync_plan_overrides_and_skips_caches(tmp_path: Path):
+    from h3_app.dubbing.lip_sync import (
+        PLAN_FILE,
+        REPORT_FILE,
+        WINDOW_CACHE_DIR,
+        build_lip_sync_plan_payload,
+        load_lip_sync_plan,
+        load_manual_overrides,
+        save_manual_overrides,
+    )
+    from h3_app.dubbing.lip_sync_match import (
+        FaceTrack,
+        Shot,
+        ShotSpeakerAssignment,
+        SourceScan,
+        TrackObservation,
+        video_fingerprint,
+    )
+
+    src_runtime, src_store = _make_workspace(tmp_path / "source")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "target")
+
+    with _using_workspace_env(src_runtime):
+        source_video = tmp_path / "talk.mp4"
+        source_video.write_bytes(b"source-talk-mp4")
+        session = dub_sessions.create(src_runtime, source_video, video=True)
+        (session.root / "vocals.wav").write_bytes(b"RIFF-vocals-wav")
+        (session.root / "takes").mkdir(parents=True, exist_ok=True)
+        (session.root / "takes" / "0.wav").write_bytes(b"RIFF-take-wav")
+        # Regenerable caches and transient intermediates must not bloat transfers.
+        (session.root / "timed").mkdir(parents=True, exist_ok=True)
+        (session.root / "timed" / "0.wav").write_bytes(b"RIFF-timed-cache")
+        (session.root / "speech-16k.wav").write_bytes(b"RIFF-temp-16k")
+        (session.root / "speech.wav").write_bytes(b"RIFF-temp-speech")
+        (session.root / "mix.wav").write_bytes(b"RIFF-temp-mix")
+
+        dub_out_dir = src_runtime.outputs_dir / "dubbing"
+        dub_out_dir.mkdir(parents=True, exist_ok=True)
+        dub_mp3 = dub_out_dir / "talk_zh.mp3"
+        dub_mp4 = dub_out_dir / "talk_zh.mp4"
+        dub_lipsync = dub_out_dir / "talk_zh.lipsync.mp4"
+        dub_mp3.write_bytes(b"dub-mp3-bytes")
+        dub_mp4.write_bytes(b"dub-mp4-video-bytes-for-fingerprint")
+        dub_lipsync.write_bytes(b"dub-lipsync-video-bytes")
+        for media_file in (dub_mp3, dub_mp4, dub_lipsync):
+            write_snapshot(media_file, {"family": "Dub & Translate", "settings": {"session": session.id}})
+
+        player_dir = dub_results.player_folder(dub_mp4)
+        player_dir.mkdir(parents=True, exist_ok=True)
+        (player_dir / "original.mp3").write_bytes(b"orig-mp3")
+        lines = [{"speaker": "Host", "start": 0.0, "end": 1.2, "source": "Hello", "translation": "你好"}]
+        spoken = {"0": [0.0, 1.2]}
+        (player_dir / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        (player_dir / "alignment.npz").write_bytes(b"npz-clips")
+        dub_results.save_player(
+            player_dir,
+            dub_results.Player(
+                video=dub_mp4,
+                dub=dub_mp3,
+                original=player_dir / "original.mp3",
+                music=None,
+                duration=2.0,
+                lines=[{"source": "Hello", "translation": "你好", "start": 0.0, "end": 1.2}],
+                target_language="Chinese",
+                source_language="English",
+            ),
+        )
+        track = FaceTrack(7, 0, 0.0, 1.2, (TrackObservation(0.6, (0.2, 0.2, 0.3, 0.4), 0.9),))
+        scan = SourceScan("src-fp", 2.0, 640, 360, 24.0, (), (Shot(0, 0.0, 2.0, (track,)),), "yolo-mediapipe")
+        assignments = {(0, "Host"): ShotSpeakerAssignment(0, "Host", "manual", 7, (0.35, 0.4), 0.6, "manual", 1.0)}
+        plan = build_lip_sync_plan_payload(
+            dub=dub_mp4, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=[]
+        )
+        (player_dir / PLAN_FILE).write_text(json.dumps(plan), encoding="utf-8")
+        save_manual_overrides(dub_mp4, {(0, "Host"): 7})
+        (player_dir / REPORT_FILE).write_text(
+            json.dumps({"output": dub_lipsync.name, "total_windows": 1, "backend": "yolo-mediapipe"}),
+            encoding="utf-8",
+        )
+        (player_dir / WINDOW_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+        (player_dir / WINDOW_CACHE_DIR / "win_cached.mp4").write_bytes(b"cached-window-mp4")
+
+        session.segments = lines
+        session.data["last_output"] = str(dub_mp4)
+        session.save()
+        dubbing_projects.save(src_runtime, "Talk Dub", session.id, source_video, {"target_language": "Chinese"})
+        archive = export_project_archive("dubbing", "Talk Dub", tmp_path / "talk_dub.zip", store=src_store, runtime=src_runtime)
+
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = set(zf.namelist())
+        assert f"result/{dub_lipsync.name}" in names
+        assert f"result_player/{PLAN_FILE}" in names
+        assert f"result_player/{REPORT_FILE}" in names
+        assert f"result_player/{WINDOW_CACHE_DIR}/win_cached.mp4" not in names
+        assert "session/vocals.wav" in names
+        assert "session/takes/0.wav" in names
+        assert "session/timed/0.wav" not in names
+        assert "session/speech-16k.wav" not in names
+        assert "session/speech.wav" not in names
+        assert "session/mix.wav" not in names
+        assert zf.getinfo("session/vocals.wav").compress_type == zipfile.ZIP_STORED
+        assert zf.getinfo("session/takes/0.wav").compress_type == zipfile.ZIP_STORED
+
+    with _using_workspace_env(dst_runtime):
+        first = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert first["status"] == "imported"
+        _, imported_session = dubbing_projects.load(dst_runtime, "Talk Dub")
+        imported_dub = Path(imported_session.data["last_output"])
+        # Simulate mtime drift on destination filesystem; fingerprint still matches.
+        orig_stat = imported_dub.stat()
+        os.utime(imported_dub, ns=(orig_stat.st_atime_ns, orig_stat.st_mtime_ns + 5_000_000_000))
+        loaded_plan = load_lip_sync_plan(imported_dub)
+        assert loaded_plan is not None
+        assert loaded_plan["video"] == imported_dub.name
+        assert loaded_plan["video_fingerprint"] == video_fingerprint(imported_dub)
+        assert loaded_plan["assignments"][0]["track_id"] == 7
+        assert load_manual_overrides(imported_dub) == {(0, "Host"): 7}
+
+        roots = (dst_runtime.output_dir, dst_runtime.outputs_dir)
+        videos, video_total = dst_store.catalog_page(kind="Video", roots=roots)
+        audios, audio_total = dst_store.catalog_page(kind="Audio", roots=roots)
+        assert video_total == 2 and audio_total == 1
+        assert {Path(row["path"]).name for row in videos} == {imported_dub.name, f"{imported_dub.stem}.lipsync.mp4"}
+
+        # Conflict rename updates plan video target and report output filename.
+        second = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert second["status"] == "renamed"
+        _, renamed_session = dubbing_projects.load(dst_runtime, second["target_name"])
+        renamed_dub = Path(renamed_session.data["last_output"])
+        assert renamed_dub.name != imported_dub.name
+        renamed_plan = load_lip_sync_plan(renamed_dub)
+        assert renamed_plan is not None and renamed_plan["video"] == renamed_dub.name
+        renamed_report = json.loads((dub_results.player_folder(renamed_dub) / REPORT_FILE).read_text(encoding="utf-8"))
+        assert renamed_report["output"] == f"{renamed_dub.stem}.lipsync.mp4"

@@ -82,23 +82,126 @@ function formatClock(sec) {
   return `${m}:${r}`;
 }
 
-function assignmentMap(plan) {
-  const map = new Map();
-  for (const a of plan?.assignments || []) {
-    map.set(`${a.shot_index}:${a.speaker}`, a);
+const planIndexes = new WeakMap();
+
+function getPlanIndex(plan) {
+  if (!plan) return null;
+  let idx = planIndexes.get(plan);
+  if (idx) return idx;
+  const assignments = new Map();
+  const firstAssignmentByShot = new Map();
+  const assignmentsByShot = new Map();
+  for (const a of plan.assignments || []) {
+    assignments.set(`${a.shot_index}:${a.speaker}`, a);
+    if (!firstAssignmentByShot.has(a.shot_index)) firstAssignmentByShot.set(a.shot_index, a);
+    let shotList = assignmentsByShot.get(a.shot_index);
+    if (!shotList) {
+      shotList = [];
+      assignmentsByShot.set(a.shot_index, shotList);
+    }
+    shotList.push(a);
   }
-  return map;
+  const shotsByIndex = new Map();
+  let shotsSorted = true;
+  let prevShotStart = -Infinity;
+  for (const shot of plan.shots || []) {
+    shotsByIndex.set(shot.index, shot);
+    if (shot.start < prevShotStart) shotsSorted = false;
+    prevShotStart = shot.start;
+  }
+  const windowsByKey = new Map();
+  for (const win of plan.windows || []) {
+    const key = `${win.shot_index}:${win.speaker}`;
+    let list = windowsByKey.get(key);
+    if (!list) {
+      list = [];
+      windowsByKey.set(key, list);
+    }
+    list.push(win);
+  }
+  let turnsSorted = true;
+  let prevTurnStart = -Infinity;
+  let maxTurnDuration = 0;
+  for (const ln of plan.turns || []) {
+    if (ln.start < prevTurnStart) turnsSorted = false;
+    prevTurnStart = ln.start;
+    const dur = ln.end - ln.start;
+    if (dur > maxTurnDuration) maxTurnDuration = dur;
+  }
+  idx = {
+    assignments,
+    firstAssignmentByShot,
+    assignmentsByShot,
+    shotsByIndex,
+    shotsSorted,
+    windowsByKey,
+    turnsSorted,
+    maxTurnDuration,
+    trackMedians: new WeakMap(),
+  };
+  planIndexes.set(plan, idx);
+  return idx;
+}
+
+function assignmentMap(plan) {
+  return getPlanIndex(plan)?.assignments || new Map();
+}
+
+function findShotAtTime(plan, idx, t) {
+  const shots = plan?.shots || [];
+  if (!shots.length) return null;
+  if (!idx?.shotsSorted) return shots.find((s) => t >= s.start && t < s.end) || null;
+  let lo = 0;
+  let hi = shots.length - 1;
+  let candidate = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (shots[mid].start <= t) {
+      candidate = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (candidate >= 0 && t >= shots[candidate].start && t < shots[candidate].end) return shots[candidate];
+  return null;
+}
+
+function findTurnAtTime(plan, idx, t) {
+  const turns = plan?.turns || [];
+  if (!turns.length) return null;
+  if (!idx?.turnsSorted) return turns.find((ln) => t >= ln.start && t < ln.end) || null;
+  let lo = 0;
+  let hi = turns.length - 1;
+  let candidate = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (turns[mid].start <= t) {
+      candidate = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (candidate < 0) return null;
+  const minStart = t - idx.maxTurnDuration;
+  let firstMatch = null;
+  for (let i = candidate; i >= 0 && turns[i].start >= minStart; i--) {
+    const ln = turns[i];
+    if (t >= ln.start && t < ln.end) firstMatch = ln;
+  }
+  return firstMatch;
 }
 
 function shotItems(plan) {
   if (!plan?.shots) return [];
-  const assignments = plan.assignments || [];
+  const idx = getPlanIndex(plan);
   const turns = plan.turns || [];
   const items = [];
   for (const shot of plan.shots) {
-    const shotAssignments = assignments.filter((a) => a.shot_index === shot.index);
-    const shotTurns = turns.filter((t) => Math.min(t.end, shot.end) - Math.max(t.start, shot.start) >= 0.04);
+    const shotAssignments = idx?.assignmentsByShot.get(shot.index) || [];
     if (!shotAssignments.length) continue;
+    const shotTurns = turns.filter((t) => Math.min(t.end, shot.end) - Math.max(t.start, shot.start) >= 0.04);
     for (const a of shotAssignments) {
       const firstTurn = shotTurns.find((t) => t.speaker === a.speaker);
       items.push({
@@ -137,13 +240,21 @@ function assignmentButtons(shot, assignment, overrides) {
 function boxAtTime(track, time) {
   const obs = track.obs || [];
   if (!obs.length) return track.box || null;
-  let best = obs[0];
-  let bestDt = Math.abs(obs[0][0] - time);
-  for (let i = 1; i < obs.length; i++) {
-    const dt = Math.abs(obs[i][0] - time);
+  let lo = 0;
+  let hi = obs.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (obs[mid][0] < time) lo = mid + 1;
+    else hi = mid;
+  }
+  let best = obs[lo];
+  let bestDt = Math.abs(best[0] - time);
+  if (lo > 0) {
+    const prev = obs[lo - 1];
+    const dt = Math.abs(prev[0] - time);
     if (dt < bestDt) {
       bestDt = dt;
-      best = obs[i];
+      best = prev;
     }
   }
   if (bestDt > 1.2) return null;
@@ -157,14 +268,21 @@ function statusBadge(a) {
   return {label: "Needs check", cls: "chip chip-warn"};
 }
 
-function trackMedianHeight(track) {
-  const obs = track?.obs || [];
+function trackMedianHeight(track, index = null) {
+  if (!track) return null;
+  if (index?.trackMedians.has(track)) return index.trackMedians.get(track);
+  let median = null;
+  const obs = track.obs || [];
   if (obs.length) {
     const heights = obs.map((o) => Number(o[4])).filter(Number.isFinite).sort((a, b) => a - b);
-    if (heights.length) return heights[Math.floor(heights.length / 2)];
+    if (heights.length) median = heights[Math.floor(heights.length / 2)];
   }
-  const boxH = Number(track?.box?.[3]);
-  return Number.isFinite(boxH) ? boxH : null;
+  if (median === null) {
+    const boxH = Number(track.box?.[3]);
+    if (Number.isFinite(boxH)) median = boxH;
+  }
+  index?.trackMedians.set(track, median);
+  return median;
 }
 
 function windowFaceSize(win) {
@@ -173,7 +291,7 @@ function windowFaceSize(win) {
 
 function isWindowManual(win, plan) {
   if (typeof win?.manual === "boolean") return win.manual;
-  const a = (plan?.assignments || []).find((item) => item.shot_index === win.shot_index && item.speaker === win.speaker);
+  const a = getPlanIndex(plan)?.assignments.get(`${win.shot_index}:${win.speaker}`);
   return a?.status === "manual";
 }
 
@@ -198,7 +316,8 @@ function filteredWindowsInfo(plan) {
 }
 
 function itemFaceSize(it, plan) {
-  const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
+  const idx = getPlanIndex(plan);
+  const wins = idx?.windowsByKey.get(it.key) || [];
   const winSizes = wins.map(windowFaceSize).filter((v) => v !== null);
   if (winSizes.length) {
     winSizes.sort((a, b) => a - b);
@@ -206,14 +325,14 @@ function itemFaceSize(it, plan) {
   }
   if (it.assignment.track_id !== null && it.assignment.track_id !== undefined) {
     const track = (it.shot.tracks || []).find((t) => t.track_id === it.assignment.track_id);
-    if (track) return trackMedianHeight(track);
+    if (track) return trackMedianHeight(track, idx);
   }
   return null;
 }
 
 function isItemSizeFiltered(it, plan) {
   if (it.assignment.status !== "matched") return false;
-  const wins = (plan?.windows || []).filter((w) => w.shot_index === it.shot.index && w.speaker === it.speaker);
+  const wins = getPlanIndex(plan)?.windowsByKey.get(it.key) || [];
   return wins.length > 0 && wins.every((w) => !windowInSizeRange(w, plan));
 }
 
@@ -308,6 +427,12 @@ function engineSettingsHtml() {
     ${feather}`;
 }
 
+function detectLockedReason(ls, app) {
+  if (!ls.ready) return "Generate this dub again to save its fitted dialogue.";
+  if (!app.boot.lip_sync) return "Open this dub in Studio to detect faces and speakers.";
+  return "";
+}
+
 function renderLockedReason(ls, app, plan) {
   if (!ls.ready) return "Generate this dub again to save its fitted dialogue.";
   if (!app.boot.lip_sync) return "Open this dub in Studio to render lip sync.";
@@ -346,7 +471,7 @@ export function renderLipSync(app) {
   }
 
   const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
-  const unavailable = !ls.ready ? "Generate this dub again to save its fitted dialogue." : "";
+  const detectReason = detectLockedReason(ls, app);
   const renderReason = renderLockedReason(ls, app, plan);
   const canRender = !!(plan?.revision && !renderReason && !lsState.loading);
 
@@ -363,7 +488,7 @@ export function renderLipSync(app) {
           </div>
           <span class="spacer"></span>
           <div class="row row-wrap">
-            <button type="button" class="btn btn-small" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!unavailable}">
+            <button type="button" class="btn btn-small" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!detectReason}" ${detectReason ? `disabled title="${esc(detectReason)}"` : ""}>
               ${plan ? "Re-run auto detect" : "Auto detect faces & speakers"}
             </button>
             <button type="button" class="btn btn-small" data-ls-action="to-result">Skip to Result →</button>
@@ -372,12 +497,12 @@ export function renderLipSync(app) {
         <div class="run-status top-gap" data-run="lip-sync-detect" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span>
-          <button type="button" class="btn btn-small" data-ls-action="interrupt" data-kind="lip-sync-detect">Interrupt</button>
+          <button type="button" class="btn btn-small" data-ls-action="interrupt" data-stop="lip-sync-detect" data-kind="lip-sync-detect">Interrupt</button>
         </div>
         <div class="run-status top-gap" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span data-run-status role="status"></span>
-          <button type="button" class="btn btn-small" data-ls-action="interrupt" data-kind="lip-sync">Interrupt</button>
+          <button type="button" class="btn btn-small" data-ls-action="interrupt" data-stop="lip-sync" data-kind="lip-sync">Interrupt</button>
         </div>
       </section>
 
@@ -389,11 +514,12 @@ export function renderLipSync(app) {
         <section class="card card-pad stack-14">
           <h2>Step 1 · Auto detect faces &amp; speaking speakers</h2>
           <p class="muted">Runs <code>face_yolov8m.pt</code> face tracking, aligns speakers using your Gemini <code>visual_speakers</code> hints, and uses MediaPipe mouth-motion (MAR) as backup. No H3 video rendering starts until you review and confirm.</p>
+          ${app.boot.lip_sync ? "" : '<p class="alert alert-info">Auto face and speaker detection runs in Studio. Open this project in Studio to detect faces or render lip sync.</p>'}
           <div class="row row-wrap">
-            <button type="button" class="btn btn-primary" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!unavailable}">
+            <button type="button" class="btn ${app.boot.lip_sync ? "btn-primary" : ""}" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!detectReason}" ${detectReason ? `disabled title="${esc(detectReason)}"` : ""}>
               Auto detect faces &amp; speakers
             </button>
-            <button type="button" class="btn" data-ls-action="to-result">Skip to Result</button>
+            <button type="button" class="btn ${app.boot.lip_sync ? "" : "btn-primary"}" data-ls-action="to-result">Skip to Result</button>
           </div>
         </section>
       ` : ""}
@@ -463,7 +589,7 @@ export function renderLipSync(app) {
                   ${renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount)}
                 </span>
                 <span class="spacer"></span>
-                <button type="button" class="btn btn-primary" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}">
+                <button type="button" class="btn btn-primary" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}" ${canRender ? "" : "disabled"}>
                   ${data?.output ? "Confirm & re-render lip sync" : "Confirm & render lip sync"}
                 </button>
               </div>
@@ -523,8 +649,9 @@ function drawOverlay(app) {
   });
 
   const t = Number(video.currentTime) || 0;
-  const shot = (plan.shots || []).find((s) => t >= s.start && t < s.end);
-  const turn = (plan.turns || []).find((ln) => t >= ln.start && t < ln.end) || null;
+  const index = getPlanIndex(plan);
+  const shot = findShotAtTime(plan, index, t);
+  const turn = findTurnAtTime(plan, index, t);
   if (subtitle) {
     if (turn) {
       subtitle.hidden = false;
@@ -533,10 +660,10 @@ function drawOverlay(app) {
       subtitle.hidden = true;
     }
   }
-  const aMap = assignmentMap(plan);
+  const aMap = index.assignments;
   const selected = shot?.index === lsState.selectedShot ? lsState.selectedSpeaker : null;
   const activeAssign = shot && (aMap.get(`${shot.index}:${selected}`) || aMap.get(`${shot.index}:${turn?.speaker}`)
-    || (plan.assignments || []).find((a) => a.shot_index === shot.index));
+    || index.firstAssignmentByShot.get(shot.index));
   const activeSpeaker = activeAssign?.speaker;
   const key = activeSpeaker ? `${shot.index}:${activeSpeaker}` : "";
   const buttons = document.getElementById("ls-quick-buttons");
@@ -550,9 +677,9 @@ function drawOverlay(app) {
     return;
   }
   const activeTrackId = activeAssign && activeAssign.status !== "off_screen" ? activeAssign.track_id : null;
-  const activeWindow = (plan.windows || []).find((win) =>
-    win.shot_index === shot.index && win.speaker === activeSpeaker && t >= win.start && t < win.end
-  );
+  const activeWindow = key
+    ? (index.windowsByKey.get(key) || []).find((win) => t >= win.start && t < win.end) || null
+    : null;
 
   // Reuse existing box buttons keyed by shot/track so clicks complete across animation frames.
   const existing = new Map();
@@ -566,7 +693,7 @@ function drawOverlay(app) {
     const [x, y, w, h] = b;
     const isSpeaking = activeTrackId !== null && track.track_id === activeTrackId;
     const speakingWindow = isSpeaking ? activeWindow : null;
-    const trackSize = (speakingWindow && windowFaceSize(speakingWindow)) ?? trackMedianHeight(track) ?? h;
+    const trackSize = (speakingWindow && windowFaceSize(speakingWindow)) ?? trackMedianHeight(track, index) ?? h;
     const pct = formatFacePct(trackSize);
     const sizeIgnored = !!speakingWindow && !windowInSizeRange(speakingWindow, plan);
     const manualKept = !!speakingWindow && isWindowManual(speakingWindow, plan)
@@ -744,6 +871,47 @@ function syncFaceSizeUI(app) {
   drawOverlay(app);
 }
 
+function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} = {}) {
+  const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
+  const plan = data?.plan;
+  const video = document.getElementById("ls-video");
+  lsState.selectedShot = shotIndex;
+  lsState.selectedSpeaker = speaker || null;
+  if (!plan || !video) {
+    app.render();
+    const renderedVideo = document.getElementById("ls-video");
+    if (renderedVideo) {
+      const seek = () => { renderedVideo.currentTime = seekTime; drawOverlay(app); };
+      if (renderedVideo.readyState >= 1) seek();
+      else renderedVideo.addEventListener("loadedmetadata", seek, {once: true});
+    }
+    return;
+  }
+  const index = getPlanIndex(plan);
+  const shot = index?.shotsByIndex.get(shotIndex) || null;
+  const assignment = shot && speaker ? index.assignments.get(`${shotIndex}:${speaker}`) : null;
+  const key = shot && speaker ? `${shotIndex}:${speaker}` : "";
+  const infoEl = document.getElementById("ls-active-info");
+  if (infoEl) infoEl.innerHTML = assignmentLabel(shot, speaker);
+  const buttonsEl = document.getElementById("ls-quick-buttons");
+  if (buttonsEl) {
+    buttonsEl.dataset.key = key;
+    buttonsEl.innerHTML = assignmentButtons(shot, assignment, data.overrides);
+  }
+  for (const row of document.querySelectorAll(".ls-shot-row")) {
+    const isSelected = Number(row.dataset.lsShot) === shotIndex
+      && (row.dataset.lsSpeaker || null) === (speaker || null);
+    row.classList.toggle("selected", isSelected);
+    if (isSelected && scroll) row.scrollIntoView({block: "nearest"});
+  }
+  const seek = () => {
+    video.currentTime = seekTime;
+    drawOverlay(app);
+  };
+  if (video.readyState >= 1) seek();
+  else video.addEventListener("loadedmetadata", seek, {once: true});
+}
+
 export function bindLipSync(app) {
   const screen = document.getElementById("screen");
   screen.addEventListener("click", async (event) => {
@@ -786,16 +954,7 @@ export function bindLipSync(app) {
     }
     const shotRow = event.target.closest("[data-ls-shot]");
     if (shotRow) {
-      lsState.selectedShot = Number(shotRow.dataset.lsShot);
-      lsState.selectedSpeaker = shotRow.dataset.lsSpeaker || null;
-      const jumpTime = Number(shotRow.dataset.lsTime) || 0;
-      app.render();
-      const video = document.getElementById("ls-video");
-      if (video) {
-        const seek = () => { video.currentTime = jumpTime; drawOverlay(app); };
-        if (video.readyState >= 1) seek();
-        else video.addEventListener("loadedmetadata", seek, {once: true});
-      }
+      selectShotInPlace(app, Number(shotRow.dataset.lsShot), shotRow.dataset.lsSpeaker || null, Number(shotRow.dataset.lsTime) || 0);
       return;
     }
     const assign = event.target.closest("[data-ls-assign]");
@@ -814,7 +973,9 @@ export function bindLipSync(app) {
       stopOverlayLoop();
       app.go("dub");
     } else if (action === "detect") {
-      if (!lsState.saving) app.startRun("lip-sync-detect", {...reviewTarget(app), api_key: app.apiKey, force: !!lsState.data?.plan});
+      if (!lsState.saving && app.boot?.lip_sync && app.session?.result?.lip_sync?.ready) {
+        app.startRun("lip-sync-detect", {...reviewTarget(app), api_key: app.apiKey, force: !!lsState.data?.plan});
+      }
     } else if (action === "render") {
       const target = reviewTarget(app);
       const revision = lsState.data?.plan?.revision;
@@ -843,15 +1004,7 @@ export function bindLipSync(app) {
       if (!items.length) return;
       const idx = Math.max(0, items.findIndex((it) => it.shot.index === lsState.selectedShot && it.speaker === lsState.selectedSpeaker));
       const next = items[(idx + (action === "next-shot" ? 1 : -1) + items.length) % items.length];
-      lsState.selectedShot = next.shot.index;
-      lsState.selectedSpeaker = next.speaker;
-      app.render();
-      const video = document.getElementById("ls-video");
-      if (video) {
-        const seek = () => { video.currentTime = next.seekTime; drawOverlay(app); };
-        if (video.readyState >= 1) seek();
-        else video.addEventListener("loadedmetadata", seek, {once: true});
-      }
+      selectShotInPlace(app, next.shot.index, next.speaker, next.seekTime, {scroll: true});
     }
   });
   screen.addEventListener("input", (event) => {

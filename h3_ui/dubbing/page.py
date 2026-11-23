@@ -922,6 +922,8 @@ def install_dubbing_page(
     @app.post(f"{API}/lip-sync-detect", include_in_schema=False)
     @guarded
     def lip_sync_detect(request: Request, body: dict = Body(...)):
+        if not lip_sync_available:
+            raise H3Error(STUDIO_ONLY.format("detect faces and speakers"))
         session_id = str(body.get("session") or "")
         _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
         force = bool(body.get("force", False))

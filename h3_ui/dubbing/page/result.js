@@ -261,6 +261,10 @@ function filterCues(app) {
   }
 }
 
+export function pauseResultPlayer() {
+  for (const media of mounted.node?.querySelectorAll("audio, video") || []) media.pause();
+}
+
 // The player keeps playing across redraws of the rest of the screen: its node moves into each new slot.
 export async function afterResult(app) {
   const slot = document.getElementById("player-slot");
@@ -282,7 +286,7 @@ export async function afterResult(app) {
   if (mounted.key !== key) {
     if (!bindPlayers) bindPlayers = (await import("./player.js")).bindPlayers;
     if (!slot.isConnected) return;
-    for (const media of mounted.node?.querySelectorAll("audio, video") || []) media.pause();
+    pauseResultPlayer();
     const node = document.createElement("div");
     node.className = "player-host";
     node.innerHTML = result.html;

@@ -484,6 +484,76 @@ class DubbingBrowserTests(PageTests):
             expect(page.locator("#player-slot audio")).to_have_attribute("src", "later.mp3")
             browser.close()
 
+    def test_workshop_lip_sync_disables_detect_preserves_video_and_shows_imported_plan(self):
+        from h3_app.dubbing.lip_sync import PLAN_FILE, build_lip_sync_plan_payload
+        from h3_app.dubbing.lip_sync_match import FaceTrack, Shot, SourceScan, TrackObservation, assign_speakers_to_shots
+
+        lines = [{"speaker": spk, "start": start, "end": end, "source": spk, "translation": spk}
+                 for spk, start, end in [("A", 0.0, 0.9), ("B", 1.1, 1.9)]]
+        session = self.session(lines)
+        self.runtime.outputs_dir.mkdir()
+        dub = self.runtime.outputs_dir / "workshop_sample.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=2",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dub)], check=True)
+        dub.with_name("workshop_sample.lipsync.mp4").write_bytes(dub.read_bytes())
+        sessions.modify(session, lambda current: current.data.update(last_output=str(dub)))
+        folder = player_folder(dub)
+        folder.mkdir(parents=True)
+        spoken = {"0": [0.0, 0.9], "1": [1.1, 1.9]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}))
+        np.savez(folder / "alignment.npz", **{key: np.ones(100, dtype=np.float32) for key in spoken})
+        t0 = FaceTrack(0, 0, 0.1, 0.8, (TrackObservation(0.4, (0.1, 0.1, 0.3, 0.4), 0.9),))
+        t1 = FaceTrack(1, 1, 1.1, 1.8, (TrackObservation(1.5, (0.5, 0.1, 0.3, 0.4), 0.9),))
+        scan = SourceScan("test", 2.0, 160, 120, 24.0, (1.0,), (Shot(0, 0.0, 1.0, (t0,)), Shot(1, 1.0, 2.0, (t1,))), "yolo-motion")
+        plan = build_lip_sync_plan_payload(dub=dub, scan=scan, lines=lines, spoken=spoken,
+                                           assignments=assign_speakers_to_shots(scan, lines), windows=[])
+        (folder / PLAN_FILE).write_text(json.dumps(plan))
+
+        boot = self.client.get("/dubbing/api/boot").json()
+        boot.update(gpu=False, lip_sync=False, pipelines=[item for item in boot["pipelines"] if item["cloud"]])
+        state = {"screen": "lipsync", "sessionId": session.id}
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+            page.route("**/api/boot", lambda route: route.fulfill(json=boot))
+
+            def serve_video(route):
+                url = urlsplit(route.request.url)
+                response = self.client.get(url.path + "?" + url.query,
+                                           headers={"Range": route.request.headers.get("range", "bytes=0-")})
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("**/api/output?*", serve_video)
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+
+            expect(page.locator(".ls-phases")).to_contain_text("1. Auto detect (yolo-motion)")
+            expect(page.locator("#ls-video")).to_be_visible()
+            expect(page.locator('.ls-stage-bar [data-ls-action="detect"]')).to_be_disabled()
+            expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
+
+            # Clicking a shot row seeks the existing <video> element without recreating it.
+            page.evaluate("window.__lsVideoRef = document.getElementById('ls-video')")
+            page.locator('[data-ls-shot="1"][data-ls-speaker="B"]').click()
+            page.wait_for_function("document.querySelector('#ls-video')?.currentTime >= 1")
+            self.assertTrue(page.evaluate("window.__lsVideoRef === document.getElementById('ls-video')"))
+
+            # Workshop can still review and save face overrides while keeping render locked.
+            page.get_by_role("button", name="Off-screen / Skip").click()
+            expect(page.get_by_role("button", name="Restore automatic match")).to_be_visible()
+            expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
+
+            # When no plan exists in Workshop, both Auto-detect buttons are disabled and Skip to Result works.
+            (folder / PLAN_FILE).unlink()
+            page.reload()
+            expect(page.locator('[data-ls-action="detect"]')).to_have_count(2)
+            for idx in range(2):
+                expect(page.locator('[data-ls-action="detect"]').nth(idx)).to_be_disabled()
+            page.get_by_role("button", name="Skip to Result", exact=True).click()
+            expect(page.locator("#screen")).to_have_attribute("data-screen", "result")
+            browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()

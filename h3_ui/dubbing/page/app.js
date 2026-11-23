@@ -9,7 +9,7 @@ import {bindBatch} from "./batch.js";
 import {renderReview, bindReview} from "./review.js";
 import {renderDub, bindDub, selectedTiming} from "./dub.js";
 import {renderLipSync, bindLipSync, afterLipSync, loadLipSyncPlan} from "./lipsync.js";
-import {renderResult, bindResult, afterResult} from "./result.js";
+import {renderResult, bindResult, afterResult, pauseResultPlayer} from "./result.js";
 
 const STORE = "h3-dubbing-page";
 const SCREENS = [["source", "Source"], ["review", "Review lines"], ["dub", "Dub"], ["lipsync", "Lip sync"], ["result", "Result"]];
@@ -193,6 +193,7 @@ export function render() {
   const screen = document.getElementById("screen");
   const renderers = {source: renderSource, review: renderReview, dub: renderDub, lipsync: renderLipSync, result: renderResult};
   if (app.screen !== "source" && !app.session) app.screen = "source";
+  if (app.screen !== "result") pauseResultPlayer();
   screen.innerHTML = renderers[app.screen](app);
   screen.dataset.screen = app.screen;
   if (app.screen === "result") afterResult(app);
@@ -231,6 +232,11 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
     if (app.filter === "combine") app.filter = "all";
   }
   if (changed) {
+    if (app.session?.id && session?.id && app.session.id !== session.id) {
+      for (const kind of Object.keys(app.pendingRuns)) {
+        if (kind !== "analyze" && kind !== "auto") delete app.pendingRuns[kind];
+      }
+    }
     app.focus = 0;
     app.linesRequest = null;
     if (session && !keepSettings) app.settings.voice_mode = session.voice_default;
@@ -295,11 +301,20 @@ async function poll() {
   pollInFlight = true;
   let retry = false;
   try {
-    const data = await api.get("run", {session: app.sessionId || ""});
+    const requestedSession = app.sessionId || "";
+    const data = await api.get("run", {session: requestedSession});
     app.runs = data.runs;
     // A batch can finish between polls, or while this page is closed.
     const auto = app.runs.auto;
     if (auto && auto.id !== app.completedAuto) app.pendingRuns.auto = auto.id;
+    if ((app.sessionId || "") === requestedSession) {
+      for (const kind of Object.keys(app.pendingRuns)) {
+        if (!(kind in app.runs) || app.runs[kind] === null) {
+          delete app.pendingRuns[kind];
+          toast("The server restarted while that step was running.", {error: true});
+        }
+      }
+    }
     saveSettings();
     for (const [kind, run] of Object.entries(app.runs)) {
       await handleCompletion(kind, run);

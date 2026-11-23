@@ -147,6 +147,7 @@ details.sub > summary { cursor: pointer; min-height: 28px; display: flex; align-
 @keyframes spin { to { transform: rotate(360deg); } }
 .run-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .run-status:not(.active) .spinner { display: none; }
+.run-status:not(.active) [data-stop] { display: none; }
 .run-status.error { color: var(--flag); }
 
 /* Fixed 2-Tier Chrome: Tier 1 ink command bar + Tier 2 workflow stepper & context rail. */

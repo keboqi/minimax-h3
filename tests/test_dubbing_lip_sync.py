@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -1246,3 +1247,46 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(resolve_lip_sync_crop_size(closeup, (3840, 2160)), 960)
         self.assertEqual(resolve_lip_sync_crop_size(unmeasured, (3840, 2160)), 640)
         self.assertEqual(resolve_lip_sync_crop_size(medium, (1920, 1080), base_crop_size=320), 320)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_load_lip_sync_plan_survives_mtime_shifts_and_rescues_legacy_plans(self):
+        folder = player_folder(self.dub)
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=1.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(self.dub),
+        ], check=True)
+        lines = [{"speaker": "A", "start": 0.1, "end": 0.8, "source": "Hi", "translation": "Salut"}]
+        spoken = {"0": [0.1, 0.8]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        track = FaceTrack(0, 0, 0.1, 0.8, (TrackObservation(0.4, (0.2, 0.2, 0.3, 0.4), 0.9),))
+        scan = SourceScan("fp", 1.0, 160, 120, 24.0, (), (Shot(0, 0.0, 1.0, (track,)),), "yolo-mediapipe")
+        assignments = {(0, "A"): ShotSpeakerAssignment(0, "A", "matched", 0, (0.35, 0.4), 0.4, "yolo-mediapipe", 0.9)}
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=[],
+        )
+        self.assertIn("video_fingerprint", plan)
+        self.assertIn("video_size", plan)
+        (folder / PLAN_FILE).write_text(json.dumps(plan), encoding="utf-8")
+
+        stat = self.dub.stat()
+        os.utime(self.dub, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+        self.assertIsNotNone(load_lip_sync_plan(self.dub))
+
+        # Legacy plans without fingerprint/size are rescued when video geometry and alignment turns still match.
+        legacy = {k: v for k, v in plan.items() if k not in ("video_fingerprint", "video_size")}
+        legacy["video_mtime_ns"] = stat.st_mtime_ns
+        (folder / PLAN_FILE).write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertIsNotNone(load_lip_sync_plan(self.dub))
+
+        # Changed video dimensions or alignment turns still invalidate legacy plans.
+        (folder / PLAN_FILE).write_text(json.dumps({**legacy, "width": 320}), encoding="utf-8")
+        self.assertIsNone(load_lip_sync_plan(self.dub))
+        (folder / PLAN_FILE).write_text(json.dumps({**legacy, "turns": [{"start": 0.0, "end": 0.2, "speaker": "A", "text": "x"}]}), encoding="utf-8")
+        self.assertIsNone(load_lip_sync_plan(self.dub))
+
+        # Re-dubbed output bytes invalidate fingerprinted plans.
+        (folder / PLAN_FILE).write_text(json.dumps(plan), encoding="utf-8")
+        self.dub.write_bytes(b"replaced-redub-bytes")
+        self.assertIsNone(load_lip_sync_plan(self.dub))
+        (folder / PLAN_FILE).write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertIsNone(load_lip_sync_plan(self.dub))

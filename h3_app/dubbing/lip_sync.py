@@ -55,6 +55,7 @@ from .lip_sync_match import (
     get_or_scan_source,
     resolve_uncertain_with_gemini_decision,
     uncertain_assignments,
+    video_fingerprint,
 )
 from .pipeline import blocking
 from .results import PLAYER_DIR, SCAN_CACHE_DIR, load_player, player_folder
@@ -238,7 +239,7 @@ def detect_shot_cuts(video: Path, *, threshold: float = DEFAULT_SHOT_THRESHOLD, 
     if not 0.0 < threshold < 1.0:
         raise H3Error("Shot-cut threshold must be between 0 and 1.")
     cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "info", "-i", str(video),
+        "ffmpeg", "-hide_banner", "-loglevel", "info", "-threads", "2", "-filter_threads", "2", "-i", str(video),
         "-vf", f"select='gt(scene,{threshold:.3f})',showinfo",
         "-f", "null", "-",
     ]
@@ -830,11 +831,10 @@ def window_cache_key(
     engine_options: dict[str, Any] | None = None,
 ) -> str:
     """Deterministic key for caching one rendered window so retries/edits skip unchanged shots."""
-    stat = dub.stat()
     payload = {
         "version": {"h3": 7, "musetalk": 7}.get(engine, 5),
         "engine": str(engine),
-        "dub": [dub.name, stat.st_size, stat.st_mtime_ns],
+        "dub": [dub.name, video_fingerprint(dub)],
         "window": [
             window.shot_index, window.speaker, window.first_frame, window.source_frames,
             window.render_frames, window.active_start_frame, window.active_end_frame,
@@ -953,6 +953,51 @@ def _save_lip_sync_report(
         temporary.unlink(missing_ok=True)
 
 
+def _legacy_plan_matches_dub(data: dict[str, Any], dub: Path) -> bool:
+    """Verify legacy mtime-only plans against video dimensions/duration and alignment turns."""
+    width = data.get("width")
+    height = data.get("height")
+    duration = data.get("duration")
+    if (
+        isinstance(width, bool) or isinstance(height, bool) or isinstance(duration, bool)
+        or not isinstance(width, (int, float)) or not isinstance(height, (int, float))
+        or not isinstance(duration, (int, float))
+        or width <= 0 or height <= 0 or not math.isfinite(duration) or duration <= 0
+    ):
+        return False
+    try:
+        meta = probe_video_metadata(dub)
+    except (H3Error, OSError, ValueError):
+        return False
+    if meta.width != int(width) or meta.height != int(height) or abs(meta.duration - float(duration)) > 0.35:
+        return False
+    alignment_path = player_folder(dub) / "alignment.json"
+    if alignment_path.is_file() and isinstance(data.get("turns"), list):
+        try:
+            saved = json.loads(alignment_path.read_text(encoding="utf-8"))
+            lines = saved.get("lines") or ()
+            spoken = saved.get("spoken") or {}
+            expected_turns: list[tuple[float, float]] = []
+            for key, span in spoken.items():
+                try:
+                    idx = int(key)
+                    start, end = float(span[0]), float(span[1])
+                except (ValueError, TypeError, IndexError):
+                    continue
+                if 0 <= idx < len(lines):
+                    expected_turns.append((round(start, 3), round(end, 3)))
+            expected_turns.sort()
+            plan_turns = [
+                (round(float(t["start"]), 3), round(float(t["end"]), 3))
+                for t in data["turns"]
+            ]
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        if plan_turns != expected_turns:
+            return False
+    return True
+
+
 def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
     """Read the saved Stage 1 face/speaker detection plan for a dubbed video, if present."""
     path = player_folder(dub) / PLAN_FILE
@@ -963,8 +1008,16 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
         data = json.loads(raw)
         if not isinstance(data, dict) or data.get("video") != dub.name:
             return None
-        if "video_mtime_ns" in data and data["video_mtime_ns"] != dub.stat().st_mtime_ns:
-            return None
+        stat = dub.stat()
+        if "video_fingerprint" in data:
+            if data["video_fingerprint"] != video_fingerprint(dub):
+                return None
+        elif "video_mtime_ns" in data and data["video_mtime_ns"] != stat.st_mtime_ns:
+            if "video_size" in data:
+                if data["video_size"] != stat.st_size:
+                    return None
+            elif not _legacy_plan_matches_dub(data, dub):
+                return None
         if "revision" not in data:
             data["revision"] = hashlib.sha256(raw).hexdigest()
         if data.get("window_version") in (2, 3):
@@ -1037,9 +1090,12 @@ def build_lip_sync_plan_payload(
             "text": str(line.get("translation") or line.get("source") or ""),
         })
     turns_out.sort(key=lambda item: (item["start"], item["end"]))
+    stat = dub.stat()
     return {
         "video": dub.name,
-        "video_mtime_ns": dub.stat().st_mtime_ns,
+        "video_mtime_ns": stat.st_mtime_ns,
+        "video_size": stat.st_size,
+        "video_fingerprint": video_fingerprint(dub),
         "revision": uuid4().hex,
         "backend": scan.backend,
         "duration": float(scan.duration),

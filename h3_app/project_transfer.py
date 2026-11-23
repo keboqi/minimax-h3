@@ -62,6 +62,8 @@ _PRECOMPRESSED_SUFFIXES = frozenset(
         ".opus",
         ".webm",
         ".flac",
+        # Uncompressed PCM WAVs are high-entropy; storing avoids heavy zlib CPU burn on low-CPU hosts.
+        ".wav",
         ".jpg",
         ".jpeg",
         ".png",
@@ -70,6 +72,9 @@ _PRECOMPRESSED_SUFFIXES = frozenset(
         ".npz",
     }
 )
+_DUBBING_SESSION_SKIP_FILES = frozenset({"speech.wav", "mix.wav", "speech-16k.wav", "speech.mp3"})
+_DUBBING_SESSION_SKIP_DIRS = frozenset({"timed", "stems"})
+_DUBBING_PLAYER_SKIP_DIRS = frozenset({"lip_sync_cache"})
 
 
 def normalize_server_url(url: str) -> str:
@@ -120,15 +125,19 @@ def _plural(count: int, word: str) -> str:
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
-def _extract_member_atomic(archive: zipfile.ZipFile, member: str, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def _extract_member_atomic(
+    archive: zipfile.ZipFile, member: str, destination: Path, *, ensure_parent: bool = True
+) -> None:
+    if ensure_parent:
+        destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f"{destination.name}.{uuid.uuid4().hex}.partial")
     try:
         with archive.open(member, "r") as reader, temporary.open("wb") as writer:
             shutil.copyfileobj(reader, writer, length=1 << 20)
         os.replace(temporary, destination)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
 
 
 def _add_zip_file(archive: zipfile.ZipFile, source: Path, arc_name: str, added: set[str]) -> bool:
@@ -140,13 +149,22 @@ def _add_zip_file(archive: zipfile.ZipFile, source: Path, arc_name: str, added: 
     return True
 
 
-def _add_zip_dir(archive: zipfile.ZipFile, root_dir: Path, prefix: str, added: set[str]) -> None:
+def _add_zip_dir(
+    archive: zipfile.ZipFile,
+    root_dir: Path,
+    prefix: str,
+    added: set[str],
+    *,
+    skip_rel: Callable[[PurePosixPath], bool] | None = None,
+) -> None:
     if not root_dir.is_dir():
         return
     for path in sorted(root_dir.rglob("*")):
         if not path.is_file() or path.is_symlink() or path.name.endswith(".tmp"):
             continue
         rel = path.relative_to(root_dir).as_posix()
+        if skip_rel is not None and skip_rel(PurePosixPath(rel)):
+            continue
         _add_zip_file(archive, path, f"{prefix}/{rel}", added)
 
 
@@ -164,24 +182,43 @@ def _validate_archive(archive: zipfile.ZipFile) -> None:
             raise H3Error(f"Unsafe archive entry: {name!r}")
 
 
-def _extract_prefix(archive: zipfile.ZipFile, prefix: str, dest_dir: Path, *, overwrite: bool = True) -> dict[str, Path]:
+def _extract_prefix(
+    archive: zipfile.ZipFile, prefix: str, dest_dir: Path, *, overwrite: bool = True, atomic: bool = True
+) -> dict[str, Path]:
     dest_root = dest_dir.resolve()
     dest_root.mkdir(parents=True, exist_ok=True)
+    created_dirs: set[Path] = {dest_root}
     extracted: dict[str, Path] = {}
     head = prefix.rstrip("/") + "/"
     for info in archive.infolist():
         if info.is_dir() or not info.filename.startswith(head):
             continue
         rel = info.filename[len(head) :]
-        if not rel:
-            continue
-        target = (dest_root / rel).resolve()
-        if not target.is_relative_to(dest_root):
+        posix_rel = PurePosixPath(rel)
+        if (
+            not rel
+            or rel.startswith("/")
+            or "\\" in rel
+            or ":" in rel
+            or any(part in ("", ".", "..") for part in posix_rel.parts)
+            or ((info.external_attr >> 16) & _FILE_TYPE_MASK) == _SYMLINK_MODE
+        ):
             raise H3Error(f"Unsafe archive path: {info.filename!r}")
-        if target.exists() and not overwrite:
+        target = dest_root.joinpath(*posix_rel.parts)
+        if not Path(os.path.abspath(target)).is_relative_to(dest_root):
+            raise H3Error(f"Unsafe archive path: {info.filename!r}")
+        if not overwrite and target.exists():
             extracted[info.filename] = target
             continue
-        _extract_member_atomic(archive, info.filename, target)
+        parent = target.parent
+        if parent not in created_dirs:
+            parent.mkdir(parents=True, exist_ok=True)
+            created_dirs.add(parent)
+        if atomic:
+            _extract_member_atomic(archive, info.filename, target, ensure_parent=False)
+        else:
+            with archive.open(info.filename, "r") as reader, target.open("wb") as writer:
+                shutil.copyfileobj(reader, writer, length=1 << 20)
         extracted[info.filename] = target
     return extracted
 
@@ -202,13 +239,29 @@ def _update_snapshot_file(path: Path, *, output_name: str, session_id: str | Non
     return data
 
 
-def _register_imported_media(media_path: Path, metadata: dict[str, Any] | None, *, store, runtime) -> None:
-    """Index an imported output file into the Media library catalog immediately."""
-    if store is None or not media_path.is_file():
+def _register_imported_media_batch(
+    entries: Iterable[tuple[Path, dict[str, Any] | None]], *, store, runtime
+) -> None:
+    """Index imported output files into the Media library catalog in one batch."""
+    if store is None:
         return
     from h3_app.media_catalog import MediaCatalog
 
-    MediaCatalog(store, lambda: runtime).register(media_path, metadata or {})
+    catalog = MediaCatalog(store, lambda: runtime)
+    records = []
+    for media_path, metadata in entries:
+        if not media_path.is_file():
+            continue
+        record = catalog.prepare(media_path, metadata or {})
+        if record is not None:
+            records.append(record)
+    if records:
+        store.index_assets(records)
+
+
+def _register_imported_media(media_path: Path, metadata: dict[str, Any] | None, *, store, runtime) -> None:
+    """Index an imported output file into the Media library catalog immediately."""
+    _register_imported_media_batch([(media_path, metadata)], store=store, runtime=runtime)
 
 
 def _collect_referenced_speakers(keys: Iterable[str], runtime) -> tuple[list[dict[str, Any]], list[tuple[Path, str]]]:
@@ -929,11 +982,25 @@ def _export_storyboard(archive: zipfile.ZipFile, project_id: str, *, store, runt
     return str(board.get("name") or project_id)
 
 
+def _skip_dubbing_session_rel(rel: PurePosixPath) -> bool:
+    parts = rel.parts
+    if not parts:
+        return False
+    if len(parts) == 1 and parts[0] in _DUBBING_SESSION_SKIP_FILES:
+        return True
+    return parts[0] in _DUBBING_SESSION_SKIP_DIRS or parts[0].startswith("dub-words-")
+
+
+def _skip_dubbing_player_rel(rel: PurePosixPath) -> bool:
+    parts = rel.parts
+    return bool(parts and parts[0] in _DUBBING_PLAYER_SKIP_DIRS)
+
+
 def _export_dubbing(archive: zipfile.ZipFile, project_id: str, *, runtime, added: set[str]) -> str:
     from h3_app.dubbing import projects as dubbing_projects, results as dub_results
 
     data, session = dubbing_projects.load(runtime, project_id)
-    _add_zip_dir(archive, session.root, "session", added)
+    _add_zip_dir(archive, session.root, "session", added, skip_rel=_skip_dubbing_session_rel)
 
     speaker_keys = [
         entry.get("voice")
@@ -963,7 +1030,7 @@ def _export_dubbing(archive: zipfile.ZipFile, project_id: str, *, runtime, added
             _add_zip_file(archive, file_path, f"result/{file_path.name}", added)
             snap = snapshot_path(file_path)
             _add_zip_file(archive, snap, f"result/{snap.name}", added)
-        _add_zip_dir(archive, dub_results.player_folder(last_path), "result_player", added)
+        _add_zip_dir(archive, dub_results.player_folder(last_path), "result_player", added, skip_rel=_skip_dubbing_player_rel)
 
     archive.writestr(
         "project.json",
@@ -1063,7 +1130,7 @@ def export_project_archive(kind: str, project_id: str, destination: Path, *, sto
     temporary = destination.with_name(f"{destination.name}.{uuid.uuid4().hex}.partial")
     added: set[str] = set()
     try:
-        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
             if kind == "soundstage":
                 display_name = _export_soundstage(archive, project_id, store=store, runtime=runtime, added=added)
             elif kind == "storyboard":
@@ -1087,8 +1154,9 @@ def export_project_archive(kind: str, project_id: str, destination: Path, *, sto
                 ),
             )
         temporary.replace(destination)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
     return destination
 
 
@@ -1305,7 +1373,7 @@ def _import_dubbing(
 
     new_session_id = uuid.uuid4().hex
     session_root = sessions.sessions_dir(runtime) / new_session_id
-    _extract_prefix(archive, "session", session_root, overwrite=True)
+    _extract_prefix(archive, "session", session_root, overwrite=True, atomic=False)
 
     manifest_path = session_root / sessions.MANIFEST
     try:
@@ -1325,7 +1393,7 @@ def _import_dubbing(
         target_stem = orig_stem
         if conflict == "rename" and any(
             (dub_out_dir / candidate).exists()
-            for candidate in (last_output_name, f"{orig_stem}.mp3", f"{orig_stem}.mp4")
+            for candidate in (last_output_name, f"{orig_stem}.mp3", f"{orig_stem}.mp4", f"{orig_stem}.lipsync.mp4")
         ):
             used_stems = {p.stem for p in dub_out_dir.iterdir() if p.is_file()}
             target_stem = _unique_name(orig_stem, used_stems, style="stem")
@@ -1347,16 +1415,14 @@ def _import_dubbing(
                 )
             else:
                 written_media.append(dest)
-        for media_path in written_media:
-            _register_imported_media(
-                media_path,
-                read_snapshot(media_path) or {"family": dub_results.DUB_FAMILY},
-                store=store,
-                runtime=runtime,
-            )
+        _register_imported_media_batch(
+            [(media_path, read_snapshot(media_path) or {"family": dub_results.DUB_FAMILY}) for media_path in written_media],
+            store=store,
+            runtime=runtime,
+        )
 
         player_dir = dub_out_dir / dub_results.PLAYER_DIR / target_stem
-        _extract_prefix(archive, "result_player", player_dir, overwrite=True)
+        _extract_prefix(archive, "result_player", player_dir, overwrite=True, atomic=player_dir.exists())
         if target_stem != orig_stem:
             for meta_name in (dub_results.PLAYER_FILE, "alignment.json"):
                 meta_path = player_dir / meta_name
@@ -1374,6 +1440,34 @@ def _import_dubbing(
                             fname = Path(val.replace("\\", "/")).name
                             container[field] = str(dub_out_dir / (target_stem + fname[len(orig_stem) :]))
                     write_json_atomic(meta_path, meta)
+
+        from h3_app.dubbing.lip_sync import PLAN_FILE, REPORT_FILE
+        from h3_app.dubbing.lip_sync_match import video_fingerprint
+
+        dub_video = dub_out_dir / f"{target_stem}.mp4"
+        plan_path = player_dir / PLAN_FILE
+        if plan_path.is_file() and dub_video.is_file():
+            try:
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                plan = None
+            if isinstance(plan, dict):
+                stat = dub_video.stat()
+                plan["video"] = dub_video.name
+                plan["video_mtime_ns"] = stat.st_mtime_ns
+                plan["video_size"] = stat.st_size
+                plan["video_fingerprint"] = video_fingerprint(dub_video)
+                write_json_atomic(plan_path, plan)
+
+        report_path = player_dir / REPORT_FILE
+        if target_stem != orig_stem and report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                report = None
+            if isinstance(report, dict) and isinstance(report.get("output"), str) and report["output"].startswith(orig_stem):
+                report["output"] = target_stem + report["output"][len(orig_stem) :]
+                write_json_atomic(report_path, report)
 
         target_last_name = (
             target_stem + last_output_name[len(orig_stem) :]
@@ -1593,8 +1687,9 @@ def import_remote_projects(
 
     results: list[dict[str, Any]] = []
     changed = False
+    http_timeout = httpx.Timeout(connect=30.0, read=max(float(timeout), 600.0), write=60.0, pool=30.0)
     with TemporaryDirectory(prefix="h3-project-import-") as tmp_dir, httpx.Client(
-        follow_redirects=True, timeout=timeout
+        follow_redirects=True, timeout=http_timeout
     ) as client:
         tmp_root = Path(tmp_dir)
         for index, (kind, project_id) in enumerate(items):
@@ -1612,9 +1707,31 @@ def import_remote_projects(
                     if response.status_code >= 400:
                         response.read()
                         raise _translate_http_error(response, normalized)
+                    try:
+                        total_bytes = int(response.headers.get("content-length") or 0)
+                    except ValueError:
+                        total_bytes = 0
+                    downloaded = 0
+                    last_report = time.monotonic()
                     with archive_path.open("wb") as handle:
-                        for chunk in response.iter_bytes():
+                        for chunk in response.iter_bytes(chunk_size=1 << 20):
                             handle.write(chunk)
+                            downloaded += len(chunk)
+                            if progress is not None:
+                                now = time.monotonic()
+                                if now - last_report >= 0.4:
+                                    last_report = now
+                                    frac = (downloaded / total_bytes) if total_bytes > 0 else 0.25
+                                    mb_done = downloaded / (1 << 20)
+                                    size_note = (
+                                        f"{mb_done:.1f} / {total_bytes / (1 << 20):.1f} MB"
+                                        if total_bytes > 0
+                                        else f"{mb_done:.1f} MB"
+                                    )
+                                    progress(
+                                        (index + 0.5 * min(1.0, frac)) / len(items),
+                                        f"Downloading {label} project {project_id}… ({size_note})",
+                                    )
                 if progress is not None:
                     progress((index + 0.5) / len(items), f"Importing {label} project {project_id}…")
                 result = import_project_archive(
@@ -1637,8 +1754,10 @@ def import_remote_projects(
                 )
             finally:
                 archive_path.unlink(missing_ok=True)
+    if changed and on_imported is not None:
+        if progress is not None:
+            progress(0.95, "Saving imported projects to workspace…")
+        on_imported()
     if progress is not None:
         progress(1.0, "Import complete.")
-    if changed and on_imported is not None:
-        on_imported()
     return results

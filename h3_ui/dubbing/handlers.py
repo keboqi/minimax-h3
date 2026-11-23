@@ -775,6 +775,8 @@ class DubbingHandlers:
     def detect_lip_sync(self, session_id, force_rescan=False, expected_video=None, *, gemini_api_key=None):
         """Stage 1 only: detect shot cuts, track faces, and align speakers without rendering H3."""
         try:
+            if not self.services.gpu or self.services.generation_services is None:
+                raise H3Error("Face and speaker detection runs in Studio.")
             session = self._session(session_id)
             output = session.data.get("last_output") if session else None
             result = load_result(output) if output else None
