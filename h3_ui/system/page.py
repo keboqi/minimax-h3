@@ -60,6 +60,7 @@ BUSY = {
 }
 MODEL_CACHE_TTL = 30.0
 _TASK_DISPLAY = {"TTS": "Soundstage", "Dub": "Dubbing"}
+_KIND_ORDER = {kind: index for index, kind in enumerate(PROJECT_KINDS)}
 _FAMILY_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Drama 3", ("drama3_",)),
     ("LTX 2.5", ("ltx25_",)),
@@ -435,17 +436,30 @@ class SystemPageState:
     ) -> dict[str, Any]:
         headers = build_auth_headers(modal_key, modal_secret)
         data = fetch_remote_projects(url, headers=headers)
-        projects = [
-            {
-                **item,
-                "kind_label": KIND_LABELS.get(str(item.get("kind") or ""), str(item.get("kind") or "")),
-            }
-            for item in data.get("projects", ())
-            if isinstance(item, dict) and item.get("kind") and item.get("id")
-        ]
+        projects: list[dict[str, Any]] = []
+        counts: dict[str, int] = {"all": 0, **{kind: 0 for kind in PROJECT_KINDS}}
+        for item in data.get("projects", ()):
+            if not isinstance(item, dict) or not item.get("kind") or not item.get("id"):
+                continue
+            kind = str(item.get("kind") or "")
+            counts["all"] += 1
+            counts[kind] = counts.get(kind, 0) + 1
+            projects.append(
+                {
+                    **item,
+                    "kind_label": KIND_LABELS.get(kind, kind.title()),
+                }
+            )
+        projects.sort(
+            key=lambda item: (
+                _KIND_ORDER.get(str(item.get("kind") or ""), len(_KIND_ORDER)),
+                str(item.get("kind") or ""),
+            )
+        )
         return {
             "app": data.get("app") or "remote server",
             "projects": projects,
+            "counts": counts,
         }
 
     def models_inventory(self, *, refresh: bool = False) -> dict[str, Any]:

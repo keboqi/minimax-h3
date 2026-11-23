@@ -469,6 +469,19 @@ a:hover { text-decoration: underline; }
   margin-top: 2px;
   accent-color: var(--accent);
 }
+.remote-groups { display: flex; flex-direction: column; gap: 14px; }
+.remote-group { display: flex; flex-direction: column; gap: 8px; }
+.remote-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.remote-group-toggle { min-height: 30px; padding: 0 9px; font-size: 12px; }
+.project-check-title { overflow-wrap: anywhere; }
 
 .empty-box {
   padding: 26px 16px;
@@ -558,6 +571,7 @@ a:hover { text-decoration: underline; }
   .hero-actions { width: 100%; }
   .hero-actions > * { flex: 1 1 40%; }
   .seg button { min-height: 44px; }
+  .remote-group-toggle { min-height: 36px; }
   .main-col, .aside-col { flex-basis: 100%; }
 }
 

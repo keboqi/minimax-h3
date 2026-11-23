@@ -49,6 +49,7 @@
     remoteServerApp: "",
     remoteLoadedUrl: "",
     remoteProjects: [],
+    remoteKind: "all",
     remoteSelected: new Set(),
     conflict: "rename",
     importResults: null,
@@ -90,6 +91,41 @@
 
   // Rendering helpers ----------------------------------------------------------
   const projectKey = (item) => `${item.kind}:${item.id}`;
+
+  const groupRemoteProjects = (projects) => {
+    const order = PROJECT_KINDS.filter(([kind]) => kind !== "all").map(([kind]) => kind);
+    const buckets = new Map();
+    for (const item of projects || []) {
+      const kind = String(item.kind || "other");
+      let group = buckets.get(kind);
+      if (!group) {
+        group = {
+          kind,
+          label: item.kind_label || (PROJECT_KINDS.find(([k]) => k === kind)?.[1]) || kind,
+          items: [],
+        };
+        buckets.set(kind, group);
+      }
+      group.items.push(item);
+    }
+    const ordered = [];
+    for (const kind of order) {
+      const group = buckets.get(kind);
+      if (group && group.items.length) ordered.push(group);
+      buckets.delete(kind);
+    }
+    for (const kind of Array.from(buckets.keys()).sort()) {
+      const group = buckets.get(kind);
+      if (group && group.items.length) ordered.push(group);
+    }
+    return ordered;
+  };
+
+  const visibleRemoteProjects = () => (
+    app.remoteKind === "all"
+      ? app.remoteProjects
+      : app.remoteProjects.filter((rp) => rp.kind === app.remoteKind)
+  );
 
   const renderHeroAndTiles = () => {
     const b = app.backend || {};
@@ -362,30 +398,98 @@
     $("remote-loaded").hidden = !hasLoaded;
     if (!hasLoaded) return;
 
-    $("remote-server-banner").textContent = `Connected to ${app.remoteServerApp} · ${app.remoteProjects.length} project${app.remoteProjects.length === 1 ? "" : "s"}`;
+    const groups = groupRemoteProjects(app.remoteProjects);
+    if (app.remoteKind !== "all" && !groups.some((g) => g.kind === app.remoteKind)) {
+      app.remoteKind = "all";
+    }
 
-    const localNames = new Set((app.projects?.projects || []).map((p) => String(p.name || "").toLowerCase()));
-    $("remote-projects-list").replaceChildren(...app.remoteProjects.map((rp) => {
-      const key = projectKey(rp);
-      const checked = app.remoteSelected.has(key);
-      const collides = localNames.has(String(rp.name || "").toLowerCase());
-      return h("label", {class: checked ? "project-check selected" : "project-check"},
-        h("input", {
-          type: "checkbox",
-          checked,
-          onchange: (event) => {
-            if (event.target.checked) app.remoteSelected.add(key);
-            else app.remoteSelected.delete(key);
-            renderRemoteImport();
-            queueFit();
-          },
-        }),
-        h("span", {class: "stack-4 grow"},
-          h("span", {class: "row tight"},
-            h("span", {class: "pill", text: rp.kind_label || rp.kind}),
-            h("strong", {text: rp.name}),
-            collides ? h("span", {class: "pill warn", text: "Matches local name"}) : null),
-          rp.summary ? h("span", {class: "small muted", text: rp.summary}) : null));
+    const total = app.remoteProjects.length;
+    const selectedCount = app.remoteSelected.size;
+    $("remote-server-banner").textContent =
+      `Connected to ${app.remoteServerApp} · ${total} project${total === 1 ? "" : "s"}`
+      + (selectedCount > 0 ? ` · ${selectedCount} selected` : "");
+
+    const visibleItems = visibleRemoteProjects();
+    const selectAllBtn = $("remote-select-all");
+    selectAllBtn.textContent = app.remoteKind === "all" ? "Select all" : "Select shown";
+    selectAllBtn.disabled = visibleItems.length === 0;
+    $("remote-clear").disabled = selectedCount === 0;
+
+    const filterEl = $("remote-kind-filters");
+    filterEl.hidden = groups.length <= 1;
+    if (groups.length > 1) {
+      const filterButtons = [
+        ["all", "All", total],
+        ...groups.map((g) => [g.kind, g.label, g.items.length]),
+      ];
+      filterEl.replaceChildren(...filterButtons.map(([kind, label, itemCount]) =>
+        h("button", {
+          type: "button",
+          "aria-pressed": String(app.remoteKind === kind),
+          onclick: () => { app.remoteKind = kind; renderRemoteImport(); queueFit(); },
+        }, label, " ", h("span", {class: "count mono", text: String(itemCount)}))));
+    } else {
+      filterEl.replaceChildren();
+    }
+
+    const visibleGroups = app.remoteKind === "all"
+      ? groups
+      : groups.filter((g) => g.kind === app.remoteKind);
+    $("remote-projects-empty").hidden = visibleGroups.length > 0;
+
+    const localNames = new Set(
+      (app.projects?.projects || []).map((p) => `${p.kind}:${String(p.name || "").toLowerCase()}`),
+    );
+    $("remote-projects-list").replaceChildren(...visibleGroups.map((group) => {
+      const groupKeys = group.items.map(projectKey);
+      const selectedInGroup = groupKeys.filter((k) => app.remoteSelected.has(k)).length;
+      const allGroupSelected = group.items.length > 0 && selectedInGroup === group.items.length;
+
+      return h("section", {class: "remote-group", "data-kind": group.kind},
+        h("div", {class: "remote-group-head"},
+          h("div", {class: "row tight"},
+            h("span", {class: "pill", text: group.label}),
+            h("span", {
+              class: "small muted mono",
+              text: selectedInGroup > 0
+                ? `${selectedInGroup}/${group.items.length} selected`
+                : `${group.items.length} project${group.items.length === 1 ? "" : "s"}`,
+            })),
+          h("button", {
+            type: "button",
+            class: "btn compact remote-group-toggle",
+            text: allGroupSelected ? "Clear" : "Select all",
+            onclick: () => {
+              if (allGroupSelected) {
+                for (const k of groupKeys) app.remoteSelected.delete(k);
+              } else {
+                for (const k of groupKeys) app.remoteSelected.add(k);
+              }
+              renderRemoteImport();
+              queueFit();
+            },
+          })),
+        h("div", {class: "project-list"}, ...group.items.map((rp) => {
+          const key = projectKey(rp);
+          const checked = app.remoteSelected.has(key);
+          const collides = localNames.has(`${rp.kind}:${String(rp.name || "").toLowerCase()}`);
+          return h("label", {class: checked ? "project-check selected" : "project-check"},
+            h("input", {
+              type: "checkbox",
+              checked,
+              onchange: (event) => {
+                if (event.target.checked) app.remoteSelected.add(key);
+                else app.remoteSelected.delete(key);
+                renderRemoteImport();
+                queueFit();
+              },
+            }),
+            h("span", {class: "stack-4 grow"},
+              h("span", {class: "row tight"},
+                h("strong", {class: "project-check-title", text: rp.name}),
+                collides ? h("span", {class: "pill warn", text: "Matches local name"}) : null),
+              rp.summary ? h("span", {class: "small muted", text: rp.summary}) : null));
+        })));
     }));
 
     $("remote-conflict").replaceChildren(...CONFLICT_MODES.map(([mode, label]) =>
@@ -713,6 +817,7 @@
       app.remoteLoadedUrl = url;
       app.remoteServerApp = data.app || "remote server";
       app.remoteProjects = data.projects || [];
+      app.remoteKind = "all";
       app.remoteSelected = new Set();
       app.importResults = null;
       renderRemoteImport();
@@ -721,13 +826,15 @@
     }));
 
     $("remote-select-all").addEventListener("click", () => {
-      app.remoteSelected = new Set(app.remoteProjects.map(projectKey));
+      for (const rp of visibleRemoteProjects()) app.remoteSelected.add(projectKey(rp));
       renderRemoteImport();
+      queueFit();
     });
 
     $("remote-clear").addEventListener("click", () => {
       app.remoteSelected = new Set();
       renderRemoteImport();
+      queueFit();
     });
 
     $("remote-import-btn").addEventListener("click", guard(async () => {

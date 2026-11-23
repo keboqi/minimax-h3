@@ -141,6 +141,8 @@ class SystemPageTests(unittest.TestCase):
         html = self.client.get("/system/")
         self.assertEqual(html.status_code, 200)
         self.assertIn("app.js", html.text)
+        self.assertIn("remote-kind-filters", html.text)
+        self.assertIn("remote-projects-empty", html.text)
 
         js = self.client.get("/system/app.js")
         self.assertEqual(js.status_code, 200)
@@ -373,6 +375,49 @@ class SystemPageTests(unittest.TestCase):
             "kind": "soundstage", "id": renamed["projects"][0]["id"],
         }))
         self.assertEqual(deleted["counts"]["soundstage"], 0)
+
+    def test_remote_projects_orders_by_kind_preserving_relative_order_and_counts(self):
+        mixed = [
+            {"kind": "remake", "id": "rem-1", "name": "Remake One"},
+            {"kind": "dubbing", "id": "dub-1", "name": "Dub One"},
+            {"kind": "soundstage", "id": "ss-1", "name": "Stage One"},
+            {"kind": "dubbing", "id": "dub-2", "name": "Dub Two"},
+            {"kind": "storyboard", "id": "sb-1", "name": "Board One"},
+            {"kind": "soundstage", "id": "ss-2", "name": "Stage Two"},
+            {"kind": "custom", "id": "cus-1", "name": "Custom One"},
+        ]
+        with patch("h3_ui.system.page.fetch_remote_projects", return_value={
+            "app": "Prism Workshop",
+            "projects": mixed,
+        }):
+            remote = self.ok(self.client.post(f"{API}/projects/remote", json={
+                "url": "https://workshop.example.com",
+            }))
+
+        self.assertEqual(
+            [(item["kind"], item["id"]) for item in remote["projects"]],
+            [
+                ("soundstage", "ss-1"),
+                ("soundstage", "ss-2"),
+                ("storyboard", "sb-1"),
+                ("dubbing", "dub-1"),
+                ("dubbing", "dub-2"),
+                ("remake", "rem-1"),
+                ("custom", "cus-1"),
+            ],
+        )
+        self.assertEqual(
+            remote["counts"],
+            {
+                "all": 7,
+                "soundstage": 2,
+                "storyboard": 1,
+                "dubbing": 2,
+                "remake": 1,
+                "custom": 1,
+            },
+        )
+        self.assertEqual(remote["projects"][-1]["kind_label"], "Custom")
 
     # 8. Model readiness caching & refresh ------------------------------------
     def test_models_inventory_caches_and_refreshes_on_request(self):
