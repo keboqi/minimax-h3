@@ -626,6 +626,58 @@ def delete_local_project(
     return outcome
 
 
+def _write_canonical_effect_manifests(
+    archive: zipfile.ZipFile,
+    stills_folder: Path,
+    *,
+    audio_path: Path,
+    output_dir: Path,
+    duration: float,
+    payload: dict[str, Any],
+    added: set[str],
+) -> None:
+    """Emit current-key SAM 3.1 manifests during export so older servers also recognize them."""
+    if not stills_folder.is_dir() or duration <= 0:
+        return
+    from h3_app.drama3 import visual_plan
+    from h3_ui.drama3 import effect_regions, visuals
+
+    saved_plan = visuals.read_plan(audio_path)
+    record = visuals.read_stills(audio_path, output_dir)
+    if not saved_plan or not record:
+        return
+    style = payload.get("video_style")
+    if style is None:
+        style = visuals.STYLE_PRESETS[visuals.DEFAULT_STYLE]
+    orientation = visuals.orientation_of(payload.get("video_orientation"))
+    try:
+        shots = visuals.plan_shots_for(saved_plan, duration, style, orientation)
+        plan = saved_plan["plan"]
+        subjects_map = {
+            key: {"kind": kind, "anchor": anchor}
+            for key, (kind, anchor) in visual_plan.subjects(plan).items()
+        }
+        keys = visual_plan.mentions(plan)
+    except H3Error:
+        return
+    for shot, still, row, mentioned in zip(shots, visuals.match_stills(shots, record), plan["shots"], keys):
+        if still is None or not still.get("image"):
+            continue
+        image_name = str(still["image"])
+        labels = effect_regions.concepts(
+            {"prompt": row["prompt"], "beat": shot.beat, "subjects": list(mentioned)},
+            subjects_map,
+        )
+        exact_name = effect_regions.manifest_path(stills_folder, image_name, labels).name
+        arc_name = f"stills/{effect_regions.MASK_FOLDER}/{exact_name}"
+        if arc_name in added:
+            continue
+        regions = effect_regions.read_regions(stills_folder, image_name, labels)
+        if regions is not None:
+            archive.writestr(arc_name, json.dumps(regions, ensure_ascii=False))
+            added.add(arc_name)
+
+
 def _export_soundstage(archive: zipfile.ZipFile, project_id: str, *, store, runtime, added: set[str]) -> str:
     from h3_app.drama3 import sounds as drama3_sounds
     from h3_app.drama3.results import result_settings
@@ -736,9 +788,20 @@ def _export_soundstage(archive: zipfile.ZipFile, project_id: str, *, store, runt
         _add_zip_file(archive, snap, f"result/{snap.name}", added)
         plan = visuals.plan_path(result_path)
         _add_zip_file(archive, plan, f"result/{plan.name}", added)
-        _add_zip_dir(archive, visuals.stills_dir(result_path, runtime.output_dir), "stills", added)
+        stills_folder = visuals.stills_dir(result_path, runtime.output_dir)
+        _add_zip_dir(archive, stills_folder, "stills", added)
+        settings = result_settings(result_path)
+        _write_canonical_effect_manifests(
+            archive,
+            stills_folder,
+            audio_path=result_path,
+            output_dir=Path(runtime.output_dir),
+            duration=float(settings.get("duration") or 0),
+            payload=payload,
+            added=added,
+        )
         takes_dir = takes_root(runtime)
-        for chunk in result_settings(result_path).get("chunks") or []:
+        for chunk in settings.get("chunks") or []:
             take_key = chunk.get("take")
             if take_key and re.fullmatch(r"[A-Za-z0-9_-]+", str(take_key)):
                 _add_zip_file(archive, takes_dir / f"{take_key}.wav", f"takes/{take_key}.wav", added)

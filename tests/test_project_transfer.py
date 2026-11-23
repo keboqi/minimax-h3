@@ -700,7 +700,7 @@ def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_man
     from PIL import Image
 
     from h3_app.drama3.visuals import FPS, Shot
-    from h3_ui.drama3 import effects_pass
+    from h3_ui.drama3 import effect_regions, effects_pass
 
     src_runtime, src_store = _make_workspace(tmp_path / "source")
     dst_runtime, dst_store = _make_workspace(tmp_path / "target")
@@ -715,6 +715,26 @@ def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_man
             {"family": "Drama 3", "settings": {"title": "SAM Story", "duration": 4.0, "chunks": [], "sounds": []}},
         )
 
+        drama3_visuals.write_plan(
+            mix_path,
+            drama3_visuals.STYLE_PRESETS[drama3_visuals.DEFAULT_STYLE],
+            1,
+            {
+                "characters": {"elena": "Elena, a woman in a navy coat"},
+                "shots": [
+                    {
+                        "id": "shot_1",
+                        "start": 0,
+                        "transition": "cut",
+                        "beat": "Window",
+                        "references": ["elena"],
+                        "prompt": "Elena stands by the window.",
+                        "effects": [],
+                    }
+                ],
+                "script_cues": [],
+            },
+        )
         still_src = tmp_path / "shot1.png"
         Image.new("RGB", (64, 36), "teal").save(still_src)
         shots = [Shot(0, 4 * FPS, False, "Elena stands by the window.", "Window", id="shot_1")]
@@ -733,6 +753,23 @@ def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_man
             json.dumps(legacy_regions), encoding="utf-8"
         )
 
+        subjects = [{"key": "elena", "kind": "characters", "anchor": "Elena, a woman in a navy coat"}]
+        rows = [
+            {
+                "shot_id": "shot_1",
+                "index": 0,
+                "image_file": image_name,
+                "start": 0.0,
+                "end": 4.0,
+                "beat": "Window",
+                "prompt": "Elena stands by the window.",
+                "subjects": ["elena"],
+                "effects": [],
+            }
+        ]
+        expected_labels = effect_regions.concepts(rows[0], {s["key"]: s for s in subjects})
+        canonical_manifest_name = effect_regions.manifest_path(stills_folder, image_name, expected_labels).name
+
         effect_stack = [{"preset": "rain", "mode": "inside", "region_id": "region_1"}]
         payload = {
             "text": "[Elena] Look at the storm.",
@@ -747,6 +784,8 @@ def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_man
         archive = export_project_archive(
             "soundstage", "SAM Story", tmp_path / "sam_story.zip", store=src_store, runtime=src_runtime
         )
+        with zipfile.ZipFile(archive, "r") as zf:
+            assert f"stills/.effect-masks/{canonical_manifest_name}" in zf.namelist()
 
     with _using_workspace_env(dst_runtime):
         result = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
@@ -755,21 +794,9 @@ def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_man
         assert loaded_result is not None
         dst_mix = Path(loaded_result)
         assert dst_mix.is_file() and dst_mix.read_bytes() == b"drama3-mix-bytes"
+        dst_stills_dir = drama3_visuals.stills_dir(dst_mix, dst_runtime.output_dir)
+        assert (dst_stills_dir / ".effect-masks" / canonical_manifest_name).is_file()
 
-        rows = [
-            {
-                "shot_id": "shot_1",
-                "index": 0,
-                "image_file": image_name,
-                "start": 0.0,
-                "end": 4.0,
-                "beat": "Window",
-                "prompt": "Elena stands by the window.",
-                "subjects": ["elena"],
-                "effects": [],
-            }
-        ]
-        subjects = [{"key": "elena", "kind": "characters", "anchor": "Elena, a woman in a navy coat"}]
         items = effects_pass.inventory(dst_mix, dst_runtime.output_dir, rows, subjects, loaded_payload)
         assert len(items) == 1
         assert items[0]["regions"] == legacy_regions
