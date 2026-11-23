@@ -454,6 +454,17 @@ def build_ui(
             model_specs=MODEL_SPECS,
             models_root=catalog.COMFY_DIR / "models",
         )
+        from .system.page import SystemPageState, install_system_page
+
+        system_pages = SystemPageState.from_bootstrap(
+            catalog,
+            services,
+            store=_JOBS.store,
+            index=lambda: gallery_components.search.h3_asset_index,
+            model_specs=MODEL_SPECS,
+            on_changed=on_workspace_import,
+        )
+        demo.h3_routes = (*demo.h3_routes, partial(install_system_page, pages=system_pages))
         from h3_ui.canvas_controls import bind_canvas_controls
 
         bind_canvas_controls(

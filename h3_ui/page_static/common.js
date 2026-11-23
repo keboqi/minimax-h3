@@ -140,8 +140,20 @@
     }
   };
 
+  const openSystem = (onFallback) => {
+    try {
+      const page = window.parent.document;
+      if (window.parent === window) throw new Error();
+      const tab = page.querySelector('#h3-main-tabs [role="tab"][data-tab-id="system"]');
+      if (!tab) throw new Error();
+      if (tab.getAttribute("aria-selected") !== "true") tab.click();
+    } catch {
+      onFallback?.("Open the System tab to set a temporary Gemini API key for this session.");
+    }
+  };
+
   globalThis.H3PageCommon = {
     $, h, visibleArea, visibleBottom, createToast, createClient,
-    seg, multiSeg, rangeOf, presetText, openStudio,
+    seg, multiSeg, rangeOf, presetText, openStudio, openSystem,
   };
 })();

@@ -5,10 +5,83 @@
   "launch": {"view": "canvas"},
   "pages": [],
   "boards": {
-    "Main.dc.html": {"title": "System", "x": 0, "y": 0, "w": 1360, "h": 790, "expand": "fill", "is_interactive": true},
-    "Jobs.dc.html": {"title": "Jobs", "x": 1440, "y": 0, "w": 1360, "h": 790, "expand": "fill", "is_interactive": true}
+    "Main.dc.html": {
+      "title": "01 · System — Runtime & Serving (Interactive)",
+      "x": 0,
+      "y": 0,
+      "w": 1360,
+      "h": 1080,
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SystemProjects.dc.html": {
+      "title": "02 · System — Projects & Transfer",
+      "x": 1440,
+      "y": 0,
+      "w": 1360,
+      "h": 1080,
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SystemModels.dc.html": {
+      "title": "03 · System — Models & Capabilities",
+      "x": 2880,
+      "y": 0,
+      "w": 1360,
+      "h": 1180,
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SystemStates.dc.html": {
+      "title": "04 · System — Maintenance, Workshop & Dark States",
+      "x": 0,
+      "y": 1620,
+      "w": 1360,
+      "h": 1220,
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SystemMobile.dc.html": {
+      "title": "05 · System — Mobile (390px)",
+      "x": 1440,
+      "y": 1620,
+      "w": 390,
+      "h": 844,
+      "is_interactive": true
+    },
+    "Jobs.dc.html": {
+      "title": "Jobs",
+      "x": 1910,
+      "y": 1620,
+      "w": 1360,
+      "h": 790,
+      "expand": "fill",
+      "is_interactive": true
+    }
   },
-  "order": ["Main.dc.html", "Jobs.dc.html"],
-  "notes": {},
+  "order": [
+    "Main.dc.html",
+    "SystemProjects.dc.html",
+    "SystemModels.dc.html",
+    "SystemStates.dc.html",
+    "SystemMobile.dc.html",
+    "Jobs.dc.html"
+  ],
+  "notes": {
+    "row1": {
+      "x": 0,
+      "y": -260,
+      "text": "System · Refined Operations Workspace",
+      "kind": "title1",
+      "maxW": 4240
+    },
+    "row2": {
+      "x": 0,
+      "y": 1360,
+      "text": "System States, Mobile & Sibling Jobs",
+      "kind": "title1",
+      "maxW": 3270
+    }
+  },
   "designSystems": []
 }

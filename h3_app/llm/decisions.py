@@ -23,7 +23,7 @@ from h3_app.catalog import GEMINI_API_ROOT
 from h3_app.errors import H3Error
 
 from . import media_type
-from .gemini import error
+from .gemini import error, session_key
 
 MODEL = "gemini-decision-1"
 ENDPOINT = f"{GEMINI_API_ROOT}/v1beta/decisions"
@@ -52,13 +52,13 @@ def enabled() -> bool:
 
 
 def key_or_none(temporary_key: str | None = None) -> str | None:
-    """A key entered in the UI, else GEMINI_API_KEY; None when there is none or checks are off.
+    """An explicit key, else this session's System key, else GEMINI_API_KEY; None when unset or off.
 
     Decision checks are always optional: without a key the caller keeps its other rules.
     """
     if not enabled():
         return None
-    key = str(temporary_key or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+    key = str(temporary_key or "").strip() or session_key() or os.getenv("GEMINI_API_KEY", "").strip()
     return key or None
 
 

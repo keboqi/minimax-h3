@@ -13,6 +13,7 @@ import uuid
 from fastapi.responses import JSONResponse
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
+from h3_app.llm.gemini import owner_context
 from h3_app.workspace_activity import workspace_task
 
 # A finished run stays readable this long, for a page that polls or reopens afterwards.
@@ -68,7 +69,8 @@ class Runs:
 
         def execute():
             try:
-                work(run)
+                with owner_context(run.owner):
+                    work(run)
             except JobCancelled:
                 run.status = "Interrupted."
             except Exception as exc:  # The page shows every failure; nothing else reads it.

@@ -58,7 +58,7 @@ import {
     const openai = backend !== "Gemini";
     return {backend, model: openai ? state.boot.writer.gemini_model : $("writer-model").value,
             openai_model: openai ? $("writer-model").value : state.boot.writer.openai_model,
-            gemini_key: openai ? "" : $("writer-key").value, openai_key: openai ? $("writer-key").value : "",
+            gemini_key: "", openai_key: openai ? $("writer-key").value : "",
             openai_url: $("writer-url").value};
   };
   const originals = () => Object.fromEntries(state.slots.flatMap((slot, index) =>
@@ -1183,6 +1183,8 @@ import {
     $("undo").hidden = state.previous === null;
     const openai = $("writer-backend").value !== "Gemini";
     $("writer-line").textContent = openai ? "OpenAI-compatible services only see the frames." : "Gemini reads the clip and the frames.";
+    $("writer-gemini-note").hidden = openai;
+    $("writer-key-row").hidden = !openai;
     $("writer-url-row").hidden = !openai;
   };
 

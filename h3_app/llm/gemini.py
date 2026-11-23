@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 from pathlib import Path
 import re
+import threading
 import time
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
@@ -18,14 +21,88 @@ from . import media_type
 # A retry needs at least this much of the call's time budget left to be worth sending.
 MIN_RETRY_SECONDS = 10.0
 
+_session_lock = threading.Lock()
+_session_keys: dict[str, str] = {}
+_current_owner: ContextVar[str | None] = ContextVar("h3_gemini_owner", default=None)
 
-def api_key(temporary_key: str | None) -> str:
-    """A key entered in the UI, else GEMINI_API_KEY; never stored."""
-    key = str(temporary_key or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+
+@contextmanager
+def owner_context(owner: str | None) -> Iterator[None]:
+    """Bind the active browser/job owner so session-scoped Gemini keys resolve downstream."""
+    normalized = str(owner or "").strip() or None
+    token = _current_owner.set(normalized)
+    try:
+        yield
+    finally:
+        _current_owner.reset(token)
+
+
+def current_owner() -> str | None:
+    """Return the active owner bound in this thread/request context, if any."""
+    return _current_owner.get()
+
+
+def mask_key(key: str) -> str:
+    """Return a non-recoverable masked representation for status UI."""
+    cleaned = str(key or "").strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) >= 10:
+        return f"{cleaned[:4]}…{cleaned[-4:]}"
+    return "••••"
+
+
+def set_session_key(owner: str, key: str | None) -> None:
+    """Store an in-memory temporary Gemini key for ``owner`` (never written to disk)."""
+    normalized_owner = str(owner or "").strip()
+    if not normalized_owner:
+        raise H3Error("A valid browser session is required to store a session Gemini key.")
+    cleaned = str(key or "").strip()
+    with _session_lock:
+        if cleaned:
+            _session_keys[normalized_owner] = cleaned
+        else:
+            _session_keys.pop(normalized_owner, None)
+
+
+def clear_session_key(owner: str) -> None:
+    """Remove any in-memory session Gemini key for ``owner``."""
+    normalized_owner = str(owner or "").strip()
+    if not normalized_owner:
+        return
+    with _session_lock:
+        _session_keys.pop(normalized_owner, None)
+
+
+def session_key(owner: str | None = None) -> str:
+    """Return the in-memory session Gemini key for ``owner`` or the current context."""
+    target = str(owner).strip() if owner is not None else (_current_owner.get() or "")
+    if not target:
+        return ""
+    with _session_lock:
+        return _session_keys.get(target, "")
+
+
+def session_key_status(owner: str | None = None) -> dict[str, Any]:
+    """Non-secret summary of the active Gemini key source for ``owner``."""
+    saved = session_key(owner)
+    env_set = bool(os.getenv("GEMINI_API_KEY", "").strip())
+    active_source = "session" if saved else ("env" if env_set else "none")
+    return {
+        "session_set": bool(saved),
+        "env_set": env_set,
+        "active_source": active_source,
+        "masked": mask_key(saved) if saved else "",
+    }
+
+
+def api_key(temporary_key: str | None = None) -> str:
+    """An explicit key, else this session's System key, else GEMINI_API_KEY; never stored."""
+    key = str(temporary_key or "").strip() or session_key() or os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
         raise H3Error(
             "Set GEMINI_API_KEY in the server environment or enter a temporary "
-            "Gemini API key in Prompt enhancer."
+            "Gemini API key in System."
         )
     return key
 

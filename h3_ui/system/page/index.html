@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System · Prism Studio</title>
+<link rel="stylesheet" href="app.css">
+<script src="common.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="standalone-header">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">PS</span>
+    <span>Prism Studio</span>
+  </div>
+  <span class="pill status-pill" id="header-status">Loading…</span>
+</header>
+
+<p id="loading" class="loading muted">Loading system status…</p>
+
+<main id="app" class="app" hidden>
+  <!-- Operations Hero -->
+  <section class="hero" aria-label="System header">
+    <div class="hero-copy">
+      <span class="hero-icon" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="7" rx="2"></rect>
+          <rect x="4" y="13" width="16" height="7" rx="2"></rect>
+          <path d="M7 7.5h2M7 16.5h2"></path>
+        </svg>
+      </span>
+      <div>
+        <h1>System</h1>
+        <p class="muted">Monitor GPU runtime, configure Drama 3 and session Gemini credentials, manage and transfer projects, and inspect local models.</p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <a class="btn" id="open-comfy-link" href="/comfyui/" target="_top" rel="noopener">
+        <span>Open ComfyUI</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"></path></svg>
+      </a>
+      <button type="button" class="btn" id="open-comfy-disabled" disabled hidden>Open ComfyUI ↗</button>
+      <button type="button" class="btn primary" id="refresh-backend">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+        <span>Refresh backend</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 4-Tile Telemetry Strip -->
+  <dl class="metrics" aria-label="System summary">
+    <div class="metric">
+      <dt>Runtime</dt>
+      <dd id="tile-runtime-val">—</dd>
+      <dd class="sub mono" id="tile-runtime-sub"></dd>
+    </div>
+    <div class="metric">
+      <dt>VRAM free</dt>
+      <dd class="mono" id="tile-vram-val">—</dd>
+      <dd class="sub">
+        <div class="bar-track" id="tile-vram-track"><div class="bar-fill" id="tile-vram-bar"></div></div>
+        <span id="tile-vram-sub"></span>
+      </dd>
+    </div>
+    <div class="metric">
+      <dt>Drama 3 serving</dt>
+      <dd id="tile-drama-val">—</dd>
+      <dd class="sub" id="tile-drama-sub"></dd>
+    </div>
+    <div class="metric">
+      <dt>Local readiness</dt>
+      <dd class="mono" id="tile-ready-val">—</dd>
+      <dd class="sub" id="tile-ready-sub"></dd>
+    </div>
+  </dl>
+
+  <!-- Section Tab Bar -->
+  <div class="tabs-bar">
+    <div class="seg tabs-seg" role="tablist" aria-label="System sections" id="section-tabs">
+      <button type="button" role="tab" data-tab="runtime" aria-selected="true">Runtime &amp; Serving</button>
+      <button type="button" role="tab" data-tab="projects" aria-selected="false">Projects <span class="count mono" id="tab-projects-count">0</span></button>
+      <button type="button" role="tab" data-tab="models" aria-selected="false">Models &amp; Engines <span class="count mono" id="tab-models-count">0/0</span></button>
+      <button type="button" role="tab" data-tab="maintenance" aria-selected="false">Maintenance</button>
+    </div>
+  </div>
+
+  <!-- TAB 1: Runtime & Serving + Session Gemini Key -->
+  <section id="panel-runtime" role="tabpanel" class="tab-panel">
+    <div class="split">
+      <!-- Left: Backend & VRAM -->
+      <section class="panel main-col">
+        <div class="panel-head">
+          <div>
+            <h2>Backend &amp; VRAM</h2>
+            <p class="muted small">Inspect GPU worker availability, active kernels, and release cached VRAM.</p>
+          </div>
+          <button type="button" class="btn" id="unload-btn">Unload all models / free VRAM</button>
+        </div>
+
+        <div id="runtime-banner"></div>
+        <div id="unload-status" class="callout soft" role="status" hidden></div>
+
+        <div class="stack-8">
+          <h3 class="eyebrow">Runtime configuration</h3>
+          <dl class="caps-grid" id="runtime-caps"></dl>
+        </div>
+
+        <details class="disclosure" id="diagnostics-details">
+          <summary>Runtime diagnostics &amp; active model profiles</summary>
+          <div class="disclosure-body" id="diagnostics-body"></div>
+        </details>
+      </section>
+
+      <!-- Right: Drama 3 serving -->
+      <section class="panel aside-col">
+        <div class="panel-head-col">
+          <h2>Drama 3 serving</h2>
+          <p class="muted small">Choose the global Drama 3 engine and checkpoint used across Soundstage, Voice Design, and Dubbing.</p>
+        </div>
+
+        <div class="card-radio-grid" role="radiogroup" aria-label="Serving backend" id="drama3-backends"></div>
+
+        <label class="stack small muted">
+          <span class="label-strong">Model checkpoint</span>
+          <select class="field" id="drama3-model"></select>
+        </label>
+
+        <div class="stack-8" id="drama3-experts-wrap" hidden>
+          <span class="label-strong small muted">ComfyUI expert placement</span>
+          <div class="card-radio-grid" role="radiogroup" aria-label="ComfyUI expert placement" id="drama3-experts"></div>
+        </div>
+
+        <div id="drama3-error" class="callout fail" role="alert" hidden></div>
+
+        <div class="callout soft" id="drama3-summary-box">
+          <span class="eyebrow ink">Active configuration</span>
+          <p class="small" id="drama3-summary-text"></p>
+          <p class="small muted">Persisted across tabs. Changing SGLang backend or checkpoint stops any running SGLang server.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Global Session Gemini API Key Card -->
+    <section class="panel" aria-label="Session Gemini API key">
+      <div class="panel-head">
+        <div class="stack-4">
+          <div class="row tight">
+            <h2>Session Gemini API key</h2>
+            <span class="pill" id="gemini-key-pill">Checking…</span>
+          </div>
+          <p class="muted small">Shared across all prompt writers, Nano Banana images, Dubbing, Storyboard translation, Soundstage, and Gemini Decision reviews for this browser session. Kept in server memory only — never written to disk or browser storage.</p>
+        </div>
+      </div>
+
+      <form id="gemini-key-form" class="key-form" autocomplete="off">
+        <label class="grow">
+          <span class="sr-only">Temporary Gemini API key for this session</span>
+          <input type="password" class="field mono full" id="gemini-key-input" placeholder="Paste temporary Gemini API key…" autocomplete="new-password">
+        </label>
+        <button type="submit" class="btn primary" id="gemini-key-save">Save for session</button>
+        <button type="button" class="btn" id="gemini-key-clear" hidden>Clear key</button>
+      </form>
+    </section>
+  </section>
+
+  <!-- TAB 2: Projects & Transfer -->
+  <section id="panel-projects" role="tabpanel" class="tab-panel" hidden>
+    <div class="split">
+      <!-- Left: Manage local projects -->
+      <section class="panel main-col">
+        <div class="panel-head">
+          <div>
+            <h2>Manage local projects</h2>
+            <p class="muted small">Rename or remove saved Soundstage, Storyboard, Dubbing, and Remake projects on this server.</p>
+          </div>
+          <button type="button" class="btn" id="projects-refresh">Refresh list</button>
+        </div>
+
+        <div class="filter-bar">
+          <div class="seg" role="group" aria-label="Project type" id="local-kind-filters"></div>
+          <input type="search" class="field grow" id="local-search" placeholder="Filter local projects…" aria-label="Filter local projects">
+        </div>
+
+        <div class="project-list" id="local-projects-list"></div>
+        <div class="empty-box muted" id="local-projects-empty" hidden>No saved projects match this filter.</div>
+      </section>
+
+      <!-- Right: Import from another server -->
+      <section class="panel aside-col">
+        <div class="panel-head-col">
+          <h2>Import from another server</h2>
+          <p class="muted small">Works with both Prism Studio and Prism Workshop URLs. Imports clips, cast, takes, and results.</p>
+        </div>
+
+        <form id="remote-load-form" class="stack-8">
+          <label class="stack small muted">
+            <span class="label-strong">Remote Studio or Workshop URL</span>
+            <span class="row tight">
+              <input type="url" class="field mono grow" id="remote-url" placeholder="https://your-server.modal.run or http://host:7860">
+              <button type="submit" class="btn" id="remote-load-btn">Load projects</button>
+            </span>
+          </label>
+        </form>
+
+        <details class="disclosure" id="remote-auth">
+          <summary>Authentication (optional)</summary>
+          <div class="disclosure-body auth-grid">
+            <label class="stack small muted">
+              <span>Modal-Key</span>
+              <input type="text" class="field mono" id="modal-key" autocomplete="off">
+            </label>
+            <label class="stack small muted">
+              <span>Modal-Secret</span>
+              <input type="password" class="field mono" id="modal-secret" autocomplete="off">
+            </label>
+          </div>
+        </details>
+
+        <div class="empty-box" id="remote-idle">
+          <strong>Not connected yet</strong>
+          <p class="small muted">Enter a Studio or Workshop URL above and click Load projects to inspect transferable projects.</p>
+        </div>
+
+        <div id="remote-loaded" class="stack-10" hidden>
+          <div class="callout soft row between">
+            <strong class="small ink" id="remote-server-banner"></strong>
+            <div class="row tight">
+              <button type="button" class="btn compact" id="remote-select-all">Select all</button>
+              <button type="button" class="btn compact" id="remote-clear">Clear</button>
+            </div>
+          </div>
+
+          <div class="project-list" id="remote-projects-list"></div>
+
+          <div class="stack-8 line-above">
+            <span class="small muted label-strong">If a project already exists locally</span>
+            <div class="seg wrap" role="radiogroup" aria-label="Conflict policy" id="remote-conflict"></div>
+            <div class="callout warn" id="overwrite-warning" role="alert" hidden>
+              Overwrite replaces local clips, cast, takes, and results for any matching project ID.
+            </div>
+            <button type="button" class="btn primary full" id="remote-import-btn" disabled>Select projects to import</button>
+          </div>
+
+          <div id="remote-progress" class="callout soft small" role="status" hidden></div>
+          <div id="remote-results" class="callout soft stack-4 small" role="status" hidden></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- TAB 3: Models & Engines -->
+  <section id="panel-models" role="tabpanel" class="tab-panel" hidden>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="row tight">
+            <h2>Model readiness</h2>
+            <span class="pill mono" id="models-summary-pill"></span>
+          </div>
+          <p class="muted small">Check which registered model files are already local. Missing files download when used (cached 30s).</p>
+        </div>
+        <button type="button" class="btn" id="models-refresh">Refresh local model presence</button>
+      </div>
+
+      <div class="filter-bar">
+        <div class="seg" role="group" aria-label="Filter by presence" id="models-presence-filters"></div>
+        <select class="field" id="models-family" aria-label="Filter by model family"></select>
+        <input type="search" class="field grow" id="models-search" placeholder="Search component or filename…" aria-label="Search model inventory">
+        <span class="mono small muted" id="models-shown-count"></span>
+      </div>
+
+      <div class="table-wrap" role="region" aria-label="Local model file presence" tabindex="0">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Component</th>
+              <th scope="col">Family</th>
+              <th scope="col">Folder / File</th>
+              <th scope="col">Presence</th>
+            </tr>
+          </thead>
+          <tbody id="models-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2 id="engines-heading">Engine capabilities</h2>
+          <p class="muted small">Execution checks required nodes, model compatibility, and TensorRT engine currency before submitting a workflow.</p>
+        </div>
+        <div class="seg wrap" role="group" aria-label="Filter engines by task" id="engine-task-filters"></div>
+      </div>
+
+      <div class="engines-grid" id="engines-grid"></div>
+    </section>
+  </section>
+
+  <!-- TAB 4: Maintenance -->
+  <section id="panel-maintenance" role="tabpanel" class="tab-panel" hidden>
+    <div class="maint-grid">
+      <section class="panel">
+        <div class="panel-head-col">
+          <h2>Media index maintenance</h2>
+          <p class="muted small">Scan historical files to register older or externally created outputs and repair missing previews.</p>
+        </div>
+        <div>
+          <button type="button" class="btn" id="scan-btn">Scan historical media</button>
+        </div>
+        <div id="scan-status" class="callout soft small" role="status" hidden></div>
+      </section>
+
+      <section class="panel danger-zone">
+        <div class="panel-head">
+          <h2>Browser settings</h2>
+          <span class="pill fail">Danger zone</span>
+        </div>
+        <p class="muted small">Clears settings saved in this browser and reloads the workspace with app defaults. Server projects and media files are not affected.</p>
+        <div id="reset-idle">
+          <button type="button" class="btn danger" id="reset-arm">Reset all settings to defaults</button>
+        </div>
+        <div id="reset-confirm" class="callout fail stack-8" role="alert" hidden>
+          <strong class="small">Clear all saved browser preferences and reload defaults?</strong>
+          <div class="row tight">
+            <button type="button" class="btn compact" id="reset-cancel">Cancel</button>
+            <button type="button" class="btn compact solid-danger" id="reset-go">Confirm reset</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -1,6 +1,7 @@
 """Track detached work that can access the workspace outside a request."""
 
 from contextlib import contextmanager
+from contextvars import copy_context
 from functools import wraps
 from threading import Lock
 
@@ -9,13 +10,15 @@ _active = 0
 
 
 def workspace_task(work):
+    context = copy_context()
+
     @wraps(work)
     def run(*args, **kwargs):
         global _active
         with _lock:
             _active += 1
         try:
-            return work(*args, **kwargs)
+            return context.copy().run(work, *args, **kwargs)
         finally:
             with _lock:
                 _active -= 1

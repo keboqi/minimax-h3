@@ -606,8 +606,11 @@ class JobCoordinator:
                     for hook in list(self.gpu_claim_hooks):
                         hook(job.family)
                 job.has_gpu = requires_gpu
+                from .llm.gemini import owner_context
+
                 try:
-                    yield job
+                    with owner_context(owner):
+                        yield job
                 finally:
                     for submission in job.submissions:
                         submission.close()

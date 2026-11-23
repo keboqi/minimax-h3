@@ -24,6 +24,7 @@ import requests
 from h3_app.catalog import GEMINI_API_ROOT
 
 from . import repair_json
+from .gemini import session_key
 
 MODELS = ("gemma-4-31b-it", "gemma-4-26b-a4b-it")
 REQUESTS_PER_MINUTE = 30
@@ -70,7 +71,7 @@ def enabled() -> bool:
 
 
 def _api_key() -> str:
-    return _key.get() or os.getenv("GEMINI_API_KEY", "").strip()
+    return _key.get() or session_key() or os.getenv("GEMINI_API_KEY", "").strip()
 
 
 def current_key() -> str:

@@ -2,75 +2,606 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>System</title>
+  <title>System · Prism Studio</title>
   <script src="./support.js"></script>
 </head>
 <body>
 <x-dc>
 <helmet>
-  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;650;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; }
+    h1, h2, h3, h4, p, dl, dt, dd { margin: 0; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
+    summary { cursor: pointer; }
     a { color: #065f51; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    button, summary { cursor: pointer; font: inherit; }
-    button:disabled { cursor: default; }
-    h1, h2, h3, p { margin: 0; }
-    :focus-visible { outline: 2px solid #087f6c; outline-offset: 3px; }
-    .action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid #b7ccc2; border-radius: 8px; background: white; color: #202e2b; font-size: 14px; font-weight: 600; }
-    .action:hover { background: #edf4f1; }
-    .action.primary { color: white; background: #087766; border-color: #087766; }
-    .action.stop { color: #991b1b; border-color: #edc6c6; }
-    .disclosure { border: 1px solid #dbe3df; border-radius: 8px; padding: 0 12px; }
-    .disclosure summary { padding: 12px 0; font-weight: 600; }
-    .disclosure p { margin-bottom: 12px; color: #596963; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
   </style>
 </helmet>
-<div style="background:#f2f5f3;color:#202e2b;font:16px/1.45 'Source Sans 3',system-ui,sans-serif;min-height:100vh">
-  <header style="background:#fff;border-bottom:1px solid #dbe3df;padding:10px clamp(18px,4vw,56px);display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center">
-    <div style="display:flex;align-items:center;gap:10px;font-weight:700"><span aria-hidden="true" style="display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#087f6c;color:white;font-size:13px">PS</span>Prism Studio</div>
-    <nav aria-label="Operations" style="display:flex;gap:16px;align-items:center">
-      <a href="Jobs.dc.html" style="padding:11px 8px;color:#596963">Jobs</a>
-      <a href="Main.dc.html" aria-current="page" style="padding:11px 8px;border-bottom:2px solid #087f6c;font-weight:700">System</a>
-    </nav>
-  </header>
-  <main style="max-width:1440px;margin:0 auto;padding:24px clamp(16px,3.4vw,48px) 36px;display:flex;flex-direction:column;gap:18px">
-    <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:18px;padding:24px clamp(16px,2.5vw,32px);background:#e3f1ec;border:1px solid #b7ccc2;border-radius:16px">
-      <div style="display:flex;align-items:flex-start;gap:16px">
-        <span style="display:grid;place-items:center;flex:none;width:48px;height:48px;margin-top:5px;border:1px solid #b7ccc2;border-radius:12px;background:#fff;color:#065f51">
-          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="4" y="4" width="16" height="7" rx="2"></rect><rect x="4" y="13" width="16" height="7" rx="2"></rect><path d="M7 7.5h2m-2 9h2"></path></svg>
-        </span>
-        <div style="display:flex;flex-direction:column;gap:3px"><h1 style="font-size:38px;line-height:1.05;letter-spacing:-.04em">System</h1><p style="color:#596963">Manage the backend, local models, and browser settings.</p></div>
-      </div>
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><button class="action" type="button" disabled="disabled">Open ComfyUI ↗</button><button class="action primary" type="button" disabled="disabled">Refresh backend</button></div>
-    </section>
-    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
-      <section style="flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
-        <div style="display:flex;flex-direction:column;gap:2px"><h2 style="font-size:21px">Backend &amp; VRAM</h2><p style="font-size:14px;color:#596963">Check the runtime and free GPU memory.</p></div>
-        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;background:#f2f5f3;border-radius:8px;padding:14px"><strong>CPU Workshop</strong><span style="color:#596963">No GPU backend</span></div>
-        <details class="disclosure"><summary>Runtime diagnostics</summary><p>ComfyUI, SGLang-Omni and GPU workers are disabled in CPU Workshop.</p></details>
-        <div><button type="button" class="action" disabled="disabled">Unload all models / free VRAM</button></div>
-      </section>
-      <section style="flex:1 1 330px;min-width:0;display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
-        <h2 style="font-size:21px">Maintenance</h2>
-        <details class="disclosure" open="open"><summary>Media index maintenance</summary><p>Scan historical files to register older outputs and repair missing previews.</p><button class="action" type="button" disabled="disabled" style="margin-bottom:12px">Scan historical media</button></details>
-        <details class="disclosure"><summary>Browser settings</summary><p>Clears settings saved in this browser and reloads the workspace with app defaults.</p><button class="action stop" type="button" disabled="disabled" style="margin-bottom:12px">Reset all settings to defaults</button></details>
-      </section>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <!-- Top Workspace Chrome -->
+  <header style="background: {{ t.surface }}; border-bottom: 1px solid {{ t.line }}; padding: 10px clamp(16px, 3vw, 40px); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px;">
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; letter-spacing: -0.02em;">
+      <span aria-hidden="true" style="display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #087f6c; color: #ffffff; font-size: 13px; font-weight: 700;">PS</span>
+      <span>Prism Studio</span>
     </div>
-    <section style="display:flex;flex-direction:column;gap:16px;padding:20px;background:#fff;border:1px solid #dbe3df;border-radius:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-        <div style="display:flex;flex-direction:column;gap:2px"><h2 style="font-size:21px">Model readiness</h2><p style="font-size:14px;color:#596963">Check which files are already local. Missing files download when used.</p></div>
-        <button class="action" type="button" disabled="disabled">Refresh local model presence</button>
+    <nav aria-label="Operations" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <a href="Jobs.dc.html" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 8px; color: {{ t.muted }}; font-weight: 500;">Jobs</a>
+      <a href="Main.dc.html" aria-current="page" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 8px; background: {{ t.soft }}; color: {{ t.ink }}; font-weight: 700;">System</a>
+    </nav>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+      <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; background: {{ statusBadge.bg }}; border: 1px solid {{ statusBadge.border }}; color: {{ statusBadge.fg }}; font-size: 13px; font-weight: 600;">
+        <span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{ statusBadge.dot }};"></span>
+        <span>{{ statusBadge.label }}</span>
+      </span>
+    </div>
+  </header>
+
+  <main style="width: 100%; max-width: 1440px; margin: 0 auto; padding: 20px clamp(16px, 3vw, 40px) 40px; display: flex; flex-direction: column; gap: 16px;">
+    <!-- Tightened Operations Hero -->
+    <section style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 18px clamp(16px, 2.2vw, 26px); background: {{ t.soft }}; border: 1px solid {{ t.dash }}; border-radius: 14px;">
+      <div style="display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1 1 360px;">
+        <span style="display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 1px solid {{ t.dash }}; border-radius: 11px; background: {{ t.surface }}; color: {{ t.ink }};">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="7" rx="2"></rect>
+            <rect x="4" y="13" width="16" height="7" rx="2"></rect>
+            <path d="M7 7.5h2M7 16.5h2"></path>
+          </svg>
+        </span>
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+          <h1 style="font-size: 28px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 700;">System</h1>
+          <p style="color: {{ t.muted }}; font-size: 14px;">Monitor GPU runtime, configure Drama 3 serving, manage and transfer projects, and inspect local models.</p>
+        </div>
       </div>
-      <details class="disclosure"><summary>Model inventory</summary><p>Component, filename, and local presence for each registered model.</p></details>
-      <details class="disclosure"><summary>Engine capabilities</summary><p>Workflow execution checks required nodes, model compatibility, and TensorRT engine currency before submission.</p></details>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <button type="button" onClick="{{ openComfy }}" disabled="{{ comfyDisabled }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span>Open ComfyUI</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 17 17 7M9 7h8v8"></path>
+          </svg>
+        </button>
+        <button type="button" onClick="{{ refreshBackend }}" style="display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 16px; border: 1px solid {{ t.primaryBtn }}; border-radius: 8px; background: {{ t.primaryBtn }}; color: {{ t.accentInk }}; font-size: 14px; font-weight: 600;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            <path d="M16 16h5v5"></path>
+          </svg>
+          <span>Refresh backend</span>
+        </button>
+      </div>
     </section>
+
+    <!-- 4-Tile Telemetry Strip (matches Jobs.dc.html) -->
+    <dl aria-label="System summary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px;">
+      <div style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;">
+        <dt style="font-size: 13px; color: {{ t.muted }}; font-weight: 500;">Runtime</dt>
+        <dd style="font-size: 20px; font-weight: 700; line-height: 1.2; color: {{ statusBadge.tileFg }};">{{ tileRuntimeTitle }}</dd>
+        <dd class="mono" style="font-size: 12px; color: {{ t.muted }};">{{ tileRuntimeSub }}</dd>
+      </div>
+      <div style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;">
+        <dt style="font-size: 13px; color: {{ t.muted }}; font-weight: 500;">VRAM free</dt>
+        <dd class="mono" style="font-size: 20px; font-weight: 700; line-height: 1.2;">{{ tileVramTitle }}</dd>
+        <dd style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="height: 5px; border-radius: 999px; background: {{ t.raised }}; overflow: hidden;">
+            <div style="height: 100%; width: {{ vramPctLabel }}; background: {{ vramBarColor }}; border-radius: 999px;"></div>
+          </div>
+          <span style="font-size: 12px; color: {{ t.muted }};">{{ tileVramSub }}</span>
+        </dd>
+      </div>
+      <div style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;">
+        <dt style="font-size: 13px; color: {{ t.muted }}; font-weight: 500;">Drama 3 serving</dt>
+        <dd style="font-size: 20px; font-weight: 700; line-height: 1.2;">{{ tileDramaTitle }}</dd>
+        <dd style="font-size: 12px; color: {{ t.muted }};">{{ tileDramaSub }}</dd>
+      </div>
+      <div style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px;">
+        <dt style="font-size: 13px; color: {{ t.muted }}; font-weight: 500;">Local readiness</dt>
+        <dd class="mono" style="font-size: 20px; font-weight: 700; line-height: 1.2;">{{ readinessTileTitle }}</dd>
+        <dd style="font-size: 12px; color: {{ t.muted }};">{{ projectCountLabel }}</dd>
+      </div>
+    </dl>
+
+    <!-- Section Switcher (Prism Studio .seg pattern) -->
+    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+      <div role="tablist" aria-label="System sections" style="display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; border: 1px solid {{ t.line }}; border-radius: 10px; background: {{ t.raised }}; max-width: 100%;">
+        <sc-for list="{{ navTabs }}" as="tab" hint-placeholder-count="4">
+          <button type="button" role="tab" aria-selected="{{ tab.active }}" onClick="{{ tab.pick }}" style="display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: {{ tab.bg }}; color: {{ tab.fg }}; font-size: 14px; font-weight: {{ tab.weight }}; box-shadow: {{ tab.shadow }};">
+            <span>{{ tab.label }}</span>
+            <sc-if value="{{ tab.hasCount }}" hint-placeholder-val="{{ true }}">
+              <span class="mono" style="font-size: 12px; color: {{ tab.countColor }};">{{ tab.count }}</span>
+            </sc-if>
+          </button>
+        </sc-for>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: {{ t.muted }};">
+        <a href="SystemProjects.dc.html" style="font-weight: 600;">Open Projects board</a>
+        <span aria-hidden="true">·</span>
+        <a href="SystemModels.dc.html" style="font-weight: 600;">Open Models board</a>
+      </div>
+    </div>
+
+    <!-- SECTION 1: Runtime & Serving -->
+    <sc-if value="{{ isRuntimeTab }}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+        <!-- Left: Backend & VRAM -->
+        <section style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+          <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <h2 style="font-size: 19px; font-weight: 700; letter-spacing: -0.02em;">Backend &amp; VRAM</h2>
+              <p style="font-size: 14px; color: {{ t.muted }};">Inspect GPU worker availability, active kernels, and release cached VRAM.</p>
+            </div>
+            <button type="button" onClick="{{ unloadModels }}" disabled="{{ unloadDisabled }}" style="display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path>
+              </svg>
+              <span>Unload all models / free VRAM</span>
+            </button>
+          </div>
+
+          <sc-if value="{{ isStudioMode }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border-radius: 10px; background: {{ t.bg }}; border: 1px solid {{ t.line }};">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span style="display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; background: {{ t.soft }}; color: {{ t.ink }}; font-size: 12px; font-weight: 700;">Connected</span>
+                  <strong style="font-size: 15px;">NVIDIA H100 80GB HBM3</strong>
+                </div>
+                <span class="mono" style="font-size: 13px; color: {{ t.text }}; font-weight: 600;">{{ vramSummaryLine }}</span>
+              </div>
+              <div style="height: 10px; border-radius: 999px; background: {{ t.raised }}; border: 1px solid {{ t.line }}; overflow: hidden;">
+                <div style="height: 100%; width: {{ vramPctLabel }}; background: {{ t.accent }}; border-radius: 999px;"></div>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; font-size: 13px; color: {{ t.muted }};">
+                <span>{{ vramUsedNote }}</span>
+                <span>{{ vramFreeNote }}</span>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isWorkshopMode }}" hint-placeholder-val="{{ false }}">
+            <div role="status" style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 10px; background: {{ t.warnBg }}; border: 1px solid {{ t.warnLine }}; color: {{ t.warnInk }};">
+              <strong style="font-size: 15px;">CPU Workshop · No GPU backend attached</strong>
+              <p style="font-size: 13px;">ComfyUI, SGLang-Omni and GPU workers are disabled. All UI pages, Media library, Models manager (on Modal), prompt writers, project editing and GPT Image API remain available.</p>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isAttentionMode }}" hint-placeholder-val="{{ false }}">
+            <div role="alert" style="display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 10px; background: {{ t.failBg }}; border: 1px solid {{ t.failLine }}; color: {{ t.failInk }};">
+              <strong style="font-size: 15px;">Backend needs attention</strong>
+              <p class="mono" style="font-size: 13px;">Backend unavailable: Connection refused on http://127.0.0.1:8188/system_stats</p>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ memoryMessage }}" hint-placeholder-val="{{ false }}">
+            <div role="status" style="padding: 10px 14px; border-radius: 8px; background: {{ t.soft }}; border: 1px solid {{ t.dash }}; color: {{ t.ink }}; font-size: 13px; font-weight: 600;">{{ memoryMessage }}</div>
+          </sc-if>
+
+          <!-- Structured Capability Grid (replaces dense markdown blob) -->
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <h3 style="font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: {{ t.muted }};">Runtime configuration</h3>
+            <dl style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 8px;">
+              <sc-for list="{{ runtimeFacts }}" as="fact" hint-placeholder-count="6">
+                <div style="padding: 10px 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.bg }}; display: flex; flex-direction: column; gap: 2px;">
+                  <dt style="font-size: 12px; color: {{ t.muted }};">{{ fact.label }}</dt>
+                  <dd style="font-size: 14px; font-weight: 600; color: {{ t.text }};">{{ fact.value }}</dd>
+                </div>
+              </sc-for>
+            </dl>
+          </div>
+
+          <!-- Collapsible Diagnostics & LoRA Profiles -->
+          <div style="border: 1px solid {{ t.line }}; border-radius: 10px; overflow: hidden;">
+            <button type="button" onClick="{{ toggleDiagnostics }}" aria-expanded="{{ diagnosticsOpen }}" style="width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 0 14px; border: 0; background: {{ t.bg }}; color: {{ t.text }}; font-size: 14px; font-weight: 600; text-align: left;">
+              <span>Runtime diagnostics &amp; active model profiles</span>
+              <span style="font-size: 12px; color: {{ t.muted }};">{{ diagToggleText }}</span>
+            </button>
+            <sc-if value="{{ diagnosticsOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 12px 14px; border-top: 1px solid {{ t.line }}; display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+                <sc-for list="{{ diagnosticProfiles }}" as="prof" hint-placeholder-count="4">
+                  <div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding-bottom: 6px; border-bottom: 1px solid {{ t.line }};">
+                    <strong>{{ prof.name }}</strong>
+                    <span class="mono" style="color: {{ t.muted }}; font-size: 12px;">{{ prof.detail }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </section>
+
+        <!-- Right: Drama 3 Serving -->
+        <section style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 16px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <h2 style="font-size: 19px; font-weight: 700; letter-spacing: -0.02em;">Drama 3 serving</h2>
+            <p style="font-size: 14px; color: {{ t.muted }};">Choose the global Drama 3 engine and checkpoint used across Soundstage, Voice Design, and Dubbing.</p>
+          </div>
+
+          <!-- 2-Card Interactive Backend Picker -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 10px;" role="radiogroup" aria-label="Serving backend">
+            <sc-for list="{{ backendCards }}" as="b" hint-placeholder-count="2">
+              <button type="button" role="radio" aria-checked="{{ b.selected }}" onClick="{{ b.pick }}" style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 14px; border: 1px solid {{ b.border }}; border-radius: 10px; background: {{ b.bg }}; text-align: left; min-height: 76px;">
+                <div style="width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                  <strong style="font-size: 15px; color: {{ t.text }};">{{ b.title }}</strong>
+                  <span style="padding: 1px 7px; border-radius: 999px; background: {{ b.tagBg }}; color: {{ b.tagFg }}; font-size: 11px; font-weight: 700;">{{ b.badge }}</span>
+                </div>
+                <span style="font-size: 12px; color: {{ t.muted }}; line-height: 1.35;">{{ b.desc }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <!-- Model Dropdown -->
+          <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: {{ t.muted }};">
+            <span>Model checkpoint</span>
+            <select value="{{ drama3Model }}" onChange="{{ changeDrama3Model }}" style="min-height: 44px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 14px; font-weight: 500;">
+              <sc-for list="{{ drama3ModelOptions }}" as="opt" hint-placeholder-count="4">
+                <option value="{{ opt.id }}">{{ opt.label }}</option>
+              </sc-for>
+            </select>
+          </label>
+
+          <!-- Conditional ComfyUI Expert Placement -->
+          <sc-if value="{{ isComfyDrama3 }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 13px; font-weight: 600; color: {{ t.muted }};">ComfyUI expert placement</span>
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+                <sc-for list="{{ expertCards }}" as="ex" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ ex.pick }}" aria-pressed="{{ ex.selected }}" style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 44px; padding: 8px 12px; border: 1px solid {{ ex.border }}; border-radius: 8px; background: {{ ex.bg }}; text-align: left;">
+                    <strong style="font-size: 13px; color: {{ t.text }};">{{ ex.title }}</strong>
+                    <span style="font-size: 12px; color: {{ t.muted }};">{{ ex.sub }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <!-- Active Serving Summary -->
+          <div style="padding: 12px 14px; border-radius: 10px; background: {{ t.soft }}; border: 1px solid {{ t.dash }}; display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 12px; font-weight: 700; color: {{ t.ink }}; text-transform: uppercase; letter-spacing: 0.04em;">Active configuration</span>
+            <p style="font-size: 13px; color: {{ t.text }}; line-height: 1.45;">{{ drama3Summary }}</p>
+            <p style="font-size: 12px; color: {{ t.muted }};">Persisted across tabs. Changing SGLang backend or checkpoint stops any running SGLang server.</p>
+          </div>
+        </section>
+      </div>
+    </sc-if>
+
+    <!-- SECTION 2: Projects & Transfer (inline playable preview) -->
+    <sc-if value="{{ isProjectsTab }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+        <section style="flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div>
+              <h2 style="font-size: 19px; font-weight: 700;">Manage local projects</h2>
+              <p style="font-size: 14px; color: {{ t.muted }};">Rename or remove saved Soundstage, Storyboard, Dubbing, and Remake projects.</p>
+            </div>
+            <a href="SystemProjects.dc.html" style="display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Full Projects board</a>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <sc-for list="{{ previewProjects }}" as="proj" hint-placeholder-count="4">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border: 1px solid {{ t.line }}; border-radius: 10px; background: {{ t.bg }};">
+                <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="padding: 1px 8px; border-radius: 999px; background: {{ t.soft }}; color: {{ t.ink }}; font-size: 11px; font-weight: 700;">{{ proj.kindLabel }}</span>
+                    <strong style="font-size: 14px;">{{ proj.name }}</strong>
+                  </div>
+                  <span style="font-size: 12px; color: {{ t.muted }};">{{ proj.summary }}</span>
+                </div>
+                <div style="display: flex; gap: 6px; flex: none;">
+                  <button type="button" onClick="{{ proj.notifyRename }}" style="min-height: 36px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Rename</button>
+                  <button type="button" onClick="{{ proj.notifyRemove }}" style="min-height: 36px; padding: 0 11px; border: 1px solid {{ t.failLine }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.failInk }}; font-size: 13px; font-weight: 600;">Remove</button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+          <div>
+            <h2 style="font-size: 19px; font-weight: 700;">Import projects from another server</h2>
+            <p style="font-size: 14px; color: {{ t.muted }};">Connect to any Prism Studio or Prism Workshop URL to pull clips, cast, takes, and results.</p>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <input value="{{ remoteUrl }}" onInput="{{ editRemoteUrl }}" aria-label="Remote Studio or Workshop URL" style="flex: 1 1 240px; min-height: 44px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px;" class="mono">
+            <button type="button" onClick="{{ triggerRemoteLoad }}" style="min-height: 44px; padding: 0 14px; border: 1px solid {{ t.primaryBtn }}; border-radius: 8px; background: {{ t.primaryBtn }}; color: {{ t.accentInk }}; font-size: 14px; font-weight: 600;">Load projects</button>
+          </div>
+          <p style="font-size: 13px; color: {{ t.muted }};">Open the dedicated <a href="SystemProjects.dc.html" style="font-weight: 600;">Projects &amp; Transfer artboard</a> for full inline rename, two-step delete confirmation, collision warnings, and batch import.</p>
+        </section>
+      </div>
+    </sc-if>
+
+    <!-- SECTION 3: Models & Engines (inline playable preview) -->
+    <sc-if value="{{ isModelsTab }}" hint-placeholder-val="{{ false }}">
+      <section style="display: flex; flex-direction: column; gap: 14px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div>
+            <h2 style="font-size: 19px; font-weight: 700;">Model readiness &amp; Engine capabilities</h2>
+            <p style="font-size: 14px; color: {{ t.muted }};">84 present locally · 65 download when used · 15 active Studio engines.</p>
+          </div>
+          <a href="SystemModels.dc.html" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border: 1px solid {{ t.primaryBtn }}; border-radius: 8px; background: {{ t.primaryBtn }}; color: {{ t.accentInk }}; font-size: 14px; font-weight: 600;">Open full Models &amp; Engines board</a>
+        </div>
+        <div style="overflow-x: auto; border: 1px solid {{ t.line }}; border-radius: 8px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+              <tr style="background: {{ t.bg }}; color: {{ t.muted }}; text-align: left;">
+                <th scope="col" style="padding: 10px 12px; border-bottom: 1px solid {{ t.line }};">Component</th>
+                <th scope="col" style="padding: 10px 12px; border-bottom: 1px solid {{ t.line }};">File</th>
+                <th scope="col" style="padding: 10px 12px; border-bottom: 1px solid {{ t.line }};">Presence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{ previewModels }}" as="m" hint-placeholder-count="5">
+                <tr>
+                  <td style="padding: 9px 12px; border-bottom: 1px solid {{ t.line }}; font-weight: 600;">{{ m.name }}</td>
+                  <td class="mono" style="padding: 9px 12px; border-bottom: 1px solid {{ t.line }}; color: {{ t.muted }};">{{ m.file }}</td>
+                  <td style="padding: 9px 12px; border-bottom: 1px solid {{ t.line }};">
+                    <span style="display: inline-flex; padding: 2px 8px; border-radius: 999px; background: {{ m.pillBg }}; color: {{ m.pillFg }}; font-size: 12px; font-weight: 600;">{{ m.state }}</span>
+                  </td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </sc-if>
+
+    <!-- SECTION 4: Maintenance (inline playable preview) -->
+    <sc-if value="{{ isMaintTab }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+        <section style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+          <h2 style="font-size: 19px; font-weight: 700;">Media index maintenance</h2>
+          <p style="font-size: 14px; color: {{ t.muted }};">Scan historical files to register older or externally created outputs and repair missing previews.</p>
+          <div>
+            <button type="button" onClick="{{ runMediaScan }}" style="min-height: 44px; padding: 0 16px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 14px; font-weight: 600;">Scan historical media</button>
+          </div>
+          <sc-if value="{{ scanMessage }}" hint-placeholder-val="{{ false }}">
+            <p role="status" style="font-size: 13px; color: {{ t.ink }}; font-weight: 600;">{{ scanMessage }}</p>
+          </sc-if>
+        </section>
+
+        <section style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.failLine }}; border-radius: 12px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <h2 style="font-size: 19px; font-weight: 700;">Browser settings</h2>
+            <span style="padding: 2px 8px; border-radius: 999px; background: {{ t.failBg }}; color: {{ t.failInk }}; font-size: 12px; font-weight: 700;">Danger zone</span>
+          </div>
+          <p style="font-size: 14px; color: {{ t.muted }};">Clears settings saved in this browser and reloads the workspace with app defaults. Server projects and media files are not affected.</p>
+          <sc-if value="{{ resetIdle }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <button type="button" onClick="{{ armReset }}" style="min-height: 44px; padding: 0 16px; border: 1px solid {{ t.failLine }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.failInk }}; font-size: 14px; font-weight: 600;">Reset all settings to defaults</button>
+            </div>
+          </sc-if>
+          <sc-if value="{{ resetArmed }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 12px; border-radius: 8px; background: {{ t.failBg }}; border: 1px solid {{ t.failLine }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+              <strong style="font-size: 13px; color: {{ t.failInk }};">Reset saved browser preferences?</strong>
+              <div style="display: flex; gap: 8px;">
+                <button type="button" onClick="{{ cancelReset }}" style="min-height: 36px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Cancel</button>
+                <button type="button" onClick="{{ confirmReset }}" style="min-height: 36px; padding: 0 12px; border: 1px solid {{ t.failInk }}; border-radius: 8px; background: {{ t.failInk }}; color: #ffffff; font-size: 13px; font-weight: 700;">Confirm reset</button>
+              </div>
+            </div>
+          </sc-if>
+        </section>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+      <div role="status" aria-live="polite" style="align-self: flex-end; padding: 9px 14px; border-radius: 8px; background: {{ t.text }}; color: {{ t.surface }}; font-size: 13px; font-weight: 600;">{{ toast }}</div>
+    </sc-if>
   </main>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":790}}'>
-class Component extends DCLogic {}
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"runtimeMode":{"editor":"enum","options":["studio","workshop","attention"],"default":"studio"},"$preview":{"width":1360,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const isDark = (this.props.theme ?? 'light') === 'dark';
+    const mode = this.props.runtimeMode ?? 'studio';
+    const isStudioMode = mode === 'studio';
+    const isWorkshopMode = mode === 'workshop';
+    const isAttentionMode = mode === 'attention';
+
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#20362f', soft: '#1f3d35',
+      line: '#34463e', dash: '#4b6b5e', text: '#e9f1ed', muted: '#a9bdb3',
+      accent: '#66d8bb', primaryBtn: '#66d8bb', accentInk: '#0b2a23', ink: '#8ee6cf',
+      warnBg: '#4a3a14', warnInk: '#fde7b0', warnLine: '#8d6c26',
+      failBg: '#4a1d1d', failInk: '#fecaca', failLine: '#7a3434'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#edf4f1', soft: '#e3f1ec',
+      line: '#dbe3df', dash: '#b7ccc2', text: '#202e2b', muted: '#596963',
+      accent: '#087f6c', primaryBtn: '#087766', accentInk: '#ffffff', ink: '#065f51',
+      warnBg: '#fbf1dc', warnInk: '#7a4f00', warnLine: '#d6b46b',
+      failBg: '#fdeaea', failInk: '#9b1c1c', failLine: '#e6c9c9'
+    };
+
+    const statusBadge = isStudioMode ? {
+      label: 'Ready · H100 80GB', bg: t.soft, border: t.dash, fg: t.ink, dot: t.accent, tileFg: t.ink
+    } : isWorkshopMode ? {
+      label: 'CPU Workshop', bg: t.warnBg, border: t.warnLine, fg: t.warnInk, dot: t.warnInk, tileFg: t.warnInk
+    } : {
+      label: 'Backend needs attention', bg: t.failBg, border: t.failLine, fg: t.failInk, dot: t.failInk, tileFg: t.failInk
+    };
+
+    const vramFreed = !!this.state?.vramFreed;
+    const vramUsed = vramFreed ? 2.4 : 25.0;
+    const vramTotal = 79.2;
+    const vramFree = vramTotal - vramUsed;
+    const vramPct = ((vramUsed / vramTotal) * 100).toFixed(1) + '%';
+
+    const activeTab = this.state?.activeTab ?? 'runtime';
+    const tabDefs = [
+      ['runtime', 'Runtime & Serving', ''],
+      ['projects', 'Projects', '8'],
+      ['models', 'Models & Engines', '84/149'],
+      ['maintenance', 'Maintenance', '']
+    ];
+    const navTabs = tabDefs.map(([id, label, count]) => {
+      const active = activeTab === id;
+      return {
+        label, count, hasCount: !!count, active,
+        bg: active ? t.surface : 'transparent',
+        fg: active ? t.ink : t.muted,
+        weight: active ? '700' : '500',
+        countColor: active ? t.ink : t.muted,
+        shadow: active ? '0 1px 2px rgba(15, 30, 25, 0.12)' : 'none',
+        pick: () => this.setState({ activeTab: id })
+      };
+    });
+
+    const drama3Backend = this.state?.drama3Backend ?? 'sglang';
+    const isComfyDrama3 = drama3Backend === 'comfyui';
+    const sglangModels = [
+      { id: 'fp8', label: 'FP8 — fishaudio/drama-3 (~41.5 GB)' },
+      { id: 'int4', label: 'INT4 — fishaudio/drama-3-int4 (~24 GB)' }
+    ];
+    const comfyModels = [
+      { id: 'drama3_comfy_fp8', label: 'FP8 experts + BF16 (38.6 GB)' },
+      { id: 'drama3_comfy_int8', label: 'INT8 experts + BF16 (38.7 GB)' },
+      { id: 'drama3_comfy_w6a8', label: 'W6A8 experts + BF16 (32.7 GB)' },
+      { id: 'drama3_comfy_w4a8', label: 'W4A8 experts + BF16 (24.6 GB, fastest)' }
+    ];
+    const drama3ModelOptions = isComfyDrama3 ? comfyModels : sglangModels;
+    const defaultModel = isComfyDrama3 ? 'drama3_comfy_w4a8' : 'fp8';
+    const rawSelectedModel = this.state?.drama3Model;
+    const validIds = drama3ModelOptions.map((m) => m.id);
+    const drama3Model = validIds.includes(rawSelectedModel) ? rawSelectedModel : defaultModel;
+    const comfyExperts = this.state?.comfyExperts ?? 'in VRAM';
+    const activeModelObj = drama3ModelOptions.find((m) => m.id === drama3Model) || drama3ModelOptions[0];
+
+    const backendCards = [
+      {
+        id: 'sglang', title: 'SGLang-Omni', badge: 'Parallel',
+        desc: 'Parallel batch generation across Soundstage, Voice Design, and Dubbing.',
+        selected: !isComfyDrama3
+      },
+      {
+        id: 'comfyui', title: 'ComfyUI', badge: 'Fast start',
+        desc: 'Sequential chunk generation with optional expert offloading to RAM.',
+        selected: isComfyDrama3
+      }
+    ].map((b) => ({
+      title: b.title, badge: b.badge, desc: b.desc, selected: b.selected,
+      border: b.selected ? t.accent : t.line,
+      bg: b.selected ? t.soft : t.bg,
+      tagBg: b.selected ? t.surface : t.raised,
+      tagFg: b.selected ? t.ink : t.muted,
+      pick: () => this.setState({
+        drama3Backend: b.id,
+        drama3Model: b.id === 'comfyui' ? 'drama3_comfy_w4a8' : 'fp8',
+        toast: 'Drama 3 backend switched to ' + b.title + '.'
+      })
+    }));
+
+    const expertCards = [
+      { id: 'in VRAM', title: 'In VRAM', sub: 'Fastest (~25–39 GB VRAM)' },
+      { id: 'in RAM', title: 'In RAM', sub: 'Offloaded experts' }
+    ].map((ex) => {
+      const selected = comfyExperts === ex.id;
+      return {
+        title: ex.title, sub: ex.sub, selected,
+        border: selected ? t.accent : t.line,
+        bg: selected ? t.soft : t.bg,
+        pick: () => this.setState({ comfyExperts: ex.id, toast: 'ComfyUI experts set to ' + ex.id + '.' })
+      };
+    });
+
+    const drama3Summary = isComfyDrama3
+      ? 'Active Drama 3 backend: ComfyUI · ' + activeModelObj.label + ' · experts ' + comfyExperts + ' (sequential chunk generation, fast start). Applies to Soundstage, Voice Design, and Dubbing.'
+      : 'Active Drama 3 backend: SGLang-Omni · ' + activeModelObj.label + ' (parallel batch generation). Applies to Soundstage, Voice Design, and Dubbing.';
+
+    const tileDramaTitle = isComfyDrama3 ? 'ComfyUI · ' + drama3Model.replace('drama3_comfy_', '').toUpperCase() : 'SGLang-Omni · ' + drama3Model.toUpperCase();
+    const tileDramaSub = isComfyDrama3 ? 'Sequential · experts ' + comfyExperts : 'Parallel · ~41.5 GB';
+
+    const runtimeFacts = [
+      { label: 'Sparse attention', value: isStudioMode ? 'SageAttention 2' : '—' },
+      { label: 'Dense attention', value: isStudioMode ? 'FlashAttention 3' : '—' },
+      { label: 'Memory profile', value: isStudioMode ? 'High VRAM' : 'CPU only' },
+      { label: 'FirstBlockCache', value: isStudioMode ? 'Available' : 'Unavailable' },
+      { label: 'EasyCache', value: isStudioMode ? 'Available' : 'Unavailable' },
+      { label: 'Spectrum accelerator', value: isStudioMode ? 'Available' : 'Unavailable' }
+    ];
+
+    const diagnosticsOpen = !!this.state?.diagnosticsOpen;
+    const diagnosticProfiles = [
+      { name: 'Base MiniMax H3 2.0', detail: 'FL2VA minimax_h3_fl2va_bf16.safetensors · Ref2VA minimax_h3_ref2va_bf16.safetensors' },
+      { name: 'LightX2V Turbo / 4-step 768p', detail: 'FL2VA v1.3 · Ref2VA v1.0 · strength 1.0' },
+      { name: 'LightX2V Turbo v1.2 / 8-step 768p', detail: '8-step default · strength 1.0 · FL2VA and Ref2VA' },
+      { name: 'Larry Turbo v4-600 EMA', detail: '6-step default · custom loader/sampler · strength 1.0' }
+    ];
+
+    const previewProjects = [
+      { kindLabel: 'Soundstage', name: 'Midnight Diner', summary: 'Ready · 14 lines' },
+      { kindLabel: 'Storyboard', name: 'Rooftop Chase', summary: '6 scenes · 11 takes' },
+      { kindLabel: 'Dubbing', name: 'Product Keynote EN', summary: '18 lines · en-US' },
+      { kindLabel: 'Remake', name: 'Studio Corridor Swap', summary: '4 windows · 4 done' }
+    ].map((p) => ({
+      kindLabel: p.kindLabel, name: p.name, summary: p.summary,
+      notifyRename: () => this.setState({ toast: 'Open the Projects board to rename ' + p.name + '.' }),
+      notifyRemove: () => this.setState({ toast: 'Open the Projects board for guarded removal of ' + p.name + '.' })
+    }));
+
+    const previewModels = [
+      { name: 'h3_image_dit', file: 'diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors', state: 'Present locally', local: true },
+      { name: 'soundstage_sam31', file: 'checkpoints/sam3.1_multiplex_fp16.safetensors', state: 'Present locally', local: true },
+      { name: 'drama3_comfy_w4a8', file: 'diffusion_models/drama3_w4a8experts_bf16.safetensors', state: 'Downloads when used', local: false },
+      { name: 'ltx25_distilled_int8', file: 'diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors', state: 'Present locally', local: true },
+      { name: 'qwen_image21_dit_int8', file: 'diffusion_models/qwen_image_2.1_int8_convrot.safetensors', state: 'Downloads when used', local: false }
+    ].map((m) => ({
+      name: m.name, file: m.file, state: m.state,
+      pillBg: m.local ? t.soft : t.warnBg,
+      pillFg: m.local ? t.ink : t.warnInk
+    }));
+
+    const resetArmed = !!this.state?.resetArmed;
+
+    return {
+      t, statusBadge, isStudioMode, isWorkshopMode, isAttentionMode,
+      comfyDisabled: !isStudioMode,
+      unloadDisabled: !isStudioMode,
+      tileRuntimeTitle: isStudioMode ? 'Connected' : isWorkshopMode ? 'CPU Workshop' : 'Unavailable',
+      tileRuntimeSub: isStudioMode ? 'NVIDIA H100 80GB HBM3' : isWorkshopMode ? 'No GPU backend' : 'Worker unreachable',
+      tileVramTitle: isStudioMode ? vramFree.toFixed(1) + ' / ' + vramTotal.toFixed(1) + ' GiB' : 'Disabled',
+      tileVramSub: isStudioMode ? vramUsed.toFixed(1) + ' GiB used (' + vramPct + ')' : 'CPU mode active',
+      vramPctLabel: isStudioMode ? vramPct : '0%',
+      vramBarColor: isStudioMode ? t.accent : t.muted,
+      vramSummaryLine: vramFree.toFixed(1) + ' / ' + vramTotal.toFixed(1) + ' GiB VRAM free',
+      vramUsedNote: vramUsed.toFixed(1) + ' GiB allocated (' + vramPct + ')',
+      vramFreeNote: vramFreed ? 'Cache released' : 'ComfyUI + Torch allocator',
+      tileDramaTitle, tileDramaSub,
+      readinessTileTitle: '84 / 149 local',
+      projectCountLabel: '8 saved projects · 65 on demand',
+      navTabs,
+      isRuntimeTab: activeTab === 'runtime',
+      isProjectsTab: activeTab === 'projects',
+      isModelsTab: activeTab === 'models',
+      isMaintTab: activeTab === 'maintenance',
+      memoryMessage: this.state?.memoryMessage ?? '',
+      runtimeFacts, diagnosticsOpen,
+      diagToggleText: diagnosticsOpen ? 'Hide' : 'Show',
+      diagnosticProfiles,
+      backendCards, drama3Model, drama3ModelOptions, isComfyDrama3, expertCards, drama3Summary,
+      previewProjects, previewModels,
+      remoteUrl: this.state?.remoteUrl ?? 'https://prism-workshop.modal.run',
+      scanMessage: this.state?.scanMessage ?? '',
+      resetArmed, resetIdle: !resetArmed,
+      toast: this.state?.toast ?? '',
+      openComfy: () => this.setState({ toast: 'Opening ComfyUI at /comfyui/…' }),
+      refreshBackend: () => this.setState({ toast: 'Backend telemetry refreshed.' }),
+      unloadModels: () => this.setState({
+        vramFreed: true,
+        memoryMessage: 'All models unloaded and cached VRAM released.',
+        toast: 'Released cached VRAM.'
+      }),
+      toggleDiagnostics: () => this.setState({ diagnosticsOpen: !diagnosticsOpen }),
+      changeDrama3Model: (e) => this.setState({ drama3Model: e.target.value, toast: 'Updated Drama 3 model checkpoint.' }),
+      editRemoteUrl: (e) => this.setState({ remoteUrl: e.target.value }),
+      triggerRemoteLoad: () => this.setState({ toast: 'Loaded 4 remote projects from Prism Workshop.' }),
+      runMediaScan: () => this.setState({ scanMessage: 'Index up to date: scanned 142 outputs, repaired 0 previews.', toast: 'Media index scan finished.' }),
+      armReset: () => this.setState({ resetArmed: true }),
+      cancelReset: () => this.setState({ resetArmed: false }),
+      confirmReset: () => this.setState({ resetArmed: false, toast: 'Browser settings cleared. Reloading defaults…' })
+    };
+  }
+}
 </script>
 </body>
 </html>

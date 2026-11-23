@@ -1900,7 +1900,7 @@
     return {
       language: subtitleLanguage(),
       model: state.boot.subtitle_models.includes(model) ? model : state.boot.subtitle_models[0],
-      gemini_api_key: writerSettings().gemini_api_key || "",
+      gemini_api_key: "",
     };
   };
   const bindSubtitleControls = () => {
@@ -1916,9 +1916,6 @@
     model.value = state.boot.subtitle_models.includes(stored.get(TRANSLATION_MODEL_KEY))
       ? stored.get(TRANSLATION_MODEL_KEY) : state.boot.subtitle_models[0];
     model.onchange = () => stored.set(TRANSLATION_MODEL_KEY, model.value);
-    const key = $("subtitle-api-key");
-    key.closest("details").ontoggle = () => { key.value = writerSettings().gemini_api_key || ""; };
-    key.onchange = () => stored.set(WRITER_KEY, JSON.stringify({...writerSettings(), gemini_api_key: key.value}));
 
     $("translate-scene").onclick = translateScene;
     $("translate-board").onclick = translateBoard;
@@ -1945,7 +1942,7 @@
       h("label", {className: "field"}, "Gemini model",
         h("select", {onchange: (event) => update("gemini_prompt_model", event.target.value)},
           writer.gemini_models.map((name) => h("option", {selected: name === model}, name)))),
-      input("Gemini API key (optional)", "gemini_api_key", {type: "password", autocomplete: "off"}));
+      h("p", {className: "small muted"}, "Uses the session Gemini API key from System, or server GEMINI_API_KEY."));
     const openaiGroup = h("div", {className: "details-body", style: "padding-top:0", hidden: backend === "Gemini"},
       input("OpenAI-compatible model", "openai_model", {placeholder: writer.openai_models[0]}),
       input("OpenAI-compatible API key (optional)", "openai_api_key", {type: "password", autocomplete: "off"}),

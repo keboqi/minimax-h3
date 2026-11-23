@@ -43,6 +43,7 @@ _APP_PAGE_SUFFIXES = (
     "/image",
     "/ltx",
     "/song",
+    "/system",
     "/comfyui",
 )
 _STORYBOARD_TAKE_PATH_KEYS = ("video", "latent", "stage_latent", "tail")

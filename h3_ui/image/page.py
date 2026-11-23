@@ -513,12 +513,6 @@ class ImagePageState(OwnerPageState):
             rows += writer_rows(state["writer"], group=4)
         else:
             rows.append(review_row(state["writer"], group=4))
-        if engine not in WRITER_ENGINES and state["writer"]["review"]:
-            # Models without a prompt writer still need a key for result scores and tags.
-            rows.append({"name": "gemini_api_key", "label": "Temporary Gemini API key", "kind": "password",
-                         "value": state["writer"]["gemini_api_key"], "store": "writer", "group": 4, "choices": [],
-                         "placeholder": "Uses GEMINI_API_KEY when blank",
-                         "hint": "Only for result scores and tags. The server does not store keys entered here."})
         counts: dict[str, int] = {}
         for row in rows:
             if row.get("changed"):

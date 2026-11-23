@@ -141,7 +141,7 @@ def writer_defaults() -> dict[str, Any]:
             "review": True}
 
 
-REVIEW_HINT = ("After each result is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Uses the Gemini key above, else GEMINI_API_KEY.")
+REVIEW_HINT = ("After each result is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Uses the session Gemini API key from System, or server GEMINI_API_KEY.")
 
 
 def review_row(writer: Mapping[str, Any], **extra) -> dict[str, Any]:
@@ -157,9 +157,8 @@ def writer_rows(writer: Mapping[str, Any], *, backends=("OpenAI-compatible", "Ge
         "hint": "", "choices": [], **extra, **more}
     rows = [row("backend", "Prompt writer", "choice", choices=[[name, name] for name in backends])]
     if writer["backend"] == "Gemini":
-        rows += [row("model", "Gemini model", "choice", choices=[[name, name] for name in catalog.GEMINI_PROMPT_MODELS]),
-                 row("gemini_api_key", "Temporary Gemini API key", "password", placeholder="Uses GEMINI_API_KEY when blank",
-                     hint="The server does not store keys entered here.")]
+        rows += [row("model", "Gemini model", "choice", choices=[[name, name] for name in catalog.GEMINI_PROMPT_MODELS],
+                     hint="Uses the session Gemini API key from System, or server GEMINI_API_KEY.")]
     else:
         rows += [row("openai_model", "OpenAI-compatible model", "text",
                      hint="Any model your endpoint serves, for example " + ", ".join(catalog.OPENAI_PROMPT_MODELS[:3]) + "."),
@@ -167,10 +166,6 @@ def writer_rows(writer: Mapping[str, Any], *, backends=("OpenAI-compatible", "Ge
                      hint="The server does not store keys entered here."),
                  row("openai_base_url", "Temporary OpenAI endpoint", "text",
                      placeholder="Uses OPENAI_BASE_URL, else the official OpenAI API, when blank")]
-        if writer["review"]:
-            rows.append(row("gemini_api_key", "Temporary Gemini API key", "password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
-                            hint="Only for result scores and tags. The server does not store keys entered here."))
     return [*rows, review_row(writer, **extra)]
 
 

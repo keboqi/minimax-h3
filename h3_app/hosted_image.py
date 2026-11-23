@@ -6,6 +6,7 @@ import os
 from .catalog import GEMINI_API_ROOT
 from .errors import H3Error
 from .gpt_image import GptImageEndpoint, gpt_image_credentials
+from .llm.gemini import session_key
 
 RESOLUTION_PIXELS = {"1K": 1024, "2K": 2048, "4K": 4096}
 DEFAULT_ASPECT_RATIO = "1:1"
@@ -73,7 +74,7 @@ HOSTED_IMAGE_PROVIDERS = {
             "gemini-nano-banana-2.1": {"1K": "~$0.0336", "2K": "~$0.0504", "4K": "~$0.113"},
             GEMINI_FLASH_LITE: {"1K": "~$0.0336"},
         },
-        10, 14, "Set GEMINI_API_KEY.",
+        10, 14, "Set GEMINI_API_KEY or enter a session key in System.",
     ),
     MAI_IMAGE: HostedImageProvider(
         "MAI-Image",
@@ -89,7 +90,7 @@ API_IMAGE_ENGINES = ("gpt_image", *HOSTED_IMAGE_PROVIDERS)
 
 def hosted_image_endpoint(engine: str) -> GptImageEndpoint | None:
     if engine == NANO_BANANA:
-        key = os.getenv("GEMINI_API_KEY", "").strip()
+        key = session_key() or os.getenv("GEMINI_API_KEY", "").strip()
         return GptImageEndpoint("Gemini", GEMINI_API_ROOT, key) if key else None
     return next(iter(gpt_image_credentials().endpoints()), None)
 

@@ -23,6 +23,8 @@ SONG_FRAME = ('<iframe class="h3-video-frame" src="/song/" title="Song" '
               'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 MEDIA_FRAME = ('<iframe class="h3-video-frame" src="/media/" title="Media" '
                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
+SYSTEM_FRAME = ('<iframe class="h3-video-frame" src="/system/" title="System" '
+                'allow="fullscreen; clipboard-write" scrolling="no"></iframe>')
 # The Image and Song pages show their own model pills, so the studio's stay away for those tasks.
 # The engine tab that holds each such task's own page.
 PAGE_TABS = {"Image": "image", "Audio / Music": "song"}
@@ -222,7 +224,11 @@ def create_workspace_views(*, summary_root=None, task_root=None, engine_root=Non
         with gr.Tab("Jobs", id="jobs") as jobs_tab:
             jobs = gr.Column(elem_classes=["h3-ops-page", "h3-jobs-shell"])
         with gr.Tab("System", id="system") as system_tab:
-            system = gr.Column(elem_classes=["h3-ops-page"])
+            # Everything people do happens on the page at /system/ (system/page.py), outside Gradio.
+            gr.HTML(SYSTEM_FRAME)
+            # The Gradio view stays built but unseen: it keeps the published API/queue bindings
+            # and component contracts that existing tests still reference.
+            system = gr.Column(elem_classes=["h3-ops-page"], visible=False)
     return AppViews(
         tabs,
         generation,

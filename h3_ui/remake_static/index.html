@@ -184,7 +184,8 @@
           <div class="stack gap">
             <label class="stack"><span class="small muted">Service</span><select id="writer-backend" class="field"><option>Gemini</option><option value="OpenAI compatible">OpenAI-compatible</option></select></label>
             <label class="stack"><span class="small muted">Model</span><select id="writer-model" class="field"></select></label>
-            <label class="stack"><span class="small muted">API key, kept for this session</span><input id="writer-key" class="field" type="password" autocomplete="off"></label>
+            <p class="small muted" id="writer-gemini-note">Uses the session Gemini API key from System, or server GEMINI_API_KEY.</p>
+            <label class="stack" id="writer-key-row" hidden><span class="small muted">OpenAI-compatible API key, kept for this session</span><input id="writer-key" class="field" type="password" autocomplete="off"></label>
             <label class="stack" id="writer-url-row" hidden><span class="small muted">Base URL</span><input id="writer-url" class="field" autocomplete="off"></label>
           </div>
         </details>

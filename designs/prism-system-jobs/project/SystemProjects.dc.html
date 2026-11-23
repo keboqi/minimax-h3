@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>System · Projects &amp; Transfer</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    h1, h2, h3, p, dl, dt, dd { margin: 0; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
+    a { color: #065f51; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <header style="background: {{ t.surface }}; border-bottom: 1px solid {{ t.line }}; padding: 10px clamp(16px, 3vw, 40px); display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px;">
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px;">
+      <span aria-hidden="true" style="display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #087f6c; color: #ffffff; font-size: 13px; font-weight: 700;">PS</span>
+      <span>Prism Studio</span>
+    </div>
+    <nav aria-label="Operations" style="display: flex; align-items: center; gap: 6px;">
+      <a href="Jobs.dc.html" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 8px; color: {{ t.muted }}; font-weight: 500;">Jobs</a>
+      <a href="Main.dc.html" aria-current="page" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: 8px; background: {{ t.soft }}; color: {{ t.ink }}; font-weight: 700;">System</a>
+    </nav>
+    <div style="margin-left: auto;">
+      <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; background: {{ t.soft }}; border: 1px solid {{ t.dash }}; color: {{ t.ink }}; font-size: 13px; font-weight: 600;">
+        <span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {{ t.accent }};"></span>
+        <span>Ready · H100 80GB</span>
+      </span>
+    </div>
+  </header>
+
+  <main style="width: 100%; max-width: 1440px; margin: 0 auto; padding: 20px clamp(16px, 3vw, 40px) 40px; display: flex; flex-direction: column; gap: 16px;">
+    <!-- Section Navigation Bar -->
+    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <h1 style="font-size: 24px; line-height: 1.15; letter-spacing: -0.025em; font-weight: 700;">System · Projects &amp; Transfer</h1>
+        <span class="mono" style="padding: 2px 9px; border-radius: 999px; background: {{ t.soft }}; color: {{ t.ink }}; font-size: 12px; font-weight: 700;">{{ localCount }} local</span>
+      </div>
+      <nav aria-label="System sections" style="display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; border: 1px solid {{ t.line }}; border-radius: 10px; background: {{ t.raised }};">
+        <a href="Main.dc.html" style="display: inline-flex; align-items: center; min-height: 36px; padding: 0 13px; border-radius: 7px; color: {{ t.muted }}; font-size: 14px; font-weight: 500;">Runtime &amp; Serving</a>
+        <a href="SystemProjects.dc.html" aria-current="page" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 13px; border-radius: 7px; background: {{ t.surface }}; color: {{ t.ink }}; font-size: 14px; font-weight: 700; box-shadow: 0 1px 2px rgba(15,30,25,0.12);">Projects <span class="mono" style="font-size: 12px;">{{ localCount }}</span></a>
+        <a href="SystemModels.dc.html" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 13px; border-radius: 7px; color: {{ t.muted }}; font-size: 14px; font-weight: 500;">Models &amp; Engines <span class="mono" style="font-size: 12px;">84/149</span></a>
+        <a href="SystemStates.dc.html" style="display: inline-flex; align-items: center; min-height: 36px; padding: 0 13px; border-radius: 7px; color: {{ t.muted }}; font-size: 14px; font-weight: 500;">Maintenance</a>
+      </nav>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+      <!-- LEFT: Local Projects (Inline Rename & Two-Step Remove) -->
+      <section style="flex: 999 1 540px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+        <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <h2 style="font-size: 19px; font-weight: 700;">Manage local projects</h2>
+            <p style="font-size: 14px; color: {{ t.muted }};">Rename or remove saved Soundstage, Storyboard, Dubbing, and Remake projects on this server.</p>
+          </div>
+          <button type="button" onClick="{{ refreshLocal }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Refresh list</button>
+        </div>
+
+        <!-- Filter & Search Bar -->
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+          <div role="group" aria-label="Filter by project type" style="display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid {{ t.line }}; border-radius: 9px; background: {{ t.raised }};">
+            <sc-for list="{{ kindFilters }}" as="kf" hint-placeholder-count="5">
+              <button type="button" aria-pressed="{{ kf.active }}" onClick="{{ kf.pick }}" style="min-height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: {{ kf.bg }}; color: {{ kf.fg }}; font-size: 13px; font-weight: {{ kf.weight }};">{{ kf.label }}</button>
+            </sc-for>
+          </div>
+          <input value="{{ localQuery }}" onInput="{{ editLocalQuery }}" placeholder="Filter local projects…" aria-label="Filter local projects" style="flex: 1 1 180px; min-height: 38px; padding: 0 11px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px;">
+        </div>
+
+        <!-- Project List -->
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{ visibleLocalProjects }}" as="proj" hint-placeholder-count="5">
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid {{ proj.border }}; border-radius: 10px; background: {{ proj.bg }};">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+                <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 240px;">
+                  <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <span style="padding: 1px 8px; border-radius: 999px; background: {{ t.soft }}; color: {{ t.ink }}; font-size: 11px; font-weight: 700;">{{ proj.kindLabel }}</span>
+                    <strong style="font-size: 15px;">{{ proj.name }}</strong>
+                  </div>
+                  <span style="font-size: 13px; color: {{ t.muted }};">{{ proj.summary }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <button type="button" onClick="{{ proj.startRename }}" style="min-height: 38px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Rename</button>
+                  <button type="button" onClick="{{ proj.askDelete }}" style="min-height: 38px; padding: 0 12px; border: 1px solid {{ t.failLine }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.failInk }}; font-size: 13px; font-weight: 600;">Remove</button>
+                </div>
+              </div>
+
+              <!-- Inline Rename Form -->
+              <sc-if value="{{ proj.isRenaming }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid {{ t.line }};">
+                  <input value="{{ renameDraft }}" onInput="{{ editRenameDraft }}" aria-label="New project name" style="flex: 1 1 200px; min-height: 38px; padding: 0 11px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.surface }}; font-size: 14px;">
+                  <button type="button" onClick="{{ proj.saveRename }}" style="min-height: 38px; padding: 0 14px; border: 1px solid {{ t.primaryBtn }}; border-radius: 8px; background: {{ t.primaryBtn }}; color: {{ t.accentInk }}; font-size: 13px; font-weight: 700;">Save name</button>
+                  <button type="button" onClick="{{ proj.cancelAction }}" style="min-height: 38px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Cancel</button>
+                </div>
+              </sc-if>
+
+              <!-- Inline Two-Step Danger Confirmation -->
+              <sc-if value="{{ proj.isConfirmDelete }}" hint-placeholder-val="{{ false }}">
+                <div role="alert" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 8px; background: {{ t.failBg }}; border: 1px solid {{ t.failLine }};">
+                  <span style="font-size: 13px; color: {{ t.failInk }}; font-weight: 600;">Delete {{ proj.name }} permanently? Clips, cast, takes, and results will be removed.</span>
+                  <div style="display: flex; gap: 6px;">
+                    <button type="button" onClick="{{ proj.cancelAction }}" style="min-height: 36px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Cancel</button>
+                    <button type="button" onClick="{{ proj.confirmDelete }}" style="min-height: 36px; padding: 0 12px; border: 1px solid {{ t.failInk }}; border-radius: 8px; background: {{ t.failInk }}; color: #ffffff; font-size: 13px; font-weight: 700;">Remove permanently</button>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+
+          <sc-if value="{{ noLocalMatches }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 24px; text-align: center; border: 1px dashed {{ t.dash }}; border-radius: 10px; background: {{ t.bg }}; color: {{ t.muted }}; font-size: 14px;">No saved projects match this filter.</div>
+          </sc-if>
+        </div>
+      </section>
+
+      <!-- RIGHT: Remote Project Import (3-step pipeline) -->
+      <section style="flex: 1 1 460px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 20px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <h2 style="font-size: 19px; font-weight: 700;">Import from another server</h2>
+          <p style="font-size: 14px; color: {{ t.muted }};">Works with Prism Studio and Prism Workshop URLs. Imports clips, cast, takes, and results.</p>
+        </div>
+
+        <!-- Step 1: Connect -->
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: {{ t.muted }};">
+            <span>Remote Studio or Workshop URL</span>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <input value="{{ remoteUrl }}" onInput="{{ editRemoteUrl }}" placeholder="https://your-server.modal.run or http://host:7860" class="mono" style="flex: 1 1 230px; min-height: 44px; padding: 0 12px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 13px;">
+              <button type="button" onClick="{{ loadRemote }}" style="min-height: 44px; padding: 0 14px; border: 1px solid {{ t.dash }}; border-radius: 8px; background: {{ t.surface }}; font-size: 14px; font-weight: 600;">Load projects</button>
+            </div>
+          </label>
+
+          <div style="border: 1px solid {{ t.line }}; border-radius: 8px; overflow: hidden;">
+            <button type="button" onClick="{{ toggleAuth }}" aria-expanded="{{ authOpen }}" style="width: 100%; display: flex; align-items: center; justify-content: space-between; min-height: 40px; padding: 0 12px; border: 0; background: {{ t.bg }}; font-size: 13px; font-weight: 600; color: {{ t.muted }};">
+              <span>Authentication (optional)</span>
+              <span>{{ authToggleLabel }}</span>
+            </button>
+            <sc-if value="{{ authOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 10px 12px; border-top: 1px solid {{ t.line }}; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 10px;">
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: {{ t.muted }};">Modal-Key
+                  <input value="{{ modalKey }}" onInput="{{ editModalKey }}" placeholder="wk-…" class="mono" style="min-height: 38px; padding: 0 10px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }};">
+                </label>
+                <label style="display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: {{ t.muted }};">Modal-Secret
+                  <input type="password" value="{{ modalSecret }}" onInput="{{ editModalSecret }}" placeholder="••••••••" class="mono" style="min-height: 38px; padding: 0 10px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }};">
+                </label>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+
+        <!-- Step 2: Idle vs Loaded -->
+        <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 28px 16px; text-align: center; border: 1px dashed {{ t.dash }}; border-radius: 10px; background: {{ t.bg }}; display: flex; flex-direction: column; gap: 4px;">
+            <strong style="font-size: 15px;">Not connected yet</strong>
+            <p style="font-size: 13px; color: {{ t.muted }};">Enter a Studio or Workshop URL above and click Load projects to preview available projects.</p>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isLoadedOrDone }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 8px; background: {{ t.soft }}; border: 1px solid {{ t.dash }};">
+              <span style="font-size: 13px; font-weight: 700; color: {{ t.ink }};">Connected to Prism Workshop · 4 projects</span>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <button type="button" onClick="{{ selectAllRemote }}" style="min-height: 32px; padding: 0 9px; border: 1px solid {{ t.dash }}; border-radius: 6px; background: {{ t.surface }}; font-size: 12px; font-weight: 600;">Select all</button>
+                <button type="button" onClick="{{ clearRemote }}" style="min-height: 32px; padding: 0 9px; border: 1px solid {{ t.line }}; border-radius: 6px; background: {{ t.surface }}; font-size: 12px; font-weight: 600;">Clear</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 7px;">
+              <sc-for list="{{ remoteProjects }}" as="rp" hint-placeholder-count="4">
+                <label style="display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid {{ rp.border }}; border-radius: 9px; background: {{ rp.bg }}; cursor: pointer;">
+                  <input type="checkbox" checked="{{ rp.checked }}" onChange="{{ rp.toggle }}" style="width: 18px; height: 18px; margin-top: 2px; accent-color: {{ t.accent }};">
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+                    <span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+                      <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.raised }}; color: {{ t.ink }}; font-size: 11px; font-weight: 700;">{{ rp.kindLabel }}</span>
+                      <strong style="font-size: 14px;">{{ rp.name }}</strong>
+                      <sc-if value="{{ rp.collides }}" hint-placeholder-val="{{ true }}">
+                        <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warnInk }}; font-size: 11px; font-weight: 700;">Matches local name</span>
+                      </sc-if>
+                    </span>
+                    <span style="font-size: 12px; color: {{ t.muted }};">{{ rp.summary }}</span>
+                  </span>
+                </label>
+              </sc-for>
+            </div>
+
+            <!-- Step 3: Conflict Policy & Import -->
+            <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid {{ t.line }};">
+              <span style="font-size: 13px; font-weight: 600; color: {{ t.muted }};">If a project already exists locally</span>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;" role="radiogroup" aria-label="Conflict handling">
+                <sc-for list="{{ conflictOptions }}" as="cf" hint-placeholder-count="3">
+                  <button type="button" role="radio" aria-checked="{{ cf.active }}" onClick="{{ cf.pick }}" style="min-height: 36px; padding: 0 11px; border: 1px solid {{ cf.border }}; border-radius: 8px; background: {{ cf.bg }}; color: {{ cf.fg }}; font-size: 13px; font-weight: {{ cf.weight }};">{{ cf.label }}</button>
+                </sc-for>
+              </div>
+
+              <sc-if value="{{ isOverwrite }}" hint-placeholder-val="{{ false }}">
+                <div role="alert" style="padding: 9px 12px; border-radius: 8px; background: {{ t.warnBg }}; border: 1px solid {{ t.warnLine }}; color: {{ t.warnInk }}; font-size: 12px; font-weight: 600;">Overwrite replaces local clips, cast, takes, and results for any matching project ID.</div>
+              </sc-if>
+
+              <button type="button" onClick="{{ runImport }}" disabled="{{ importDisabled }}" style="min-height: 44px; padding: 0 16px; border: 1px solid {{ t.primaryBtn }}; border-radius: 8px; background: {{ t.primaryBtn }}; color: {{ t.accentInk }}; font-size: 14px; font-weight: 700;">{{ importBtnLabel }}</button>
+            </div>
+
+            <sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+              <div role="status" style="padding: 12px; border-radius: 9px; background: {{ t.soft }}; border: 1px solid {{ t.dash }}; display: flex; flex-direction: column; gap: 6px;">
+                <strong style="font-size: 13px; color: {{ t.ink }};">{{ importSummaryHeading }}</strong>
+                <sc-for list="{{ importResults }}" as="res" hint-placeholder-count="2">
+                  <span style="font-size: 13px; color: {{ t.text }};">· {{ res.text }}</span>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </section>
+    </div>
+
+    <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+      <div role="status" aria-live="polite" style="align-self: flex-end; padding: 9px 14px; border-radius: 8px; background: {{ t.text }}; color: {{ t.surface }}; font-size: 13px; font-weight: 600;">{{ toast }}</div>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"importState":{"editor":"enum","options":["loaded","idle","done"],"default":"loaded"},"$preview":{"width":1360,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const isDark = (this.props.theme ?? 'light') === 'dark';
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#20362f', soft: '#1f3d35',
+      line: '#34463e', dash: '#4b6b5e', text: '#e9f1ed', muted: '#a9bdb3',
+      accent: '#66d8bb', primaryBtn: '#66d8bb', accentInk: '#0b2a23', ink: '#8ee6cf',
+      warnBg: '#4a3a14', warnInk: '#fde7b0', warnLine: '#8d6c26',
+      failBg: '#4a1d1d', failInk: '#fecaca', failLine: '#7a3434'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#edf4f1', soft: '#e3f1ec',
+      line: '#dbe3df', dash: '#b7ccc2', text: '#202e2b', muted: '#596963',
+      accent: '#087f6c', primaryBtn: '#087766', accentInk: '#ffffff', ink: '#065f51',
+      warnBg: '#fbf1dc', warnInk: '#7a4f00', warnLine: '#d6b46b',
+      failBg: '#fdeaea', failInk: '#9b1c1c', failLine: '#e6c9c9'
+    };
+
+    const defaultLocal = [
+      { id: 'ss-1', kind: 'soundstage', kindLabel: 'Soundstage', name: 'Midnight Diner', summary: 'Ready · 14 lines' },
+      { id: 'ss-2', kind: 'soundstage', kindLabel: 'Soundstage', name: 'Harbor Fog', summary: 'Draft · 9 lines' },
+      { id: 'sb-1', kind: 'storyboard', kindLabel: 'Storyboard', name: 'Rooftop Chase', summary: '6 scenes · 11 takes' },
+      { id: 'sb-2', kind: 'storyboard', kindLabel: 'Storyboard', name: 'Glass Greenhouse', summary: '4 scenes · 7 takes' },
+      { id: 'db-1', kind: 'dubbing', kindLabel: 'Dubbing', name: 'Product Keynote EN', summary: '18 lines · en-US' },
+      { id: 'db-2', kind: 'dubbing', kindLabel: 'Dubbing', name: 'Festival Trailer JA', summary: '12 lines · ja-JP' },
+      { id: 'rm-1', kind: 'remake', kindLabel: 'Remake', name: 'Studio Corridor Swap', summary: '4 windows · 4 done' },
+      { id: 'ss-3', kind: 'soundstage', kindLabel: 'Soundstage', name: 'Radio Play Ep 2', summary: 'Mixed · 22 lines' }
+    ];
+
+    const localList = this.state?.localList ?? defaultLocal;
+    const kindFilter = this.state?.kindFilter ?? 'all';
+    const localQuery = this.state?.localQuery ?? '';
+    const actionTarget = this.state?.actionTarget ?? null;
+    const actionKind = this.state?.actionKind ?? null;
+    const renameDraft = this.state?.renameDraft ?? '';
+
+    const kindDefs = [
+      ['all', 'All'], ['soundstage', 'Soundstage'], ['storyboard', 'Storyboard'],
+      ['dubbing', 'Dubbing'], ['remake', 'Remake']
+    ];
+    const kindFilters = kindDefs.map(([id, label]) => {
+      const active = kindFilter === id;
+      return {
+        label, active,
+        bg: active ? t.surface : 'transparent',
+        fg: active ? t.ink : t.muted,
+        weight: active ? '700' : '500',
+        pick: () => this.setState({ kindFilter: id })
+      };
+    });
+
+    const q = localQuery.trim().toLowerCase();
+    const visibleLocalProjects = localList
+      .filter((p) => (kindFilter === 'all' || p.kind === kindFilter) && (!q || p.name.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q)))
+      .map((p) => {
+        const isRenaming = actionTarget === p.id && actionKind === 'rename';
+        const isConfirmDelete = actionTarget === p.id && actionKind === 'delete';
+        return {
+          kindLabel: p.kindLabel, name: p.name, summary: p.summary,
+          isRenaming, isConfirmDelete,
+          border: isConfirmDelete ? t.failLine : (isRenaming ? t.accent : t.line),
+          bg: isConfirmDelete ? t.failBg : t.bg,
+          startRename: () => this.setState({ actionTarget: p.id, actionKind: 'rename', renameDraft: p.name }),
+          askDelete: () => this.setState({ actionTarget: p.id, actionKind: 'delete' }),
+          cancelAction: () => this.setState({ actionTarget: null, actionKind: null }),
+          saveRename: () => {
+            const trimmed = (renameDraft || '').trim();
+            if (!trimmed) return;
+            const next = localList.map((item) => item.id === p.id ? Object.assign({}, item, { name: trimmed }) : item);
+            this.setState({ localList: next, actionTarget: null, actionKind: null, toast: 'Renamed project to ' + trimmed + '.' });
+          },
+          confirmDelete: () => {
+            const next = localList.filter((item) => item.id !== p.id);
+            this.setState({ localList: next, actionTarget: null, actionKind: null, toast: 'Removed ' + p.name + '.' });
+          }
+        };
+      });
+
+    const importState = this.state?.importStateOverride ?? (this.props.importState ?? 'loaded');
+    const localNames = new Set(localList.map((p) => p.name.toLowerCase()));
+    const remoteChecked = this.state?.remoteChecked ?? { 'r-1': true, 'r-2': false, 'r-3': true, 'r-4': false };
+    const remoteItems = [
+      { id: 'r-1', kindLabel: 'Soundstage', name: 'Midnight Diner', summary: 'Ready · 14 lines' },
+      { id: 'r-2', kindLabel: 'Storyboard', name: 'Rooftop Chase', summary: '6 scenes · 11 takes' },
+      { id: 'r-3', kindLabel: 'Storyboard', name: 'Neon Subway', summary: '5 scenes · 9 takes' },
+      { id: 'r-4', kindLabel: 'Dubbing', name: 'Docu Narration ES', summary: '24 lines · es-ES' }
+    ];
+    const remoteProjects = remoteItems.map((rp) => {
+      const checked = !!remoteChecked[rp.id];
+      const collides = localNames.has(rp.name.toLowerCase());
+      return {
+        kindLabel: rp.kindLabel, name: rp.name, summary: rp.summary,
+        checked, collides,
+        bg: checked ? t.soft : t.bg,
+        border: checked ? t.accent : t.line,
+        toggle: () => {
+          const next = Object.assign({}, remoteChecked);
+          next[rp.id] = !next[rp.id];
+          this.setState({ remoteChecked: next });
+        }
+      };
+    });
+
+    const selectedRemote = remoteItems.filter((rp) => !!remoteChecked[rp.id]);
+    const selectedCount = selectedRemote.length;
+    const conflict = this.state?.conflict ?? 'rename';
+    const conflictOptions = [
+      { id: 'rename', label: 'Import as copy (rename)' },
+      { id: 'skip', label: 'Skip existing' },
+      { id: 'overwrite', label: 'Overwrite existing' }
+    ].map((c) => {
+      const active = conflict === c.id;
+      return {
+        label: c.label, active,
+        border: active ? t.accent : t.line,
+        bg: active ? t.soft : t.bg,
+        fg: active ? t.ink : t.muted,
+        weight: active ? '700' : '500',
+        pick: () => this.setState({ conflict: c.id })
+      };
+    });
+
+    const defaultResults = [
+      { text: 'Imported Soundstage "Midnight Diner (imported)" (renamed to avoid conflict).' },
+      { text: 'Imported Storyboard "Neon Subway" (5 scenes · 9 takes).' }
+    ];
+    const importResults = this.state?.importResults ?? defaultResults;
+    const authOpen = !!this.state?.authOpen;
+
+    return {
+      t,
+      localCount: localList.length,
+      kindFilters, localQuery, visibleLocalProjects,
+      noLocalMatches: visibleLocalProjects.length === 0,
+      renameDraft,
+      remoteUrl: this.state?.remoteUrl ?? 'https://prism-workshop.modal.run',
+      authOpen,
+      authToggleLabel: authOpen ? 'Hide' : 'Show',
+      modalKey: this.state?.modalKey ?? '',
+      modalSecret: this.state?.modalSecret ?? '',
+      isIdle: importState === 'idle',
+      isLoadedOrDone: importState === 'loaded' || importState === 'done',
+      isDone: importState === 'done',
+      remoteProjects, conflictOptions,
+      isOverwrite: conflict === 'overwrite',
+      importDisabled: selectedCount === 0,
+      importBtnLabel: selectedCount === 0 ? 'Select projects to import' : 'Import ' + selectedCount + (selectedCount === 1 ? ' selected project' : ' selected projects'),
+      importSummaryHeading: 'Import finished (' + importResults.length + ' processed)',
+      importResults,
+      toast: this.state?.toast ?? '',
+      refreshLocal: () => this.setState({ toast: 'Showing ' + localList.length + ' local projects.' }),
+      editLocalQuery: (e) => this.setState({ localQuery: e.target.value }),
+      editRenameDraft: (e) => this.setState({ renameDraft: e.target.value }),
+      editRemoteUrl: (e) => this.setState({ remoteUrl: e.target.value }),
+      toggleAuth: () => this.setState({ authOpen: !authOpen }),
+      editModalKey: (e) => this.setState({ modalKey: e.target.value }),
+      editModalSecret: (e) => this.setState({ modalSecret: e.target.value }),
+      loadRemote: () => this.setState({ importStateOverride: 'loaded', toast: 'Loaded 4 projects from Prism Workshop.' }),
+      selectAllRemote: () => this.setState({ remoteChecked: { 'r-1': true, 'r-2': true, 'r-3': true, 'r-4': true } }),
+      clearRemote: () => this.setState({ remoteChecked: {} }),
+      runImport: () => {
+        const res = selectedRemote.map((rp) => {
+          const collides = localNames.has(rp.name.toLowerCase());
+          if (collides && conflict === 'skip') return { text: 'Skipped ' + rp.kindLabel + ' "' + rp.name + '" (already exists locally).' };
+          if (collides && conflict === 'overwrite') return { text: 'Overwrote local ' + rp.kindLabel + ' "' + rp.name + '".' };
+          if (collides) return { text: 'Imported ' + rp.kindLabel + ' "' + rp.name + ' (imported)".' };
+          return { text: 'Imported ' + rp.kindLabel + ' "' + rp.name + '".' };
+        });
+        this.setState({ importStateOverride: 'done', importResults: res, toast: 'Import finished (' + res.length + ' processed).' });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

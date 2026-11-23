@@ -218,9 +218,7 @@ function transcription(app) {
             <select data-setting="gemini_model">${app.boot.gemini_models.map((name) => `
               <option ${name === app.settings.gemini_model ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
           </label>
-          <label class="field grow-2">Gemini API key for this session
-            <input type="password" data-action="api-key" value="${esc(app.apiKey)}" placeholder="Uses GEMINI_API_KEY when empty" autocomplete="off">
-          </label>
+          <p class="muted small grow-2" style="align-self:flex-end;margin:0 0 8px">Uses the session Gemini API key from System, or server GEMINI_API_KEY.</p>
         </div>` : ""}
       ${prompted ? `<div class="sub stack-8"><strong>Gemini prompt</strong>
         ${promptOptions(app.settings, {same})}</div>` : ""}

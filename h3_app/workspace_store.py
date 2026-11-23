@@ -663,11 +663,14 @@ def install_owner_cookie(app, store):
 
     @app.middleware("http")
     async def owner_cookie(request, call_next):
+        from h3_app.llm.gemini import owner_context
+
         token = request.cookies.get(COOKIE)
         owner = store.verify_owner(token)
         issued = None
         if not owner:
             issued = store.issue_owner()
+            owner = store.verify_owner(issued)
             request.scope["headers"] = [
                 (k, v) for k, v in request.scope["headers"] if k != b"cookie"
             ] + [
@@ -680,7 +683,8 @@ def install_owner_cookie(app, store):
             ]
         elif int(token.split(".")[1]) - time.time() < 7 * 86400:
             issued = store.issue_owner(owner)
-        response = await call_next(request)
+        with owner_context(owner):
+            response = await call_next(request)
         if issued and request.url.path != "/workspace/owner/recover":
             response.set_cookie(
                 COOKIE,
