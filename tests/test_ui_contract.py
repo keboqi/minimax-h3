@@ -1085,8 +1085,21 @@ class UiContractTests(unittest.TestCase):
         self.assertIs(result, mock.sentinel.mounted_app)
         mounted_css = mount.call_args.kwargs["css"]
         self.assertEqual(mounted_css, H3_SETUP_CSS)
+        self.assertEqual(mount.call_args.kwargs["footer_links"], [])
         self.assertIn(str(gradio_app.OUTPUTS_DIR / ".h3-workspace"), mount.call_args.kwargs["blocked_paths"])
         self.assertNotIn(".gradio-container", mounted_css)
+
+    def test_mounted_server_disables_gradio_footer_links(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with gradio_app.gr.Blocks() as demo:
+            gradio_app.gr.Markdown()
+        self.addCleanup(demo.close)
+        app = gradio_app.build_server(demo, [])
+        with TestClient(app) as client:
+            response = client.get("/config")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["footer_links"], [])
 
     def restored_session(self):
         """Run the page-load restoration and return its authoritative session."""

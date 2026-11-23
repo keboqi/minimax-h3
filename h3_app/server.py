@@ -457,4 +457,5 @@ def build_server(
         show_error=True,
         css=config.css,
         theme=gr.themes.Default(primary_hue="teal", secondary_hue="slate"),
+        footer_links=[],
     )
