@@ -161,6 +161,24 @@ class LauncherOptionTests(unittest.TestCase):
         # The servers decide when the launcher exits; preparation never does.
         self.assertIn('wait -n "$COMFY_PID" "$GRADIO_PID"', source)
 
+    def test_cjk_fonts_install_in_background_and_foreground_setup_skips_them(self):
+        source = (ROOT / "run_h3.sh").read_text(encoding="utf-8")
+        bg_cmd = '"$PYTHON_BIN" -u "$SCRIPT_DIR/setup_h3.py" --cjk-font-only &'
+        self.assertIn(bg_cmd, source)
+        self.assertLess(source.index('[[ "$APP" == "workshop" ]] && run_workshop'), source.index(bg_cmd))
+        self.assertLess(source.index(bg_cmd), source.index('running automatic setup'))
+
+        lines = source.splitlines()
+        setup_lines = [
+            index for index, line in enumerate(lines)
+            if '"$PYTHON_BIN"' in line and 'setup_h3.py"' in line and "--cjk-font-only" not in line
+        ]
+        self.assertEqual(len(setup_lines), 4)
+        for index in setup_lines:
+            # Handle multi-line setup_h3.py invocation (`--skip-env` form).
+            block = "\n".join(lines[index:index + 4])
+            self.assertIn("--skip-cjk-font", block)
+
 
 if __name__ == "__main__":
     unittest.main()

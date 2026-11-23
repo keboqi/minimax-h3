@@ -468,19 +468,26 @@ if [[ "${H3_STARTUP_STATS:-1}" != "0" && -f "$SCRIPT_DIR/h3_startup_stats.py" ]]
   STATS_PID=$!
 fi
 
+# Install Noto Sans CJK SC in the background so subtitle fonts never delay setup or launch.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  "$PYTHON_BIN" -u "$SCRIPT_DIR/setup_h3.py" --cjk-font-only &
+  PREPARE_PIDS+=("$!")
+fi
+
 if [[ "${H3_REFRESH_SETUP:-0}" == "1" ]]; then
   log "Explicit setup refresh requested"
-  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR" --refresh
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR" --skip-cjk-font --refresh
 elif [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
-  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR" --skip-cjk-font
 elif ! environment_is_current; then
   log "ComfyUI/Gradio environment or frontend assets are stale; refreshing the environment"
-  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR" --skip-cjk-font
 else
   log "ComfyUI environment is current; validating reusable setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" \
     --install-dir "$INSTALL_DIR" \
+    --skip-cjk-font \
     --skip-env
 fi
 

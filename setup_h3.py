@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import http.client
 from importlib import metadata
 import os
 import shutil
@@ -12,6 +14,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from h3_gpu import gpu_profile, is_a100
@@ -1202,26 +1207,161 @@ def ensure_root_entrypoints() -> None:
             print(f"[h3-setup] note: could not write gradio_app.py: {exc}", flush=True)
 
 
-def ensure_cjk_font() -> None:
-    """Install Noto CJK on Linux when no font has Chinese letters, for burned-in video subtitles.
+# Official Google/Adobe Noto Sans CJK SC v2.004 (tag Sans2.004); provides Regular and Bold
+# for the "Noto Sans CJK SC" family requested by h3_app/burned_subtitles.py without running
+# apt-get update or unpacking the multi-script fonts-noto-cjk package.
+CJK_FONT_REF = "523d033d6cb47f4a80c58a35753646f5c3608a78"
+CJK_FONT_BASE_URL = (
+    f"https://raw.githubusercontent.com/notofonts/noto-cjk/{CJK_FONT_REF}"
+    "/Sans/OTF/SimplifiedChinese"
+)
+CJK_FONT_FILES = (
+    ("NotoSansCJKsc-Regular.otf", "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"),
+    ("NotoSansCJKsc-Bold.otf", "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a"),
+)
 
-    Hosted VMs lose system packages between sessions, so this runs on every setup; it is skipped
-    where it cannot apply (not Linux, no apt-get, not root) and never fails setup.
-    """
-    if not sys.platform.startswith("linux") or not shutil.which("apt-get") or os.geteuid() != 0:
-        return
+
+def _user_cjk_font_dir() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+    base = Path(data_home).expanduser() if data_home else Path.home() / ".local" / "share"
+    return base / "fonts" / "noto-cjk"
+
+
+def _cjk_font_dir() -> Path:
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and geteuid() == 0:
+        return Path("/usr/local/share/fonts/noto-cjk")
+    return _user_cjk_font_dir()
+
+
+def _has_cjk_font(font_dir: Path) -> bool:
+    if all(
+        (font_dir / name).is_file() and (font_dir / name).stat().st_size > 0
+        for name, _ in CJK_FONT_FILES
+    ):
+        return True
+    if shutil.which("fc-list"):
+        found = subprocess.run(
+            ["fc-list", ":lang=zh", "family"],
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        if found.returncode == 0 and found.stdout.strip():
+            return True
+    return False
+
+
+def _download_cjk_font_file(
+    filename: str,
+    expected_sha256: str,
+    font_dir: Path,
+    *,
+    timeout: float = 60.0,
+) -> Path:
+    url = f"{CJK_FONT_BASE_URL}/{filename}"
+    request = urllib.request.Request(url, headers={"User-Agent": "MiniMax-H3-Setup"})
+    digest = hashlib.sha256()
+    temp_path: Path | None = None
     try:
-        if shutil.which("fc-list"):
-            found = subprocess.run(["fc-list", ":lang=zh", "family"], text=True, capture_output=True, timeout=30)
-            if found.stdout.strip():
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            with tempfile.NamedTemporaryFile(
+                "wb",
+                dir=font_dir,
+                prefix=f".{filename}.",
+                suffix=".part",
+                delete=False,
+            ) as handle:
+                temp_path = Path(handle.name)
+                while True:
+                    chunk = response.read(256 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    handle.write(chunk)
+        if digest.hexdigest() != expected_sha256:
+            raise ValueError(f"Checksum mismatch for {filename}")
+        os.chmod(temp_path, 0o644)
+        return temp_path
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def ensure_cjk_font(font_dir: Path | None = None) -> None:
+    """Install Noto Sans CJK SC on Linux when no Chinese font is present, for burned-in subtitles.
+
+    Downloads only Regular and Bold OTFs directly from pinned Google Noto CJK releases instead
+    of running apt-get update, so setup stays fast and never blocks system package installs.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    target_dir = font_dir or _cjk_font_dir()
+    try:
+        if _has_cjk_font(target_dir):
+            return
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            if font_dir is not None:
+                raise
+            fallback_dir = _user_cjk_font_dir()
+            if fallback_dir == target_dir:
+                raise
+            target_dir = fallback_dir
+            if _has_cjk_font(target_dir):
                 return
-        print("[h3-setup] Installing Noto CJK fonts for video subtitles", flush=True)
-        quiet = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-        subprocess.run(["apt-get", "update", "-qq"], env=quiet, check=True, timeout=300, capture_output=True)
-        subprocess.run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "fonts-noto-cjk", "fontconfig"],
-                       env=quiet, check=True, timeout=600, capture_output=True)
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"[h3-setup] Could not install CJK fonts ({exc}); Chinese video subtitles may show boxes", flush=True)
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+        missing = [
+            (name, digest)
+            for name, digest in CJK_FONT_FILES
+            if not ((target_dir / name).is_file() and (target_dir / name).stat().st_size > 0)
+        ]
+        if not missing:
+            return
+
+        print("[h3-setup] Installing Noto Sans CJK SC fonts for video subtitles", flush=True)
+        started = time.monotonic()
+        staged: dict[str, Path] = {}
+        futures: dict = {}
+        try:
+            with ThreadPoolExecutor(max_workers=len(missing)) as pool:
+                futures = {
+                    pool.submit(_download_cjk_font_file, name, digest, target_dir): name
+                    for name, digest in missing
+                }
+                for future, name in futures.items():
+                    staged[name] = future.result()
+            for name, temp_path in staged.items():
+                temp_path.replace(target_dir / name)
+        except Exception:
+            for path in staged.values():
+                path.unlink(missing_ok=True)
+            for future in futures:
+                if future.done() and not future.cancelled() and future.exception() is None:
+                    future.result().unlink(missing_ok=True)
+            raise
+
+        if shutil.which("fc-cache"):
+            subprocess.run(
+                ["fc-cache", "-f", str(target_dir)],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        print(
+            f"[h3-setup] Noto Sans CJK SC fonts ready ({target_dir}, {time.monotonic() - started:.1f}s)",
+            flush=True,
+        )
+    except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError, subprocess.SubprocessError) as exc:
+        print(
+            f"[h3-setup] Could not install CJK fonts ({exc}); Chinese video subtitles may show boxes",
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -1236,11 +1376,26 @@ def main() -> None:
         action="store_true",
         help="Prune cached Hugging Face model downloads to free disk space and exit",
     )
+    cjk_group = parser.add_mutually_exclusive_group()
+    cjk_group.add_argument(
+        "--cjk-font-only",
+        action="store_true",
+        help="Only install the Noto Sans CJK SC subtitle fonts on Linux and exit",
+    )
+    cjk_group.add_argument(
+        "--skip-cjk-font",
+        action="store_true",
+        help="Skip CJK subtitle font installation",
+    )
     args = parser.parse_args()
 
     if args.prune_cache:
         freed = prune_hf_cache(log_prefix="[h3-setup]")
         print(f"[h3-setup] Hugging Face cache pruned ({freed} bytes freed)")
+        return
+
+    if args.cjk_font_only:
+        ensure_cjk_font()
         return
 
     if sys.version_info[:2] != (3, 12):
@@ -1250,7 +1405,8 @@ def main() -> None:
         )
 
     ensure_root_entrypoints()
-    ensure_cjk_font()
+    if not args.skip_cjk_font:
+        ensure_cjk_font()
     install_dir = Path(args.install_dir).expanduser().resolve()
     comfy = install_dir / "ComfyUI"
     install_dir.mkdir(parents=True, exist_ok=True)
