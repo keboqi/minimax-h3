@@ -324,7 +324,8 @@ class SystemPageState:
     ) -> SystemPageState:
         runtime_fn = getattr(services.engine_deps, "runtime_config", None)
         if runtime_fn is None:
-            runtime_fn = lambda: None
+            def runtime_fn():
+                return None
         return cls(
             SystemPageServices(
                 backend_status=services.backend_status,
@@ -520,7 +521,20 @@ class SystemPageState:
 def install_system_page(app: FastAPI, *, pages: SystemPageState) -> SystemPageState:
     """Mount ``/system/`` and ``/system/api/*`` on ``app``."""
     install_static_page(app, ROUTE, STATIC, STATIC_TYPES)
-    runs = {kind: Runs(BUSY[kind]) for kind in (UNLOAD, SCAN, IMPORT)}
+    import_runs: Runs | None = None
+    import_runs = Runs(
+        BUSY[IMPORT],
+        blocked=lambda _run: (
+            BUSY[IMPORT]
+            if import_runs is not None and any(r.finished_at is None for r in import_runs.items.values())
+            else None
+        ),
+    )
+    runs = {
+        UNLOAD: Runs(BUSY[UNLOAD]),
+        SCAN: Runs(BUSY[SCAN]),
+        IMPORT: import_runs,
+    }
 
     def _owner(request: Request) -> str:
         try:
@@ -677,11 +691,14 @@ def install_system_page(app: FastAPI, *, pages: SystemPageState) -> SystemPageSt
         raw_items = body.get("items")
         if not isinstance(raw_items, list) or not raw_items:
             raise H3Error("Select at least one project to import.")
-        selections: list[tuple[str, str]] = []
+        selections: list[tuple[str, str] | tuple[str, str, str]] = []
         for entry in raw_items:
             if not isinstance(entry, dict) or not entry.get("kind") or not entry.get("id"):
                 raise H3Error("Each item must specify kind and id.")
-            selections.append((str(entry["kind"]), str(entry["id"])))
+            if entry.get("name"):
+                selections.append((str(entry["kind"]), str(entry["id"]), str(entry["name"])))
+            else:
+                selections.append((str(entry["kind"]), str(entry["id"])))
         conflict = str(body.get("conflict") or "rename")
         if conflict not in CONFLICT_MODES:
             raise H3Error(f"Unsupported conflict mode: {conflict!r}")

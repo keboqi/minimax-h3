@@ -44,6 +44,73 @@ def names(runtime):
     return [name for _, name in sorted(found, reverse=True)]
 
 
+def summaries(runtime) -> list[dict]:
+    """Read lightweight metadata for all saved dubbing projects in a single pass."""
+    sess_root = sessions.sessions_dir(runtime)
+    items: list[dict] = []
+    for path, data in _entries(runtime):
+        try:
+            current, published_ns = _current_revision(path, data)
+            manifest = sess_root / current / sessions.MANIFEST
+            sess_data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(sess_data, dict):
+            continue
+        segments = sess_data.get("segments")
+        segment_count = len(segments) if isinstance(segments, list) else 0
+        settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
+        updated = float(sess_data.get("updated") or sess_data.get("created") or 0)
+        if published_ns > 0:
+            updated = max(updated, published_ns / 1_000_000_000)
+        items.append(
+            {
+                "name": data["name"],
+                "session": current,
+                "updated": updated,
+                "segments": segment_count,
+                "source_language": str(sess_data.get("source_language") or "").strip(),
+                "target_language": str(
+                    settings.get("target_language") or sess_data.get("target_language") or ""
+                ).strip(),
+            }
+        )
+    items.sort(key=lambda item: item["updated"], reverse=True)
+    return items
+
+
+def project_mtime_ns(runtime, name: str) -> tuple[int, int] | None:
+    """Return ``(project_mtime_ns, session_mtime_ns)`` if ``name`` exists, else None."""
+    try:
+        path = _path(runtime, name)
+        data = _read_project(path)
+        current, published_ns = _current_revision(path, data)
+        manifest = sessions.sessions_dir(runtime) / current / sessions.MANIFEST
+        return max(path.stat().st_mtime_ns, published_ns), manifest.stat().st_mtime_ns
+    except (H3Error, OSError):
+        return None
+
+
+def save_imported(runtime, name: str, session_id: str, settings: dict) -> Path:
+    """Atomically publish an imported dubbing project and clear any superseded revisions."""
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        raise H3Error("Enter a project name.")
+    target = _path(runtime, cleaned)
+    with _LOCK:
+        write_json_atomic(
+            target,
+            {
+                "name": cleaned,
+                "session": str(session_id),
+                "settings": dict(settings or {}),
+                "generation": uuid.uuid4().hex,
+            },
+        )
+        shutil.rmtree(target.with_suffix(""), ignore_errors=True)
+    return target
+
+
 def retained_sessions(runtime):
     """Only sessions still referenced by named projects are exempt from cleanup."""
     return {_current_session(path, data) for path, data in _entries(runtime)}

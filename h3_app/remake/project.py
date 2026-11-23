@@ -64,16 +64,29 @@ class Projects:
 
     def list(self, owner: str | None = None) -> list[dict[str, Any]]:
         """Saved projects in this workspace, most recently changed first."""
-        paths = sorted(self.root.glob("*/*/project.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if not self.root.is_dir():
+            return []
+        found: list[tuple[float, Path]] = []
+        for path in self.root.glob("*/*/project.json"):
+            try:
+                found.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+        found.sort(key=lambda item: item[0], reverse=True)
         projects: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for path in paths:
-            data = json.loads(path.read_text("utf-8"))
+        for mtime, path in found:
+            try:
+                data = json.loads(path.read_text("utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not isinstance(data, dict):
+                continue
             key = data.get("key") or path.parent.name
             if key in seen:
                 continue
             seen.add(key)
-            projects.append({**data, "folder": str(path.parent), "updated": path.stat().st_mtime})
+            projects.append({**data, "folder": str(path.parent), "updated": mtime})
         return projects
 
     def delete(self, project: dict[str, Any]) -> None:
@@ -93,7 +106,7 @@ class Projects:
         return project
 
     @staticmethod
-    def _write(project: dict[str, Any]) -> None:
+    def write(project: dict[str, Any]) -> None:
         folder = Path(project["folder"])
         partial = folder / f"project.{uuid.uuid4().hex}.tmp"
         partial.write_text(
@@ -101,6 +114,8 @@ class Projects:
             "utf-8",
         )
         partial.replace(folder / "project.json")
+
+    _write = write
 
     def edit(self, project: dict[str, Any], change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
         """Apply ``change`` to the saved project: the run and the tab both write while a job runs."""

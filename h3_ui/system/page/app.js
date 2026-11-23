@@ -840,7 +840,7 @@
     $("remote-import-btn").addEventListener("click", guard(async () => {
       const items = app.remoteProjects
         .filter((rp) => app.remoteSelected.has(projectKey(rp)))
-        .map((rp) => ({kind: rp.kind, id: rp.id}));
+        .map((rp) => ({kind: rp.kind, id: rp.id, name: rp.name || ""}));
       app.importResults = null;
       await takeRuns((await post("/projects/import", {
         url: app.remoteLoadedUrl,

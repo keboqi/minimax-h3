@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import re
 import shutil
 import tempfile
+import threading
+import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import gradio as gr
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
 from h3_app.errors import H3Error
 from h3_app.project_transfer import (
@@ -25,10 +29,137 @@ from h3_app.project_transfer import (
     fetch_remote_projects,
     import_remote_projects,
     list_local_projects,
+    project_export_stamp,
     rename_local_project,
 )
 from h3_app.workspace_store import request_owner
 from h3_gpu import is_cpu_only
+
+_EXPORT_CACHE_TTL_SECONDS = 300.0
+_EXPORT_CACHE_MAX_ENTRIES = 8
+_EXPORT_CACHE_MAX_BYTES = 4 << 30
+
+
+@dataclass
+class _CachedArchive:
+    path: Path
+    size: int
+    created_at: float
+    last_access: float
+
+
+class _ExportArchiveCache:
+    """Short-lived singleflight archive cache enabling instant HTTP Range resumption."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._inflight: dict[tuple[str, ...], threading.Lock] = {}
+        self._entries: dict[tuple[str, ...], _CachedArchive] = {}
+        self._root: Path | None = None
+
+    def _ensure_root(self) -> Path:
+        if self._root is None or not self._root.is_dir():
+            self._root = Path(tempfile.mkdtemp(prefix="h3-project-export-cache-"))
+        return self._root
+
+    def _evict_locked(self, now: float) -> None:
+        expired = [
+            key
+            for key, entry in self._entries.items()
+            if now - entry.last_access > _EXPORT_CACHE_TTL_SECONDS or not entry.path.is_file()
+        ]
+        for key in expired:
+            entry = self._entries.pop(key)
+            try:
+                entry.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        total_bytes = sum(entry.size for entry in self._entries.values())
+        if len(self._entries) <= _EXPORT_CACHE_MAX_ENTRIES and total_bytes <= _EXPORT_CACHE_MAX_BYTES:
+            return
+        by_oldest = sorted(self._entries.items(), key=lambda kv: kv[1].last_access)
+        for key, entry in by_oldest:
+            if len(self._entries) <= _EXPORT_CACHE_MAX_ENTRIES and total_bytes <= _EXPORT_CACHE_MAX_BYTES:
+                break
+            self._entries.pop(key, None)
+            total_bytes -= entry.size
+            try:
+                entry.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def get_or_build(self, kind: str, project_id: str, *, store, runtime) -> Path:
+        stamp = project_export_stamp(kind, project_id, store=store, runtime=runtime)
+        cache_key = (
+            str(Path(runtime.output_dir).resolve()),
+            str(Path(runtime.outputs_dir).resolve()),
+            kind,
+            project_id,
+            stamp,
+        )
+        now = time.monotonic()
+        with self._lock:
+            self._evict_locked(now)
+            hit = self._entries.get(cache_key)
+            if hit is not None and hit.path.is_file():
+                hit.last_access = now
+                return hit.path
+            key_lock = self._inflight.get(cache_key)
+            if key_lock is None:
+                key_lock = threading.Lock()
+                self._inflight[cache_key] = key_lock
+
+        with key_lock:
+            now = time.monotonic()
+            with self._lock:
+                hit = self._entries.get(cache_key)
+                if hit is not None and hit.path.is_file():
+                    hit.last_access = now
+                    return hit.path
+                root = self._ensure_root()
+                dest = root / f"{uuid.uuid4().hex}.zip"
+
+            try:
+                built = export_project_archive(kind, project_id, dest, store=store, runtime=runtime)
+                size = built.stat().st_size
+            except BaseException:
+                try:
+                    dest.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                with self._lock:
+                    self._inflight.pop(cache_key, None)
+                raise
+
+            now = time.monotonic()
+            with self._lock:
+                self._inflight.pop(cache_key, None)
+                # Drop any older cached versions of the same (output_dir, outputs_dir, kind, project_id).
+                stale_keys = [k for k in self._entries if k[:4] == cache_key[:4] and k != cache_key]
+                for stale in stale_keys:
+                    old = self._entries.pop(stale)
+                    try:
+                        old.path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                self._entries[cache_key] = _CachedArchive(
+                    path=built, size=size, created_at=now, last_access=now
+                )
+                self._evict_locked(now)
+            return built
+
+    def cleanup(self) -> None:
+        with self._lock:
+            root = self._root
+            self._root = None
+            self._entries.clear()
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+_EXPORT_CACHE = _ExportArchiveCache()
+atexit.register(_EXPORT_CACHE.cleanup)
 
 
 def _is_not_found_error(exc: Exception) -> bool:
@@ -44,8 +175,8 @@ def _archive_filename(kind: str, project_id: str) -> str:
     return f"{slug}.zip"
 
 
-def _project_key(kind: str, project_id: str) -> str:
-    return json.dumps([kind, project_id])
+def _project_key(kind: str, project_id: str, name: str | None = None) -> str:
+    return json.dumps([kind, project_id, name] if name else [kind, project_id])
 
 
 def _parse_project_key(raw: str | None) -> tuple[str, str]:
@@ -55,7 +186,7 @@ def _parse_project_key(raw: str | None) -> tuple[str, str]:
         parsed = json.loads(raw)
     except (TypeError, ValueError) as exc:
         raise H3Error("Select a valid project.") from exc
-    if not isinstance(parsed, list) or len(parsed) != 2 or not parsed[0] or not parsed[1]:
+    if not isinstance(parsed, list) or len(parsed) not in (2, 3) or not parsed[0] or not parsed[1]:
         raise H3Error("Select a valid project.")
     return str(parsed[0]), str(parsed[1])
 
@@ -102,27 +233,20 @@ def install_project_transfer_routes(
 
     @app.get("/api/projects/transfer/export", include_in_schema=False)
     def transfer_export(kind: str, id: str):
-        tmp_dir = tempfile.mkdtemp(prefix="h3-project-export-")
         try:
-            archive_path = export_project_archive(
+            archive_path = _EXPORT_CACHE.get_or_build(
                 kind,
                 id,
-                Path(tmp_dir) / "project.zip",
                 store=store,
                 runtime=runtime_config(),
             )
         except (H3Error, ValueError) as exc:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
             status_code = 404 if _is_not_found_error(exc) else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-        except Exception:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise
         return FileResponse(
             archive_path,
             media_type="application/zip",
             filename=_archive_filename(kind, id),
-            background=BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True),
         )
 
     @app.post("/api/projects/transfer/import", include_in_schema=False)
@@ -133,11 +257,17 @@ def install_project_transfer_routes(
         items = body.get("items")
         if not isinstance(items, list) or not items:
             raise HTTPException(status_code=400, detail="Select at least one project to import.")
-        selections: list[tuple[str, str]] = []
+        selections: list[tuple[str, str, str | None]] = []
         for entry in items:
             if not isinstance(entry, dict) or not entry.get("kind") or not entry.get("id"):
                 raise HTTPException(status_code=400, detail="Each item must specify kind and id.")
-            selections.append((str(entry["kind"]), str(entry["id"])))
+            selections.append(
+                (
+                    str(entry["kind"]),
+                    str(entry["id"]),
+                    str(entry["name"]) if entry.get("name") else None,
+                )
+            )
         conflict = str(body.get("conflict") or "rename")
         try:
             headers = build_auth_headers(
@@ -418,7 +548,11 @@ def build_project_import_view(
         choices = [
             (
                 _project_choice_label(item),
-                _project_key(str(item["kind"]), str(item["id"])),
+                _project_key(
+                    str(item["kind"]),
+                    str(item["id"]),
+                    str(item["name"]) if item.get("name") else None,
+                ),
             )
             for item in data["projects"]
             if isinstance(item, dict) and item.get("kind") and item.get("id")
@@ -454,10 +588,12 @@ def build_project_import_view(
             headers = build_auth_headers(key, secret)
             if conflict_mode not in CONFLICT_MODES:
                 raise H3Error(f"Unsupported conflict mode: {conflict_mode!r}")
-            selections: list[tuple[str, str]] = []
+            selections: list[tuple[str, str] | tuple[str, str, str]] = []
             for entry in selected or []:
                 parsed = json.loads(entry)
-                if isinstance(parsed, list) and len(parsed) == 2:
+                if isinstance(parsed, list) and len(parsed) == 3 and parsed[2]:
+                    selections.append((str(parsed[0]), str(parsed[1]), str(parsed[2])))
+                elif isinstance(parsed, list) and len(parsed) in (2, 3):
                     selections.append((str(parsed[0]), str(parsed[1])))
             results = import_remote_projects(
                 url,

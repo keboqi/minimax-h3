@@ -36,7 +36,7 @@ from h3_app.project_transfer import (
     normalize_server_url,
     rename_local_project,
 )
-from h3_app.provenance import snapshot_path, write_snapshot
+from h3_app.provenance import read_snapshot, snapshot_path, write_snapshot
 from h3_app.remake.project import Projects as RemakeProjects
 from h3_app.storyboard import StoryboardService, model as sb_model
 from h3_app.workspace_store import WorkspaceStore
@@ -1162,3 +1162,347 @@ def test_dubbing_transfer_preserves_lipsync_plan_overrides_and_skips_caches(tmp_
         assert renamed_plan is not None and renamed_plan["video"] == renamed_dub.name
         renamed_report = json.loads((dub_results.player_folder(renamed_dub) / REPORT_FILE).read_text(encoding="utf-8"))
         assert renamed_report["output"] == f"{renamed_dub.stem}.lipsync.mp4"
+
+
+def test_storyboard_references_cast_and_media_scenes_stay_done_after_transfer(tmp_path: Path):
+    src_runtime, src_store = _make_workspace(tmp_path / "source")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "target")
+    src_service = StoryboardService(src_store, lambda: src_runtime)
+    dst_service = StoryboardService(dst_store, lambda: dst_runtime)
+
+    cast_pic = tmp_path / "hero.png"
+    cast_pic.write_bytes(b"hero-cast-png")
+    media_clip = tmp_path / "intro_clip.mp4"
+    media_clip.write_bytes(b"intro-clip-mp4")
+
+    board_id = src_service.create(
+        "owner-a",
+        "Cast & Media Board",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        cast=[("Hero", cast_pic)],
+    )
+    board = src_service.load("owner-a", board_id)
+    scene0_id = board["scenes"][0]["id"]
+    # Scene 0 uses REFERENCES mode with Cast (records [name, filename] in take inputs).
+    src_service.set_mode("owner-a", board_id, scene0_id, sb_model.REFERENCES)
+    src_service.update_scene("owner-a", board_id, scene0_id, prompt="Hero walks in", cast=["Hero"])
+
+    # Scene 1 is a VIDEO_FROM_MEDIA scene (records video basename in take inputs).
+    stored_clip = src_service.media_dir(board_id) / "intro_clip.mp4"
+    stored_clip.parent.mkdir(parents=True, exist_ok=True)
+    stored_clip.write_bytes(b"intro-clip-mp4")
+    media_scene = {
+        **sb_model.new_media_scene("Intro Cut"),
+        "video": str(stored_clip),
+        "video_info": {"seconds": 4.0, "fps": 24.0, "width": 1280, "height": 720},
+        "video_in": 0.0,
+        "video_out": 4.0,
+    }
+    src_service.change("owner-a", board_id, lambda b: b["scenes"].append(media_scene))
+    board = src_service.load("owner-a", board_id)
+    scene1_id = board["scenes"][1]["id"]
+
+    for idx, sc_id in enumerate((scene0_id, scene1_id)):
+        take_id = sb_model.new_id()
+        prefix = src_service.take_prefix(board_id, sc_id, take_id)
+        take_video = src_service.output_path(f"{prefix}.mp4")
+        take_video.parent.mkdir(parents=True, exist_ok=True)
+        take_video.write_bytes(f"video-{idx}".encode())
+        board = src_service.load("owner-a", board_id)
+        src_service.record_take(
+            "owner-a",
+            board_id,
+            sc_id,
+            take_id,
+            video=str(take_video),
+            latents={"latent": None},
+            seed=10 + idx,
+            inputs=sb_model.scene_inputs(board, idx),
+        )
+
+    assert sb_model.scene_states(src_service.load("owner-a", board_id)) == [sb_model.DONE, sb_model.DONE]
+    archive = export_project_archive(
+        "storyboard", board_id, tmp_path / "cast_media_board.zip", store=src_store, runtime=src_runtime
+    )
+    imported = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+    dst_board = dst_service.load("imported", imported["target_id"])
+    assert sb_model.scene_states(dst_board) == [sb_model.DONE, sb_model.DONE]
+
+
+def test_soundstage_clip_collision_isolation_illustrated_video_and_pre1980_mtime(tmp_path: Path):
+    from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY, latest_export
+
+    src_runtime, src_store = _make_workspace(tmp_path / "source")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "target")
+
+    with _using_workspace_env(src_runtime):
+        clips_dir = src_runtime.output_dir / "h3" / ".soundstage" / "clips"
+        clips_dir.mkdir(parents=True, exist_ok=True)
+        clip_path = clips_dir / "shared.wav"
+        clip_path.write_bytes(b"REMOTE-VOICE-BYTES")
+        # Set pre-1980 mtime (epoch 1970) to ensure zip export never fails strict_timestamps.
+        os.utime(clip_path, (0, 0))
+
+        h3_dir = src_runtime.output_dir / "h3"
+        h3_dir.mkdir(parents=True, exist_ok=True)
+        mix_path = h3_dir / "ep_mix.mp3"
+        mix_path.write_bytes(b"ep-mix-mp3")
+        write_snapshot(mix_path, {"family": "Drama 3", "settings": {"title": "Ep", "chunks": []}})
+        illus_video = h3_dir / "ep_mix_illustrated_1234abcd.mp4"
+        illus_video.write_bytes(b"illustrated-mp4-bytes")
+        write_snapshot(
+            illus_video,
+            {"family": ILLUSTRATED_FAMILY, "settings": {"source": mix_path.name, "subtitles": 100}},
+        )
+
+        src_store.save_soundstage_project(
+            "Ep",
+            {"text": "[Host] Hi", "voice_0_preset": UPLOAD_VOICE, "voice_0_audio": "shared.wav"},
+        )
+        src_store.mark_soundstage_generated("Ep", str(mix_path))
+        archive = export_project_archive(
+            "soundstage", "Ep", tmp_path / "ep.zip", store=src_store, runtime=src_runtime
+        )
+
+    with _using_workspace_env(dst_runtime):
+        dst_clips = dst_runtime.output_dir / "h3" / ".soundstage" / "clips"
+        dst_clips.mkdir(parents=True, exist_ok=True)
+        (dst_clips / "shared.wav").write_bytes(b"LOCAL-OTHER-PROJECT-VOICE")
+        dst_store.save_soundstage_project(
+            "Other Local",
+            {"text": "[Other] Keep my voice", "voice_0_preset": UPLOAD_VOICE, "voice_0_audio": "shared.wav"},
+        )
+
+        first = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert first["status"] == "imported"
+        # Unrelated local project's clip is untouched; imported project got an isolated clip name.
+        assert (dst_clips / "shared.wav").read_bytes() == b"LOCAL-OTHER-PROJECT-VOICE"
+        ep_payload, ep_result = dst_store.soundstage_project("Ep")
+        assert ep_payload["voice_0_audio"] == "shared_imported.wav"
+        assert (dst_clips / "shared_imported.wav").read_bytes() == b"REMOTE-VOICE-BYTES"
+        exported_vid = latest_export(Path(ep_result))
+        assert exported_vid is not None and exported_vid.read_bytes() == b"illustrated-mp4-bytes"
+
+        # Importing again as a copy deduplicates the matching clip and renames both mix and illustrated video.
+        second = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert second["status"] == "renamed"
+        ep2_payload, ep2_result = dst_store.soundstage_project(second["target_name"])
+        assert (dst_clips / ep2_payload["voice_0_audio"]).read_bytes() == b"REMOTE-VOICE-BYTES"
+        renamed_vid = latest_export(Path(ep2_result))
+        assert renamed_vid is not None and renamed_vid.name != exported_vid.name
+        assert read_snapshot(renamed_vid)["settings"]["source"] == Path(ep2_result).name
+
+
+def test_corrupt_archive_rollback_preserves_existing_projects_and_leaves_no_orphans(tmp_path: Path):
+    src_runtime, src_store = _make_workspace(tmp_path / "source")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "target")
+
+    def corrupt_zip_entry(src_zip: Path, dst_zip: Path, target_suffix: str) -> Path:
+        raw = bytearray(src_zip.read_bytes())
+        with zipfile.ZipFile(src_zip, "r") as zf:
+            info = next(i for i in zf.infolist() if i.filename.endswith(target_suffix) and i.file_size >= 8)
+            # Flip bytes in the member payload so CRC verification fails mid-extraction.
+            local_sig_offset = info.header_offset
+            name_len = int.from_bytes(raw[local_sig_offset + 26 : local_sig_offset + 28], "little")
+            extra_len = int.from_bytes(raw[local_sig_offset + 28 : local_sig_offset + 30], "little")
+            data_offset = local_sig_offset + 30 + name_len + extra_len
+            raw[data_offset] ^= 0xFF
+            raw[data_offset + 1] ^= 0xFF
+        dst_zip.write_bytes(bytes(raw))
+        return dst_zip
+
+    # 1. Remake overwrite rollback on corrupt archive
+    src_remakes = RemakeProjects(src_runtime.output_dir)
+    dst_remakes = RemakeProjects(dst_runtime.output_dir)
+    vid = tmp_path / "src.mp4"
+    vid.write_bytes(b"valid-remake-source-bytes-1234567890")
+    src_remakes.create("owner-a", "rk1", str(vid), {"name": "Remake Safe"}, [{"render": [0, 24]}])
+    good_remake_zip = export_project_archive(
+        "remake", "rk1", tmp_path / "remake_good.zip", store=src_store, runtime=src_runtime
+    )
+    bad_remake_zip = corrupt_zip_entry(good_remake_zip, tmp_path / "remake_bad.zip", ".mp4")
+
+    local_vid = tmp_path / "local.mp4"
+    local_vid.write_bytes(b"EXISTING-LOCAL-REMAKE-MUST-SURVIVE")
+    dst_proj = dst_remakes.create("owner-b", "rk1", str(local_vid), {"name": "Remake Safe"}, [{"render": [0, 24]}])
+
+    with pytest.raises(zipfile.BadZipFile):
+        import_project_archive(bad_remake_zip, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+
+    surviving = dst_remakes.load(None, "rk1")
+    assert surviving is not None
+    assert Path(surviving["source"]).read_bytes() == b"EXISTING-LOCAL-REMAKE-MUST-SURVIVE"
+    owner_parent = Path(dst_proj["folder"]).parent
+    assert not [p for p in owner_parent.iterdir() if p.name.startswith((".importing-", ".replacing-"))]
+
+    # 2. Dubbing failed import cleans up new session_root without leaking orphan folders
+    with _using_workspace_env(src_runtime):
+        dub_src = tmp_path / "talk.mp4"
+        dub_src.write_bytes(b"dub-source-bytes-1234567890")
+        sess = dub_sessions.create(src_runtime, dub_src, video=True)
+        dub_out = src_runtime.outputs_dir / "dubbing"
+        dub_out.mkdir(parents=True, exist_ok=True)
+        dub_mp4 = dub_out / "talk_fr.mp4"
+        dub_mp4.write_bytes(b"dub-result-video-bytes-1234567890")
+        dub_mp3 = dub_out / "talk_fr.mp3"
+        dub_mp3.write_bytes(b"dub-result-audio-bytes-1234567890")
+        sess.data["last_output"] = str(dub_mp4)
+        sess.save()
+        dubbing_projects.save(src_runtime, "Safe Dub", sess.id, dub_src, {"target_language": "French"})
+        good_dub_zip = export_project_archive(
+            "dubbing", "Safe Dub", tmp_path / "dub_good.zip", store=src_store, runtime=src_runtime
+        )
+    bad_dub_zip = corrupt_zip_entry(good_dub_zip, tmp_path / "dub_bad.zip", "talk_fr.mp4")
+
+    with _using_workspace_env(dst_runtime):
+        sessions_before = set(dub_sessions.sessions_dir(dst_runtime).glob("*"))
+        with pytest.raises(zipfile.BadZipFile):
+            import_project_archive(bad_dub_zip, store=dst_store, runtime=dst_runtime, conflict="rename")
+        sessions_after = set(dub_sessions.sessions_dir(dst_runtime).glob("*"))
+        assert sessions_after == sessions_before
+        assert "Safe Dub" not in dubbing_projects.names(dst_runtime)
+
+
+def test_http_retry_range_resume_skip_fastpath_and_parallel_ordering(tmp_path: Path, monkeypatch):
+    from fastapi.responses import PlainTextResponse, StreamingResponse
+
+    from h3_app import project_transfer as pt_mod
+    from h3_app.project_transfer import import_remote_projects
+
+    monkeypatch.setattr(pt_mod, "_retry_sleep_seconds", lambda *_args, **_kwargs: 0.01)
+
+    src_runtime, src_store = _make_workspace(tmp_path / "remote")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "local")
+
+    with _using_workspace_env(src_runtime):
+        for i in range(4):
+            src_store.save_soundstage_project(f"Stage {i}", {"text": f"[Host] Line {i}", "title": f"T{i}"})
+        sb_service = StoryboardService(src_store, lambda: src_runtime)
+        sb_id = sb_service.create(
+            "owner-r",
+            "Existing Board Name",
+            sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        )
+
+    export_builds: list[tuple[str, str]] = []
+    real_export = pt_mod.export_project_archive
+
+    def counting_export(kind: str, project_id: str, destination: Path, **kwargs) -> Path:
+        export_builds.append((kind, project_id))
+        return real_export(kind, project_id, destination, **kwargs)
+
+    monkeypatch.setattr("h3_ui.project_transfer.export_project_archive", counting_export)
+
+    list_calls = 0
+    export_requests: list[tuple[str, str, str | None]] = []
+    dropped_once: set[str] = set()
+
+    remote_app = FastAPI()
+
+    @remote_app.middleware("http")
+    async def inject_transient_faults(request: Request, call_next):
+        nonlocal list_calls
+        if request.url.path == "/api/projects/transfer/list":
+            list_calls += 1
+            if list_calls == 1:
+                return PlainTextResponse("Bad Gateway", status_code=502)
+        if request.url.path == "/api/projects/transfer/export":
+            kind = request.query_params.get("kind", "")
+            pid = request.query_params.get("id", "")
+            rng = request.headers.get("range")
+            export_requests.append((kind, pid, rng))
+            if pid == "Stage 0" and pid not in dropped_once:
+                dropped_once.add(pid)
+                full_resp = await call_next(request)
+                body = b"".join([chunk async for chunk in full_resp.body_iterator])
+                half = max(1, len(body) // 2)
+                headers = {
+                    k: v
+                    for k, v in full_resp.headers.items()
+                    if k.lower() in {"content-length", "etag", "last-modified", "accept-ranges"}
+                }
+
+                async def truncated_stream():
+                    import asyncio
+
+                    yield body[:half]
+                    await asyncio.sleep(0.01)
+                    raise ConnectionResetError("Simulated mid-stream tunnel drop")
+
+                return StreamingResponse(
+                    truncated_stream(),
+                    status_code=200,
+                    headers=headers,
+                    media_type="application/zip",
+                )
+            if pid == "Stage 1" and pid not in dropped_once:
+                dropped_once.add(pid)
+                return PlainTextResponse("Service Unavailable", status_code=503)
+        return await call_next(request)
+
+    install_project_transfer_routes(remote_app, store=src_store, runtime_config=lambda: src_runtime)
+
+    with _serve_fastapi(remote_app) as remote_url, _using_workspace_env(dst_runtime):
+        # 1. fetch_remote_projects recovers from initial HTTP 502.
+        listing = fetch_remote_projects(remote_url)
+        assert list_calls == 2
+        assert len(listing["projects"]) == 5
+
+        # 2. Pre-seed Stage 3 and Storyboard (with different local ID, matching name) to verify 0-download skip.
+        dst_store.save_soundstage_project("Stage 3", {"text": "Local keep"})
+        local_sb_service = StoryboardService(dst_store, lambda: dst_runtime)
+        local_sb_service.create(
+            "owner-l",
+            "Existing Board Name",
+            sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        )
+
+        commit_mock = Mock()
+        selections = [
+            ("soundstage", "Stage 0", "Stage 0"),
+            ("soundstage", "Stage 1", "Stage 1"),
+            ("soundstage", "Stage 2", "Stage 2"),
+            ("soundstage", "Stage 3", "Stage 3"),
+            ("storyboard", sb_id, "Existing Board Name"),
+        ]
+        results = import_remote_projects(
+            remote_url,
+            selections,
+            store=dst_store,
+            runtime=dst_runtime,
+            conflict="skip",
+            on_imported=commit_mock,
+        )
+        # Exact selection order preserved despite parallel workers and retries.
+        assert [(r["kind"], r["source_id"], r["status"]) for r in results] == [
+            ("soundstage", "Stage 0", "imported"),
+            ("soundstage", "Stage 1", "imported"),
+            ("soundstage", "Stage 2", "imported"),
+            ("soundstage", "Stage 3", "skipped"),
+            ("storyboard", sb_id, "skipped"),
+        ]
+        commit_mock.assert_called_once()
+
+        # Skipped items never hit /api/projects/transfer/export at all.
+        requested_ids = {pid for _k, pid, _rng in export_requests}
+        assert "Stage 3" not in requested_ids
+        assert sb_id not in requested_ids
+
+        # Stage 0 resumed via Range header, and _EXPORT_CACHE built Stage 0's archive only ONCE.
+        stage0_ranges = [rng for _k, pid, rng in export_requests if pid == "Stage 0"]
+        assert stage0_ranges[0] is None
+        assert stage0_ranges[1] is not None and stage0_ranges[1].startswith("bytes=")
+        assert export_builds.count(("soundstage", "Stage 0")) == 1
+
+        # Editing Stage 0 invalidates the export cache stamp and builds a fresh archive.
+        src_store.save_soundstage_project("Stage 0", {"text": "[Host] Updated line", "title": "T0-v2"})
+        overwrite_res = import_remote_projects(
+            remote_url,
+            [("soundstage", "Stage 0")],
+            store=dst_store,
+            runtime=dst_runtime,
+            conflict="overwrite",
+        )
+        assert overwrite_res[0]["status"] == "overwritten"
+        assert dst_store.soundstage_project("Stage 0")[0]["title"] == "T0-v2"
+        assert export_builds.count(("soundstage", "Stage 0")) == 2
