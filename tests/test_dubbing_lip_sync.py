@@ -16,6 +16,7 @@ import wave
 
 import numpy as np
 
+from h3_app.catalog import PIKA_FLEX
 from h3_app.dubbing.alignment import FITTED_AUDIO_RATE as RATE
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
@@ -23,6 +24,7 @@ from h3_app.dubbing.lip_sync import (
     REPORT_FILE,
     _extract_window_slice,
     _is_no_face_error,
+    _prepare_h3_lip_sync_models,
     assemble_lip_sync_video,
     build_lip_sync_plan_payload,
     detect_lip_sync_plan,
@@ -43,7 +45,9 @@ from h3_app.dubbing.results import player_folder
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 from h3_app.media_tools import probe_video_metadata
+from h3_app.model_types import ModelConfig, ModelProfile
 from h3_app.workflows.lip_sync import build_auto_lip_sync_graph, build_lip_sync_graph, snap_h3_frames
+from h3_models import MODEL_SPECS
 from tests.test_face_refine import by_class, link_id, models
 
 
@@ -209,6 +213,8 @@ class LipSyncTests(unittest.TestCase):
         self.model_services = SimpleNamespace(
             load_model_config=lambda: self.models, ensure_base_video_vae=Mock(), ensure_audio_vae=Mock(),
             ensure_lightvae=Mock(), ensure_int8_video_vae=Mock(), ensure_model_keys=Mock(),
+            ensure_profile_model=Mock(), ensure_turbo_lora=Mock(), ensure_h3_text_encoder=Mock(),
+            ensure_h3_semantic_bridge=Mock(), ensure_h3_veda_predictor=Mock(),
         )
 
     def test_dialogue_starts_at_the_fitted_time_and_excludes_other_speakers(self):
@@ -248,6 +254,12 @@ class LipSyncTests(unittest.TestCase):
 
         def submit(graph, client_id):
             self.assertTrue(by_class(graph, "SaveVideo")["filename_prefix"].endswith(client_id))
+            self.model_services.ensure_profile_model.assert_called_once_with(
+                "speed", self.models.profile("speed"), "Text to video",
+            )
+            self.model_services.ensure_turbo_lora.assert_called_once_with(
+                self.models, PIKA_FLEX, "Text to video",
+            )
             self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
             return client_id
 
@@ -273,6 +285,43 @@ class LipSyncTests(unittest.TestCase):
             with self.assertRaises(JobCancelled):
                 next(preview)
         services.execution.submit_prompt.assert_not_called()
+
+    def test_prepare_h3_lip_sync_models_provisions_full_stack(self):
+        cfg = ModelConfig(
+            {"speed": ModelProfile("Test", "base.safetensors", "ref.safetensors")},
+            "speed",
+            MODEL_SPECS["text_encoder_int8"].local_name,
+            "video.safetensors",
+            "audio.safetensors",
+            turbo_lora="turbo.safetensors",
+        )
+        _prepare_h3_lip_sync_models(self.model_services, cfg, {})
+        self.model_services.ensure_profile_model.assert_called_once_with(
+            "speed", cfg.profile("speed"), "Text to video",
+        )
+        self.model_services.ensure_turbo_lora.assert_called_once_with(
+            cfg, PIKA_FLEX, "Text to video",
+        )
+        self.model_services.ensure_h3_text_encoder.assert_called_once_with(cfg, "INT8 ConvRot")
+        self.model_services.ensure_base_video_vae.assert_called_once_with(cfg)
+        self.model_services.ensure_audio_vae.assert_called_once_with(cfg)
+        self.model_services.ensure_h3_semantic_bridge.assert_called_once_with()
+        self.model_services.ensure_h3_veda_predictor.assert_not_called()
+
+        model_services_veda = SimpleNamespace(
+            ensure_profile_model=Mock(), ensure_turbo_lora=Mock(), ensure_h3_text_encoder=Mock(),
+            ensure_base_video_vae=Mock(), ensure_audio_vae=Mock(), ensure_lightvae=Mock(),
+            ensure_int8_video_vae=Mock(), ensure_h3_semantic_bridge=Mock(),
+            ensure_h3_veda_predictor=Mock(),
+        )
+        _prepare_h3_lip_sync_models(
+            model_services_veda,
+            cfg,
+            {"attention_mode": "Veda", "semantic_bridge": False, "text_encoder": "BF16"},
+        )
+        model_services_veda.ensure_h3_text_encoder.assert_called_once_with(cfg, "BF16")
+        model_services_veda.ensure_h3_semantic_bridge.assert_not_called()
+        model_services_veda.ensure_h3_veda_predictor.assert_called_once_with("Text to video")
 
     def test_invalid_crop_is_rejected_before_staging(self):
         media = SimpleNamespace(probe_video_metadata=Mock(return_value=SimpleNamespace(
@@ -608,6 +657,12 @@ class LipSyncTests(unittest.TestCase):
             def submit(graph, client_id):
                 video_name = by_class(graph, "LoadVideo")["file"]
                 expected_frames = by_class(graph, "MiniMaxH3ImageToVideo")["length"]
+                self.model_services.ensure_profile_model.assert_called_once_with(
+                    "speed", self.models.profile("speed"), "Text to video",
+                )
+                self.model_services.ensure_turbo_lora.assert_called_once_with(
+                    self.models, PIKA_FLEX, "Text to video",
+                )
                 self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
                 self.model_services.ensure_audio_vae.assert_called_once_with(self.models)
                 self.model_services.ensure_lightvae.assert_called_once_with("LightVAE Lite", "none")

@@ -18,6 +18,8 @@ from uuid import uuid4
 
 import numpy as np
 
+from h3_models import H3_TEXT_ENCODER_CHOICES, MODEL_SPECS
+
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices, ModelsServices
@@ -1223,8 +1225,28 @@ def _render_window_via_worker(
     return rendered
 
 
-def _prepare_h3_lip_sync_vaes(services: ModelsServices, models, refinement: dict[str, Any]) -> None:
-    settings = resolve_face_refinement(refinement, models)["settings"]
+def _h3_text_encoder_choice(models, refinement: dict[str, Any], filename: str) -> str | None:
+    if "text_encoder" in refinement:
+        return str(refinement["text_encoder"])
+    configured = models.text_encoders or {}
+    for label, key in H3_TEXT_ENCODER_CHOICES.items():
+        if filename == (configured.get(label) or MODEL_SPECS[key].local_name):
+            return label
+    return None
+
+
+def _prepare_h3_lip_sync_models(services: ModelsServices, models, refinement: dict[str, Any]) -> None:
+    """Provision the H3 checkpoint, LoRA, text encoder, VAEs, and adapters used by lip sync."""
+    config = resolve_face_refinement(refinement, models)
+    settings = config["settings"]
+    mode = settings["mode"]
+    profile_key = models.profile_key(settings["model_profile"])
+    services.ensure_profile_model(profile_key, models.profile(profile_key), mode)
+    if config["lora"]:
+        services.ensure_turbo_lora(models, config["variant"], mode)
+    text_encoder_choice = _h3_text_encoder_choice(models, refinement, config["text_encoder"])
+    if text_encoder_choice is not None:
+        services.ensure_h3_text_encoder(models, text_encoder_choice)
     services.ensure_base_video_vae(models)
     services.ensure_audio_vae(models)
     encoder, decoder = settings["video_encoder"], settings["lightvae_decoder"]
@@ -1236,6 +1258,10 @@ def _prepare_h3_lip_sync_vaes(services: ModelsServices, models, refinement: dict
         services.ensure_int8_video_vae(models, lynnreal=True)
     elif settings["use_int8_vae"]:
         services.ensure_int8_video_vae(models)
+    if settings["semantic_bridge"] and settings["semantic_bridge_alpha"]:
+        services.ensure_h3_semantic_bridge()
+    if str(settings["attention_mode"]).lower() == "veda":
+        services.ensure_h3_veda_predictor(mode)
 
 
 def _render_window_via_comfy(
@@ -1425,7 +1451,7 @@ def render_dub_lip_sync(
                     if not h3_models_ready:
                         yield "Preparing H3 lip-sync models"
                         check_cancelled()
-                        _prepare_h3_lip_sync_vaes(services.models, models, config)
+                        _prepare_h3_lip_sync_models(services.models, models, config)
                         services.models.ensure_model_keys(("face_yolov8m",))
                         h3_models_ready = True
                     rendered_path = yield from _render_window_via_comfy(
@@ -1515,7 +1541,7 @@ def render_lip_sync_preview(*, dub: Path, speaker: str, first_frame: int, crop: 
     config = {**(refinement or {}), "_source_duration": frames / FPS}
     yield "Preparing H3 lip-sync models"
     check_cancelled()
-    _prepare_h3_lip_sync_vaes(services.models, models, config)
+    _prepare_h3_lip_sync_models(services.models, models, config)
     client_id = uuid4().hex
     with TemporaryDirectory(prefix="h3-lip-sync-") as directory:
         wav = Path(directory) / "dialogue.wav"
