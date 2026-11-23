@@ -5,9 +5,9 @@ import {esc, icon, plural, toast} from "./ui.js";
 
 const SIZE_PRESETS = [[0, 100, "All"], [8, 100, "8%+"], [15, 100, "15%+"], [25, 100, "25%+"]];
 const ENGINE_OPTIONS = [
-  ["h3", "MiniMax H3", "Output keeps <strong>Dubbed audio only</strong> · MediaPipe landmark mouth mask"],
-  ["musetalk", "MuseTalk 1.5 · Fast", "Output keeps <strong>Dubbed audio only</strong> · MuseTalk 1.5 fast single-step inpainting"],
-  ["latentsync", "LatentSync 1.6 · Quality", "Output keeps <strong>Dubbed audio only</strong> · LatentSync 1.6 (512×512 Whisper diffusion)"],
+  ["h3", "MiniMax H3", "Preserves dubbed audio &amp; subtitles · MediaPipe landmark mouth mask"],
+  ["musetalk", "MuseTalk 1.5 · Fast", "Preserves dubbed audio &amp; subtitles · Fast single-step 256×256 inpainting"],
+  ["latentsync", "LatentSync 1.6 · Quality", "Preserves dubbed audio &amp; subtitles · 512×512 Whisper-conditioned diffusion"],
 ];
 
 const lsState = {

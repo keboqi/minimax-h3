@@ -1044,3 +1044,87 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(lines[2]["loaded"], [])
         self.assertFalse(lines[3]["ok"])
         self.assertIn("ValueError: bad op", lines[3]["error"])
+
+    def test_chunked_long_turn_uses_per_window_visual_hints_without_tracks(self):
+        from h3_app.dubbing.lip_sync_match import Shot, SourceScan, assign_speakers_to_shots
+
+        folder = player_folder(self.dub)
+        visual_speakers = [
+            {"speaker": "A", "time": 0.5, "visibility": "on_screen", "face_center": [0.25, 0.5]},
+            {"speaker": "A", "time": 5.5, "visibility": "on_screen", "face_center": [0.75, 0.4]},
+        ]
+        lines = [
+            {"speaker": "A", "start": 0.0, "end": 7.0},
+        ]
+        (folder / "alignment.json").write_text(json.dumps({
+            "lines": lines,
+            "spoken": {"0": [0.0, 7.0]},
+            "visual_speakers": visual_speakers,
+        }), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{"0": np.ones(1, dtype=np.float32)})
+        scan = SourceScan(
+            fingerprint="fp", duration=8.0, fps=24.0, width=1000, height=500, cuts=(), backend="none",
+            shots=(Shot(index=0, start=0.0, end=8.0, tracks=()),),
+        )
+        assignments = assign_speakers_to_shots(scan, lines, visual_speakers=visual_speakers)
+        windows = plan_lip_sync_windows(
+            self.dub, video_duration=8.0, video_size=(1000, 500), assignments=assignments,
+            require_assignment=True, max_window_seconds=4.0,
+        )
+        self.assertEqual(len(windows), 2)
+        self.assertEqual(windows[0].face_target[:2], (250, 250))
+        self.assertEqual(windows[1].face_target[:2], (750, 200))
+        self.assertEqual(windows[1].face_target[2], round(5.5 * 24) - windows[1].first_frame)
+
+    def test_detect_faces_per_frame_fills_mediapipe_gaps_with_insightface(self):
+        frames = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(3)]
+
+        def mp_det(xmin, ymin, w, h):
+            return SimpleNamespace(
+                location_data=SimpleNamespace(
+                    relative_bounding_box=SimpleNamespace(xmin=xmin, ymin=ymin, width=w, height=h)
+                )
+            )
+
+        mp_results = [
+            SimpleNamespace(detections=[mp_det(0.1, 0.1, 0.2, 0.2)]),
+            SimpleNamespace(detections=[]),  # missed by MediaPipe
+            SimpleNamespace(detections=[mp_det(0.12, 0.1, 0.2, 0.2)]),
+        ]
+
+        class FakeFaceDetection:
+            def __init__(self, **_kwargs):
+                self._idx = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def process(self, _rgb):
+                res = mp_results[self._idx]
+                self._idx += 1
+                return res
+
+        mediapipe = SimpleNamespace(solutions=SimpleNamespace(face_detection=SimpleNamespace(
+            FaceDetection=FakeFaceDetection,
+        )))
+        cv2 = SimpleNamespace(cvtColor=lambda f, _code: f, COLOR_BGR2RGB=0)
+        analyzer = Mock()
+        analyzer.get.return_value = [SimpleNamespace(bbox=[50, 50, 80, 80])]
+
+        with patch.dict(sys.modules, {"cv2": cv2, "mediapipe": mediapipe}):
+            detections = lip_sync_worker._detect_faces_per_frame(frames, get_analyzer=lambda: analyzer)
+        self.assertEqual(detections[0], [(10, 10, 30, 30)])
+        self.assertEqual(detections[1], [(50, 50, 80, 80)])
+        self.assertEqual(detections[2], [(12, 10, 32, 30)])
+        # InsightFace only ran on the single frame MediaPipe missed.
+        self.assertEqual(analyzer.get.call_count, 1)
+
+        # When InsightFace fails on the gap, partial MediaPipe detections are still preserved.
+        with patch.dict(sys.modules, {"cv2": cv2, "mediapipe": mediapipe}):
+            partial = lip_sync_worker._detect_faces_per_frame(
+                frames, get_analyzer=Mock(side_effect=RuntimeError("no insightface")),
+            )
+        self.assertEqual(partial, [[(10, 10, 30, 30)], [], [(12, 10, 32, 30)]])

@@ -90,4 +90,10 @@ def load(runtime, token: str) -> Share | None:
         player = load_player(_output(runtime, data["output"]))
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    return Share(player, str(data.get("title") or "")) if player is not None else None
+    if player is None:
+        return None
+    if player.video is not None:
+        lipsync = player.video.with_name(f"{player.video.stem}.lipsync.mp4")
+        if lipsync.is_file():
+            player.video = lipsync
+    return Share(player, str(data.get("title") or ""))

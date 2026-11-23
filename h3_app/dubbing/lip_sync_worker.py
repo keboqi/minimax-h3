@@ -346,25 +346,33 @@ def _detect_faces_per_frame(
                         y2 = min(h, int(round((rel.ymin + rel.height) * h)))
                         if x2 > x1 + 4 and y2 > y1 + 4:
                             detections[idx].append((x1, y1, x2, y2))
-            if any(detections):
+            if all(detections):
                 return detections
     except Exception:
         pass
 
-    if get_analyzer is not None:
-        analyzer = get_analyzer()
-    else:
-        from insightface.app import FaceAnalysis
+    missing = [idx for idx, boxes in enumerate(detections) if not boxes]
+    if not missing:
+        return detections
 
-        analyzer = FaceAnalysis(name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-        analyzer.prepare(ctx_id=0, det_size=(640, 640))
-    for idx, frame in enumerate(frames_bgr):
-        for face in analyzer.get(frame):
-            x1, y1, x2, y2 = (int(round(float(v))) for v in face.bbox[:4])
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
-            if x2 > x1 + 4 and y2 > y1 + 4:
-                detections[idx].append((x1, y1, x2, y2))
+    try:
+        if get_analyzer is not None:
+            analyzer = get_analyzer()
+        else:
+            from insightface.app import FaceAnalysis
+
+            analyzer = FaceAnalysis(name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+            analyzer.prepare(ctx_id=0, det_size=(640, 640))
+        for idx in missing:
+            for face in analyzer.get(frames_bgr[idx]):
+                x1, y1, x2, y2 = (int(round(float(v))) for v in face.bbox[:4])
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                if x2 > x1 + 4 and y2 > y1 + 4:
+                    detections[idx].append((x1, y1, x2, y2))
+    except Exception:
+        if not any(detections):
+            raise
     return detections
 
 

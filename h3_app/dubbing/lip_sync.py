@@ -259,6 +259,18 @@ class _Turn:
     shot_end: float
     shot_index: int = 0
     visual_hint: dict[str, Any] | None = None
+    visual_hints: tuple[dict[str, Any], ...] = ()
+
+
+def _merge_hints(first: Sequence[dict[str, Any]], second: Sequence[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    merged: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for item in (*first, *second):
+        marker = id(item)
+        if marker not in seen:
+            seen.add(marker)
+            merged.append(item)
+    return tuple(merged)
 
 
 def _drop_cross_speaker_overlaps(turns: list[_Turn]) -> list[_Turn]:
@@ -276,6 +288,7 @@ def _drop_cross_speaker_overlaps(turns: list[_Turn]) -> list[_Turn]:
             continue
         chosen = active[0]
         hint = next((t.visual_hint for t in active if t.visual_hint is not None), None)
+        hints = _merge_hints((), [h for t in active for h in t.visual_hints])
         if (clean and clean[-1].speaker == chosen.speaker
                 and clean[-1].shot_index == chosen.shot_index
                 and abs(clean[-1].end - left) < 1e-4):
@@ -284,12 +297,13 @@ def _drop_cross_speaker_overlaps(turns: list[_Turn]) -> list[_Turn]:
                 speaker=prev.speaker, start=prev.start, end=right,
                 shot_start=prev.shot_start, shot_end=prev.shot_end,
                 shot_index=prev.shot_index, visual_hint=prev.visual_hint or hint,
+                visual_hints=_merge_hints(prev.visual_hints, hints),
             )
         else:
             clean.append(_Turn(
                 speaker=chosen.speaker, start=left, end=right,
                 shot_start=chosen.shot_start, shot_end=chosen.shot_end,
-                shot_index=chosen.shot_index, visual_hint=hint,
+                shot_index=chosen.shot_index, visual_hint=hint, visual_hints=hints,
             ))
     return clean
 
@@ -319,31 +333,53 @@ def _hint_to_face_target(hint: dict[str, Any] | None, video_size: tuple[int, int
     )
 
 
-def _line_visual_hint(
+def _line_visual_hints(
     line: dict[str, Any],
     speaker: str,
     start: float,
     end: float,
     visual_speakers: Sequence[dict[str, Any]],
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, tuple[dict[str, Any], ...]]:
+    collected: list[dict[str, Any]] = []
     hint = line.get("visual_speaker")
     if isinstance(hint, dict):
-        return hint
-    if not visual_speakers:
-        return None
-    line_start = float(line["start"]) if isinstance(line.get("start"), (int, float)) else float(start)
-    line_end = float(line["end"]) if isinstance(line.get("end"), (int, float)) else float(end)
-    matches = [
-        item for item in visual_speakers
-        if isinstance(item, dict)
-        and item.get("speaker") == speaker
+        collected.append(hint)
+    if visual_speakers:
+        line_start = float(line["start"]) if isinstance(line.get("start"), (int, float)) else float(start)
+        line_end = float(line["end"]) if isinstance(line.get("end"), (int, float)) else float(end)
+        for item in visual_speakers:
+            if (isinstance(item, dict)
+                    and item.get("speaker") == speaker
+                    and isinstance(item.get("time"), (int, float))
+                    and line_start - 0.1 <= float(item["time"]) <= line_end + 0.1):
+                collected.append(item)
+    if not collected:
+        return None, ()
+    primary = (
+        hint if isinstance(hint, dict) else
+        next((item for item in collected if item.get("visibility") == "on_screen" and item.get("face_center")),
+             collected[0])
+    )
+    return primary, tuple(collected)
+
+
+def _best_in_window_hint(
+    hints: Sequence[dict[str, Any]],
+    first_frame: int,
+    last_frame: int,
+    mid_time: float,
+) -> dict[str, Any] | None:
+    candidates = [
+        item for item in hints
+        if item.get("visibility") == "on_screen"
+        and item.get("face_center")
         and isinstance(item.get("time"), (int, float))
-        and line_start - 0.1 <= float(item["time"]) <= line_end + 0.1
+        and math.isfinite(item["time"])
+        and first_frame <= round(float(item["time"]) * FPS) < last_frame
     ]
-    if not matches:
+    if not candidates:
         return None
-    on_screen = next((item for item in matches if item.get("visibility") == "on_screen" and item.get("face_center")), None)
-    return on_screen or matches[0]
+    return min(candidates, key=lambda item: abs(float(item["time"]) - mid_time))
 
 
 def plan_lip_sync_windows(
@@ -371,7 +407,7 @@ def plan_lip_sync_windows(
         raise H3Error("max_window_seconds must be at least 1 second.")
 
     try:
-        raw_turns: list[tuple[float, float, str, dict[str, Any] | None]] = []
+        raw_turns: list[tuple[float, float, str, dict[str, Any] | None, tuple[dict[str, Any], ...]]] = []
         with open_alignment(dub) as (saved, clips):
             lines = saved["lines"]
             saved_hints = list(saved.get("visual_speakers") or ())
@@ -385,15 +421,18 @@ def plan_lip_sync_windows(
                     continue
                 line = lines[index]
                 line_speaker = line["speaker"]
-                hint = (
-                    _line_visual_hint(line, line_speaker, start, end, effective_hints)
-                    if use_visual_hints else None
+                hint, all_hints = (
+                    _line_visual_hints(line, line_speaker, start, end, effective_hints)
+                    if use_visual_hints else (None, ())
                 )
                 clamped_start = max(0.0, float(start))
                 clamped_end = min(float(video_duration), float(end))
                 if clamped_end - clamped_start < _MIN_TURN_SECONDS:
                     continue
-                raw_turns.append((clamped_start, clamped_end, line_speaker, hint if isinstance(hint, dict) else None))
+                raw_turns.append((
+                    clamped_start, clamped_end, line_speaker,
+                    hint if isinstance(hint, dict) else None, all_hints,
+                ))
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise H3Error("Saved fitted dialogue is missing or unreadable. Generate this dub again.") from exc
 
@@ -405,7 +444,7 @@ def plan_lip_sync_windows(
 
     # Split every turn cleanly at shot boundaries, applying shot-level assignments when supplied.
     shot_turns: list[_Turn] = []
-    for start, end, line_speaker, hint in sorted(raw_turns, key=lambda item: (item[0], item[1])):
+    for start, end, line_speaker, hint, all_hints in sorted(raw_turns, key=lambda item: (item[0], item[1])):
         for shot_index, (shot_start, shot_end) in shots:
             left = max(start, shot_start)
             right = min(end, shot_end)
@@ -413,7 +452,8 @@ def plan_lip_sync_windows(
                 continue
             shot_turns.append(_Turn(
                 speaker=line_speaker, start=left, end=right,
-                shot_start=shot_start, shot_end=shot_end, shot_index=shot_index, visual_hint=hint,
+                shot_start=shot_start, shot_end=shot_end, shot_index=shot_index,
+                visual_hint=hint, visual_hints=all_hints,
             ))
 
     shot_turns = _drop_cross_speaker_overlaps(shot_turns)
@@ -438,12 +478,13 @@ def plan_lip_sync_windows(
                 and turn.start - grouped[-1].end <= max_gap_seconds
                 and turn.end - grouped[-1].start <= max_window
                 and not any(other != turn.speaker and left < turn.start and right > grouped[-1].end
-                            for left, right, other, _ in raw_turns)):
+                            for left, right, other, _, _ in raw_turns)):
             prev = grouped[-1]
             grouped[-1] = _Turn(
                 speaker=prev.speaker, start=prev.start, end=max(prev.end, turn.end),
                 shot_start=prev.shot_start, shot_end=prev.shot_end,
                 shot_index=prev.shot_index, visual_hint=prev.visual_hint or turn.visual_hint,
+                visual_hints=_merge_hints(prev.visual_hints, turn.visual_hints),
             )
         else:
             grouped.append(turn)
@@ -456,6 +497,7 @@ def plan_lip_sync_windows(
                 speaker=turn.speaker, start=cursor, end=cursor + max_window,
                 shot_start=turn.shot_start, shot_end=turn.shot_end,
                 shot_index=turn.shot_index, visual_hint=turn.visual_hint,
+                visual_hints=turn.visual_hints,
             ))
             cursor += max_window
         if turn.end - cursor >= _MIN_TURN_SECONDS:
@@ -463,6 +505,7 @@ def plan_lip_sync_windows(
                 speaker=turn.speaker, start=cursor, end=turn.end,
                 shot_start=turn.shot_start, shot_end=turn.shot_end,
                 shot_index=turn.shot_index, visual_hint=turn.visual_hint,
+                visual_hints=turn.visual_hints,
             ))
 
     total_frames = max(1, math.ceil(video_duration * FPS))
@@ -486,6 +529,7 @@ def plan_lip_sync_windows(
         render_frames = snap_h3_frames(source_frames)
         active_start_frame = max(0, min(source_frames - 1, math.floor(chunk.start * FPS) - first_frame))
         active_end_frame = max(active_start_frame + 1, min(source_frames, math.ceil(chunk.end * FPS) - first_frame))
+        mid = (chunk.start + chunk.end) / 2
         face_target = None
         face_size = None
         manual = False
@@ -494,7 +538,6 @@ def plan_lip_sync_windows(
             manual = bool(assigned is not None and assigned.status == "manual")
             if assigned and assigned.track_id is not None and tracks is not None:
                 track = tracks.get((chunk.shot_index, assigned.track_id))
-                mid = (chunk.start + chunk.end) / 2
                 samples = [obs for obs in track.observations
                            if first_frame <= round(obs.time * FPS) < last_frame] if track else []
                 observation = min(samples, key=lambda obs: abs(obs.time - mid), default=None)
@@ -508,12 +551,9 @@ def plan_lip_sync_windows(
             elif assigned and assigned.face_center is not None:
                 ref = assigned.reference_time
                 if ref is not None and not first_frame <= round(ref * FPS) < last_frame:
-                    hint = chunk.visual_hint or {}
-                    hint_time = hint.get("time")
-                    if (hint.get("visibility") == "on_screen" and hint.get("face_center")
-                            and isinstance(hint_time, (int, float)) and math.isfinite(hint_time)
-                            and first_frame <= round(float(hint_time) * FPS) < last_frame):
-                        face_target = _hint_to_face_target(hint, video_size, first_frame, 0, source_frames)
+                    in_window_hint = _best_in_window_hint(chunk.visual_hints, first_frame, last_frame, mid)
+                    if in_window_hint is not None:
+                        face_target = _hint_to_face_target(in_window_hint, video_size, first_frame, 0, source_frames)
                     else:
                         face_target = _center_to_face_target(
                             assigned.face_center, None, video_size, first_frame, active_start_frame, active_end_frame,
@@ -523,8 +563,9 @@ def plan_lip_sync_windows(
                         assigned.face_center, ref, video_size, first_frame, 0, source_frames,
                     )
         if face_target is None:
+            in_window_hint = _best_in_window_hint(chunk.visual_hints, first_frame, last_frame, mid)
             face_target = _hint_to_face_target(
-                chunk.visual_hint, video_size, first_frame, active_start_frame, active_end_frame,
+                in_window_hint or chunk.visual_hint, video_size, first_frame, active_start_frame, active_end_frame,
             )
         windows.append(LipSyncWindow(
             speaker=chunk.speaker,

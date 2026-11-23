@@ -95,6 +95,15 @@ class ShareTests(unittest.TestCase):
         other = shares.create(self.runtime, plain, "Plain")
         self.assertEqual(self.client.get(f"{share_path(other)}/music").status_code, 404)
 
+    def test_share_serves_lip_synced_video_when_available(self):
+        token = shares.create(self.runtime, self.output, "Talk")
+        self.assertEqual(self.client.get(f"{share_path(token)}/video").content, b"video bytes")
+        lipsync = self.output.with_name(f"{self.output.stem}.lipsync.mp4")
+        lipsync.write_bytes(b"lipsync video bytes")
+        self.assertEqual(self.client.get(f"{share_path(token)}/video").content, b"lipsync video bytes")
+        lipsync.unlink()
+        self.assertEqual(self.client.get(f"{share_path(token)}/video").content, b"video bytes")
+
     def test_the_page_is_self_contained_and_view_only(self):
         token = shares.create(self.runtime, self.output, 'Talk <script>"')
         response = self.client.get(share_path(token))
