@@ -77,6 +77,9 @@ class WorkspaceStore:
                     created REAL NOT NULL, updated REAL NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS soundstage_projects (
                     name TEXT PRIMARY KEY, payload TEXT NOT NULL, result TEXT, updated REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS run_queues (
+                    kind TEXT NOT NULL, owner TEXT NOT NULL, updated REAL NOT NULL,
+                    payload TEXT NOT NULL, PRIMARY KEY(kind, owner));
                 CREATE INDEX IF NOT EXISTS storyboards_owner ON storyboards(owner, updated);
                 CREATE INDEX IF NOT EXISTS assets_kind_available_modified ON assets(kind, available, modified DESC);
                 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
@@ -123,6 +126,45 @@ class WorkspaceStore:
         """Remove a global workspace setting from the ``settings`` table."""
         with self.connect() as db:
             db.execute("DELETE FROM settings WHERE key=?", (key,))
+
+    def save_run_queue(self, kind: str, owner: str, payload: dict) -> None:
+        """Persist a page queue snapshot (Soundstage Batch or Storyboard Auto Render)."""
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO run_queues (kind, owner, updated, payload) VALUES (?, ?, ?, ?)",
+                (str(kind), str(owner), time.time(), json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def load_run_queues(self, kind: str) -> dict[str, dict]:
+        """Load persisted page queue snapshots for ``kind``, keyed by owner."""
+        with self.connect() as db:
+            rows = db.execute("SELECT owner, payload FROM run_queues WHERE kind=?", (str(kind),)).fetchall()
+        result: dict[str, dict] = {}
+        for row in rows:
+            try:
+                data = json.loads(row["payload"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, dict):
+                result[str(row["owner"])] = data
+        return result
+
+    def delete_run_queue(self, kind: str, owner: str) -> None:
+        """Remove a persisted page queue snapshot."""
+        with self.connect() as db:
+            db.execute("DELETE FROM run_queues WHERE kind=? AND owner=?", (str(kind), str(owner)))
+
+    def load_job_payload(self, job_id: str) -> dict | None:
+        """Read one persisted job payload by ID, or None if not found."""
+        with self.connect() as db:
+            row = db.execute("SELECT payload FROM jobs WHERE id=?", (str(job_id),)).fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def issue_owner(self, owner=None):
         owner = owner or secrets.token_hex(24)

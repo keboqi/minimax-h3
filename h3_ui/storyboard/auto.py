@@ -37,8 +37,8 @@ class AutoRenders(RunQueues):
 
     def __init__(self, service: Callable[[], sb.StoryboardService], *,
                  start_generation: Callable[[str, str, Any], Run], start_export: Callable[[str, str], Run],
-                 interrupt: Callable[[Any, Run], str] | None):
-        super().__init__(MESSAGES, interrupt)
+                 interrupt: Callable[[Any, Run], str] | None, store=None, job_lookup=None):
+        super().__init__(MESSAGES, interrupt, store=store, kind="storyboard_auto", job_lookup=job_lookup)
         self.service = service
         self.start_generation = start_generation
         self.start_export = start_export

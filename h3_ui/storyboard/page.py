@@ -153,6 +153,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         start_export=lambda owner, storyboard_id: start_join(owner, storyboard_id, False, True),
         interrupt=(None if interrupt is None else
                    lambda session, run: interrupt(session, family="storyboard", job_id=run.job_id)),
+        store=getattr(handlers.service, "store", None),
     )
 
     auto_payload = autos.payload
@@ -191,6 +192,19 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
                        "openai_models": list(OPENAI_PROMPT_MODELS)},
             "subtitle_languages": subtitles.TARGET_LANGUAGES,
             "subtitle_models": subtitles.TRANSLATION_MODELS,
+        }
+
+    @app.get(f"{api}/capabilities", include_in_schema=False)
+    @guarded
+    def storyboard_capabilities(request: Request):
+        """Authoritative Storyboard schema & limits so skills never hardcode drifting catalogs."""
+        owner_of(request)
+        return {
+            "gpu": gpu and not is_cpu_only(),
+            "features": {"auto_resume": True},
+            "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],
+            "tail_frames": sb.TAIL_FRAMES,
+            "max_takes": MAX_TAKES_PER_RUN,
         }
 
     # Storyboards -----------------------------------------------------------
@@ -676,3 +690,14 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         owner = owner_of(request)
         message = autos.stop(owner, session_of(request))
         return {"message": message, "auto": auto_payload(owner)}
+
+    @app.post(f"{api}/auto/resume", include_in_schema=False)
+    @guarded
+    def resume_auto(request: Request):
+        if is_cpu_only():
+            raise H3Error(CPU_ONLY_MESSAGE)
+        if not gpu:
+            raise H3Error("Scenes are generated on the GPU endpoint.")
+        owner = owner_of(request)
+        autos.resume(owner, session_of(request))
+        return {"auto": auto_payload(owner)}

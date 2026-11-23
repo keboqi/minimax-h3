@@ -236,11 +236,33 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         owner_of(request)
         return {"gpu": gpu,
                 "background_music": generate_music is not None,
+                "capabilities": {"prepare": True, "library_upload": True, "batch_resume": True},
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
                 "ranges": {key: list(bounds) for key, bounds in SETTING_RANGES.items()},
                 "video": video_boot_payload(video_export.engines) if video_export else None,
                 **boot_payload(), **cast_boot_payload()}
+
+    @app.get(f"{api}/capabilities", include_in_schema=False)
+    @guarded
+    def capabilities_route(request: Request):
+        """Authoritative Soundstage schema & presets so skills never hardcode drifting catalogs."""
+        from h3_app.drama3.visual_effects import EFFECT_PRESETS
+        from . import visuals
+
+        owner_of(request)
+        effect_kinds = {
+            preset["id"]: preset["kind"]
+            for preset in EFFECT_PRESETS
+            if isinstance(preset, dict) and preset.get("id") and preset.get("kind")
+        }
+        return {
+            "gpu": gpu,
+            "features": {"prepare": True, "library_upload": True, "batch_resume": True},
+            "effect_kinds": effect_kinds,
+            "style_presets": list(visuals.STYLE_PRESETS.keys()),
+            "setting_ranges": {key: list(bounds) for key, bounds in SETTING_RANGES.items()},
+        }
 
     def example_blocked(owner, name):
         return (runs.active(owner, name)
@@ -276,6 +298,110 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         with editing(store, name) as data:
             apply_fields(data, body, SETTING_FIELDS, SETTING_RANGES)
         return payload(owner, name)
+
+    @app.post(f"{api}/project/prepare", include_in_schema=False)
+    @guarded
+    def prepare_project(name: str, request: Request, body: dict = Body(...)):
+        """Atomic CPU-safe validate-and-apply for Workshop handoffs with digest and revision checks."""
+        from .controls import DRAMA3_VOICE_SLOTS
+        from .page_script import _apply_cast, _setting, failed as reply_failed, sync_sounds, writer_slots
+        from .page_video import VIDEO_FIELDS, VIDEO_RANGES, video_settings
+        from h3_app.drama3.visual_plan import check_plan_reply
+
+        owner = owner_of(request)
+        input_digest = str(body.get("input_digest") or "").strip() or None
+        expected_revision = body.get("expected_revision")
+        reply_raw = str(body.get("reply") or "")
+        if not reply_raw.strip():
+            raise H3Error("Prepare requires a writer reply.")
+
+        existing_names = {proj_name for proj_name, _ in store.soundstage_projects()}
+        created_new = name not in existing_names
+        if created_new:
+            store.create_soundstage_project(name)
+        else:
+            current_data, current_result = project(name)
+            if current_result is not None or example_blocked(owner, name):
+                raise H3Error(f"Workshop project {name!r} has production work; prepare revisions in a new project/title.")
+            saved_digest = current_data.get("_prepare_digest")
+            saved_rev = current_data.get("_prepare_revision")
+            if input_digest and saved_digest == input_digest:
+                proj = payload(owner, name)
+                return {"project": proj, "prepare_revision": saved_rev, "prepare_digest": saved_digest,
+                        "reused": True}
+            if expected_revision is not None and saved_rev != expected_revision:
+                raise H3Error(f"Workshop project {name!r} changed since handoff (revision {saved_rev} != {expected_revision}).")
+
+        try:
+            with editing(store, name) as data:
+                if body.get("source") is not None:
+                    data["text"] = str(body.get("source") or "")
+                if body.get("script_mode"):
+                    data["script_mode"] = str(body["script_mode"])
+                if body.get("title") is not None:
+                    data["title"] = str(body.get("title") or "")
+                if body.get("group"):
+                    data["speaker_group"] = str(body["group"])
+                if body.get("engine"):
+                    data["voice_engine"] = str(body["engine"])
+                data["skip_existing"] = True
+                data["skip_existing_sounds"] = True
+                strict_source = bool(body.get("strict_source", False))
+                data["strict_source"] = strict_source
+
+                before = data.get("text") or ""
+                outputs = list(actions.apply_drama3_writer_reply(
+                    reply_raw, before, _setting(data, "speaker_mode"),
+                    *writer_slots(data, clip), strict_source=strict_source))
+                status = str(outputs[1])
+                if reply_failed(status):
+                    raise H3Error(status)
+                data.pop("_writer_proposal", None)
+                _apply_cast(data, outputs)
+                data["prepared"] = True
+                sync_sounds(actions, data)
+
+                language = body.get("language")
+                if language:
+                    for slot in range(DRAMA3_VOICE_SLOTS):
+                        if data.get(f"voice_{slot}_save_name") or data.get(f"voice_{slot}_description"):
+                            data[f"voice_{slot}_language"] = str(language)
+
+                sampling = body.get("sampling")
+                if isinstance(sampling, dict):
+                    apply_fields(data, sampling, SETTING_FIELDS, SETTING_RANGES)
+
+                visuals_body = body.get("visuals")
+                if isinstance(visuals_body, dict) and video_export is not None:
+                    vsettings = visuals_body.get("settings")
+                    if isinstance(vsettings, dict):
+                        apply_fields(data, vsettings, VIDEO_FIELDS, VIDEO_RANGES)
+                    vreply = str(visuals_body.get("reply") or "")
+                    if vreply.strip():
+                        _, mix_settings = planning_mix(name, data, None, video_export, store=store)
+                        parsed_plan, _ = check_plan_reply(
+                            vreply, mix_settings, runtime=runtime_config() if runtime_config else None)
+                        resolved = video_settings(data, video_export.engines)
+                        data["video_limit"] = len(parsed_plan["shots"])
+                        data["visual_plan"] = {"style": resolved["style"], "limit": len(parsed_plan["shots"]),
+                                               "plan": parsed_plan}
+                    data["auto_illustrate"] = True
+                    data["auto_save_speakers"] = True
+
+                next_rev = int(data.get("_prepare_revision") or 0) + 1
+                data["_prepare_revision"] = next_rev
+                if input_digest:
+                    data["_prepare_digest"] = input_digest
+        except Exception:
+            if created_new and hasattr(store, "delete_soundstage_project"):
+                try:
+                    store.delete_soundstage_project(name)
+                except Exception:
+                    pass
+            raise
+
+        proj = payload(owner, name)
+        return {"project": proj, "prepare_revision": next_rev, "prepare_digest": input_digest, "reused": False}
 
     # Files -----------------------------------------------------------------
     @app.get(f"{api}/audio", include_in_schema=False)
@@ -512,7 +638,8 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     batches = Batches(
         start_auto,
         interrupt=(None if interrupt is None else
-                   lambda session, run: interrupt(session, family=run.family or "drama3", job_id=run.job_id)))
+                   lambda session, run: interrupt(session, family=run.family or "drama3", job_id=run.job_id)),
+        store=store)
     batch_payload = batches.payload
 
     @app.get(f"{api}/batch", include_in_schema=False)
@@ -554,6 +681,15 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         owner = owner_of(request)
         message = batches.stop(owner, session_of(request))
         return {"message": message, "batch": batch_payload(owner)}
+
+    @app.post(f"{api}/batch/resume", include_in_schema=False)
+    @guarded
+    def resume_batch(request: Request):
+        if not gpu:
+            raise H3Error("Open Soundstage in Studio to resume batch production on the GPU.")
+        owner = owner_of(request)
+        batches.resume(owner, session_of(request))
+        return {"batch": batch_payload(owner)}
 
     @app.post(f"{api}/words", include_in_schema=False)
     @guarded

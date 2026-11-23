@@ -138,8 +138,31 @@ class TakeCheck:
     warnings: tuple[str, ...] = ()  # uncertain heuristics never trigger regeneration
 
 
+def check_take_transcript(expected_text: str, heard_text: str, *, min_similarity: float = 0.55) -> tuple[bool, float, str]:
+    """Compare expected spoken text against an ASR transcript using normalized sequence similarity.
+
+    Returns ``(ok, similarity, reason)`` so piloted ASR checks inside ``check_take`` can catch
+    garbled, skipped, or hallucinated takes that pass pure RMS/duration checks.
+    """
+    from difflib import SequenceMatcher
+
+    norm_exp = re.sub(r"[^\w\u4e00-\u9fff]+", "", str(expected_text or "").casefold())
+    norm_heard = re.sub(r"[^\w\u4e00-\u9fff]+", "", str(heard_text or "").casefold())
+    if not norm_exp:
+        return True, 1.0, "ok"
+    if not norm_heard:
+        return False, 0.0, "ASR heard no speech"
+    sim = SequenceMatcher(None, norm_exp, norm_heard, autojunk=False).ratio()
+    if sim < min_similarity:
+        return False, round(sim, 3), f"ASR transcript mismatch ({sim:.2f} < {min_similarity:.2f})"
+    return True, round(sim, 3), "ok"
+
+
 def check_take(samples: np.ndarray, rate: int, expected_seconds: float,
-               max_seconds: float | None = None) -> TakeCheck:
+               max_seconds: float | None = None, *,
+               expected_text: str | None = None,
+               asr_transcribe=None,
+               min_asr_similarity: float = 0.55) -> TakeCheck:
     """Fail clearly broken takes; report uncertain duration estimates as advice only.
 
     A take fails when it is silent, holds a fifth or less of the activity a line of at
@@ -171,6 +194,15 @@ def check_take(samples: np.ndarray, rate: int, expected_seconds: float,
     interior = silent[active[0]:active[-1] + 1]
     if len(interior) * FRAME_SECONDS > 1.5 and interior.mean() > 0.6:
         warnings.append("long internal pauses")
+    if asr_transcribe is not None and expected_text:
+        try:
+            heard = asr_transcribe(samples, rate)
+        except Exception:
+            heard = None
+        if heard is not None:
+            ok_asr, sim, reason = check_take_transcript(expected_text, heard, min_similarity=min_asr_similarity)
+            if not ok_asr:
+                return TakeCheck(False, reason, seconds, voiced, score + 10.0 - sim, tuple(warnings))
     return TakeCheck(True, "; ".join(warnings) or "ok", seconds, voiced, score, tuple(warnings))
 
 

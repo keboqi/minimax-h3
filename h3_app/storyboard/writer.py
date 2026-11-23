@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.llm import gemini, openai_compatible, strip_code_fence
 from h3_app.prompt_writers.common import read_system_prompt
 
-from .model import SCENE_SECONDS
+from .model import FRAMES, REFERENCES, SCENE_SECONDS, TEXT
 from .text import SEPARATOR_LINE, join_scenes
 
 
@@ -100,3 +101,77 @@ def _scene(item, usual: int) -> tuple[str, int]:
             or isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds != int(seconds)):
         raise H3Error("The writer did not return the requested scenes. Your story was kept; try again.")
     return prompt.strip(), min(max(int(seconds), SCENE_SECONDS[0]), SCENE_SECONDS[-1])
+
+
+def _name_mentioned(name: str, text: str) -> bool:
+    """Match Latin names on word boundaries (avoid 'Al' matching 'wall'); match CJK directly."""
+    cleaned = str(name or "").strip()
+    if not cleaned:
+        return False
+    if cleaned.isascii():
+        return bool(re.search(rf"\b{re.escape(cleaned)}\b", text, re.IGNORECASE))
+    return cleaned.casefold() in text.casefold()
+
+
+def plan_scene_mode(scene: dict, *, cast_names: tuple[str, ...] | list[str] = ()) -> tuple[str, list[str], str]:
+    """Select Storyboard generation mode (Ref2VA / FL2VA / T2VA) for a scene beat.
+
+    Recurring named cast members route to Reference media (Ref2VA) so character identity is preserved;
+    explicit endpoint frame/state anchors route to First / last frame (FL2VA); establishing or
+    non-character beats route to Text to video (T2VA).
+    """
+    prompt = str(scene.get("prompt") or "")
+    explicit_cast = [str(c) for c in (scene.get("cast") or []) if str(c).strip()]
+    matched_cast = list(dict.fromkeys(explicit_cast))
+    if not matched_cast and cast_names:
+        for name in cast_names:
+            cleaned = str(name or "").strip()
+            if _name_mentioned(cleaned, prompt):
+                matched_cast.append(cleaned)
+    if scene.get("first_image") or scene.get("last_image") or (scene.get("entry_state") and scene.get("exit_state")):
+        return FRAMES, matched_cast, "endpoint frame/state anchors specified"
+    if matched_cast:
+        return REFERENCES, matched_cast, f"recurring cast present ({', '.join(matched_cast[:3])})"
+    return TEXT, [], "establishing or non-character beat"
+
+
+def bind_cast_references(prompt: str, matched_cast: list[str], *, descriptions: dict[str, str] | None = None) -> str:
+    """Prepend deterministic subject_definitions and <Picture N> bindings for Ref2VA scenes."""
+    text = str(prompt or "").strip()
+    if not matched_cast or text.startswith("subject_definitions:"):
+        return text
+    descs = descriptions or {}
+    defs = []
+    for idx, name in enumerate(matched_cast, 1):
+        detail = str(descs.get(name) or "").strip()
+        defs.append(f"- <Picture {idx}> is {name}" + (f" ({detail})" if detail else "") + ".")
+    body = text if text.startswith("integrated_multimodal_description:") else f"integrated_multimodal_description: {text}"
+    return "subject_definitions:\n" + "\n".join(defs) + "\n\n" + body
+
+
+def plan_scenes_with_modes(
+    scenes: list[dict | str],
+    *,
+    cast_names: tuple[str, ...] | list[str] = (),
+    cast_descriptions: dict[str, str] | None = None,
+    usual_seconds: int = 10,
+) -> list[dict]:
+    """Normalize raw scenes into mode-aware Storyboard scene plans with cast bindings."""
+    planned = []
+    for idx, raw in enumerate(scenes, 1):
+        item = {"prompt": raw, "seconds": usual_seconds} if isinstance(raw, str) else dict(raw)
+        prompt, seconds = _scene(item, usual_seconds)
+        mode, matched_cast, rationale = plan_scene_mode({**item, "prompt": prompt}, cast_names=cast_names)
+        if mode == REFERENCES and matched_cast:
+            prompt = bind_cast_references(prompt, matched_cast, descriptions=cast_descriptions)
+        planned.append({
+            "key": str(item.get("key") or f"scene_{idx:02d}"),
+            "title": str(item.get("title") or item.get("beat") or f"Scene {idx}"),
+            "mode": mode,
+            "cast": matched_cast,
+            "seconds": seconds,
+            "link": str(item.get("link") or "cut"),
+            "prompt": prompt,
+            "mode_rationale": rationale,
+        })
+    return planned

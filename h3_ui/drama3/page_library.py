@@ -7,7 +7,11 @@ updates its slots, so a renamed voice stays in use and a deleted one is let go.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
+import hashlib
+from pathlib import Path
+import tempfile
 from typing import Any, Callable
 
 from fastapi import Body, FastAPI, Request
@@ -211,6 +215,74 @@ def install_library_routes(app: FastAPI, actions, *, api: str, store, owner_of, 
         saved = drama3_speakers.save_speaker(source.name, run.takes[index], run.brief["transcript"], runtime(),
                                              run.brief["description"], source.group)
         return answer(request, body.get("project"), f'"{saved.name}" now uses voice {index + 1}.', key=saved.key)
+
+    @app.post(f"{api}/library/speaker/upload", include_in_schema=False)
+    @guarded
+    def upload_speaker(request: Request, body: dict = Body(...)):
+        """CPU-safe idempotent upload of a locked voice clip into the Soundstage speaker library."""
+        owner_of(request)
+        config = runtime()
+        name = str(body.get("name") or "").strip()
+        group = str(body.get("group") or "Global").strip() or "Global"
+        transcript = str(body.get("transcript") or "").strip()
+        description = str(body.get("description") or "").strip()
+        expected_sha = str(body.get("sha256") or "").strip().lower()
+        existing = next((p for p in drama3_speakers.list_speakers(config, group)
+                         if p.name.casefold() == name.casefold()), None)
+        if existing is not None and existing.audio.is_file():
+            existing_sha = hashlib.sha256(existing.audio.read_bytes()).hexdigest().lower()
+            if (not expected_sha or existing_sha == expected_sha) and existing.transcript.strip() == transcript:
+                return {"saved": False, "reused": True, "key": existing.key,
+                        "message": f'Reused existing voice "{existing.name}" in "{existing.group}".'}
+        raw_b64 = str(body.get("audio_b64") or "")
+        if not raw_b64:
+            raise H3Error("Voice upload requires audio_b64.")
+        if not name:
+            raise H3Error("Voice upload requires a speaker name.")
+        suffix = Path(str(body.get("filename") or "voice.wav")).suffix.lower() or ".wav"
+        try:
+            data = base64.b64decode(raw_b64.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise H3Error("Invalid base64 audio payload.") from exc
+        with tempfile.TemporaryDirectory(prefix="h3-voice-upload-") as tmp:
+            clip = Path(tmp) / f"voice{suffix}"
+            clip.write_bytes(data)
+            saved = drama3_speakers.save_speaker(name, clip, transcript, config, description, group)
+        return {"saved": True, "reused": False, "key": saved.key,
+                "message": f'Uploaded voice "{saved.name}" to "{saved.group}".'}
+
+    @app.post(f"{api}/library/sound/upload", include_in_schema=False)
+    @guarded
+    def upload_sound(request: Request, body: dict = Body(...)):
+        """CPU-safe idempotent upload of a locked sound clip into the Soundstage sound library."""
+        owner_of(request)
+        config = runtime()
+        name = str(body.get("name") or "").strip()
+        description = str(body.get("description") or "").strip()
+        duration = body.get("duration", 5)
+        expected_sha = str(body.get("sha256") or "").strip().lower()
+        existing = drama3_sounds.find_sound(name, config)
+        if existing is not None and existing.audio.is_file():
+            existing_sha = hashlib.sha256(existing.audio.read_bytes()).hexdigest().lower()
+            if not expected_sha or existing_sha == expected_sha:
+                return {"saved": False, "reused": True, "name": existing.name,
+                        "message": f'Reused existing sound "{existing.name}".'}
+        raw_b64 = str(body.get("audio_b64") or "")
+        if not raw_b64:
+            raise H3Error("Sound upload requires audio_b64.")
+        if not name:
+            raise H3Error("Sound upload requires a sound name.")
+        suffix = Path(str(body.get("filename") or "sound.wav")).suffix.lower() or ".wav"
+        try:
+            data = base64.b64decode(raw_b64.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise H3Error("Invalid base64 audio payload.") from exc
+        with tempfile.TemporaryDirectory(prefix="h3-sound-upload-") as tmp:
+            clip = Path(tmp) / f"sound{suffix}"
+            clip.write_bytes(data)
+            saved = drama3_sounds.save_sound(name, clip, description, duration, config)
+        return {"saved": True, "reused": False, "name": saved.name,
+                "message": f'Uploaded sound "{saved.name}".'}
 
     @app.post(f"{api}/library/takes/interrupt", include_in_schema=False)
     @guarded

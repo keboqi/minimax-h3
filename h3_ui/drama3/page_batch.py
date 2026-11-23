@@ -36,8 +36,8 @@ class Batches(RunQueues):
     thread_name = "soundstage-batch"
 
     def __init__(self, start_auto: Callable[[str, str, Any, dict], Run],
-                 interrupt: Callable[[Any, Run], str] | None):
-        super().__init__(MESSAGES, interrupt)
+                 interrupt: Callable[[Any, Run], str] | None, *, store=None, job_lookup=None):
+        super().__init__(MESSAGES, interrupt, store=store, kind="soundstage_batch", job_lookup=job_lookup)
         self.start_auto = start_auto
 
     def start(self, owner, names: list[str], session, writer: dict | None = None, *, illustrate=None) -> RunQueue:
