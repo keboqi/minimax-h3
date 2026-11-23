@@ -393,7 +393,10 @@ def build_ui(manager: ModelManager | None, media=None):
 
     runtime, store = media if media is not None else (None, None)
     build_models = (lambda ui: _build_models(ui, manager)) if manager is not None else None
-    ui = studio_app.build_ui(runtime=runtime, store=store, build_models=build_models)
+    on_import = manager.volume.commit if manager is not None and manager.volume is not None else None
+    ui = studio_app.build_ui(
+        runtime=runtime, store=store, build_models=build_models, on_workspace_import=on_import,
+    )
     return ui.queue(default_concurrency_limit=1, max_size=8)
 
 

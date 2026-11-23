@@ -1076,7 +1076,7 @@ def update_drama3_settings(backend: str, model: str, comfy_experts: str):
     )
 
 
-def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=None) -> gr.Blocks:
+def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=None, on_workspace_import=None) -> gr.Blocks:
     """Compose the workspace using explicit catalogs and callbacks."""
     from .bootstrap import build_ui as compose_ui
     from .contracts import BootstrapCatalog, BootstrapServices
@@ -1156,6 +1156,7 @@ def build_ui(*, runtime: RuntimeConfig | None = None, store=None, build_models=N
             upscale_selected_input_images=MEDIA.upscale_selected_input_images,
         ),
         build_models=build_models,
+        on_workspace_import=on_workspace_import,
     )
 
 

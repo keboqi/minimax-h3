@@ -1,5 +1,6 @@
 """Composition root with explicit catalogs and callbacks; no generation policy."""
 
+from functools import partial
 from types import SimpleNamespace
 import gradio as gr
 from .api_bindings import bind_default_video_api
@@ -147,7 +148,13 @@ TASK_OPENS_CREATE_JS = """
 """
 
 
-def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_models=None) -> gr.Blocks:
+def build_ui(
+    catalog: BootstrapCatalog,
+    services: BootstrapServices,
+    *,
+    build_models=None,
+    on_workspace_import=None,
+) -> gr.Blocks:
     audio_probe_cache.install()
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
@@ -176,6 +183,24 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             include_models=build_models is not None,
         )
         system_view = build_system_view(app_views.system, initial_backend, initial_summary)
+        from .project_transfer import build_project_import_view, install_project_transfer_routes
+        from h3_app.jobs import JOBS as _JOBS
+
+        build_project_import_view(
+            app_views.system,
+            store=_JOBS.store,
+            runtime_config=services.engine_deps.runtime_config,
+            on_imported=on_workspace_import,
+        )
+        demo.h3_routes = (
+            *getattr(demo, "h3_routes", ()),
+            partial(
+                install_project_transfer_routes,
+                store=_JOBS.store,
+                runtime_config=services.engine_deps.runtime_config,
+                on_imported=on_workspace_import,
+            ),
+        )
         generation_view = app_views.generation
         gallery_view = app_views.gallery
         gallery_tab = app_views.gallery_tab
@@ -197,7 +222,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices, *, build_mo
             app_views.image, app_views, engine_views, engine_handlers, h3_components,
             services.engine_deps, demo,
         )
-        from functools import partial
 
         from .engines.remake import EditTarget, bind_h3_settings, media_targets as remake_media_targets
 
