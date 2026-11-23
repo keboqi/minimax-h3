@@ -183,9 +183,19 @@ def build_ui(
             include_models=build_models is not None,
         )
         system_view = build_system_view(app_views.system, initial_backend, initial_summary)
-        from .project_transfer import build_project_import_view, install_project_transfer_routes
+        from .project_transfer import (
+            build_project_import_view,
+            build_project_manage_view,
+            install_project_transfer_routes,
+        )
         from h3_app.jobs import JOBS as _JOBS
 
+        build_project_manage_view(
+            app_views.system,
+            store=_JOBS.store,
+            runtime_config=services.engine_deps.runtime_config,
+            on_changed=on_workspace_import,
+        )
         build_project_import_view(
             app_views.system,
             store=_JOBS.store,

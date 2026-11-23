@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import threading
 import time
 import uuid
@@ -199,3 +200,43 @@ def attach(runtime, name, session_id, *, expected_session=None, expected_generat
             return False
         write_json_atomic(revision, {"previous": previous.id, "published": time.time_ns()})
         return True
+
+
+def rename(runtime, old_name, new_name):
+    """Rename a saved dubbing project and relocate its revision metadata folder."""
+    new_name = str(new_name or "").strip()
+    if not new_name:
+        raise H3Error("Enter a project name.")
+    with _LOCK:
+        src = _path(runtime, old_name)
+        data = _read_project(src)
+        if new_name == data["name"]:
+            return new_name
+        dst = _path(runtime, new_name)
+        if dst != src and dst.exists():
+            raise H3Error(f'A Dubbing project named "{new_name}" already exists.')
+        src_revs = src.with_suffix("")
+        dst_revs = dst.with_suffix("")
+        moved_revs = False
+        if dst != src and src_revs.is_dir():
+            shutil.rmtree(dst_revs, ignore_errors=True)
+            shutil.move(src_revs, dst_revs)
+            moved_revs = True
+        try:
+            write_json_atomic(dst, {**data, "name": new_name})
+        except BaseException:
+            if moved_revs and dst_revs.is_dir() and not src_revs.exists():
+                shutil.move(dst_revs, src_revs)
+            raise
+        if dst != src:
+            src.unlink(missing_ok=True)
+        return new_name
+
+
+def delete(runtime, name):
+    """Delete a saved dubbing project and its revision metadata folder."""
+    with _LOCK:
+        path = _path(runtime, name)
+        _read_project(path)
+        path.unlink(missing_ok=True)
+        shutil.rmtree(path.with_suffix(""), ignore_errors=True)

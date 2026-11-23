@@ -446,6 +446,186 @@ def list_local_projects(store, runtime) -> list[dict[str, Any]]:
     return items
 
 
+def rename_local_project(
+    kind: str,
+    project_id: str,
+    new_name: str,
+    *,
+    store,
+    runtime,
+    on_changed: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Rename a local Soundstage, Storyboard, Dubbing, or Remake project."""
+    if kind not in PROJECT_KINDS:
+        raise H3Error(f"Unsupported project kind: {kind!r}")
+    cleaned = str(new_name or "").strip()
+    if not cleaned:
+        raise H3Error("Enter a project name.")
+
+    if kind == "soundstage":
+        if store is None:
+            raise H3Error("Workspace store is unavailable.")
+        try:
+            store.rename_soundstage_project(project_id, cleaned)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
+        if cleaned != project_id:
+            from h3_ui.drama3 import visuals
+
+            old_plan_audio = _soundstage_plan_audio(runtime, project_id)
+            new_plan_audio = _soundstage_plan_audio(runtime, cleaned)
+            old_plan = visuals.plan_path(old_plan_audio)
+            new_plan = visuals.plan_path(new_plan_audio)
+            if old_plan.is_file():
+                new_plan.parent.mkdir(parents=True, exist_ok=True)
+                old_plan.replace(new_plan)
+            old_stills = visuals.stills_dir(old_plan_audio, runtime.output_dir)
+            new_stills = visuals.stills_dir(new_plan_audio, runtime.output_dir)
+            if old_stills.is_dir():
+                shutil.rmtree(new_stills, ignore_errors=True)
+                new_stills.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(old_stills, new_stills)
+                _update_stills_source(new_stills, new_plan_audio.name, visuals.STILLS_RECORD)
+        outcome = {
+            "kind": "soundstage",
+            "old_id": project_id,
+            "id": cleaned,
+            "name": cleaned,
+            "message": f'Renamed Soundstage "{project_id}" to "{cleaned}".',
+        }
+    elif kind == "storyboard":
+        if store is None:
+            raise H3Error("Workspace store is unavailable.")
+        from h3_app.storyboard.service import StoryboardService
+
+        try:
+            existing = store.storyboard(None, project_id)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
+        old_name = str(existing.get("name") or project_id)
+        with store.connect() as db:
+            row = db.execute("SELECT owner FROM storyboards WHERE id=?", (project_id,)).fetchone()
+        sb_owner = str(row["owner"]) if row and row["owner"] else "local"
+        board = StoryboardService(store, lambda: runtime).rename(sb_owner, project_id, cleaned)
+        updated_name = str(board.get("name") or cleaned)
+        outcome = {
+            "kind": "storyboard",
+            "old_id": project_id,
+            "id": project_id,
+            "name": updated_name,
+            "message": f'Renamed Storyboard "{old_name}" to "{updated_name}".',
+        }
+    elif kind == "dubbing":
+        from h3_app.dubbing import projects as dubbing_projects
+
+        updated = dubbing_projects.rename(runtime, project_id, cleaned)
+        outcome = {
+            "kind": "dubbing",
+            "old_id": project_id,
+            "id": updated,
+            "name": updated,
+            "message": f'Renamed Dubbing "{project_id}" to "{updated}".',
+        }
+    else:
+        from h3_app.remake.project import Projects as RemakeProjects
+
+        projects = RemakeProjects(runtime.output_dir)
+        project = projects.load(None, project_id)
+        if project is None:
+            raise H3Error(f'Remake project "{project_id}" no longer exists.')
+        old_name = str(project.get("name") or project_id)
+        projects.edit(project, lambda current: current.update(name=cleaned))
+        outcome = {
+            "kind": "remake",
+            "old_id": project_id,
+            "id": project_id,
+            "name": cleaned,
+            "message": f'Renamed Remake "{old_name}" to "{cleaned}".',
+        }
+
+    if on_changed is not None:
+        on_changed()
+    return outcome
+
+
+def delete_local_project(
+    kind: str,
+    project_id: str,
+    *,
+    store,
+    runtime,
+    on_changed: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Remove a local Soundstage, Storyboard, Dubbing, or Remake project."""
+    if kind not in PROJECT_KINDS:
+        raise H3Error(f"Unsupported project kind: {kind!r}")
+
+    if kind == "soundstage":
+        if store is None:
+            raise H3Error("Workspace store is unavailable.")
+        try:
+            store.delete_soundstage_project(project_id)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
+        from h3_ui.drama3 import visuals
+
+        plan_audio = _soundstage_plan_audio(runtime, project_id)
+        visuals.plan_path(plan_audio).unlink(missing_ok=True)
+        shutil.rmtree(visuals.stills_dir(plan_audio, runtime.output_dir), ignore_errors=True)
+        outcome = {
+            "kind": "soundstage",
+            "id": project_id,
+            "name": project_id,
+            "message": f'Removed Soundstage "{project_id}".',
+        }
+    elif kind == "storyboard":
+        if store is None:
+            raise H3Error("Workspace store is unavailable.")
+        from h3_app.storyboard.service import StoryboardService
+
+        try:
+            existing = store.storyboard(None, project_id)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
+        old_name = str(existing.get("name") or project_id)
+        StoryboardService(store, lambda: runtime).delete(None, project_id)
+        outcome = {
+            "kind": "storyboard",
+            "id": project_id,
+            "name": old_name,
+            "message": f'Removed Storyboard "{old_name}".',
+        }
+    elif kind == "dubbing":
+        from h3_app.dubbing import projects as dubbing_projects
+
+        dubbing_projects.delete(runtime, project_id)
+        outcome = {
+            "kind": "dubbing",
+            "id": project_id,
+            "name": project_id,
+            "message": f'Removed Dubbing "{project_id}".',
+        }
+    else:
+        from h3_app.remake.project import Projects as RemakeProjects
+
+        projects = RemakeProjects(runtime.output_dir)
+        project = projects.load(None, project_id)
+        if project is None:
+            raise H3Error(f'Remake project "{project_id}" no longer exists.')
+        old_name = str(project.get("name") or project_id)
+        projects.delete(project)
+        outcome = {
+            "kind": "remake",
+            "id": project_id,
+            "name": old_name,
+            "message": f'Removed Remake "{old_name}".',
+        }
+
+    if on_changed is not None:
+        on_changed()
+    return outcome
+
+
 def _export_soundstage(archive: zipfile.ZipFile, project_id: str, *, store, runtime, added: set[str]) -> str:
     from h3_app.drama3 import sounds as drama3_sounds
     from h3_app.drama3.results import result_settings
@@ -537,8 +717,18 @@ def _export_soundstage(archive: zipfile.ZipFile, project_id: str, *, store, runt
     result_name: str | None = None
     result_path = Path(result) if result else None
     if result_path is not None and not result_path.is_file():
-        candidate = Path(runtime.output_dir) / "h3" / result_path.name
-        result_path = candidate if candidate.is_file() else None
+        output_dir = Path(runtime.output_dir)
+        result_path = next(
+            (
+                candidate
+                for candidate in (
+                    output_dir / "drama3" / result_path.name,
+                    output_dir / "h3" / result_path.name,
+                )
+                if candidate.is_file()
+            ),
+            None,
+        )
     if result_path is not None:
         result_name = result_path.name
         _add_zip_file(archive, result_path, f"result/{result_name}", added)
@@ -882,12 +1072,23 @@ def _import_soundstage(
 
     target_result: Path | None = None
     if result_name and f"result/{result_name}" in names_in_archive:
-        h3_dir = Path(runtime.output_dir) / "h3"
+        output_dir = Path(runtime.output_dir)
+        h3_dir = output_dir / "h3"
         h3_dir.mkdir(parents=True, exist_ok=True)
         result_path_obj = Path(result_name)
         target_result_name = result_name
-        if conflict == "rename" and (h3_dir / result_name).exists():
+        drama3_dir = output_dir / "drama3"
+        stills_root = output_dir / ".soundstage" / "stills"
+        if conflict == "rename" and (
+            (h3_dir / result_name).exists()
+            or (drama3_dir / result_name).exists()
+            or visuals.stills_dir(h3_dir / result_name, runtime.output_dir).exists()
+        ):
             used_stems = {p.stem for p in h3_dir.iterdir() if p.is_file()}
+            if drama3_dir.is_dir():
+                used_stems.update(p.stem for p in drama3_dir.iterdir() if p.is_file())
+            if stills_root.is_dir():
+                used_stems.update(p.name for p in stills_root.iterdir() if p.is_dir())
             new_stem = _unique_name(result_path_obj.stem, used_stems, style="stem")
             target_result_name = f"{new_stem}{result_path_obj.suffix}"
         target_result = h3_dir / target_result_name

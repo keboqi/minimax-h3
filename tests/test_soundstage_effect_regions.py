@@ -1,6 +1,8 @@
 """SAM misses must leave the other concepts in a shot available."""
 
 import ast
+import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -127,3 +129,75 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
             self.assertEqual(len(regions), 1)
             self.assertEqual(regions[0]["label"], "window")
             self.assertEqual(regions[0]["box"], [0.0, 0.0, 1.0, 0.5])
+
+    def test_read_regions_falls_back_to_legacy_manifest_and_prefers_exact_match(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            masks = root / effect_regions.MASK_FOLDER
+            masks.mkdir()
+            (masks / "shot.jpg.aaaa111122223333.region_1.png").write_bytes(b"old-mask")
+            (masks / "shot.jpg.bbbb111122223333.region_1.png").write_bytes(b"new-mask")
+            (masks / "other.jpg.cccc111122223333.region_1.png").write_bytes(b"other-mask")
+
+            older_regions = [{"id": "region_1", "label": "old_lamp", "mask": "shot.jpg.aaaa111122223333.region_1.png",
+                              "box": [0.0, 0.0, 0.4, 0.4]}]
+            newer_regions = [{"id": "region_1", "label": "window", "mask": "shot.jpg.bbbb111122223333.region_1.png",
+                              "box": [0.1, 0.1, 0.9, 0.9]}]
+            broken_regions = [{"id": "region_1", "label": "door", "mask": "shot.jpg.missing.region_1.png",
+                               "box": [0.0, 0.0, 1.0, 1.0]}]
+            other_regions = [{"id": "region_1", "label": "person", "mask": "other.jpg.cccc111122223333.region_1.png",
+                              "box": [0.2, 0.2, 0.8, 0.8]}]
+
+            older = masks / "shot.jpg.0123456789abcdef.json"
+            newer = masks / "shot.jpg.fedcba9876543210.json"
+            broken = masks / "shot.jpg.1111222233334444.json"
+            other = masks / "other.jpg.9999888877776666.json"
+            older.write_text(json.dumps(older_regions), encoding="utf-8")
+            newer.write_text(json.dumps(newer_regions), encoding="utf-8")
+            broken.write_text(json.dumps(broken_regions), encoding="utf-8")
+            other.write_text(json.dumps(other_regions), encoding="utf-8")
+            os.utime(older, (1000, 1000))
+            os.utime(newer, (2000, 2000))
+            os.utime(broken, (3000, 3000))
+            os.utime(other, (4000, 4000))
+
+            labels = ["person", "window", "door", "lamp"]
+            self.assertEqual(effect_regions.read_regions(root, "shot.jpg", labels), newer_regions)
+
+            exact = effect_regions.manifest_path(root, "shot.jpg", labels)
+            exact.write_text("[]", encoding="utf-8")
+            os.utime(exact, (500, 500))
+            self.assertEqual(effect_regions.read_regions(root, "shot.jpg", labels), [])
+
+    def test_rebind_stills_copies_matching_effect_masks(self):
+        from h3_app.drama3.visuals import FPS, Shot
+        from h3_ui.drama3 import visuals
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old_audio = root / "old.mp3"
+            new_audio = root / "new.mp3"
+            old_audio.write_bytes(b"old")
+            new_audio.write_bytes(b"new")
+            still = root / "s1.png"
+            Image.new("RGB", (32, 18), "navy").save(still)
+            old_shots = [Shot(0, FPS, False, "Opening", "Beat 1", id="shot_1")]
+            visuals.keep_stills(old_audio, root, old_shots, [still], {}, total_frames=FPS)
+            old_folder = visuals.stills_dir(old_audio, root)
+            image_name = visuals.read_stills(old_audio, root)["shots"][0]["image"]
+
+            mask_dir = old_folder / effect_regions.MASK_FOLDER
+            mask_dir.mkdir(parents=True, exist_ok=True)
+            mask_name = f"{image_name}.{'a' * 32}.region_1.png"
+            (mask_dir / mask_name).write_bytes(b"mask-png")
+            regions = [{"id": "region_1", "label": "person", "mask": mask_name, "box": [0.0, 0.0, 0.5, 0.5]}]
+            effect_regions.manifest_path(old_folder, image_name, ["person"]).write_text(
+                json.dumps(regions), encoding="utf-8"
+            )
+            (mask_dir / "other.jpg.1234567890abcdef.json").write_text("[]", encoding="utf-8")
+
+            new_shots = [Shot(0, 2 * FPS, False, "Opening", "Beat 1", id="shot_1")]
+            visuals.rebind_stills(new_audio, root, new_shots, previous_audio=old_audio, previous_shots=old_shots)
+            new_folder = visuals.stills_dir(new_audio, root)
+            self.assertEqual(effect_regions.read_regions(new_folder, image_name, ["person"]), regions)
+            self.assertFalse((new_folder / effect_regions.MASK_FOLDER / "other.jpg.1234567890abcdef.json").exists())

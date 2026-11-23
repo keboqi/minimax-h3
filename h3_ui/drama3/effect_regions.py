@@ -48,14 +48,49 @@ def manifest_path(folder, image, labels):
     return folder / MASK_FOLDER / f"{image}.{key}.json"
 
 
-def read_regions(folder, image, labels):
-    path = manifest_path(folder, image, labels)
+def _load_manifest(path: Path) -> list | None:
     try:
         regions = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(regions, list) and all((path.parent / region["mask"]).is_file() for region in regions):
+    except (OSError, ValueError):
+        return None
+    if not isinstance(regions, list):
+        return None
+    if all(
+        isinstance(region, dict)
+        and isinstance(region.get("mask"), str)
+        and (path.parent / region["mask"]).is_file()
+        for region in regions
+    ):
+        return regions
+    return None
+
+
+def _manifest_sort_key(path: Path) -> tuple[int, str]:
+    try:
+        return (path.stat().st_mtime_ns, path.name)
+    except OSError:
+        return (-1, path.name)
+
+
+def read_regions(folder, image, labels):
+    exact = manifest_path(folder, image, labels)
+    if (regions := _load_manifest(exact)) is not None:
+        return regions
+    mask_dir = Path(folder) / MASK_FOLDER
+    if not mask_dir.is_dir():
+        return None
+    pattern = re.compile(rf"{re.escape(str(image))}\.[0-9a-f]{{16}}\.json")
+    try:
+        candidates = [
+            entry
+            for entry in mask_dir.iterdir()
+            if entry != exact and pattern.fullmatch(entry.name) and entry.is_file()
+        ]
+    except OSError:
+        return None
+    for candidate in sorted(candidates, key=_manifest_sort_key, reverse=True):
+        if (regions := _load_manifest(candidate)) is not None:
             return regions
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
     return None
 
 

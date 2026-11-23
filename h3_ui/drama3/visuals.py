@@ -606,9 +606,21 @@ def rebind_stills(audio, root, shots, *, previous_audio=None, previous_shots=Non
     if not same:
         destination = stills_dir(audio, root)
         destination.mkdir(parents=True, exist_ok=True)
+        src_masks = folder / ".effect-masks"
+        mask_files = (
+            [entry for entry in src_masks.iterdir() if not entry.is_symlink() and entry.is_file()]
+            if src_masks.is_dir()
+            else []
+        )
+        dst_masks = destination / ".effect-masks"
         for index, image in enumerate(images):
             target = destination / image.name
             copyfile(image, target)
+            prefix = f"{image.name}."
+            for mask_file in mask_files:
+                if mask_file.name.startswith(prefix):
+                    dst_masks.mkdir(parents=True, exist_ok=True)
+                    copyfile(mask_file, dst_masks / mask_file.name)
             images[index] = target
     drawings = [Shot(shot.first, shot.frames, shot.dissolve, item.get("prompt", ""),
                      shot.beat, id=shot.id) for shot, item in pairs]

@@ -28,10 +28,13 @@ from h3_app.errors import H3Error
 from h3_app.project_transfer import (
     TRANSFER_SCHEMA_VERSION,
     build_auth_headers,
+    delete_local_project,
     export_project_archive,
     fetch_remote_projects,
     import_project_archive,
+    list_local_projects,
     normalize_server_url,
+    rename_local_project,
 )
 from h3_app.provenance import snapshot_path, write_snapshot
 from h3_app.remake.project import Projects as RemakeProjects
@@ -597,10 +600,9 @@ def test_workshop_ui_wires_transfer_routes_and_volume_commit(tmp_path: Path, mon
             fn for fn in installers if getattr(fn, "func", None) is install_project_transfer_routes
         )
         assert transfer_installer.keywords["on_imported"] == volume.commit
-        assert any(
-            c.get("props", {}).get("label") == "Remote Studio or Workshop URL"
-            for c in ui.get_config_file()["components"]
-        )
+        labels = {c.get("props", {}).get("label") for c in ui.get_config_file()["components"]}
+        assert "Remote Studio or Workshop URL" in labels
+        assert "Local project" in labels
     finally:
         ui.close()
         media_catalog._CATALOG = previous_catalog
@@ -692,3 +694,308 @@ def test_gradio_mounted_server_serves_transfer_routes_and_ui_callbacks(tmp_path:
         media_catalog._CATALOG = previous_catalog
         JOBS.store = previous_store
         studio_app.set_runtime_override(None)
+
+
+def test_soundstage_transfer_preserves_sam_segments_across_drama3_and_legacy_manifest_keys(tmp_path: Path):
+    from PIL import Image
+
+    from h3_app.drama3.visuals import FPS, Shot
+    from h3_ui.drama3 import effects_pass
+
+    src_runtime, src_store = _make_workspace(tmp_path / "source")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "target")
+
+    with _using_workspace_env(src_runtime):
+        drama3_dir = src_runtime.output_dir / "drama3"
+        drama3_dir.mkdir(parents=True, exist_ok=True)
+        mix_path = drama3_dir / "sam_story_20261123.mp3"
+        mix_path.write_bytes(b"drama3-mix-bytes")
+        write_snapshot(
+            mix_path,
+            {"family": "Drama 3", "settings": {"title": "SAM Story", "duration": 4.0, "chunks": [], "sounds": []}},
+        )
+
+        still_src = tmp_path / "shot1.png"
+        Image.new("RGB", (64, 36), "teal").save(still_src)
+        shots = [Shot(0, 4 * FPS, False, "Elena stands by the window.", "Window", id="shot_1")]
+        drama3_visuals.keep_stills(mix_path, src_runtime.output_dir, shots, [still_src], {}, total_frames=4 * FPS)
+        stills_folder = drama3_visuals.stills_dir(mix_path, src_runtime.output_dir)
+        image_name = drama3_visuals.read_stills(mix_path, src_runtime.output_dir)["shots"][0]["image"]
+
+        mask_dir = stills_folder / ".effect-masks"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        mask_name = f"{image_name}.{'b' * 32}.region_1.png"
+        Image.new("RGBA", (64, 36), (255, 255, 255, 200)).save(mask_dir / mask_name)
+        legacy_regions = [
+            {"id": "region_1", "label": "window", "mask": mask_name, "box": [0.1, 0.1, 0.8, 0.8]},
+        ]
+        (mask_dir / f"{image_name}.0123456789abcdef.json").write_text(
+            json.dumps(legacy_regions), encoding="utf-8"
+        )
+
+        effect_stack = [{"preset": "rain", "mode": "inside", "region_id": "region_1"}]
+        payload = {
+            "text": "[Elena] Look at the storm.",
+            "title": "SAM Story",
+            "shown_slots": 1,
+            "video_effect_stacks": {"shot_1": {"image": image_name, "effects": effect_stack}},
+        }
+        src_store.save_soundstage_project("SAM Story", payload)
+        # Store a stale directory prefix to verify export resolves mix files moved into output/drama3.
+        src_store.mark_soundstage_generated("SAM Story", str(tmp_path / "relocated" / "drama3" / mix_path.name))
+
+        archive = export_project_archive(
+            "soundstage", "SAM Story", tmp_path / "sam_story.zip", store=src_store, runtime=src_runtime
+        )
+
+    with _using_workspace_env(dst_runtime):
+        result = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert result["status"] == "imported"
+        loaded_payload, loaded_result = dst_store.soundstage_project("SAM Story")
+        assert loaded_result is not None
+        dst_mix = Path(loaded_result)
+        assert dst_mix.is_file() and dst_mix.read_bytes() == b"drama3-mix-bytes"
+
+        rows = [
+            {
+                "shot_id": "shot_1",
+                "index": 0,
+                "image_file": image_name,
+                "start": 0.0,
+                "end": 4.0,
+                "beat": "Window",
+                "prompt": "Elena stands by the window.",
+                "subjects": ["elena"],
+                "effects": [],
+            }
+        ]
+        subjects = [{"key": "elena", "kind": "characters", "anchor": "Elena, a woman in a navy coat"}]
+        items = effects_pass.inventory(dst_mix, dst_runtime.output_dir, rows, subjects, loaded_payload)
+        assert len(items) == 1
+        assert items[0]["regions"] == legacy_regions
+        assert items[0]["applied"] == effect_stack
+
+        public = effects_pass.public_pass("SAM Story", items, [], loaded_payload)
+        shot = public["shots"][0]
+        assert shot["segmented"] is True
+        assert [r["id"] for r in shot["regions"]] == ["region_1"]
+        assert shot["effects"] == effect_stack
+
+        # Pre-create a conflicting drama3 mix on target to ensure conflict="rename" avoids colliding stems/stills.
+        dst_drama3 = dst_runtime.output_dir / "drama3"
+        dst_drama3.mkdir(parents=True, exist_ok=True)
+        (dst_drama3 / mix_path.name).write_bytes(b"existing-drama3-mix")
+        dst_mix.unlink()
+        dst_stills = drama3_visuals.stills_dir(dst_mix, dst_runtime.output_dir)
+        assert dst_stills.is_dir()
+
+        renamed = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+        assert renamed["status"] == "renamed"
+        _, renamed_result = dst_store.soundstage_project(renamed["target_name"])
+        assert Path(renamed_result).name == "sam_story_20261123_imported.mp3"
+
+
+def test_local_project_rename_and_delete_all_four_kinds(tmp_path: Path):
+    from h3_app.project_transfer import _soundstage_plan_audio
+
+    runtime, store = _make_workspace(tmp_path / "workspace")
+    with _using_workspace_env(runtime):
+        # 1. Soundstage (with draft plan & stills + duplicate guard)
+        store.save_soundstage_project("SS One", {"text": "[Host] Hello", "title": "One"})
+        store.save_soundstage_project("SS Two", {"text": "[Host] Two", "title": "Two"})
+        old_plan_audio = _soundstage_plan_audio(runtime, "SS One")
+        old_plan_audio.parent.mkdir(parents=True, exist_ok=True)
+        drama3_visuals.write_plan(old_plan_audio, "Editorial ink", 2, {"shots": [], "script_cues": []})
+        old_stills = drama3_visuals.stills_dir(old_plan_audio, runtime.output_dir)
+        old_stills.mkdir(parents=True, exist_ok=True)
+        (old_stills / "shot1.jpg").write_bytes(b"jpg-bytes")
+        (old_stills / drama3_visuals.STILLS_RECORD).write_text(
+            json.dumps({"revision": "rev1", "source": old_plan_audio.name, "shots": [{"image": "shot1.jpg"}]}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(H3Error, match="already exists"):
+            rename_local_project("soundstage", "SS One", "SS Two", store=store, runtime=runtime)
+        with pytest.raises(H3Error, match="Enter a project name"):
+            rename_local_project("soundstage", "SS One", "   ", store=store, runtime=runtime)
+
+        ss_ren = rename_local_project("soundstage", "SS One", "SS Renamed", store=store, runtime=runtime)
+        assert ss_ren["id"] == "SS Renamed"
+        new_plan_audio = _soundstage_plan_audio(runtime, "SS Renamed")
+        assert drama3_visuals.plan_path(new_plan_audio).is_file()
+        assert not drama3_visuals.plan_path(old_plan_audio).exists()
+        assert not old_stills.exists()
+        stills_rec = json.loads(
+            (drama3_visuals.stills_dir(new_plan_audio, runtime.output_dir) / drama3_visuals.STILLS_RECORD).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert stills_rec["source"] == new_plan_audio.name
+
+        delete_local_project("soundstage", "SS Renamed", store=store, runtime=runtime)
+        with pytest.raises(ValueError):
+            store.soundstage_project("SS Renamed")
+        assert not drama3_visuals.plan_path(new_plan_audio).exists()
+        assert not drama3_visuals.stills_dir(new_plan_audio, runtime.output_dir).exists()
+
+        # 2. Storyboard
+        board_service = StoryboardService(store, lambda: runtime)
+        board_id = board_service.create(
+            "owner-1",
+            "Board One",
+            sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        )
+        cast_dir = store.root / "storyboards" / board_id / "cast"
+        cast_dir.mkdir(parents=True, exist_ok=True)
+        (cast_dir / "hero.png").write_bytes(b"png")
+
+        sb_ren = rename_local_project("storyboard", board_id, "Board Renamed", store=store, runtime=runtime)
+        assert sb_ren["name"] == "Board Renamed"
+        assert store.storyboard(None, board_id)["name"] == "Board Renamed"
+
+        delete_local_project("storyboard", board_id, store=store, runtime=runtime)
+        assert not (store.root / "storyboards" / board_id).exists()
+        with pytest.raises(ValueError):
+            store.storyboard(None, board_id)
+
+        # 3. Dubbing (with revision dir + duplicate guard)
+        dub_src = tmp_path / "dub.wav"
+        dub_src.write_bytes(b"RIFF-dub")
+        sess = dubbing_projects.save(runtime, "Dub One", None, str(dub_src), {"target_language": "English"})
+        dubbing_projects.save(runtime, "Dub Two", None, str(dub_src), {"target_language": "Japanese"})
+        dub_path = dubbing_projects._path(runtime, "Dub One")
+        rev_dir = dub_path.with_suffix("")
+        rev_dir.mkdir(parents=True, exist_ok=True)
+        (rev_dir / "rev.json").write_text("{}", encoding="utf-8")
+
+        with pytest.raises(H3Error, match="already exists"):
+            rename_local_project("dubbing", "Dub One", "Dub Two", store=store, runtime=runtime)
+
+        dub_ren = rename_local_project("dubbing", "Dub One", "Dub Renamed", store=store, runtime=runtime)
+        assert dub_ren["id"] == "Dub Renamed"
+        assert not dub_path.exists()
+        assert not rev_dir.exists()
+        new_dub_path = dubbing_projects._path(runtime, "Dub Renamed")
+        assert (new_dub_path.with_suffix("") / "rev.json").is_file()
+        assert dubbing_projects.load(runtime, "Dub Renamed")[1].id == sess.id
+
+        delete_local_project("dubbing", "Dub Renamed", store=store, runtime=runtime)
+        assert "Dub Renamed" not in dubbing_projects.names(runtime)
+        assert not new_dub_path.exists()
+        assert not new_dub_path.with_suffix("").exists()
+
+        # 4. Remake
+        remake_src = tmp_path / "clip.mp4"
+        remake_src.write_bytes(b"mp4-source")
+        remake_projects = RemakeProjects(runtime.output_dir)
+        created = remake_projects.create(
+            "owner-1",
+            "remake_key_1",
+            str(remake_src),
+            {"name": "Remake One"},
+            [{"render": (0, 24)}],
+        )
+        rm_ren = rename_local_project("remake", "remake_key_1", "Remake Renamed", store=store, runtime=runtime)
+        assert rm_ren["name"] == "Remake Renamed"
+        assert remake_projects.load(None, "remake_key_1")["name"] == "Remake Renamed"
+
+        delete_local_project("remake", "remake_key_1", store=store, runtime=runtime)
+        assert remake_projects.load(None, "remake_key_1") is None
+        assert not Path(created["folder"]).exists()
+
+
+def test_local_project_manage_routes_and_ui_callbacks(tmp_path: Path):
+    import gradio as gr
+    from fastapi.testclient import TestClient
+
+    from h3_ui.project_transfer import build_project_manage_view
+
+    runtime, store = _make_workspace(tmp_path / "manage_ws")
+    with _using_workspace_env(runtime):
+        store.save_soundstage_project("Alpha Stage", {"text": "[Host] Hi", "title": "Alpha"})
+        board_id = StoryboardService(store, lambda: runtime).create(
+            "owner-1",
+            "Beta Board",
+            sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        )
+        dub_src = tmp_path / "dub.wav"
+        dub_src.write_bytes(b"RIFF-dub")
+        dubbing_projects.save(runtime, "Gamma Dub", None, str(dub_src), {"target_language": "English"})
+
+        changed_mock = Mock()
+        app = FastAPI()
+        install_project_transfer_routes(
+            app, store=store, runtime_config=lambda: runtime, on_imported=changed_mock
+        )
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/projects/manage/rename",
+            json={"kind": "storyboard", "id": board_id, "name": "Beta Board Renamed"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Beta Board Renamed"
+        assert store.storyboard(None, board_id)["name"] == "Beta Board Renamed"
+        assert changed_mock.call_count == 1
+
+        resp = client.post(
+            "/api/projects/manage/delete",
+            json={"kind": "storyboard", "id": board_id},
+        )
+        assert resp.status_code == 200
+        assert changed_mock.call_count == 2
+
+        missing = client.post(
+            "/api/projects/manage/delete",
+            json={"kind": "storyboard", "id": board_id},
+        )
+        assert missing.status_code == 404
+
+        with gr.Blocks() as demo:
+            with gr.Column() as system_col:
+                build_project_manage_view(
+                    system_col,
+                    store=store,
+                    runtime_config=lambda: runtime,
+                    on_changed=changed_mock,
+                )
+        config = demo.get_config_file()
+
+        def callback_for(*, label: str | None = None, value: str | None = None):
+            for dep in config["dependencies"]:
+                for target in dep.get("targets", []):
+                    cid = target[0] if isinstance(target, (list, tuple)) else target
+                    block = demo.blocks.get(cid)
+                    if label is not None and getattr(block, "label", None) == label:
+                        return demo.fns[dep["id"]].fn
+                    if value is not None and getattr(block, "value", None) == value:
+                        return demo.fns[dep["id"]].fn
+            raise AssertionError(f"Missing callback for label={label!r}, value={value!r}")
+
+        filter_fn = callback_for(label="Project type")
+        select_fn = callback_for(label="Local project")
+        refresh_fn = callback_for(value="Refresh list")
+        rename_fn = callback_for(value="Rename project")
+        delete_fn = callback_for(value="Remove project")
+
+        drop_u, dub_name, names_map, msg = filter_fn("dubbing", None)
+        assert dub_name == "Gamma Dub"
+        assert "Showing 1 project" in msg
+        dub_key = drop_u["value"]
+        assert select_fn(dub_key, names_map) == "Gamma Dub"
+
+        drop_u, renamed_name, names_map, msg = rename_fn("dubbing", dub_key, "Gamma Dub v2", names_map)
+        assert renamed_name == "Gamma Dub v2"
+        assert 'Renamed Dubbing "Gamma Dub" to "Gamma Dub v2"' in msg
+        assert changed_mock.call_count == 3
+
+        drop_u, after_del_name, names_map, msg = delete_fn("dubbing", drop_u["value"], names_map)
+        assert drop_u["value"] is None
+        assert after_del_name == ""
+        assert 'Removed Dubbing "Gamma Dub v2"' in msg
+        assert changed_mock.call_count == 4
+
+        drop_u, rem_name, names_map, msg = refresh_fn("all", None)
+        assert rem_name == "Alpha Stage"
+        assert len(list_local_projects(store, runtime)) == 1
+        demo.close()

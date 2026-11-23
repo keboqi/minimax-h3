@@ -373,6 +373,31 @@ class WorkspaceStore:
         with self.connect() as db:
             db.execute("UPDATE soundstage_projects SET result=?, updated=? WHERE name=?", (str(result), time.time(), name))
 
+    def delete_soundstage_project(self, name):
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM soundstage_projects WHERE name=?", (name,))
+        if cursor.rowcount == 0:
+            raise ValueError("Select a saved Sound Stage project.")
+
+    def rename_soundstage_project(self, old_name, new_name):
+        new_name = str(new_name or "").strip()
+        if not new_name:
+            raise ValueError("Enter a project name.")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT 1 FROM soundstage_projects WHERE name=?", (old_name,)).fetchone()
+            if row is None:
+                raise ValueError("Select a saved Sound Stage project.")
+            if new_name == old_name:
+                return
+            try:
+                db.execute(
+                    "UPDATE soundstage_projects SET name=?, updated=? WHERE name=?",
+                    (new_name, time.time(), old_name),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f'A Soundstage project named "{new_name}" already exists.') from exc
+
     def index_asset(self, path, kind, metadata=None):
         path = Path(path).resolve()
         asset_id = uuid.uuid5(uuid.NAMESPACE_URL, path.as_uri()).hex
