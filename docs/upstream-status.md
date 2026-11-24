@@ -1,5 +1,150 @@
 # Upstream status
 
+## MiniMax H3 fused Turbo checkpoints — 2026-11-23
+
+**Test Spectrallic's fused DMAD and LightX2V builds first.** They keep the
+stock FL2VA or Ref2VA tensor layout and bake one known distillation
+adapter into the corresponding base. Hugging Face range reads confirmed
+all 932 tensor names, shapes and dtypes match the appropriate Comfy-Org
+INT8 ConvRot base for the sampled DMAD FL2VA 4-step, DMAD Ref2VA 8-step,
+LightX2V FL2VA 4-step and LightX2V Ref2VA 4-step files. The headers also
+identify the merged adapter and strength. These are loader-layout
+checks. Generation, peak memory and render quality still need GPU runs.
+
+| Checkpoint | Steps and size | Integration notes |
+| --- | --- | --- |
+| **Spectrallic DMAD INT8 ConvRot** | FL2VA and Ref2VA, **4 or 8**, **20.97 GB each** | Separate full-critic students for four and eight steps, merged at strength 1. Keep the matching DMAD recipe and video/audio shifts 12/2. The four-step FL2VA build is the cleanest comparison with our existing separate-adapter path. [Weights and recipes](https://huggingface.co/Spectrallic/MiniMax-H3-DMAD-int8-convrot) |
+| **Spectrallic LightX2V INT8 ConvRot** | FL2VA and Ref2VA, **4 or 8**, **20.97 GB each** | The four-step files bake FL2VA v1.3 and Ref2VA v1.0. The eight-step files bake v1.1, while our catalog uses v1.2. The publisher lists 6/3 shifts for its builds. Our current Ref2VA policy uses 12/3, so validate the fused Ref2VA recipe independently. [Weights and recipes](https://huggingface.co/Spectrallic/MiniMax-H3-LightX2V-int8-convrot) |
+| **OliviaRossi Hybrid DMAD + PDMD** | **6–8** recommended, **4** for preview. **15.90 GB W6A8**, **20.29 GB INT8** | One FL2VA/Ref2VA hybrid with DMAD 0.85 and PDMD 0.333 baked in. Start at eight steps, Euler/simple, CFG 1 and shifts 12/3. Best candidate if sharing one file across modes matters. [Model card](https://huggingface.co/OliviaRossi/Minimax-H3-Hybrid-DMAD-PDMD) |
+| **PRISM DMAD + PDMD** | **8**, **15.90 GB W6A8**, **20.28 GB INT8** | Singularity × 10Eros derivative. The author recommends Euler/Beta57 and 12/3 for this file. The same repo also ships Pika Flex merges. Sulphur3 × 10Eros is a separate DMAD/PDMD merge with a 21.06 GB INT8 file and a nine-step example. [PRISM](https://huggingface.co/OliviaRossi/Minimax-h3_Singularity-x-10Eros-Max_PRISM) · [Sulphur3 merge](https://huggingface.co/OliviaRossi/Minimax-H3-Sulphur3-10Erosmax-Merge) |
+| **MATLOWAI RefDelta + LightX2V + Mystic** | **4** recommended, **20.98 GB INT8** | The checkpoint bakes in Ref2VA behavior, LightX2V's eight-step weights and Mystic. Use the author's four-step res_multistep/simple recipe with 12/3. A style and motion candidate. [Weights and workflows](https://huggingface.co/MATLOWAI/minimax-h3-fused-turbo-int8-convrot) |
+| **Kijai TurboH3 I2VA INT8 ConvRot** | **5** in the upstream I2VA recipe, **20.97 GB** | Full distilled I2VA transformer. Its tensor header matches stock FL2VA INT8. The upstream schedule is five steps at 12/3. Validate the converted checkpoint on that schedule and with first-frame conditioning. [Kijai conversion](https://huggingface.co/Kijai/MiniMax-H3_comfy/blob/main/diffusion_models/minimax_h3_fl2va_turboh3_i2va_pruned_int8_convrot.safetensors) · [Upstream recipe](https://huggingface.co/TurboDiffusion/TurboH3-FL2VA-I2VA) |
+| **Wuli Turbo INT8 and F2 hybrid** | **8**, **21.39 GB** plain FL2VA or **25.01 GB** F2 | Wuli's full eight-step distill has a baked timestep table. The F2 community merge adds late Ref2VA blocks and FlashGen. Use the documented Euler/simple, CFG 1, 12/3 schedule. [ComfyUI ports and configs](https://huggingface.co/sandpies/Wuli-MiniMax-H3-Turbo-ComfyUI) |
+| **QuantFunc INT4, ChrisColeTech GGUF, rotated NVFP4** | QuantFunc **4 FL2VA / 8 Ref2VA**, **12.37 GB**. ChrisColeTech **8**, **11.39 GB Q4_K_M**. Rotated FL2VA **4**, about **12.5 GB**. | Compact fused alternatives with distinct loader paths. The ChrisColeTech release also provides a **20.96 GB** FL2VA FP8 safetensors file. [QuantFunc](https://huggingface.co/QuantFunc/Minimax-H3-Quantfunc-4bit) · [ChrisColeTech](https://huggingface.co/ChrisColeTech/minimax-h3-turbo-GGUF) · [Rotated NVFP4](https://huggingface.co/pottokao/MiniMax-H3-FL2VA-turbo-4step-v1.2-768p-NVFP4-rotated-T1) |
+
+The two ibyteohdear fused builds are sharded Diffusers transformers at
+about 40.23 GB each. The published 2/4-step pi-H3 DWD files from
+DeepBeepMeep are 1.74 GB INT8 or 3.35 GB BF16 DWD components that pair with
+an H3 transformer. SMD 4/8-step ComfyUI packages also use a separate
+adapter and base. [ibyteohdear DMD](https://huggingface.co/ibyteohdear/MiniMax-H3-Pruned-DMD-FL2VA-Turbo-Fused) ·
+[pi-H3 weights and workflow](https://github.com/Lakonik/ComfyUI-piFlow/blob/main/docs/piH3.md) ·
+[SMD releases](https://huggingface.co/collections/zjwfufu/smd)
+
+For an app integration, let the selected fused checkpoint activate its
+sampler, shifts and step count independently of the LoRA loader. The
+current graph treats an empty Turbo LoRA filename as standard sampling.
+Benchmark the fused DMAD checkpoint against the equivalent base and
+adapter with the same prompts, seeds, clip lengths and attention settings.
+Compare cold load, sampling time, peak VRAM, speech sync and motion.
+Source metadata and headers are in `.cache/h3-fused-audit-2026-11-23/`.
+
+## MiniMax H3 video base checkpoint audit — 2026-11-23
+
+MiniMax still publishes the same BF16 FL2VA and Ref2VA bases. Its latest
+repository update fixes the download instructions. The catalog's five H3
+profiles all resolve, including both aliases for each Singularity version.
+Keep Singularity v1.3 as the default and use the existing Original BF16
+profile as the quality reference.
+[MiniMax release history](https://huggingface.co/MiniMaxAI/MiniMax-H3/commits/main)
+
+| What to evaluate | Candidate | Fit for this repo |
+| --- | --- | --- |
+| Quality on the current workflows | **Singularity V2 pruned INT8**, 20.97 GB | Already selectable and the same size as v1.3. The author reports broader action coverage, better prompt adherence and a reference-audio conditioning fix. Compare both versions with matching prompts, seeds and sampler settings on action and multimodal reference clips. [Model card](https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity) |
+| Smaller checkpoint for the existing FL2VA and Ref2VA graphs | **Comfy-Org pruned W6A8**, 15.98 GB each | The pinned Core registers W6A8. These files are 24% smaller than the equivalent Comfy-Org INT8 ConvRot bases. Test against those INT8 bases first to isolate quantization effects, including with the LoRA and offload paths the app uses. A third-party Singularity V2 W6A8 is also 15.98 GB and has more limited published validation. [Comfy weights](https://huggingface.co/Comfy-Org/MiniMax-H3/tree/main/diffusion_models) · [Pinned loader](https://github.com/Comfy-Org/ComfyUI/blob/v0.46.0/comfy/quant_ops.py) · [V2 conversion](https://huggingface.co/boricuapab/Minimax-h3_Singularity_ref2va_v2_pruned_w6a8) |
+| Faster text and keyframe generation | **HyperFlow H3 Flash FL2VA INT8**, 16.01 GB | The 14B distill uses a dedicated loader and two-time schedule. Start with the publisher's six-step INT8 workflow. Its Ref2VA ComfyUI templates take image references, while the Python pipeline also accepts video and audio. [Weights and task matrix](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) · [ComfyUI nodes](https://github.com/Video-Rebirth/ComfyUI-HyperFlow-Flash) |
+| Faster multimodal Ref2VA | **FastH3 Omni INT8 ConvRot**, 22.21 GB, or **NVFP4 QAD**, 13.77 GB | The native ComfyUI recipe uses eight steps, CFG 1 and video/audio shifts 12/3. It accepts image, video and audio references. The published companion encoder and VAE hashes match the equivalent Comfy-Org files. Qualify it as a Ref2VA preset with its own sampling settings. Native NVFP4 acceleration targets Blackwell. [INT8 release](https://huggingface.co/FastVideo/FastH3-Omni-Comfy) · [QAD release](https://huggingface.co/FastVideo/FastH3-Omni-NVFP4-QAD-Comfy) |
+
+For an existing Blackwell FL2VA speed profile, the 12.7 GB calibrated
+NVFP4 experiment has lower author-measured one-step error than the 12.5 GB
+lilcheaty file. The normal ComfyUI weight-LoRA merge requantizes and loses
+that calibration, so evaluate it on a workflow that preserves the scales.
+Intel's MXFP8 FL2VA files target XPU and Blackwell and weigh 21.56 GB,
+compared with 20.97 GB for Comfy-Org INT8 ConvRot.
+[Calibrated NVFP4 measurements](https://huggingface.co/nynxz/MiniMax-H3-Experiments) ·
+[Intel model card](https://huggingface.co/intel-ai/MiniMax-H3-MXFP-Comfy)
+
+File sizes describe transformer downloads. The text encoder, VAEs and
+runtime allocations also affect peak VRAM. This audit used source and
+metadata checks without downloading weights or running GPU inference.
+Evidence is in `.cache/h3-base-audit-2026-11-23/`.
+
+## Component and LoRA audit — 2026-11-23
+
+Compared 23 pinned Git sources, 25 PyPI packages and 42 Hugging Face
+repositories from the catalog and candidate scan. All 38 configured LoRAs
+are listed, including five files at exact revisions. All 19 configured
+SHA-256 values match Hugging Face metadata, and the other 19 file hashes
+match the November 20 snapshot. The separate prompt-rewriter adapter is
+still listed. Metadata and comparisons are in
+`.cache/upstream-audit-2026-11-23/`.
+
+### Components
+
+- **Keep ComfyUI v0.46.0.** It remains the latest tagged release. Main is
+  36 commits ahead and adds H3 model merging, intermediate-device
+  accumulation for context windows, and Kitchen 0.2.42. Our graphs do not
+  call the model merge or context-window nodes. Verify A → B → A model
+  switching with distinct H3 schedules and stage offload on the current tag.
+  [Release](https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.46.0) ·
+  [Comparison](https://github.com/Comfy-Org/ComfyUI/compare/v0.46.0...5ea159fa614bca9fb38a25a099189d6d0b4f3597)
+- **Qualify T8 Audio v1.106.3 first.** The tag remains current and adds
+  Core FinalLayer grid compatibility. Confirm node registration and run
+  an FL2VA voice-reference generation on v0.46.0 with the existing
+  `MiniMaxH3AudioConditioningT8` graph before updating the pin.
+  [T8 release](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/releases/tag/v1.106.3)
+- **Adapt Drama 3 worker detection before moving SGLang-Omni.** Omni is
+  148 commits ahead of the deployed pin. Our checkpoint path expects
+  three CUDA workers and the upstream single-GPU default can colocate the
+  vocoder with the engine. Verify sleep/wake and output after aligning that
+  expectation with the launched topology. NeMo Speech is 71 commits ahead
+  of its pin, including a cache-aware streaming fix that should be checked
+  against the dubbing transcription path. OpenMOSS Transcribe-Diarize is
+  three commits ahead with README changes only.
+  [Omni comparison](https://github.com/sgl-project/sglang-omni/compare/e560005fc7e2f3d7152651fe81704377962118dd...c15bfc80bf873fb339dfc576658d060412653cb5) ·
+  [NeMo comparison](https://github.com/NVIDIA-NeMo/Speech/compare/a837f4e588ca778f46e586a8ad1acf5dc9a244a7...c02239ab43822ea837b21fb5c0c29e45fbd063fd) ·
+  [OpenMOSS comparison](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize/compare/61bc29cd4120be7b5d3b761b64cd5dff57263642...79c675f0670cc2f824bcbcdd98263704f40f1f7e)
+- **Keep paired dependencies.** The four PyPI movements were frontend
+  1.59.13, Kitchen 0.2.42, Transformers 5.24.0, and OpenAI 3.57.0.
+  Frontend and Kitchen follow the selected Core revision. The
+  Transformers and OpenAI updates do not justify a standalone bump.
+  [Frontend](https://pypi.org/project/comfyui-frontend-package/#history) ·
+  [Kitchen](https://pypi.org/project/comfy-kitchen/#history) ·
+  [Transformers](https://pypi.org/project/transformers/#history) ·
+  [OpenAI](https://pypi.org/project/openai/#history)
+
+### LoRAs
+
+- **pi-H3 is the strongest new FL2VA candidate.** Kijai published two
+  rank-64 conversions at about 582 MB each. Start with the four-step
+  workflow using pi-Flow scheduling and standard video VAE decoding.
+  Compare it with LightX2V on matched prompts and seeds at 768p, including
+  first/last-frame fidelity, motion, speech sync, and end-to-end latency.
+  The official DWD variants add a decoder head and can skip the video
+  VAE decode. Keyframe encoding and audio VAE decoding still apply.
+  Qualify DWD after the four-step comparison.
+  [Kijai conversions](https://huggingface.co/Kijai/MiniMax-H3_comfy/tree/main/loras/pi-H3) ·
+  [Official workflow and scheduler](https://github.com/Lakonik/ComfyUI-piFlow/blob/main/docs/piH3.md)
+- **Compact LightX2V v1.2 remains the lower-effort FL2VA option.** Its
+  336 MB conversion is about 84% smaller than the configured 2.12 GB
+  adapter. Use the existing eight-step profile and compare matched
+  outputs before offering it as an option.
+  [Weight upload](https://huggingface.co/Kijai/MiniMax-H3_comfy/commit/c64ac4de8c5101af8a1b2057038d13fc1e72f950)
+- **ModelsLab added two Ref2VA experiments.** Stage 5 is labeled an RLHF
+  evaluation candidate. A separate 1.18 GB DWD head targets the
+  Ref2VA + V4 + RL stack. Use the documented Stage 3 adapter as the
+  quality baseline and compare both LoRAs on a shared eight-forward
+  schedule before assigning any benefit to Stage 5.
+  [Stage 5 upload](https://huggingface.co/ModelsLab/MiniMax-H3-Turbo-RL/commit/fead0019c) ·
+  [DWD upload](https://huggingface.co/ModelsLab/MiniMax-H3-Turbo-RL/commit/2e90452fcbbea0a541593d7b5f51b2813d95f07e)
+- **Pruna is a naming cleanup.** Both repository IDs resolve at
+  `44a0fb73`. The newly named `p-image-oss_lora_bf16.safetensors`
+  has the same SHA-256 as the configured filename.
+  [Pruna inventory](https://huggingface.co/PrunaAI/P-Image-OSS-Comfy/tree/main/loras)
+
+All 25 focused upstream compatibility, LightX2V loader and FL2VA voice
+tests passed on the current checkout. Candidate GPU compatibility,
+performance and output quality remain unverified.
+
 ## ComfyUI v0.46.0 pin updated — 2026-11-20
 
 Local, Colab and Modal provisioning now share the v0.46.0 pin (`a277b5bf`)
