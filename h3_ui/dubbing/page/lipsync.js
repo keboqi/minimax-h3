@@ -10,6 +10,34 @@ const ENGINE_OPTIONS = [
   ["latentsync", "LatentSync 1.6 · Quality", "Preserves dubbed audio &amp; subtitles · 512×512 Whisper-conditioned diffusion"],
 ];
 
+const LS_SETTINGS_KEY = "h3-dubbing-lipsync-settings";
+
+function loadSavedLsSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_SETTINGS_KEY) || "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLsSettings() {
+  try {
+    localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify({
+      engine: lsState.engine,
+      strength: lsState.strength,
+      feather: lsState.feather,
+      bboxShift: lsState.bboxShift,
+      inferenceSteps: lsState.inferenceSteps,
+      guidanceScale: lsState.guidanceScale,
+    }));
+  } catch {
+    // Ignore storage errors in private browsing.
+  }
+}
+
+const savedLs = loadSavedLsSettings();
+
 const lsState = {
   targetKey: null,
   data: null,
@@ -22,14 +50,17 @@ const lsState = {
   selectedSpeaker: null,
   stageMode: "align",
   loopShot: true,
-  compareOrig: false,
   checkedKeys: new Set(),
-  engine: "h3",
-  strength: 0.58,
-  feather: 6,
-  bboxShift: 0,
-  inferenceSteps: 20,
-  guidanceScale: 1.5,
+  lastRenderedKeys: [],
+  autoplayPreview: false,
+  queueScrollTop: 0,
+  videoTime: null,
+  engine: savedLs.engine || "h3",
+  strength: Number.isFinite(savedLs.strength) ? savedLs.strength : 0.58,
+  feather: Number.isFinite(savedLs.feather) ? savedLs.feather : 6,
+  bboxShift: Number.isFinite(savedLs.bboxShift) ? savedLs.bboxShift : 0,
+  inferenceSteps: Number.isFinite(savedLs.inferenceSteps) ? savedLs.inferenceSteps : 20,
+  guidanceScale: Number.isFinite(savedLs.guidanceScale) ? savedLs.guidanceScale : 1.5,
   minFaceSize: 0,
   maxFaceSize: 100,
   rafId: null,
@@ -57,7 +88,8 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
   if (lsState.targetKey !== key) {
     Object.assign(lsState, {
       targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null,
-      stageMode: "align", compareOrig: false, checkedKeys: new Set(),
+      stageMode: "align", checkedKeys: new Set(), lastRenderedKeys: [], autoplayPreview: false,
+      queueScrollTop: 0, videoTime: null,
       minFaceSize: 0, maxFaceSize: 100,
     });
   }
@@ -69,12 +101,21 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
     const data = await api.get("lip-sync-plan", target);
     if (isCurrent()) {
       lsState.data = data;
-      if (openPreview && lsState.selectedSpeaker) {
-        const activeKey = `${lsState.selectedShot}:${lsState.selectedSpeaker}`;
-        const take = activeTakeFor(data, activeKey);
-        if (take?.preview_url) {
-          lsState.stageMode = "preview";
-          lsState.compareOrig = false;
+      if (openPreview) {
+        const focusKey = lsState.lastRenderedKeys[0]
+          || (lsState.selectedSpeaker ? `${lsState.selectedShot}:${lsState.selectedSpeaker}` : null);
+        lsState.lastRenderedKeys = [];
+        if (focusKey) {
+          const sep = focusKey.indexOf(":");
+          if (sep > 0) {
+            lsState.selectedShot = Number(focusKey.slice(0, sep));
+            lsState.selectedSpeaker = focusKey.slice(sep + 1);
+          }
+          const take = activeTakeFor(data, focusKey);
+          if (take?.preview_url) {
+            lsState.stageMode = "preview";
+            lsState.autoplayPreview = true;
+          }
         }
       }
     }
@@ -556,6 +597,79 @@ function renderLockedReason(ls, app, plan) {
   return "";
 }
 
+function stageTopHtml(activeItem, activeEntry, activeTake, isPreviewMode, showingSyncedTake) {
+  const hasAnyTake = activeEntry.takes.length > 0;
+  return `
+    <div class="seg" role="group" aria-label="Stage view mode">
+      <button type="button" data-ls-stage="align" aria-pressed="${!isPreviewMode}">Edit face</button>
+      <button type="button" data-ls-stage="preview" aria-pressed="${isPreviewMode}" ${hasAnyTake ? "" : 'disabled title="Render this shot first to preview a take"'}>
+        Preview take${activeTake ? ` (T${activeTake.number})` : ""}
+      </button>
+    </div>
+    ${isPreviewMode ? `
+      <span class="chip ${showingSyncedTake ? "" : "chip-quiet"}">
+        ${showingSyncedTake ? `Take ${activeTake.number} · Lip-synced` : "Original picture"}
+      </span>
+      <button type="button" class="btn btn-small ${lsState.loopShot ? "btn-primary" : ""}" data-ls-action="toggle-loop" aria-pressed="${lsState.loopShot}">Loop</button>
+    ` : ""}
+    <span class="spacer"></span>
+    ${activeItem ? `<span class="mono muted small">Shot ${activeItem.shot.index + 1} · ${formatClock(activeItem.shot.start)}–${formatClock(activeItem.shot.end)}</span>` : ""}`;
+}
+
+function takesPanelHtml(activeItem, activeEntry, activeStatus, data) {
+  if (!activeItem) return "";
+  return `
+    <div class="row align-center row-wrap">
+      <strong class="small">Takes for Shot ${activeItem.shot.index + 1}</strong>
+      <span class="muted small">${activeEntry.takes.length ? "Click a take to preview &amp; use in assembly" : "No take rendered yet — click Render shot above."}</span>
+      <span class="spacer"></span>
+      ${activeStatus === "outdated" ? '<span class="chip chip-warn">Face changed — click New take</span>' : ""}
+    </div>
+    ${activeEntry.takes.length ? `
+      <div class="ls-takes-row">
+        <div class="ls-take-card ${activeEntry.active_take_id === "original" ? "active" : ""}">
+          <button type="button" class="ls-take-pick" data-ls-pick-take="original" data-shot-key="${esc(activeItem.key)}">
+            <div class="row align-center">
+              <strong class="small">Original</strong>
+              <span class="spacer"></span>
+              <span class="chip ${activeEntry.active_take_id === "original" ? "" : "chip-quiet"}">${activeEntry.active_take_id === "original" ? "Active" : "No sync"}</span>
+            </div>
+            <span class="muted small">Compare source picture</span>
+          </button>
+        </div>
+        ${activeEntry.takes.map((tk) => {
+          const isActive = activeEntry.active_take_id === tk.id;
+          const inExport = assembledTakeId(data, activeItem.key) === tk.id;
+          const pillLabel = isActive ? "Active ★" : (inExport ? "In export" : "Saved");
+          const pillCls = isActive ? "chip" : "chip chip-quiet";
+          return `
+            <div class="ls-take-card ${isActive ? "active" : ""}">
+              <button type="button" class="ls-take-pick" data-ls-pick-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}">
+                <div class="row align-center">
+                  <strong class="small">Take ${tk.number}</strong>
+                  <span class="spacer"></span>
+                  <span class="${pillCls}">${pillLabel}</span>
+                </div>
+                <span class="muted small">${esc(formatTakeMeta(tk, activeItem.shot))}</span>
+              </button>
+              <button type="button" class="ls-take-del" data-ls-delete-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}" title="Delete Take ${tk.number}" aria-label="Delete Take ${tk.number}">×</button>
+            </div>`;
+        }).join("")}
+      </div>
+    ` : ""}`;
+}
+
+function queueBulkHtml(checkedCount, canRender, busy) {
+  if (!checkedCount) return "";
+  return `
+    <div class="ls-queue-bulk">
+      <strong class="small">${checkedCount} selected</strong>
+      <button type="button" class="btn btn-small btn-primary" data-ls-action="render-selected" data-busy="lip-sync" data-locked="${!canRender}" ${canRender && !busy ? "" : "disabled"}>
+        Render selected (${checkedCount})
+      </button>
+    </div>`;
+}
+
 export function renderLipSync(app) {
   const result = app.session?.result;
   const ls = result?.lip_sync;
@@ -601,8 +715,9 @@ export function renderLipSync(app) {
   const activeEntry = activeItem ? shotTakeEntry(data, activeItem.key) : {active_take_id: "original", takes: []};
   const activeTake = activeItem ? activeTakeFor(data, activeItem.key) : null;
   const activeStatus = activeItem ? shotTakeStatus(activeItem, data) : "unrendered";
-  const isPreviewMode = lsState.stageMode === "preview" && !!activeItem;
-  const showingSyncedTake = isPreviewMode && !!activeTake?.preview_url && !lsState.compareOrig;
+  const hasAnyTake = activeEntry.takes.length > 0;
+  const isPreviewMode = lsState.stageMode === "preview" && !!activeItem && hasAnyTake;
+  const showingSyncedTake = isPreviewMode && !!activeTake?.preview_url;
   const stageVideoSrc = showingSyncedTake ? activeTake.preview_url : (data?.video_url || "");
 
   const validKeys = new Set(items.map((it) => it.key));
@@ -697,32 +812,16 @@ export function renderLipSync(app) {
         <div class="ls-grid">
           <section class="ls-main stack-14">
             <div class="card ls-player-card">
-              <div class="ls-stage-top">
-                <div class="seg" role="group" aria-label="Stage view mode">
-                  <button type="button" data-ls-stage="align" aria-pressed="${!isPreviewMode}">Face alignment</button>
-                  <button type="button" data-ls-stage="preview" aria-pressed="${isPreviewMode}">Shot take preview</button>
-                </div>
-                ${isPreviewMode ? `
-                  <span class="chip ${showingSyncedTake ? "" : "chip-quiet"}">
-                    ${showingSyncedTake ? `Take ${activeTake.number} · Lip-synced` : "Original picture"}
-                  </span>
-                  ${activeTake?.preview_url ? `
-                    <button type="button" class="btn btn-small" data-ls-action="toggle-compare">
-                      ${lsState.compareOrig ? "Show synced take" : "Compare original"}
-                    </button>
-                  ` : ""}
-                  <button type="button" class="btn btn-small ${lsState.loopShot ? "btn-primary" : ""}" data-ls-action="toggle-loop" aria-pressed="${lsState.loopShot}">Loop shot</button>
-                ` : ""}
-                <span class="spacer"></span>
-                ${activeItem ? `<span class="mono muted small">Shot ${activeItem.shot.index + 1} · ${formatClock(activeItem.shot.start)}–${formatClock(activeItem.shot.end)}</span>` : ""}
+              <div class="ls-stage-top" id="ls-stage-top">
+                ${stageTopHtml(activeItem, activeEntry, activeTake, isPreviewMode, showingSyncedTake)}
               </div>
 
               <div class="ls-video-stage" id="ls-video-stage">
-                <video id="ls-video" src="${esc(stageVideoSrc)}" controls playsinline ${showingSyncedTake && lsState.loopShot ? "loop" : ""} preload="metadata" data-stage-mode="${isPreviewMode ? "preview" : "align"}" data-clip-start="${activeItem ? activeItem.shot.start : 0}" data-clip-end="${activeItem ? activeItem.shot.end : 0}"></video>
+                <video id="ls-video" src="${esc(stageVideoSrc)}" controls playsinline ${showingSyncedTake && lsState.loopShot ? "loop" : ""} preload="metadata" data-stage-mode="${isPreviewMode ? "preview" : "align"}" data-seek-time="${activeItem ? activeItem.seekTime : 0}" data-clip-start="${activeItem ? activeItem.shot.start : 0}" data-clip-end="${activeItem ? activeItem.shot.end : 0}"></video>
                 ${!isPreviewMode ? '<div class="ls-overlay" id="ls-overlay" aria-label="Tracked face boxes"></div><div class="ls-subtitle-bar" id="ls-subtitle" hidden></div>' : `
                   <div class="ls-preview-hud">
                     <span class="ls-preview-dot ${showingSyncedTake ? "" : "orig"}"></span>
-                    <span>${showingSyncedTake ? `Previewing Take ${activeTake.number} · ${esc(formatTakeMeta(activeTake, activeItem.shot))}` : "Previewing original shot frames (no lip sync)"}</span>
+                    <span>${showingSyncedTake ? `Take ${activeTake.number} · ${esc(formatTakeMeta(activeTake, activeItem.shot))}` : "Original picture (no lip sync)"}</span>
                   </div>
                 `}
               </div>
@@ -740,56 +839,14 @@ export function renderLipSync(app) {
                     ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides)}
                   </div>
                   ${activeItem ? `
-                    <button type="button" class="btn btn-small btn-primary" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot ? "" : "disabled"}>
+                    <button type="button" id="ls-render-shot-btn" class="btn btn-small btn-primary" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot ? "" : "disabled"}>
                       ${activeEntry.takes.length ? "New take" : "Render shot"}
                     </button>
                   ` : ""}
                 </div>
               </div>
 
-              ${activeItem ? `
-                <div class="ls-takes-panel">
-                  <div class="row align-center row-wrap">
-                    <strong class="small">Takes for Shot ${activeItem.shot.index + 1}</strong>
-                    <span class="muted small">Pick a take to preview &amp; include in full video assembly</span>
-                    <span class="spacer"></span>
-                    ${activeStatus === "outdated" ? '<span class="chip chip-warn">Face changed since last take — click New take</span>' : ""}
-                  </div>
-                  <div class="ls-takes-row">
-                    <div class="ls-take-card ${activeEntry.active_take_id === "original" ? "active" : ""}">
-                      <button type="button" class="ls-take-pick" data-ls-pick-take="original" data-shot-key="${esc(activeItem.key)}">
-                        <div class="row align-center">
-                          <strong class="small">Original</strong>
-                          <span class="spacer"></span>
-                          <span class="chip ${activeEntry.active_take_id === "original" ? "" : "chip-quiet"}">${activeEntry.active_take_id === "original" ? "Active" : "No sync"}</span>
-                        </div>
-                        <span class="muted small">Keep source picture</span>
-                      </button>
-                    </div>
-                    ${activeEntry.takes.map((tk) => {
-                      const isActive = activeEntry.active_take_id === tk.id;
-                      const inExport = assembledTakeId(data, activeItem.key) === tk.id;
-                      const pillLabel = isActive ? "Active ★" : (inExport ? "In export" : "Saved");
-                      const pillCls = isActive ? "chip" : "chip chip-quiet";
-                      return `
-                        <div class="ls-take-card ${isActive ? "active" : ""}">
-                          <button type="button" class="ls-take-pick" data-ls-pick-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}">
-                            <div class="row align-center">
-                              <strong class="small">Take ${tk.number}</strong>
-                              <span class="spacer"></span>
-                              <span class="${pillCls}">${pillLabel}</span>
-                            </div>
-                            <span class="muted small">${esc(formatTakeMeta(tk, activeItem.shot))}</span>
-                          </button>
-                          <button type="button" class="ls-take-del" data-ls-delete-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}" title="Delete Take ${tk.number}" aria-label="Delete Take ${tk.number}">×</button>
-                        </div>`;
-                    }).join("")}
-                    <button type="button" class="ls-take-new" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot ? "" : "disabled"}>
-                      <span>+ New take</span>
-                    </button>
-                  </div>
-                </div>
-              ` : ""}
+              ${activeItem ? `<div class="ls-takes-panel" id="ls-takes-panel">${takesPanelHtml(activeItem, activeEntry, activeStatus, data)}</div>` : ""}
             </div>
 
             <section class="card card-pad stack-12 ls-assembly-card">
@@ -814,11 +871,6 @@ export function renderLipSync(app) {
               <div class="row align-center row-wrap top-line">
                 <span class="small muted">Fast splice · updates only changed shots and reuses every unchanged take without GPU re-rendering.</span>
                 <span class="spacer"></span>
-                ${asm.unrenderedKeys.length > 0 && app.boot.lip_sync ? `
-                  <button type="button" class="btn btn-small" data-ls-action="render-unrendered" data-busy="lip-sync" data-locked="${!canRender}" ${canRender ? "" : "disabled"}>
-                    Render unrendered (${asm.unrenderedKeys.length})
-                  </button>
-                ` : ""}
                 <button type="button" class="btn btn-primary" data-ls-action="assemble" data-busy="lip-sync" data-locked="${!canAssemble}" ${canAssemble ? "" : "disabled"}>
                   ${assembleLabel}
                 </button>
@@ -829,7 +881,7 @@ export function renderLipSync(app) {
               <div class="row align-center row-wrap">
                 <h3>Settings for next take</h3>
                 <span class="spacer"></span>
-                <span class="muted small">${(ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2]}</span>
+                <span class="muted small" id="ls-engine-desc">${(ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2]}</span>
               </div>
               <div class="row align-center row-wrap">
                 <span class="field-label">Engine</span>
@@ -839,7 +891,7 @@ export function renderLipSync(app) {
                   `).join("")}
                 </div>
               </div>
-              <div class="ls-settings-row">
+              <div class="ls-settings-row" id="ls-settings-row">
                 ${engineSettingsHtml()}
               </div>
               <div class="field ls-range-field">
@@ -880,21 +932,16 @@ export function renderLipSync(app) {
                 <h2>Shots &amp; takes (${items.length})</h2>
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-small" data-ls-action="select-unrendered">Select unrendered</button>
-                ${checkedCount > 0 ? '<button type="button" class="btn btn-small" data-ls-action="clear-checked">Clear</button>' : ""}
+                <button type="button" id="ls-clear-checked-btn" class="btn btn-small" data-ls-action="clear-checked" ${checkedCount > 0 ? "" : "hidden"}>Clear</button>
               </div>
               <div class="seg" role="group" aria-label="Filter shots">
                 <button type="button" data-ls-filter="all" aria-pressed="${lsState.filter === "all"}">All (${items.length})</button>
                 <button type="button" data-ls-filter="pending" aria-pressed="${lsState.filter === "pending"}">Pending (${pendingCount})</button>
                 <button type="button" data-ls-filter="review" aria-pressed="${lsState.filter === "review"}">Needs check (${uncertainCount})</button>
               </div>
-              ${checkedCount > 0 ? `
-                <div class="ls-queue-bulk">
-                  <strong class="small">${checkedCount} selected</strong>
-                  <button type="button" class="btn btn-small btn-primary" data-ls-action="render-selected" data-busy="lip-sync" data-locked="${!canRender}" ${canRender ? "" : "disabled"}>
-                    Render selected (${checkedCount})
-                  </button>
-                </div>
-              ` : ""}
+              <div id="ls-queue-bulk-slot">
+                ${queueBulkHtml(checkedCount, canRender, !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active)}
+              </div>
             </div>
             <div class="ls-queue-list">
               ${visible.map((it) => {
@@ -1034,6 +1081,31 @@ function drawOverlay(app) {
   }
 }
 
+function captureQueueScroll() {
+  const list = document.querySelector(".ls-queue-list");
+  if (list) lsState.queueScrollTop = list.scrollTop;
+}
+
+function rerenderLipSync(app, {preserveVideo = false} = {}) {
+  captureQueueScroll();
+  const video = preserveVideo ? document.getElementById("ls-video") : null;
+  const savedTime = video && video.dataset.stageMode === "align" ? video.currentTime : null;
+  const wasPaused = video ? video.paused : true;
+  app.render();
+  if (savedTime !== null) {
+    const nextVideo = document.getElementById("ls-video");
+    if (nextVideo && nextVideo.dataset.stageMode === "align") {
+      const restore = () => {
+        nextVideo.currentTime = savedTime;
+        if (!wasPaused) nextVideo.play().catch(() => {});
+        drawOverlay(app);
+      };
+      if (nextVideo.readyState >= 1) restore();
+      else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
+    }
+  }
+}
+
 export function afterLipSync(app) {
   stopOverlayLoop();
   const target = reviewTarget(app);
@@ -1041,6 +1113,13 @@ export function afterLipSync(app) {
   if (lsState.targetKey !== JSON.stringify(target) || (!lsState.data && !lsState.loading && !lsState.error)) {
     loadLipSyncPlan(app);
     return;
+  }
+  const queueList = document.querySelector(".ls-queue-list");
+  if (queueList) {
+    queueList.scrollTop = lsState.queueScrollTop;
+    queueList.addEventListener("scroll", () => {
+      lsState.queueScrollTop = queueList.scrollTop;
+    }, {passive: true});
   }
   const video = document.getElementById("ls-video");
   if (!video || !lsState.data?.plan) return;
@@ -1052,6 +1131,10 @@ export function afterLipSync(app) {
       const seekToStart = () => {
         if (video.currentTime < clipStart || video.currentTime >= clipEnd) {
           video.currentTime = clipStart;
+        }
+        if (lsState.autoplayPreview) {
+          lsState.autoplayPreview = false;
+          video.play().catch(() => {});
         }
       };
       if (video.readyState >= 1) seekToStart();
@@ -1067,9 +1150,23 @@ export function afterLipSync(app) {
           }
         }
       });
+    } else if (lsState.autoplayPreview) {
+      lsState.autoplayPreview = false;
+      const startPlay = () => { video.play().catch(() => {}); };
+      if (video.readyState >= 1) startPlay();
+      else video.addEventListener("loadedmetadata", startPlay, {once: true});
     }
     return;
   }
+  const restoreAlignTime = () => {
+    const targetTime = lsState.videoTime !== null ? lsState.videoTime : (Number(video.dataset.seekTime) || 0);
+    if (targetTime > 0 && Math.abs(video.currentTime - targetTime) > 0.05) {
+      video.currentTime = targetTime;
+    }
+    drawOverlay(app);
+  };
+  if (video.readyState >= 1) restoreAlignTime();
+  else video.addEventListener("loadedmetadata", restoreAlignTime, {once: true});
   lsState.observer = new ResizeObserver(() => drawOverlay(app));
   lsState.observer.observe(video);
   const tick = () => {
@@ -1084,13 +1181,14 @@ export function afterLipSync(app) {
       lsState.rafId = null;
     }
   };
+  const rememberTime = () => {
+    if (video.readyState >= 1) lsState.videoTime = video.currentTime;
+  };
   video.addEventListener("play", () => { if (lsState.rafId === null) lsState.rafId = requestAnimationFrame(tick); });
-  video.addEventListener("pause", () => drawOverlay(app));
-  video.addEventListener("seeked", () => drawOverlay(app));
-  video.addEventListener("timeupdate", () => { if (lsState.rafId === null) drawOverlay(app); });
-  video.addEventListener("loadedmetadata", () => drawOverlay(app));
+  video.addEventListener("pause", () => { rememberTime(); drawOverlay(app); });
+  video.addEventListener("seeked", () => { rememberTime(); drawOverlay(app); });
+  video.addEventListener("timeupdate", () => { rememberTime(); if (lsState.rafId === null) drawOverlay(app); });
   video.addEventListener("resize", () => drawOverlay(app));
-  drawOverlay(app);
 }
 
 async function selectTake(app, shotKey, takeId, {remove = false} = {}) {
@@ -1109,9 +1207,9 @@ async function selectTake(app, shotKey, takeId, {remove = false} = {}) {
     lsState.data = resp;
     if (!remove) {
       lsState.stageMode = "preview";
-      lsState.compareOrig = takeId === "original";
+      lsState.autoplayPreview = true;
     }
-    app.render();
+    rerenderLipSync(app);
     toast(remove ? "Take removed." : takeId === "original" ? "Switched shot to original picture." : "Active take updated.");
   } catch (error) {
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
@@ -1140,20 +1238,7 @@ async function saveOverride(app, key, trackId) {
     lsState.data = resp;
     lsState.selectedShot = shotIndex;
     lsState.selectedSpeaker = speaker;
-    const video = document.getElementById("ls-video");
-    const savedTime = video ? video.currentTime : null;
-    const wasPaused = video ? video.paused : true;
-    app.render();
-    const nextVideo = document.getElementById("ls-video");
-    if (nextVideo && savedTime !== null) {
-      const restore = () => {
-        nextVideo.currentTime = savedTime;
-        if (!wasPaused) nextVideo.play().catch(() => {});
-        drawOverlay(app);
-      };
-      if (nextVideo.readyState >= 1) restore();
-      else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
-    }
+    rerenderLipSync(app, {preserveVideo: true});
     toast(trackId === "auto" ? "Automatic assignment restored." : trackId === null ? `Shot ${shotIndex + 1} marked off-screen.` : `Shot ${shotIndex + 1} aligned to Face.`);
   } catch (error) {
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
@@ -1223,22 +1308,116 @@ function syncFaceSizeUI(app) {
   drawOverlay(app);
 }
 
+function patchBulkSelection(app) {
+  const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
+  const plan = data?.plan;
+  const ls = app.session?.result?.lip_sync;
+  const reason = ls && plan ? renderLockedReason(ls, app, plan) : "unavailable";
+  const canRender = !!(plan?.revision && !reason && !lsState.loading);
+  const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+  const count = lsState.checkedKeys.size;
+  const slot = document.getElementById("ls-queue-bulk-slot");
+  if (slot) slot.innerHTML = queueBulkHtml(count, canRender, busy);
+  const clearBtn = document.getElementById("ls-clear-checked-btn");
+  if (clearBtn) clearBtn.hidden = count === 0;
+  for (const chk of document.querySelectorAll("[data-ls-check]")) {
+    const shouldCheck = lsState.checkedKeys.has(chk.dataset.lsCheck);
+    if (chk.checked !== shouldCheck) chk.checked = shouldCheck;
+  }
+}
+
+function patchEngineUI() {
+  for (const btn of document.querySelectorAll("[data-ls-engine]")) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.lsEngine === lsState.engine));
+  }
+  const descEl = document.getElementById("ls-engine-desc");
+  if (descEl) {
+    descEl.innerHTML = (ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2];
+  }
+  const rowEl = document.getElementById("ls-settings-row");
+  if (rowEl) rowEl.innerHTML = engineSettingsHtml();
+}
+
+function patchLoopUI() {
+  const video = document.getElementById("ls-video");
+  if (video && video.dataset.stageMode === "preview") {
+    video.loop = lsState.loopShot;
+  }
+  const btn = document.querySelector('[data-ls-action="toggle-loop"]');
+  if (btn) {
+    btn.classList.toggle("btn-primary", lsState.loopShot);
+    btn.setAttribute("aria-pressed", String(lsState.loopShot));
+  }
+}
+
 function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} = {}) {
+  captureQueueScroll();
   lsState.selectedShot = shotIndex;
   lsState.selectedSpeaker = speaker || null;
-  lsState.compareOrig = false;
-  app.render();
-  const renderedVideo = document.getElementById("ls-video");
-  if (renderedVideo && renderedVideo.dataset.stageMode === "align") {
-    const seek = () => { renderedVideo.currentTime = seekTime; drawOverlay(app); };
-    if (renderedVideo.readyState >= 1) seek();
-    else renderedVideo.addEventListener("loadedmetadata", seek, {once: true});
+  lsState.videoTime = seekTime;
+  const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
+  const plan = data?.plan;
+  const key = `${shotIndex}:${speaker || ""}`;
+  const entry = shotTakeEntry(data, key);
+  if (lsState.stageMode === "preview" && !entry.takes.length) {
+    lsState.stageMode = "align";
   }
-  if (scroll) {
-    const key = `${shotIndex}:${speaker || ""}`;
-    const row = document.querySelector(`.ls-shot-row[data-ls-row-key="${CSS.escape(key)}"]`);
-    row?.scrollIntoView({block: "nearest"});
+
+  const video = document.getElementById("ls-video");
+  const canPatchInPlace = !!(plan && video && lsState.stageMode === "align" && video.dataset.stageMode === "align");
+  if (!canPatchInPlace) {
+    app.render();
+    if (scroll) {
+      const row = document.querySelector(`.ls-shot-row[data-ls-row-key="${CSS.escape(key)}"]`);
+      row?.scrollIntoView({block: "nearest"});
+      captureQueueScroll();
+    }
+    return;
   }
+
+  const items = shotItems(plan);
+  const activeItem = items.find((it) => it.shot.index === shotIndex && (!speaker || it.speaker === speaker)) || null;
+  const activeTake = activeItem ? activeTakeFor(data, activeItem.key) : null;
+  const activeStatus = activeItem ? shotTakeStatus(activeItem, data) : "unrendered";
+  const stageTop = document.getElementById("ls-stage-top");
+  if (stageTop) stageTop.innerHTML = stageTopHtml(activeItem, entry, activeTake, false, false);
+  const infoEl = document.getElementById("ls-active-info");
+  if (infoEl) infoEl.innerHTML = assignmentLabel(activeItem?.shot, activeItem?.speaker);
+  const buttonsEl = document.getElementById("ls-quick-buttons");
+  if (buttonsEl) {
+    buttonsEl.dataset.key = activeItem?.key || "";
+    buttonsEl.innerHTML = assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides);
+  }
+  const renderShotBtn = document.getElementById("ls-render-shot-btn");
+  if (renderShotBtn && activeItem) {
+    const ls = app.session?.result?.lip_sync;
+    const canRenderShot = !!(
+      plan?.revision && app.boot?.lip_sync && ls?.ready && !lsState.loading
+      && activeItem.assignment.status !== "off_screen"
+    );
+    const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+    renderShotBtn.dataset.shotKey = activeItem.key;
+    renderShotBtn.dataset.locked = String(!canRenderShot);
+    renderShotBtn.disabled = busy || !canRenderShot;
+    renderShotBtn.textContent = entry.takes.length ? "New take" : "Render shot";
+  }
+  const takesEl = document.getElementById("ls-takes-panel");
+  if (takesEl) takesEl.innerHTML = takesPanelHtml(activeItem, entry, activeStatus, data);
+  for (const row of document.querySelectorAll(".ls-shot-row")) {
+    const isSelected = row.dataset.lsRowKey === key;
+    row.classList.toggle("selected", isSelected);
+    if (isSelected && scroll) {
+      row.scrollIntoView({block: "nearest"});
+      captureQueueScroll();
+    }
+  }
+  video.dataset.seekTime = String(seekTime);
+  const seek = () => {
+    video.currentTime = seekTime;
+    drawOverlay(app);
+  };
+  if (video.readyState >= 1) seek();
+  else video.addEventListener("loadedmetadata", seek, {once: true});
 }
 
 function renderShotsPayload(app, shotKeys, {fresh = true} = {}) {
@@ -1269,7 +1448,7 @@ export function bindLipSync(app) {
       const key = chk.dataset.lsCheck;
       if (chk.checked) lsState.checkedKeys.add(key);
       else lsState.checkedKeys.delete(key);
-      app.render();
+      patchBulkSelection(app);
     }
   });
   screen.addEventListener("click", async (event) => {
@@ -1279,8 +1458,8 @@ export function bindLipSync(app) {
       const nextMode = stageBtn.dataset.lsStage;
       if (nextMode && nextMode !== lsState.stageMode) {
         lsState.stageMode = nextMode;
-        lsState.compareOrig = false;
-        app.render();
+        if (nextMode === "preview") lsState.autoplayPreview = true;
+        rerenderLipSync(app);
       }
       return;
     }
@@ -1298,21 +1477,9 @@ export function bindLipSync(app) {
     if (engineBtn) {
       const nextEngine = engineBtn.dataset.lsEngine;
       if (nextEngine && nextEngine !== lsState.engine) {
-        const video = document.getElementById("ls-video");
-        const savedTime = video ? video.currentTime : null;
-        const wasPaused = video ? video.paused : true;
         lsState.engine = nextEngine;
-        app.render();
-        const nextVideo = document.getElementById("ls-video");
-        if (nextVideo && savedTime !== null && nextVideo.dataset.stageMode === "align") {
-          const restore = () => {
-            nextVideo.currentTime = savedTime;
-            if (!wasPaused) nextVideo.play().catch(() => {});
-            drawOverlay(app);
-          };
-          if (nextVideo.readyState >= 1) restore();
-          else nextVideo.addEventListener("loadedmetadata", restore, {once: true});
-        }
+        saveLsSettings();
+        patchEngineUI();
       }
       return;
     }
@@ -1350,12 +1517,9 @@ export function bindLipSync(app) {
     } else if (action === "to-dub") {
       stopOverlayLoop();
       app.go("dub");
-    } else if (action === "toggle-compare") {
-      lsState.compareOrig = !lsState.compareOrig;
-      app.render();
     } else if (action === "toggle-loop") {
       lsState.loopShot = !lsState.loopShot;
-      app.render();
+      patchLoopUI();
     } else if (action === "select-unrendered") {
       const items = shotItems(lsState.data?.plan);
       const next = new Set();
@@ -1364,23 +1528,24 @@ export function bindLipSync(app) {
         if (st === "unrendered" || st === "outdated") next.add(it.key);
       }
       lsState.checkedKeys = next;
-      app.render();
+      patchBulkSelection(app);
       toast(next.size ? `Selected ${plural(next.size, "shot")}.` : "All on-screen shots already have up-to-date takes.");
     } else if (action === "clear-checked") {
       lsState.checkedKeys.clear();
-      app.render();
+      patchBulkSelection(app);
     } else if (action === "render-shot") {
       const shotKey = btn.dataset.shotKey;
       const payload = shotKey ? renderShotsPayload(app, [shotKey], {fresh: true}) : null;
-      if (payload) app.startRun("lip-sync-shots", payload);
+      if (payload) {
+        lsState.lastRenderedKeys = payload.shot_keys;
+        app.startRun("lip-sync-shots", payload);
+      }
     } else if (action === "render-selected") {
       const payload = renderShotsPayload(app, Array.from(lsState.checkedKeys), {fresh: true});
-      if (payload) app.startRun("lip-sync-shots", payload);
-    } else if (action === "render-unrendered") {
-      const items = shotItems(lsState.data?.plan);
-      const asm = assemblySummary(items, lsState.data);
-      const payload = renderShotsPayload(app, asm.unrenderedKeys, {fresh: false});
-      if (payload) app.startRun("lip-sync-shots", payload);
+      if (payload) {
+        lsState.lastRenderedKeys = payload.shot_keys;
+        app.startRun("lip-sync-shots", payload);
+      }
     } else if (action === "assemble") {
       const target = reviewTarget(app);
       if (lsState.targetKey !== JSON.stringify(target) || lsState.saving || lsState.loading) return;
@@ -1437,6 +1602,7 @@ export function bindLipSync(app) {
     if (!el) return;
     const key = el.dataset.lsSetting;
     lsState[key] = Number(el.value);
+    saveLsSettings();
     const out = document.querySelector(`[data-ls-out="${key}"]`);
     if (out) out.textContent = formatSettingOut(key, lsState[key]);
   });

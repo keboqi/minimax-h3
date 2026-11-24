@@ -1049,22 +1049,48 @@ def save_lip_sync_takes(dub: Path, registry: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def lip_sync_take_preview_path(dub: Path, shot_key: str, take_id: str) -> Path | None:
-    """Return the validated local MP4 preview path for one shot take, if available."""
+def lip_sync_take_preview_path(dub: Path, shot_key: str, take_id: str, *, build_missing: bool = False) -> Path | None:
+    """Return the validated local MP4 preview path for one shot take, optionally building it on demand."""
     registry = load_lip_sync_takes(dub)
     entry = registry.get("shots", {}).get(shot_key)
     if not isinstance(entry, dict):
         return None
     takes_root = _takes_dir(dub).resolve()
+    cache_dir = _window_cache_dir(dub)
     for take in entry.get("takes") or ():
         if take.get("id") != take_id:
             continue
         name = take.get("preview_file")
-        if not name or "/" in str(name) or "\\" in str(name):
+        if name and "/" not in str(name) and "\\" not in str(name):
+            candidate = (takes_root / str(name)).resolve()
+            if candidate.parent == takes_root and candidate.is_file():
+                return candidate
+        if not build_missing:
             return None
-        candidate = (takes_root / str(name)).resolve()
-        if candidate.parent == takes_root and candidate.is_file():
-            return candidate
+        win_pairs: list[tuple[LipSyncWindow, Path]] = []
+        for item in take.get("windows") or ():
+            cache_name = item.get("cache_file") if isinstance(item, dict) else None
+            win_data = item.get("window") if isinstance(item, dict) else None
+            if not cache_name or not isinstance(win_data, dict):
+                return None
+            cpath = cache_dir / str(cache_name)
+            if not cpath.is_file():
+                return None
+            win_pairs.append((LipSyncWindow(**win_data), cpath))
+        if not win_pairs:
+            return None
+        plan = load_lip_sync_plan(dub)
+        bounds = _plan_shot_bounds(plan).get(int(take.get("shot_index", 0))) if plan else None
+        preview_name = f"shot_{int(take.get('shot_index', 0)):03d}_{take_id}_{uuid4().hex[:6]}.mp4"
+        dest = _takes_dir(dub) / preview_name
+        build_shot_preview_clip(
+            dub, win_pairs, dest,
+            shot_start=bounds[0] if bounds else None,
+            shot_end=bounds[1] if bounds else None,
+        )
+        take["preview_file"] = preview_name
+        save_lip_sync_takes(dub, registry)
+        return dest
     return None
 
 
@@ -1096,36 +1122,40 @@ def build_shot_preview_clip(
     inputs, filter_parts, fps_str = _build_splice_filter_graph(dub, shot_windows, meta, start_frame, end_frame)
     audio_idx = len(inputs) // 2
     inputs += ["-ss", f"{actual_start:.6f}", "-t", f"{actual_dur:.6f}", "-i", str(dub)]
-    encoder = "h264_nvenc" if has_encoder("h264_nvenc") else "libx264"
-    video_args = (
-        ["-c:v", encoder, "-preset", "p4", "-cq", "21"]
-        if encoder == "h264_nvenc"
-        else ["-c:v", encoder, "-preset", "veryfast", "-crf", "20"]
+    encoders = (
+        [("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "21"]),
+         ("libx264", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"])]
+        if has_encoder("h264_nvenc")
+        else [("libx264", ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"])]
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     pending = destination.with_suffix(destination.suffix + ".partial")
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        *inputs,
-        "-filter_complex", ";".join(filter_parts),
-        "-map", "[vout]",
-        "-map", f"{audio_idx}:a?",
-        *video_args,
-        "-r", fps_str,
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest",
-        "-movflags", "+faststart",
-        "-f", "mp4",
-        str(pending),
-    ]
+    last_error = ""
     try:
-        proc = run_media_process(cmd, capture_output=True, text=True, timeout=timeout, partial_outputs=(pending,))
-        if proc.returncode != 0 or not pending.is_file():
-            raise H3Error(f"Could not build shot preview clip: {proc.stderr.strip()}")
-        check_cancelled()
-        pending.replace(destination)
-        return destination
+        for _enc_name, video_args in encoders:
+            pending.unlink(missing_ok=True)
+            cmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                *inputs,
+                "-filter_complex", ";".join(filter_parts),
+                "-map", "[vout]",
+                "-map", f"{audio_idx}:a?",
+                *video_args,
+                "-r", fps_str,
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                "-movflags", "+faststart",
+                "-f", "mp4",
+                str(pending),
+            ]
+            proc = run_media_process(cmd, capture_output=True, text=True, timeout=timeout, partial_outputs=(pending,))
+            if proc.returncode == 0 and pending.is_file():
+                check_cancelled()
+                pending.replace(destination)
+                return destination
+            last_error = (proc.stderr or "").strip()
+        raise H3Error(f"Could not build shot preview clip: {last_error}")
     finally:
         pending.unlink(missing_ok=True)
 

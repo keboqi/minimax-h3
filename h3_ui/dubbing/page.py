@@ -927,8 +927,8 @@ def install_dubbing_page(
                     "preview_url": (
                         f"{API}/lip-sync-take-preview?session={sid}"
                         f"&shot_key={quote(s_key)}&take_id={quote(str(tk.get('id') or ''))}"
-                        f"&v={quote(str(tk.get('preview_file') or ''))}"
-                    ) if tk.get("preview_file") else None,
+                        f"&v={quote(str(tk.get('preview_file') or tk.get('created_at') or ''))}"
+                    ),
                 }
                 enriched_list.append(item)
             takes_shots[s_key] = {
@@ -1084,7 +1084,7 @@ def install_dubbing_page(
         dub = result.video
         if dub is None or not dub.is_file():
             raise not_found()
-        preview = lip_sync_take_preview_path(dub, shot_key, take_id)
+        preview = lip_sync_take_preview_path(dub, shot_key, take_id, build_missing=True)
         if preview is None:
             raise not_found()
         return file_response(preview)
