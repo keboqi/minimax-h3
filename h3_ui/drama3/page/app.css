@@ -169,7 +169,7 @@ button.step:hover { background: var(--surface); }
 /* Voice clips carry a small waveform glyph. */
 #lanes .clip:not(.bed, .cue, .effect-clip)::after { content: ""; position: absolute; inset: 0; background: rgba(255, 255, 255, .6);
   -webkit-mask: var(--wave) left center / 48px 100% repeat-x; mask: var(--wave) left center / 48px 100% repeat-x; }
-.clip:hover, .clip.active { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--playhead); }
+.clip:hover, .clip.active, .clip.picked { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--playhead); z-index: 1; }
 .clip.bed { background: var(--bed-line); color: var(--new); }
 .clip.cue { background: var(--cue-line); color: var(--cue-ink); }
 .effect-lane-name { height: 30px; color: var(--tok-effect); white-space: normal; line-height: 1.1; }
@@ -400,10 +400,11 @@ button.step:hover { background: var(--surface); }
 .vscene-body { display: flex; align-items: stretch; }
 .vscene-rows { flex: 1; min-width: 0; padding: 4px 0; }
 .vbeds { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
-.vbed { flex: 1 1 240px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 100%; min-height: 44px; padding: 8px 12px;
+.vbed-wrap { position: relative; flex: 1 1 240px; max-width: 100%; display: flex; }
+.vbed { flex: 1; width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 100%; min-height: 44px; padding: 8px 12px;
   border: 1px solid var(--bed-line); border-radius: 10px; background: var(--bed-soft); font-size: 12px; }
 .vbed:hover { border-color: var(--new); }
-.vbed-head { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--new); }
+.vbed-head { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-right: 28px; color: var(--new); }
 .vbed-head svg { flex: none; color: var(--new); }
 .vbed strong { font-family: var(--mono); font-size: 12px; }
 .vbed-meta, .vbed-desc { color: var(--muted); }
@@ -424,13 +425,17 @@ button.step:hover { background: var(--surface); }
 .vedit { visibility: hidden; margin-top: 6px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
   border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--accent); }
 .vrow.picked > .vedit, .vrow:hover > .vedit, .vedit:focus-visible { visibility: visible; }
+.vedit-sound { position: absolute; top: 5px; right: 5px; margin-top: 0; width: 26px; height: 26px; border-radius: 6px; z-index: 1; }
+.vcue-wrap:hover > .vedit-sound, .vbed-wrap:hover > .vedit-sound,
+.vcue.picked + .vedit-sound, .vbed.picked + .vedit-sound { visibility: visible; }
 .vcues { display: flex; flex-direction: column; gap: 6px; padding: 6px 12px 6px 0; }
 .vcues:empty { padding: 0; }
+.vcue-wrap { position: relative; }
 .vcue { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px;
   border: 1px solid var(--cue-line); border-radius: 10px; background: var(--cue-soft); }
 .vcue:hover { border-color: var(--cue); }
 .vcue.loop { border-color: var(--bed-line); background: var(--bed-soft); }
-.vcue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--cue-ink); }
+.vcue-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-right: 28px; font-size: 13px; color: var(--cue-ink); }
 .vcue.loop .vcue-head { color: var(--new); }
 .vcue-head svg { flex: none; }
 .vcue-head strong { font-family: var(--mono); font-size: 12.5px; }

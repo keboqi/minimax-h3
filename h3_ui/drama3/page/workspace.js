@@ -1,5 +1,6 @@
 import {createScript} from "./script.js";
 import {createScriptView} from "./scriptview.js";
+import {createJump} from "./jump.js";
 import {createCast} from "./cast.js";
 import {createMix, lineTakes} from "./mix.js";
 import {createVideo} from "./video.js";
@@ -587,6 +588,7 @@ export function startWorkspace() {
     if (!result || !result.lines[index]) return;
     state.picked = index;
     takeAudio.pause();
+    jump.clearTimelinePick();
     for (const button of $("lines").querySelectorAll(".line")) {
       button.setAttribute("aria-pressed", String(Number(button.dataset.line) === index));
     }
@@ -1378,6 +1380,7 @@ export function startWorkspace() {
   const scriptView = createScriptView({
     state, $: (...args) => $(...args), h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows,
     onEstimate: () => layout.renderScriptOverview(state.project, state.estimate),
+    onJumpToTimeline: (info) => jump.jumpToTimeline(info),
   });
   const {renderEstimate} = scriptView;
   const {castRunning, castJob, slotNote, slotWorking, speakerLines, missingItems, pickSlot, ensurePick, renderCast, renderCastLists, field, renderSlotEditor, noteBox, sourceSwitch, voiceEditor, soundEditor, renderGeneratorSettings, renderCastActions} = createCast({
@@ -1405,7 +1408,7 @@ export function startWorkspace() {
     getLibrary: () => library,
     onCastRendered: () => layout.renderCastOverview(state.project),
   });
-  const {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, wordNodes, renderFilters, renderLines, renderInspector, renderSettings} = createMix({
+  const {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, showTimeline, wordNodes, renderFilters, renderLines, renderInspector, renderSettings} = createMix({
     state,
     $: (...args) => $(...args),
     h,
@@ -1435,7 +1438,8 @@ export function startWorkspace() {
     visualSource: (...args) => visualSource(...args),
     shotLanes: (...args) => shotLanes(...args),
     getPlayer: () => mix,
-    toast
+    toast,
+    jumpToScript: (kind, index) => jump.jumpToScript(kind, index),
   });
   const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo,
          renderIllustrateActions, illustrateSummary, shotLanes} = createVideo({
@@ -1467,6 +1471,9 @@ export function startWorkspace() {
     speakerTone: (...args) => speakerTone(...args),
     getPlayer: () => mix,
     setPlayer: (player) => { mix = player; }
+  });
+  const jump = createJump({
+    state, $: (...args) => $(...args), show, pick, seek, toast, showTimeline, visualSource, scriptView,
   });
   const {openLibrary, refreshLibrary, libraryCall, renderLibrary, speakerLibrary, soundLibrary, tryVoices, libraryState, pollTakes} = createLibrary({
     state,

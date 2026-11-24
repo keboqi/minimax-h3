@@ -3,7 +3,7 @@
 import {effectTrack} from "./effects.js";
 import {readPref, writePref} from "./layout.js";
 
-export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows, onEstimate = () => {}}) {
+export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, paintEditor, NAME, clock, rows, onEstimate = () => {}, onJumpToTimeline = () => {}}) {
   const VIEW_KEY = "h3-soundstage-script-view";
   const CONTAINER = /(<\/?(?:parallel|sequential)\b[^<>]*>)/i;
   // Like the speech parser, a sound tag must open and close on one line; one split over lines is read as speech.
@@ -14,6 +14,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   const TIMELINE_KEY = "h3-soundstage-timeline";
   let flashTimer = 0, visualTimer = 0, outlineTimer = 0, frame = 0;
   let timelineOpen = readPref(TIMELINE_KEY) === "open";
+  let pickedTarget = null;
 
   state.scriptView = readPref(VIEW_KEY) === "visual" ? "visual" : "code";
   state.scriptLine = 1;
@@ -186,12 +187,23 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     return dots.length ? h("span", {class: "vstage", "aria-hidden": "true"}, dots) : null;
   }
 
+  function soundEditButton(sound) {
+    return h("button", {
+      type: "button", class: "vedit vedit-sound", "data-line": sound.n,
+      "aria-label": `Edit sound ${sound.name} (line ${sound.n}) in code`,
+      title: "Edit in code",
+    }, svg(EDIT_ICON, 13));
+  }
+
   function cueChip(sound) {
-    return h("button", {type: "button", class: `vcue${sound.loop ? " loop" : ""}`, "data-line": sound.n,
-                        title: `Line ${sound.n} · double-click to edit it in code`},
-      h("span", {class: "vcue-head"}, svg("M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7", 12),
-        h("strong", {}, sound.name), h("span", {class: "vcue-meta"}, sound.meta)),
-      sound.desc ? h("span", {class: "vcue-desc"}, sound.desc) : null);
+    return h("div", {class: "vcue-wrap"},
+      h("button", {type: "button", class: `vcue${sound.loop ? " loop" : ""}`, "data-line": sound.n,
+                   "data-sound-name": sound.name, "data-sound-loop": String(Boolean(sound.loop)),
+                   title: `Line ${sound.n} · double-click to jump to timeline`},
+        h("span", {class: "vcue-head"}, svg("M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7", 12),
+          h("strong", {}, sound.name), h("span", {class: "vcue-meta"}, sound.meta)),
+        sound.desc ? h("span", {class: "vcue-desc"}, sound.desc) : null),
+      soundEditButton(sound));
   }
 
   function lineRow(node, tones, {note = "", cues = []} = {}) {
@@ -200,7 +212,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     const said = (node.parts || [{text: node.text}]).flatMap((part, index) => [
       index ? " " : null, part.cue ? h("span", {class: "vcue-inline"}, part.cue) : part.text]);
     return h("div", {class: "vrow", "data-row": node.n},
-      h("button", {type: "button", class: "vline", "data-line": node.n, title: `Line ${node.n} · double-click to edit it in code`},
+      h("button", {type: "button", class: "vline", "data-line": node.n, title: `Line ${node.n} · double-click to jump to timeline`},
         h("span", {class: "vspeaker", style: {color: tone ? toneColor(tone) : ""}}, node.speaker || ""),
         h("span", {class: "vtext"}, note ? h("span", {class: "vnote"}, note) : null, h("span", {class: "vsaid"}, said)),
         h("span", {class: "vtime"}, timed().length ? clock(startOf(node.n)) : "")),
@@ -322,12 +334,16 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
           h("span", {class: "spacer"}),
           range ? h("span", {class: "muted small num"}, range) : null),
         // The scene's beds run under all of it, so they sit across its top.
-        sceneBeds.length ? h("div", {class: "vbeds"}, sceneBeds.map((bed) => h("button", {
-          type: "button", class: "vbed", "data-line": bed.n, title: `Line ${bed.n} · double-click to edit it in code`,
-          "aria-label": `Bed ${bed.name}, ${bed.meta}, line ${bed.n}${bed.desc ? `: ${bed.desc}` : ""}`,
-        }, h("span", {class: "vbed-head"}, svg("M2 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0", 13), h("strong", {}, bed.name),
-             bed.meta ? h("span", {class: "vbed-meta"}, bed.meta) : null),
-           bed.desc ? h("span", {class: "vbed-desc"}, bed.desc) : null))) : null,
+        sceneBeds.length ? h("div", {class: "vbeds"}, sceneBeds.map((bed) => h("div", {class: "vbed-wrap"},
+          h("button", {
+            type: "button", class: "vbed", "data-line": bed.n,
+            "data-sound-name": bed.name, "data-sound-loop": "true",
+            title: `Line ${bed.n} · double-click to jump to timeline`,
+            "aria-label": `Bed ${bed.name}, ${bed.meta}, line ${bed.n}${bed.desc ? `: ${bed.desc}` : ""}`,
+          }, h("span", {class: "vbed-head"}, svg("M2 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0", 13), h("strong", {}, bed.name),
+               bed.meta ? h("span", {class: "vbed-meta"}, bed.meta) : null),
+             bed.desc ? h("span", {class: "vbed-desc"}, bed.desc) : null),
+          soundEditButton(bed)))) : null,
         h("div", {class: "vscene-body"},
           h("div", {class: "vscene-rows"}, renderNodes(group.children, tones, {inScene: true, note: ""})))));
     });
@@ -392,10 +408,40 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
     }
   }
 
+  function findVisualTarget(n, {kind = null, name = ""} = {}) {
+    const box = $("visual-view");
+    const candidates = [...box.querySelectorAll(`[data-line="${n}"]:not(.vedit)`)];
+    if (candidates.length) {
+      if (kind === "sound") {
+        const sounds = candidates.filter((el) => el.classList.contains("vcue") || el.classList.contains("vbed"));
+        const exact = name ? sounds.find((el) => el.dataset.soundName === name) : null;
+        if (exact) return exact;
+        if (sounds.length) return sounds[0];
+      } else if (kind === "line") {
+        const speech = candidates.find((el) => el.classList.contains("vline"));
+        if (speech) return speech;
+      }
+      return candidates[0];
+    }
+    let target = null, best = 0;
+    for (const element of box.querySelectorAll("[data-line]:not(.vedit)")) {
+      const line = Number(element.dataset.line);
+      if (line <= n && line > best) { best = line; target = element; }
+    }
+    return target;
+  }
+
   function markPicked() {
     const box = $("visual-view");
     for (const element of box.querySelectorAll(".picked")) element.classList.remove("picked");
-    for (const element of box.querySelectorAll(`[data-line="${state.scriptLine}"]`)) {
+    if (pickedTarget && pickedTarget.line === state.scriptLine) {
+      const target = findVisualTarget(pickedTarget.line, pickedTarget);
+      if (target && Number(target.dataset.line) === state.scriptLine) {
+        (target.closest(".vrow") && target.classList.contains("vline") ? target.closest(".vrow") : target).classList.add("picked");
+        return;
+      }
+    }
+    for (const element of box.querySelectorAll(`[data-line="${state.scriptLine}"]:not(.vedit)`)) {
       (element.closest(".vrow") && element.classList.contains("vline") ? element.closest(".vrow") : element).classList.add("picked");
     }
   }
@@ -421,6 +467,7 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   function onCaret() {
     const line = caretLine();
     if (line === state.scriptLine && !$("line-band").hidden) return;
+    pickedTarget = null;
     state.scriptLine = line;
     placeBand();
     markTimeline();
@@ -485,19 +532,28 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
   /** Find line ``n`` in whichever view is showing. */
   function locate(n) {
     if (state.scriptView === "code") { editLine(n); return; }
+    pickedTarget = null;
     state.scriptLine = n;
-    const box = $("visual-view");
-    let target = null, best = 0;
-    for (const element of box.querySelectorAll("[data-line]")) {
-      const line = Number(element.dataset.line);
-      if (line <= n && line > best) { best = line; target = element; }
-    }
+    const target = findVisualTarget(n);
     markPicked();
     markTimeline();
     if (target) centre(target);
   }
 
-  function pick(n) {
+  /** Switch to Visual view if needed and jump to line ``n`` (optionally targeting a specific speech or sound). */
+  function locateVisual(n, {kind = null, name = ""} = {}) {
+    pickedTarget = kind ? {line: n, kind, name} : null;
+    state.scriptLine = n;
+    if (state.scriptView !== "visual") setView("visual");
+    else renderVisual();
+    const target = findVisualTarget(n, {kind, name});
+    markPicked();
+    markTimeline();
+    if (target) centre(target);
+  }
+
+  function pick(n, target = null) {
+    pickedTarget = target ? {line: n, ...target} : null;
     state.scriptLine = n;
     markPicked();
     markTimeline();
@@ -702,17 +758,37 @@ export function createScriptView({state, $, h, svg, toneColor, scriptSpeakers, p
       const edit = event.target.closest(".vedit");
       if (edit) { editLine(Number(edit.dataset.line)); return; }
       const target = event.target.closest("[data-line]");
-      if (target) pick(Number(target.dataset.line));
+      if (!target) return;
+      if (target.classList.contains("vcue") || target.classList.contains("vbed")) {
+        pick(Number(target.dataset.line), {kind: "sound", name: target.dataset.soundName || ""});
+      } else if (target.classList.contains("vline")) {
+        pick(Number(target.dataset.line), {kind: "line"});
+      } else {
+        pick(Number(target.dataset.line));
+      }
     });
     visual.addEventListener("dblclick", (event) => {
+      if (event.target.closest(".vedit")) return;
       const target = event.target.closest("[data-line]");
       if (!target) return;
       event.preventDefault();
       window.getSelection()?.removeAllRanges();
-      editLine(Number(target.dataset.line));
+      const line = Number(target.dataset.line);
+      if (target.classList.contains("vline")) {
+        onJumpToTimeline({line, kind: "line"});
+      } else if (target.classList.contains("vcue") || target.classList.contains("vbed")) {
+        onJumpToTimeline({
+          line,
+          kind: "sound",
+          name: target.dataset.soundName || "",
+          loop: target.dataset.soundLoop === "true",
+        });
+      } else {
+        editLine(line);
+      }
     });
     setView(state.scriptView);
   }
 
-  return {bind, painted, renderEstimate, renderVisual, editLine, locate, setView, parse, sections, plain};
+  return {bind, painted, renderEstimate, renderVisual, editLine, locate, locateVisual, setView, parse, sections, plain};
 }

@@ -24,7 +24,7 @@ export function lineTakes(result) {
   return matches;
 }
 
-export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast}) {
+export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast, jumpToScript = () => {}}) {
   const box = $("player");
   const COMPACT_KEY = "h3-soundstage-player-compact";
   let compactPlayer = readPref(COMPACT_KEY) === "true";
@@ -35,6 +35,12 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       compactButton.textContent = compactPlayer ? "Show timeline" : "Compact";
       compactButton.setAttribute("aria-expanded", String(!compactPlayer));
     }
+  };
+  const showTimeline = () => {
+    if (!compactPlayer) return;
+    compactPlayer = false;
+    writePref(COMPACT_KEY, false);
+    syncCompact(Boolean(state.project?.result));
   };
   const fullscreenButton = h("button", {type: "button", class: "btn btn-small", id: "player-fullscreen", hidden: true}, "Fullscreen");
   const fullscreen = bindFullscreen(box, fullscreenButton, toast);
@@ -201,9 +207,16 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         const line = result.lines[index];
         return h("button", {
           type: "button", class: "clip", "data-line": index,
-          title: `${line.speaker}: ${line.text}`, "aria-label": `Play from ${line.speaker}: ${line.text}`,
+          title: `${line.speaker}: ${line.text} · double-click to view in script`,
+          "aria-label": `Play from ${line.speaker}: ${line.text}`,
           style: {...place(line.start, line.end), "--row": placed.placed[at], background: color},
           onclick: (event) => { event.stopPropagation(); pick(index, {seek: true}); },
+          ondblclick: (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            jumpToScript("line", index);
+          },
         });
       })));
     }
@@ -215,10 +228,21 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       lanes.push(h("span", {class: "lane-name", style: laneHeight(soundRows.count)}));
       tracks.push(h("div", {class: "lane", style: {"--rows": soundRows.count}},
         result.sounds.map((sound, index) => h("button", {
-          type: "button", class: `clip ${sound.loop ? "bed" : "cue"}`,
-          title: `${sound.name} (${sound.loop ? "looped" : "one-shot"})`, "aria-label": `Play from sound: ${sound.name}`,
+          type: "button", class: `clip ${sound.loop ? "bed" : "cue"}`, "data-sound": index,
+          title: `${sound.name} (${sound.loop ? "looped" : "one-shot"}) · double-click to view in script`,
+          "aria-label": `Play from sound: ${sound.name}`,
           style: {...place(sound.start, sound.end), "--row": soundRows.placed[index]},
-          onclick: (event) => { event.stopPropagation(); seek(sound.start); },
+          onclick: (event) => {
+            event.stopPropagation();
+            for (const clip of document.querySelectorAll("#lanes .clip.picked")) clip.classList.remove("picked");
+            seek(sound.start);
+          },
+          ondblclick: (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            jumpToScript("sound", index);
+          },
         }, h("span", {"aria-hidden": "true"}, sound.name)))));
     }
     if (result.music && duration > 0) {
@@ -247,7 +271,7 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
       result.sounds.length ? [h("span", {}, h("i", {style: {background: "var(--bed-line)"}}), "Looped bed"),
                               h("span", {}, h("i", {style: {background: "var(--cue-line)"}}), "One-shot effect")] : null,
       h("span", {class: "spacer"}),
-      h("span", {}, "Click a clip or a line to jump there"));
+      h("span", {}, "Click a clip or a line to jump there · double-click a voice or sound clip to view in Script"));
     const deck = h("div", {class: "player-deck"},
       stage,
       h("div", {class: "player-timeline-wrap"},
@@ -379,5 +403,5 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
   }
 
   // -- Illustrated video -----------------------------------------------------
-  return {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, wordNodes, renderFilters, renderLines, renderInspector, renderSettings};
+  return {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, showTimeline, wordNodes, renderFilters, renderLines, renderInspector, renderSettings};
 }
