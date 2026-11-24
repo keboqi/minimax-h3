@@ -269,8 +269,8 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
                             outputs[node]["images"].append({"filename": p.name})
                     elif "positive_coords" in sam["inputs"]:
                         coords = json.loads(sam["inputs"]["positive_coords"])
-                        # Fallback point segmentation for "stone archway" where text missed.
-                        if coords and coords[0]["x"] == 40 and coords[0]["y"] == 24:
+                        # Fallback multi-point segmentation for "stone archway" where text missed.
+                        if len(coords) >= 2 and coords[0]["x"] == 40 and coords[0]["y"] == 14 and coords[1]["y"] == 34:
                             p = out_folder / "arch_pt.png"
                             m = Image.new("L", (80, 48), 0)
                             ImageDraw.Draw(m).rectangle((32, 8, 48, 40), fill=255)
@@ -287,23 +287,23 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
                 ),
             )
             requests = [
-                # Picks the lower-right lantern matching include/box instead of upper-middle one.
+                # Picks the lower-right lantern matching multi-point include/box instead of upper-middle one.
                 {
                     "id": "new_1",
                     "label": "table lantern",
                     "prompt": "brass lantern",
                     "box": [0.68, 0.50, 0.95, 0.90],
-                    "include": [[0.81, 0.71]],
+                    "include": [[0.76, 0.62], [0.85, 0.80]],
                     "exclude": [],
                     "merge": False,
                 },
-                # Text misses "stone archway", falls back to point branch in the same ComfyUI submission.
+                # Text misses "stone archway", falls back to multi-point branch in the same ComfyUI submission.
                 {
                     "id": "new_2",
                     "label": "archway",
                     "prompt": "stone archway",
                     "box": [0.40, 0.16, 0.60, 0.84],
-                    "include": [[0.50, 0.50]],
+                    "include": [[0.50, 0.30], [0.50, 0.72]],
                     "exclude": [],
                     "merge": False,
                 },
@@ -312,7 +312,7 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
                     "id": "new_3",
                     "label": "hero",
                     "prompt": "woman",
-                    "include": [[0.15, 0.50]],
+                    "include": [[0.14, 0.25], [0.16, 0.72]],
                     "exclude": [],
                     "merge": False,
                 },
@@ -321,7 +321,7 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
                     "id": "new_4",
                     "label": "distant bird",
                     "prompt": "tiny bird",
-                    "include": [[0.95, 0.05]],
+                    "include": [[0.93, 0.05], [0.96, 0.08]],
                     "exclude": [],
                     "merge": False,
                 },

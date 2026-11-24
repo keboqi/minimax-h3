@@ -92,7 +92,7 @@ with TemporaryDirectory() as directory:
 
         assert boots["/storyboard/api/boot"]["gpu"] is False
         assert boots["/remake/api/boot"]["gpu"] is True
-        assert boots["/soundstage/api/boot"]["gpu"] is True
+        assert boots["/soundstage/api/boot"]["gpu"] is False
         assert boots["/dubbing/api/boot"]["gpu"] is False
         assert {item["label"] for item in boots["/dubbing/api/boot"]["pipelines"]} == {
             "Gemini (cloud)", "Gemini by hand",

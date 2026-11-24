@@ -722,7 +722,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
         h("strong", {}, "Enhance this shot"),
         h("span", {class: "muted small"}, state.boot.gpu
           ? "Uses shot image, depth & SAM segments · adds object segments when needed"
-          : "Uses shot image & scene context")),
+          : "Uses shot image & cached depth/segments")),
       h("div", {class: "pass-shot-ai-row"},
         h("input", {
           type: "text",

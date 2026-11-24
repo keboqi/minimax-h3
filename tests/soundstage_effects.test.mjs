@@ -676,3 +676,13 @@ test("single-shot effects edit supports AI enhance direction, auto-segment contr
   assert.ok(text(dialog).includes("1 set · 1 / 16 effects"));
 });
 
+test("video action bar reports accurate titles for effects enhancement runs and errors instead of Drawing stopped", async () => {
+  const {readFileSync} = await import("node:fs");
+  const source = readFileSync(new URL("../h3_ui/drama3/page/video.js", import.meta.url), "utf8");
+  assert.ok(source.includes('enhance_effects: "Enhancing visual effects…"'));
+  assert.ok(source.includes('enhance_effects: "Effects enhancement stopped"'));
+  assert.ok(source.includes('segment_effects: "Segmentation stopped"'));
+  assert.ok(source.includes('refine_effect_mask: "Mask update stopped"'));
+});
+
+

@@ -1555,13 +1555,13 @@ class Drama3PageVideoTests(unittest.TestCase):
                         "label": "stall lantern",
                         "prompt": "paper lantern",
                         "box": [0.65, 0.25, 0.92, 0.80],
-                        "include": [[0.78, 0.52]],
+                        "include": [[0.76, 0.38], [0.80, 0.66]],
                     },
                     {
                         "id": "new_unused",
                         "label": "unused crate",
                         "prompt": "wooden crate",
-                        "include": [[0.1, 0.9]],
+                        "include": [[0.10, 0.82], [0.16, 0.92]],
                     },
                 ],
                 "effects": [
@@ -1664,14 +1664,96 @@ class Drama3PageVideoTests(unittest.TestCase):
         }))["video"]["effect_enhancement"]["shots"][0]
         self.assertIsNone(dismissed["proposal"])
 
-        # Non-ASCII prompt with box/points degrades cleanly to point/box segmentation instead of failing.
+        # Non-ASCII prompt with >=2 distinct points degrades cleanly to multi-point segmentation instead of failing.
         cleaned_new = effect_enhancement.check_new_regions(
-            [{"id": "new_1", "label": "灯笼", "prompt": "纸灯笼", "box": [0.2, 0.2, 0.5, 0.6], "include": [[0.35, 0.4]]}],
+            [{"id": "new_1", "label": "灯笼", "prompt": "纸灯笼", "box": [0.2, 0.2, 0.5, 0.6], "include": [[0.30, 0.32], [0.40, 0.50]]}],
             {"region_1"},
         )
         self.assertEqual(cleaned_new[0]["prompt"], "")
+        self.assertEqual(len(cleaned_new[0]["include"]), 2)
+        # Fewer than 2 distinct include points are rejected so SAM never gets a single subpart point.
         with self.assertRaises(H3Error):
-            effect_enhancement.check_new_regions([{"id": "new_1", "label": "灯笼", "prompt": "纸灯笼"}], {"region_1"})
+            effect_enhancement.check_new_regions(
+                [{"id": "new_1", "label": "lantern", "prompt": "paper lantern", "include": [[0.35, 0.40]]}],
+                {"region_1"},
+            )
+        with self.assertRaises(H3Error):
+            effect_enhancement.check_new_regions(
+                [{"id": "new_1", "label": "lantern", "prompt": "paper lantern", "include": [[0.35, 0.40], [0.35, 0.40]]}],
+                {"region_1"},
+            )
+
+    def test_single_shot_effect_enhancement_works_on_cpu_workshop_without_gpu(self):
+        import os
+        from unittest.mock import Mock
+        import h3_gpu
+        from h3_app.errors import H3Error
+        from h3_ui.drama3 import effect_regions
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        self.export.deps.generation_services = Mock(side_effect=H3Error(h3_gpu.CPU_ONLY_MESSAGE))
+
+        shot0 = self.project()["video"]["effect_enhancement"]["shots"][0]
+        captured = {}
+
+        def fake_write_prompt(**kwargs):
+            captured["media_labels"] = [label for label, _ in kwargs["media_values"]]
+            req = json.loads(kwargs["request_text"])
+            captured["can_add_regions"] = req["can_add_regions"]
+            return json.dumps({
+                "revision": req["revision"],
+                "shot_id": req["shot"]["shot_id"],
+                "action": "replace",
+                "summary": "Added atmospheric rain and gentle push-in.",
+                "new_regions": [
+                    {"id": "new_1", "label": "lantern", "prompt": "paper lantern", "include": [[0.46, 0.42], [0.54, 0.58]]}
+                ],
+                "effects": [
+                    {"presets": ["push_in", "rain"], "mode": "full_frame", "intensity": 0.6},
+                    {"preset": "warm_glow", "mode": "inside", "region_id": "new_1", "intensity": 0.7},
+                ],
+            }), "OK"
+
+        # 1. Under H3_CPU_ONLY=1, /boot reports gpu=False, SAM/Depth GPU calls are skipped completely,
+        #    and single-shot enhancement succeeds with <Shot Image> and drops unmaterialized new_regions cleanly.
+        with (
+            patch.dict(os.environ, {h3_gpu.CPU_ONLY_ENV: "1"}),
+            patch.object(effect_regions, "prepare", side_effect=AssertionError("SAM called on CPU Workshop")),
+            patch("h3_app.drama3.effect_enhancement.write_prompt", side_effect=fake_write_prompt),
+        ):
+            boot = self.ok(self.client.get(f"{API}/boot"))
+            self.assertFalse(boot["gpu"])
+            self.ok(self.client.post(f"{API}/project/video/effects/shot/generate", params=NAME, json={
+                "shot_id": shot0["shot_id"],
+                "image": shot0["image"],
+            }))
+            self.assertIsNone(self.wait()["error"])
+
+        enhanced = self.project()["video"]["effect_enhancement"]["shots"][0]
+        self.assertEqual(len(captured["media_labels"]), 1)
+        self.assertTrue(captured["media_labels"][0].startswith("<Shot Image>"))
+        self.assertFalse(captured["can_add_regions"])
+        self.assertIsNotNone(enhanced["proposal"])
+        self.assertEqual(enhanced["proposal"]["effects"], [
+            {"preset": "push_in", "mode": "full_frame"},
+            {"preset": "rain", "mode": "full_frame", "intensity": 0.6},
+        ])
+        self.assertTrue(any("GPU segmentation is unavailable" in w for w in enhanced["proposal"]["warnings"]))
+
+        # 2. Even on a GPU endpoint where ComfyUI raises H3Error during SAM prep/segmentation,
+        #    single-shot enhancement degrades gracefully instead of discarding the LLM result.
+        with patch("h3_app.drama3.effect_enhancement.write_prompt", side_effect=fake_write_prompt):
+            self.ok(self.client.post(f"{API}/project/video/effects/shot/generate", params=NAME, json={
+                "shot_id": shot0["shot_id"],
+                "image": shot0["image"],
+            }))
+            self.assertIsNone(self.wait()["error"])
+        fallback = self.project()["video"]["effect_enhancement"]["shots"][0]["proposal"]
+        self.assertIsNotNone(fallback)
+        self.assertEqual(len(fallback["effects"]), 2)
+        self.assertTrue(any("Skipped" in w for w in fallback["warnings"]))
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from h3_app.drama3 import effect_enhancement
 from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
 from h3_app.jobs import check_cancelled
+from h3_gpu import is_cpu_only
 
 from ..job_bindings import owned_generation
 from ..page_runs import guarded
@@ -29,6 +30,9 @@ MAX_TOTAL_REGIONS = 24
 
 def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, session_of, project, payload,
                           mix_of, check_available, video_settings, plan_payload):
+    def has_gpu() -> bool:
+        return bool(gpu and not is_cpu_only())
+
     def effect_context(name, editing_data=None):
         if editing_data is None:
             data, audio, mix, settings = mix_of(name, strict=True)
@@ -77,8 +81,11 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
 
     def run_visual_job(run, owner, session, generate):
         callback = owned_generation(generate, "drama3_visuals")
-        for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
-            pass
+        try:
+            for _ in run_job(run, owner, session, "drama3_visuals", [], callback):
+                pass
+        finally:
+            run.job_id, run.family = None, None
 
     def await_writer_reply(pool, run, fn, *args, timeout_message: str, **kwargs):
         ctx = contextvars.copy_context()
@@ -103,7 +110,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
     @app.post(f"{api}/project/video/effects/segment", include_in_schema=False)
     @guarded
     def segment_effects(name: str, request: Request, body: dict = Body(default={})):
-        if not gpu:
+        if not has_gpu():
             raise H3Error("Open Sound Stage on the GPU server to run SAM 3.1.")
         folder, items, _, settings, _ = effect_context(name)
         depth_model = settings["depth_model"]
@@ -281,13 +288,13 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
             draft_effects=draft_effects,
             user_direction=direction,
         )
-        can_add = bool(gpu and len(item["regions"] or ()) < MAX_TOTAL_REGIONS)
+        can_add = bool(has_gpu() and len(item["regions"] or ()) < MAX_TOTAL_REGIONS)
         return shot_input, token, can_add
 
     def materialize_new_shot_regions(run, owner, session, name, body, folder, item, new_reqs, runtime):
         if not new_reqs:
             return {}, []
-        if not gpu:
+        if not has_gpu():
             return {}, ["Skipped new object segments because GPU segmentation is unavailable here."]
         id_map = {}
         warnings = []
@@ -328,7 +335,12 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
                 warnings.append(f"SAM 3.1 found no mask for: {', '.join(skipped)}.")
             yield run.status
 
-        run_visual_job(run, owner, session, generate)
+        try:
+            run_visual_job(run, owner, session, generate)
+        except H3Error as exc:
+            if run.stop_requested:
+                raise
+            warnings.append(f"Skipped new object segments ({exc}).")
         return id_map, warnings
 
     def commit_shot_proposal(name, body, shot_input, decision, id_map, warnings):
@@ -379,33 +391,39 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
         def work(run):
             cur_folder, cur_items, cur_sounds, cur_settings, cur_art = folder, items, sounds, settings, art_style
             cur_item = initial_item
-            if gpu and not run.stop_requested:
-                need_sam = cur_item["regions"] is None
-                get_services = getattr(export.deps, "generation_services", None)
-                has_depth_services = callable(get_services) and get_services() is not None
-                need_depth = (
-                    effect_depth.missing_stills(cur_folder, [cur_item["image"]], cur_settings["depth_model"])
-                    if has_depth_services else []
-                )
-                if need_sam or need_depth:
-                    def prep_visuals():
-                        services = export.deps.generation_services()
-                        if need_sam:
-                            run.status = f"Segmenting shot {cur_item['index'] + 1} with SAM 3.1…"
-                            effect_regions.prepare(services)
-                            check_cancelled()
-                            effect_regions.segment(cur_folder / cur_item["image"], cur_item["labels"], services, runtime)
-                            yield run.status
-                        if need_depth:
-                            run.status = f"Estimating depth for shot {cur_item['index'] + 1} with Depth Pro 2…"
-                            effect_depth.ensure_stills_depth(
-                                cur_folder, need_depth, cur_settings["depth_model"], services, runtime
-                            )
-                            yield run.status
+            prep_warnings = []
+            if has_gpu() and not run.stop_requested:
+                try:
+                    need_sam = cur_item["regions"] is None
+                    get_services = getattr(export.deps, "generation_services", None)
+                    has_depth_services = callable(get_services) and get_services() is not None
+                    need_depth = (
+                        effect_depth.missing_stills(cur_folder, [cur_item["image"]], cur_settings["depth_model"])
+                        if has_depth_services else []
+                    )
+                    if need_sam or need_depth:
+                        def prep_visuals():
+                            services = export.deps.generation_services()
+                            if need_sam:
+                                run.status = f"Segmenting shot {cur_item['index'] + 1} with SAM 3.1…"
+                                effect_regions.prepare(services)
+                                check_cancelled()
+                                effect_regions.segment(cur_folder / cur_item["image"], cur_item["labels"], services, runtime)
+                                yield run.status
+                            if need_depth:
+                                run.status = f"Estimating depth for shot {cur_item['index'] + 1} with Depth Pro 2…"
+                                effect_depth.ensure_stills_depth(
+                                    cur_folder, need_depth, cur_settings["depth_model"], services, runtime
+                                )
+                                yield run.status
 
-                    run_visual_job(run, owner, session, prep_visuals)
-                    cur_folder, cur_items, cur_sounds, cur_settings, cur_art = effect_context(name)
-                    cur_item = find_effect_shot(cur_items, body)
+                        run_visual_job(run, owner, session, prep_visuals)
+                        cur_folder, cur_items, cur_sounds, cur_settings, cur_art = effect_context(name)
+                        cur_item = find_effect_shot(cur_items, body)
+                except H3Error as exc:
+                    if run.stop_requested:
+                        raise
+                    prep_warnings.append(f"Skipped GPU depth/segmentation preparation ({exc}).")
 
             if run.stop_requested:
                 return
@@ -443,7 +461,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
             )
             with runs.lock:
                 if not run.stop_requested:
-                    commit_shot_proposal(name, body, shot_input, decision, id_map, warnings)
+                    commit_shot_proposal(name, body, shot_input, decision, id_map, prep_warnings + warnings)
                     run.status = f"Shot {cur_item['index'] + 1} effects ready to preview."
 
         return start_effect_job(
@@ -464,7 +482,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
             items, sounds, settings, art_style, item, draft_effects, direction
         )
         decision = effect_enhancement.check_shot_reply(reply, shot_input, token)
-        if decision["new_regions"] and gpu:
+        if decision["new_regions"] and has_gpu():
             runtime = export.deps.runtime_config()
 
             def work(run):
@@ -533,7 +551,7 @@ def install_effect_routes(app, *, api, export, store, gpu, runs, owner_of, sessi
     @app.post(f"{api}/project/video/effects/refine", include_in_schema=False)
     @guarded
     def refine_effect_mask(name: str, request: Request, body: dict = Body(...)):
-        if not gpu:
+        if not has_gpu():
             raise H3Error("Open Sound Stage on the GPU server to refine a mask.")
         owner, session = owner_of(request), session_of(request)
         folder, items, _ = effect_inputs(name)

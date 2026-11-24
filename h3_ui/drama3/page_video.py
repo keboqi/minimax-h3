@@ -28,6 +28,7 @@ from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
 from h3_app.hosted_image import API_IMAGE_ENGINES
 from h3_app.provenance import read_snapshot
+from h3_gpu import is_cpu_only
 from h3_models import DEFAULT_SOUNDSTAGE_DEPTH_MODEL, SOUNDSTAGE_DEPTH_MODEL_KEYS, SOUNDSTAGE_DEPTH_MODEL_LABELS
 
 from ..job_bindings import owned_generation
@@ -479,8 +480,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         audio, settings = planning_mix(name, data, result, export, strict=strict, store=store)
         return data, audio, settings, video_settings(data, export.engines)
 
+    def has_gpu() -> bool:
+        return bool(gpu and not is_cpu_only())
+
     def ensure_depth_for_mix(run, owner, session, audio, depth_model):
-        if not gpu or run.stop_requested:
+        if not has_gpu() or run.stop_requested:
             return 0
         get_services = getattr(export.deps, "generation_services", None)
         services = get_services() if callable(get_services) else None
@@ -719,7 +723,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         result = project(name)[1]
         if not result and settings["engine"] not in API_IMAGE_ENGINES:
             raise H3Error("Speak the project before drawing images.")
-        if not gpu and settings["engine"] not in API_IMAGE_ENGINES:
+        if not has_gpu() and settings["engine"] not in API_IMAGE_ENGINES:
             raise H3Error("Choose an API image model to draw images in Workshop.")
         if visuals.read_plan(audio, settings["limit"]) is None:
             raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
@@ -749,7 +753,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         owner = owner_of(request)
         data, _result = project(name)
         settings = video_settings(data, export.engines)
-        if not gpu and settings["engine"] not in API_IMAGE_ENGINES:
+        if not has_gpu() and settings["engine"] not in API_IMAGE_ENGINES:
             raise H3Error("Choose an API image model to draw style previews in Workshop.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
@@ -764,7 +768,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
     @guarded
     def generate_depth(name: str, request: Request):
         """Estimate missing Depth Pro 2 depth maps for the mix's drawn stills using the selected Depth model."""
-        if not gpu:
+        if not has_gpu():
             raise H3Error("Open Sound Stage on the GPU server to estimate depth.")
         get_services = getattr(export.deps, "generation_services", None)
         if not callable(get_services) or get_services() is None:
@@ -835,7 +839,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
 
         def work(run):
             current_scene = scene
-            if gpu and current_scene is not None and plan is not None:
+            if has_gpu() and current_scene is not None and plan is not None:
                 added = ensure_depth_for_mix(run, owner, session, result, settings["depth_model"])
                 if added > 0:
                     current_scene = build_scene(plan)

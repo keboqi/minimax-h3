@@ -11,6 +11,7 @@ from .visual_plan import _reply_json
 
 MAX_LAYERS = 16
 MAX_NEW_REGIONS = 6
+MIN_INCLUDE_POINTS = 2
 MAX_REGION_POINTS = 8
 FULL_FRAME = "full_frame"
 MODES = {
@@ -38,7 +39,7 @@ NEW_REGION_FIELDS = {
     "label": "short display label for the segmented object (for example `brass lantern`)",
     "prompt": "concise ASCII English visual noun phrase (1–4 words) for SAM 3.1 text detection",
     "box": "normalized `[x0, y0, x1, y1]` bounding box in 0–1 coordinates framing the object in <Shot Image>",
-    "include": "1–3 normalized `[x, y]` interior points inside the object in <Shot Image>",
+    "include": "required 2–4 (up to 8) distinct normalized `[x, y]` interior points spread across different parts of the object in <Shot Image> so SAM segments the complete object instead of a subpart",
     "exclude": "optional normalized `[x, y]` points on adjacent background or occluders to exclude",
     "merge": "optional boolean (`true` only when combining multiple matching instances into one mask)",
 }
@@ -259,15 +260,15 @@ def check_new_regions(value, existing_ids, *, max_new=MAX_NEW_REGIONS):
         if not prompt_clean and label_clean.isascii():
             prompt_clean = label_clean
         box = _check_box(entry.get("box"))
-        include = _check_points(entry.get("include"), "include")
+        raw_include = _check_points(entry.get("include"), "include")
+        include = [list(pt) for pt in dict.fromkeys((u, v) for u, v in raw_include)]
         exclude = _check_points(entry.get("exclude"), "exclude")
+        if len(include) < MIN_INCLUDE_POINTS:
+            raise H3Error(
+                f"New region {rid} must include at least {MIN_INCLUDE_POINTS} distinct [x, y] points spread across the object."
+            )
         if prompt_clean and not prompt_clean.isascii():
-            if include or box is not None:
-                prompt_clean = ""
-            else:
-                raise H3Error("New region prompt must be an ASCII English phrase when no points or box are given.")
-        if not prompt_clean and not include and box is None:
-            raise H3Error(f"New region {rid} needs an English prompt, include points, or a bounding box.")
+            prompt_clean = ""
         merge = entry.get("merge", False)
         if not isinstance(merge, bool):
             raise H3Error("New region merge must be true or false.")

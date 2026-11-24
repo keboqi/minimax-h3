@@ -626,10 +626,27 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;
     stop.hidden = !["draw", "preview", "depth", "segment_effects", "enhance_effects", "refine_effect_mask"].some(videoRunning);
     if (busy) {
-      title.textContent = {plan: "Planning shots…", draw: "Drawing…", preview: "Drawing style previews…", depth: "Estimating depth…", save: "Saving to Media…"}[run.kind] || "Working…";
+      title.textContent = {
+        plan: "Planning shots…",
+        draw: "Drawing…",
+        preview: "Drawing style previews…",
+        depth: "Estimating depth…",
+        segment_effects: "Segmenting shots…",
+        enhance_effects: "Enhancing visual effects…",
+        refine_effect_mask: "Updating segment mask…",
+        save: "Saving to Media…",
+      }[run.kind] || "Working…";
       detail.textContent = run.status || "";
     } else if (run?.error) {
-      title.textContent = {plan: "Planning stopped", save: "Saving stopped", preview: "Style previews stopped", depth: "Depth estimation stopped"}[run.kind] || "Drawing stopped";
+      title.textContent = {
+        plan: "Planning stopped",
+        save: "Saving stopped",
+        preview: "Style previews stopped",
+        depth: "Depth estimation stopped",
+        segment_effects: "Segmentation stopped",
+        enhance_effects: "Effects enhancement stopped",
+        refine_effect_mask: "Mask update stopped",
+      }[run.kind] || "Drawing stopped";
       detail.textContent = run.error;
       detail.classList.add("error");
     } else if (!rows.length) {

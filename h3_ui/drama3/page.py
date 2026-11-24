@@ -20,6 +20,7 @@ from fastapi import Body, FastAPI, Request
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
+from h3_gpu import is_cpu_only
 
 from ..job_bindings import owned_generation
 from ..page_routes import install_static_page, owner_of, session_of
@@ -171,6 +172,22 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     """
     admission_lock = RLock()
 
+    def has_gpu() -> bool:
+        return bool(gpu and not is_cpu_only())
+
+    if is_cpu_only():
+        gpu = False
+    raw_interrupt = interrupt
+    if raw_interrupt is not None:
+        from ..api_images import interrupt_api_image
+
+        def safe_interrupt(session, *, family="image", job_id=None):
+            if not has_gpu():
+                return interrupt_api_image(session, family=family, job_id=job_id)
+            return raw_interrupt(session, family=family, job_id=job_id)
+
+        interrupt = safe_interrupt
+
     def speak_blocked(run):
         if video_runs is not None and video_runs.active(run.owner, run.storyboard_id):
             return "Wait for illustration planning, drawing or saving to finish."
@@ -234,8 +251,8 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
     @guarded
     def boot(request: Request):
         owner_of(request)
-        return {"gpu": gpu,
-                "background_music": generate_music is not None,
+        return {"gpu": has_gpu(),
+                "background_music": has_gpu() and generate_music is not None,
                 "capabilities": {"prepare": True, "library_upload": True, "batch_resume": True},
                 "projects": [{"name": name, "generated": generated} for name, generated in store.soundstage_projects()],
                 "presets": {name: list(values) for name, values in DRAMA3_SAMPLING_PRESETS.items()},
@@ -257,7 +274,7 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             if isinstance(preset, dict) and preset.get("id") and preset.get("kind")
         }
         return {
-            "gpu": gpu,
+            "gpu": has_gpu(),
             "features": {"prepare": True, "library_upload": True, "batch_resume": True},
             "effect_kinds": effect_kinds,
             "style_presets": list(visuals.STYLE_PRESETS.keys()),

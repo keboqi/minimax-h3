@@ -470,7 +470,11 @@ def segment_new_regions(
         inc = list(req.get("include") or ())
         if not inc and req.get("box"):
             bx0, by0, bx1, by1 = req["box"]
-            inc = [[(bx0 + bx1) * 0.5, (by0 + by1) * 0.5]]
+            cx, cy = (bx0 + bx1) * 0.5, (by0 + by1) * 0.5
+            if (bx1 - bx0) >= (by1 - by0):
+                inc = [[bx0 + (bx1 - bx0) * 0.35, cy], [bx0 + (bx1 - bx0) * 0.65, cy]]
+            else:
+                inc = [[cx, by0 + (by1 - by0) * 0.35], [cx, by0 + (by1 - by0) * 0.65]]
         if inc:
             pos_px = [
                 {"x": min(width - 1, max(0, int(u * width))), "y": min(height - 1, max(0, int(v * height)))}

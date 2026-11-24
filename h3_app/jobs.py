@@ -32,8 +32,10 @@ def request_requires_gpu(family, values):
     if family == "remake_edit":
         return len(values) < 3 or values[2] != "gpt_image"
     if family == "drama3_visuals":
-        return not values or not (values[0] == "gpt_image" or
-                                  len(values) > 1 and values[1] == "gpt_image")
+        from .hosted_image import API_IMAGE_ENGINES
+
+        return not values or not (values[0] in API_IMAGE_ENGINES or
+                                  len(values) > 1 and values[1] in API_IMAGE_ENGINES)
     return True
 
 
