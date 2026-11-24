@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Lip sync — Shot takes</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.55; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    a { color: #087f6c; }
+    a:hover { color: #065f51; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 10px rgba(10, 16, 14, 0.08);">
+    <!-- Tier 1: Project & Common Functions Bar -->
+    <div style="background: {{ t.chrome }}; color: {{ t.chromeText }}; border-bottom: 1px solid {{ t.chromeLine }}; padding: 8px 20px; min-height: 52px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+      <div style="display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; letter-spacing: -0.01em;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+          <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+        </svg>
+        <span>Dubbing</span>
+      </div>
+      <span aria-hidden="true" style="width: 1px; height: 20px; background: {{ t.chromeLine }}; flex: none;"></span>
+
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-weight: 600; font-size: 14px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeMuted }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          </svg>
+          <span>The Editing Room</span>
+        </span>
+      </div>
+
+      <span style="flex: 1;"></span>
+
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <sc-if value="{{ isStudio }}" hint-placeholder-val="{{ true }}">
+          <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border-radius: 999px; background: {{ t.chromeRaised }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; color: {{ t.chromeText }};">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ t.chromeAccent }};"></span>
+            GPU ready
+          </span>
+        </sc-if>
+        <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+          <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border-radius: 999px; background: #362210; border: 1px solid #6b4620; font-size: 13px; font-weight: 600; color: #fdba74;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: #fdba74;"></span>
+            Workshop · CPU
+          </span>
+        </sc-if>
+        <button type="button" onClick="{{ saveNow }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 13px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-size: 13px; font-weight: 700;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12l5 5 9-10"></path>
+          </svg>
+          <span>Saved</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tier 2: Workflow Stepper -->
+    <div style="background: {{ t.surface }}; color: {{ t.text }}; border-bottom: 1px solid {{ t.line }}; padding: 6px 20px; min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;">
+      <nav aria-label="Dubbing steps" style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px;">
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accentSoft }}; color: {{ t.accent }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+          </span>
+          <span>Source</span>
+        </span>
+        <span aria-hidden="true" style="width: 14px; height: 2px; background: {{ t.accent }}; opacity: 0.4;"></span>
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accentSoft }}; color: {{ t.accent }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+          </span>
+          <span>Review lines</span>
+        </span>
+        <span aria-hidden="true" style="width: 14px; height: 2px; background: {{ t.accent }}; opacity: 0.4;"></span>
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accentSoft }}; color: {{ t.accent }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+          </span>
+          <span>Dub</span>
+        </span>
+        <span aria-hidden="true" style="width: 14px; height: 2px; background: {{ t.accent }}; opacity: 0.4;"></span>
+        <span aria-current="step" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 14px; font-weight: 700;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 12px; font-weight: 700;">4</span>
+          <span>Lip sync</span>
+          <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.surface }}; color: {{ t.accentText }}; font-size: 11px; font-weight: 700;">9/10 takes</span>
+        </span>
+        <span aria-hidden="true" style="width: 14px; height: 2px; background: {{ t.line }};"></span>
+        <a href="AssembleDiff.dc.html" style="display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 4px 10px 4px 6px; border-radius: 8px; text-decoration: none; color: {{ t.text }}; font-size: 14px; font-weight: 600;">
+          <span style="display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 2px solid {{ t.line }}; color: {{ t.muted }}; font-size: 12px; font-weight: 700;">5</span>
+          <span>Result</span>
+          <span style="padding: 1px 7px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }}; font-size: 11px; font-weight: 700;">2 pending</span>
+        </a>
+      </nav>
+      <span style="flex: 1;"></span>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 999px; background: {{ t.raised }}; border: 1px solid {{ t.line }}; color: {{ t.muted }}; font-size: 12px; font-weight: 600;">English → Spanish · 0:36</span>
+        <a href="AssembleDiff.dc.html" style="display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700; white-space: nowrap;">Update full video (2) →</a>
+      </div>
+    </div>
+  </header>
+
+  <main style="padding: 18px 24px 36px; max-width: 1440px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+    <!-- 4-Phase Inline Stage Bar -->
+    <section aria-label="Lip sync stages" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{ t.accentSoft }}; color: {{ t.accentText }};">1. Auto detect (YOLO + MAR)</span>
+        <span style="color: {{ t.muted }};">→</span>
+        <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{ t.accentSoft }}; color: {{ t.accentText }};">2. Confirm faces</span>
+        <span style="color: {{ t.muted }};">→</span>
+        <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{ t.accent }}; color: {{ t.accentInk }};">3. Shot takes &amp; preview (9/10)</span>
+        <span style="color: {{ t.muted }};">→</span>
+        <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }};">4. Assemble video (2 changed)</span>
+      </div>
+      <span style="flex: 1;"></span>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+        <button type="button" onClick="{{ rerunDetect }}" style="min-height: 34px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Re-run detect</button>
+        <a href="ShotRendering.dc.html" style="display: inline-flex; align-items: center; min-height: 34px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.raised }}; color: {{ t.text }}; text-decoration: none; font-size: 13px; font-weight: 600;">Render queue view</a>
+      </div>
+    </section>
+
+    <!-- 2-Column Workspace -->
+    <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start;">
+      <!-- Left Column: Stage + Shot Takes + Settings + Assembly -->
+      <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 16px;">
+        <!-- Unified Stage Card (Face Alignment + Shot Take Preview) -->
+        <section aria-label="Shot stage and take preview" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden;">
+          <!-- Stage Top Bar: Mode Switcher + Preview Controls -->
+          <div style="padding: 10px 14px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+            <div role="group" aria-label="Stage view mode" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+              <button type="button" onClick="{{ setModeAlign }}" aria-pressed="{{ isAlign }}" style="min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: {{ alignBtnBg }}; color: {{ alignBtnFg }}; box-shadow: {{ alignBtnShadow }}; font-size: 13px; font-weight: 600;">Face alignment</button>
+              <button type="button" onClick="{{ setModePreview }}" aria-pressed="{{ isPreview }}" style="min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: {{ previewBtnBg }}; color: {{ previewBtnFg }}; box-shadow: {{ previewBtnShadow }}; font-size: 13px; font-weight: 600;">Shot take preview</button>
+            </div>
+
+            <sc-if value="{{ isPreview }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <span style="font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: {{ previewChipBg }}; color: {{ previewChipFg }};">{{ previewLabel }}</span>
+                <button type="button" onClick="{{ toggleCompare }}" style="min-height: 32px; padding: 0 10px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }}; font-size: 12px; font-weight: 600;">{{ compareBtnLabel }}</button>
+                <button type="button" onClick="{{ toggleLoop }}" aria-pressed="{{ loopShot }}" style="min-height: 32px; padding: 0 10px; border: 1px solid {{ loopBorder }}; border-radius: 7px; background: {{ loopBg }}; color: {{ loopFg }}; font-size: 12px; font-weight: 600;">Loop shot</button>
+              </div>
+            </sc-if>
+
+            <span style="flex: 1;"></span>
+
+            <div role="group" aria-label="Audio track" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+              <button type="button" onClick="{{ setAudioDub }}" aria-pressed="{{ isDubAudio }}" style="min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: {{ dubAudBg }}; color: {{ dubAudFg }}; font-size: 12px; font-weight: 600;">Dubbed audio</button>
+              <button type="button" onClick="{{ setAudioOrig }}" aria-pressed="{{ isOrigAudio }}" style="min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: {{ origAudBg }}; color: {{ origAudFg }}; font-size: 12px; font-weight: 600;">Original</button>
+            </div>
+          </div>
+
+          <!-- Video Viewport -->
+          <div style="position: relative; aspect-ratio: 16 / 9; background: #141c1a; overflow: hidden;">
+            <img src="/_blob/91b03e7a5c1280205281051339fb81da" alt="Studio interview frame for Shot 3" style="display: block; width: 100%; height: 100%; object-fit: cover;">
+
+            <!-- Face Alignment Boxes (shown in Align mode) -->
+            <sc-if value="{{ isAlign }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ assignFace1 }}" aria-label="Assign Face 1, left speaker" style="position: absolute; left: 17%; top: 10%; width: 18%; height: 37%; border-radius: 8px; border: {{ face1Border }}; background: {{ face1Bg }}; padding: 0; display: flex; align-items: flex-start; justify-content: flex-start;">
+                <span style="margin: 5px; padding: 2px 8px; border-radius: 6px; background: {{ face1TagBg }}; color: {{ face1TagFg }}; font-size: 12px; font-weight: 700; white-space: nowrap;">{{ face1Label }}</span>
+              </button>
+              <button type="button" onClick="{{ assignFace2 }}" aria-label="Assign Face 2, right speaker" style="position: absolute; left: 70%; top: 9%; width: 19%; height: 38%; border-radius: 8px; border: {{ face2Border }}; background: {{ face2Bg }}; padding: 0; display: flex; align-items: flex-start; justify-content: flex-start;">
+                <span style="margin: 5px; padding: 2px 8px; border-radius: 6px; background: {{ face2TagBg }}; color: {{ face2TagFg }}; font-size: 12px; font-weight: 700; white-space: nowrap;">{{ face2Label }}</span>
+              </button>
+            </sc-if>
+
+            <!-- Shot Take Preview HUD (shown in Preview mode) -->
+            <sc-if value="{{ isPreview }}" hint-placeholder-val="{{ true }}">
+              <div style="position: absolute; top: 12px; left: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 8px; background: rgba(10, 16, 14, 0.86); color: #e9f1ed; border: 1px solid rgba(102, 216, 187, 0.45); font-size: 12px; font-weight: 600;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ hudDotColor }};"></span>
+                <span>{{ hudStatusText }}</span>
+              </div>
+              <div style="position: absolute; top: 12px; right: 12px; padding: 4px 10px; border-radius: 8px; background: rgba(10, 16, 14, 0.84); color: #e9f1ed; font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px;">
+                Shot {{ activeShot.num }} · {{ activeShot.range }}
+              </div>
+            </sc-if>
+
+            <!-- Dubbed Subtitle Overlay -->
+            <div style="position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); max-width: 90%; padding: 6px 14px; border-radius: 8px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; border: 1px solid rgba(52, 70, 62, 0.9); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              <span style="color: #66d8bb; margin-right: 8px; font-size: 12px; font-weight: 700;">{{ activeShot.speaker }}</span>
+              <span>{{ activeShot.line }}</span>
+            </div>
+          </div>
+
+          <!-- Shot Scrubber (scoped to shot in Preview mode) -->
+          <div style="padding: 8px 14px; border-top: 1px solid {{ t.lineSoft }}; display: flex; align-items: center; gap: 10px; background: {{ t.raised }};">
+            <button type="button" onClick="{{ togglePlay }}" aria-label="Play or pause shot" style="display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; flex: none;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+            </button>
+            <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }}; white-space: nowrap;">{{ scrubClock }}</span>
+            <input aria-label="Shot timeline" type="range" min="0" max="100" value="{{ scrubPct }}" onInput="{{ onScrub }}" style="flex: 1; accent-color: {{ t.accent }};">
+            <span style="font-size: 12px; color: {{ t.muted }}; white-space: nowrap;">{{ scrubScopeLabel }}</span>
+          </div>
+
+          <!-- Shot Controls & Face Assignment Row -->
+          <div style="padding: 12px 14px; border-top: 1px solid {{ t.lineSoft }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+              <button type="button" onClick="{{ prevShot }}" style="min-height: 36px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">← Prev</button>
+              <button type="button" onClick="{{ nextShot }}" style="min-height: 36px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Next →</button>
+              <span style="font-size: 13px; color: {{ t.muted }}; margin-left: 4px;">Shot {{ activeShot.num }} · <strong style="color: {{ t.text }};">{{ activeShot.speaker }}</strong></span>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+              <button type="button" onClick="{{ assignFace1 }}" style="min-height: 34px; padding: 0 10px; border: 1px solid {{ btn1Border }}; border-radius: 8px; background: {{ btn1Bg }}; color: {{ btn1Fg }}; font-size: 13px; font-weight: 600;">Face #1</button>
+              <button type="button" onClick="{{ assignFace2 }}" style="min-height: 34px; padding: 0 10px; border: 1px solid {{ btn2Border }}; border-radius: 8px; background: {{ btn2Bg }}; color: {{ btn2Fg }}; font-size: 13px; font-weight: 600;">Face #2</button>
+              <button type="button" onClick="{{ assignOff }}" style="min-height: 34px; padding: 0 10px; border: 1px solid {{ btnOffBorder }}; border-radius: 8px; background: {{ btnOffBg }}; color: {{ btnOffFg }}; font-size: 13px; font-weight: 600;">Off-screen</button>
+              <span aria-hidden="true" style="width: 1px; height: 22px; background: {{ t.line }}; margin: 0 2px;"></span>
+              <button type="button" onClick="{{ renderThisShot }}" disabled="{{ isWorkshop }}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 13px; font-weight: 700;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"></path>
+                  <path d="M21 3v5h-5"></path>
+                </svg>
+                <span>{{ renderShotBtnLabel }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Shot Takes Strip (like Speech Takes / Scene Takes) -->
+          <div style="padding: 12px 14px 14px; border-top: 1px solid {{ t.lineSoft }}; background: {{ t.raised }}; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 14px;">Takes for Shot {{ activeShot.num }}</strong>
+                <span style="font-size: 12px; color: {{ t.muted }};">Pick a take to preview &amp; use in assembly</span>
+              </div>
+              <sc-if value="{{ activeShotStale }}" hint-placeholder-val="{{ false }}">
+                <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }}; font-size: 12px; font-weight: 700;">Face changed since last take — click New take</span>
+              </sc-if>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <sc-for list="{{ activeTakes }}" as="tk" hint-placeholder-count="3">
+                <button type="button" onClick="{{ tk.pick }}" aria-pressed="{{ tk.selected }}" style="flex: 1 1 170px; max-width: 240px; text-align: left; padding: 9px 11px; border-radius: 9px; border: 1.5px solid {{ tk.border }}; background: {{ tk.bg }}; display: flex; flex-direction: column; gap: 3px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                    <strong style="font-size: 13px; color: {{ t.text }};">{{ tk.label }}</strong>
+                    <span style="font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: {{ tk.pillBg }}; color: {{ tk.pillFg }};">{{ tk.pill }}</span>
+                  </div>
+                  <span style="font-size: 12px; color: {{ t.muted }};">{{ tk.meta }}</span>
+                </button>
+              </sc-for>
+
+              <button type="button" onClick="{{ renderThisShot }}" disabled="{{ isWorkshop }}" style="flex: 0 0 auto; min-width: 112px; padding: 9px 12px; border-radius: 9px; border: 1.5px dashed {{ t.line }}; background: {{ t.surface }}; color: {{ t.accentText }}; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 13px; font-weight: 700;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                <span>New take</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Next-Take Render Settings Card -->
+        <section aria-label="Render settings" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+            <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Settings for next take</h2>
+            <span style="flex: 1;"></span>
+            <span style="font-size: 13px; color: {{ t.muted }};">Applies only to newly rendered shots; existing takes stay untouched.</span>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;">
+            <span style="font-size: 13px; font-weight: 600; color: {{ t.muted }};">Engine</span>
+            <div role="group" aria-label="Lip-sync engine" style="display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+              <sc-for list="{{ engineButtons }}" as="eng" hint-placeholder-count="3">
+                <button type="button" onClick="{{ eng.pick }}" aria-pressed="{{ eng.pressed }}" style="min-height: 34px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ eng.bg }}; color: {{ eng.color }}; box-shadow: {{ eng.shadow }}; font-size: 13px; font-weight: 600;">{{ eng.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px;">
+            <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600;">
+              <span>{{ param1Label }} <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;">{{ param1Out }}</span></span>
+              <input type="range" min="0.25" max="0.90" step="0.05" value="{{ strength }}" onInput="{{ changeStrength }}" style="width: 100%; accent-color: {{ t.accent }};">
+            </label>
+            <label style="display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600;">
+              <span>Mask feather <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;">{{ feather }} px</span></span>
+              <input type="range" min="2" max="16" step="1" value="{{ feather }}" onInput="{{ changeFeather }}" style="width: 100%; accent-color: {{ t.accent }};">
+            </label>
+          </div>
+        </section>
+
+        <!-- Incremental Full-Video Assembly Card -->
+        <section aria-label="Assemble full video" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Full video assembly</h2>
+              <span style="font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }};">2 shots updated since last export</span>
+            </div>
+            <span style="font-size: 12px; color: {{ t.muted }};">Last export · 14:10 · 0:36 MP4</span>
+          </div>
+
+          <!-- Shot Readiness Progress Bar -->
+          <div role="img" aria-label="7 shots in last export, 2 updated takes ready to patch, 1 unrendered, 2 off-screen" style="display: flex; gap: 3px; height: 10px; border-radius: 999px; overflow: hidden;">
+            <span style="flex: 7; background: {{ t.accent }};"></span>
+            <span style="flex: 2; background: #d97706;"></span>
+            <span style="flex: 1; background: {{ t.line }};"></span>
+            <span style="flex: 2; background: {{ t.quietBg }};"></span>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: {{ t.muted }};">
+            <span><strong style="color: {{ t.text }};">7</strong> unchanged (reused)</span>
+            <span><strong style="color: {{ t.warn }};">2</strong> updated takes (Shot 3, Shot 7)</span>
+            <span><strong style="color: {{ t.text }};">1</strong> not rendered (Shot 6)</span>
+            <span><strong style="color: {{ t.text }};">2</strong> off-screen</span>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid {{ t.lineSoft }};">
+            <span style="font-size: 13px; color: {{ t.muted }};">Fast splice (~4 s) · patches only Shot 3 &amp; Shot 7; 7 unchanged shots keep their saved takes.</span>
+            <span style="flex: 1;"></span>
+            <a href="ShotRendering.dc.html" style="display: inline-flex; align-items: center; min-height: 40px; padding: 0 13px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; text-decoration: none; font-size: 13px; font-weight: 600;">Render remaining (1)</a>
+            <a href="AssembleDiff.dc.html" style="display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700;">Update full video (2 shots)</a>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sticky Right Rail: Shots & Takes Queue with Multi-Select -->
+      <aside aria-label="Shots and takes queue" style="flex: 1 1 360px; min-width: 0; position: sticky; top: 112px; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+        <div style="padding: 14px 14px 12px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <h1 style="margin: 0; font-size: 17px; font-weight: 700;">Shots &amp; takes (12)</h1>
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+              <button type="button" onClick="{{ selectPending }}" style="min-height: 28px; padding: 0 8px; border: 1px solid {{ t.line }}; border-radius: 6px; background: {{ t.raised }}; font-size: 12px; font-weight: 600;">Select unrendered</button>
+              <sc-if value="{{ hasChecked }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ clearChecked }}" style="min-height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: {{ t.muted }}; font-size: 12px; font-weight: 600;">Clear</button>
+              </sc-if>
+            </div>
+          </div>
+
+          <div role="group" aria-label="Filter shots" style="display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+            <sc-for list="{{ filterButtons }}" as="flt" hint-placeholder-count="3">
+              <button type="button" onClick="{{ flt.pick }}" aria-pressed="{{ flt.pressed }}" style="min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: {{ flt.bg }}; color: {{ flt.color }}; box-shadow: {{ flt.shadow }}; font-size: 12px; font-weight: 600;">{{ flt.label }}</button>
+            </sc-for>
+          </div>
+
+          <!-- Bulk Action Bar when shots are checked -->
+          <sc-if value="{{ hasChecked }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; background: {{ t.accentSoft }}; color: {{ t.accentText }};">
+              <span style="font-size: 13px; font-weight: 700;">{{ checkedCount }} selected</span>
+              <button type="button" onClick="{{ renderSelected }}" disabled="{{ isWorkshop }}" style="min-height: 32px; padding: 0 12px; border: 1px solid {{ t.accent }}; border-radius: 7px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 12px; font-weight: 700;">Render selected ({{ checkedCount }})</button>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{ visibleShots }}" as="sh" hint-placeholder-count="6">
+            <div style="padding: 10px 11px; border-radius: 10px; border: 1.5px solid {{ sh.border }}; background: {{ sh.bg }}; display: flex; align-items: flex-start; gap: 9px;">
+              <input type="checkbox" checked="{{ sh.checked }}" onChange="{{ sh.toggleCheck }}" aria-label="Select Shot {{ sh.num }}" style="width: 17px; height: 17px; margin-top: 2px; accent-color: {{ t.accent }}; flex: none;">
+              <button type="button" onClick="{{ sh.pick }}" style="flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; align-items: center; gap: 6px; width: 100%;">
+                  <strong style="font-size: 14px;">Shot {{ sh.num }}</strong>
+                  <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 11px; color: {{ t.muted }};">{{ sh.range }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: {{ sh.badgeBg }}; color: {{ sh.badgeFg }}; white-space: nowrap;">{{ sh.badgeLabel }}</span>
+                </div>
+                <div style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;"><strong>{{ sh.speaker }}</strong> · {{ sh.line }}</div>
+                <div style="font-size: 12px; color: {{ t.muted }};">{{ sh.takeSummary }}</div>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div role="status" aria-live="polite" style="position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px; border-radius: 10px; background: {{ t.chrome }}; color: {{ t.chromeText }}; border: 1px solid {{ t.chromeLine }}; font-size: 14px; font-weight: 600; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); z-index: 70;">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"mode":{"editor":"enum","options":["studio","workshop"],"default":"studio"},"$preview":{"width":1360,"height":1280}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const isDark = theme === 'dark';
+    const mode = this.props.mode ?? 'studio';
+    const isWorkshop = mode === 'workshop';
+    const isStudio = !isWorkshop;
+
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', lane: '#22312c', line: '#34463e', lineSoft: '#2a3a34',
+      text: '#e9f1ed', muted: '#a9bdb3', quiet: '#b8c7c0', quietBg: '#26342f',
+      accent: '#66d8bb', accentInk: '#0b2a23', accentSoft: '#1f3d35', accentText: '#8ee6cf', selected: '#1c332d',
+      warn: '#fdba74', warnBg: '#432010',
+      chrome: '#0a100e', chromeRaised: '#17221f', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#f7f9f8', lane: '#eef2f0', line: '#dbe3df', lineSoft: '#e8eeeb',
+      text: '#202e2b', muted: '#4f605a', quiet: '#4b5a55', quietBg: '#eef2f0',
+      accent: '#087f6c', accentInk: '#ffffff', accentSoft: '#e3f1ec', accentText: '#075b4e', selected: '#f2faf7',
+      warn: '#8a420e', warnBg: '#fdecdc',
+      chrome: '#141c1a', chromeRaised: '#1e2c28', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    };
+
+    const stageMode = this.state?.stageMode ?? 'preview';
+    const isAlign = stageMode === 'align';
+    const isPreview = stageMode === 'preview';
+    const audioMode = this.state?.audioMode ?? 'dub';
+    const loopShot = this.state?.loopShot ?? true;
+    const compareOrig = !!this.state?.compareOrig;
+    const scrubPct = this.state?.scrubPct ?? 42;
+    const filter = this.state?.filter ?? 'all';
+    const selectedIdx = this.state?.selectedIdx ?? 2;
+    const engine = this.state?.engine ?? 'h3';
+    const strength = this.state?.strength ?? 0.58;
+    const feather = this.state?.feather ?? 6;
+    const checkedMap = this.state?.checkedMap ?? { 2: true, 5: true };
+    const assignMap = this.state?.assignMap ?? { 0: 'face1', 1: 'face2', 2: 'face1', 3: 'off', 4: 'face2', 5: 'face1', 6: 'face2' };
+    const activeTakeMap = this.state?.activeTakeMap ?? { 0: 't1', 1: 't1', 2: 't2', 3: 'orig', 4: 't1', 5: 'orig', 6: 't1' };
+    const staleMap = this.state?.staleMap ?? {};
+
+    const shotsRaw = [
+      { num: 1, range: '0:01.2–0:04.4', speaker: 'Maya Lin', line: 'Cada escena comienza con un ritmo…', state: 'exported', takeSummary: 'Take 1 · H3 · Face #1 (34%) · In export', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'No sync', meta: 'Source frames' },
+        { id: 't1', label: 'Take 1', pill: 'In export', meta: 'H3 0.58 · Face #1 · 14:04' }
+      ]},
+      { num: 2, range: '0:04.8–0:08.1', speaker: 'Carlos Vega', line: 'Y cuando el corte encaja limpio…', state: 'exported', takeSummary: 'Take 1 · H3 · Face #2 (31%) · In export', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'No sync', meta: 'Source frames' },
+        { id: 't1', label: 'Take 1', pill: 'In export', meta: 'H3 0.58 · Face #2 · 14:06' }
+      ]},
+      { num: 3, range: '0:08.6–0:11.0', speaker: 'Maya Lin', line: 'Empezamos con la historia que queremos contar.', state: 'updated', takeSummary: 'Take 2 · H3 · Face #1 (34%) · Updated', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'No sync', meta: 'Source frames' },
+        { id: 't1', label: 'Take 1', pill: 'Wrong face', meta: 'H3 0.58 · Face #2 · 14:08' },
+        { id: 't2', label: 'Take 2', pill: 'Updated', meta: 'H3 0.58 · Face #1 · 14:18' }
+      ]},
+      { num: 4, range: '0:12.4–0:16.2', speaker: 'Carlos Vega', line: 'Incluso una pausa de medio segundo…', state: 'off', takeSummary: 'Off-screen · Keeps original picture', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'Active', meta: 'Skipped (off-screen)' }
+      ]},
+      { num: 5, range: '0:18.0–0:21.5', speaker: 'Maya Lin', line: 'Por eso grabamos tono de sala…', state: 'exported', takeSummary: 'Take 1 · H3 · Face #1 (34%) · In export', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'No sync', meta: 'Source frames' },
+        { id: 't1', label: 'Take 1', pill: 'In export', meta: 'H3 0.58 · Face #1 · 14:09' }
+      ]},
+      { num: 6, range: '0:22.1–0:25.8', speaker: 'Maya Lin', line: 'Así cada diálogo respira natural…', state: 'unrendered', takeSummary: 'No take yet · Face #1 (32%) · Ready to render', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'Current', meta: 'Not rendered yet' }
+      ]},
+      { num: 7, range: '0:26.4–0:30.2', speaker: 'Carlos Vega', line: 'Sin tener que repetir toda la escena.', state: 'updated', takeSummary: 'Take 1 · LatentSync · Face #2 (29%) · Updated', takes: [
+        { id: 'orig', label: 'Original picture', pill: 'No sync', meta: 'Source frames' },
+        { id: 't1', label: 'Take 1', pill: 'Updated', meta: 'LatentSync · Face #2 · 14:21' }
+      ]}
+    ];
+
+    const shots = shotsRaw.map((s, idx) => {
+      const selected = idx === selectedIdx;
+      const checked = !!checkedMap[idx];
+      const isStale = !!staleMap[idx];
+      const assign = assignMap[idx] ?? 'face1';
+      let badgeLabel = 'In export';
+      let badgeBg = t.accentSoft;
+      let badgeFg = t.accentText;
+      if (isStale) { badgeLabel = 'Outdated'; badgeBg = t.warnBg; badgeFg = t.warn; }
+      else if (s.state === 'updated') { badgeLabel = 'Take updated'; badgeBg = t.warnBg; badgeFg = t.warn; }
+      else if (s.state === 'unrendered') { badgeLabel = 'Not rendered'; badgeBg = t.quietBg; badgeFg = t.quiet; }
+      else if (s.state === 'off') { badgeLabel = 'Off-screen'; badgeBg = t.quietBg; badgeFg = t.quiet; }
+      return {
+        num: s.num, range: s.range, speaker: s.speaker, line: s.line, state: s.state,
+        takeSummary: s.takeSummary, takes: s.takes, assign, selected, checked, isStale,
+        bg: selected ? t.selected : t.raised,
+        border: selected ? t.accent : t.lineSoft,
+        badgeLabel, badgeBg, badgeFg,
+        pick: () => this.setState({ selectedIdx: idx, compareOrig: false }),
+        toggleCheck: () => {
+          const next = Object.assign({}, checkedMap);
+          next[idx] = !checked;
+          this.setState({ checkedMap: next });
+        }
+      };
+    });
+
+    const visibleShots = shots.filter((s) => {
+      if (filter === 'pending') return s.state === 'updated' || s.state === 'unrendered' || s.isStale;
+      if (filter === 'ready') return s.state === 'exported' || s.state === 'updated';
+      return true;
+    });
+
+    const activeShot = shots[selectedIdx] || shots[0];
+    const activeTakeId = activeTakeMap[selectedIdx] ?? activeShot.takes[activeShot.takes.length - 1].id;
+    const activeTakes = activeShot.takes.map((tk) => {
+      const isSelected = tk.id === activeTakeId;
+      const isUpdated = tk.pill === 'Updated';
+      return {
+        label: tk.label, meta: tk.meta,
+        pill: isSelected ? (tk.id === 'orig' ? 'Active' : 'Active ★') : tk.pill,
+        selected: isSelected,
+        border: isSelected ? t.accent : t.line,
+        bg: isSelected ? t.selected : t.surface,
+        pillBg: isSelected ? t.accent : (isUpdated ? t.warnBg : t.quietBg),
+        pillFg: isSelected ? t.accentInk : (isUpdated ? t.warn : t.quiet),
+        pick: () => {
+          const next = Object.assign({}, activeTakeMap);
+          next[selectedIdx] = tk.id;
+          this.setState({ activeTakeMap: next, stageMode: 'preview', compareOrig: tk.id === 'orig', toast: 'Shot ' + activeShot.num + ': previewing ' + tk.label + '.' });
+        }
+      };
+    });
+
+    const checkedCount = Object.values(checkedMap).filter(Boolean).length;
+    const f1Active = activeShot.assign === 'face1';
+    const f2Active = activeShot.assign === 'face2';
+    const offActive = activeShot.assign === 'off';
+
+    const setAssign = (val, msg) => {
+      const nextA = Object.assign({}, assignMap); nextA[selectedIdx] = val;
+      const nextS = Object.assign({}, staleMap); nextS[selectedIdx] = activeShot.takes.length > 1;
+      this.setState({ assignMap: nextA, staleMap: nextS, stageMode: 'align', toast: msg });
+    };
+
+    const filterButtons = [['all', 'All (12)'], ['pending', 'Changed / Unrendered (3)'], ['ready', 'Ready (9)']].map(([key, label]) => {
+      const pressed = filter === key;
+      return {
+        label, pressed,
+        bg: pressed ? t.surface : 'transparent', color: pressed ? t.text : t.muted,
+        shadow: pressed ? '0 1px 2px rgba(0, 0, 0, 0.14)' : 'none',
+        pick: () => this.setState({ filter: key })
+      };
+    });
+
+    const engineButtons = [['h3', 'MiniMax H3'], ['musetalk', 'MuseTalk 1.5 · Fast'], ['latentsync', 'LatentSync 1.6 · Quality']].map(([key, label]) => {
+      const pressed = engine === key;
+      return {
+        label, pressed,
+        bg: pressed ? t.surface : 'transparent', color: pressed ? t.text : t.muted,
+        shadow: pressed ? '0 1px 2px rgba(0, 0, 0, 0.14)' : 'none',
+        pick: () => this.setState({ engine: key, toast: 'Next take engine set to ' + label + '.' })
+      };
+    });
+
+    const curTakeObj = activeShot.takes.find((x) => x.id === activeTakeId) || activeShot.takes[0];
+    const showingOriginal = compareOrig || activeTakeId === 'orig';
+    const previewLabel = showingOriginal ? 'Original picture' : (curTakeObj.label + ' · Lip-synced');
+
+    return {
+      t, isStudio, isWorkshop, isAlign, isPreview,
+      isDubAudio: audioMode === 'dub', isOrigAudio: audioMode === 'orig',
+      loopShot, scrubPct, visibleShots, activeShot, activeTakes,
+      activeShotStale: !!activeShot.isStale,
+      hasChecked: checkedCount > 0, checkedCount,
+      filterButtons, engineButtons, strength, feather,
+      param1Label: engine === 'musetalk' ? 'Mouth box shift' : engine === 'latentsync' ? 'Guidance scale' : 'Denoise strength',
+      param1Out: engine === 'musetalk' ? '+0 px' : engine === 'latentsync' ? '1.5' : Number(strength).toFixed(2),
+      alignBtnBg: isAlign ? t.surface : 'transparent', alignBtnFg: isAlign ? t.text : t.muted, alignBtnShadow: isAlign ? '0 1px 2px rgba(0,0,0,0.14)' : 'none',
+      previewBtnBg: isPreview ? t.surface : 'transparent', previewBtnFg: isPreview ? t.text : t.muted, previewBtnShadow: isPreview ? '0 1px 2px rgba(0,0,0,0.14)' : 'none',
+      dubAudBg: audioMode === 'dub' ? t.surface : 'transparent', dubAudFg: audioMode === 'dub' ? t.text : t.muted,
+      origAudBg: audioMode === 'orig' ? t.surface : 'transparent', origAudFg: audioMode === 'orig' ? t.text : t.muted,
+      previewLabel,
+      previewChipBg: showingOriginal ? t.quietBg : t.accentSoft,
+      previewChipFg: showingOriginal ? t.quiet : t.accentText,
+      compareBtnLabel: showingOriginal ? 'Show synced take' : 'Compare original',
+      loopBg: loopShot ? t.accentSoft : t.surface, loopFg: loopShot ? t.accentText : t.text, loopBorder: loopShot ? t.accent : t.line,
+      hudDotColor: showingOriginal ? '#a9bdb3' : '#66d8bb',
+      hudStatusText: showingOriginal ? 'Previewing original frames (no lip sync)' : ('Previewing ' + curTakeObj.label + ' · ' + curTakeObj.meta),
+      scrubClock: isPreview ? ('0:0' + (1 + Math.round(scrubPct * 0.014)) + ' / 0:02.4') : '0:09.6 / 0:36.0',
+      scrubScopeLabel: isPreview ? 'Shot clip only' : 'Full video',
+      renderShotBtnLabel: activeShot.takes.length > 1 ? 'New take' : 'Render shot',
+      face1Border: f1Active ? '2.5px solid #66d8bb' : '2px dashed rgba(233, 241, 237, 0.72)',
+      face1Bg: f1Active ? 'rgba(102, 216, 187, 0.16)' : 'rgba(10, 16, 14, 0.16)',
+      face1TagBg: f1Active ? '#66d8bb' : 'rgba(10, 16, 14, 0.88)',
+      face1TagFg: f1Active ? '#0b2a23' : '#e9f1ed',
+      face1Label: f1Active ? activeShot.speaker + ' · 34%' : 'Face #1 · 34%',
+      face2Border: f2Active ? '2.5px solid #66d8bb' : '2px dashed rgba(233, 241, 237, 0.72)',
+      face2Bg: f2Active ? 'rgba(102, 216, 187, 0.16)' : 'rgba(10, 16, 14, 0.16)',
+      face2TagBg: f2Active ? '#66d8bb' : 'rgba(10, 16, 14, 0.88)',
+      face2TagFg: f2Active ? '#0b2a23' : '#e9f1ed',
+      face2Label: f2Active ? activeShot.speaker + ' · 31%' : 'Face #2 · 31%',
+      btn1Bg: f1Active ? t.accent : t.surface, btn1Fg: f1Active ? t.accentInk : t.text, btn1Border: f1Active ? t.accent : t.line,
+      btn2Bg: f2Active ? t.accent : t.surface, btn2Fg: f2Active ? t.accentInk : t.text, btn2Border: f2Active ? t.accent : t.line,
+      btnOffBg: offActive ? t.accent : t.surface, btnOffFg: offActive ? t.accentInk : t.text, btnOffBorder: offActive ? t.accent : t.line,
+      toast: this.state?.toast ?? '',
+      setModeAlign: () => this.setState({ stageMode: 'align' }),
+      setModePreview: () => this.setState({ stageMode: 'preview' }),
+      setAudioDub: () => this.setState({ audioMode: 'dub' }),
+      setAudioOrig: () => this.setState({ audioMode: 'orig' }),
+      toggleCompare: () => this.setState({ compareOrig: !compareOrig }),
+      toggleLoop: () => this.setState({ loopShot: !loopShot }),
+      togglePlay: () => this.setState({ scrubPct: scrubPct >= 90 ? 10 : scrubPct + 20 }),
+      onScrub: (e) => this.setState({ scrubPct: Number(e.target.value) }),
+      prevShot: () => this.setState({ selectedIdx: (selectedIdx + shotsRaw.length - 1) % shotsRaw.length, compareOrig: false }),
+      nextShot: () => this.setState({ selectedIdx: (selectedIdx + 1) % shotsRaw.length, compareOrig: false }),
+      assignFace1: () => setAssign('face1', 'Shot ' + activeShot.num + ' assigned to Face #1.'),
+      assignFace2: () => setAssign('face2', 'Shot ' + activeShot.num + ' assigned to Face #2.'),
+      assignOff: () => setAssign('off', 'Shot ' + activeShot.num + ' marked off-screen.'),
+      renderThisShot: () => this.setState({ toast: 'Rendering new take for Shot ' + activeShot.num + ' only (~14 s)…' }),
+      renderSelected: () => this.setState({ toast: 'Queued ' + checkedCount + ' selected shots for lip-sync render.' }),
+      selectPending: () => this.setState({ checkedMap: { 2: true, 5: true, 6: true }, toast: 'Selected 3 changed/unrendered shots.' }),
+      clearChecked: () => this.setState({ checkedMap: {} }),
+      changeStrength: (e) => this.setState({ strength: Number(e.target.value) }),
+      changeFeather: (e) => this.setState({ feather: Number(e.target.value) }),
+      rerunDetect: () => this.setState({ toast: 'Re-running YOLO + MAR face detection…' }),
+      saveNow: () => this.setState({ toast: 'Project & shot takes saved.' })
+    };
+  }
+}
+</script>
+</body>
+</html>

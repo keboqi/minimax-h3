@@ -388,6 +388,10 @@ async function finished(kind, run) {
   }
   if (kind === "lip-sync" && !run.error && !run.stop_requested && run.status !== "Interrupted.") {
     if (run.session !== app.session?.id || run.dub_video !== app.session.result?.lip_sync?.video) return;
+    if (run.task === "lip-sync-shots") {
+      await loadLipSyncPlan(app, {silent: true, openPreview: true});
+      return;
+    }
     await refresh();
     if (run.session !== app.session?.id || run.dub_video !== app.session.result?.lip_sync?.video) return;
     await loadLipSyncPlan(app, {silent: true});

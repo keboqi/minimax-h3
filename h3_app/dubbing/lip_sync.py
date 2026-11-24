@@ -74,6 +74,9 @@ DEFAULT_LATENTSYNC_STEPS = 20
 DEFAULT_LATENTSYNC_GUIDANCE = 1.5
 _MIN_TURN_SECONDS = 1.0 / FPS
 WINDOW_CACHE_DIR = "lip_sync_cache"
+TAKES_DIR = "lip_sync_takes"
+TAKES_FILE = "lip_sync_takes.json"
+TAKE_ORIGINAL = "original"
 REPORT_FILE = "lip_sync_report.json"
 PLAN_FILE = "lip_sync_plan.json"
 OVERRIDES_FILE = "lip_sync_overrides.json"
@@ -721,21 +724,17 @@ def _extract_window_slice(
     return destination
 
 
-def assemble_lip_sync_video(
+def _build_splice_filter_graph(
     dub: Path,
     rendered_windows: Sequence[tuple[LipSyncWindow, Path]],
-    destination: Path,
-    *,
-    timeout: int = 600,
-) -> Path:
-    """Splice rendered lip-sync windows onto the full video and copy audio/subtitle tracks from dub."""
-    if not rendered_windows:
-        raise H3Error("No rendered lip-sync windows to assemble.")
-    meta = probe_video_metadata(dub)
+    meta: Any,
+    start_frame: int,
+    end_frame: int,
+) -> tuple[list[str], list[str], str]:
+    """Build ffmpeg inputs and filter_complex graph splicing rendered windows onto [start_frame, end_frame)."""
     rate = Fraction(meta.fps).limit_denominator(100000)
     fps_str = f"{rate.numerator}/{rate.denominator}"
     time_base = f"{rate.denominator}/{rate.numerator}"
-    total_frames = max(1, round(meta.duration * rate))
     # Cover rounding at the splice boundary, including a one-frame patch downsampled below 24 fps.
     patch_padding = max(1, math.ceil(FPS / rate))
 
@@ -743,7 +742,7 @@ def assemble_lip_sync_video(
     inputs = ["-i", str(dub)]
     filter_parts: list[str] = []
     concat_labels: list[str] = []
-    cursor = 0
+    cursor = start_frame
     seg_index = 0
 
     def add_source_segment(seg_start: int, seg_end: int) -> None:
@@ -763,7 +762,7 @@ def assemble_lip_sync_video(
             raise H3Error(f"Rendered lip-sync window is missing: {rendered_path.name}")
         patch_start = round(window.start * rate)
         win_start = max(cursor, patch_start)
-        win_end = min(total_frames, round(window.end * rate))
+        win_end = min(end_frame, round(window.end * rate))
         if win_end <= win_start:
             continue
         add_source_segment(cursor, win_start)
@@ -782,15 +781,30 @@ def assemble_lip_sync_video(
         concat_labels.append(f"[{label}]")
         cursor = win_end
 
-    add_source_segment(cursor, total_frames)
+    add_source_segment(cursor, end_frame)
     if not concat_labels:
         raise H3Error("No video segments were produced for lip-sync assembly.")
-
-    # The concat filter estimates segment durations from timestamps. Number every
-    # frame on the common output timeline so estimation errors cannot accumulate.
+    # Number every frame on the common output timeline so concat duration rounding cannot accumulate.
     filter_parts.append(
         f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0,settb={time_base},setpts=N[vout]"
     )
+    return inputs, filter_parts, fps_str
+
+
+def assemble_lip_sync_video(
+    dub: Path,
+    rendered_windows: Sequence[tuple[LipSyncWindow, Path]],
+    destination: Path,
+    *,
+    timeout: int = 600,
+) -> Path:
+    """Splice rendered lip-sync windows onto the full video and copy audio/subtitle tracks from dub."""
+    if not rendered_windows:
+        raise H3Error("No rendered lip-sync windows to assemble.")
+    meta = probe_video_metadata(dub)
+    rate = Fraction(meta.fps).limit_denominator(100000)
+    total_frames = max(1, round(meta.duration * rate))
+    inputs, filter_parts, fps_str = _build_splice_filter_graph(dub, rendered_windows, meta, 0, total_frames)
     encoder = "h264_nvenc" if has_encoder("h264_nvenc") else "libx264"
     video_args = (
         ["-c:v", encoder, "-preset", "p5", "-cq", "19"]
@@ -913,6 +927,360 @@ def save_manual_overrides(dub: Path, overrides: dict[tuple[int, str], int | None
         pass
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def shot_key_str(shot_index: int, speaker: str) -> str:
+    return f"{int(shot_index)}:{speaker}"
+
+
+def parse_shot_key(raw: str | tuple[int, str]) -> tuple[int, str]:
+    if isinstance(raw, tuple) and len(raw) == 2:
+        return int(raw[0]), str(raw[1])
+    text = str(raw or "")
+    if ":" not in text:
+        raise H3Error(f"Invalid shot key: {raw!r}. Expected '<shot_index>:<speaker>'.")
+    idx_str, speaker = text.split(":", 1)
+    try:
+        idx = int(idx_str)
+    except ValueError as exc:
+        raise H3Error(f"Invalid shot index in shot key: {raw!r}.") from exc
+    if not speaker:
+        raise H3Error(f"Missing speaker in shot key: {raw!r}.")
+    return idx, speaker
+
+
+def _takes_dir(dub: Path) -> Path:
+    return player_folder(dub) / TAKES_DIR
+
+
+def _empty_takes_registry(dub: Path) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "dub": dub.name,
+        "dub_fingerprint": video_fingerprint(dub) if dub.is_file() else None,
+        "shots": {},
+        "assembled": None,
+    }
+
+
+def load_lip_sync_takes(dub: Path) -> dict[str, Any]:
+    """Read persisted per-shot lip-sync takes for a dub, pruning missing cache files."""
+    base = _empty_takes_registry(dub)
+    path = player_folder(dub) / TAKES_FILE
+    if not path.is_file():
+        return base
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return base
+    if not isinstance(raw, dict):
+        return base
+    if raw.get("dub") != dub.name:
+        return base
+    fp = base["dub_fingerprint"]
+    if fp and raw.get("dub_fingerprint") and raw.get("dub_fingerprint") != fp:
+        return base
+
+    cache_dir = _window_cache_dir(dub)
+    takes_dir = _takes_dir(dub)
+    cleaned_shots: dict[str, dict[str, Any]] = {}
+    raw_shots = raw.get("shots")
+    if isinstance(raw_shots, dict):
+        for key, entry in raw_shots.items():
+            if not isinstance(entry, dict):
+                continue
+            valid_takes: list[dict[str, Any]] = []
+            for take in entry.get("takes") or ():
+                if not isinstance(take, dict) or not take.get("id"):
+                    continue
+                win_entries = take.get("windows") or []
+                if not isinstance(win_entries, list) or not win_entries:
+                    continue
+                all_present = True
+                for item in win_entries:
+                    cache_name = item.get("cache_file") if isinstance(item, dict) else None
+                    if not cache_name or not (cache_dir / cache_name).is_file():
+                        all_present = False
+                        break
+                if not all_present:
+                    continue
+                copied = dict(take)
+                preview_name = copied.get("preview_file")
+                if preview_name and not (takes_dir / preview_name).is_file():
+                    copied["preview_file"] = None
+                valid_takes.append(copied)
+            active = str(entry.get("active_take_id") or TAKE_ORIGINAL)
+            valid_ids = {tk["id"] for tk in valid_takes}
+            if active != TAKE_ORIGINAL and active not in valid_ids:
+                active = valid_takes[-1]["id"] if valid_takes else TAKE_ORIGINAL
+            if valid_takes or active == TAKE_ORIGINAL:
+                cleaned_shots[str(key)] = {
+                    "active_take_id": active,
+                    "takes": valid_takes,
+                    "next_number": max(
+                        int(entry.get("next_number") or 1),
+                        max((int(tk.get("number") or 0) for tk in valid_takes), default=0) + 1,
+                    ),
+                }
+    assembled = raw.get("assembled")
+    if not isinstance(assembled, dict):
+        assembled = None
+    return {
+        "version": 1,
+        "dub": dub.name,
+        "dub_fingerprint": fp,
+        "shots": cleaned_shots,
+        "assembled": assembled,
+    }
+
+
+def save_lip_sync_takes(dub: Path, registry: dict[str, Any]) -> None:
+    """Persist per-shot lip-sync takes atomically beside the dub."""
+    folder = player_folder(dub)
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = folder / TAKES_FILE
+    temporary = folder / f"{TAKES_FILE}.{uuid4().hex}.tmp"
+    try:
+        temporary.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, destination)
+    except OSError:
+        pass
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def lip_sync_take_preview_path(dub: Path, shot_key: str, take_id: str) -> Path | None:
+    """Return the validated local MP4 preview path for one shot take, if available."""
+    registry = load_lip_sync_takes(dub)
+    entry = registry.get("shots", {}).get(shot_key)
+    if not isinstance(entry, dict):
+        return None
+    takes_root = _takes_dir(dub).resolve()
+    for take in entry.get("takes") or ():
+        if take.get("id") != take_id:
+            continue
+        name = take.get("preview_file")
+        if not name or "/" in str(name) or "\\" in str(name):
+            return None
+        candidate = (takes_root / str(name)).resolve()
+        if candidate.parent == takes_root and candidate.is_file():
+            return candidate
+    return None
+
+
+def build_shot_preview_clip(
+    dub: Path,
+    shot_windows: Sequence[tuple[LipSyncWindow, Path]],
+    destination: Path,
+    *,
+    shot_start: float | None = None,
+    shot_end: float | None = None,
+    timeout: int = 180,
+) -> Path:
+    """Splice one shot's rendered window(s) onto that shot's clip range with dubbed audio."""
+    if not shot_windows:
+        raise H3Error("No rendered lip-sync windows for shot preview.")
+    meta = probe_video_metadata(dub)
+    rate = Fraction(meta.fps).limit_denominator(100000)
+    total_frames = max(1, round(meta.duration * rate))
+
+    win_min = min(w.start for w, _ in shot_windows)
+    win_max = max(w.end for w, _ in shot_windows)
+    clip_start = max(0.0, min(win_min, float(shot_start) if shot_start is not None else win_min))
+    clip_end = min(meta.duration, max(win_max, float(shot_end) if shot_end is not None else win_max))
+    start_frame = max(0, round(clip_start * rate))
+    end_frame = min(total_frames, max(start_frame + 1, round(clip_end * rate)))
+    actual_start = float(start_frame / rate)
+    actual_dur = max(0.05, float((end_frame - start_frame) / rate))
+
+    inputs, filter_parts, fps_str = _build_splice_filter_graph(dub, shot_windows, meta, start_frame, end_frame)
+    audio_idx = len(inputs) // 2
+    inputs += ["-ss", f"{actual_start:.6f}", "-t", f"{actual_dur:.6f}", "-i", str(dub)]
+    encoder = "h264_nvenc" if has_encoder("h264_nvenc") else "libx264"
+    video_args = (
+        ["-c:v", encoder, "-preset", "p4", "-cq", "21"]
+        if encoder == "h264_nvenc"
+        else ["-c:v", encoder, "-preset", "veryfast", "-crf", "20"]
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pending = destination.with_suffix(destination.suffix + ".partial")
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        *inputs,
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "[vout]",
+        "-map", f"{audio_idx}:a?",
+        *video_args,
+        "-r", fps_str,
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        str(pending),
+    ]
+    try:
+        proc = run_media_process(cmd, capture_output=True, text=True, timeout=timeout, partial_outputs=(pending,))
+        if proc.returncode != 0 or not pending.is_file():
+            raise H3Error(f"Could not build shot preview clip: {proc.stderr.strip()}")
+        check_cancelled()
+        pending.replace(destination)
+        return destination
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+def _plan_shot_bounds(plan: dict[str, Any]) -> dict[int, tuple[float, float]]:
+    return {
+        int(s["index"]): (float(s["start"]), float(s["end"]))
+        for s in (plan.get("shots") or ())
+        if isinstance(s, dict) and "index" in s
+    }
+
+
+def _settings_snapshot(
+    engine: str,
+    *,
+    strength: float,
+    feather: int,
+    bbox_shift: int,
+    inference_steps: int,
+    guidance_scale: float,
+) -> dict[str, Any]:
+    return {
+        "strength": round(float(strength), 3) if engine == "h3" else None,
+        "feather": int(feather),
+        "bbox_shift": int(bbox_shift) if engine == "musetalk" else None,
+        "inference_steps": int(inference_steps) if engine == "latentsync" else None,
+        "guidance_scale": round(float(guidance_scale), 2) if engine == "latentsync" else None,
+    }
+
+
+def _record_shot_take(
+    dub: Path,
+    registry: dict[str, Any],
+    *,
+    shot_index: int,
+    speaker: str,
+    engine: str,
+    settings: dict[str, Any],
+    track_id: int | None,
+    shot_windows: Sequence[tuple[LipSyncWindow, Path]],
+    shot_start: float | None = None,
+    shot_end: float | None = None,
+    build_preview: bool = True,
+    force_new: bool = False,
+) -> dict[str, Any]:
+    """Record a rendered shot take in the registry and optionally build its preview clip."""
+    key = shot_key_str(shot_index, speaker)
+    shots = registry.setdefault("shots", {})
+    entry = shots.get(key)
+    if not isinstance(entry, dict):
+        entry = {"active_take_id": TAKE_ORIGINAL, "takes": [], "next_number": 1}
+        shots[key] = entry
+    takes: list[dict[str, Any]] = entry.setdefault("takes", [])
+    cache_files = [path.name for _, path in shot_windows]
+    if not force_new:
+        for existing in reversed(takes):
+            ex_files = [item.get("cache_file") for item in existing.get("windows") or ()]
+            if ex_files == cache_files and existing.get("engine") == engine and existing.get("track_id") == track_id:
+                if build_preview and not existing.get("preview_file"):
+                    preview_name = f"shot_{shot_index:03d}_{existing['id']}_{uuid4().hex[:6]}.mp4"
+                    try:
+                        build_shot_preview_clip(
+                            dub, shot_windows, _takes_dir(dub) / preview_name,
+                            shot_start=shot_start, shot_end=shot_end,
+                        )
+                        existing["preview_file"] = preview_name
+                    except Exception:
+                        pass
+                entry["active_take_id"] = existing["id"]
+                return existing
+
+    number = max(
+        int(entry.get("next_number") or 1),
+        max((int(tk.get("number") or 0) for tk in takes), default=0) + 1,
+    )
+    take_id = f"t{number}"
+    entry["next_number"] = number + 1
+    preview_file: str | None = None
+    if build_preview:
+        preview_name = f"shot_{shot_index:03d}_{take_id}_{uuid4().hex[:6]}.mp4"
+        try:
+            build_shot_preview_clip(
+                dub, shot_windows, _takes_dir(dub) / preview_name,
+                shot_start=shot_start, shot_end=shot_end,
+            )
+            preview_file = preview_name
+        except Exception:
+            preview_file = None
+
+    first_win = shot_windows[0][0]
+    take_record = {
+        "id": take_id,
+        "number": number,
+        "shot_index": int(shot_index),
+        "speaker": str(speaker),
+        "created_at": time.time(),
+        "engine": str(engine),
+        "settings": dict(settings),
+        "track_id": track_id,
+        "face_target": list(first_win.face_target) if first_win.face_target is not None else None,
+        "preview_file": preview_file,
+        "windows": [
+            {"window": asdict(win), "cache_file": path.name}
+            for win, path in shot_windows
+        ],
+    }
+    takes.append(take_record)
+    entry["active_take_id"] = take_id
+    return take_record
+
+
+def select_lip_sync_shot_take(dub: Path, shot_key: str, take_id: str) -> dict[str, Any]:
+    """Choose which saved take (or 'original') is active for a shot."""
+    parse_shot_key(shot_key)
+    registry = load_lip_sync_takes(dub)
+    shots = registry.setdefault("shots", {})
+    entry = shots.get(shot_key)
+    if take_id == TAKE_ORIGINAL:
+        if not isinstance(entry, dict):
+            entry = {"active_take_id": TAKE_ORIGINAL, "takes": [], "next_number": 1}
+            shots[shot_key] = entry
+        else:
+            entry["active_take_id"] = TAKE_ORIGINAL
+        save_lip_sync_takes(dub, registry)
+        return registry
+    if not isinstance(entry, dict) or not any(tk.get("id") == take_id for tk in entry.get("takes") or ()):
+        raise H3Error(f"Take {take_id!r} was not found for shot {shot_key}.")
+    entry["active_take_id"] = take_id
+    save_lip_sync_takes(dub, registry)
+    return registry
+
+
+def delete_lip_sync_shot_take(dub: Path, shot_key: str, take_id: str) -> dict[str, Any]:
+    """Delete one saved take for a shot and update the active take if needed."""
+    parse_shot_key(shot_key)
+    registry = load_lip_sync_takes(dub)
+    entry = registry.get("shots", {}).get(shot_key)
+    if not isinstance(entry, dict):
+        raise H3Error(f"No takes found for shot {shot_key}.")
+    takes = list(entry.get("takes") or ())
+    removed = [tk for tk in takes if tk.get("id") == take_id]
+    if not removed:
+        raise H3Error(f"Take {take_id!r} was not found for shot {shot_key}.")
+    remaining = [tk for tk in takes if tk.get("id") != take_id]
+    entry["takes"] = remaining
+    if entry.get("active_take_id") == take_id:
+        entry["active_take_id"] = remaining[-1]["id"] if remaining else TAKE_ORIGINAL
+    preview_name = removed[0].get("preview_file")
+    if preview_name:
+        try:
+            (_takes_dir(dub) / str(preview_name)).unlink(missing_ok=True)
+        except OSError:
+            pass
+    save_lip_sync_takes(dub, registry)
+    return registry
 
 
 def _is_no_face_error(exc: Exception) -> bool:
@@ -1708,6 +2076,362 @@ def render_dub_lip_sync(
             failed_windows=failed_windows, filtered_windows=filtered_windows,
             face_size_range=(min_size, max_size),
         )
+        try:
+            registry = load_lip_sync_takes(dub)
+            shot_bounds = _plan_shot_bounds(reviewed_plan)
+            grouped: dict[tuple[int, str], list[tuple[LipSyncWindow, Path]]] = {}
+            for win, rpath in rendered_windows:
+                if rpath.parent == cache_dir and rpath.is_file():
+                    grouped.setdefault((win.shot_index, win.speaker), []).append((win, rpath))
+            settings_snapshot = _settings_snapshot(
+                engine,
+                strength=strength,
+                feather=feather,
+                bbox_shift=bbox_shift,
+                inference_steps=inference_steps,
+                guidance_scale=guidance_scale,
+            )
+            shot_takes_map: dict[str, str] = {}
+            for (s_idx, spk), win_list in grouped.items():
+                assign = assignments.get((s_idx, spk))
+                bounds = shot_bounds.get(s_idx)
+                take = _record_shot_take(
+                    dub,
+                    registry,
+                    shot_index=s_idx,
+                    speaker=spk,
+                    engine=engine,
+                    settings=settings_snapshot,
+                    track_id=assign.track_id if assign is not None else None,
+                    shot_windows=win_list,
+                    shot_start=bounds[0] if bounds else None,
+                    shot_end=bounds[1] if bounds else None,
+                    build_preview=True,
+                    force_new=False,
+                )
+                shot_takes_map[shot_key_str(s_idx, spk)] = take["id"]
+            registry["assembled"] = {
+                "output": assembled.name,
+                "at": time.time(),
+                "shot_takes": shot_takes_map,
+            }
+            save_lip_sync_takes(dub, registry)
+        except Exception:
+            pass
+    yield assembled
+
+
+def render_lip_sync_shots(
+    *,
+    dub: Path,
+    shot_keys: Sequence[str | tuple[int, str]],
+    services: GenerationServices | None,
+    reviewed_plan: dict[str, Any] | None = None,
+    refinement: dict[str, Any] | None = None,
+    crop_size: int = DEFAULT_CROP_SIZE,
+    strength: float = DEFAULT_AUTO_STRENGTH,
+    feather: int = DEFAULT_AUTO_FEATHER,
+    seed: int = 0,
+    fresh: bool = True,
+    engine: str = DEFAULT_LIP_SYNC_ENGINE,
+    bbox_shift: int = DEFAULT_MUSETALK_BBOX_SHIFT,
+    inference_steps: int = DEFAULT_LATENTSYNC_STEPS,
+    guidance_scale: float = DEFAULT_LATENTSYNC_GUIDANCE,
+    runtime: Any = None,
+    free_gpu: Any = None,
+    hf_token: str | None = None,
+) -> Iterator[str | dict[str, Any]]:
+    """Render lip-sync takes for only the selected shot(s), saving preview clips without full assembly."""
+    check_cancelled()
+    engine = validate_lip_sync_engine(engine)
+    validated_options = validate_lip_sync_options(
+        bbox_shift=bbox_shift,
+        inference_steps=inference_steps,
+        guidance_scale=guidance_scale,
+    )
+    bbox_shift = validated_options["bbox_shift"]
+    inference_steps = validated_options["inference_steps"]
+    guidance_scale = validated_options["guidance_scale"]
+
+    parsed_keys: list[tuple[int, str]] = []
+    seen_keys: set[tuple[int, str]] = set()
+    for raw in shot_keys or ():
+        key = parse_shot_key(raw)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            parsed_keys.append(key)
+    if not parsed_keys:
+        raise H3Error("Select at least one shot to render.")
+
+    plan = reviewed_plan or load_lip_sync_plan(dub)
+    if plan is None:
+        raise H3Error("Detect faces and speakers before rendering shot takes.")
+    assignments = _plan_assignments(plan)
+    if plan.get("window_version") in (3, 4) and "windows" in plan:
+        all_windows = [LipSyncWindow(**w) for w in plan["windows"]]
+    else:
+        all_windows = _reviewed_windows(dub, plan, assignments)
+
+    windows_by_key: dict[tuple[int, str], list[LipSyncWindow]] = {}
+    for win in all_windows:
+        k = (win.shot_index, win.speaker)
+        if k in seen_keys:
+            windows_by_key.setdefault(k, []).append(win)
+
+    ordered_shot_keys = [k for k in parsed_keys if windows_by_key.get(k)]
+    if not ordered_shot_keys:
+        raise H3Error("Selected shot(s) have no on-screen speaking windows. Assign a visible face first.")
+
+    is_h3 = engine == "h3"
+    models = None
+    free_gpu_cb = None
+    h3_models_ready = False
+    if is_h3:
+        if services is None:
+            raise H3Error("Generation services are required for H3 lip sync.")
+        lip_sync_runtime.stop()
+        models = services.models.load_model_config()
+    else:
+        if runtime is None:
+            raise H3Error("Lip sync runtime is not configured.")
+        free_gpu_cb = free_gpu or (services.models.unload_comfy_models if services is not None else (lambda: None))
+
+    registry = load_lip_sync_takes(dub)
+    cache_dir = _window_cache_dir(dub)
+    plan_w, plan_h = plan.get("width"), plan.get("height")
+    video_size = (int(plan_w), int(plan_h)) if plan_w and plan_h else None
+    shot_bounds = _plan_shot_bounds(plan)
+    settings_snapshot = _settings_snapshot(
+        engine,
+        strength=strength,
+        feather=feather,
+        bbox_shift=bbox_shift,
+        inference_steps=inference_steps,
+        guidance_scale=guidance_scale,
+    )
+
+    total_shots = len(ordered_shot_keys)
+    rendered_shots: list[dict[str, Any]] = []
+    failed_windows: list[dict[str, Any]] = []
+
+    with TemporaryDirectory(prefix="h3-lip-sync-shots-") as directory:
+        work_dir = Path(directory)
+        for shot_pos, (s_idx, spk) in enumerate(ordered_shot_keys, start=1):
+            check_cancelled()
+            s_key = shot_key_str(s_idx, spk)
+            existing_entry = registry.get("shots", {}).get(s_key) or {}
+            next_num = int(existing_entry.get("next_number") or (len(existing_entry.get("takes") or ()) + 1))
+            shot_wins = windows_by_key[(s_idx, spk)]
+            shot_rendered: list[tuple[LipSyncWindow, Path]] = []
+
+            for w_idx, window in enumerate(shot_wins, start=1):
+                check_cancelled()
+                frame_count = window.render_frames if is_h3 else window.source_frames
+                dialogue = fitted_dialogue(dub, window.speaker, window.first_frame, frame_count, allow_silence=True)
+                config = {
+                    **(refinement or {}),
+                    "_source_duration": frame_count / FPS,
+                    "_feather": int(feather),
+                }
+                options = None if is_h3 else _engine_options(
+                    engine,
+                    feather=feather,
+                    bbox_shift=bbox_shift,
+                    inference_steps=inference_steps,
+                    guidance_scale=guidance_scale,
+                )
+                effective_crop_size = resolve_lip_sync_crop_size(window, video_size, crop_size) if is_h3 else 0
+                window_seed = seed + window.first_frame + (next_num * 1009 if fresh else 0)
+                key = window_cache_key(
+                    dub,
+                    window,
+                    dialogue,
+                    crop_size=effective_crop_size,
+                    strength=strength if is_h3 else 0.0,
+                    seed=window_seed,
+                    refinement=config,
+                    engine=engine,
+                    engine_options=options,
+                )
+                cache_path = cache_dir / f"{key}.mp4"
+                if not fresh and cache_path.is_file() and cache_path.stat().st_size > 0:
+                    yield f"Shot {s_idx + 1} ({shot_pos}/{total_shots}): reusing cached window"
+                    shot_rendered.append((window, cache_path))
+                    continue
+
+                yield f"Rendering Shot {s_idx + 1} ({shot_pos}/{total_shots}, {_window_location(window)})"
+                if is_h3 and not h3_models_ready:
+                    assert services is not None
+                    yield "Preparing H3 lip-sync models"
+                    check_cancelled()
+                    _prepare_h3_lip_sync_models(services.models, models, config)
+                    services.models.ensure_model_keys(("face_yolov8m",))
+                    h3_models_ready = True
+
+                try:
+                    wav_path = work_dir / f"shot_{s_idx}_{w_idx}.wav"
+                    wav_path.write_bytes(encode_wav(dialogue, FITTED_AUDIO_RATE))
+                    slice_path = _extract_window_slice(dub, window, work_dir / f"shot_{s_idx}_{w_idx}.mp4", pad=is_h3)
+                    if is_h3:
+                        assert services is not None
+                        rendered_path = yield from _render_window_via_comfy(
+                            index=shot_pos,
+                            total=total_shots,
+                            window=window,
+                            slice_path=slice_path,
+                            wav_path=wav_path,
+                            services=services,
+                            models=models,
+                            config=config,
+                            crop_size=effective_crop_size,
+                            seed=window_seed,
+                            strength=strength,
+                            feather=feather,
+                        )
+                    else:
+                        status = f"Rendering Shot {s_idx + 1} ({shot_pos}/{total_shots}, {engine})"
+                        yield status
+                        check_cancelled()
+                        rendered_path = yield from blocking(status, lambda report: _render_window_via_worker(
+                            engine=engine,
+                            window=window,
+                            slice_path=slice_path,
+                            wav_path=wav_path,
+                            output_path=work_dir / f"rendered_{s_idx}_{w_idx}.mp4",
+                            feather=feather,
+                            seed=window_seed,
+                            bbox_shift=bbox_shift,
+                            inference_steps=inference_steps,
+                            guidance_scale=guidance_scale,
+                            runtime=runtime,
+                            free_gpu=free_gpu_cb,
+                            hf_token=hf_token,
+                            report=report,
+                        ))
+                        check_cancelled()
+                except JobCancelled:
+                    raise
+                except Exception as exc:
+                    reason = _short_error(exc)
+                    failed_windows.append({
+                        "shot_index": window.shot_index,
+                        "speaker": window.speaker,
+                        "start": round(float(window.start), 3),
+                        "end": round(float(window.end), 3),
+                        "error": reason,
+                    })
+                    yield f"Shot {s_idx + 1} ({_window_location(window)}) failed: {reason}"
+                    continue
+
+                rendered_path = _store_cached_window(rendered_path, cache_path)
+                shot_rendered.append((window, rendered_path))
+
+            if shot_rendered:
+                yield f"Building preview clip for Shot {s_idx + 1} ({shot_pos}/{total_shots})"
+                assign = assignments.get((s_idx, spk))
+                bounds = shot_bounds.get(s_idx)
+                take = _record_shot_take(
+                    dub,
+                    registry,
+                    shot_index=s_idx,
+                    speaker=spk,
+                    engine=engine,
+                    settings=settings_snapshot,
+                    track_id=assign.track_id if assign is not None else None,
+                    shot_windows=shot_rendered,
+                    shot_start=bounds[0] if bounds else None,
+                    shot_end=bounds[1] if bounds else None,
+                    build_preview=True,
+                    force_new=fresh,
+                )
+                save_lip_sync_takes(dub, registry)
+                rendered_shots.append({"shot_key": s_key, "shot_index": s_idx, "speaker": spk, "take": take})
+
+    if not rendered_shots:
+        if failed_windows:
+            first = failed_windows[0]
+            raise H3Error(f"Shot {first['shot_index'] + 1} failed: {first['error']}")
+        raise H3Error("No shot takes were rendered.")
+
+    yield {"rendered_shots": rendered_shots, "failed_windows": failed_windows, "takes": registry}
+
+
+def assemble_lip_sync_from_takes(
+    *,
+    dub: Path,
+    output: Path | None = None,
+) -> Iterator[str | Path]:
+    """Fast-splice the full lip-synced MP4 using each shot's active take (no GPU rendering)."""
+    check_cancelled()
+    registry = load_lip_sync_takes(dub)
+    plan = load_lip_sync_plan(dub)
+    cache_dir = _window_cache_dir(dub)
+    rendered_windows: list[tuple[LipSyncWindow, Path]] = []
+    shot_takes_map: dict[str, str] = {}
+    engines_used: set[str] = set()
+
+    for s_key, entry in sorted((registry.get("shots") or {}).items()):
+        if not isinstance(entry, dict):
+            continue
+        active_id = str(entry.get("active_take_id") or TAKE_ORIGINAL)
+        if active_id == TAKE_ORIGINAL:
+            continue
+        take = next((tk for tk in entry.get("takes") or () if tk.get("id") == active_id), None)
+        if not take:
+            continue
+        win_pairs: list[tuple[LipSyncWindow, Path]] = []
+        valid = True
+        for item in take.get("windows") or ():
+            cache_name = item.get("cache_file")
+            win_data = item.get("window")
+            if not cache_name or not isinstance(win_data, dict):
+                valid = False
+                break
+            cpath = cache_dir / str(cache_name)
+            if not cpath.is_file():
+                valid = False
+                break
+            win_pairs.append((LipSyncWindow(**win_data), cpath))
+        if valid and win_pairs:
+            rendered_windows.extend(win_pairs)
+            shot_takes_map[s_key] = active_id
+            if take.get("engine"):
+                engines_used.add(str(take["engine"]))
+
+    if not rendered_windows:
+        raise H3Error("No active shot takes to assemble. Render at least one shot take first.")
+
+    prev_map = (registry.get("assembled") or {}).get("shot_takes") or {}
+    changed_count = sum(
+        1 for k in (set(shot_takes_map) | set(prev_map))
+        if shot_takes_map.get(k) != prev_map.get(k)
+    )
+    if prev_map and changed_count > 0:
+        yield f"Assembling full video (patching {changed_count} changed shot(s), reusing {max(0, len(shot_takes_map) - changed_count)} cached)"
+    else:
+        yield f"Assembling full video from {len(shot_takes_map)} active shot take(s)"
+    check_cancelled()
+    destination = output or dub.with_name(f"{dub.stem}.lipsync.mp4")
+    assembled = assemble_lip_sync_video(dub, rendered_windows, destination)
+    registry["assembled"] = {
+        "output": assembled.name,
+        "at": time.time(),
+        "shot_takes": shot_takes_map,
+    }
+    save_lip_sync_takes(dub, registry)
+    assignments = _plan_assignments(plan) if plan else {}
+    engine_label = next(iter(engines_used)) if len(engines_used) == 1 else "mixed"
+    _save_lip_sync_report(
+        dub,
+        output=assembled,
+        backend=(plan or {}).get("backend", "takes"),
+        engine=engine_label,
+        total_windows=len(rendered_windows),
+        cached_windows=len(rendered_windows),
+        skipped_windows=0,
+        assignments=assignments,
+        failed_windows=[],
+    )
     yield assembled
 
 

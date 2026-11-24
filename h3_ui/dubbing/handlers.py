@@ -23,9 +23,11 @@ from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.lip_sync import (
     REPORT_FILE,
+    assemble_lip_sync_from_takes,
     detect_lip_sync_plan,
     load_lip_sync_plan,
     render_dub_lip_sync,
+    render_lip_sync_shots,
     validate_lip_sync_engine,
     validate_lip_sync_options,
 )
@@ -774,19 +776,56 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
+    def _lip_sync_dub(self, session_id, expected_video=None):
+        """Return (session, dub_video) for lip-sync operations, validating the video hasn't changed."""
+        session = self._session(session_id)
+        output = session.data.get("last_output") if session else None
+        result = load_result(output) if output else None
+        dub = result.video if result else None
+        if dub is None or not dub.is_file():
+            raise H3Error("Generate a video dub first.")
+        if expected_video is not None and str(dub) != expected_video:
+            raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
+        return session, dub
+
+    @staticmethod
+    def _lip_sync_render_options(
+        *,
+        engine=None,
+        strength=None,
+        feather=None,
+        bbox_shift=None,
+        inference_steps=None,
+        guidance_scale=None,
+        min_face_size=None,
+        max_face_size=None,
+        refinement: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        extra = validate_lip_sync_options(
+            bbox_shift=bbox_shift,
+            inference_steps=inference_steps,
+            guidance_scale=guidance_scale,
+        )
+        if engine is not None:
+            extra["engine"] = validate_lip_sync_engine(engine)
+        if strength is not None:
+            extra["strength"] = max(0.2, min(1.0, float(strength)))
+        if feather is not None:
+            extra["feather"] = max(0, min(32, int(feather)))
+        if min_face_size is not None:
+            extra["min_face_size"] = min_face_size
+        if max_face_size is not None:
+            extra["max_face_size"] = max_face_size
+        if refinement is not None:
+            extra["refinement"] = refinement
+        return extra
+
     def detect_lip_sync(self, session_id, force_rescan=False, expected_video=None, *, gemini_api_key=None):
         """Stage 1 only: detect shot cuts, track faces, and align speakers without rendering H3."""
         try:
             if not self.services.gpu or self.services.generation_services is None:
                 raise H3Error("Face and speaker detection runs in Studio.")
-            session = self._session(session_id)
-            output = session.data.get("last_output") if session else None
-            result = load_result(output) if output else None
-            dub = result.video if result else None
-            if dub is None or not dub.is_file():
-                raise H3Error("Generate a video dub first.")
-            if expected_video is not None and str(dub) != expected_video:
-                raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
+            session, dub = self._lip_sync_dub(session_id, expected_video)
             services = self.services.generation_services() if self.services.generation_services is not None else None
             for update in detect_lip_sync_plan(
                 dub=dub,
@@ -814,36 +853,17 @@ class DubbingHandlers:
         try:
             if self.services.generation_services is None:
                 raise H3Error("Lip sync runs in Studio.")
-            session = self._session(session_id)
-            output = session.data.get("last_output") if session else None
-            result = load_result(output) if output else None
-            dub = result.video if result else None
-            if dub is None or not dub.is_file():
-                raise H3Error("Generate a video dub first.")
-            if expected_video is not None and str(dub) != expected_video:
-                raise H3Error("The dub changed. Open Lip Sync again to review the current video.")
+            session, dub = self._lip_sync_dub(session_id, expected_video)
             reviewed_plan = None
             if reviewed_revision is not None:
                 reviewed_plan = load_lip_sync_plan(dub)
                 if reviewed_plan is None or reviewed_plan["revision"] != reviewed_revision:
                     raise H3Error("The lip-sync plan changed. Review the updated face assignments.")
-            extra = validate_lip_sync_options(
-                bbox_shift=bbox_shift,
-                inference_steps=inference_steps,
-                guidance_scale=guidance_scale,
+            extra = self._lip_sync_render_options(
+                engine=engine, strength=strength, feather=feather,
+                bbox_shift=bbox_shift, inference_steps=inference_steps, guidance_scale=guidance_scale,
+                min_face_size=min_face_size, max_face_size=max_face_size, refinement=refinement,
             )
-            if engine is not None:
-                extra["engine"] = validate_lip_sync_engine(engine)
-            if strength is not None:
-                extra["strength"] = max(0.2, min(1.0, float(strength)))
-            if feather is not None:
-                extra["feather"] = max(0, min(32, int(feather)))
-            if min_face_size is not None:
-                extra["min_face_size"] = min_face_size
-            if max_face_size is not None:
-                extra["max_face_size"] = max_face_size
-            if refinement is not None:
-                extra["refinement"] = refinement
             if isinstance(manual_overrides, list):
                 manual_overrides = {(shot, speaker): track_id for shot, speaker, track_id in manual_overrides}
             for update in render_dub_lip_sync(
@@ -871,6 +891,76 @@ class DubbingHandlers:
                         )
                     else:
                         yield str(update), "Lip-synced video ready."
+                else:
+                    yield None, update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
+
+    def lip_sync_shots(
+        self,
+        session_id,
+        shot_keys,
+        strength=None,
+        feather=None,
+        expected_video=None,
+        reviewed_revision=None,
+        *,
+        fresh=True,
+        engine=None,
+        bbox_shift=None,
+        inference_steps=None,
+        guidance_scale=None,
+        refinement: dict[str, Any] | None = None,
+    ):
+        """Render lip-sync takes for only the selected shot(s) without full video assembly."""
+        try:
+            if self.services.generation_services is None:
+                raise H3Error("Lip sync runs in Studio.")
+            _, dub = self._lip_sync_dub(session_id, expected_video)
+            reviewed_plan = load_lip_sync_plan(dub)
+            if reviewed_plan is None or (reviewed_revision is not None and reviewed_plan["revision"] != reviewed_revision):
+                raise H3Error("The lip-sync plan changed. Review the updated face assignments.")
+            extra = self._lip_sync_render_options(
+                engine=engine, strength=strength, feather=feather,
+                bbox_shift=bbox_shift, inference_steps=inference_steps, guidance_scale=guidance_scale,
+                refinement=refinement,
+            )
+            for update in render_lip_sync_shots(
+                dub=dub,
+                shot_keys=shot_keys,
+                services=self.services.generation_services(),
+                reviewed_plan=reviewed_plan,
+                fresh=bool(fresh),
+                runtime=self._runtime(),
+                free_gpu=self.services.free_gpu,
+                hf_token=self._hf_token(),
+                **extra,
+            ):
+                if isinstance(update, dict):
+                    rendered = update.get("rendered_shots") or ()
+                    failed = update.get("failed_windows") or ()
+                    if failed:
+                        yield None, (
+                            f"Rendered {len(rendered)} shot take(s) ({len(failed)} failed). "
+                            "Preview takes before assembling the full video."
+                        )
+                    else:
+                        yield None, (
+                            f"Rendered {len(rendered)} shot take(s). "
+                            "Preview takes before assembling the full video."
+                        )
+                else:
+                    yield None, update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
+
+    def lip_sync_assemble(self, session_id, expected_video=None):
+        """Assemble or patch the full lip-synced MP4 from each shot's active take (no GPU render)."""
+        try:
+            _, dub = self._lip_sync_dub(session_id, expected_video)
+            for update in assemble_lip_sync_from_takes(dub=dub):
+                if isinstance(update, Path):
+                    yield str(update), "Lip-synced video assembled from active shot takes."
                 else:
                     yield None, update
         except Exception as exc:

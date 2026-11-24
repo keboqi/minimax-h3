@@ -1393,3 +1393,119 @@ class LipSyncTests(unittest.TestCase):
                     list(render_dub_lip_sync(
                         dub=self.dub, services=services, reviewed_plan=plan, use_cache=False,
                     ))
+
+    def test_shot_takes_selective_render_preview_select_delete_and_incremental_assemble(self):
+        from h3_app.dubbing.lip_sync import (
+            TAKE_ORIGINAL,
+            assemble_lip_sync_from_takes,
+            delete_lip_sync_shot_take,
+            lip_sync_take_preview_path,
+            load_lip_sync_takes,
+            render_lip_sync_shots,
+            select_lip_sync_shot_take,
+        )
+
+        folder = player_folder(self.dub)
+        lines = [
+            {"speaker": "A", "start": 0.1, "end": 0.6},
+            {"speaker": "B", "start": 1.2, "end": 1.8},
+        ]
+        spoken = {"0": [0.1, 0.6], "1": [1.2, 1.8]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.ones(round(0.5 * RATE), dtype=np.float32),
+            "1": np.ones(round(0.6 * RATE), dtype=np.float32),
+        })
+        track_a = FaceTrack(0, 0, 0.1, 0.6, (TrackObservation(0.35, (0.1, 0.1, 0.3, 0.3)),))
+        track_b = FaceTrack(1, 1, 1.2, 1.8, (TrackObservation(1.5, (0.3, 0.2, 0.3, 0.3)),))
+        scan = SourceScan("fp", 2.0, 640, 480, 24.0, (1.0,), (
+            Shot(0, 0.0, 1.0, (track_a,)),
+            Shot(1, 1.0, 2.0, (track_b,)),
+        ), "yolo-mediapipe")
+        assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "matched", 0, (0.25, 0.25), 0.35, "yolo-mediapipe", 0.9),
+            (1, "B"): ShotSpeakerAssignment(1, "B", "matched", 1, (0.45, 0.35), 1.5, "yolo-mediapipe", 0.9),
+        }
+        windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(640, 480), shot_cuts=[1.0],
+            assignments=assignments, tracks={(0, 0): track_a, (1, 1): track_b}, require_assignment=True,
+        )
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
+        )
+        (folder / PLAN_FILE).write_text(json.dumps(plan), encoding="utf-8")
+
+        runtime = SimpleNamespace(output_dir=self.dub.parent, comfy_dir=self.dub.parent, script_dir=self.dub.parent)
+        worker_calls: list[dict] = []
+        assembled_calls: list[list[tuple[int, str, str]]] = []
+
+        def fake_slice(_source, _window, destination, **_kw):
+            destination.write_bytes(b"slice")
+            return destination
+
+        def fake_worker_run(_op, payload, _rt, **_kw):
+            worker_calls.append(payload)
+            out = Path(payload["output_path"])
+            out.write_bytes(f"render-{len(worker_calls)}".encode("utf-8"))
+            return {"output_path": str(out), "frames": payload["source_frames"]}
+
+        def fake_preview(_dub, _wins, destination, **_kw):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"preview-mp4")
+            return destination
+
+        def fake_assemble(_dub, rendered, destination, **_kw):
+            assembled_calls.append([(w.shot_index, w.speaker, p.name) for w, p in rendered])
+            destination.write_bytes(b"assembled-mp4")
+            return destination
+
+        with patch("h3_app.dubbing.lip_sync._extract_window_slice", side_effect=fake_slice), \
+                patch("h3_app.dubbing.lip_sync.lip_sync_runtime.run", side_effect=fake_worker_run), \
+                patch("h3_app.dubbing.lip_sync.build_shot_preview_clip", side_effect=fake_preview), \
+                patch("h3_app.dubbing.lip_sync.assemble_lip_sync_video", side_effect=fake_assemble):
+            # 1. Initial full render records t1 for both shots and marks them assembled.
+            list(render_dub_lip_sync(
+                dub=self.dub, services=None, reviewed_plan=plan, engine="musetalk", runtime=runtime,
+            ))
+            self.assertEqual(len(worker_calls), 2)
+            self.assertEqual(len(assembled_calls), 1)
+            reg = load_lip_sync_takes(self.dub)
+            self.assertEqual(reg["shots"]["0:A"]["active_take_id"], "t1")
+            self.assertEqual(reg["shots"]["1:B"]["active_take_id"], "t1")
+            self.assertEqual(reg["assembled"]["shot_takes"], {"0:A": "t1", "1:B": "t1"})
+
+            # 2. Selective render of ONLY Shot 0 creates t2 + preview clip, does NOT touch Shot 1 or assemble.
+            shot_updates = list(render_lip_sync_shots(
+                dub=self.dub, shot_keys=["0:A"], services=None, reviewed_plan=plan,
+                fresh=True, engine="latentsync", runtime=runtime,
+            ))
+            self.assertEqual(len(worker_calls), 3)
+            self.assertEqual(len(assembled_calls), 1)
+            summary = shot_updates[-1]
+            self.assertEqual(len(summary["rendered_shots"]), 1)
+            self.assertEqual(summary["rendered_shots"][0]["take"]["id"], "t2")
+            preview = lip_sync_take_preview_path(self.dub, "0:A", "t2")
+            self.assertIsNotNone(preview)
+            self.assertTrue(preview.is_file())
+
+            reg2 = load_lip_sync_takes(self.dub)
+            self.assertEqual([t["id"] for t in reg2["shots"]["0:A"]["takes"]], ["t1", "t2"])
+            self.assertEqual(reg2["shots"]["0:A"]["active_take_id"], "t2")
+            self.assertEqual(reg2["shots"]["1:B"]["active_take_id"], "t1")
+
+            # 3. Switching active take to original / t1 / t2 and deleting t1 works cleanly.
+            select_lip_sync_shot_take(self.dub, "0:A", TAKE_ORIGINAL)
+            self.assertEqual(load_lip_sync_takes(self.dub)["shots"]["0:A"]["active_take_id"], TAKE_ORIGINAL)
+            select_lip_sync_shot_take(self.dub, "0:A", "t2")
+            delete_lip_sync_shot_take(self.dub, "0:A", "t1")
+            self.assertEqual([t["id"] for t in load_lip_sync_takes(self.dub)["shots"]["0:A"]["takes"]], ["t2"])
+
+            # 4. Incremental assembly splices Shot 0 (t2) + reused Shot 1 (t1) with ZERO extra worker calls.
+            asm_updates = list(assemble_lip_sync_from_takes(dub=self.dub))
+            self.assertEqual(len(worker_calls), 3)
+            self.assertEqual(len(assembled_calls), 2)
+            self.assertEqual(asm_updates[-1], self.dub.with_name("finished.lipsync.mp4"))
+            self.assertEqual(
+                load_lip_sync_takes(self.dub)["assembled"]["shot_takes"],
+                {"0:A": "t2", "1:B": "t1"},
+            )

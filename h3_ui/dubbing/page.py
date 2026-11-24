@@ -29,10 +29,15 @@ from h3_app.dubbing import moss, nemotron, pipeline, projects, review_checks, se
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
     REPORT_FILE,
+    TAKE_ORIGINAL,
+    delete_lip_sync_shot_take,
     filter_lip_sync_windows,
+    lip_sync_take_preview_path,
     load_lip_sync_plan,
+    load_lip_sync_takes,
     load_manual_overrides,
     revise_lip_sync_plan,
+    select_lip_sync_shot_take,
     validate_face_size_range,
     validate_lip_sync_engine,
     validate_lip_sync_options,
@@ -903,6 +908,33 @@ def install_dubbing_page(
             spk = str(line.get("speaker") or "")
             if spk and spk not in speakers:
                 speakers[spk] = presenters.speaker_label(spk)
+        raw_takes = load_lip_sync_takes(dub)
+        takes_shots: dict[str, Any] = {}
+        for s_key, entry in (raw_takes.get("shots") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            enriched_list = []
+            for tk in entry.get("takes") or ():
+                item = {
+                    "id": tk.get("id"),
+                    "number": tk.get("number"),
+                    "shot_index": tk.get("shot_index"),
+                    "speaker": tk.get("speaker"),
+                    "created_at": tk.get("created_at"),
+                    "engine": tk.get("engine"),
+                    "settings": tk.get("settings") or {},
+                    "track_id": tk.get("track_id"),
+                    "preview_url": (
+                        f"{API}/lip-sync-take-preview?session={sid}"
+                        f"&shot_key={quote(s_key)}&take_id={quote(str(tk.get('id') or ''))}"
+                        f"&v={quote(str(tk.get('preview_file') or ''))}"
+                    ) if tk.get("preview_file") else None,
+                }
+                enriched_list.append(item)
+            takes_shots[s_key] = {
+                "active_take_id": entry.get("active_take_id") or TAKE_ORIGINAL,
+                "takes": enriched_list,
+            }
         return {
             "session": sid,
             "video": dub.name,
@@ -912,6 +944,10 @@ def install_dubbing_page(
             "plan": plan,
             "overrides": {f"{s}:{spk}": tid for (s, spk), tid in overrides.items()},
             "output": output,
+            "takes": {
+                "shots": takes_shots,
+                "assembled": raw_takes.get("assembled"),
+            },
         }
 
     @app.get(f"{API}/lip-sync-plan", include_in_schema=False)
@@ -966,6 +1002,23 @@ def install_dubbing_page(
             )
             return _lip_sync_plan_response(session_id, loaded, dub)
 
+    def _lip_sync_request_options(request: Request, body: dict):
+        engine = body.get("engine")
+        if engine is not None:
+            engine = validate_lip_sync_engine(engine)
+        validated_options = validate_lip_sync_options(
+            bbox_shift=body.get("bbox_shift"),
+            inference_steps=body.get("inference_steps"),
+            guidance_scale=body.get("guidance_scale"),
+        )
+        h3_refinement = None
+        if h3_values is not None and (engine or "h3") == "h3":
+            from h3_app.refinement import H3_REFINEMENT_FIELDS
+
+            raw_h3 = h3_values(owner_of(request)) or {}
+            h3_refinement = {name: raw_h3[name] for name in H3_REFINEMENT_FIELDS if name in raw_h3}
+        return engine, validated_options, h3_refinement
+
     @app.post(f"{API}/lip-sync", include_in_schema=False)
     @guarded
     def lip_sync(request: Request, body: dict = Body(...)):
@@ -982,31 +1035,15 @@ def install_dubbing_page(
                 track_id = item.get("track_id")
                 overrides.append((int(item["shot_index"]), str(item["speaker"]),
                                   None if track_id is None else int(track_id)))
-        engine = body.get("engine")
-        if engine is not None:
-            engine = validate_lip_sync_engine(engine)
+        engine, validated_options, h3_refinement = _lip_sync_request_options(request, body)
         strength = body.get("strength")
         feather = body.get("feather")
-        validated_options = validate_lip_sync_options(
-            bbox_shift=body.get("bbox_shift"),
-            inference_steps=body.get("inference_steps"),
-            guidance_scale=body.get("guidance_scale"),
-        )
-        bbox_shift = validated_options.get("bbox_shift")
-        inference_steps = validated_options.get("inference_steps")
-        guidance_scale = validated_options.get("guidance_scale")
         raw_min = body.get("min_face_size")
         raw_max = body.get("max_face_size")
         if raw_min is not None or raw_max is not None:
             min_size, max_size = validate_face_size_range(raw_min, raw_max)
         else:
             min_size, max_size = 0.0, 1.0
-        h3_refinement = None
-        if h3_values is not None and (engine or "h3") == "h3":
-            from h3_app.refinement import H3_REFINEMENT_FIELDS
-
-            raw_h3 = h3_values(owner_of(request)) or {}
-            h3_refinement = {name: raw_h3[name] for name in H3_REFINEMENT_FIELDS if name in raw_h3}
         with admission_lock:
             _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
             values = [session_id, overrides, strength, feather]
@@ -1031,12 +1068,92 @@ def install_dubbing_page(
                     min_face_size=raw_min,
                     max_face_size=raw_max,
                     engine=engine,
-                    bbox_shift=bbox_shift,
-                    inference_steps=inference_steps,
-                    guidance_scale=guidance_scale,
+                    bbox_shift=validated_options.get("bbox_shift"),
+                    inference_steps=validated_options.get("inference_steps"),
+                    guidance_scale=validated_options.get("guidance_scale"),
                     refinement=h3_refinement,
                 ),
                 values, reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
+            )
+
+    @app.get(f"{API}/lip-sync-take-preview", include_in_schema=False)
+    def lip_sync_take_preview(session: str, shot_key: str, take_id: str, request: Request):
+        with found():
+            owner_of(request)
+            result = latest_result(session)
+        dub = result.video
+        if dub is None or not dub.is_file():
+            raise not_found()
+        preview = lip_sync_take_preview_path(dub, shot_key, take_id)
+        if preview is None:
+            raise not_found()
+        return file_response(preview)
+
+    @app.post(f"{API}/lip-sync-take-select", include_in_schema=False)
+    @guarded
+    def lip_sync_take_select(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = str(body.get("session") or "")
+        shot_key = str(body.get("shot_key") or "")
+        take_id = str(body.get("take_id") or "")
+        delete = bool(body.get("delete", False))
+        if not shot_key or not take_id:
+            raise H3Error("Provide shot_key and take_id.")
+        with admission_lock:
+            loaded, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            if lip_sync_busy(dub.name):
+                raise H3Error("Wait for the current lip-sync operation before changing shot takes.")
+            if delete:
+                delete_lip_sync_shot_take(dub, shot_key, take_id)
+            else:
+                select_lip_sync_shot_take(dub, shot_key, take_id)
+            return _lip_sync_plan_response(session_id, loaded, dub)
+
+    @app.post(f"{API}/lip-sync-shots", include_in_schema=False)
+    @guarded
+    def lip_sync_shots(request: Request, body: dict = Body(...)):
+        if not lip_sync_available:
+            raise H3Error(STUDIO_ONLY.format("render shot takes"))
+        session_id = str(body.get("session") or "")
+        raw_keys = body.get("shot_keys")
+        if not isinstance(raw_keys, list) or not raw_keys:
+            raise H3Error("Select at least one shot to render.")
+        shot_keys = [str(k) for k in raw_keys if k]
+        fresh = bool(body.get("fresh", True))
+        engine, validated_options, h3_refinement = _lip_sync_request_options(request, body)
+        strength = body.get("strength")
+        feather = body.get("feather")
+        with admission_lock:
+            _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            revision = body.get("plan_revision")
+            checked_lip_sync_plan(dub, revision)
+            return start(
+                request, LIP_SYNC, session_id, "lip-sync-shots",
+                partial(
+                    handlers.lip_sync_shots,
+                    fresh=fresh,
+                    engine=engine,
+                    bbox_shift=validated_options.get("bbox_shift"),
+                    inference_steps=validated_options.get("inference_steps"),
+                    guidance_scale=validated_options.get("guidance_scale"),
+                    refinement=h3_refinement,
+                ),
+                [session_id, shot_keys, strength, feather, str(dub), revision],
+                reader(1), session_id=session_id, dub_video=dub.name,
+            )
+
+    @app.post(f"{API}/lip-sync-assemble", include_in_schema=False)
+    @guarded
+    def lip_sync_assemble(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = str(body.get("session") or "")
+        with admission_lock:
+            _, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            return start(
+                request, LIP_SYNC, session_id, "lip-sync-assemble",
+                handlers.lip_sync_assemble,
+                [session_id, str(dub)],
+                reader(1, file_index=0), session_id=session_id, dub_video=dub.name,
             )
 
     def start_auto(owner, request_session, body, *, batch=False):
