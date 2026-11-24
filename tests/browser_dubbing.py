@@ -554,6 +554,80 @@ class DubbingBrowserTests(PageTests):
             expect(page.locator("#screen")).to_have_attribute("data-screen", "result")
             browser.close()
 
+    def test_face_size_range_filters_overlay_boxes_and_face_buttons(self):
+        from h3_app.dubbing.lip_sync import PLAN_FILE, build_lip_sync_plan_payload
+        from h3_app.dubbing.lip_sync_match import FaceTrack, Shot, SourceScan, TrackObservation, assign_speakers_to_shots
+
+        lines = [{"speaker": "A", "start": 0, "end": 1.5, "source": "Hello", "translation": "Bonjour"}]
+        session = self.session(lines)
+        self.runtime.outputs_dir.mkdir()
+        dub = self.runtime.outputs_dir / "crowd.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=2",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dub)], check=True)
+        sessions.modify(session, lambda current: current.data.update(last_output=str(dub)))
+        folder = player_folder(dub)
+        folder.mkdir(parents=True)
+        spoken = {"0": [0, 1.5]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}))
+        np.savez(folder / "alignment.npz", **{"0": np.ones(1)})
+
+        tracks = (
+            FaceTrack(1, 0, 0.2, 1.8, tuple(TrackObservation(t, (0.05, 0.1, 0.03, 0.03)) for t in (0.3, 1.2))),
+            FaceTrack(2, 0, 0.2, 1.8, tuple(TrackObservation(t, (0.25, 0.1, 0.10, 0.11)) for t in (0.3, 1.2))),
+            FaceTrack(3, 0, 0.2, 1.8, tuple(TrackObservation(t, (0.55, 0.1, 0.22, 0.28)) for t in (0.3, 1.2))),
+        )
+        scan = SourceScan("crowd", 2, 160, 120, 24, (), (Shot(0, 0, 2, tracks),), "yolo-motion")
+        plan = build_lip_sync_plan_payload(dub=dub, scan=scan, lines=lines, spoken=spoken,
+                                           assignments=assign_speakers_to_shots(scan, lines), windows=[])
+        (folder / PLAN_FILE).write_text(json.dumps(plan))
+        state = {"screen": "lipsync", "sessionId": session.id}
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page()
+            page.route("http://dubbing.test/**", self.serve)
+
+            def serve_video(route):
+                url = urlsplit(route.request.url)
+                response = self.client.get(url.path + "?" + url.query,
+                                           headers={"Range": route.request.headers.get("range", "bytes=0-")})
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("**/api/output?*", serve_video)
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+
+            expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(3)
+            expect(page.get_by_role("button", name="Face #1", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Face #2", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Face #3", exact=True)).to_be_visible()
+            expect(page.locator("[data-ls-hidden-faces]")).to_have_count(0)
+
+            # Filtering to 8%+ hides the 3% background face from both the overlay and buttons while preserving numbering.
+            page.locator('[data-ls-size-preset="8,100"]').click()
+            expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(2)
+            expect(page.get_by_role("button", name="Face #1", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="Face #2", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Face #3", exact=True)).to_be_visible()
+            expect(page.locator("[data-ls-hidden-faces]")).to_have_text("1 face hidden by size")
+
+            # Manually picking Face #2 (11%) keeps it visible even when narrowing the range to 25%+.
+            page.get_by_role("button", name="Face #2", exact=True).click()
+            expect(page.get_by_role("button", name="Restore automatic match")).to_be_visible()
+            page.locator('[data-ls-size-preset="25,100"]').click()
+            expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(2)
+            expect(page.locator("#ls-overlay .ls-face-box.speaking")).to_contain_text("(manual)")
+            expect(page.get_by_role("button", name="Face #2", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Face #3", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Face #1", exact=True)).to_have_count(0)
+            expect(page.locator("[data-ls-hidden-faces]")).to_have_text("1 face hidden by size")
+
+            # Saved size range persists across page reloads.
+            page.reload()
+            expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(2)
+            expect(page.get_by_role("button", name="Face #1", exact=True)).to_have_count(0)
+            browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1579,6 +1579,7 @@ export function bindLipSync(app) {
       const items = shotItems(plan);
       const next = new Set();
       for (const it of items) {
+        if (!itemHasWindows(it, plan)) continue;
         const st = shotTakeStatus(it, lsState.data);
         if (st === "outdated" || (st === "unrendered" && !isItemSizeFiltered(it, plan))) next.add(it.key);
       }
