@@ -439,6 +439,12 @@ class IllustratedMixTests(unittest.TestCase):
         self.assertEqual((captured["qwen__width"], captured["qwen__height"]), (928, 1664))
         visuals.widescreen("flux3", captured)
         self.assertEqual((captured["flux3__width"], captured["flux3__height"]), (1344, 768))
+        visuals.widescreen("mai_image", captured, "landscape")
+        self.assertEqual((captured["mai_image__aspect_ratio"], captured["mai_image__batch_count"]), ("16:9", 1))
+        visuals.widescreen("nano_banana", captured, "portrait")
+        self.assertEqual((captured["nano_banana__aspect_ratio"], captured["nano_banana__batch_count"]), ("9:16", 1))
+        visuals._size("mai_image", captured, visuals.PORTRAIT_SIZE, visuals.PORTRAIT_SIZE)
+        self.assertEqual(captured["mai_image__aspect_ratio"], "1:1")
         self.assertEqual(visuals.orientation_of("square"), "landscape")
         with tempfile.TemporaryDirectory() as tmp:
             mix = Path(tmp) / f"mix_{'e' * 32}.mp3"

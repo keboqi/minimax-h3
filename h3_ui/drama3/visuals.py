@@ -76,6 +76,10 @@ def _size(engine, captured, width, height):
     elif engine == "gpt_image":
         gpt_width, gpt_height = (1088, 1920) if height > width else (1920, 1088)
         captured.update(gpt_image__width=gpt_width, gpt_image__height=gpt_height)
+    elif engine in HOSTED_IMAGE_PROVIDERS:
+        ratio = "1:1" if width == height else ("9:16" if height > width else "16:9")
+        captured[f"{engine}__aspect_ratio"] = ratio
+        captured[f"{engine}__match_first_aspect"] = False
     else:
         captured.update({f"{engine}__width": width, f"{engine}__height": height})
         if engine in ("qwen", "flux3"):
@@ -85,7 +89,8 @@ def _size(engine, captured, width, height):
 def widescreen(engine, captured, orientation="landscape"):
     """One image per request at a 16:9 size (9:16 for ``portrait``), whatever the Image tab is set to."""
     captured.update(qwen__batch_count=1, qwen__batch_edit_inputs=False, moss_image__layout="", flux3__layout="",
-                    qwen__output_resolution_1k=None, qwen__output_resolution_2k=None, gpt_image__batch_count=1)
+                    qwen__output_resolution_1k=None, qwen__output_resolution_2k=None, gpt_image__batch_count=1,
+                    **{f"{name}__batch_count": 1 for name in HOSTED_IMAGE_PROVIDERS})
     width, height = _WIDESCREEN.get(engine, (1344, 768))
     _size(engine, captured, *((height, width) if orientation == "portrait" else (width, height)))
 
@@ -1123,8 +1128,7 @@ def video_export(controller, deps, triggers=()):
         except H3Error as exc:
             raise gr.Error(str(exc)) from exc
 
-    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")
-                                                      if item.id not in HOSTED_IMAGE_PROVIDERS],
+    export = VideoExport(controller, deps, generate, [(item.label, item.id) for item in engines_for_task("Image")],
                          preview=preview)
     if triggers:
         names = list(controller.fields)

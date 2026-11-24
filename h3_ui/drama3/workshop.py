@@ -20,10 +20,12 @@ def build_soundstage_workshop(tab, ui, runtime, store, *, images=None):
 
     export = planning_export(runtime)
     if images is not None:
+        from h3_app.hosted_image import API_IMAGE_ENGINES
+
         from .visuals import video_export
         from ..image.page import Live
         export = video_export(images.controller, images.deps)
-        export.engines = [("GPT Image", "gpt_image")]
+        export.engines = [(label, engine_id) for label, engine_id in export.engines if engine_id in API_IMAGE_ENGINES]
         export.settings = Live(images.pages.job_options)
 
     handlers = Drama3Handlers(Drama3Services(lambda: runtime, None, None, None))

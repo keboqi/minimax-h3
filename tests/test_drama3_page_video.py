@@ -277,10 +277,13 @@ class Drama3PageVideoTests(unittest.TestCase):
         self.assertIn("Pick style presets", refused.text)
 
     def test_bundled_style_previews_are_served_on_fresh_deployments(self):
-        self.export.engines.append(("GPT Image", "gpt_image"))
-        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_engine": "gpt_image"}))
-        previews = self.project()["video"]["previews"]
-        self.assertEqual(set(previews), set(STYLE_PRESETS))
+        self.export.engines.extend([("GPT Image", "gpt_image"), ("Nano Banana", "nano_banana"), ("MAI-Image", "mai_image")])
+        # When GPT Image is available, projects without a saved engine default to it.
+        self.assertEqual(self.project()["video"]["engine"], "gpt_image")
+        for engine in ("gpt_image", "nano_banana", "mai_image"):
+            self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_engine": engine}))
+            previews = self.project()["video"]["previews"]
+            self.assertEqual(set(previews), set(STYLE_PRESETS))
         response = self.client.get(previews["Digital painting"])
         self.assertEqual((response.status_code, response.headers["content-type"]), (200, "image/jpeg"))
         self.assertGreater(len(response.content), 1000)

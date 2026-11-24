@@ -92,7 +92,12 @@ def hosted_image_endpoint(engine: str) -> GptImageEndpoint | None:
     if engine == NANO_BANANA:
         key = session_key() or os.getenv("GEMINI_API_KEY", "").strip()
         return GptImageEndpoint("Gemini", GEMINI_API_ROOT, key) if key else None
-    return next(iter(gpt_image_credentials().endpoints()), None)
+    endpoint = next(iter(gpt_image_credentials().endpoints()), None)
+    if (endpoint and engine == MAI_IMAGE
+            and endpoint.url.lower().endswith("/openai/v1")
+            and ".services.ai.azure.com" in endpoint.url.lower()):
+        return GptImageEndpoint(endpoint.name, endpoint.url[: -len("/openai/v1")] + "/mai/v1", endpoint.api_key)
+    return endpoint
 
 
 def validate_hosted_image_settings(engine, model, resolution, batch_count, *, aspect_ratio=DEFAULT_ASPECT_RATIO):

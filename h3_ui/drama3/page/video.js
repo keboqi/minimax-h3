@@ -9,7 +9,8 @@ const startOf = (shot) => shot.start;
 // The Illustrate step: the shot plan and its characters and places, drawn into stills that slide
 // along the mix in the shared player. Save to Media renders them as a video from the player.
 export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, seek, renderPlayer, sync, saveVideoToMedia, planShots, drawImages, drawPreviews, generateDepth, interruptVideo, copyPlannerPrompt, applyPlannerReply, effectCall, copyEffectsPrompt, writerService, editShot, editSubject, show, toneColor, speakerTone, getPlayer, setPlayer}) {
-  const canDraw = () => Boolean(state.boot.gpu || state.project?.video?.engine === "gpt_image");
+  const isApiEngine = (id) => Boolean(state.boot.video?.engines?.some((e) => e.id === id && e.api) || id === "gpt_image");
+  const canDraw = () => Boolean(state.boot.gpu || isApiEngine(state.project?.video?.engine));
   const STATUS = {drawn: ["Drawn", "status-drawn"], changed: ["Changed", "status-changed"], todo: ["Not drawn", "status-todo"]};
   const KINDS = [["characters", "Characters"], ["locations", "Places"], ["props", "Props"]];
 
@@ -376,7 +377,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             ? effectChips.map((label) => h("span", {class: "chip"}, label))
             : h("span", {class: "muted small"}, "No effects selected")))),
       h("div", {class: "shot-inspector-foot"},
-        h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && video.engine !== "gpt_image"),
+        h("button", {type: "button", class: "btn btn-primary", disabled: busy || !canDraw() || (video.timing_pending && !state.project.result && !isApiEngine(video.engine)),
                      onclick: () => drawImages([row.index])}, draw)));
   }
 
@@ -594,7 +595,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
         "aria-haspopup": "dialog", "aria-controls": "effect-pass-dialog",
         onclick: () => effectPass.open()}, "Enhance visual effects") : null,
       looks ? h("span", {class: "muted small"}, "Drawn once as references; shots that mention one match it.")
-        : rows.length ? h("button", {type: "button", class: "btn btn-small", disabled: videoRunning() || !canDraw() || (!state.project.result && video.engine !== "gpt_image"),
+        : rows.length ? h("button", {type: "button", class: "btn btn-small", disabled: videoRunning() || !canDraw() || (!state.project.result && !isApiEngine(video.engine)),
                                      title: "Draw every shot from scratch, with new portraits", onclick: () => drawImages("all")}, "Draw every shot again") : null), body);
     renderInspector(rows);
     renderSettings();
@@ -617,7 +618,7 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
     planButton.disabled = busy;
     planButton.textContent = videoRunning("plan") ? "Planning…" : rows.length ? "Plan again" : "Plan shots";
     planButton.className = rows.length ? "btn" : "btn btn-primary";
-    drawButton.hidden = !rows.length || !needs || (!state.project.result && video.engine !== "gpt_image");
+    drawButton.hidden = !rows.length || !needs || (!state.project.result && !isApiEngine(video.engine));
     drawButton.disabled = busy || !canDraw();
     drawButton.title = canDraw() ? "Draw the shots not drawn from their current prompt; the others keep their images" : NO_GPU;
     drawButton.textContent = `Draw ${plural(needs, "shot")}`;

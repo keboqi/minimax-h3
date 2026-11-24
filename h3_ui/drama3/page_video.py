@@ -26,6 +26,7 @@ from h3_app.drama3.visual_plan import (check_plan_reply, edit_shot, edit_subject
                                        plan_shots, subjects)
 from h3_app.drama3.visual_timing import shot_speech_cues
 from h3_app.errors import H3Error
+from h3_app.hosted_image import API_IMAGE_ENGINES
 from h3_app.provenance import read_snapshot
 from h3_models import DEFAULT_SOUNDSTAGE_DEPTH_MODEL, SOUNDSTAGE_DEPTH_MODEL_KEYS, SOUNDSTAGE_DEPTH_MODEL_LABELS
 
@@ -78,7 +79,7 @@ def video_settings(data: dict, engines: list) -> dict:
     engine_ids = [engine_id for _label, engine_id in engines]
     engine = data.get("video_engine")
     if engine not in engine_ids:
-        engine = engine_ids[0] if engine_ids else None
+        engine = "gpt_image" if "gpt_image" in engine_ids else (engine_ids[0] if engine_ids else None)
     limit = int(data.get("video_limit") or 16)
     return {"engine": engine, "depth_model": effect_depth.normalize_depth_model(data.get("video_depth_model")),
             "style": style, "preset": visuals.preset_for(style), "limit": limit,
@@ -445,7 +446,8 @@ def preview_url(engine: str, file: str) -> str:
 
 
 def boot_payload(engines: list) -> dict:
-    return {"engines": [{"id": engine_id, "label": label} for label, engine_id in engines],
+    return {"engines": [{"id": engine_id, "label": label, "api": engine_id in API_IMAGE_ENGINES}
+                        for label, engine_id in engines],
             "depth_models": [{"id": key, "label": SOUNDSTAGE_DEPTH_MODEL_LABELS[key]}
                              for key in SOUNDSTAGE_DEPTH_MODEL_KEYS],
             "default_depth_model": DEFAULT_SOUNDSTAGE_DEPTH_MODEL,
@@ -715,10 +717,10 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         owner = owner_of(request)
         _, audio, _mix_settings, settings = mix_of(name, strict=True)
         result = project(name)[1]
-        if not result and settings["engine"] != "gpt_image":
+        if not result and settings["engine"] not in API_IMAGE_ENGINES:
             raise H3Error("Speak the project before drawing images.")
-        if not gpu and settings["engine"] != "gpt_image":
-            raise H3Error("Choose GPT Image to draw images in Workshop.")
+        if not gpu and settings["engine"] not in API_IMAGE_ENGINES:
+            raise H3Error("Choose an API image model to draw images in Workshop.")
         if visuals.read_plan(audio, settings["limit"]) is None:
             raise H3Error("This mix has no shot plan for the current Minimum shots yet. "
                           "Plan shots, or paste a plan from another chat model, then draw.")
@@ -730,7 +732,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         values = [audio.name, settings["engine"], settings["style"], settings["limit"], settings["continuity"],
                   settings["orientation"], json.dumps(only), *export.values(owner)]
         generate = (partial(export.generate, mix=(audio, _mix_settings))
-                    if settings["engine"] == "gpt_image" else export.generate)
+                    if settings["engine"] in API_IMAGE_ENGINES else export.generate)
         return start_drawing(request, owner, name, DRAW, generate, visuals.VIDEO_INPUT_NAMES, values,
                              depth_context=(audio, settings["depth_model"]))
 
@@ -747,8 +749,8 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         owner = owner_of(request)
         data, _result = project(name)
         settings = video_settings(data, export.engines)
-        if not gpu and settings["engine"] != "gpt_image":
-            raise H3Error("Choose GPT Image to draw style previews in Workshop.")
+        if not gpu and settings["engine"] not in API_IMAGE_ENGINES:
+            raise H3Error("Choose an API image model to draw style previews in Workshop.")
         if not settings["engine"]:
             raise H3Error("No image model is available here.")
         presets = body.get("presets", "missing")

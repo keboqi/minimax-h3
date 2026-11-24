@@ -104,6 +104,16 @@ class HostedImageTests(unittest.TestCase):
             with self.assertRaisesRegex(H3Error, "unsupported edit size"):
                 _mai_image(endpoint, "MAI-Image-2.7", "create", "1K", [])
 
+    def test_mai_endpoint_maps_azure_foundry_openai_path_to_mai(self):
+        from h3_app.hosted_image import hosted_image_endpoint
+
+        env = {"GPT_IMAGE_API_URL": "https://demo.services.ai.azure.com/openai/v1", "GPT_IMAGE_API_KEY": "k"}
+        with patch.dict("os.environ", env, clear=False):
+            self.assertEqual(hosted_image_endpoint(MAI_IMAGE).url, "https://demo.services.ai.azure.com/mai/v1")
+        env["GPT_IMAGE_API_URL"] = "https://gateway.example/openai/v1"
+        with patch.dict("os.environ", env, clear=False):
+            self.assertEqual(hosted_image_endpoint(MAI_IMAGE).url, "https://gateway.example/openai/v1")
+
     def test_failed_batch_request_reports_failure_and_exhausted_429_is_formatted(self):
         import requests as req
 
