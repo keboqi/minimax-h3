@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -21,13 +22,14 @@ from h3_app import video_download
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import gemini as dub_gemini, pipeline, segments as segment_tools, session as sessions, shares
 from h3_app.dubbing.lip_sync import (
+    REPORT_FILE,
     detect_lip_sync_plan,
     load_lip_sync_plan,
     render_dub_lip_sync,
     validate_lip_sync_engine,
     validate_lip_sync_options,
 )
-from h3_app.dubbing.results import load_result
+from h3_app.dubbing.results import load_result, player_folder
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices
 from h3_app.jobs import JobCancelled, record_failure
@@ -855,7 +857,20 @@ class DubbingHandlers:
                 **extra,
             ):
                 if isinstance(update, Path):
-                    yield str(update), "Lip-synced video ready."
+                    failed_count = 0
+                    report_path = player_folder(dub) / REPORT_FILE
+                    if report_path.is_file():
+                        try:
+                            failed_count = len(json.loads(report_path.read_text(encoding="utf-8")).get("failed_windows") or ())
+                        except (OSError, ValueError):
+                            failed_count = 0
+                    if failed_count:
+                        yield str(update), (
+                            f"Lip-synced video ready ({failed_count} window(s) failed and kept original — "
+                            "see Lip Sync workspace for details)."
+                        )
+                    else:
+                        yield str(update), "Lip-synced video ready."
                 else:
                     yield None, update
         except Exception as exc:

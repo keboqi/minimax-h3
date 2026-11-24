@@ -1290,3 +1290,106 @@ class LipSyncTests(unittest.TestCase):
         self.assertIsNone(load_lip_sync_plan(self.dub))
         (folder / PLAN_FILE).write_text(json.dumps(legacy), encoding="utf-8")
         self.assertIsNone(load_lip_sync_plan(self.dub))
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_extract_window_slice_guarantees_exact_grid_frames_at_fractional_fps_end(self):
+        root = self.dub.parent
+        src = root / "v30.mp4"
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=30000/1001:d=5.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src),
+        ], check=True)
+        # Window at the very end where source_frames == render_frames == 22 (pad_frames == 0).
+        win = LipSyncWindow("A", 99 / 24, 5.0, 99 / 24, 5.0, 99, 22, 22, 0, 22)
+        padded = _extract_window_slice(src, win, root / "end_padded.mp4", pad=True)
+        unpadded = _extract_window_slice(src, win, root / "end_unpadded.mp4", pad=False)
+        self.assertEqual(probe_video_metadata(padded).frame_count, 22)
+        self.assertEqual(probe_video_metadata(unpadded).frame_count, 22)
+
+    def test_render_dub_lip_sync_keeps_original_on_window_failure_and_reports_location(self):
+        folder = player_folder(self.dub)
+        lines = [
+            {"speaker": "A", "start": 0.1, "end": 0.6},
+            {"speaker": "B", "start": 1.2, "end": 1.8},
+        ]
+        spoken = {"0": [0.1, 0.6], "1": [1.2, 1.8]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.ones(round(0.5 * RATE), dtype=np.float32),
+            "1": np.ones(round(0.6 * RATE), dtype=np.float32),
+        })
+        track_a = FaceTrack(0, 0, 0.1, 0.6, (TrackObservation(0.35, (0.1, 0.1, 0.3, 0.3)),))
+        track_b = FaceTrack(1, 1, 1.2, 1.8, (TrackObservation(1.5, (0.3, 0.2, 0.3, 0.3)),))
+        scan = SourceScan("fp", 2.0, 1280, 720, 24.0, (1.0,), (
+            Shot(0, 0.0, 1.0, (track_a,)),
+            Shot(1, 1.0, 2.0, (track_b,)),
+        ), "yolo-mediapipe")
+        assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "matched", 0, (0.25, 0.25), 0.35, "yolo-mediapipe", 0.9),
+            (1, "B"): ShotSpeakerAssignment(1, "B", "matched", 1, (0.45, 0.35), 1.5, "yolo-mediapipe", 0.9),
+        }
+        windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(1280, 720), shot_cuts=[1.0],
+            assignments=assignments, tracks={(0, 0): track_a, (1, 1): track_b}, require_assignment=True,
+        )
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            rendered_files: dict[str, Path] = {}
+            call_count = 0
+
+            def submit_partial(_graph, client_id):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise RuntimeError("Lip sync requires a matching crop and per-frame mask")
+                out = out_dir / f"{client_id}_00001_.mp4"
+                out.write_bytes(b"rendered")
+                rendered_files[client_id] = out
+                return client_id
+
+            def fake_slice(_source, _window, destination, **_kw):
+                destination.write_bytes(b"slice")
+                return destination
+
+            def fake_assemble(_dub, rendered, destination, **_kw):
+                self.assertEqual(len(rendered), 1)
+                self.assertEqual(rendered[0][0].speaker, "B")
+                destination.write_bytes(b"assembled")
+                return destination
+
+            services = SimpleNamespace(
+                models=self.model_services,
+                media=SimpleNamespace(
+                    stage_file=lambda p, _cat: Path(p).name,
+                    resolve_output=lambda h, _: rendered_files[h],
+                ),
+                execution=SimpleNamespace(
+                    submit_prompt=Mock(side_effect=submit_partial),
+                    wait_for_history=lambda prompt_id: prompt_id,
+                    poll_comfy_progress=lambda *_: [],
+                ),
+            )
+            with patch("h3_app.dubbing.lip_sync._extract_window_slice", side_effect=fake_slice), \
+                    patch("h3_app.dubbing.lip_sync.assemble_lip_sync_video", side_effect=fake_assemble):
+                updates = list(render_dub_lip_sync(
+                    dub=self.dub, services=services, reviewed_plan=plan, use_cache=False,
+                ))
+            self.assertEqual(updates[-1], self.dub.with_name("finished.lipsync.mp4"))
+            report = json.loads((folder / REPORT_FILE).read_text(encoding="utf-8"))
+            self.assertEqual((report["total_windows"], report["rendered_windows"]), (2, 1))
+            self.assertEqual(len(report["failed_windows"]), 1)
+            failed = report["failed_windows"][0]
+            self.assertEqual((failed["window_index"], failed["shot_index"], failed["speaker"]), (1, 0, "A"))
+            self.assertIn("matching crop", failed["error"])
+
+            # When every window fails, the error pinpoints the exact shot, timestamp, speaker, and reason.
+            services.execution.submit_prompt = Mock(side_effect=RuntimeError("boom on grid"))
+            with patch("h3_app.dubbing.lip_sync._extract_window_slice", side_effect=fake_slice):
+                with self.assertRaisesRegex(H3Error, r"Shot 1 .*A.*\+1 more.*boom on grid"):
+                    list(render_dub_lip_sync(
+                        dub=self.dub, services=services, reviewed_plan=plan, use_cache=False,
+                    ))

@@ -23,7 +23,7 @@ from h3_models import H3_TEXT_ENCODER_CHOICES, MODEL_SPECS
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
 from h3_app.generation.services import GenerationServices, ModelsServices
-from h3_app.jobs import check_cancelled
+from h3_app.jobs import JobCancelled, check_cancelled
 from h3_app.llm import decisions
 from h3_app.media_tools import has_encoder, probe_video_metadata
 from h3_app.processes import run_media_process
@@ -680,20 +680,24 @@ def _extract_window_slice(
 ) -> Path:
     """Slice a single 24 fps CFR video window, optionally cloning trailing frames to H3's grid."""
     target_frames = window.render_frames if pad else window.source_frames
-    pad_frames = max(0, target_frames - window.source_frames) if pad else 0
     duration = max(window.source_frames / FPS, window.end - window.start)
     # Fast-seek 2s before the window, then frame-accurately trim inside the filtergraph
     # so the slice aligns to the exact same frame as assemble_lip_sync_video.
     fast_seek = max(0.0, window.start - 2.0)
     trim_offset = max(0.0, window.start - fast_seek)
+    # Give trim a tiny safety margin so fps=24 never starves on the last real frame when
+    # resampling fractional-fps sources; trim=end_frame then clamps to source_frames so we
+    # never bleed into the next shot, and tpad clones the final frame so -frames:v always
+    # produces exactly target_frames even when the video stream ends slightly early.
+    trim_duration = duration + (2.0 / FPS)
     filters = [
-        f"trim=start={trim_offset:.6f}:duration={duration:.6f}",
+        f"trim=start={trim_offset:.6f}:duration={trim_duration:.6f}",
         "setpts=PTS-STARTPTS",
         f"fps={FPS}",
+        f"trim=end_frame={window.source_frames}",
         "format=yuv420p",
+        f"tpad=stop_mode=clone:stop={target_frames}",
     ]
-    if pad_frames > 0:
-        filters.append(f"tpad=stop_mode=clone:stop={pad_frames}")
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         *(["-ss", f"{fast_seek:.6f}"] if fast_seek > 0.0 else []),
@@ -708,6 +712,12 @@ def _extract_window_slice(
     proc = run_media_process(cmd, capture_output=True, text=True, timeout=timeout, partial_outputs=(destination,))
     if proc.returncode != 0 or not destination.is_file():
         raise H3Error(f"Could not slice lip-sync window: {proc.stderr.strip()}")
+    actual_frames = probe_video_metadata(destination).frame_count
+    if actual_frames != target_frames:
+        raise H3Error(
+            f"Lip-sync window slice produced {actual_frames} frame(s), expected {target_frames} "
+            f"(shot {window.shot_index + 1}, {window.start:.2f}s–{window.end:.2f}s)."
+        )
     return destination
 
 
@@ -910,6 +920,21 @@ def _is_no_face_error(exc: Exception) -> bool:
     return any(marker in text for marker in _NO_FACE_MARKERS)
 
 
+def _format_clock(seconds: float) -> str:
+    s = max(0.0, float(seconds))
+    minutes = int(s // 60)
+    return f"{minutes}:{s - minutes * 60:04.1f}"
+
+
+def _window_location(window: LipSyncWindow) -> str:
+    return f"Shot {window.shot_index + 1}, {_format_clock(window.start)}–{_format_clock(window.end)}, {window.speaker}"
+
+
+def _short_error(exc: Exception) -> str:
+    text = " ".join(str(exc).split()).strip()
+    return text[:240] if text else exc.__class__.__name__
+
+
 def _save_lip_sync_report(
     dub: Path,
     *,
@@ -920,20 +945,23 @@ def _save_lip_sync_report(
     cached_windows: int,
     skipped_windows: int,
     assignments: dict[tuple[int, str], ShotSpeakerAssignment],
+    failed_windows: Sequence[dict[str, Any]] = (),
     filtered_windows: int = 0,
     face_size_range: tuple[float, float] = (DEFAULT_MIN_FACE_SIZE, DEFAULT_MAX_FACE_SIZE),
 ) -> None:
     folder = player_folder(dub)
     if not folder.is_dir():
         return
+    failed_list = list(failed_windows)
     report = {
         "output": output.name,
         "backend": backend,
         "engine": engine,
         "total_windows": total_windows,
         "cached_windows": cached_windows,
-        "rendered_windows": max(0, total_windows - cached_windows - skipped_windows),
+        "rendered_windows": max(0, total_windows - cached_windows - skipped_windows - len(failed_list)),
         "skipped_windows": skipped_windows,
+        "failed_windows": failed_list,
         "filtered_windows": filtered_windows,
         "face_size_range": [round(float(face_size_range[0]), 4), round(float(face_size_range[1]), 4)],
         "uncertain_count": len(uncertain_assignments(assignments)),
@@ -1533,6 +1561,7 @@ def render_dub_lip_sync(
     rendered_windows: list[tuple[LipSyncWindow, Path]] = []
     cached_hits = 0
     skipped_windows = 0
+    failed_windows: list[dict[str, Any]] = []
     cache_dir = _window_cache_dir(dub)
     plan_w, plan_h = reviewed_plan.get("width"), reviewed_plan.get("height")
     video_size = (int(plan_w), int(plan_h)) if plan_w and plan_h else None
@@ -1578,20 +1607,21 @@ def render_dub_lip_sync(
                     rendered_windows.append((window, cache_path))
                     continue
 
-            yield f"Preparing lip-sync window {index}/{total}"
-            wav_path = work_dir / f"window_{index:03d}.wav"
-            wav_path.write_bytes(encode_wav(dialogue, FITTED_AUDIO_RATE))
-            slice_path = _extract_window_slice(dub, window, work_dir / f"window_{index:03d}.mp4", pad=is_h3)
+            yield f"Preparing lip-sync window {index}/{total} ({_window_location(window)})"
+            if is_h3 and not h3_models_ready:
+                assert services is not None
+                yield "Preparing H3 lip-sync models"
+                check_cancelled()
+                _prepare_h3_lip_sync_models(services.models, models, config)
+                services.models.ensure_model_keys(("face_yolov8m",))
+                h3_models_ready = True
 
             try:
+                wav_path = work_dir / f"window_{index:03d}.wav"
+                wav_path.write_bytes(encode_wav(dialogue, FITTED_AUDIO_RATE))
+                slice_path = _extract_window_slice(dub, window, work_dir / f"window_{index:03d}.mp4", pad=is_h3)
                 if is_h3:
                     assert services is not None
-                    if not h3_models_ready:
-                        yield "Preparing H3 lip-sync models"
-                        check_cancelled()
-                        _prepare_h3_lip_sync_models(services.models, models, config)
-                        services.models.ensure_model_keys(("face_yolov8m",))
-                        h3_models_ready = True
                     rendered_path = yield from _render_window_via_comfy(
                         index=index,
                         total=total,
@@ -1627,12 +1657,28 @@ def render_dub_lip_sync(
                         report=report,
                     ))
                     check_cancelled()
+            except JobCancelled:
+                raise
             except Exception as exc:
                 if _is_no_face_error(exc):
                     skipped_windows += 1
-                    yield f"Window {index}/{total}: no face detected, keeping original frames"
+                    yield f"Window {index}/{total} ({_window_location(window)}): no face detected, keeping original frames"
                     continue
-                raise
+                reason = _short_error(exc)
+                failed_windows.append({
+                    "window_index": index,
+                    "shot_index": window.shot_index,
+                    "speaker": window.speaker,
+                    "start": round(float(window.start), 3),
+                    "end": round(float(window.end), 3),
+                    "error": reason,
+                })
+                print(
+                    f"[Lip Sync] Window {index}/{total} ({_window_location(window)}) failed: {reason}",
+                    flush=True,
+                )
+                yield f"Window {index}/{total} ({_window_location(window)}) failed: {reason} — keeping original frames"
+                continue
 
             if cache_path is not None:
                 try:
@@ -1642,6 +1688,14 @@ def render_dub_lip_sync(
             rendered_windows.append((window, rendered_path))
 
         if not rendered_windows:
+            if failed_windows:
+                first = failed_windows[0]
+                loc = (
+                    f"Shot {first['shot_index'] + 1} "
+                    f"({_format_clock(first['start'])}–{_format_clock(first['end'])}, {first['speaker']})"
+                )
+                extra = f" (+{len(failed_windows) - 1} more)" if len(failed_windows) > 1 else ""
+                raise H3Error(f"Lip sync failed on {loc}{extra}: {first['error']}")
             raise H3Error("No faces were detected in any speaking window for lip sync.")
         yield "Assembling the lip-synced video"
         check_cancelled()
@@ -1651,7 +1705,8 @@ def render_dub_lip_sync(
             dub, output=assembled, backend=backend, engine=engine,
             total_windows=len(windows), cached_windows=cached_hits,
             skipped_windows=skipped_windows, assignments=assignments,
-            filtered_windows=filtered_windows, face_size_range=(min_size, max_size),
+            failed_windows=failed_windows, filtered_windows=filtered_windows,
+            face_size_range=(min_size, max_size),
         )
     yield assembled
 

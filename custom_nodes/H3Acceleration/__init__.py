@@ -2639,7 +2639,10 @@ class H3LipSyncMask:
         boundaries = h3_latent_frame_boundaries(video.shape[2])
         expected = (boundaries[-1], height * 16, width * 16)
         if tuple(source_frames.shape[:3]) != expected or tuple(mouth_mask.shape) != expected:
-            raise ValueError("Lip sync requires a matching crop and per-frame mask on H3's 17k+5 frame grid")
+            raise ValueError(
+                "Lip sync requires a matching crop and per-frame mask on H3's 17k+5 frame grid "
+                f"(expected {expected}, got crop={tuple(source_frames.shape[:3])}, mask={tuple(mouth_mask.shape)})"
+            )
         if height % 2 or width % 2:
             raise ValueError("Lip sync crop dimensions must be multiples of 32 pixels")
 

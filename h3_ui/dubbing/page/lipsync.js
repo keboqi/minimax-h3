@@ -475,6 +475,29 @@ export function renderLipSync(app) {
   const renderReason = renderLockedReason(ls, app, plan);
   const canRender = !!(plan?.revision && !renderReason && !lsState.loading);
 
+  const failedWindows = Array.isArray(ls.report?.failed_windows) ? ls.report.failed_windows : [];
+  const failedByKey = new Map();
+  for (const f of failedWindows) {
+    const k = `${f.shot_index}:${f.speaker}`;
+    if (!failedByKey.has(k)) failedByKey.set(k, f);
+  }
+  const failedBanner = failedWindows.length ? `
+    <section class="card card-pad stack-8">
+      <div class="row align-center row-wrap">
+        <span class="chip chip-warn">${plural(failedWindows.length, "window")} failed on last render (kept original frames)</span>
+        <span class="muted small">Click a window to jump straight to that shot.</span>
+      </div>
+      <div class="stack-6">
+        ${failedWindows.map((f) => `
+          <div class="row align-center row-wrap small">
+            <button type="button" class="btn btn-small" data-ls-shot="${Number(f.shot_index) || 0}" data-ls-speaker="${esc(f.speaker || "")}" data-ls-time="${Number(f.start) || 0}">
+              Shot ${(Number(f.shot_index) || 0) + 1} (${formatClock(f.start)}–${formatClock(f.end)}) · ${esc(speakerLabel(f.speaker))}
+            </button>
+            <span class="fail-text">${esc(f.error || "Render failed")}</span>
+          </div>`).join("")}
+      </div>
+    </section>` : "";
+
   return `
     <div class="ls-workspace stack-16">
       <section class="card card-pad ls-stage-bar">
@@ -507,6 +530,7 @@ export function renderLipSync(app) {
       </section>
 
       <p class="muted small" id="ls-render-reason" ${renderReason ? "" : "hidden"}>${esc(renderReason)}</p>
+      ${failedBanner}
       ${lsState.loading ? '<div class="card card-pad muted">Loading lip-sync plan…</div>' : ""}
       ${lsState.error ? `<div class="card card-pad fail-text">${esc(lsState.error)}</div>` : ""}
 
@@ -611,9 +635,10 @@ export function renderLipSync(app) {
             </div>
             <div class="ls-queue-list">
               ${visible.map((it) => {
-                const badge = rowBadgeFor(it, plan);
+                const failedEntry = failedByKey.get(it.key);
+                const badge = failedEntry ? {label: "Failed", cls: "chip chip-warn"} : rowBadgeFor(it, plan);
                 const selected = activeItem && it.key === activeItem.key;
-                const targetDesc = shotTargetDescription(it, plan);
+                const targetDesc = failedEntry ? `Last render failed: ${failedEntry.error}` : shotTargetDescription(it, plan);
                 return `
                   <button type="button" class="ls-shot-row ${selected ? "selected" : ""}" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.seekTime}">
                     <div class="row align-center">

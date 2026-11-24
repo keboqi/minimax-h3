@@ -100,20 +100,35 @@ function exportCard(app, result) {
     </section>`;
 }
 
+function formatLsClock(sec) {
+  const s = Math.max(0, Number(sec) || 0);
+  const m = Math.floor(s / 60);
+  return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+}
+
 function lipSyncCard(app, result) {
   const ls = result.lip_sync;
   if (!ls) return "";
   const out = ls.output;
   const report = ls.report;
+  const failed = Array.isArray(report?.failed_windows) ? report.failed_windows : [];
+  const syncedCount = report ? ((report.rendered_windows || 0) + (report.cached_windows || 0)) : 0;
   const stats = out
-    ? `<span class="chip">${report ? `${plural(report.total_windows, "window")} synced` : "Lip sync ready"}</span>`
+    ? `<span class="chip">${report ? `${plural(failed.length ? syncedCount : report.total_windows, "window")} synced` : "Lip sync ready"}</span>`
+      + (failed.length ? `<span class="chip chip-warn">${plural(failed.length, "window")} failed (kept original)</span>` : "")
     : '<span class="chip chip-quiet">Optional step</span>';
+  const failedList = failed.length ? `
+    <div class="alert alert-warn stack-6 small">
+      <strong>Some windows failed and kept original frames:</strong>
+      ${failed.map((f) => `<div><strong>Shot ${(Number(f.shot_index) || 0) + 1}</strong> (${formatLsClock(f.start)}–${formatLsClock(f.end)} · ${esc(f.speaker || "Speaker")}): ${esc(f.error || "Render failed")}</div>`).join("")}
+    </div>` : "";
   return `
     <section class="card card-pad stack-10" aria-labelledby="ls-h">
       <div class="row align-center row-wrap"><h2 id="ls-h">Lip sync</h2>${stats}</div>
       <p class="muted small">${out
         ? "Switch between Original and Lip sync video in the player above. Open the Lip Sync workspace to review or adjust face alignment and re-render."
         : "Auto-detect faces and speakers, confirm face alignment on the playing video with dubbed audio, then render lip sync."}</p>
+      ${failedList}
       <div class="row row-wrap">
         <button type="button" class="btn btn-small ${out ? "" : "btn-primary"}" data-action="to-lipsync">
           ${out ? "Open Lip Sync workspace →" : "Go to Lip Sync step →"}

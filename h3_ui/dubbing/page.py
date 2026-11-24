@@ -235,6 +235,8 @@ def _lip_sync_payload(sid: str, video: Path | None) -> dict | None:
             "total_windows": report.get("total_windows", 0),
             "cached_windows": report.get("cached_windows", 0),
             "rendered_windows": report.get("rendered_windows", 0),
+            "skipped_windows": report.get("skipped_windows", 0),
+            "failed_windows": list(report.get("failed_windows") or ()),
             "uncertain_count": report.get("uncertain_count", 0),
             "backend": report.get("backend", "none"),
             "engine": report.get("engine", "h3"),
