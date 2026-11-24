@@ -253,7 +253,7 @@ class WorkshopPageTests(PageTests):
             "width": 160,
             "height": 120,
             "fps": 24.0,
-            "window_version": 4,
+            "window_version": 5,
             "windows_count": 0,
             "windows": [],
             "shots": [{"index": 0, "start": 0.0, "end": 1.0, "tracks": [{"track_id": 2, "box": [0.1, 0.1, 0.3, 0.4], "obs": [[0.5, 0.1, 0.1, 0.3, 0.4, 0.8]]}]}],

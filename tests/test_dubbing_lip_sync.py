@@ -803,7 +803,7 @@ class LipSyncTests(unittest.TestCase):
         plan = build_lip_sync_plan_payload(
             dub=self.dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=windows,
         )
-        self.assertEqual(plan["window_version"], 4)
+        self.assertEqual(plan["window_version"], 5)
         legacy_windows = [
             {key: value for key, value in window.items() if key not in {"face_size", "manual"}}
             for window in plan["windows"]
@@ -812,14 +812,20 @@ class LipSyncTests(unittest.TestCase):
             json.dumps({**plan, "window_version": 2, "windows": legacy_windows}), encoding="utf-8",
         )
         upgraded = load_lip_sync_plan(self.dub)
-        self.assertEqual(upgraded["window_version"], 4)
+        self.assertEqual(upgraded["window_version"], 5)
         self.assertEqual(upgraded["revision"], plan["revision"])
         self.assertEqual([w["face_size"] for w in upgraded["windows"]], [0.06, 0.34])
         (folder / PLAN_FILE).write_text(
             json.dumps({**plan, "window_version": 3}), encoding="utf-8",
         )
         upgraded_v3 = load_lip_sync_plan(self.dub)
-        self.assertEqual(upgraded_v3["window_version"], 4)
+        self.assertEqual(upgraded_v3["window_version"], 5)
+        (folder / PLAN_FILE).write_text(
+            json.dumps({**plan, "window_version": 4, "windows": []}), encoding="utf-8",
+        )
+        upgraded_v4 = load_lip_sync_plan(self.dub)
+        self.assertEqual(upgraded_v4["window_version"], 5)
+        self.assertEqual(len(upgraded_v4["windows"]), 2)
         revise_lip_sync_plan(self.dub, plan, {(0, "A"): 0}, reset=set())
         revised = load_lip_sync_plan(self.dub)
         self.assertTrue(revised["windows"][0]["manual"])
@@ -1509,3 +1515,79 @@ class LipSyncTests(unittest.TestCase):
                 load_lip_sync_takes(self.dub)["assembled"]["shot_takes"],
                 {"0:A": "t2", "1:B": "t1"},
             )
+
+    def test_manual_face_selection_keeps_window_when_track_observations_are_outside_short_chunk(self):
+        from h3_app.dubbing.lip_sync import render_lip_sync_shots
+
+        folder = player_folder(self.dub)
+        # Shot 0 (0.0-2.0): Speaker A speaks early (0.0-1.6), Speaker B speaks briefly at the end (1.7-2.0).
+        # Face track #1 only has observations during 0.2-0.8 (earlier in the same shot, >0.5s away from B's chunk).
+        lines = [
+            {"speaker": "A", "start": 0.0, "end": 1.6},
+            {"speaker": "B", "start": 1.7, "end": 2.0},
+        ]
+        spoken = {"0": [0.0, 1.6], "1": [1.7, 2.0]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}), encoding="utf-8")
+        np.savez_compressed(folder / "alignment.npz", **{
+            "0": np.ones(round(1.6 * RATE), dtype=np.float32),
+            "1": np.ones(round(0.3 * RATE), dtype=np.float32),
+        })
+        track = FaceTrack(1, 0, 0.2, 0.8, (
+            TrackObservation(0.2, (0.2, 0.2, 0.2, 0.15)),
+            TrackObservation(0.8, (0.3, 0.2, 0.2, 0.15)),
+        ))
+        tracks = {(0, 1): track}
+
+        # Auto match >0.5s away from track observations conservatively skips Speaker B's window.
+        auto_assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "matched", 1, (0.4, 0.275), 0.8, "yolo-mediapipe", 0.9),
+            (0, "B"): ShotSpeakerAssignment(0, "B", "matched", 1, (0.4, 0.275), 1.85, "yolo-mediapipe", 0.9),
+        }
+        auto_windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(640, 480), assignments=auto_assignments,
+            tracks=tracks, require_assignment=True, context_seconds=0.0,
+        )
+        self.assertEqual([w.speaker for w in auto_windows], ["A"])
+
+        # Manual override for Speaker B MUST still produce a render window using the nearest observation in the shot.
+        manual_assignments = {
+            **auto_assignments,
+            (0, "B"): ShotSpeakerAssignment(0, "B", "manual", 1, (0.4, 0.275), 1.85, "manual", 1.0),
+        }
+        manual_windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(640, 480), assignments=manual_assignments,
+            tracks=tracks, require_assignment=True, context_seconds=0.0,
+        )
+        self.assertEqual([w.speaker for w in manual_windows], ["A", "B"])
+        self.assertTrue(manual_windows[1].manual)
+        self.assertEqual(manual_windows[1].face_size, 0.15)
+        self.assertEqual(manual_windows[1].face_target[:2], (round(0.4 * 640), round(0.275 * 480)))
+
+        # Auto match with a brief sampling gap (<= 0.5s, e.g. 5-fps stride miss) also keeps the window.
+        near_track = FaceTrack(1, 0, 0.2, 1.5, (
+            TrackObservation(0.2, (0.2, 0.2, 0.2, 0.15)),
+            TrackObservation(1.5, (0.3, 0.2, 0.2, 0.15)),
+        ))
+        near_windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(640, 480), assignments=auto_assignments,
+            tracks={(0, 1): near_track}, require_assignment=True, context_seconds=0.0,
+        )
+        self.assertEqual([w.speaker for w in near_windows], ["A", "B"])
+
+        # When a manually-assigned shot genuinely has zero non-overlapping dubbed speaking frames,
+        # render_lip_sync_shots reports that clearly instead of saying "Assign a visible face first."
+        overlap_spoken = {"0": [0.0, 2.0], "1": [1.7, 2.0]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": overlap_spoken}), encoding="utf-8")
+        scan = SourceScan("fp", 2.0, 640, 480, 24.0, (), (Shot(0, 0.0, 2.0, (track,)),), "yolo-mediapipe")
+        overlap_windows = plan_lip_sync_windows(
+            self.dub, 2.0, video_size=(640, 480), assignments=manual_assignments,
+            tracks=tracks, require_assignment=True, context_seconds=0.0,
+        )
+        plan = build_lip_sync_plan_payload(
+            dub=self.dub, scan=scan, lines=lines, spoken=overlap_spoken,
+            assignments=manual_assignments, windows=overlap_windows,
+        )
+        with self.assertRaisesRegex(H3Error, "no non-overlapping dubbed speaking frames"):
+            list(render_lip_sync_shots(
+                dub=self.dub, shot_keys=["0:B"], services=None, reviewed_plan=plan, engine="musetalk",
+            ))

@@ -30,6 +30,8 @@ function saveLsSettings() {
       bboxShift: lsState.bboxShift,
       inferenceSteps: lsState.inferenceSteps,
       guidanceScale: lsState.guidanceScale,
+      minFaceSize: lsState.minFaceSize,
+      maxFaceSize: lsState.maxFaceSize,
     }));
   } catch {
     // Ignore storage errors in private browsing.
@@ -37,6 +39,12 @@ function saveLsSettings() {
 }
 
 const savedLs = loadSavedLsSettings();
+const savedMinFaceSize = Number.isFinite(savedLs.minFaceSize)
+  ? Math.max(0, Math.min(100, Math.round(savedLs.minFaceSize)))
+  : 0;
+const savedMaxFaceSize = Number.isFinite(savedLs.maxFaceSize)
+  ? Math.max(savedMinFaceSize, Math.min(100, Math.round(savedLs.maxFaceSize)))
+  : 100;
 
 const lsState = {
   targetKey: null,
@@ -61,8 +69,8 @@ const lsState = {
   bboxShift: Number.isFinite(savedLs.bboxShift) ? savedLs.bboxShift : 0,
   inferenceSteps: Number.isFinite(savedLs.inferenceSteps) ? savedLs.inferenceSteps : 20,
   guidanceScale: Number.isFinite(savedLs.guidanceScale) ? savedLs.guidanceScale : 1.5,
-  minFaceSize: 0,
-  maxFaceSize: 100,
+  minFaceSize: savedMinFaceSize,
+  maxFaceSize: savedMaxFaceSize,
   rafId: null,
   observer: null,
 };
@@ -90,7 +98,6 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
       targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null,
       stageMode: "align", checkedKeys: new Set(), lastRenderedKeys: [], autoplayPreview: false,
       queueScrollTop: 0, videoTime: null,
-      minFaceSize: 0, maxFaceSize: 100,
     });
   }
   const request = Symbol();
@@ -163,6 +170,10 @@ function shotTakeStatus(it, data) {
   return "unrendered";
 }
 
+function itemHasWindows(it, plan) {
+  return !!(it && (getPlanIndex(plan)?.windowsByKey.get(it.key) || []).length > 0);
+}
+
 function takeStatusBadge(it, plan, data) {
   const active = activeTakeFor(data, it.key);
   const st = shotTakeStatus(it, data);
@@ -176,6 +187,7 @@ function takeStatusBadge(it, plan, data) {
   if (st === "off_screen") return {label: "Off-screen", cls: "chip chip-quiet"};
   if (isItemSizeFiltered(it, plan)) return {label: "Size ignored", cls: "chip chip-quiet"};
   if (it.assignment.status === "uncertain") return {label: "Needs check", cls: "chip chip-warn"};
+  if (!itemHasWindows(it, plan)) return {label: "No speaking frames", cls: "chip chip-quiet"};
   return {label: "Not rendered", cls: "chip chip-quiet"};
 }
 
@@ -197,7 +209,7 @@ function formatTakeMeta(take, shot) {
   return `${detail} · ${face}`;
 }
 
-function assemblySummary(items, data) {
+function assemblySummary(items, data, plan = null) {
   let reused = 0;
   let updated = 0;
   let outdated = 0;
@@ -214,6 +226,7 @@ function assemblySummary(items, data) {
     else if (st === "updated") { updated++; changedShots.push(it); }
     else if (st === "outdated") { outdated++; changedShots.push(it); }
     else if (st === "off_screen") off++;
+    else if (plan && it.assignment.status !== "uncertain" && !itemHasWindows(it, plan)) off++;
     else { unrendered++; if (it.assignment.status !== "off_screen") unrenderedKeys.push(it.key); }
   }
   return {
@@ -379,15 +392,37 @@ function assignmentLabel(shot, speaker) {
     : "Choose a shot with a speaker to review.";
 }
 
-function assignmentButtons(shot, assignment, overrides) {
+function assignedTrackId(assignment) {
+  if (!assignment || assignment.status === "off_screen") return null;
+  return assignment.track_id !== null && assignment.track_id !== undefined ? assignment.track_id : null;
+}
+
+function isTrackInSizeRange(track, index = null, fallbackHeight = null) {
+  return sizeInRange(trackMedianHeight(track, index) ?? fallbackHeight);
+}
+
+function assignmentButtons(shot, assignment, overrides, plan = null) {
   if (!shot || !assignment) return "";
+  const index = getPlanIndex(plan);
   const key = `${shot.index}:${assignment.speaker}`;
+  const activeTrackId = assignedTrackId(assignment);
   const button = (id, label, selected) => `<button type="button" class="btn btn-small ${selected ? "btn-primary" : ""}"
     data-ls-assign="${esc(key)}" data-track-id="${id}">${label}</button>`;
-  const buttons = (shot.tracks || []).map((track, idx) =>
-    button(track.track_id, `Face #${idx + 1}`, track.track_id === assignment.track_id));
+  const buttons = [];
+  let hiddenCount = 0;
+  (shot.tracks || []).forEach((track, idx) => {
+    const selected = activeTrackId !== null && track.track_id === activeTrackId;
+    if (!selected && !isTrackInSizeRange(track, index)) {
+      hiddenCount++;
+      return;
+    }
+    buttons.push(button(track.track_id, `Face #${idx + 1}`, selected));
+  });
   buttons.push(button("off", "Off-screen / Skip", assignment.status === "off_screen"));
   if (Object.hasOwn(overrides || {}, key)) buttons.push(button("auto", "Restore automatic match", false));
+  if (hiddenCount > 0) {
+    buttons.push(`<span class="muted small" data-ls-hidden-faces="${hiddenCount}">${plural(hiddenCount, "face")} hidden by size</span>`);
+  }
   return buttons.join("");
 }
 
@@ -685,7 +720,7 @@ export function renderLipSync(app) {
   const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
   const plan = data?.plan || null;
   const items = shotItems(plan);
-  const asm = assemblySummary(items, data);
+  const asm = assemblySummary(items, data, plan);
   const visible = items.filter((it) => {
     if (lsState.filter === "review") return it.assignment.status === "uncertain";
     if (lsState.filter === "pending") {
@@ -709,6 +744,7 @@ export function renderLipSync(app) {
   const canRenderShot = !!(
     plan?.revision && app.boot.lip_sync && ls.ready && !lsState.loading
     && activeItem && activeItem.assignment.status !== "off_screen"
+    && itemHasWindows(activeItem, plan)
   );
   const canAssemble = !!(plan && asm.activeTakesCount > 0 && !lsState.loading);
 
@@ -835,8 +871,8 @@ export function renderLipSync(app) {
                   </span>
                 </div>
                 <div class="row row-wrap align-center">
-                  <div class="row row-wrap" id="ls-quick-buttons" data-key="${esc(activeItem?.key || "")}">
-                    ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides)}
+                  <div class="row row-wrap align-center" id="ls-quick-buttons" data-assign-key="${esc(activeItem?.key || "")}" data-range="${lsState.minFaceSize}-${lsState.maxFaceSize}">
+                    ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides, plan)}
                   </div>
                   ${activeItem ? `
                     <button type="button" id="ls-render-shot-btn" class="btn btn-small btn-primary" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot ? "" : "disabled"}>
@@ -912,7 +948,7 @@ export function renderLipSync(app) {
                   <input type="range" min="0" max="100" step="1" value="${lsState.minFaceSize}" data-ls-range="min" aria-label="Minimum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 4 : 3}">
                   <input type="range" min="0" max="100" step="1" value="${lsState.maxFaceSize}" data-ls-range="max" aria-label="Maximum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 3 : 4}">
                 </div>
-                <span class="muted small">Applies to newly rendered shots; existing takes stay untouched.</span>
+                <span class="muted small">Filters face boxes, face buttons, and newly rendered shots; manual picks and existing takes stay untouched.</span>
               </div>
               <div class="row align-center row-wrap top-line">
                 <span class="small" data-ls-render-summary>
@@ -1011,16 +1047,19 @@ function drawOverlay(app) {
   const activeSpeaker = activeAssign?.speaker;
   const key = activeSpeaker ? `${shot.index}:${activeSpeaker}` : "";
   const buttons = document.getElementById("ls-quick-buttons");
-  if (buttons && buttons.dataset.key !== key) {
-    buttons.dataset.key = key;
-    buttons.innerHTML = assignmentButtons(shot, activeAssign, lsState.data.overrides);
-    document.getElementById("ls-active-info").innerHTML = assignmentLabel(shot, activeSpeaker);
+  const rangeKey = `${lsState.minFaceSize}-${lsState.maxFaceSize}`;
+  if (buttons && (buttons.dataset.assignKey !== key || buttons.dataset.range !== rangeKey)) {
+    buttons.dataset.assignKey = key;
+    buttons.dataset.range = rangeKey;
+    buttons.innerHTML = assignmentButtons(shot, activeAssign, lsState.data.overrides, plan);
+    const infoEl = document.getElementById("ls-active-info");
+    if (infoEl) infoEl.innerHTML = assignmentLabel(shot, activeSpeaker);
   }
   if (!shot) {
     if (overlay.childElementCount) overlay.textContent = "";
     return;
   }
-  const activeTrackId = activeAssign && activeAssign.status !== "off_screen" ? activeAssign.track_id : null;
+  const activeTrackId = assignedTrackId(activeAssign);
   const activeWindow = key
     ? (index.windowsByKey.get(key) || []).find((win) => t >= win.start && t < win.end) || null
     : null;
@@ -1036,12 +1075,14 @@ function drawOverlay(app) {
     if (!b) return;
     const [x, y, w, h] = b;
     const isSpeaking = activeTrackId !== null && track.track_id === activeTrackId;
+    if (!isSpeaking && !isTrackInSizeRange(track, index, h)) return;
     const speakingWindow = isSpeaking ? activeWindow : null;
     const trackSize = (speakingWindow && windowFaceSize(speakingWindow)) ?? trackMedianHeight(track, index) ?? h;
     const pct = formatFacePct(trackSize);
-    const sizeIgnored = !!speakingWindow && !windowInSizeRange(speakingWindow, plan);
-    const manualKept = !!speakingWindow && isWindowManual(speakingWindow, plan)
-      && !sizeInRange(windowFaceSize(speakingWindow));
+    const isManual = speakingWindow ? isWindowManual(speakingWindow, plan) : activeAssign?.status === "manual";
+    const inRange = speakingWindow ? sizeInRange(windowFaceSize(speakingWindow)) : sizeInRange(trackSize);
+    const sizeIgnored = isSpeaking && !isManual && !inRange;
+    const manualKept = isSpeaking && isManual && !inRange;
     const label = isSpeaking
       ? `${speakerLabel(activeSpeaker)} · ${pct}${sizeIgnored ? " (size ignored)" : manualKept ? " (manual)" : ""}`
       : `Face #${idx + 1} · ${pct}`;
@@ -1305,6 +1346,16 @@ function syncFaceSizeUI(app) {
       descEl.textContent = tk ? `Take ${tk.number} · ${formatTakeMeta(tk, it.shot)}` : shotTargetDescription(it, plan);
     }
   }
+  const buttonsEl = document.getElementById("ls-quick-buttons");
+  if (buttonsEl) {
+    const assignKey = buttonsEl.dataset.assignKey || "";
+    const sep = assignKey.indexOf(":");
+    const idx = getPlanIndex(plan);
+    const shot = sep > 0 ? idx?.shotsByIndex.get(Number(assignKey.slice(0, sep))) : null;
+    const assign = assignKey ? idx?.assignments.get(assignKey) : null;
+    buttonsEl.dataset.range = `${lsState.minFaceSize}-${lsState.maxFaceSize}`;
+    buttonsEl.innerHTML = assignmentButtons(shot, assign, data.overrides, plan);
+  }
   drawOverlay(app);
 }
 
@@ -1385,8 +1436,9 @@ function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} =
   if (infoEl) infoEl.innerHTML = assignmentLabel(activeItem?.shot, activeItem?.speaker);
   const buttonsEl = document.getElementById("ls-quick-buttons");
   if (buttonsEl) {
-    buttonsEl.dataset.key = activeItem?.key || "";
-    buttonsEl.innerHTML = assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides);
+    buttonsEl.dataset.assignKey = activeItem?.key || "";
+    buttonsEl.dataset.range = `${lsState.minFaceSize}-${lsState.maxFaceSize}`;
+    buttonsEl.innerHTML = assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides, plan);
   }
   const renderShotBtn = document.getElementById("ls-render-shot-btn");
   if (renderShotBtn && activeItem) {
@@ -1394,6 +1446,7 @@ function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} =
     const canRenderShot = !!(
       plan?.revision && app.boot?.lip_sync && ls?.ready && !lsState.loading
       && activeItem.assignment.status !== "off_screen"
+      && itemHasWindows(activeItem, plan)
     );
     const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
     renderShotBtn.dataset.shotKey = activeItem.key;
@@ -1488,6 +1541,7 @@ export function bindLipSync(app) {
       const [lo, hi] = preset.dataset.lsSizePreset.split(",").map(Number);
       lsState.minFaceSize = lo;
       lsState.maxFaceSize = hi;
+      saveLsSettings();
       syncFaceSizeUI(app);
       return;
     }
@@ -1521,11 +1575,12 @@ export function bindLipSync(app) {
       lsState.loopShot = !lsState.loopShot;
       patchLoopUI();
     } else if (action === "select-unrendered") {
-      const items = shotItems(lsState.data?.plan);
+      const plan = lsState.data?.plan;
+      const items = shotItems(plan);
       const next = new Set();
       for (const it of items) {
         const st = shotTakeStatus(it, lsState.data);
-        if (st === "unrendered" || st === "outdated") next.add(it.key);
+        if (st === "outdated" || (st === "unrendered" && !isItemSizeFiltered(it, plan))) next.add(it.key);
       }
       lsState.checkedKeys = next;
       patchBulkSelection(app);
@@ -1595,6 +1650,7 @@ export function bindLipSync(app) {
       } else {
         lsState.maxFaceSize = Math.max(val, lsState.minFaceSize);
       }
+      saveLsSettings();
       syncFaceSizeUI(app);
       return;
     }

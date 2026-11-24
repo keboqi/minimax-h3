@@ -627,13 +627,24 @@ def plan_lip_sync_windows(
                 samples = [obs for obs in track.observations
                            if first_frame <= round(obs.time * FPS) < last_frame] if track else []
                 observation = min(samples, key=lambda obs: abs(obs.time - mid), default=None)
-                if observation is None:
+                if observation is not None:
+                    heights = sorted(obs.box[3] for obs in samples)
+                    face_size = round(float(heights[len(heights) // 2]), 4)
+                    face_target = _center_to_face_target(
+                        observation.center, observation.time, video_size, first_frame, 0, source_frames,
+                    )
+                elif track and track.observations:
+                    nearest = min(track.observations, key=lambda obs: abs(obs.time - mid))
+                    gap = max(0.0, first_frame / FPS - nearest.time, nearest.time - last_frame / FPS)
+                    if not manual and gap > 0.5:
+                        continue
+                    heights = sorted(obs.box[3] for obs in track.observations)
+                    face_size = round(float(heights[len(heights) // 2]), 4)
+                    face_target = _center_to_face_target(
+                        nearest.center, None, video_size, first_frame, active_start_frame, active_end_frame,
+                    )
+                else:
                     continue
-                heights = sorted(obs.box[3] for obs in samples)
-                face_size = round(float(heights[len(heights) // 2]), 4)
-                face_target = _center_to_face_target(
-                    observation.center, observation.time, video_size, first_frame, 0, source_frames,
-                )
             elif assigned and assigned.face_center is not None:
                 ref = assigned.reference_time
                 if ref is not None and not first_frame <= round(ref * FPS) < last_frame:
@@ -1445,10 +1456,10 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
                 return None
         if "revision" not in data:
             data["revision"] = hashlib.sha256(raw).hexdigest()
-        if data.get("window_version") in (2, 3):
+        if data.get("window_version") in (2, 3, 4):
             # Use the same window planner for review and render while retaining the saved revision.
             windows = _reviewed_windows(dub, data, _plan_assignments(data))
-            data.update(window_version=4, windows_count=len(windows),
+            data.update(window_version=5, windows_count=len(windows),
                         windows=[asdict(window) for window in windows])
         return data
     except (OSError, ValueError):
@@ -1528,7 +1539,7 @@ def build_lip_sync_plan_payload(
         "width": int(scan.width),
         "height": int(scan.height),
         "fps": round(float(scan.fps), 3),
-        "window_version": 4,
+        "window_version": 5,
         "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
@@ -1622,7 +1633,7 @@ def revise_lip_sync_plan(
     windows = _reviewed_windows(dub, plan, assignments, visual_speakers=hints)
     _save_lip_sync_plan(dub, {
         **plan, "revision": uuid4().hex, "automatic_assignments": automatic,
-        "window_version": 4, "windows_count": len(windows),
+        "window_version": 5, "windows_count": len(windows),
         "windows": [asdict(window) for window in windows],
         "uncertain_count": len(uncertain_assignments(assignments)),
         "assignments": [item.to_dict() for item in assignments.values()],
@@ -1928,7 +1939,7 @@ def render_dub_lip_sync(
         yield "Using reviewed face assignments"
     assignments = _plan_assignments(reviewed_plan)
     backend = reviewed_plan["backend"]
-    if reviewed_plan.get("window_version") in (3, 4) and "windows" in reviewed_plan:
+    if reviewed_plan.get("window_version") == 5 and "windows" in reviewed_plan:
         windows = [LipSyncWindow(**w) for w in reviewed_plan["windows"] if speaker is None or w["speaker"] == speaker]
     else:
         windows = _reviewed_windows(dub, reviewed_plan, assignments, visual_speakers=visual_speakers, speaker=speaker)
@@ -2197,7 +2208,7 @@ def render_lip_sync_shots(
     if plan is None:
         raise H3Error("Detect faces and speakers before rendering shot takes.")
     assignments = _plan_assignments(plan)
-    if plan.get("window_version") in (3, 4) and "windows" in plan:
+    if plan.get("window_version") == 5 and "windows" in plan:
         all_windows = [LipSyncWindow(**w) for w in plan["windows"]]
     else:
         all_windows = _reviewed_windows(dub, plan, assignments)
@@ -2210,6 +2221,13 @@ def render_lip_sync_shots(
 
     ordered_shot_keys = [k for k in parsed_keys if windows_by_key.get(k)]
     if not ordered_shot_keys:
+        if all(
+            (a := assignments.get(k)) is not None
+            and a.status not in ("uncertain", "off_screen")
+            and (a.track_id is not None or a.face_center is not None)
+            for k in parsed_keys
+        ):
+            raise H3Error("Selected shot(s) have no non-overlapping dubbed speaking frames to render in this shot.")
         raise H3Error("Selected shot(s) have no on-screen speaking windows. Assign a visible face first.")
 
     is_h3 = engine == "h3"
