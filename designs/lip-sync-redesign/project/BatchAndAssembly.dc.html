@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Lip sync — Batch render &amp; assembly</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.52; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .dc-spin { animation: spin 0.9s linear infinite; }
+    a { color: #075b4e; }
+    a:hover { color: #064a3f; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <!-- Shared 2-Tier Header -->
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 10px rgba(10, 16, 14, 0.08);">
+    <div style="background: {{ t.chrome }}; color: {{ t.chromeText }}; border-bottom: 1px solid {{ t.chromeLine }}; padding: 7px 20px; min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+      <div style="display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+          <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+        </svg>
+        <span>Dubbing</span>
+      </div>
+      <span aria-hidden="true" style="width: 1px; height: 20px; background: {{ t.chromeLine }}; flex: none;"></span>
+      <span style="display: inline-flex; align-items: center; min-height: 34px; padding: 0 11px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-weight: 600; font-size: 14px;">The Editing Room</span>
+      <span style="flex: 1;"></span>
+      <sc-if value="{{ showHeaderRunPill }}" hint-placeholder-val="{{ true }}">
+        <div role="status" style="display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 7px 0 11px; border: 1px solid {{ t.chromeAccent }}; border-radius: 8px; background: #1f3d35; color: {{ t.chromeText }}; font-size: 13px; font-weight: 600;">
+          <span class="dc-spin" style="width: 13px; height: 13px; border-radius: 50%; border: 2px solid {{ t.chromeAccent }}; border-right-color: transparent;"></span>
+          <span>Rendering Shot 5 (1/2) · 56%</span>
+          <button type="button" onClick="{{ interruptBatch }}" style="min-height: 24px; padding: 0 8px; border: 1px solid {{ t.chromeLine }}; border-radius: 6px; background: {{ t.chrome }}; color: {{ t.chromeText }}; font-size: 12px; font-weight: 600;">Interrupt</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showHeaderCpuPill }}" hint-placeholder-val="{{ false }}">
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; background: {{ t.chromeRaised }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; color: {{ t.chromeText }};">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ t.chromeAccent }};"></span>
+          Fast splice (CPU ffmpeg · no GPU needed)
+        </span>
+      </sc-if>
+    </div>
+
+    <div style="background: {{ t.surface }}; color: {{ t.text }}; border-bottom: 1px solid {{ t.line }}; padding: 5px 20px; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;">
+      <a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 6px; min-height: 32px; text-decoration: none; color: {{ t.accentText }}; font-size: 14px; font-weight: 700;">← Back to Lip sync workbench</a>
+      <span style="flex: 1;"></span>
+      <div role="group" aria-label="Workflow view" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+        <button type="button" onClick="{{ showBatch }}" aria-pressed="{{ isBatch }}" style="min-height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ tab1Bg }}; color: {{ tab1Fg }}; box-shadow: {{ tab1Shadow }}; font-size: 13px; font-weight: 600;">Live batch render (2)</button>
+        <button type="button" onClick="{{ showAssembly }}" aria-pressed="{{ isAssembly }}" style="min-height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ tab2Bg }}; color: {{ tab2Fg }}; box-shadow: {{ tab2Shadow }}; font-size: 13px; font-weight: 600;">Fast-splice assembly</button>
+      </div>
+    </div>
+  </header>
+
+  <main style="padding: 16px 20px 28px; max-width: 1440px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px;">
+    <!-- VIEW 1: Non-Blocking Live Batch Render (Docked into the same workbench) -->
+    <sc-if value="{{ isBatch }}" hint-placeholder-val="{{ true }}">
+      <!-- Docked Live Progress Strip inside Command Bar -->
+      <section aria-label="Batch render progress" style="background: {{ t.surface }}; border: 1.5px solid {{ batchBannerBorder }}; border-radius: 12px; padding: 12px 16px; display: flex; flex-direction: column; gap: 9px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+          <sc-if value="{{ batchRunning }}" hint-placeholder-val="{{ true }}">
+            <span class="dc-spin" style="width: 15px; height: 15px; border-radius: 50%; border: 2.5px solid {{ t.accent }}; border-right-color: transparent; flex: none;"></span>
+            <strong style="font-size: 15px;">Rendering 2 selected shots · Shot 5 (Take 1 · MuseTalk 1.5)</strong>
+          </sc-if>
+          <sc-if value="{{ batchDone }}" hint-placeholder-val="{{ false }}">
+            <span style="display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 12px; font-weight: 700;">✓</span>
+            <strong style="font-size: 15px;">2 shot takes finished — Shot 5 &amp; Shot 8 ready to preview &amp; assemble</strong>
+          </sc-if>
+          <span style="flex: 1;"></span>
+          <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">{{ batchEta }}</span>
+          <button type="button" onClick="{{ toggleBatchSim }}" style="min-height: 32px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.raised }}; font-size: 12px; font-weight: 700;">{{ batchSimLabel }}</button>
+          <sc-if value="{{ batchRunning }}" hint-placeholder-val="{{ true }}">
+            <button type="button" onClick="{{ interruptBatch }}" style="min-height: 32px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }}; font-size: 12px; font-weight: 600;">Interrupt</button>
+          </sc-if>
+          <sc-if value="{{ batchDone }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ showAssembly }}" style="min-height: 32px; padding: 0 12px; border: 1px solid {{ t.accent }}; border-radius: 7px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 12px; font-weight: 700;">Update video (4 shots) →</button>
+          </sc-if>
+        </div>
+
+        <div style="height: 7px; border-radius: 999px; background: {{ t.lane }}; overflow: hidden;">
+          <div style="width: {{ batchPct }}; height: 100%; border-radius: 999px; background: {{ t.accent }};"></div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 13px; color: {{ t.muted }};">
+          <span><strong style="color: {{ t.text }};">6 other shots untouched</strong> — approved takes stay cached &amp; playable while GPU renders.</span>
+          <span>Takes save per shot; interrupting keeps any completed shot.</span>
+        </div>
+      </section>
+
+      <!-- Same 2-Column Workbench: Interactive Preview on Left, Live Queue Progress on Right -->
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+        <section aria-label="Interactive preview during render" style="flex: 999 1 700px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden;">
+          <div style="padding: 9px 14px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+            <strong style="font-size: 15px;">Shot 3 · Maya Lin</strong>
+            <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">0:08.6–0:11.0</span>
+            <span style="padding: 2px 8px; border-radius: 999px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 12px; font-weight: 700;">Still playable during GPU render</span>
+            <span style="flex: 1;"></span>
+            <div role="group" aria-label="Compare synced vs original" style="display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: {{ t.lane }};">
+              <button type="button" onClick="{{ cmpSync }}" aria-pressed="{{ isCmpSync }}" style="min-height: 28px; padding: 0 9px; border: 0; border-radius: 6px; background: {{ csBg }}; color: {{ csFg }}; font-size: 12px; font-weight: 700;">Synced (T2)</button>
+              <button type="button" onClick="{{ cmpOrig }}" aria-pressed="{{ isCmpOrig }}" style="min-height: 28px; padding: 0 9px; border: 0; border-radius: 6px; background: {{ coBg }}; color: {{ coFg }}; font-size: 12px; font-weight: 700;">Original</button>
+            </div>
+          </div>
+
+          <div style="position: relative; aspect-ratio: 16 / 9; max-height: 430px; background: #141c1a; overflow: hidden;">
+            <img src="{{ previewImg }}" alt="Shot 3 take preview while batch renders" style="display: block; width: 100%; height: 100%; object-fit: cover;">
+            <div style="position: absolute; top: 12px; left: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 8px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; border: 1px solid rgba(102, 216, 187, 0.48); font-size: 12px; font-weight: 600;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ cmpDot }};"></span>
+              <span>{{ cmpHud }}</span>
+            </div>
+            <div style="position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 90%; padding: 6px 14px; border-radius: 8px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; font-size: 15px; font-weight: 600; white-space: nowrap;">
+              <span style="color: #66d8bb; margin-right: 8px; font-size: 12px; font-weight: 700;">Maya Lin</span>
+              <span>Empezamos con la historia que queremos contar.</span>
+            </div>
+          </div>
+
+          <div style="padding: 12px 14px; border-top: 1px solid {{ t.lineSoft }}; background: {{ t.raised }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+            <span style="font-size: 13px; color: {{ t.muted }};">Reviewing other shots never interrupts the active GPU queue.</span>
+            <span style="font-size: 12px; font-weight: 700; color: {{ t.accentText }};">Auto-opens Shot 5 preview when finished</span>
+          </div>
+        </section>
+
+        <!-- Right Rail: Live Shot Queue with Inline Per-Shot Bars -->
+        <aside aria-label="Live render queue" style="flex: 1 1 360px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+          <div style="padding: 12px 14px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; align-items: center; justify-content: space-between;">
+            <h1 style="margin: 0; font-size: 16px; font-weight: 700;">Active render queue</h1>
+            <span style="font-size: 12px; font-weight: 700; color: {{ t.accentText }};">2 of 9 shots</span>
+          </div>
+          <div style="padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px;">
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: {{ t.muted }};">In this GPU batch (2)</span>
+
+            <!-- Active Rendering Shot Row -->
+            <div style="padding: 10px 12px; border-radius: 10px; border: 1.5px solid {{ t.accent }}; background: {{ t.selected }}; display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong style="font-size: 14px;">Shot 5 · Take 1</strong>
+                <span style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: {{ t.accent }}; color: {{ t.accentInk }};">{{ q1Pill }}</span>
+              </div>
+              <span style="font-size: 12px; color: {{ t.muted }};">0:16.5–0:19.4 · Maya Lin · Face #1 · MuseTalk 1.5</span>
+              <div style="height: 5px; border-radius: 999px; background: {{ t.lane }}; overflow: hidden;">
+                <div style="width: {{ q1Width }}; height: 100%; background: {{ t.accent }};"></div>
+              </div>
+            </div>
+
+            <!-- Queued Shot Row -->
+            <div style="padding: 10px 12px; border-radius: 10px; border: 1px solid {{ t.line }}; background: {{ t.raised }}; display: flex; flex-direction: column; gap: 4px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong style="font-size: 14px;">Shot 8 · Take 1</strong>
+                <span style="font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: {{ q2Bg }}; color: {{ q2Fg }};">{{ q2Pill }}</span>
+              </div>
+              <span style="font-size: 12px; color: {{ t.muted }};">0:26.5–0:29.8 · Maya Lin · Face #1 · MuseTalk 1.5</span>
+            </div>
+
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: {{ t.muted }}; padding-top: 6px;">Cached &amp; untouched (4)</span>
+
+            <sc-for list="{{ cachedRows }}" as="cr" hint-placeholder-count="4">
+              <div style="padding: 8px 11px; border-radius: 9px; border: 1px solid {{ t.lineSoft }}; background: {{ t.surface }}; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
+                  <strong style="font-size: 13px;">{{ cr.title }}</strong>
+                  <span style="font-size: 12px; color: {{ t.muted }};">{{ cr.meta }}</span>
+                </div>
+                <span style="font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: {{ t.quietBg }}; color: {{ t.quiet }};">Kept</span>
+              </div>
+            </sc-for>
+          </div>
+        </aside>
+      </div>
+    </sc-if>
+
+    <!-- VIEW 2: Fast-Splice Incremental Assembly & Shot Patch Diff -->
+    <sc-if value="{{ isAssembly }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px;">
+        <div>
+          <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em;">Assemble full lip-synced video</h1>
+          <p style="margin: 3px 0 0; color: {{ t.muted }}; font-size: 14px;">Splices each shot’s active take onto the dubbed MP4 in seconds on CPU — zero GPU re-rendering.</p>
+        </div>
+        <span style="display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; background: {{ asmPillBg }}; color: {{ asmPillFg }}; font-size: 13px; font-weight: 700;">{{ asmPillText }}</span>
+      </div>
+
+      <!-- Visual Interactive Timeline Patch Map -->
+      <section aria-label="Shot patch timeline map" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Shot timeline map (0:00 – 0:36)</h2>
+          <div style="display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: {{ t.muted }};">
+            <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{ t.accent }};"></span> Reused cached take (4)</span>
+            <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{ t.amber }};"></span> Patched take (2)</span>
+            <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{ t.off }};"></span> Original picture (2)</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px;">
+          <sc-for list="{{ timelineShots }}" as="ts" hint-placeholder-count="8">
+            <button type="button" onClick="{{ ts.pick }}" style="padding: 9px 6px; border-radius: 8px; border: 1.5px solid {{ ts.border }}; background: {{ ts.bg }}; color: {{ ts.fg }}; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 60px; justify-content: center;">
+              <strong style="font-size: 12px;">Shot {{ ts.num }}</strong>
+              <span style="font-size: 11px; font-weight: 600;">{{ ts.tag }}</span>
+            </button>
+          </sc-for>
+        </div>
+
+        <div style="padding: 9px 12px; border-radius: 8px; background: {{ t.raised }}; border: 1px solid {{ t.lineSoft }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px;">
+          <span><strong>Shot {{ inspected.num }}</strong> ({{ inspected.range }}) · {{ inspected.speaker }} · {{ inspected.detail }}</span>
+          <a href="Main.dc.html" style="font-weight: 700; text-decoration: none; color: {{ t.accentText }};">Open in workbench →</a>
+        </div>
+      </section>
+
+      <!-- Diff + Splice CTA Split -->
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+        <section aria-label="Shots changed since last export" style="flex: 999 1 600px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Changes since last export (19:22)</h2>
+            <span style="font-size: 12px; color: {{ t.muted }};">Mixed engines supported (H3 + LatentSync)</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 9px;">
+            <div style="padding: 11px 13px; border-radius: 10px; border: 1px solid {{ t.line }}; background: {{ t.raised }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong>Shot 3 · Maya Lin</strong>
+                  <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">0:08.6–0:11.0</span>
+                  <span style="padding: 1px 8px; border-radius: 999px; background: {{ t.warnBg }}; color: {{ t.warn }}; font-size: 11px; font-weight: 700;">Face fixed</span>
+                </div>
+                <span style="font-size: 13px; color: {{ t.muted }};">Take 1 (Face #2) → <strong style="color: {{ t.text }};">Take 2 (Face #1 · H3 0.58)</strong></span>
+              </div>
+              <a href="Main.dc.html" style="display: inline-flex; align-items: center; min-height: 32px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }}; color: {{ t.text }}; text-decoration: none; font-size: 12px; font-weight: 600;">Preview take</a>
+            </div>
+
+            <div style="padding: 11px 13px; border-radius: 10px; border: 1px solid {{ t.line }}; background: {{ t.raised }}; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong>Shot 7 · Carlos Vega</strong>
+                  <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">0:22.8–0:26.1</span>
+                  <span style="padding: 1px 8px; border-radius: 999px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 11px; font-weight: 700;">New take</span>
+                </div>
+                <span style="font-size: 13px; color: {{ t.muted }};">Original picture → <strong style="color: {{ t.text }};">Take 1 (Face #2 · LatentSync 20st)</strong></span>
+              </div>
+              <a href="Main.dc.html" style="display: inline-flex; align-items: center; min-height: 32px; padding: 0 11px; border: 1px solid {{ t.line }}; border-radius: 7px; background: {{ t.surface }}; color: {{ t.text }}; text-decoration: none; font-size: 12px; font-weight: 600;">Preview take</a>
+            </div>
+          </div>
+
+          <div style="padding: 9px 12px; border-radius: 8px; background: {{ t.warnBg }}; color: {{ t.warn }}; font-size: 13px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
+            <span><strong>Note:</strong> Shot 5 (Failed) and Shot 8 (Needs check) have no active take and will keep original frames in this export.</span>
+            <button type="button" onClick="{{ showBatch }}" style="min-height: 28px; padding: 0 10px; border: 1px solid {{ t.warn }}; border-radius: 6px; background: {{ t.surface }}; color: {{ t.warn }}; font-size: 12px; font-weight: 700;">Render those 2 first</button>
+          </div>
+        </section>
+
+        <!-- Right: Fast Splice Summary & Execute -->
+        <aside aria-label="Execute fast splice" style="flex: 1 1 340px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 13px;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Export summary</h2>
+
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; text-align: center;">
+            <div style="padding: 9px 6px; border-radius: 9px; background: {{ t.warnBg }}; display: flex; flex-direction: column;">
+              <strong style="font-size: 21px; color: {{ t.warn }};">2</strong>
+              <span style="font-size: 12px; color: {{ t.warn }};">patched</span>
+            </div>
+            <div style="padding: 9px 6px; border-radius: 9px; background: {{ t.selected }}; display: flex; flex-direction: column;">
+              <strong style="font-size: 21px; color: {{ t.accentText }};">4</strong>
+              <span style="font-size: 12px; color: {{ t.muted }};">reused</span>
+            </div>
+            <div style="padding: 9px 6px; border-radius: 9px; background: {{ t.quietBg }}; display: flex; flex-direction: column;">
+              <strong style="font-size: 21px; color: {{ t.text }};">~4s</strong>
+              <span style="font-size: 12px; color: {{ t.muted }};">CPU splice</span>
+            </div>
+          </div>
+
+          <div style="padding: 10px 12px; border-radius: 9px; background: {{ t.raised }}; font-size: 13px; color: {{ t.muted }}; display: flex; flex-direction: column; gap: 3px;">
+            <span><strong style="color: {{ t.text }};">Audio:</strong> Dubbed Spanish mix (stream copy)</span>
+            <span><strong style="color: {{ t.text }};">Subtitles:</strong> Word-by-word SRT preserved</span>
+            <span><strong style="color: {{ t.text }};">Output:</strong> editing_room.lipsync.mp4</span>
+          </div>
+
+          <sc-if value="{{ notAssembled }}" hint-placeholder-val="{{ true }}">
+            <button type="button" onClick="{{ runAssemble }}" style="min-height: 46px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 15px; font-weight: 700;">Update full video (patch 2 shots)</button>
+          </sc-if>
+
+          <sc-if value="{{ isAssembled }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 10px 12px; border-radius: 9px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 13px; font-weight: 700;">
+              Full video spliced in 3.7 s — Shot 3 &amp; Shot 7 updated cleanly.
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <a href="Main.dc.html" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 12px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700;">Watch in Result →</a>
+              <button type="button" onClick="{{ resetAssemble }}" style="min-height: 42px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Reset</button>
+            </div>
+          </sc-if>
+        </aside>
+      </div>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div role="status" aria-live="polite" style="position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 9px 15px; border-radius: 10px; background: {{ t.chrome }}; color: {{ t.chromeText }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); z-index: 70;">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const isDark = theme === 'dark';
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', lane: '#22312c', line: '#34463e', lineSoft: '#2a3a34', off: '#3d514a',
+      text: '#e9f1ed', muted: '#a9bdb3', quiet: '#b8c7c0', quietBg: '#26342f',
+      accent: '#66d8bb', accentInk: '#0b2a23', accentSoft: '#1f3d35', accentText: '#8ee6cf', selected: '#1c332d',
+      warn: '#fdba74', warnBg: '#432010', amber: '#e08a43',
+      chrome: '#0a100e', chromeRaised: '#17221f', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#f7f9f8', lane: '#eef2f0', line: '#dbe3df', lineSoft: '#e8eeeb', off: '#c9d4cf',
+      text: '#202e2b', muted: '#4f605a', quiet: '#4b5a55', quietBg: '#eef2f0',
+      accent: '#087f6c', accentInk: '#ffffff', accentSoft: '#e3f1ec', accentText: '#075b4e', selected: '#f2faf7',
+      warn: '#8a420e', warnBg: '#fdecdc', amber: '#d97a2b',
+      chrome: '#141c1a', chromeRaised: '#1e2c28', chromeLine: '#3a4a45', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    };
+
+    const view = this.state?.view ?? 'batch';
+    const isBatch = view === 'batch';
+    const isAssembly = view === 'assembly';
+    const batchDone = !!this.state?.batchDone;
+    const batchRunning = !batchDone;
+    const cmp = this.state?.cmp ?? 'sync';
+    const assembled = !!this.state?.assembled;
+    const inspectedIdx = this.state?.inspectedIdx ?? 2;
+
+    const cachedRows = [
+      { title: 'Shot 1 · Take 1', meta: '0:01.2–0:04.4 · Maya Lin · H3 0.58' },
+      { title: 'Shot 2 · Take 1', meta: '0:04.8–0:08.1 · Carlos Vega · H3 0.58' },
+      { title: 'Shot 3 · Take 2', meta: '0:08.6–0:11.0 · Maya Lin · H3 0.58' },
+      { title: 'Shot 7 · Take 1', meta: '0:22.8–0:26.1 · Carlos Vega · LatentSync' }
+    ];
+
+    const rawTimeline = [
+      { num: 1, kind: 'reused', tag: 'T1', range: '0:01.2–0:04.4', speaker: 'Maya Lin', detail: 'Reuses cached Take 1 (H3 0.58 · Face #1)' },
+      { num: 2, kind: 'reused', tag: 'T1', range: '0:04.8–0:08.1', speaker: 'Carlos Vega', detail: 'Reuses cached Take 1 (H3 0.58 · Face #2)' },
+      { num: 3, kind: 'patched', tag: 'T2', range: '0:08.6–0:11.0', speaker: 'Maya Lin', detail: 'Patched with Take 2 (Face #1 fixed · H3 0.58)' },
+      { num: 4, kind: 'orig', tag: 'Off', range: '0:12.4–0:16.2', speaker: 'Carlos Vega', detail: 'Off-screen · preserves original frames' },
+      { num: 5, kind: 'orig', tag: 'Orig', range: '0:16.5–0:19.4', speaker: 'Maya Lin', detail: 'Failed render · preserves original frames until retried' },
+      { num: 6, kind: 'reused', tag: 'T1', range: '0:19.8–0:22.4', speaker: 'Maya Lin', detail: 'Reuses cached Take 1 (H3 0.58 · Face #1)' },
+      { num: 7, kind: 'patched', tag: 'T1', range: '0:22.8–0:26.1', speaker: 'Carlos Vega', detail: 'Patched with Take 1 (LatentSync 20st · Face #2)' },
+      { num: 8, kind: 'reused', tag: 'T1', range: '0:26.5–0:29.8', speaker: 'Maya Lin', detail: 'Reuses cached Take 1 (H3 0.58 · Face #1)' }
+    ];
+
+    const timelineShots = rawTimeline.map((s, idx) => {
+      const sel = idx === inspectedIdx;
+      const isPatched = s.kind === 'patched' && !assembled;
+      return {
+        num: s.num, tag: s.tag,
+        bg: isPatched ? t.warnBg : (s.kind === 'orig' ? t.quietBg : t.accentSoft),
+        fg: isPatched ? t.warn : (s.kind === 'orig' ? t.quiet : t.accentText),
+        border: sel ? t.text : (isPatched ? t.amber : t.line),
+        pick: () => this.setState({ inspectedIdx: idx })
+      };
+    });
+
+    return {
+      t, isBatch, isAssembly, batchRunning, batchDone, cachedRows, timelineShots,
+      inspected: rawTimeline[inspectedIdx] || rawTimeline[0],
+      showHeaderRunPill: isBatch && batchRunning,
+      showHeaderCpuPill: isAssembly || batchDone,
+      tab1Bg: isBatch ? t.surface : 'transparent', tab1Fg: isBatch ? t.text : t.muted, tab1Shadow: isBatch ? '0 1px 2px rgba(0,0,0,0.16)' : 'none',
+      tab2Bg: isAssembly ? t.surface : 'transparent', tab2Fg: isAssembly ? t.text : t.muted, tab2Shadow: isAssembly ? '0 1px 2px rgba(0,0,0,0.16)' : 'none',
+      batchBannerBorder: batchDone ? t.accent : t.line,
+      batchPct: batchDone ? '100%' : '56%',
+      batchEta: batchDone ? 'Finished in 19 s' : '56% · ~9 s left (vs ~2m 30s full re-render)',
+      batchSimLabel: batchDone ? 'Replay render' : 'Simulate finish →',
+      q1Pill: batchDone ? 'Done' : 'Rendering 56%',
+      q1Width: batchDone ? '100%' : '56%',
+      q2Pill: batchDone ? 'Done' : 'Queued (2/2)',
+      q2Bg: batchDone ? t.accentSoft : t.quietBg,
+      q2Fg: batchDone ? t.accentText : t.quiet,
+      isCmpSync: cmp === 'sync', isCmpOrig: cmp === 'orig',
+      csBg: cmp === 'sync' ? t.accent : 'transparent', csFg: cmp === 'sync' ? t.accentInk : t.muted,
+      coBg: cmp === 'orig' ? t.surface : 'transparent', coFg: cmp === 'orig' ? t.text : t.muted,
+      previewImg: cmp === 'sync' ? '/_blob/ec04e35ffbc1709f9d5453e96fe09f48' : '/_blob/91b03e7a5c1280205281051339fb81da',
+      cmpDot: cmp === 'sync' ? '#66d8bb' : '#a9bdb3',
+      cmpHud: cmp === 'sync' ? 'Take 2 · H3 0.58 · Face #1 (Active)' : 'Comparing Original · Take 2 stays active',
+      isAssembled: assembled, notAssembled: !assembled,
+      asmPillBg: assembled ? t.accentSoft : t.warnBg,
+      asmPillFg: assembled ? t.accentText : t.warn,
+      asmPillText: assembled ? 'Assembled · Up to date' : '2 shots ready to patch',
+      toast: this.state?.toast ?? '',
+      showBatch: () => this.setState({ view: 'batch' }),
+      showAssembly: () => this.setState({ view: 'assembly' }),
+      toggleBatchSim: () => this.setState({ batchDone: !batchDone, toast: !batchDone ? '2 selected shots finished. Ready to update full video.' : 'Replaying active batch render.' }),
+      interruptBatch: () => this.setState({ toast: 'Batch interrupted. Any completed shot takes stay saved.' }),
+      cmpSync: () => this.setState({ cmp: 'sync' }),
+      cmpOrig: () => this.setState({ cmp: 'orig' }),
+      runAssemble: () => this.setState({ assembled: true, toast: 'Fast-spliced editing_room.lipsync.mp4 in 3.7 s.' }),
+      resetAssemble: () => this.setState({ assembled: false })
+    };
+  }
+}
+</script>
+</body>
+</html>

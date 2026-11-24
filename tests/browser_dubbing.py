@@ -528,7 +528,7 @@ class DubbingBrowserTests(PageTests):
             page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
             page.goto("http://dubbing.test/dubbing/")
 
-            expect(page.locator(".ls-phases")).to_contain_text("1. Auto detect (yolo-motion)")
+            expect(page.locator(".ls-backend-tag")).to_have_text("yolo-motion")
             expect(page.locator("#ls-video")).to_be_visible()
             expect(page.locator('.ls-stage-bar [data-ls-action="detect"]')).to_be_disabled()
             expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
@@ -544,12 +544,11 @@ class DubbingBrowserTests(PageTests):
             expect(page.get_by_role("button", name="Restore automatic match")).to_be_visible()
             expect(page.locator('[data-ls-action="render"]')).to_be_disabled()
 
-            # When no plan exists in Workshop, both Auto-detect buttons are disabled and Skip to Result works.
+            # When no plan exists in Workshop, the onboarding Auto-detect button is disabled and Skip to Result works.
             (folder / PLAN_FILE).unlink()
             page.reload()
-            expect(page.locator('[data-ls-action="detect"]')).to_have_count(2)
-            for idx in range(2):
-                expect(page.locator('[data-ls-action="detect"]').nth(idx)).to_be_disabled()
+            expect(page.locator('[data-ls-action="detect"]')).to_have_count(1)
+            expect(page.locator('[data-ls-action="detect"]')).to_be_disabled()
             page.get_by_role("button", name="Skip to Result", exact=True).click()
             expect(page.locator("#screen")).to_have_attribute("data-screen", "result")
             browser.close()
@@ -603,6 +602,12 @@ class DubbingBrowserTests(PageTests):
             expect(page.get_by_role("button", name="Face #3", exact=True)).to_be_visible()
             expect(page.locator("[data-ls-hidden-faces]")).to_have_count(0)
 
+            # Open the live Face size drawer right above the video without recreating <video>.
+            page.evaluate("window.__lsSizeVideo = document.getElementById('ls-video')")
+            page.locator("#ls-size-trigger").click()
+            expect(page.locator("#ls-size-drawer")).to_be_visible()
+            self.assertTrue(page.evaluate("window.__lsSizeVideo === document.getElementById('ls-video')"))
+
             # Filtering to 8%+ hides the 3% background face from both the overlay and buttons while preserving numbering.
             page.locator('[data-ls-size-preset="8,100"]').click()
             expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(2)
@@ -622,10 +627,160 @@ class DubbingBrowserTests(PageTests):
             expect(page.get_by_role("button", name="Face #1", exact=True)).to_have_count(0)
             expect(page.locator("[data-ls-hidden-faces]")).to_have_text("1 face hidden by size")
 
-            # Saved size range persists across page reloads.
+            # Saved size range persists across page reloads and clicking the hidden-faces hint opens the size drawer.
             page.reload()
             expect(page.locator("#ls-overlay .ls-face-box")).to_have_count(2)
             expect(page.get_by_role("button", name="Face #1", exact=True)).to_have_count(0)
+            expect(page.locator("#ls-size-drawer")).to_be_hidden()
+            page.locator("[data-ls-hidden-faces]").click()
+            expect(page.locator("#ls-size-drawer")).to_be_visible()
+            browser.close()
+
+    def test_lip_sync_workbench_drawers_non_destructive_compare_and_recovery(self):
+        from h3_app.dubbing.lip_sync import (
+            PLAN_FILE, REPORT_FILE, TAKES_DIR, TAKES_FILE, WINDOW_CACHE_DIR,
+            LipSyncWindow, build_lip_sync_plan_payload, video_fingerprint,
+        )
+        from h3_app.dubbing.lip_sync_match import (
+            FaceTrack, Shot, ShotSpeakerAssignment, SourceScan, TrackObservation,
+        )
+
+        lines = [
+            {"speaker": "A", "start": 0.0, "end": 1.0, "source": "Hello", "translation": "Hola"},
+            {"speaker": "B", "start": 1.0, "end": 1.9, "source": "Yes", "translation": "Si"},
+            {"speaker": "A", "start": 2.1, "end": 3.0, "source": "Cut", "translation": "Corte"},
+        ]
+        session = self.session(lines)
+        self.runtime.outputs_dir.mkdir()
+        dub = self.runtime.outputs_dir / "studio_scene.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=s=160x120:r=24:d=3.2",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(dub)], check=True)
+        sessions.modify(session, lambda current: current.data.update(last_output=str(dub)))
+        folder = player_folder(dub)
+        folder.mkdir(parents=True)
+        spoken = {"0": [0.0, 1.0], "1": [1.0, 1.9], "2": [2.1, 3.0]}
+        (folder / "alignment.json").write_text(json.dumps({"lines": lines, "spoken": spoken}))
+        np.savez(folder / "alignment.npz", **{k: np.ones(100, dtype=np.float32) for k in spoken})
+
+        t_a = FaceTrack(1, 0, 0.1, 1.8, (TrackObservation(0.5, (0.1, 0.1, 0.25, 0.34), 0.9),))
+        t_b = FaceTrack(2, 0, 0.1, 1.8, (TrackObservation(1.4, (0.6, 0.1, 0.25, 0.31), 0.9),))
+        t_c = FaceTrack(3, 1, 2.2, 2.9, (TrackObservation(2.5, (0.2, 0.1, 0.25, 0.34), 0.9),))
+        scan = SourceScan(
+            "scene", 3.2, 160, 120, 24.0, (2.0,),
+            (Shot(0, 0.0, 2.0, (t_a, t_b)), Shot(1, 2.0, 3.2, (t_c,))),
+            "yolo-mediapipe",
+        )
+        assignments = {
+            (0, "A"): ShotSpeakerAssignment(0, "A", "matched", 1, (0.225, 0.27), 0.5, "yolo-mediapipe", 0.95),
+            (0, "B"): ShotSpeakerAssignment(0, "B", "matched", 2, (0.725, 0.255), 1.4, "yolo-mediapipe", 0.95),
+            (1, "A"): ShotSpeakerAssignment(1, "A", "matched", 3, (0.325, 0.27), 2.5, "yolo-mediapipe", 0.95),
+        }
+        win_a = LipSyncWindow("A", 0.0, 1.0, 0.0, 1.0, 0, 24, 24, 0, 24, (36, 32, 12), 0, 0.34, False)
+        win_c = LipSyncWindow("A", 2.1, 3.0, 2.1, 3.0, 50, 22, 22, 0, 22, (52, 32, 12), 1, 0.34, False)
+        plan = build_lip_sync_plan_payload(
+            dub=dub, scan=scan, lines=lines, spoken=spoken, assignments=assignments, windows=[win_a, win_c],
+        )
+        (folder / PLAN_FILE).write_text(json.dumps(plan))
+
+        # Seed a real cached take preview for Shot 1 (0:A) and a failed window report for Shot 2 (1:A).
+        cache_dir = folder / WINDOW_CACHE_DIR
+        takes_dir = folder / TAKES_DIR
+        cache_dir.mkdir(parents=True)
+        takes_dir.mkdir(parents=True)
+        (cache_dir / "win_a.mp4").write_bytes(dub.read_bytes())
+        (takes_dir / "shot_000_t1.mp4").write_bytes(dub.read_bytes())
+        takes_reg = {
+            "version": 1,
+            "dub": dub.name,
+            "dub_fingerprint": video_fingerprint(dub),
+            "shots": {
+                "0:A": {
+                    "active_take_id": "t1",
+                    "next_number": 2,
+                    "takes": [{
+                        "id": "t1", "number": 1, "shot_index": 0, "speaker": "A",
+                        "created_at": 1700000000.0, "engine": "h3", "settings": {"strength": 0.58, "feather": 6},
+                        "track_id": 1, "preview_file": "shot_000_t1.mp4",
+                        "windows": [{"window": plan["windows"][0], "cache_file": "win_a.mp4"}],
+                    }],
+                },
+            },
+            "assembled": None,
+        }
+        (folder / TAKES_FILE).write_text(json.dumps(takes_reg))
+        (folder / REPORT_FILE).write_text(json.dumps({
+            "output": "studio_scene.lipsync.mp4", "backend": "yolo-mediapipe", "engine": "h3",
+            "total_windows": 2, "cached_windows": 0, "rendered_windows": 1, "skipped_windows": 0,
+            "uncertain_count": 0,
+            "failed_windows": [{"shot_index": 1, "speaker": "A", "start": 2.1, "end": 3.0, "error": "Landmark lost"}],
+        }))
+
+        state = {"screen": "lipsync", "sessionId": session.id}
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(channel=os.environ.get("H3_BROWSER_CHANNEL"))
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.route("http://dubbing.test/**", self.serve)
+
+            def serve_media(route):
+                url = urlsplit(route.request.url)
+                response = self.client.get(url.path + "?" + url.query,
+                                           headers={"Range": route.request.headers.get("range", "bytes=0-")})
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("**/api/output?*", serve_media)
+            page.route("**/api/lip-sync-take-preview?*", serve_media)
+            select_calls = []
+            page.on("request", lambda req: select_calls.append(req.url) if "/api/lip-sync-take-select" in req.url else None)
+
+            page.add_init_script(f"localStorage.setItem('h3-dubbing-page', {json.dumps(json.dumps(state))})")
+            page.goto("http://dubbing.test/dubbing/")
+
+            # Multi-speaker tabs appear for Shot 1 (A & B) and switch in place without recreating <video>.
+            expect(page.locator("#ls-video")).to_be_visible()
+            expect(page.locator(".ls-speaker-tabs [data-ls-speaker-tab]")).to_have_count(2)
+            page.evaluate("window.__lsStageVideo = document.getElementById('ls-video')")
+            page.locator('.ls-speaker-tabs [data-speaker="B"]').click()
+            self.assertTrue(page.evaluate("window.__lsStageVideo === document.getElementById('ls-video')"))
+            expect(page.locator("#ls-stage-hints")).to_contain_text("No solo frames")
+            expect(page.locator("#ls-render-shot-btn")).to_be_disabled()
+
+            # Switch back to speaker A and open inline Next-Take Settings drawer beside Render shot.
+            page.locator('.ls-speaker-tabs [data-speaker="A"]').click()
+            expect(page.locator("#ls-settings-drawer")).to_be_hidden()
+            page.locator("#ls-engine-trigger").click()
+            expect(page.locator("#ls-settings-drawer")).to_be_visible()
+            page.locator('[data-ls-engine="musetalk"]').click()
+            expect(page.locator("#ls-engine-pill-label")).to_contain_text("MuseTalk")
+            self.assertTrue(page.evaluate("window.__lsStageVideo === document.getElementById('ls-video')"))
+
+            # Non-destructive Preview A/B Compare switches video src without mutating active_take_id on server.
+            page.locator('[data-ls-stage="preview"]').click()
+            expect(page.locator("#ls-video")).to_have_attribute("src", "/dubbing/api/lip-sync-take-preview?session=" + session.id + "&shot_key=0%3AA&take_id=t1&v=shot_000_t1.mp4")
+            expect(page.locator(".ls-compare-seg")).to_be_visible()
+            page.locator('[data-ls-compare="original"]').click()
+            expect(page.locator(".ls-preview-hud")).to_contain_text("Comparing original")
+            expect(page.locator("#ls-video")).to_have_attribute("data-compare-orig", "true")
+            self.assertEqual(select_calls, [])
+            page.locator('[data-ls-compare="synced"]').click()
+            expect(page.locator("#ls-video")).to_have_attribute("data-compare-orig", "false")
+            self.assertEqual(select_calls, [])
+
+            # Assembly map drawer opens inline and shows timeline tiles + changed diff row.
+            page.locator('[data-ls-action="toggle-assembly"]').click()
+            expect(page.locator("#ls-assembly-drawer")).to_be_visible()
+            expect(page.locator("#ls-assembly-drawer .ls-map-tile")).to_have_count(3)
+            expect(page.locator("#ls-assembly-drawer .ls-diff-row")).to_have_count(1)
+
+            # Command strip "1 failed" pill jumps straight to Shot 2 with contextual recovery strip.
+            page.locator('[data-ls-jump="failed"]').click()
+            expect(page.locator(".ls-recovery-strip.is-fail")).to_contain_text("Landmark lost")
+            expect(page.locator('[data-ls-action="retry-musetalk"]')).to_be_visible()
+
+            # Hide skipped toggle hides the overlapping no-solo-frames row in All filter.
+            page.locator('[data-ls-filter="all"]').click()
+            expect(page.locator(".ls-shot-row")).to_have_count(3)
+            page.locator('[data-ls-action="toggle-hide-skipped"]').click()
+            expect(page.locator(".ls-shot-row")).to_have_count(2)
             browser.close()
 
 

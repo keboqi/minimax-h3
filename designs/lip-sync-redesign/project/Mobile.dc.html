@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Lip sync — Mobile (390px)</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    a { color: #075b4e; }
+    a:hover { color: #064a3f; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <!-- Compact Mobile Header (No fake status bar) -->
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 8px rgba(10, 16, 14, 0.1);">
+    <div style="background: {{ t.chrome }}; color: {{ t.chromeText }}; border-bottom: 1px solid {{ t.chromeLine }}; padding: 8px 12px; display: flex; align-items: center; gap: 8px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+        <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+      </svg>
+      <strong style="font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">The Editing Room</strong>
+      <span style="flex: 1;"></span>
+      <span style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: {{ t.chromeRaised }}; border: 1px solid {{ t.chromeLine }}; font-size: 12px; font-weight: 600;">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: {{ t.chromeAccent }};"></span>
+        GPU
+      </span>
+    </div>
+    <nav aria-label="Dubbing steps" style="background: {{ t.surface }}; border-bottom: 1px solid {{ t.line }}; padding: 6px 10px; display: flex; align-items: center; gap: 6px; overflow-x: auto;">
+      <span style="flex: none; padding: 5px 8px; border-radius: 7px; font-size: 13px; font-weight: 600; color: {{ t.muted }};">3 Dub</span>
+      <span aria-current="step" style="flex: none; padding: 5px 10px; border-radius: 7px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 13px; font-weight: 700;">4 Lip sync</span>
+      <a href="BatchAndAssembly.dc.html" style="flex: none; padding: 5px 8px; border-radius: 7px; text-decoration: none; color: {{ t.text }}; font-size: 13px; font-weight: 600;">5 Result</a>
+      <span style="flex: 1;"></span>
+      <a href="Main.dc.html" style="flex: none; font-size: 12px; font-weight: 700; color: {{ t.accentText }}; text-decoration: none;">Desktop</a>
+    </nav>
+  </header>
+
+  <main style="padding: 12px 12px 84px; display: flex; flex-direction: column; gap: 12px;">
+    <!-- Unified Compact Stage Card -->
+    <section aria-label="Shot preview and face controls" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+      <!-- Mode & Compare Strip -->
+      <div style="padding: 8px 10px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+        <div role="group" aria-label="Stage mode" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+          <button type="button" onClick="{{ setAlign }}" aria-pressed="{{ isAlign }}" style="min-height: 38px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ alignBg }}; color: {{ alignFg }}; font-size: 13px; font-weight: 600;">Align</button>
+          <button type="button" onClick="{{ setPreview }}" aria-pressed="{{ isPreview }}" style="min-height: 38px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ prevBg }}; color: {{ prevFg }}; font-size: 13px; font-weight: 600;">Preview</button>
+        </div>
+        <sc-if value="{{ isPreview }}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{ toggleCompare }}" style="min-height: 44px; padding: 0 12px; border: 1px solid {{ cmpBorder }}; border-radius: 8px; background: {{ cmpBg }}; color: {{ cmpFg }}; font-size: 13px; font-weight: 700;">{{ cmpLabel }}</button>
+        </sc-if>
+        <sc-if value="{{ isAlign }}" hint-placeholder-val="{{ false }}">
+          <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">Shot {{ activeShot.num }}</span>
+        </sc-if>
+      </div>
+
+      <!-- 16:9 Viewport -->
+      <div style="position: relative; aspect-ratio: 16 / 9; background: #141c1a; overflow: hidden;">
+        <img src="{{ stageImg }}" alt="Shot {{ activeShot.num }} mobile frame" style="display: block; width: 100%; height: 100%; object-fit: cover;">
+        <sc-if value="{{ isAlign }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ pickFace1 }}" aria-label="Assign Face 1" style="position: absolute; left: 16%; top: 8%; width: 20%; height: 42%; border-radius: 7px; border: {{ f1Border }}; background: {{ f1Bg }}; padding: 0; display: flex; align-items: flex-start;">
+            <span style="margin: 3px; padding: 1px 6px; border-radius: 5px; background: {{ f1TagBg }}; color: {{ f1TagFg }}; font-size: 11px; font-weight: 700;">#1 · 34%</span>
+          </button>
+          <button type="button" onClick="{{ pickFace2 }}" aria-label="Assign Face 2" style="position: absolute; left: 69%; top: 7%; width: 21%; height: 42%; border-radius: 7px; border: {{ f2Border }}; background: {{ f2Bg }}; padding: 0; display: flex; align-items: flex-start;">
+            <span style="margin: 3px; padding: 1px 6px; border-radius: 5px; background: {{ f2TagBg }}; color: {{ f2TagFg }}; font-size: 11px; font-weight: 700;">#2 · 31%</span>
+          </button>
+        </sc-if>
+        <sc-if value="{{ isPreview }}" hint-placeholder-val="{{ true }}">
+          <div style="position: absolute; top: 8px; left: 8px; padding: 3px 9px; border-radius: 7px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; border: 1px solid rgba(102, 216, 187, 0.45); font-size: 11px; font-weight: 600;">
+            {{ hudLabel }}
+          </div>
+        </sc-if>
+        <div style="position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 4px 10px; border-radius: 7px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <span style="color: #66d8bb; margin-right: 6px; font-size: 11px; font-weight: 700;">{{ activeShot.speaker }}</span>
+          <span>{{ activeShot.line }}</span>
+        </div>
+      </div>
+
+      <!-- Touch-Sized Controls: Face Assignment + Inline Engine Pill + Render -->
+      <div style="padding: 10px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{ t.lineSoft }};">
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;">
+          <button type="button" onClick="{{ pickFace1 }}" style="min-height: 44px; padding: 0 8px; border: 1px solid {{ b1Border }}; border-radius: 8px; background: {{ b1Bg }}; color: {{ b1Fg }}; font-size: 13px; font-weight: 600;">Face #1</button>
+          <button type="button" onClick="{{ pickFace2 }}" style="min-height: 44px; padding: 0 8px; border: 1px solid {{ b2Border }}; border-radius: 8px; background: {{ b2Bg }}; color: {{ b2Fg }}; font-size: 13px; font-weight: 600;">Face #2</button>
+          <button type="button" onClick="{{ pickOff }}" style="min-height: 44px; padding: 0 8px; border: 1px solid {{ bOffBorder }}; border-radius: 8px; background: {{ bOffBg }}; color: {{ bOffFg }}; font-size: 13px; font-weight: 600;">Off-screen</button>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button type="button" onClick="{{ toggleSheet }}" aria-expanded="{{ sheetOpen }}" style="flex: 1; min-height: 44px; padding: 0 10px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.raised }}; color: {{ t.text }}; font-size: 13px; font-weight: 600; text-align: left; display: flex; align-items: center; justify-content: space-between;">
+            <span>{{ enginePill }}</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+          </button>
+          <button type="button" onClick="{{ renderShot }}" style="min-height: 44px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 14px; font-weight: 700; white-space: nowrap;">New take</button>
+        </div>
+
+        <!-- Inline Settings & Face Size Sheet -->
+        <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="padding: 10px; border-radius: 9px; background: {{ t.raised }}; border: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 10px;">
+            <div role="group" aria-label="Engine" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 3px; border-radius: 8px; background: {{ t.lane }};">
+              <button type="button" onClick="{{ engH3 }}" aria-pressed="{{ isH3 }}" style="min-height: 36px; border: 0; border-radius: 6px; background: {{ h3Bg }}; color: {{ h3Fg }}; font-size: 12px; font-weight: 700;">H3</button>
+              <button type="button" onClick="{{ engMT }}" aria-pressed="{{ isMT }}" style="min-height: 36px; border: 0; border-radius: 6px; background: {{ mtBg }}; color: {{ mtFg }}; font-size: 12px; font-weight: 700;">MuseTalk</button>
+              <button type="button" onClick="{{ engLS }}" aria-pressed="{{ isLS }}" style="min-height: 36px; border: 0; border-radius: 6px; background: {{ lsBg }}; color: {{ lsFg }}; font-size: 12px; font-weight: 700;">LatentSync</button>
+            </div>
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600;">
+              <span>Min face size <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;">{{ minSize }}%+</span></span>
+              <input type="range" min="0" max="30" step="5" value="{{ minSize }}" onInput="{{ onMinSize }}" style="width: 100%; accent-color: {{ t.accent }};">
+            </label>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- Takes Strip -->
+      <div style="padding: 10px; border-top: 1px solid {{ t.lineSoft }}; background: {{ t.raised }}; display: flex; flex-direction: column; gap: 8px;">
+        <strong style="font-size: 13px;">Takes · Shot {{ activeShot.num }}</strong>
+        <div style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px;">
+          <sc-for list="{{ takes }}" as="tk" hint-placeholder-count="3">
+            <button type="button" onClick="{{ tk.pick }}" style="flex: 0 0 142px; min-height: 54px; padding: 8px 10px; border-radius: 9px; border: 1.5px solid {{ tk.border }}; background: {{ tk.bg }}; text-align: left; display: flex; flex-direction: column; gap: 2px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px;">
+                <strong style="font-size: 13px;">{{ tk.label }}</strong>
+                <span style="padding: 1px 6px; border-radius: 999px; background: {{ tk.pBg }}; color: {{ tk.pFg }}; font-size: 10px; font-weight: 700;">{{ tk.pill }}</span>
+              </div>
+              <span style="font-size: 11px; color: {{ t.muted }};">{{ tk.meta }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <!-- Shot List -->
+    <section aria-label="Shots" style="background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h1 style="margin: 0; font-size: 15px; font-weight: 700;">Shots (8)</h1>
+        <span style="font-size: 12px; color: {{ t.warn }}; font-weight: 700;">2 updated · 1 failed</span>
+      </div>
+      <sc-for list="{{ mobileShots }}" as="ms" hint-placeholder-count="4">
+        <button type="button" onClick="{{ ms.pick }}" style="min-height: 54px; padding: 9px 10px; border-radius: 9px; border: 1.5px solid {{ ms.border }}; background: {{ ms.bg }}; text-align: left; display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; align-items: center; gap: 6px; width: 100%;">
+            <strong style="font-size: 13px;">Shot {{ ms.num }}</strong>
+            <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 11px; color: {{ t.muted }};">{{ ms.range }}</span>
+            <span style="flex: 1;"></span>
+            <span style="padding: 1px 7px; border-radius: 999px; background: {{ ms.bBg }}; color: {{ ms.bFg }}; font-size: 11px; font-weight: 700;">{{ ms.badge }}</span>
+          </div>
+          <span style="font-size: 12px; color: {{ t.muted }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;">{{ ms.speaker }} · {{ ms.line }}</span>
+        </button>
+      </sc-for>
+    </section>
+  </main>
+
+  <!-- Sticky Bottom Fast-Splice Bar -->
+  <div style="position: fixed; left: 0; right: 0; bottom: 0; z-index: 35; padding: 10px 12px; background: {{ t.surface }}; border-top: 1px solid {{ t.line }}; box-shadow: 0 -4px 16px rgba(10, 16, 14, 0.08); display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+    <div style="display: flex; flex-direction: column;">
+      <strong style="font-size: 13px;">2 shots changed</strong>
+      <span style="font-size: 11px; color: {{ t.muted }};">Fast CPU splice · ~4s</span>
+    </div>
+    <a href="BatchAndAssembly.dc.html" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border-radius: 9px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700;">Update video (2)</a>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const isDark = theme === 'dark';
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', lane: '#22312c', line: '#34463e', lineSoft: '#2a3a34',
+      text: '#e9f1ed', muted: '#a9bdb3', quiet: '#b8c7c0', quietBg: '#26342f',
+      accent: '#66d8bb', accentInk: '#0b2a23', accentSoft: '#1f3d35', accentText: '#8ee6cf', selected: '#1c332d',
+      warn: '#fdba74', warnBg: '#432010', flag: '#ffb3cc', flagBg: '#4a1f2e',
+      chrome: '#0a100e', chromeRaised: '#17221f', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeAccent: '#66d8bb'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#f7f9f8', lane: '#eef2f0', line: '#dbe3df', lineSoft: '#e8eeeb',
+      text: '#202e2b', muted: '#4f605a', quiet: '#4b5a55', quietBg: '#eef2f0',
+      accent: '#087f6c', accentInk: '#ffffff', accentSoft: '#e3f1ec', accentText: '#075b4e', selected: '#f2faf7',
+      warn: '#8a420e', warnBg: '#fdecdc', flag: '#94264f', flagBg: '#fbe3ea',
+      chrome: '#141c1a', chromeRaised: '#1e2c28', chromeLine: '#3a4a45', chromeText: '#e9f1ed', chromeAccent: '#66d8bb'
+    };
+
+    const mode = this.state?.mode ?? 'preview';
+    const isPreview = mode === 'preview';
+    const isAlign = !isPreview;
+    const compareOrig = !!this.state?.compareOrig;
+    const face = this.state?.face ?? 'f1';
+    const sheetOpen = !!this.state?.sheetOpen;
+    const engine = this.state?.engine ?? 'h3';
+    const minSize = this.state?.minSize ?? 15;
+    const activeTake = this.state?.activeTake ?? 't2';
+    const selNum = this.state?.selNum ?? 3;
+
+    const rawShots = [
+      { num: 3, range: '0:08.6–0:11.0', speaker: 'Maya Lin', line: 'Empezamos con la historia…', badge: 'T2 · Updated', bBg: t.warnBg, bFg: t.warn },
+      { num: 5, range: '0:16.5–0:19.4', speaker: 'Maya Lin', line: 'Por eso grabamos tono de sala…', badge: 'Failed', bBg: t.flagBg, bFg: t.flag },
+      { num: 7, range: '0:22.8–0:26.1', speaker: 'Carlos Vega', line: 'Sin tener que repetir la escena.', badge: 'T1 · Updated', bBg: t.warnBg, bFg: t.warn },
+      { num: 8, range: '0:26.5–0:29.8', speaker: 'Maya Lin', line: 'Y al final todo encaja sin cortes.', badge: 'Needs check', bBg: t.warnBg, bFg: t.warn }
+    ];
+    const activeShot = rawShots.find((s) => s.num === selNum) || rawShots[0];
+    const mobileShots = rawShots.map((s) => ({
+      ...s,
+      border: s.num === selNum ? t.accent : t.lineSoft,
+      bg: s.num === selNum ? t.selected : t.raised,
+      pick: () => this.setState({ selNum: s.num })
+    }));
+
+    const takesRaw = [
+      { id: 'orig', label: 'Original', pill: 'No sync', meta: 'Source picture' },
+      { id: 't1', label: 'Take 1', pill: 'Saved', meta: 'H3 · Face #2' },
+      { id: 't2', label: 'Take 2', pill: 'Updated', meta: 'H3 · Face #1' }
+    ];
+    const takes = takesRaw.map((tk) => ({
+      label: tk.label, meta: tk.meta,
+      pill: tk.id === activeTake ? 'Active' : tk.pill,
+      border: tk.id === activeTake ? t.accent : t.line,
+      bg: tk.id === activeTake ? t.selected : t.surface,
+      pBg: tk.id === activeTake ? t.accent : t.quietBg,
+      pFg: tk.id === activeTake ? t.accentInk : t.quiet,
+      pick: () => this.setState({ activeTake: tk.id, mode: 'preview', compareOrig: tk.id === 'orig' })
+    }));
+
+    const showSynced = isPreview && !compareOrig && activeTake !== 'orig';
+    const engLabel = engine === 'mt' ? 'MuseTalk' : (engine === 'ls' ? 'LatentSync' : 'H3 0.58');
+
+    return {
+      t, isPreview, isAlign, sheetOpen, minSize, activeShot, mobileShots, takes,
+      isH3: engine === 'h3', isMT: engine === 'mt', isLS: engine === 'ls',
+      h3Bg: engine === 'h3' ? t.surface : 'transparent', h3Fg: engine === 'h3' ? t.text : t.muted,
+      mtBg: engine === 'mt' ? t.surface : 'transparent', mtFg: engine === 'mt' ? t.text : t.muted,
+      lsBg: engine === 'ls' ? t.surface : 'transparent', lsFg: engine === 'ls' ? t.text : t.muted,
+      enginePill: engLabel + ' · Size ' + minSize + '%+',
+      stageImg: showSynced ? '/_blob/ec04e35ffbc1709f9d5453e96fe09f48' : '/_blob/91b03e7a5c1280205281051339fb81da',
+      hudLabel: showSynced ? 'Take 2 · H3 0.58 · Synced' : 'Comparing Original · T2 stays active',
+      alignBg: isAlign ? t.surface : 'transparent', alignFg: isAlign ? t.text : t.muted,
+      prevBg: isPreview ? t.surface : 'transparent', prevFg: isPreview ? t.text : t.muted,
+      cmpLabel: compareOrig ? 'Showing Orig' : 'Compare Orig',
+      cmpBg: compareOrig ? t.warnBg : t.surface, cmpFg: compareOrig ? t.warn : t.text, cmpBorder: compareOrig ? t.warn : t.line,
+      f1Border: face === 'f1' ? '2.5px solid #66d8bb' : '2px dashed rgba(233,241,237,0.7)',
+      f1Bg: face === 'f1' ? 'rgba(102,216,187,0.16)' : 'rgba(10,16,14,0.14)',
+      f1TagBg: face === 'f1' ? '#66d8bb' : 'rgba(10,16,14,0.86)', f1TagFg: face === 'f1' ? '#0b2a23' : '#e9f1ed',
+      f2Border: face === 'f2' ? '2.5px solid #66d8bb' : '2px dashed rgba(233,241,237,0.7)',
+      f2Bg: face === 'f2' ? 'rgba(102,216,187,0.16)' : 'rgba(10,16,14,0.14)',
+      f2TagBg: face === 'f2' ? '#66d8bb' : 'rgba(10,16,14,0.86)', f2TagFg: face === 'f2' ? '#0b2a23' : '#e9f1ed',
+      b1Bg: face === 'f1' ? t.accent : t.surface, b1Fg: face === 'f1' ? t.accentInk : t.text, b1Border: face === 'f1' ? t.accent : t.line,
+      b2Bg: face === 'f2' ? t.accent : t.surface, b2Fg: face === 'f2' ? t.accentInk : t.text, b2Border: face === 'f2' ? t.accent : t.line,
+      bOffBg: face === 'off' ? t.accent : t.surface, bOffFg: face === 'off' ? t.accentInk : t.text, bOffBorder: face === 'off' ? t.accent : t.line,
+      setAlign: () => this.setState({ mode: 'align' }),
+      setPreview: () => this.setState({ mode: 'preview', compareOrig: false }),
+      toggleCompare: () => this.setState({ compareOrig: !compareOrig }),
+      pickFace1: () => this.setState({ face: 'f1', mode: 'align' }),
+      pickFace2: () => this.setState({ face: 'f2', mode: 'align' }),
+      pickOff: () => this.setState({ face: 'off', mode: 'align' }),
+      toggleSheet: () => this.setState({ sheetOpen: !sheetOpen }),
+      engH3: () => this.setState({ engine: 'h3' }),
+      engMT: () => this.setState({ engine: 'mt' }),
+      engLS: () => this.setState({ engine: 'ls' }),
+      onMinSize: (e) => this.setState({ minSize: Number(e.target.value) }),
+      renderShot: () => this.setState({ mode: 'preview', compareOrig: false, activeTake: 't2' })
+    };
+  }
+}
+</script>
+</body>
+</html>

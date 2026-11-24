@@ -1,0 +1,65 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-24T12:02:00Z"
+  },
+  "title": "Prism Dubbing · Lip Sync Workbench Redesign",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 980,
+      "title": "01 · Lip Sync Workbench — Unified Stage, Live Filters & Takes",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "OnboardingAndErrors.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 960,
+      "title": "02 · First-Run Detection & Failure Recovery",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "BatchAndAssembly.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 980,
+      "title": "03 · Live Batch Rendering & Fast-Splice Assembly",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Mobile.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "04 · Mobile (390px) — Compact Stage & Take Sheet",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "OnboardingAndErrors.dc.html",
+    "BatchAndAssembly.dc.html",
+    "Mobile.dc.html"
+  ],
+  "notes": {
+    "row1": {
+      "x": 0,
+      "y": -280,
+      "text": "Lip Sync Workbench Redesign · Unified Shot Studio Flow",
+      "kind": "title1",
+      "maxW": 4950
+    }
+  },
+  "designSystems": []
+}

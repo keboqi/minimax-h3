@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dubbing · Lip sync — First-run &amp; recovery states</title>
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap">
+  <style>
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: 0.52; }
+    :focus-visible { outline: 2px solid #087f6c; outline-offset: 2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .dc-spin { animation: spin 0.9s linear infinite; }
+    a { color: #075b4e; }
+    a:hover { color: #064a3f; }
+  </style>
+</helmet>
+<div style="min-height: 100vh; background: {{ t.bg }}; color: {{ t.text }}; font: 15px/1.45 'Source Sans 3', 'Source Sans Pro', system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column;">
+  <!-- Shared 2-Tier Header -->
+  <header style="position: sticky; top: 0; z-index: 30; box-shadow: 0 2px 10px rgba(10, 16, 14, 0.08);">
+    <div style="background: {{ t.chrome }}; color: {{ t.chromeText }}; border-bottom: 1px solid {{ t.chromeLine }}; padding: 7px 20px; min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+      <div style="display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{ t.chromeAccent }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h10M8 3v3M5 6c0 4 3 7 7 8M11 6c-1 4-4 7-8 8"></path>
+          <path d="M13 21l4-9 4 9M14.5 18h5"></path>
+        </svg>
+        <span>Dubbing</span>
+      </div>
+      <span aria-hidden="true" style="width: 1px; height: 20px; background: {{ t.chromeLine }}; flex: none;"></span>
+      <span style="display: inline-flex; align-items: center; min-height: 34px; padding: 0 11px; border: 1px solid {{ t.chromeLine }}; border-radius: 8px; background: {{ t.chromeRaised }}; color: {{ t.chromeText }}; font-weight: 600; font-size: 14px;">The Editing Room</span>
+      <span style="flex: 1;"></span>
+      <sc-if value="{{ isStudio }}" hint-placeholder-val="{{ true }}">
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; background: {{ t.chromeRaised }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; color: {{ t.chromeText }};">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ t.chromeAccent }};"></span>
+          GPU ready
+        </span>
+      </sc-if>
+      <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+        <span style="display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; background: #362210; border: 1px solid #6b4620; font-size: 13px; font-weight: 600; color: #fdba74;">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #fdba74;"></span>
+          Workshop · CPU only
+        </span>
+      </sc-if>
+    </div>
+
+    <div style="background: {{ t.surface }}; color: {{ t.text }}; border-bottom: 1px solid {{ t.line }}; padding: 5px 20px; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;">
+      <a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 6px; min-height: 32px; text-decoration: none; color: {{ t.accentText }}; font-size: 14px; font-weight: 700;">← Back to Lip sync workbench</a>
+      <span style="flex: 1;"></span>
+      <div role="group" aria-label="Preview state scenario" style="display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+        <button type="button" onClick="{{ showFirstRun }}" aria-pressed="{{ isFirstRun }}" style="min-height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ tab1Bg }}; color: {{ tab1Fg }}; box-shadow: {{ tab1Shadow }}; font-size: 13px; font-weight: 600;">First-run auto detect</button>
+        <button type="button" onClick="{{ showRecovery }}" aria-pressed="{{ isRecovery }}" style="min-height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ tab2Bg }}; color: {{ tab2Fg }}; box-shadow: {{ tab2Shadow }}; font-size: 13px; font-weight: 600;">Failure &amp; edge-case recovery</button>
+      </div>
+    </div>
+  </header>
+
+  <main style="padding: 18px 20px 30px; max-width: 1360px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;">
+    <!-- SCENARIO A: Clean First-Run Auto Detect -->
+    <sc-if value="{{ isFirstRun }}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start;">
+        <!-- Left: Video Preview + 3-Step Flow Summary -->
+        <section aria-label="Dubbed video ready for face detection" style="flex: 999 1 620px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+          <div style="position: relative; aspect-ratio: 16 / 9; max-height: 410px; background: #141c1a; overflow: hidden;">
+            <img src="/_blob/91b03e7a5c1280205281051339fb81da" alt="Dubbed video frame ready to scan" style="display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0.9;">
+            <div style="position: absolute; left: 14px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px;">
+              <span style="padding: 4px 10px; border-radius: 8px; background: rgba(10, 16, 14, 0.86); color: #e9f1ed; font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; font-weight: 600;">0:36 · 1920×1080 · 24 fps</span>
+              <span style="padding: 4px 10px; border-radius: 8px; background: rgba(10, 16, 14, 0.86); color: #66d8bb; font-size: 12px; font-weight: 700;">9 dubbed turns · 2 speakers</span>
+            </div>
+          </div>
+
+          <div style="padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; background: {{ t.raised }}; border-top: 1px solid {{ t.lineSoft }};">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: {{ t.accentText }};">1 · Detect once</span>
+              <strong style="font-size: 14px;">Shots, faces &amp; speakers</strong>
+              <span style="font-size: 13px; color: {{ t.muted }};">Tracks faces with YOLO + mouth-motion (MAR) and Gemini speaker hints.</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: {{ t.accentText }};">2 · Per-shot takes</span>
+              <strong style="font-size: 14px;">Fix faces &amp; render selectively</strong>
+              <span style="font-size: 13px; color: {{ t.muted }};">Preview each shot with dubbed audio and mix H3, MuseTalk, or LatentSync takes.</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: {{ t.accentText }};">3 · Fast splice</span>
+              <strong style="font-size: 14px;">Patch MP4 without re-render</strong>
+              <span style="font-size: 13px; color: {{ t.muted }};">Splices active takes onto the dubbed MP4 in seconds on CPU.</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right: Focused Launch & Live Progress Card -->
+        <aside aria-label="Start detection" style="flex: 1 1 360px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: {{ t.accentText }};">Optional Step 4</span>
+            <h1 style="margin: 0; font-size: 20px; font-weight: 700;">Prepare lip sync for this dub</h1>
+            <p style="margin: 0; font-size: 14px; color: {{ t.muted }};">Scans the dubbed video and prepares shot-level face assignments. No GPU lip-sync rendering starts until you pick shots.</p>
+          </div>
+
+          <sc-if value="{{ isWorkshop }}" hint-placeholder-val="{{ false }}">
+            <div role="status" style="padding: 10px 12px; border-radius: 9px; background: {{ t.infoBg }}; color: {{ t.info }}; font-size: 13px; font-weight: 600;">
+              Face detection requires a Studio GPU. Once scanned in Studio, you can review faces, pick takes, and fast-splice here in Workshop.
+            </div>
+          </sc-if>
+
+          <!-- Live 3-Step Detection Checklist -->
+          <div style="padding: 12px; border-radius: 10px; background: {{ t.raised }}; border: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 10px;">
+            <sc-for list="{{ detectSteps }}" as="ds" hint-placeholder-count="3">
+              <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <span style="width: 22px; height: 22px; border-radius: 50%; border: {{ ds.markBorder }}; background: {{ ds.markBg }}; color: {{ ds.markFg }}; display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; margin-top: 1px;">{{ ds.num }}</span>
+                <div style="display: flex; flex-direction: column; gap: 1px;">
+                  <strong style="font-size: 13px; color: {{ ds.titleColor }};">{{ ds.title }}</strong>
+                  <span style="font-size: 12px; color: {{ t.muted }};">{{ ds.detail }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <button type="button" onClick="{{ startDetect }}" disabled="{{ isWorkshop }}" style="min-height: 46px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 15px; font-weight: 700;">Auto detect faces &amp; speakers</button>
+              <a href="Main.dc.html" style="display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; text-decoration: none; font-size: 14px; font-weight: 600;">Skip lip sync &amp; go to Result</a>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isDetecting }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; color: {{ t.accentText }};">
+                <span class="dc-spin" style="width: 15px; height: 15px; border-radius: 50%; border: 2px solid {{ t.accent }}; border-right-color: transparent;"></span>
+                <span>Tracking faces &amp; scoring mouth motion (64%)…</span>
+              </div>
+              <div style="height: 7px; border-radius: 999px; background: {{ t.lane }}; overflow: hidden;">
+                <div style="width: 64%; height: 100%; background: {{ t.accent }}; border-radius: 999px;"></div>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button type="button" onClick="{{ finishDetect }}" style="flex: 1; min-height: 38px; padding: 0 12px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 13px; font-weight: 700;">Simulate finish →</button>
+                <button type="button" onClick="{{ cancelDetect }}" style="min-height: 38px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; font-size: 13px; font-weight: 600;">Interrupt</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isDetected }}" hint-placeholder-val="{{ false }}">
+            <div style="padding: 11px 12px; border-radius: 9px; background: {{ t.accentSoft }}; color: {{ t.accentText }}; font-size: 13px; font-weight: 600;">
+              Scan complete: 8 shots, 9 speaker turns, 1 shot flagged for quick review.
+            </div>
+            <a href="Main.dc.html" style="display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; text-decoration: none; font-size: 14px; font-weight: 700;">Open Lip Sync Workbench →</a>
+          </sc-if>
+        </aside>
+      </div>
+    </sc-if>
+
+    <!-- SCENARIO B: Contextual Failure & Edge-Case Recovery (Zero Wall-of-Errors Banners!) -->
+    <sc-if value="{{ isRecovery }}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+          <div>
+            <h1 style="margin: 0; font-size: 20px; font-weight: 700;">Contextual issue recovery — inside the shot stage</h1>
+            <p style="margin: 2px 0 0; font-size: 14px; color: {{ t.muted }};">Failed windows, overlapping speech chunks, and face-size exclusions resolve directly in place rather than stacking top-of-page error walls.</p>
+          </div>
+          <div role="group" aria-label="Edge case selector" style="display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: {{ t.lane }};">
+            <sc-for list="{{ caseTabs }}" as="ct" hint-placeholder-count="3">
+              <button type="button" onClick="{{ ct.pick }}" aria-pressed="{{ ct.active }}" style="min-height: 32px; padding: 0 11px; border: 0; border-radius: 7px; background: {{ ct.bg }}; color: {{ ct.fg }}; box-shadow: {{ ct.shadow }}; font-size: 13px; font-weight: 600;">{{ ct.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+          <!-- Left: Contextual Stage Diagnostic Card -->
+          <section aria-label="Selected issue detail" style="flex: 999 1 680px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; overflow: hidden;">
+            <div style="padding: 10px 14px; border-bottom: 1px solid {{ t.lineSoft }}; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+              <strong style="font-size: 15px;">{{ activeCase.shotTitle }}</strong>
+              <span style="font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: {{ t.muted }};">{{ activeCase.range }}</span>
+              <span style="padding: 2px 9px; border-radius: 999px; background: {{ activeCase.pillBg }}; color: {{ activeCase.pillFg }}; font-size: 12px; font-weight: 700;">{{ activeCase.pill }}</span>
+              <span style="flex: 1;"></span>
+              <span style="font-size: 12px; color: {{ t.muted }};">Commit origin: {{ activeCase.origin }}</span>
+            </div>
+
+            <div style="position: relative; aspect-ratio: 16 / 9; max-height: 380px; background: #141c1a; overflow: hidden;">
+              <img src="/_blob/91b03e7a5c1280205281051339fb81da" alt="Frame illustrating {{ activeCase.shotTitle }}" style="display: block; width: 100%; height: 100%; object-fit: cover;">
+              <!-- Diagnostic Box Overlay -->
+              <div style="position: absolute; left: {{ activeCase.boxLeft }}; top: {{ activeCase.boxTop }}; width: {{ activeCase.boxW }}; height: {{ activeCase.boxH }}; border-radius: 8px; border: 2.5px {{ activeCase.boxStyle }} {{ activeCase.boxColor }}; background: rgba(10, 16, 14, 0.22); display: flex; align-items: flex-start;">
+                <span style="margin: 5px; padding: 2px 8px; border-radius: 6px; background: {{ activeCase.tagBg }}; color: {{ activeCase.tagFg }}; font-size: 12px; font-weight: 700; white-space: nowrap;">{{ activeCase.boxTag }}</span>
+              </div>
+              <div style="position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 90%; padding: 6px 14px; border-radius: 8px; background: rgba(10, 16, 14, 0.88); color: #e9f1ed; font-size: 14px; font-weight: 600;">
+                <span style="color: #66d8bb; margin-right: 8px; font-size: 12px; font-weight: 700;">{{ activeCase.speaker }}</span>
+                <span>{{ activeCase.line }}</span>
+              </div>
+            </div>
+
+            <!-- Actionable Inline Recovery Strip -->
+            <div style="padding: 14px 16px; background: {{ activeCase.alertBg }}; color: {{ activeCase.alertFg }}; border-top: 1px solid {{ t.lineSoft }}; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px;">
+                <div style="flex: 1 1 360px; display: flex; flex-direction: column; gap: 3px;">
+                  <strong style="font-size: 14px;">{{ activeCase.headline }}</strong>
+                  <span style="font-size: 13px;">{{ activeCase.explanation }}</span>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <button type="button" onClick="{{ runPrimaryFix }}" disabled="{{ isWorkshop }}" style="min-height: 36px; padding: 0 13px; border: 1px solid {{ t.accent }}; border-radius: 8px; background: {{ t.accent }}; color: {{ t.accentInk }}; font-size: 13px; font-weight: 700;">{{ activeCase.primaryCta }}</button>
+                  <button type="button" onClick="{{ runSecondaryFix }}" style="min-height: 36px; padding: 0 12px; border: 1px solid {{ t.line }}; border-radius: 8px; background: {{ t.surface }}; color: {{ t.text }}; font-size: 13px; font-weight: 600;">{{ activeCase.secondaryCta }}</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Right: Filtered Attention Queue -->
+          <aside aria-label="Shots needing attention" style="flex: 1 1 340px; min-width: 0; background: {{ t.surface }}; border: 1px solid {{ t.line }}; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Attention queue (3)</h2>
+              <span style="font-size: 12px; color: {{ t.muted }};">Auto-grouped for triage</span>
+            </div>
+            <sc-for list="{{ caseCards }}" as="cc" hint-placeholder-count="3">
+              <button type="button" onClick="{{ cc.pick }}" style="padding: 10px 11px; border-radius: 9px; border: 1.5px solid {{ cc.border }}; background: {{ cc.bg }}; text-align: left; display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+                  <strong style="font-size: 13px;">{{ cc.shotTitle }}</strong>
+                  <span style="padding: 1px 7px; border-radius: 999px; background: {{ cc.pillBg }}; color: {{ cc.pillFg }}; font-size: 11px; font-weight: 700;">{{ cc.pill }}</span>
+                </div>
+                <span style="font-size: 12px; color: {{ t.muted }};">{{ cc.summary }}</span>
+              </button>
+            </sc-for>
+          </aside>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div role="status" aria-live="polite" style="position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 9px 15px; border-radius: 10px; background: {{ t.chrome }}; color: {{ t.chromeText }}; border: 1px solid {{ t.chromeLine }}; font-size: 13px; font-weight: 600; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28); z-index: 70;">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"mode":{"editor":"enum","options":["studio","workshop"],"default":"studio"},"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const isDark = theme === 'dark';
+    const mode = this.props.mode ?? 'studio';
+    const isWorkshop = mode === 'workshop';
+    const isStudio = !isWorkshop;
+
+    const t = isDark ? {
+      bg: '#111b18', surface: '#192522', raised: '#1e2c28', lane: '#22312c', line: '#34463e', lineSoft: '#2a3a34',
+      text: '#e9f1ed', muted: '#a9bdb3', quiet: '#b8c7c0', quietBg: '#26342f',
+      accent: '#66d8bb', accentInk: '#0b2a23', accentSoft: '#1f3d35', accentText: '#8ee6cf', selected: '#1c332d',
+      warn: '#fdba74', warnBg: '#432010', flag: '#ffb3cc', flagBg: '#4a1f2e', info: '#a5c8ff', infoBg: '#1c2d47',
+      chrome: '#0a100e', chromeRaised: '#17221f', chromeLine: '#34463e', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    } : {
+      bg: '#f2f5f3', surface: '#ffffff', raised: '#f7f9f8', lane: '#eef2f0', line: '#dbe3df', lineSoft: '#e8eeeb',
+      text: '#202e2b', muted: '#4f605a', quiet: '#4b5a55', quietBg: '#eef2f0',
+      accent: '#087f6c', accentInk: '#ffffff', accentSoft: '#e3f1ec', accentText: '#075b4e', selected: '#f2faf7',
+      warn: '#8a420e', warnBg: '#fdecdc', flag: '#94264f', flagBg: '#fbe3ea', info: '#1d4f9a', infoBg: '#e3eefc',
+      chrome: '#141c1a', chromeRaised: '#1e2c28', chromeLine: '#3a4a45', chromeText: '#e9f1ed', chromeMuted: '#a9bdb3', chromeAccent: '#66d8bb'
+    };
+
+    const scenario = this.state?.scenario ?? 'recovery';
+    const isFirstRun = scenario === 'firstrun';
+    const isRecovery = scenario === 'recovery';
+    const detectStage = this.state?.detectStage ?? 'idle';
+    const caseId = this.state?.caseId ?? 'failed';
+
+    const detectSteps = [
+      { num: '1', title: 'Detect shot cuts', detail: 'Splits 0:36 dubbed video on camera cuts', done: detectStage !== 'idle', active: false },
+      { num: '2', title: 'Track faces & mouth motion', detail: 'YOLO face tracks + MediaPipe MAR scores', done: detectStage === 'done', active: detectStage === 'running' },
+      { num: '3', title: 'Align speakers to faces', detail: 'Uses Gemini visual_speakers hints + MAR fallback', done: detectStage === 'done', active: false }
+    ].map((s) => ({
+      num: s.done ? '✓' : s.num,
+      title: s.title, detail: s.detail,
+      markBg: s.done ? t.accent : (s.active ? t.accentSoft : 'transparent'),
+      markFg: s.done ? t.accentInk : (s.active ? t.accentText : t.muted),
+      markBorder: s.done ? ('2px solid ' + t.accent) : (s.active ? ('2px solid ' + t.accent) : ('1.5px solid ' + t.line)),
+      titleColor: s.active ? t.accentText : t.text
+    }));
+
+    const casesRaw = [
+      {
+        id: 'failed', label: 'Failed window', shotTitle: 'Shot 5 · Maya Lin', range: '0:16.5–0:19.4',
+        pill: 'Failed', pillBg: t.flagBg, pillFg: t.flag, origin: 'c5416aa',
+        speaker: 'Maya Lin', line: 'Por eso grabamos tono de sala…',
+        boxLeft: '16%', boxTop: '8%', boxW: '19%', boxH: '40%', boxStyle: 'solid', boxColor: '#e11d48',
+        tagBg: '#94264f', tagFg: '#ffffff', boxTag: 'Maya Lin · 34% (landmark lost)',
+        alertBg: t.flagBg, alertFg: t.flag,
+        headline: 'Window 0:17.8–0:19.1 failed during H3 render — original frames preserved',
+        explanation: 'MediaPipe lost mouth landmarks during a fast head turn. Retry just this shot with MuseTalk 1.5 (bbox fallback), adjust the face, or keep original picture.',
+        primaryCta: 'Retry with MuseTalk 1.5', secondaryCta: 'Keep original picture',
+        summary: 'H3 render lost mouth landmarks at 0:18.1'
+      },
+      {
+        id: 'size', label: 'Size ignored', shotTitle: 'Shot 6 · Maya Lin', range: '0:19.8–0:22.4',
+        pill: 'Size ignored', pillBg: t.warnBg, pillFg: t.warn, origin: '1ef9b49',
+        speaker: 'Maya Lin', line: 'Así cada diálogo respira natural…',
+        boxLeft: '53%', boxTop: '14%', boxW: '8%', boxH: '16%', boxStyle: 'dashed', boxColor: '#fdba74',
+        tagBg: '#8a420e', tagFg: '#ffffff', boxTag: 'Face #3 · 9% (below 15% min)',
+        alertBg: t.warnBg, alertFg: t.warn,
+        headline: 'Auto-matched Face #3 (9% frame height) is below your 15%–100% size filter',
+        explanation: 'Excluded from batch rendering and "Select unrendered" to avoid noisy tiny-face artifacts. Confirming this face manually overrides the filter for Shot 6 only.',
+        primaryCta: 'Confirm Face #3 manually', secondaryCta: 'Lower min size to 8%',
+        summary: 'Face #3 (9%) hidden by 15% minimum size filter'
+      },
+      {
+        id: 'overlap', label: 'No speaking frames', shotTitle: 'Shot 3 · 2/2 · Carlos Vega', range: '0:10.6–0:11.0',
+        pill: 'No solo frames', pillBg: t.quietBg, pillFg: t.quiet, origin: 'f8c50c4',
+        speaker: 'Carlos Vega', line: 'Exacto.',
+        boxLeft: '69%', boxTop: '7%', boxW: '20%', boxH: '41%', boxStyle: 'dashed', boxColor: '#a9bdb3',
+        tagBg: '#141c1a', tagFg: '#e9f1ed', boxTag: 'Carlos Vega · 31% (overlapped)',
+        alertBg: t.raised, alertFg: t.text,
+        headline: 'Short 0.4s turn is fully overlapped by Maya Lin — nothing solo to render',
+        explanation: 'Lip sync skips overlapping dialogue so the wrong voice never drives a face. Adjust turn timing in Review lines if Carlos should speak solo here.',
+        primaryCta: 'Open line in Review lines', secondaryCta: 'Mark off-screen',
+        summary: '0.4s turn overlapped by Maya Lin · skipped safely'
+      }
+    ];
+
+    const activeCase = casesRaw.find((c) => c.id === caseId) || casesRaw[0];
+    const caseTabs = casesRaw.map((c) => ({
+      label: c.label, active: c.id === caseId,
+      bg: c.id === caseId ? t.surface : 'transparent',
+      fg: c.id === caseId ? t.text : t.muted,
+      shadow: c.id === caseId ? '0 1px 2px rgba(0,0,0,0.16)' : 'none',
+      pick: () => this.setState({ caseId: c.id })
+    }));
+    const caseCards = casesRaw.map((c) => ({
+      shotTitle: c.shotTitle, pill: c.pill, pillBg: c.pillBg, pillFg: c.pillFg, summary: c.summary,
+      border: c.id === caseId ? t.accent : t.lineSoft,
+      bg: c.id === caseId ? t.selected : t.raised,
+      pick: () => this.setState({ caseId: c.id })
+    }));
+
+    return {
+      t, isStudio, isWorkshop, isFirstRun, isRecovery,
+      isIdle: detectStage === 'idle', isDetecting: detectStage === 'running', isDetected: detectStage === 'done',
+      detectSteps, activeCase, caseTabs, caseCards,
+      tab1Bg: isFirstRun ? t.surface : 'transparent', tab1Fg: isFirstRun ? t.text : t.muted, tab1Shadow: isFirstRun ? '0 1px 2px rgba(0,0,0,0.16)' : 'none',
+      tab2Bg: isRecovery ? t.surface : 'transparent', tab2Fg: isRecovery ? t.text : t.muted, tab2Shadow: isRecovery ? '0 1px 2px rgba(0,0,0,0.16)' : 'none',
+      toast: this.state?.toast ?? '',
+      showFirstRun: () => this.setState({ scenario: 'firstrun' }),
+      showRecovery: () => this.setState({ scenario: 'recovery' }),
+      startDetect: () => this.setState({ detectStage: 'running', toast: 'Started YOLO + MediaPipe MAR face & speaker detection.' }),
+      finishDetect: () => this.setState({ detectStage: 'done', toast: 'Detection finished: 8 shots ready to review.' }),
+      cancelDetect: () => this.setState({ detectStage: 'idle', toast: 'Detection interrupted.' }),
+      runPrimaryFix: () => this.setState({ toast: activeCase.primaryCta + ' triggered for ' + activeCase.shotTitle + '.' }),
+      runSecondaryFix: () => this.setState({ toast: activeCase.secondaryCta + ' applied.' })
+    };
+  }
+}
+</script>
+</body>
+</html>

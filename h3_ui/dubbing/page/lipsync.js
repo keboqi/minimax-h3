@@ -1,13 +1,15 @@
-// Step 4, Lip sync (optional): 1. Auto detect -> 2. Play & confirm face alignment -> 3. Confirm & render.
+// Step 4, Lip sync (optional): Unified Shot Studio Workbench.
+// 1. Auto detect -> 2. Triage & confirm faces (live face-size filter) ->
+// 3. Per-shot takes & non-destructive A/B preview -> 4. Fast-splice full video assembly.
 
 import {api} from "./api.js";
 import {esc, icon, plural, toast} from "./ui.js";
 
 const SIZE_PRESETS = [[0, 100, "All"], [8, 100, "8%+"], [15, 100, "15%+"], [25, 100, "25%+"]];
 const ENGINE_OPTIONS = [
-  ["h3", "MiniMax H3", "Preserves dubbed audio &amp; subtitles · MediaPipe landmark mouth mask"],
-  ["musetalk", "MuseTalk 1.5 · Fast", "Preserves dubbed audio &amp; subtitles · Fast single-step 256×256 inpainting"],
-  ["latentsync", "LatentSync 1.6 · Quality", "Preserves dubbed audio &amp; subtitles · 512×512 Whisper-conditioned diffusion"],
+  ["h3", "MiniMax H3", "Balanced diffusion · MediaPipe landmark mouth mask"],
+  ["musetalk", "MuseTalk 1.5 · Fast", "Fast single-step 256×256 inpainting · bbox fallback"],
+  ["latentsync", "LatentSync 1.6 · Quality", "High-detail 512×512 Whisper-conditioned diffusion"],
 ];
 
 const LS_SETTINGS_KEY = "h3-dubbing-lipsync-settings";
@@ -32,6 +34,7 @@ function saveLsSettings() {
       guidanceScale: lsState.guidanceScale,
       minFaceSize: lsState.minFaceSize,
       maxFaceSize: lsState.maxFaceSize,
+      hideSkipped: lsState.hideSkipped,
     }));
   } catch {
     // Ignore storage errors in private browsing.
@@ -54,11 +57,19 @@ const lsState = {
   saving: false,
   error: null,
   filter: "all",
+  hideSkipped: Boolean(savedLs.hideSkipped),
   selectedShot: 0,
   selectedSpeaker: null,
   stageMode: "align",
+  compareOriginal: false,
+  compareOffset: null,
+  compareResume: false,
   loopShot: true,
+  sizeDrawerOpen: false,
+  settingsOpen: false,
+  assemblyOpen: false,
   checkedKeys: new Set(),
+  activeBatchKeys: new Set(),
   lastRenderedKeys: [],
   autoplayPreview: false,
   queueScrollTop: 0,
@@ -89,6 +100,14 @@ function reviewTarget(app) {
   return ls ? {session: app.session.id, video: ls.video, video_version: ls.video_version} : null;
 }
 
+function isLipSyncBusy(app) {
+  return !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+}
+
+function isShotBatchActive(app) {
+  return !!app.runs?.["lip-sync"]?.active && app.runs["lip-sync"].task === "lip-sync-shots";
+}
+
 export async function loadLipSyncPlan(app, {silent = false, openPreview = false} = {}) {
   const target = reviewTarget(app);
   if (!target) return;
@@ -96,7 +115,9 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
   if (lsState.targetKey !== key) {
     Object.assign(lsState, {
       targetKey: key, data: null, saving: false, selectedShot: 0, selectedSpeaker: null,
-      stageMode: "align", checkedKeys: new Set(), lastRenderedKeys: [], autoplayPreview: false,
+      stageMode: "align", compareOriginal: false, compareOffset: null, compareResume: false,
+      sizeDrawerOpen: false, settingsOpen: false, assemblyOpen: false,
+      checkedKeys: new Set(), activeBatchKeys: new Set(), lastRenderedKeys: [], autoplayPreview: false,
       queueScrollTop: 0, videoTime: null,
     });
   }
@@ -108,6 +129,7 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
     const data = await api.get("lip-sync-plan", target);
     if (isCurrent()) {
       lsState.data = data;
+      lsState.activeBatchKeys.clear();
       if (openPreview) {
         const focusKey = lsState.lastRenderedKeys[0]
           || (lsState.selectedSpeaker ? `${lsState.selectedShot}:${lsState.selectedSpeaker}` : null);
@@ -121,6 +143,7 @@ export async function loadLipSyncPlan(app, {silent = false, openPreview = false}
           const take = activeTakeFor(data, focusKey);
           if (take?.preview_url) {
             lsState.stageMode = "preview";
+            lsState.compareOriginal = false;
             lsState.autoplayPreview = true;
           }
         }
@@ -177,28 +200,62 @@ function itemHasWindows(it, plan) {
 function takeStatusBadge(it, plan, data) {
   const active = activeTakeFor(data, it.key);
   const st = shotTakeStatus(it, data);
-  if (st === "outdated") return {label: `Take ${active.number} · Outdated`, cls: "chip chip-warn"};
+  if (st === "outdated") return {label: `T${active.number} · Outdated`, cls: "chip chip-warn", tone: "warn"};
   if (st === "updated") {
     return active
-      ? {label: `Take ${active.number} · Updated`, cls: "chip chip-warn"}
-      : {label: "Original · Updated", cls: "chip chip-warn"};
+      ? {label: `T${active.number} · Updated`, cls: "chip chip-warn", tone: "warn"}
+      : {label: "Original · Updated", cls: "chip chip-warn", tone: "warn"};
   }
-  if (st === "in_export") return {label: `Take ${active.number} · In export`, cls: "chip"};
-  if (st === "off_screen") return {label: "Off-screen", cls: "chip chip-quiet"};
-  if (isItemSizeFiltered(it, plan)) return {label: "Size ignored", cls: "chip chip-quiet"};
-  if (it.assignment.status === "uncertain") return {label: "Needs check", cls: "chip chip-warn"};
-  if (!itemHasWindows(it, plan)) return {label: "No speaking frames", cls: "chip chip-quiet"};
-  return {label: "Not rendered", cls: "chip chip-quiet"};
+  if (st === "in_export") return {label: `T${active.number} · In export`, cls: "chip", tone: "ok"};
+  if (st === "off_screen") return {label: "Off-screen", cls: "chip chip-quiet", tone: "quiet"};
+  if (isItemSizeFiltered(it, plan)) return {label: "Size ignored", cls: "chip chip-quiet", tone: "quiet"};
+  if (it.assignment.status === "uncertain") return {label: "Needs check", cls: "chip chip-warn", tone: "warn"};
+  if (!itemHasWindows(it, plan)) return {label: "No solo frames", cls: "chip chip-quiet", tone: "quiet"};
+  return {label: "Not rendered", cls: "chip chip-quiet", tone: "quiet"};
+}
+
+function isSkippedItem(it, plan, data, failedByKey) {
+  if (failedByKey?.has(it.key)) return false;
+  const st = shotTakeStatus(it, data);
+  if (st === "off_screen") return true;
+  if (st === "unrendered" && (isItemSizeFiltered(it, plan) || (it.assignment.status !== "uncertain" && !itemHasWindows(it, plan)))) {
+    return true;
+  }
+  return false;
+}
+
+function isUncheckableItem(it, plan) {
+  if (it.assignment.status === "off_screen") return true;
+  if (!itemHasWindows(it, plan)) return true;
+  if (isItemSizeFiltered(it, plan)) return true;
+  return false;
 }
 
 function formatEngineShort(engine) {
+  if (engine === "musetalk") return "MuseTalk 1.5";
+  if (engine === "latentsync") return "LatentSync 1.6";
+  return "MiniMax H3";
+}
+
+function formatEngineTiny(engine) {
   if (engine === "musetalk") return "MuseTalk";
   if (engine === "latentsync") return "LatentSync";
   return "H3";
 }
 
+function enginePillSummary() {
+  if (lsState.engine === "musetalk") {
+    const shift = `${lsState.bboxShift > 0 ? "+" : ""}${lsState.bboxShift}px`;
+    return `MuseTalk · ${shift} · ${lsState.feather}px`;
+  }
+  if (lsState.engine === "latentsync") {
+    return `LatentSync · ${lsState.inferenceSteps}st · ${lsState.feather}px`;
+  }
+  return `H3 · ${Number(lsState.strength).toFixed(2)} · ${lsState.feather}px`;
+}
+
 function formatTakeMeta(take, shot) {
-  const eng = formatEngineShort(take.engine);
+  const eng = formatEngineTiny(take.engine);
   const idx = (shot?.tracks || []).findIndex((t) => Number(t.track_id) === Number(take.track_id));
   const face = idx >= 0 ? `Face #${idx + 1}` : "Face";
   const detail = take.engine === "h3" && take.settings?.strength != null
@@ -226,8 +283,14 @@ function assemblySummary(items, data, plan = null) {
     else if (st === "updated") { updated++; changedShots.push(it); }
     else if (st === "outdated") { outdated++; changedShots.push(it); }
     else if (st === "off_screen") off++;
+    else if (plan && isItemSizeFiltered(it, plan)) off++;
     else if (plan && it.assignment.status !== "uncertain" && !itemHasWindows(it, plan)) off++;
-    else { unrendered++; if (it.assignment.status !== "off_screen") unrenderedKeys.push(it.key); }
+    else {
+      unrendered++;
+      if (it.assignment.status !== "off_screen" && (!plan || itemHasWindows(it, plan))) {
+        unrenderedKeys.push(it.key);
+      }
+    }
   }
   return {
     reused, updated, outdated, unrendered, off, activeTakesCount,
@@ -310,10 +373,6 @@ function getPlanIndex(plan) {
   return idx;
 }
 
-function assignmentMap(plan) {
-  return getPlanIndex(plan)?.assignments || new Map();
-}
-
 function findShotAtTime(plan, idx, t) {
   const shots = plan?.shots || [];
   if (!shots.length) return null;
@@ -369,27 +428,24 @@ function shotItems(plan) {
     const shotAssignments = idx?.assignmentsByShot.get(shot.index) || [];
     if (!shotAssignments.length) continue;
     const shotTurns = turns.filter((t) => Math.min(t.end, shot.end) - Math.max(t.start, shot.start) >= 0.04);
-    for (const a of shotAssignments) {
+    const totalInShot = shotAssignments.length;
+    shotAssignments.forEach((a, pos) => {
       const firstTurn = shotTurns.find((t) => t.speaker === a.speaker);
       items.push({
         shot,
         assignment: a,
         speaker: a.speaker,
+        turnPosition: pos + 1,
+        turnCount: totalInShot,
         seekTime: firstTurn
           ? (Math.max(shot.start, firstTurn.start) + Math.min(shot.end, firstTurn.end)) / 2
           : Math.max(shot.start, Math.min(shot.end - 0.001, a.reference_time ?? shot.start)),
         line: firstTurn?.text || "",
         key: `${shot.index}:${a.speaker}`,
       });
-    }
+    });
   }
   return items;
-}
-
-function assignmentLabel(shot, speaker) {
-  return shot && speaker
-    ? `Shot ${shot.index + 1} (${formatClock(shot.start)}–${formatClock(shot.end)}) · <strong>${esc(speakerLabel(speaker))}</strong>`
-    : "Choose a shot with a speaker to review.";
 }
 
 function assignedTrackId(assignment) {
@@ -406,8 +462,8 @@ function assignmentButtons(shot, assignment, overrides, plan = null) {
   const index = getPlanIndex(plan);
   const key = `${shot.index}:${assignment.speaker}`;
   const activeTrackId = assignedTrackId(assignment);
-  const button = (id, label, selected) => `<button type="button" class="btn btn-small ${selected ? "btn-primary" : ""}"
-    data-ls-assign="${esc(key)}" data-track-id="${id}">${label}</button>`;
+  const button = (id, label, selected, title = "") => `<button type="button" class="btn btn-small ${selected ? "btn-primary" : ""}"
+    data-ls-assign="${esc(key)}" data-track-id="${id}"${title ? ` title="${esc(title)}"` : ""}>${label}</button>`;
   const buttons = [];
   let hiddenCount = 0;
   (shot.tracks || []).forEach((track, idx) => {
@@ -416,12 +472,13 @@ function assignmentButtons(shot, assignment, overrides, plan = null) {
       hiddenCount++;
       return;
     }
-    buttons.push(button(track.track_id, `Face #${idx + 1}`, selected));
+    const pct = formatFacePct(trackMedianHeight(track, index));
+    buttons.push(button(track.track_id, `Face #${idx + 1}`, selected, pct ? `${pct} frame height` : ""));
   });
   buttons.push(button("off", "Off-screen / Skip", assignment.status === "off_screen"));
   if (Object.hasOwn(overrides || {}, key)) buttons.push(button("auto", "Restore automatic match", false));
   if (hiddenCount > 0) {
-    buttons.push(`<span class="muted small" data-ls-hidden-faces="${hiddenCount}">${plural(hiddenCount, "face")} hidden by size</span>`);
+    buttons.push(`<button type="button" class="linkish small ls-hidden-faces-btn" data-ls-action="open-size-drawer" data-ls-hidden-faces="${hiddenCount}">${plural(hiddenCount, "face")} hidden by size</button>`);
   }
   return buttons.join("");
 }
@@ -448,13 +505,6 @@ function boxAtTime(track, time) {
   }
   if (bestDt > 1.2) return null;
   return [best[1], best[2], best[3], best[4], best[5]];
-}
-
-function statusBadge(a) {
-  if (a.status === "manual") return {label: "Confirmed", cls: "chip"};
-  if (a.status === "matched") return {label: "Auto matched", cls: "chip"};
-  if (a.status === "off_screen") return {label: "Off-screen", cls: "chip chip-quiet"};
-  return {label: "Needs check", cls: "chip chip-warn"};
 }
 
 function trackMedianHeight(track, index = null) {
@@ -537,12 +587,13 @@ function shotCounts(items) {
   return {uncertainCount, confirmedCount, offCount};
 }
 
-function rowBadgeFor(it, plan) {
-  return isItemSizeFiltered(it, plan) ? {label: "Size ignored", cls: "chip chip-quiet"} : statusBadge(it.assignment);
-}
-
 function formatFacePct(size) {
   return size === null ? "" : `${Math.round(size * 100)}%`;
+}
+
+function faceSizeShort() {
+  if (lsState.minFaceSize === 0 && lsState.maxFaceSize === 100) return "All";
+  return `${lsState.minFaceSize}%–${lsState.maxFaceSize}%`;
 }
 
 function faceSizeLabel(plan) {
@@ -557,20 +608,26 @@ function faceSizeLabel(plan) {
 
 function shotTargetDescription(it, plan) {
   if (it.assignment.status === "off_screen") return "Skipped (off-screen)";
+  if (!itemHasWindows(it, plan) && it.assignment.status !== "uncertain") {
+    return "Overlapping dialogue · no solo speaking frames";
+  }
   const trackIdx = (it.shot.tracks || []).findIndex((t) => t.track_id === it.assignment.track_id);
   if (trackIdx < 0) return it.assignment.reason || it.assignment.source;
   const faceSize = itemFaceSize(it, plan);
   const pct = formatFacePct(faceSize);
   const manualOutside = it.assignment.status === "manual" && !sizeInRange(faceSize);
+  if (isItemSizeFiltered(it, plan)) {
+    return `Face #${trackIdx + 1}${pct ? ` (${pct})` : ""} · outside ${faceSizeShort()} size filter`;
+  }
   return `Face #${trackIdx + 1}${pct ? ` (${pct})` : ""} · ${manualOutside ? "Manual override" : it.assignment.source}`;
 }
 
 function renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount) {
   const info = filteredWindowsInfo(plan);
   const winText = info.filtered > 0
-    ? `${info.included} of ${info.total} render windows (${info.filtered} size-ignored)`
-    : plural(info.total, "render window");
-  return `<strong>${confirmedCount}</strong> matched · <strong>${uncertainCount}</strong> needs check · <strong>${offCount}</strong> off-screen (${esc(winText)})`;
+    ? `${info.included} of ${info.total} windows (${info.filtered} size-ignored)`
+    : plural(info.total, "window");
+  return `<strong>${confirmedCount}</strong> matched · <strong>${uncertainCount}</strong> check · <strong>${offCount}</strong> off-screen · ${esc(winText)}`;
 }
 
 function formatSettingOut(key, value) {
@@ -632,76 +689,314 @@ function renderLockedReason(ls, app, plan) {
   return "";
 }
 
-function stageTopHtml(activeItem, activeEntry, activeTake, isPreviewMode, showingSyncedTake) {
+function failedWindowMap(ls) {
+  const failedWindows = Array.isArray(ls?.report?.failed_windows) ? ls.report.failed_windows : [];
+  const map = new Map();
+  for (const f of failedWindows) {
+    const k = `${f.shot_index}:${f.speaker}`;
+    if (!map.has(k)) map.set(k, f);
+  }
+  return map;
+}
+
+function stageTopHtml(activeItem, items, activeEntry, activeTake, isPreviewMode, canCompare) {
   const hasAnyTake = activeEntry.takes.length > 0;
+  const siblings = activeItem ? items.filter((it) => it.shot.index === activeItem.shot.index) : [];
+  const speakerControl = !activeItem ? "" : siblings.length > 1
+    ? `<div class="seg ls-speaker-tabs" role="group" aria-label="Speakers in Shot ${activeItem.shot.index + 1}">
+        ${siblings.map((sib) => `
+          <button type="button" data-ls-speaker-tab="${sib.shot.index}" data-speaker="${esc(sib.speaker)}" data-time="${sib.seekTime}" aria-pressed="${sib.key === activeItem.key}">
+            ${esc(speakerLabel(sib.speaker))}
+          </button>`).join("")}
+      </div>`
+    : `<span class="chip ls-speaker-chip">${esc(speakerLabel(activeItem.speaker))}</span>`;
+
   return `
-    <div class="seg" role="group" aria-label="Stage view mode">
-      <button type="button" data-ls-stage="align" aria-pressed="${!isPreviewMode}">Edit face</button>
-      <button type="button" data-ls-stage="preview" aria-pressed="${isPreviewMode}" ${hasAnyTake ? "" : 'disabled title="Render this shot first to preview a take"'}>
-        Preview take${activeTake ? ` (T${activeTake.number})` : ""}
-      </button>
+    <div class="row align-center row-wrap ls-stage-nav">
+      <button type="button" class="btn btn-small ls-nav-icon" data-ls-action="prev-shot" aria-label="Previous shot" title="Previous shot">${icon("prev", 14)}</button>
+      <button type="button" class="btn btn-small ls-nav-icon" data-ls-action="next-shot" aria-label="Next shot" title="Next shot">${icon("next", 14)}</button>
+      ${activeItem ? `<strong class="ls-shot-heading">Shot ${activeItem.shot.index + 1}</strong>
+        <span class="mono muted small">${formatClock(activeItem.shot.start)}–${formatClock(activeItem.shot.end)}</span>` : ""}
+      ${speakerControl}
     </div>
-    ${isPreviewMode ? `
-      <span class="chip ${showingSyncedTake ? "" : "chip-quiet"}">
-        ${showingSyncedTake ? `Take ${activeTake.number} · Lip-synced` : "Original picture"}
-      </span>
-      <button type="button" class="btn btn-small ${lsState.loopShot ? "btn-primary" : ""}" data-ls-action="toggle-loop" aria-pressed="${lsState.loopShot}">Loop</button>
-    ` : ""}
     <span class="spacer"></span>
-    ${activeItem ? `<span class="mono muted small">Shot ${activeItem.shot.index + 1} · ${formatClock(activeItem.shot.start)}–${formatClock(activeItem.shot.end)}</span>` : ""}`;
+    <div class="row align-center row-wrap ls-stage-modes">
+      <div class="seg" role="group" aria-label="Stage view mode">
+        <button type="button" data-ls-stage="align" aria-pressed="${!isPreviewMode}">Align face</button>
+        <button type="button" data-ls-stage="preview" aria-pressed="${isPreviewMode}" ${hasAnyTake ? "" : 'disabled title="Render this shot first to preview a take"'}>
+          Preview${activeTake ? ` (T${activeTake.number})` : " take"}
+        </button>
+      </div>
+      ${isPreviewMode && canCompare ? `
+        <div class="seg ls-compare-seg" role="group" aria-label="Compare synced take with original">
+          <button type="button" data-ls-compare="synced" aria-pressed="${!lsState.compareOriginal}">Synced</button>
+          <button type="button" data-ls-compare="original" aria-pressed="${lsState.compareOriginal}">Original</button>
+        </div>
+      ` : ""}
+      ${isPreviewMode ? `
+        <button type="button" class="btn btn-small ${lsState.loopShot ? "btn-primary" : ""}" data-ls-action="toggle-loop" aria-pressed="${lsState.loopShot}">Loop</button>
+      ` : ""}
+    </div>`;
+}
+
+function speakingSpanHtml(activeItem, plan) {
+  if (!activeItem || !plan) return "";
+  const dur = Math.max(0.05, Number(activeItem.shot.end) - Number(activeItem.shot.start));
+  const wins = getPlanIndex(plan)?.windowsByKey.get(activeItem.key) || [];
+  if (!wins.length) {
+    const label = activeItem.assignment.status === "off_screen"
+      ? "Off-screen · keeps original picture"
+      : activeItem.assignment.status === "uncertain"
+        ? "Confirm face above to plan speaking windows"
+        : "Overlapping speech · no solo speaking frames in this shot";
+    return `<div class="ls-span-bar is-empty"><span class="muted small">${esc(label)}</span></div>`;
+  }
+  let spokenSec = 0;
+  const spans = wins.map((w) => {
+    const left = Math.max(0, Math.min(100, ((w.active_start - activeItem.shot.start) / dur) * 100));
+    const right = Math.max(left + 1.5, Math.min(100, ((w.active_end - activeItem.shot.start) / dur) * 100));
+    spokenSec += Math.max(0, w.active_end - w.active_start);
+    return `<span class="ls-span-seg" style="left:${left.toFixed(2)}%;width:${(right - left).toFixed(2)}%"></span>`;
+  }).join("");
+  return `
+    <div class="ls-span-bar">
+      <span class="mono muted small">${formatClock(activeItem.shot.start)}</span>
+      <div class="ls-span-track" role="img" aria-label="Speaking window span ${spokenSec.toFixed(1)} seconds inside shot">
+        ${spans}
+      </div>
+      <span class="mono muted small">${formatClock(activeItem.shot.end)}</span>
+      <span class="muted small ls-span-meta">Speaking · ${spokenSec.toFixed(1)}s</span>
+    </div>`;
+}
+
+function stageHintsHtml(activeItem, activeStatus, plan) {
+  if (!activeItem) return "";
+  const parts = [];
+  if (activeStatus === "outdated") {
+    parts.push('<span class="chip chip-warn">Face changed</span>');
+  } else if (activeItem.assignment.status !== "off_screen" && activeItem.assignment.status !== "uncertain" && !itemHasWindows(activeItem, plan)) {
+    parts.push('<span class="chip chip-quiet">No solo frames</span>');
+  }
+  return parts.join("");
+}
+
+function recoveryStripHtml(activeItem, plan, failedEntry, app) {
+  if (!activeItem) return "";
+  const busy = isLipSyncBusy(app);
+  const canStudio = !!app.boot?.lip_sync && !!app.session?.result?.lip_sync?.ready;
+  if (failedEntry) {
+    return `
+      <div class="ls-recovery-strip is-fail" role="alert">
+        ${icon("warn", 16)}
+        <span class="grow small"><strong>Last render failed:</strong> ${esc(failedEntry.error || "Render failed")} (original frames kept).</span>
+        <button type="button" class="btn btn-small" data-ls-action="retry-musetalk" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canStudio}" ${canStudio && !busy ? "" : "disabled"}>
+          Retry with MuseTalk 1.5
+        </button>
+      </div>`;
+  }
+  if (plan && isItemSizeFiltered(activeItem, plan)) {
+    const faceSize = itemFaceSize(activeItem, plan);
+    const pct = formatFacePct(faceSize);
+    const trackId = activeItem.assignment.track_id;
+    return `
+      <div class="ls-recovery-strip is-warn">
+        <span class="grow small">Auto-matched face${pct ? ` (${pct})` : ""} is outside your <strong>${esc(faceSizeShort())}</strong> face size filter and will be skipped in batch renders.</span>
+        ${trackId !== null && trackId !== undefined ? `
+          <button type="button" class="btn btn-small" data-ls-assign="${esc(activeItem.key)}" data-track-id="${trackId}">Include shot manually</button>
+        ` : ""}
+        <button type="button" class="btn btn-small" data-ls-action="open-size-drawer">Adjust size filter</button>
+      </div>`;
+  }
+  return "";
 }
 
 function takesPanelHtml(activeItem, activeEntry, activeStatus, data) {
   if (!activeItem) return "";
+  if (!activeEntry.takes.length) {
+    return `
+      <div class="row align-center row-wrap">
+        <strong class="small">Takes · Shot ${activeItem.shot.index + 1}</strong>
+        <span class="muted small" id="ls-takes-empty-note">No takes yet — click Render shot above using ${esc(formatEngineShort(lsState.engine))}.</span>
+      </div>`;
+  }
   return `
     <div class="row align-center row-wrap">
-      <strong class="small">Takes for Shot ${activeItem.shot.index + 1}</strong>
-      <span class="muted small">${activeEntry.takes.length ? "Click a take to preview &amp; use in assembly" : "No take rendered yet — click Render shot above."}</span>
+      <strong class="small">Takes · Shot ${activeItem.shot.index + 1}</strong>
+      <span class="muted small">Click a take to preview &amp; set active for assembly</span>
       <span class="spacer"></span>
-      ${activeStatus === "outdated" ? '<span class="chip chip-warn">Face changed — click New take</span>' : ""}
+      ${activeStatus === "outdated" ? '<span class="chip chip-warn">Face changed — render a new take</span>' : ""}
     </div>
-    ${activeEntry.takes.length ? `
-      <div class="ls-takes-row">
-        <div class="ls-take-card ${activeEntry.active_take_id === "original" ? "active" : ""}">
-          <button type="button" class="ls-take-pick" data-ls-pick-take="original" data-shot-key="${esc(activeItem.key)}">
-            <div class="row align-center">
-              <strong class="small">Original</strong>
-              <span class="spacer"></span>
-              <span class="chip ${activeEntry.active_take_id === "original" ? "" : "chip-quiet"}">${activeEntry.active_take_id === "original" ? "Active" : "No sync"}</span>
-            </div>
-            <span class="muted small">Compare source picture</span>
-          </button>
-        </div>
-        ${activeEntry.takes.map((tk) => {
-          const isActive = activeEntry.active_take_id === tk.id;
-          const inExport = assembledTakeId(data, activeItem.key) === tk.id;
-          const pillLabel = isActive ? "Active ★" : (inExport ? "In export" : "Saved");
-          const pillCls = isActive ? "chip" : "chip chip-quiet";
-          return `
-            <div class="ls-take-card ${isActive ? "active" : ""}">
-              <button type="button" class="ls-take-pick" data-ls-pick-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}">
-                <div class="row align-center">
-                  <strong class="small">Take ${tk.number}</strong>
-                  <span class="spacer"></span>
-                  <span class="${pillCls}">${pillLabel}</span>
-                </div>
-                <span class="muted small">${esc(formatTakeMeta(tk, activeItem.shot))}</span>
-              </button>
-              <button type="button" class="ls-take-del" data-ls-delete-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}" title="Delete Take ${tk.number}" aria-label="Delete Take ${tk.number}">×</button>
-            </div>`;
-        }).join("")}
+    <div class="ls-takes-row">
+      <div class="ls-take-card ${activeEntry.active_take_id === "original" ? "active" : ""}">
+        <button type="button" class="ls-take-pick" data-ls-pick-take="original" data-shot-key="${esc(activeItem.key)}">
+          <div class="row align-center">
+            <strong class="small">Keep original</strong>
+            <span class="spacer"></span>
+            <span class="chip ${activeEntry.active_take_id === "original" ? "" : "chip-quiet"}">${activeEntry.active_take_id === "original" ? "Active" : "No sync"}</span>
+          </div>
+          <span class="muted small">Use source picture in export</span>
+        </button>
       </div>
-    ` : ""}`;
+      ${activeEntry.takes.map((tk) => {
+        const isActive = activeEntry.active_take_id === tk.id;
+        const inExport = assembledTakeId(data, activeItem.key) === tk.id;
+        const pillLabel = isActive ? "Active" : (inExport ? "In export" : "Saved");
+        const pillCls = isActive ? "chip" : "chip chip-quiet";
+        return `
+          <div class="ls-take-card ${isActive ? "active" : ""}">
+            <button type="button" class="ls-take-pick" data-ls-pick-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}">
+              <div class="row align-center">
+                <strong class="small">Take ${tk.number}</strong>
+                <span class="spacer"></span>
+                <span class="${pillCls}">${pillLabel}</span>
+              </div>
+              <span class="muted small">${esc(formatTakeMeta(tk, activeItem.shot))}</span>
+            </button>
+            <button type="button" class="ls-take-del" data-ls-delete-take="${esc(tk.id)}" data-shot-key="${esc(activeItem.key)}" title="Delete Take ${tk.number}" aria-label="Delete Take ${tk.number}">×</button>
+          </div>`;
+      }).join("")}
+    </div>`;
 }
 
-function queueBulkHtml(checkedCount, canRender, busy) {
-  if (!checkedCount) return "";
+function queueBulkHtml(checkedCount, unrenderedCount, canRender, busy) {
+  if (checkedCount > 0) {
+    return `
+      <div class="ls-queue-bulk">
+        <div class="ls-bulk-meta">
+          <strong class="small">${checkedCount} selected</strong>
+          <span class="small" id="ls-bulk-engine-label">Using ${esc(formatEngineShort(lsState.engine))}</span>
+        </div>
+        <div class="row align-center">
+          <button type="button" class="btn btn-small" data-ls-action="clear-checked">Clear</button>
+          <button type="button" class="btn btn-small btn-primary" data-ls-action="render-selected" data-busy="lip-sync" data-locked="${!canRender}" ${canRender && !busy ? "" : "disabled"}>
+            Render (${checkedCount})
+          </button>
+        </div>
+      </div>`;
+  }
+  if (unrenderedCount > 0 && canRender) {
+    return `
+      <div class="ls-queue-hint">
+        <span class="small muted">${plural(unrenderedCount, "shot")} ready to render</span>
+        <button type="button" class="linkish small" data-ls-action="select-unrendered">Select all</button>
+      </div>`;
+  }
+  return "";
+}
+
+function assemblyDrawerHtml(items, data, plan, asm, failedByKey, canRender, canAssemble, assembleLabel, busy) {
+  const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
+  const tiles = items.map((it) => {
+    const failed = failedByKey.has(it.key);
+    const active = activeTakeFor(data, it.key);
+    const st = shotTakeStatus(it, data);
+    const tone = failed ? "fail" : (st === "updated" || st === "outdated") ? "warn" : st === "in_export" ? "ok" : "quiet";
+    const tag = failed ? "Fail" : active ? `T${active.number}` : st === "off_screen" ? "Off" : "Orig";
+    return `
+      <button type="button" class="ls-map-tile tone-${tone}" data-ls-map-shot="${it.shot.index}" data-speaker="${esc(it.speaker)}" data-time="${it.seekTime}"
+        title="Shot ${it.shot.index + 1} · ${esc(speakerLabel(it.speaker))} (${esc(tag)})">
+        <strong>S${it.shot.index + 1}</strong>
+        <span>${esc(tag)}</span>
+      </button>`;
+  }).join("");
+
+  const diffRows = asm.changedShots.map((it) => {
+    const active = activeTakeFor(data, it.key);
+    const prevId = assembledTakeId(data, it.key);
+    const prevLabel = prevId ? `Take ${prevId.replace(/^t/i, "")}` : "Original picture";
+    const nextLabel = active ? `Take ${active.number} (${formatTakeMeta(active, it.shot)})` : "Original picture";
+    return `
+      <div class="ls-diff-row">
+        <div class="grow">
+          <div class="row align-center row-wrap">
+            <strong class="small">Shot ${it.shot.index + 1} · ${esc(speakerLabel(it.speaker))}</strong>
+            <span class="mono muted small">${formatClock(it.shot.start)}–${formatClock(it.shot.end)}</span>
+          </div>
+          <span class="muted small">${esc(prevLabel)} → <strong>${esc(nextLabel)}</strong></span>
+        </div>
+        <button type="button" class="btn btn-small" data-ls-map-shot="${it.shot.index}" data-speaker="${esc(it.speaker)}" data-time="${it.seekTime}">Inspect</button>
+      </div>`;
+  }).join("");
+
   return `
-    <div class="ls-queue-bulk">
-      <strong class="small">${checkedCount} selected</strong>
-      <button type="button" class="btn btn-small btn-primary" data-ls-action="render-selected" data-busy="lip-sync" data-locked="${!canRender}" ${canRender && !busy ? "" : "disabled"}>
-        Render selected (${checkedCount})
-      </button>
+    <div class="ls-assembly-drawer stack-12" id="ls-assembly-drawer" ${lsState.assemblyOpen ? "" : "hidden"}>
+      <div class="row align-center row-wrap">
+        <h3>Fast-splice assembly map</h3>
+        <span class="muted small">Splices each shot's active take onto the dubbed MP4 on CPU — no GPU re-rendering.</span>
+        <span class="spacer"></span>
+        ${data?.output ? '<button type="button" class="btn btn-small" data-ls-action="to-result">Watch in Result →</button>' : ""}
+      </div>
+      <div class="ls-timeline-map">${tiles}</div>
+      ${asm.changedShots.length ? `
+        <div class="ls-diff-list stack-8">
+          <span class="rail-label">Changed since last export (${asm.changedShots.length})</span>
+          ${diffRows}
+        </div>
+      ` : ""}
+      <div class="row align-center row-wrap top-line">
+        <span class="small muted" data-ls-render-summary>
+          ${renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount)}
+        </span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-small" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}" ${canRender && !busy ? "" : "disabled"}>
+          Render all &amp; assemble
+        </button>
+        <button type="button" class="btn btn-small btn-primary" data-ls-action="assemble" data-busy="lip-sync" data-locked="${!canAssemble}" ${canAssemble && !busy ? "" : "disabled"}>
+          ${esc(assembleLabel)}
+        </button>
+      </div>
+    </div>`;
+}
+
+function onboardingHtml(app, ls, data, detectReason) {
+  const detecting = !!app.runs?.["lip-sync-detect"]?.active;
+  const videoUrl = data?.video_url || "";
+  return `
+    <div class="ls-onboarding">
+      <section class="card ls-onboarding-preview">
+        <div class="ls-video-stage">
+          ${videoUrl
+            ? `<video src="${esc(videoUrl)}" muted playsinline preload="metadata"></video>`
+            : '<div class="ls-onboarding-poster">Dubbed video ready</div>'}
+        </div>
+        <div class="ls-onboarding-steps">
+          <div class="ls-onboard-step">
+            <span class="ls-step-kicker">1 · Detect once</span>
+            <strong>Shots, faces &amp; speakers</strong>
+            <span class="muted small">Tracks faces with YOLO + mouth motion (MAR) and Gemini speaker hints.</span>
+          </div>
+          <div class="ls-onboard-step">
+            <span class="ls-step-kicker">2 · Per-shot takes</span>
+            <strong>Fix faces &amp; render selectively</strong>
+            <span class="muted small">Preview each shot with dubbed audio and mix H3, MuseTalk, or LatentSync takes.</span>
+          </div>
+          <div class="ls-onboard-step">
+            <span class="ls-step-kicker">3 · Fast splice</span>
+            <strong>Patch MP4 without re-render</strong>
+            <span class="muted small">Splices active takes onto the dubbed MP4 in seconds on CPU.</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="card card-pad stack-14 ls-onboarding-launch">
+        <div class="stack-6">
+          <span class="rail-label">Optional Step 4</span>
+          <h1>Prepare lip sync for this dub</h1>
+          <p class="muted small">Scans shot cuts and speaker face tracks first. No GPU lip-sync video rendering starts until you confirm faces or render shots.</p>
+        </div>
+        ${app.boot.lip_sync ? "" : '<p class="alert alert-info small">Face detection runs in Studio. Once scanned in Studio, you can review face assignments, switch takes, and fast-splice here in Workshop.</p>'}
+        <div class="run-status" data-run="lip-sync-detect" data-dub-video="${esc(ls.video)}" ${detecting ? "" : "hidden"}>
+          <span class="spinner" aria-hidden="true"></span>
+          <span data-run-status role="status"></span>
+          <button type="button" class="btn btn-small" data-ls-action="interrupt" data-stop="lip-sync-detect" data-kind="lip-sync-detect">Interrupt</button>
+        </div>
+        <div class="stack-8">
+          <button type="button" class="btn ${app.boot.lip_sync ? "btn-primary" : ""}" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!detectReason}" ${detectReason ? `disabled title="${esc(detectReason)}"` : ""}>
+            Auto detect faces &amp; speakers
+          </button>
+          <button type="button" class="btn ${app.boot.lip_sync ? "" : "btn-primary"}" data-ls-action="to-result">Skip to Result</button>
+        </div>
+      </aside>
     </div>`;
 }
 
@@ -719,17 +1014,53 @@ export function renderLipSync(app) {
 
   const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
   const plan = data?.plan || null;
+  const detectReason = detectLockedReason(ls, app);
+
+  if (!plan) {
+    return `
+      <div class="ls-workspace stack-14">
+        ${lsState.loading ? '<div class="card card-pad muted">Loading lip-sync plan…</div>' : ""}
+        ${lsState.error ? `<div class="card card-pad fail-text">${esc(lsState.error)}</div>` : ""}
+        ${!lsState.loading ? onboardingHtml(app, ls, data, detectReason) : ""}
+      </div>`;
+  }
+
   const items = shotItems(plan);
   const asm = assemblySummary(items, data, plan);
+  const failedByKey = failedWindowMap(ls);
+  const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
+  const renderReason = renderLockedReason(ls, app, plan);
+  const busy = isLipSyncBusy(app);
+  const batchActive = isShotBatchActive(app);
+  if (!batchActive && lsState.activeBatchKeys.size) lsState.activeBatchKeys.clear();
+  const canRender = !!(plan.revision && !renderReason && !lsState.loading);
+  const canAssemble = !!(asm.activeTakesCount > 0 && !lsState.loading);
+
+  let attentionCount = 0;
+  let pendingCount = 0;
+  let readyCount = 0;
+  let skippedCount = 0;
+  for (const it of items) {
+    const st = shotTakeStatus(it, data);
+    const failed = failedByKey.has(it.key);
+    const skipped = isSkippedItem(it, plan, data, failedByKey);
+    if (skipped) skippedCount++;
+    if (failed || st === "outdated" || it.assignment.status === "uncertain") attentionCount++;
+    if (st === "updated" || st === "outdated" || (st === "unrendered" && !skipped)) pendingCount++;
+    if (st === "in_export" || st === "updated") readyCount++;
+  }
+
   const visible = items.filter((it) => {
-    if (lsState.filter === "review") return it.assignment.status === "uncertain";
-    if (lsState.filter === "pending") {
-      const st = shotTakeStatus(it, data);
-      return st === "updated" || st === "outdated" || st === "unrendered";
-    }
-    if (lsState.filter === "confirmed") return it.assignment.status === "matched" || it.assignment.status === "manual";
+    const st = shotTakeStatus(it, data);
+    const failed = failedByKey.has(it.key);
+    const skipped = isSkippedItem(it, plan, data, failedByKey);
+    if (lsState.hideSkipped && skipped) return false;
+    if (lsState.filter === "attention") return failed || st === "outdated" || it.assignment.status === "uncertain";
+    if (lsState.filter === "pending") return st === "updated" || st === "outdated" || (st === "unrendered" && !skipped);
+    if (lsState.filter === "ready") return st === "in_export" || st === "updated";
     return true;
   });
+
   const activeItem = items.find((it) => it.shot.index === lsState.selectedShot && (!lsState.selectedSpeaker || it.speaker === lsState.selectedSpeaker))
     || items[0] || null;
   if (activeItem) {
@@ -737,277 +1068,283 @@ export function renderLipSync(app) {
     lsState.selectedSpeaker = activeItem.speaker;
   }
 
-  const {uncertainCount, confirmedCount, offCount} = shotCounts(items);
-  const detectReason = detectLockedReason(ls, app);
-  const renderReason = renderLockedReason(ls, app, plan);
-  const canRender = !!(plan?.revision && !renderReason && !lsState.loading);
   const canRenderShot = !!(
-    plan?.revision && app.boot.lip_sync && ls.ready && !lsState.loading
+    plan.revision && app.boot.lip_sync && ls.ready && !lsState.loading
     && activeItem && activeItem.assignment.status !== "off_screen"
     && itemHasWindows(activeItem, plan)
   );
-  const canAssemble = !!(plan && asm.activeTakesCount > 0 && !lsState.loading);
 
   const activeEntry = activeItem ? shotTakeEntry(data, activeItem.key) : {active_take_id: "original", takes: []};
   const activeTake = activeItem ? activeTakeFor(data, activeItem.key) : null;
   const activeStatus = activeItem ? shotTakeStatus(activeItem, data) : "unrendered";
   const hasAnyTake = activeEntry.takes.length > 0;
   const isPreviewMode = lsState.stageMode === "preview" && !!activeItem && hasAnyTake;
-  const showingSyncedTake = isPreviewMode && !!activeTake?.preview_url;
+  const canCompare = isPreviewMode && !!activeTake?.preview_url;
+  const showingOriginalCompare = canCompare && lsState.compareOriginal;
+  const showingSyncedTake = canCompare && !lsState.compareOriginal;
   const stageVideoSrc = showingSyncedTake ? activeTake.preview_url : (data?.video_url || "");
+  const activeFailed = activeItem ? failedByKey.get(activeItem.key) : null;
 
-  const validKeys = new Set(items.map((it) => it.key));
+  const validKeys = new Set(items.filter((it) => !isUncheckableItem(it, plan)).map((it) => it.key));
   for (const k of Array.from(lsState.checkedKeys)) {
     if (!validKeys.has(k)) lsState.checkedKeys.delete(k);
   }
   const checkedCount = lsState.checkedKeys.size;
-  const pendingCount = asm.changedCount + asm.unrendered;
-
-  const failedWindows = Array.isArray(ls.report?.failed_windows) ? ls.report.failed_windows : [];
-  const failedByKey = new Map();
-  for (const f of failedWindows) {
-    const k = `${f.shot_index}:${f.speaker}`;
-    if (!failedByKey.has(k)) failedByKey.set(k, f);
-  }
-  const failedBanner = failedWindows.length ? `
-    <section class="card card-pad stack-8">
-      <div class="row align-center row-wrap">
-        <span class="chip chip-warn">${plural(failedWindows.length, "window")} failed on last render (kept original frames)</span>
-        <span class="muted small">Click a window to jump straight to that shot.</span>
-      </div>
-      <div class="stack-6">
-        ${failedWindows.map((f) => `
-          <div class="row align-center row-wrap small">
-            <button type="button" class="btn btn-small" data-ls-shot="${Number(f.shot_index) || 0}" data-ls-speaker="${esc(f.speaker || "")}" data-ls-time="${Number(f.start) || 0}">
-              Shot ${(Number(f.shot_index) || 0) + 1} (${formatClock(f.start)}–${formatClock(f.end)}) · ${esc(speakerLabel(f.speaker))}
-            </button>
-            <span class="fail-text">${esc(f.error || "Render failed")}</span>
-          </div>`).join("")}
-      </div>
-    </section>` : "";
+  const hasSizeFilter = lsState.minFaceSize > 0 || lsState.maxFaceSize < 100;
 
   const assembleLabel = asm.hasAssembled && asm.changedCount > 0
-    ? `Update full video (${plural(asm.changedCount, "shot")})`
+    ? `Update video (${plural(asm.changedCount, "shot")})`
     : asm.hasAssembled && asm.changedCount === 0
-      ? "Re-assemble full video"
-      : `Assemble full video (${plural(asm.activeTakesCount, "take")})`;
+      ? "Re-assemble video"
+      : `Assemble video (${plural(asm.activeTakesCount, "take")})`;
+
+  const primaryCommandCta = asm.activeTakesCount > 0
+    ? `<button type="button" class="btn btn-small ${lsState.assemblyOpen ? "btn-primary" : ""}" data-ls-action="toggle-assembly" aria-expanded="${lsState.assemblyOpen}">
+        Assembly map
+      </button>
+      <button type="button" class="btn btn-small btn-primary" data-ls-action="assemble" data-busy="lip-sync" data-locked="${!canAssemble}" ${canAssemble && !busy ? "" : "disabled"}>
+        ${esc(assembleLabel)}
+      </button>`
+    : `<button type="button" class="btn btn-small btn-primary" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}" ${canRender && !busy ? "" : "disabled"}>
+        Render all &amp; assemble
+      </button>`;
 
   return `
-    <div class="ls-workspace stack-16">
-      <section class="card card-pad ls-stage-bar">
-        <div class="row align-center row-wrap gap-28">
-          <div class="ls-phases row align-center row-wrap">
-            <span class="chip ${plan ? "" : "chip-warn"}">1. Auto detect${plan ? ` (${esc(plan.backend)})` : ""}</span>
-            <span class="muted">→</span>
-            <span class="chip ${plan ? "" : "chip-quiet"}">2. Confirm faces</span>
-            <span class="muted">→</span>
-            <span class="chip ${asm.activeTakesCount > 0 ? "" : "chip-quiet"}">3. Shot takes &amp; preview${plan ? ` (${asm.activeTakesCount}/${Math.max(0, items.length - offCount)})` : ""}</span>
-            <span class="muted">→</span>
-            <span class="chip ${asm.changedCount > 0 ? "chip-warn" : data?.output ? "" : "chip-quiet"}">4. Assemble${asm.changedCount > 0 ? ` (${asm.changedCount} changed)` : ""}</span>
+    <div class="ls-workspace stack-12">
+      <!-- Unified Studio Command Strip: Readiness + Live Face Size Filter + Assembly CTA -->
+      <section class="card ls-stage-bar" aria-label="Lip sync status and assembly">
+        <div class="ls-command-row">
+          <div class="ls-readiness-cluster">
+            <div class="ls-readiness-bar" role="img" aria-label="${asm.reused} synced, ${asm.changedCount} updated, ${failedByKey.size} failed, ${asm.unrendered} unrendered">
+              ${asm.reused > 0 ? `<span class="ls-seg-reused" style="flex:${asm.reused}"></span>` : ""}
+              ${asm.changedCount > 0 ? `<span class="ls-seg-updated" style="flex:${asm.changedCount}"></span>` : ""}
+              ${failedByKey.size > 0 ? `<span class="ls-seg-failed" style="flex:${failedByKey.size}"></span>` : ""}
+              ${asm.unrendered > 0 ? `<span class="ls-seg-unrendered" style="flex:${asm.unrendered}"></span>` : ""}
+              ${asm.off > 0 ? `<span class="ls-seg-off" style="flex:${asm.off}"></span>` : ""}
+            </div>
+            <div class="ls-status-pills">
+              ${asm.reused > 0 ? `<button type="button" class="ls-stat-pill tone-ok" data-ls-jump="ready">${asm.reused} synced</button>` : ""}
+              ${asm.changedCount > 0 ? `<button type="button" class="ls-stat-pill tone-warn" data-ls-jump="pending">${asm.changedCount} updated</button>` : ""}
+              ${failedByKey.size > 0 ? `<button type="button" class="ls-stat-pill tone-fail" data-ls-jump="failed">${failedByKey.size} failed</button>` : ""}
+              ${uncertainCount > 0 ? `<button type="button" class="ls-stat-pill tone-warn" data-ls-jump="uncertain">${uncertainCount} check</button>` : ""}
+              ${asm.reused === 0 && asm.changedCount === 0 && failedByKey.size === 0 && uncertainCount === 0
+                ? `<span class="small muted">${plural(items.length, "shot")} detected</span>` : ""}
+              <span class="ls-backend-tag" title="Auto-detection backend">${esc(plan.backend)}</span>
+            </div>
           </div>
+
+          <span class="ls-cmd-divider" aria-hidden="true"></span>
+
+          <button type="button" id="ls-size-trigger" class="btn btn-small ${lsState.sizeDrawerOpen || hasSizeFilter ? "ls-pill-active" : ""}" data-ls-action="toggle-size-drawer" aria-expanded="${lsState.sizeDrawerOpen}">
+            <span>Face size: <strong class="mono" data-ls-out="face-size-short">${esc(faceSizeShort())}</strong></span>
+            <span class="ls-caret" aria-hidden="true">▾</span>
+          </button>
+
           <span class="spacer"></span>
-          <div class="row row-wrap">
+
+          <div class="row align-center row-wrap">
             <button type="button" class="btn btn-small" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!detectReason}" ${detectReason ? `disabled title="${esc(detectReason)}"` : ""}>
-              ${plan ? "Re-run auto detect" : "Auto detect faces & speakers"}
+              Re-detect
             </button>
-            <button type="button" class="btn btn-small" data-ls-action="to-result">Skip to Result →</button>
+            ${data?.output && asm.changedCount === 0 ? '<button type="button" class="btn btn-small" data-ls-action="to-result">Watch in Result →</button>' : ""}
+            ${primaryCommandCta}
           </div>
         </div>
-        <div class="run-status top-gap" data-run="lip-sync-detect" data-dub-video="${esc(ls.video)}" hidden>
+
+        <!-- Inline Expandable Face Size Filter Bar (Directly above the video so overlay boxes update in view) -->
+        <div class="ls-size-drawer" id="ls-size-drawer" ${lsState.sizeDrawerOpen ? "" : "hidden"}>
+          <div class="row align-center row-wrap">
+            <span class="field-label">Face size range <span class="mono" data-ls-out="face-size">${esc(faceSizeLabel(plan))}</span></span>
+            <div class="ls-size-presets row row-wrap">
+              ${SIZE_PRESETS.map(([lo, hi, label]) => `
+                <button type="button" class="btn btn-small ${lsState.minFaceSize === lo && lsState.maxFaceSize === hi ? "btn-primary" : ""}"
+                  data-ls-size-preset="${lo},${hi}">${label}</button>
+              `).join("")}
+            </div>
+            <span class="spacer"></span>
+            <span class="muted small">Filters video face boxes, face buttons &amp; batch selection live; manual picks stay kept.</span>
+          </div>
+          <div class="ls-range-dual">
+            <div class="ls-range-track">
+              <div class="ls-range-fill" id="ls-range-fill" style="left:${lsState.minFaceSize}%;width:${Math.max(0, lsState.maxFaceSize - lsState.minFaceSize)}%"></div>
+            </div>
+            <input type="range" min="0" max="100" step="1" value="${lsState.minFaceSize}" data-ls-range="min" aria-label="Minimum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 4 : 3}">
+            <input type="range" min="0" max="100" step="1" value="${lsState.maxFaceSize}" data-ls-range="max" aria-label="Maximum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 3 : 4}">
+          </div>
+        </div>
+
+        <!-- Inline Expandable Fast-Splice Assembly Diff Drawer -->
+        ${asm.activeTakesCount > 0 ? assemblyDrawerHtml(items, data, plan, asm, failedByKey, canRender, canAssemble, assembleLabel, busy) : ""}
+
+        <!-- Docked Live Progress Strips -->
+        <div class="run-status ls-run-dock" data-run="lip-sync-detect" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
-          <span data-run-status role="status"></span>
+          <span data-run-status role="status" class="grow"></span>
           <button type="button" class="btn btn-small" data-ls-action="interrupt" data-stop="lip-sync-detect" data-kind="lip-sync-detect">Interrupt</button>
         </div>
-        <div class="run-status top-gap" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
+        <div class="run-status ls-run-dock" data-run="lip-sync" data-dub-video="${esc(ls.video)}" hidden>
           <span class="spinner" aria-hidden="true"></span>
-          <span data-run-status role="status"></span>
+          <span data-run-status role="status" class="grow"></span>
           <button type="button" class="btn btn-small" data-ls-action="interrupt" data-stop="lip-sync" data-kind="lip-sync">Interrupt</button>
         </div>
       </section>
 
       <p class="muted small" id="ls-render-reason" ${renderReason ? "" : "hidden"}>${esc(renderReason)}</p>
-      ${failedBanner}
-      ${lsState.loading ? '<div class="card card-pad muted">Loading lip-sync plan…</div>' : ""}
       ${lsState.error ? `<div class="card card-pad fail-text">${esc(lsState.error)}</div>` : ""}
 
-      ${!plan && !lsState.loading ? `
-        <section class="card card-pad stack-14">
-          <h2>Step 1 · Auto detect faces &amp; speaking speakers</h2>
-          <p class="muted">Runs <code>face_yolov8m.pt</code> face tracking, aligns speakers using your Gemini <code>visual_speakers</code> hints, and uses MediaPipe mouth-motion (MAR) as backup. No video rendering starts until you pick shots or confirm.</p>
-          ${app.boot.lip_sync ? "" : '<p class="alert alert-info">Auto face and speaker detection runs in Studio. Open this project in Studio to detect faces or render lip sync.</p>'}
-          <div class="row row-wrap">
-            <button type="button" class="btn ${app.boot.lip_sync ? "btn-primary" : ""}" data-ls-action="detect" data-busy="lip-sync-detect" data-locked="${!!detectReason}" ${detectReason ? `disabled title="${esc(detectReason)}"` : ""}>
-              Auto detect faces &amp; speakers
-            </button>
-            <button type="button" class="btn ${app.boot.lip_sync ? "" : "btn-primary"}" data-ls-action="to-result">Skip to Result</button>
-          </div>
-        </section>
-      ` : ""}
-
-      ${plan ? `
-        <div class="ls-grid">
-          <section class="ls-main stack-14">
-            <div class="card ls-player-card">
-              <div class="ls-stage-top" id="ls-stage-top">
-                ${stageTopHtml(activeItem, activeEntry, activeTake, isPreviewMode, showingSyncedTake)}
-              </div>
-
-              <div class="ls-video-stage" id="ls-video-stage">
-                <video id="ls-video" src="${esc(stageVideoSrc)}" controls playsinline ${showingSyncedTake && lsState.loopShot ? "loop" : ""} preload="metadata" data-stage-mode="${isPreviewMode ? "preview" : "align"}" data-seek-time="${activeItem ? activeItem.seekTime : 0}" data-clip-start="${activeItem ? activeItem.shot.start : 0}" data-clip-end="${activeItem ? activeItem.shot.end : 0}"></video>
-                ${!isPreviewMode ? '<div class="ls-overlay" id="ls-overlay" aria-label="Tracked face boxes"></div><div class="ls-subtitle-bar" id="ls-subtitle" hidden></div>' : `
-                  <div class="ls-preview-hud">
-                    <span class="ls-preview-dot ${showingSyncedTake ? "" : "orig"}"></span>
-                    <span>${showingSyncedTake ? `Take ${activeTake.number} · ${esc(formatTakeMeta(activeTake, activeItem.shot))}` : "Original picture (no lip sync)"}</span>
-                  </div>
-                `}
-              </div>
-
-              <div class="ls-assign-bar">
-                <div class="row align-center row-wrap">
-                  <button type="button" class="btn btn-small" data-ls-action="prev-shot">← Prev</button>
-                  <button type="button" class="btn btn-small" data-ls-action="next-shot">Next →</button>
-                  <span class="muted small" id="ls-active-info">
-                    ${assignmentLabel(activeItem?.shot, activeItem?.speaker)}
-                  </span>
-                </div>
-                <div class="row row-wrap align-center">
-                  <div class="row row-wrap align-center" id="ls-quick-buttons" data-assign-key="${esc(activeItem?.key || "")}" data-range="${lsState.minFaceSize}-${lsState.maxFaceSize}">
-                    ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides, plan)}
-                  </div>
-                  ${activeItem ? `
-                    <button type="button" id="ls-render-shot-btn" class="btn btn-small btn-primary" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot ? "" : "disabled"}>
-                      ${activeEntry.takes.length ? "New take" : "Render shot"}
-                    </button>
-                  ` : ""}
-                </div>
-              </div>
-
-              ${activeItem ? `<div class="ls-takes-panel" id="ls-takes-panel">${takesPanelHtml(activeItem, activeEntry, activeStatus, data)}</div>` : ""}
+      <!-- 2-Column Split Studio Workbench -->
+      <div class="ls-grid">
+        <!-- LEFT MAIN COLUMN: Unified Shot Stage + Inline Engine/Settings + Takes -->
+        <section class="ls-main">
+          <div class="card ls-player-card">
+            <div class="ls-stage-top" id="ls-stage-top">
+              ${stageTopHtml(activeItem, items, activeEntry, activeTake, isPreviewMode, canCompare)}
             </div>
 
-            <section class="card card-pad stack-12 ls-assembly-card">
-              <div class="row align-center row-wrap">
-                <h3>Full video assembly</h3>
-                ${asm.changedCount > 0 ? `<span class="chip chip-warn">${plural(asm.changedCount, "shot")} changed since last export</span>` : data?.output ? '<span class="chip">Up to date</span>' : '<span class="chip chip-quiet">Not assembled yet</span>'}
-                <span class="spacer"></span>
-                ${data?.output ? `<button type="button" class="btn btn-small" data-ls-action="to-result">Watch in Result →</button>` : ""}
-              </div>
-              <div class="ls-readiness-bar" role="img" aria-label="${asm.reused} reused, ${asm.changedCount} updated, ${asm.unrendered} unrendered, ${asm.off} off-screen">
-                ${asm.reused > 0 ? `<span class="ls-seg-reused" style="flex:${asm.reused}"></span>` : ""}
-                ${asm.changedCount > 0 ? `<span class="ls-seg-updated" style="flex:${asm.changedCount}"></span>` : ""}
-                ${asm.unrendered > 0 ? `<span class="ls-seg-unrendered" style="flex:${asm.unrendered}"></span>` : ""}
-                ${asm.off > 0 ? `<span class="ls-seg-off" style="flex:${asm.off}"></span>` : ""}
-              </div>
-              <div class="row row-wrap small muted">
-                <span><strong>${asm.reused}</strong> reused</span>
-                <span><strong>${asm.changedCount}</strong> updated</span>
-                <span><strong>${asm.unrendered}</strong> unrendered</span>
-                <span><strong>${asm.off}</strong> off-screen</span>
-              </div>
-              <div class="row align-center row-wrap top-line">
-                <span class="small muted">Fast splice · updates only changed shots and reuses every unchanged take without GPU re-rendering.</span>
-                <span class="spacer"></span>
-                <button type="button" class="btn btn-primary" data-ls-action="assemble" data-busy="lip-sync" data-locked="${!canAssemble}" ${canAssemble ? "" : "disabled"}>
-                  ${assembleLabel}
-                </button>
-              </div>
-            </section>
+            <div class="ls-video-stage" id="ls-video-stage">
+              <video id="ls-video" src="${esc(stageVideoSrc)}" controls playsinline ${showingSyncedTake && lsState.loopShot ? "loop" : ""} preload="metadata"
+                data-stage-mode="${isPreviewMode ? "preview" : "align"}"
+                data-compare-orig="${showingOriginalCompare ? "true" : "false"}"
+                data-seek-time="${activeItem ? activeItem.seekTime : 0}"
+                data-clip-start="${activeItem ? activeItem.shot.start : 0}"
+                data-clip-end="${activeItem ? activeItem.shot.end : 0}"></video>
+              ${!isPreviewMode ? '<div class="ls-overlay" id="ls-overlay" aria-label="Tracked face boxes"></div><div class="ls-subtitle-bar" id="ls-subtitle" hidden></div>' : `
+                <div class="ls-preview-hud">
+                  <span class="ls-preview-dot ${showingSyncedTake ? "" : "orig"}"></span>
+                  <span>${showingSyncedTake
+                    ? `Take ${activeTake.number} · ${esc(formatTakeMeta(activeTake, activeItem.shot))}`
+                    : showingOriginalCompare
+                      ? `Comparing original · Take ${activeTake.number} stays active`
+                      : "Original picture (Keep original in export)"}</span>
+                </div>
+              `}
+            </div>
 
-            <section class="card card-pad stack-12">
-              <div class="row align-center row-wrap">
-                <h3>Settings for next take</h3>
-                <span class="spacer"></span>
-                <span class="muted small" id="ls-engine-desc">${(ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2]}</span>
+            <div id="ls-speaking-span">
+              ${speakingSpanHtml(activeItem, plan)}
+            </div>
+
+            <!-- Unified Face Assignment + Engine Pill + Render CTA Ribbon -->
+            <div class="ls-assign-bar">
+              <div class="row align-center row-wrap ls-face-group">
+                <span class="rail-label">Face</span>
+                <div class="row row-wrap align-center" id="ls-quick-buttons" data-assign-key="${esc(activeItem?.key || "")}" data-range="${lsState.minFaceSize}-${lsState.maxFaceSize}">
+                  ${assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides, plan)}
+                </div>
               </div>
+              <div class="row align-center row-wrap ls-render-group">
+                <span id="ls-stage-hints" class="row align-center">${stageHintsHtml(activeItem, activeStatus, plan)}</span>
+                <button type="button" id="ls-engine-trigger" class="btn btn-small ${lsState.settingsOpen ? "ls-pill-active" : ""}" data-ls-action="toggle-settings" aria-expanded="${lsState.settingsOpen}" title="Choose engine and parameters for the next take">
+                  <span id="ls-engine-pill-label">${esc(enginePillSummary())}</span>
+                  <span class="ls-caret" aria-hidden="true">▾</span>
+                </button>
+                ${activeItem ? `
+                  <button type="button" id="ls-render-shot-btn" class="btn btn-small btn-primary" data-ls-action="render-shot" data-shot-key="${esc(activeItem.key)}" data-busy="lip-sync" data-locked="${!canRenderShot}" ${canRenderShot && !busy ? "" : "disabled"}>
+                    ${activeEntry.takes.length ? "New take" : "Render shot"}
+                  </button>
+                ` : ""}
+              </div>
+            </div>
+
+            <!-- Inline Collapsible Next-Take Settings Drawer (Directly beside Render shot) -->
+            <div class="ls-settings-drawer" id="ls-settings-drawer" ${lsState.settingsOpen ? "" : "hidden"}>
               <div class="row align-center row-wrap">
-                <span class="field-label">Engine</span>
+                <span class="field-label">Next-take engine</span>
                 <div class="seg" role="group" aria-label="Lip-sync engine">
                   ${ENGINE_OPTIONS.map(([id, label]) => `
                     <button type="button" data-ls-engine="${id}" aria-pressed="${lsState.engine === id}">${esc(label)}</button>
                   `).join("")}
                 </div>
+                <span class="spacer"></span>
+                <span class="muted small" id="ls-engine-desc">${(ENGINE_OPTIONS.find(([id]) => id === lsState.engine) || ENGINE_OPTIONS[0])[2]}</span>
               </div>
               <div class="ls-settings-row" id="ls-settings-row">
                 ${engineSettingsHtml()}
               </div>
-              <div class="field ls-range-field">
-                <div class="row align-center row-wrap">
-                  <span class="field-label">Face size range <span class="mono" data-ls-out="face-size">${esc(faceSizeLabel(plan))}</span></span>
-                  <span class="spacer"></span>
-                  <div class="ls-size-presets row row-wrap">
-                    ${SIZE_PRESETS.map(([lo, hi, label]) => `
-                      <button type="button" class="btn btn-small ${lsState.minFaceSize === lo && lsState.maxFaceSize === hi ? "btn-primary" : ""}"
-                        data-ls-size-preset="${lo},${hi}">${label}</button>
-                    `).join("")}
-                  </div>
-                </div>
-                <div class="ls-range-dual">
-                  <div class="ls-range-track">
-                    <div class="ls-range-fill" id="ls-range-fill" style="left:${lsState.minFaceSize}%;width:${Math.max(0, lsState.maxFaceSize - lsState.minFaceSize)}%"></div>
-                  </div>
-                  <input type="range" min="0" max="100" step="1" value="${lsState.minFaceSize}" data-ls-range="min" aria-label="Minimum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 4 : 3}">
-                  <input type="range" min="0" max="100" step="1" value="${lsState.maxFaceSize}" data-ls-range="max" aria-label="Maximum face height percent" style="z-index:${lsState.minFaceSize >= 95 ? 3 : 4}">
-                </div>
-                <span class="muted small">Filters face boxes, face buttons, and newly rendered shots; manual picks and existing takes stay untouched.</span>
-              </div>
-              <div class="row align-center row-wrap top-line">
-                <span class="small" data-ls-render-summary>
-                  ${renderSummaryHtml(plan, confirmedCount, uncertainCount, offCount)}
-                </span>
-                <span class="spacer"></span>
-                <button type="button" class="btn" data-ls-action="render" data-busy="lip-sync" data-locked="${!canRender}" ${canRender ? "" : "disabled"}>
-                  Render all &amp; assemble
-                </button>
-              </div>
-            </section>
-          </section>
+              <span class="muted small">Applies only to newly rendered takes; existing saved takes stay untouched.</span>
+            </div>
 
-          <aside class="card ls-queue">
-            <div class="ls-queue-head stack-10">
-              <div class="row align-center row-wrap">
-                <h2>Shots &amp; takes (${items.length})</h2>
-                <span class="spacer"></span>
-                <button type="button" class="btn btn-small" data-ls-action="select-unrendered">Select unrendered</button>
-                <button type="button" id="ls-clear-checked-btn" class="btn btn-small" data-ls-action="clear-checked" ${checkedCount > 0 ? "" : "hidden"}>Clear</button>
-              </div>
-              <div class="seg" role="group" aria-label="Filter shots">
-                <button type="button" data-ls-filter="all" aria-pressed="${lsState.filter === "all"}">All (${items.length})</button>
-                <button type="button" data-ls-filter="pending" aria-pressed="${lsState.filter === "pending"}">Pending (${pendingCount})</button>
-                <button type="button" data-ls-filter="review" aria-pressed="${lsState.filter === "review"}">Needs check (${uncertainCount})</button>
-              </div>
-              <div id="ls-queue-bulk-slot">
-                ${queueBulkHtml(checkedCount, canRender, !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active)}
-              </div>
+            <!-- Contextual Failure / Size-Ignored Recovery Strip -->
+            <div id="ls-recovery-slot">
+              ${recoveryStripHtml(activeItem, plan, activeFailed, app)}
             </div>
-            <div class="ls-queue-list">
-              ${visible.map((it) => {
-                const failedEntry = failedByKey.get(it.key);
-                const badge = failedEntry ? {label: "Failed", cls: "chip chip-warn"} : takeStatusBadge(it, plan, data);
-                const selected = activeItem && it.key === activeItem.key;
-                const checked = lsState.checkedKeys.has(it.key);
-                const tk = activeTakeFor(data, it.key);
-                const targetDesc = failedEntry
-                  ? `Last render failed: ${failedEntry.error}`
-                  : tk
-                    ? `Take ${tk.number} · ${formatTakeMeta(tk, it.shot)}`
-                    : shotTargetDescription(it, plan);
-                return `
-                  <div class="ls-shot-row ${selected ? "selected" : ""}" data-ls-row-key="${esc(it.key)}">
-                    <input type="checkbox" class="ls-shot-check" data-ls-check="${esc(it.key)}" ${checked ? "checked" : ""} aria-label="Select Shot ${it.shot.index + 1}">
-                    <button type="button" class="ls-shot-main" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.seekTime}">
-                      <div class="row align-center">
-                        <strong>Shot ${it.shot.index + 1}</strong>
-                        <span class="mono muted">${formatClock(it.shot.start)}–${formatClock(it.shot.end)}</span>
-                        <span class="spacer"></span>
-                        <span class="${badge.cls}" data-ls-row-badge="${esc(it.key)}">${badge.label}</span>
-                      </div>
-                      <div class="small ellipsis"><strong>${esc(speakerLabel(it.speaker))}</strong>${it.line ? ` · ${esc(it.line)}` : ""}</div>
-                      <div class="small muted ellipsis" data-ls-row-desc="${esc(it.key)}">${esc(targetDesc)}</div>
-                    </button>
-                  </div>`;
-              }).join("") || '<p class="muted small card-pad">No shots in this filter.</p>'}
+
+            <!-- Compact Shot Takes Strip -->
+            ${activeItem ? `<div class="ls-takes-panel" id="ls-takes-panel">${takesPanelHtml(activeItem, activeEntry, activeStatus, data)}</div>` : ""}
+          </div>
+        </section>
+
+        <!-- RIGHT RAIL: Smart Shot & Take Queue -->
+        <aside class="card ls-queue" aria-label="Shots and takes queue">
+          <div class="ls-queue-head stack-10">
+            <div class="row align-center row-wrap">
+              <h2>Shots (${items.length})</h2>
+              <span class="spacer"></span>
+              ${skippedCount > 0 ? `
+                <button type="button" class="btn btn-small ${lsState.hideSkipped ? "ls-pill-active" : ""}" data-ls-action="toggle-hide-skipped" aria-pressed="${lsState.hideSkipped}">
+                  ${lsState.hideSkipped ? `Hidden (${skippedCount})` : `Hide skipped (${skippedCount})`}
+                </button>` : ""}
+              <button type="button" class="btn btn-small" data-ls-action="select-unrendered">Select unrendered</button>
             </div>
-          </aside>
+            <div class="seg ls-filter-seg" role="group" aria-label="Filter shots">
+              <button type="button" data-ls-filter="all" aria-pressed="${lsState.filter === "all"}">All (${items.length})</button>
+              <button type="button" data-ls-filter="attention" aria-pressed="${lsState.filter === "attention"}">Attention (${attentionCount})</button>
+              <button type="button" data-ls-filter="pending" aria-pressed="${lsState.filter === "pending"}">Pending (${pendingCount})</button>
+              <button type="button" data-ls-filter="ready" aria-pressed="${lsState.filter === "ready"}">Ready (${readyCount})</button>
+            </div>
+            <div id="ls-queue-bulk-slot">
+              ${queueBulkHtml(checkedCount, asm.unrenderedKeys.length, canRender, busy)}
+            </div>
+          </div>
+
+          <div class="ls-queue-list">
+            ${visible.map((it) => {
+              const failedEntry = failedByKey.get(it.key);
+              const queued = batchActive && lsState.activeBatchKeys.has(it.key);
+              const badge = queued
+                ? {label: "Rendering…", cls: "chip", tone: "ok"}
+                : failedEntry
+                  ? {label: "Failed", cls: "chip chip-fail", tone: "fail"}
+                  : takeStatusBadge(it, plan, data);
+              const selected = activeItem && it.key === activeItem.key;
+              const uncheckable = isUncheckableItem(it, plan);
+              const checked = !uncheckable && lsState.checkedKeys.has(it.key);
+              const tk = activeTakeFor(data, it.key);
+              const shotLabel = it.turnCount > 1 ? `Shot ${it.shot.index + 1} · ${it.turnPosition}/${it.turnCount}` : `Shot ${it.shot.index + 1}`;
+              const targetDesc = failedEntry
+                ? `Failed: ${failedEntry.error}`
+                : tk
+                  ? `Take ${tk.number} · ${formatTakeMeta(tk, it.shot)}`
+                  : shotTargetDescription(it, plan);
+              return `
+                <div class="ls-shot-row ${selected ? "selected" : ""} ${queued ? "is-rendering" : ""}" data-ls-row-key="${esc(it.key)}">
+                  <input type="checkbox" class="ls-shot-check" data-ls-check="${esc(it.key)}" ${checked ? "checked" : ""} ${uncheckable ? "disabled" : ""} aria-label="Select Shot ${it.shot.index + 1} ${esc(speakerLabel(it.speaker))}">
+                  <button type="button" class="ls-shot-main" data-ls-shot="${it.shot.index}" data-ls-speaker="${esc(it.speaker)}" data-ls-time="${it.seekTime}">
+                    <div class="row align-center">
+                      <span class="ls-dot tone-${badge.tone}" data-ls-row-dot="${esc(it.key)}" aria-hidden="true"></span>
+                      <strong class="small">${shotLabel}</strong>
+                      <span class="mono muted small">${formatClock(it.shot.start)}–${formatClock(it.shot.end)}</span>
+                      <span class="spacer"></span>
+                      <span class="${badge.cls}" data-ls-row-badge="${esc(it.key)}">${badge.label}</span>
+                    </div>
+                    <div class="small ellipsis"><strong>${esc(speakerLabel(it.speaker))}</strong>${it.line ? ` · ${esc(it.line)}` : ""}</div>
+                    <div class="small ${failedEntry ? "fail-text" : "muted"} ellipsis" data-ls-row-desc="${esc(it.key)}">${esc(targetDesc)}</div>
+                  </button>
+                </div>`;
+            }).join("") || '<p class="muted small card-pad">No shots match this filter.</p>'}
+          </div>
+        </aside>
+      </div>
+
+      ${asm.activeTakesCount > 0 ? `
+        <div class="ls-mobile-dock">
+          <div class="ls-mobile-dock-meta">
+            <strong class="small">${asm.changedCount > 0 ? `${plural(asm.changedCount, "shot")} changed` : `${plural(asm.activeTakesCount, "take")} ready`}</strong>
+            <span class="muted small">Fast CPU splice</span>
+          </div>
+          <button type="button" class="btn btn-primary" data-ls-action="assemble" data-busy="lip-sync" data-locked="${!canAssemble}" ${canAssemble && !busy ? "" : "disabled"}>
+            ${esc(assembleLabel)}
+          </button>
         </div>
       ` : ""}
     </div>`;
@@ -1052,8 +1389,6 @@ function drawOverlay(app) {
     buttons.dataset.assignKey = key;
     buttons.dataset.range = rangeKey;
     buttons.innerHTML = assignmentButtons(shot, activeAssign, lsState.data.overrides, plan);
-    const infoEl = document.getElementById("ls-active-info");
-    if (infoEl) infoEl.innerHTML = assignmentLabel(shot, activeSpeaker);
   }
   if (!shot) {
     if (overlay.childElementCount) overlay.textContent = "";
@@ -1168,15 +1503,21 @@ export function afterLipSync(app) {
     const clipStart = Number(video.dataset.clipStart) || 0;
     const clipEnd = Number(video.dataset.clipEnd) || 0;
     const isFullSource = !video.hasAttribute("loop") && clipEnd > clipStart;
+    const compareOffset = lsState.compareOffset;
+    const shouldResume = lsState.autoplayPreview || lsState.compareResume;
+    lsState.compareOffset = null;
+    lsState.compareResume = false;
+    lsState.autoplayPreview = false;
+
     if (isFullSource) {
       const seekToStart = () => {
-        if (video.currentTime < clipStart || video.currentTime >= clipEnd) {
-          video.currentTime = clipStart;
+        const desired = compareOffset !== null
+          ? Math.max(clipStart, Math.min(clipEnd - 0.05, clipStart + compareOffset))
+          : clipStart;
+        if (video.currentTime < clipStart || video.currentTime >= clipEnd || compareOffset !== null) {
+          video.currentTime = desired;
         }
-        if (lsState.autoplayPreview) {
-          lsState.autoplayPreview = false;
-          video.play().catch(() => {});
-        }
+        if (shouldResume) video.play().catch(() => {});
       };
       if (video.readyState >= 1) seekToStart();
       else video.addEventListener("loadedmetadata", seekToStart, {once: true});
@@ -1191,14 +1532,19 @@ export function afterLipSync(app) {
           }
         }
       });
-    } else if (lsState.autoplayPreview) {
-      lsState.autoplayPreview = false;
-      const startPlay = () => { video.play().catch(() => {}); };
+    } else {
+      const startPlay = () => {
+        if (compareOffset !== null && Number.isFinite(video.duration) && video.duration > 0) {
+          video.currentTime = Math.max(0, Math.min(video.duration - 0.05, compareOffset));
+        }
+        if (shouldResume) video.play().catch(() => {});
+      };
       if (video.readyState >= 1) startPlay();
       else video.addEventListener("loadedmetadata", startPlay, {once: true});
     }
     return;
   }
+
   const restoreAlignTime = () => {
     const targetTime = lsState.videoTime !== null ? lsState.videoTime : (Number(video.dataset.seekTime) || 0);
     if (targetTime > 0 && Math.abs(video.currentTime - targetTime) > 0.05) {
@@ -1246,12 +1592,13 @@ async function selectTake(app, shotKey, takeId, {remove = false} = {}) {
     });
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     lsState.data = resp;
+    lsState.compareOriginal = false;
     if (!remove) {
       lsState.stageMode = "preview";
       lsState.autoplayPreview = true;
     }
     rerenderLipSync(app);
-    toast(remove ? "Take removed." : takeId === "original" ? "Switched shot to original picture." : "Active take updated.");
+    toast(remove ? "Take removed." : takeId === "original" ? "Set shot to keep original picture in export." : "Active take updated.");
   } catch (error) {
     if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
     toast(error.message, {error: true});
@@ -1290,6 +1637,31 @@ async function saveOverride(app, key, trackId) {
   }
 }
 
+function patchDrawerUI() {
+  const hasSizeFilter = lsState.minFaceSize > 0 || lsState.maxFaceSize < 100;
+  const sizeDrawer = document.getElementById("ls-size-drawer");
+  const sizeTrigger = document.getElementById("ls-size-trigger");
+  if (sizeDrawer) sizeDrawer.hidden = !lsState.sizeDrawerOpen;
+  if (sizeTrigger) {
+    sizeTrigger.setAttribute("aria-expanded", String(lsState.sizeDrawerOpen));
+    sizeTrigger.classList.toggle("ls-pill-active", lsState.sizeDrawerOpen || hasSizeFilter);
+  }
+  const settingsDrawer = document.getElementById("ls-settings-drawer");
+  const engineTrigger = document.getElementById("ls-engine-trigger");
+  if (settingsDrawer) settingsDrawer.hidden = !lsState.settingsOpen;
+  if (engineTrigger) {
+    engineTrigger.setAttribute("aria-expanded", String(lsState.settingsOpen));
+    engineTrigger.classList.toggle("ls-pill-active", lsState.settingsOpen);
+  }
+  const asmDrawer = document.getElementById("ls-assembly-drawer");
+  const asmBtn = document.querySelector('[data-ls-action="toggle-assembly"]');
+  if (asmDrawer) asmDrawer.hidden = !lsState.assemblyOpen;
+  if (asmBtn) {
+    asmBtn.setAttribute("aria-expanded", String(lsState.assemblyOpen));
+    asmBtn.classList.toggle("btn-primary", lsState.assemblyOpen);
+  }
+}
+
 function syncFaceSizeUI(app) {
   const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
   const plan = data?.plan;
@@ -1311,6 +1683,9 @@ function syncFaceSizeUI(app) {
   }
   const out = document.querySelector('[data-ls-out="face-size"]');
   if (out) out.textContent = faceSizeLabel(plan);
+  const shortOut = document.querySelector('[data-ls-out="face-size-short"]');
+  if (shortOut) shortOut.textContent = faceSizeShort();
+  patchDrawerUI();
   for (const btn of document.querySelectorAll("[data-ls-size-preset]")) {
     const [lo, hi] = btn.dataset.lsSizePreset.split(",").map(Number);
     btn.classList.toggle("btn-primary", lsState.minFaceSize === lo && lsState.maxFaceSize === hi);
@@ -1326,24 +1701,35 @@ function syncFaceSizeUI(app) {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
-  const renderBtn = document.querySelector('[data-ls-action="render"]');
-  if (renderBtn) {
-    const locked = !(plan?.revision && !reason && !lsState.loading);
+  const busy = isLipSyncBusy(app);
+  for (const renderBtn of document.querySelectorAll('[data-ls-action="render"]')) {
+    const locked = !(plan.revision && !reason && !lsState.loading);
     renderBtn.dataset.locked = String(locked);
-    const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
     renderBtn.disabled = busy || locked;
   }
+  const failedByKey = failedWindowMap(ls);
   for (const it of items) {
     const badgeEl = document.querySelector(`[data-ls-row-badge="${CSS.escape(it.key)}"]`);
-    if (badgeEl) {
+    if (badgeEl && !failedByKey.has(it.key)) {
       const badge = takeStatusBadge(it, plan, data);
       badgeEl.className = badge.cls;
       badgeEl.textContent = badge.label;
+      const dotEl = document.querySelector(`[data-ls-row-dot="${CSS.escape(it.key)}"]`);
+      if (dotEl) dotEl.className = `ls-dot tone-${badge.tone}`;
     }
     const descEl = document.querySelector(`[data-ls-row-desc="${CSS.escape(it.key)}"]`);
-    if (descEl) {
+    if (descEl && !failedByKey.has(it.key)) {
       const tk = activeTakeFor(data, it.key);
       descEl.textContent = tk ? `Take ${tk.number} · ${formatTakeMeta(tk, it.shot)}` : shotTargetDescription(it, plan);
+    }
+    const chk = document.querySelector(`[data-ls-check="${CSS.escape(it.key)}"]`);
+    if (chk) {
+      const uncheckable = isUncheckableItem(it, plan);
+      chk.disabled = uncheckable;
+      if (uncheckable && lsState.checkedKeys.has(it.key)) {
+        lsState.checkedKeys.delete(it.key);
+        chk.checked = false;
+      }
     }
   }
   const buttonsEl = document.getElementById("ls-quick-buttons");
@@ -1356,6 +1742,10 @@ function syncFaceSizeUI(app) {
     buttonsEl.dataset.range = `${lsState.minFaceSize}-${lsState.maxFaceSize}`;
     buttonsEl.innerHTML = assignmentButtons(shot, assign, data.overrides, plan);
   }
+  const activeItem = items.find((it) => it.shot.index === lsState.selectedShot && (!lsState.selectedSpeaker || it.speaker === lsState.selectedSpeaker)) || null;
+  const recSlot = document.getElementById("ls-recovery-slot");
+  if (recSlot) recSlot.innerHTML = recoveryStripHtml(activeItem, plan, activeItem ? failedByKey.get(activeItem.key) : null, app);
+  patchBulkSelection(app);
   drawOverlay(app);
 }
 
@@ -1365,14 +1755,14 @@ function patchBulkSelection(app) {
   const ls = app.session?.result?.lip_sync;
   const reason = ls && plan ? renderLockedReason(ls, app, plan) : "unavailable";
   const canRender = !!(plan?.revision && !reason && !lsState.loading);
-  const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+  const busy = isLipSyncBusy(app);
+  const items = shotItems(plan);
+  const asm = assemblySummary(items, data, plan);
   const count = lsState.checkedKeys.size;
   const slot = document.getElementById("ls-queue-bulk-slot");
-  if (slot) slot.innerHTML = queueBulkHtml(count, canRender, busy);
-  const clearBtn = document.getElementById("ls-clear-checked-btn");
-  if (clearBtn) clearBtn.hidden = count === 0;
+  if (slot) slot.innerHTML = queueBulkHtml(count, asm.unrenderedKeys.length, canRender, busy);
   for (const chk of document.querySelectorAll("[data-ls-check]")) {
-    const shouldCheck = lsState.checkedKeys.has(chk.dataset.lsCheck);
+    const shouldCheck = !chk.disabled && lsState.checkedKeys.has(chk.dataset.lsCheck);
     if (chk.checked !== shouldCheck) chk.checked = shouldCheck;
   }
 }
@@ -1387,11 +1777,21 @@ function patchEngineUI() {
   }
   const rowEl = document.getElementById("ls-settings-row");
   if (rowEl) rowEl.innerHTML = engineSettingsHtml();
+  patchEngineSummaryLabels();
+}
+
+function patchEngineSummaryLabels() {
+  const pill = document.getElementById("ls-engine-pill-label");
+  if (pill) pill.textContent = enginePillSummary();
+  const bulk = document.getElementById("ls-bulk-engine-label");
+  if (bulk) bulk.textContent = `Using ${formatEngineShort(lsState.engine)}`;
+  const emptyNote = document.getElementById("ls-takes-empty-note");
+  if (emptyNote) emptyNote.textContent = `No takes yet — click Render shot above using ${formatEngineShort(lsState.engine)}.`;
 }
 
 function patchLoopUI() {
   const video = document.getElementById("ls-video");
-  if (video && video.dataset.stageMode === "preview") {
+  if (video && video.dataset.stageMode === "preview" && video.dataset.compareOrig !== "true") {
     video.loop = lsState.loopShot;
   }
   const btn = document.querySelector('[data-ls-action="toggle-loop"]');
@@ -1406,6 +1806,7 @@ function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} =
   lsState.selectedShot = shotIndex;
   lsState.selectedSpeaker = speaker || null;
   lsState.videoTime = seekTime;
+  lsState.compareOriginal = false;
   const data = lsState.targetKey === JSON.stringify(reviewTarget(app)) ? lsState.data : null;
   const plan = data?.plan;
   const key = `${shotIndex}:${speaker || ""}`;
@@ -1430,30 +1831,36 @@ function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} =
   const activeItem = items.find((it) => it.shot.index === shotIndex && (!speaker || it.speaker === speaker)) || null;
   const activeTake = activeItem ? activeTakeFor(data, activeItem.key) : null;
   const activeStatus = activeItem ? shotTakeStatus(activeItem, data) : "unrendered";
+  const ls = app.session?.result?.lip_sync;
+  const failedByKey = failedWindowMap(ls);
+
   const stageTop = document.getElementById("ls-stage-top");
-  if (stageTop) stageTop.innerHTML = stageTopHtml(activeItem, entry, activeTake, false, false);
-  const infoEl = document.getElementById("ls-active-info");
-  if (infoEl) infoEl.innerHTML = assignmentLabel(activeItem?.shot, activeItem?.speaker);
+  if (stageTop) stageTop.innerHTML = stageTopHtml(activeItem, items, entry, activeTake, false, false);
+  const spanEl = document.getElementById("ls-speaking-span");
+  if (spanEl) spanEl.innerHTML = speakingSpanHtml(activeItem, plan);
   const buttonsEl = document.getElementById("ls-quick-buttons");
   if (buttonsEl) {
     buttonsEl.dataset.assignKey = activeItem?.key || "";
     buttonsEl.dataset.range = `${lsState.minFaceSize}-${lsState.maxFaceSize}`;
     buttonsEl.innerHTML = assignmentButtons(activeItem?.shot, activeItem?.assignment, data.overrides, plan);
   }
+  const hintsEl = document.getElementById("ls-stage-hints");
+  if (hintsEl) hintsEl.innerHTML = stageHintsHtml(activeItem, activeStatus, plan);
   const renderShotBtn = document.getElementById("ls-render-shot-btn");
   if (renderShotBtn && activeItem) {
-    const ls = app.session?.result?.lip_sync;
     const canRenderShot = !!(
-      plan?.revision && app.boot?.lip_sync && ls?.ready && !lsState.loading
+      plan.revision && app.boot?.lip_sync && ls?.ready && !lsState.loading
       && activeItem.assignment.status !== "off_screen"
       && itemHasWindows(activeItem, plan)
     );
-    const busy = !!app.runs?.auto?.active || !!app.runs?.["lip-sync"]?.active || !!app.runs?.["lip-sync-detect"]?.active;
+    const busy = isLipSyncBusy(app);
     renderShotBtn.dataset.shotKey = activeItem.key;
     renderShotBtn.dataset.locked = String(!canRenderShot);
     renderShotBtn.disabled = busy || !canRenderShot;
     renderShotBtn.textContent = entry.takes.length ? "New take" : "Render shot";
   }
+  const recSlot = document.getElementById("ls-recovery-slot");
+  if (recSlot) recSlot.innerHTML = recoveryStripHtml(activeItem, plan, activeItem ? failedByKey.get(activeItem.key) : null, app);
   const takesEl = document.getElementById("ls-takes-panel");
   if (takesEl) takesEl.innerHTML = takesPanelHtml(activeItem, entry, activeStatus, data);
   for (const row of document.querySelectorAll(".ls-shot-row")) {
@@ -1465,6 +1872,8 @@ function selectShotInPlace(app, shotIndex, speaker, seekTime, {scroll = false} =
     }
   }
   video.dataset.seekTime = String(seekTime);
+  video.dataset.clipStart = String(activeItem ? activeItem.shot.start : 0);
+  video.dataset.clipEnd = String(activeItem ? activeItem.shot.end : 0);
   const seek = () => {
     video.currentTime = seekTime;
     drawOverlay(app);
@@ -1492,6 +1901,17 @@ function renderShotsPayload(app, shotKeys, {fresh = true} = {}) {
   };
 }
 
+function startShotRender(app, shotKeys) {
+  const payload = renderShotsPayload(app, shotKeys, {fresh: true});
+  if (!payload) return;
+  lsState.lastRenderedKeys = payload.shot_keys;
+  lsState.activeBatchKeys = new Set(payload.shot_keys);
+  app.startRun("lip-sync-shots", payload).then((run) => {
+    if (run && app.screen === "lipsync") rerenderLipSync(app, {preserveVideo: true});
+    else if (!run) lsState.activeBatchKeys.clear();
+  });
+}
+
 export function bindLipSync(app) {
   const screen = document.getElementById("screen");
   screen.addEventListener("change", (event) => {
@@ -1506,26 +1926,69 @@ export function bindLipSync(app) {
   });
   screen.addEventListener("click", async (event) => {
     if (app.screen !== "lipsync" || !app.session) return;
+
+    const jumpBtn = event.target.closest("[data-ls-jump]");
+    if (jumpBtn) {
+      const kind = jumpBtn.dataset.lsJump;
+      const plan = lsState.data?.plan;
+      const items = shotItems(plan);
+      const failedByKey = failedWindowMap(app.session?.result?.lip_sync);
+      if (kind === "ready") lsState.filter = "ready";
+      else if (kind === "pending") lsState.filter = "pending";
+      else lsState.filter = "attention";
+      let focus = null;
+      if (kind === "failed") focus = items.find((it) => failedByKey.has(it.key));
+      else if (kind === "uncertain") focus = items.find((it) => it.assignment.status === "uncertain");
+      if (focus) {
+        lsState.selectedShot = focus.shot.index;
+        lsState.selectedSpeaker = focus.speaker;
+        lsState.videoTime = focus.seekTime;
+      }
+      rerenderLipSync(app);
+      return;
+    }
+
+    const compareBtn = event.target.closest("[data-ls-compare]");
+    if (compareBtn) {
+      const wantOrig = compareBtn.dataset.lsCompare === "original";
+      if (wantOrig !== lsState.compareOriginal) {
+        const video = document.getElementById("ls-video");
+        if (video && video.readyState >= 1) {
+          const clipStart = Number(video.dataset.clipStart) || 0;
+          const wasOrig = lsState.compareOriginal;
+          lsState.compareOffset = Math.max(0, video.currentTime - (wasOrig ? clipStart : 0));
+          lsState.compareResume = !video.paused && !video.ended;
+        }
+        lsState.compareOriginal = wantOrig;
+        rerenderLipSync(app);
+      }
+      return;
+    }
+
     const stageBtn = event.target.closest("[data-ls-stage]");
     if (stageBtn) {
       const nextMode = stageBtn.dataset.lsStage;
       if (nextMode && nextMode !== lsState.stageMode) {
         lsState.stageMode = nextMode;
+        lsState.compareOriginal = false;
         if (nextMode === "preview") lsState.autoplayPreview = true;
         rerenderLipSync(app);
       }
       return;
     }
+
     const pickTakeBtn = event.target.closest("[data-ls-pick-take]");
     if (pickTakeBtn) {
       await selectTake(app, pickTakeBtn.dataset.shotKey, pickTakeBtn.dataset.lsPickTake, {remove: false});
       return;
     }
+
     const delTakeBtn = event.target.closest("[data-ls-delete-take]");
     if (delTakeBtn) {
       await selectTake(app, delTakeBtn.dataset.shotKey, delTakeBtn.dataset.lsDeleteTake, {remove: true});
       return;
     }
+
     const engineBtn = event.target.closest("[data-ls-engine]");
     if (engineBtn) {
       const nextEngine = engineBtn.dataset.lsEngine;
@@ -1536,6 +1999,7 @@ export function bindLipSync(app) {
       }
       return;
     }
+
     const preset = event.target.closest("[data-ls-size-preset]");
     if (preset) {
       const [lo, hi] = preset.dataset.lsSizePreset.split(",").map(Number);
@@ -1545,23 +2009,34 @@ export function bindLipSync(app) {
       syncFaceSizeUI(app);
       return;
     }
+
     const filter = event.target.closest("[data-ls-filter]");
     if (filter) {
       lsState.filter = filter.dataset.lsFilter;
-      app.render();
+      rerenderLipSync(app, {preserveVideo: true});
       return;
     }
+
     const shotRow = event.target.closest("[data-ls-shot]");
     if (shotRow) {
       selectShotInPlace(app, Number(shotRow.dataset.lsShot), shotRow.dataset.lsSpeaker || null, Number(shotRow.dataset.lsTime) || 0);
       return;
     }
+
+    const altShot = event.target.closest("[data-ls-speaker-tab], [data-ls-map-shot]");
+    if (altShot) {
+      const rawIdx = altShot.dataset.lsSpeakerTab ?? altShot.dataset.lsMapShot;
+      selectShotInPlace(app, Number(rawIdx), altShot.dataset.speaker || null, Number(altShot.dataset.time) || 0, {scroll: true});
+      return;
+    }
+
     const assign = event.target.closest("[data-ls-assign]");
     if (assign) {
       const raw = assign.dataset.trackId;
       await saveOverride(app, assign.dataset.lsAssign, raw === "auto" ? "auto" : raw === "off" ? null : Number(raw));
       return;
     }
+
     const btn = event.target.closest("[data-ls-action]");
     if (!btn) return;
     const action = btn.dataset.lsAction;
@@ -1571,6 +2046,23 @@ export function bindLipSync(app) {
     } else if (action === "to-dub") {
       stopOverlayLoop();
       app.go("dub");
+    } else if (action === "toggle-size-drawer") {
+      lsState.sizeDrawerOpen = !lsState.sizeDrawerOpen;
+      patchDrawerUI();
+    } else if (action === "open-size-drawer") {
+      lsState.sizeDrawerOpen = true;
+      patchDrawerUI();
+      document.getElementById("ls-size-drawer")?.scrollIntoView({block: "nearest"});
+    } else if (action === "toggle-settings") {
+      lsState.settingsOpen = !lsState.settingsOpen;
+      patchDrawerUI();
+    } else if (action === "toggle-assembly") {
+      lsState.assemblyOpen = !lsState.assemblyOpen;
+      patchDrawerUI();
+    } else if (action === "toggle-hide-skipped") {
+      lsState.hideSkipped = !lsState.hideSkipped;
+      saveLsSettings();
+      rerenderLipSync(app, {preserveVideo: true});
     } else if (action === "toggle-loop") {
       lsState.loopShot = !lsState.loopShot;
       patchLoopUI();
@@ -1591,17 +2083,17 @@ export function bindLipSync(app) {
       patchBulkSelection(app);
     } else if (action === "render-shot") {
       const shotKey = btn.dataset.shotKey;
-      const payload = shotKey ? renderShotsPayload(app, [shotKey], {fresh: true}) : null;
-      if (payload) {
-        lsState.lastRenderedKeys = payload.shot_keys;
-        app.startRun("lip-sync-shots", payload);
+      if (shotKey) startShotRender(app, [shotKey]);
+    } else if (action === "retry-musetalk") {
+      const shotKey = btn.dataset.shotKey;
+      if (shotKey) {
+        lsState.engine = "musetalk";
+        saveLsSettings();
+        patchEngineUI();
+        startShotRender(app, [shotKey]);
       }
     } else if (action === "render-selected") {
-      const payload = renderShotsPayload(app, Array.from(lsState.checkedKeys), {fresh: true});
-      if (payload) {
-        lsState.lastRenderedKeys = payload.shot_keys;
-        app.startRun("lip-sync-shots", payload);
-      }
+      startShotRender(app, Array.from(lsState.checkedKeys));
     } else if (action === "assemble") {
       const target = reviewTarget(app);
       if (lsState.targetKey !== JSON.stringify(target) || lsState.saving || lsState.loading) return;
@@ -1662,5 +2154,6 @@ export function bindLipSync(app) {
     saveLsSettings();
     const out = document.querySelector(`[data-ls-out="${key}"]`);
     if (out) out.textContent = formatSettingOut(key, lsState[key]);
+    patchEngineSummaryLabels();
   });
 }
