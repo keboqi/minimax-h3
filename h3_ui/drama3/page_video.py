@@ -797,10 +797,11 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         """A kept style preview; only files the model's previews record names."""
         owner_of(request)
         root = export.deps.runtime_config().output_dir
-        if file not in visuals.preview_images(root, engine).values():
+        path = visuals.preview_file_path(root, engine, file)
+        if path is None:
             raise not_found()
         # Each preview gets a new name when drawn again, so a file never changes under its name.
-        return file_response(visuals.previews_dir(root, engine) / file, media_type="image/jpeg",
+        return file_response(path, media_type="image/jpeg",
                              cache="private, max-age=31536000, immutable")
 
     @app.post(f"{api}/project/video/save", include_in_schema=False)

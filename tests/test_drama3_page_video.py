@@ -276,6 +276,15 @@ class Drama3PageVideoTests(unittest.TestCase):
         refused = self.client.post(f"{API}/project/video/preview", params=NAME, json={"presets": ["Nope"]})
         self.assertIn("Pick style presets", refused.text)
 
+    def test_bundled_style_previews_are_served_on_fresh_deployments(self):
+        self.export.engines.append(("GPT Image", "gpt_image"))
+        self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={"video_engine": "gpt_image"}))
+        previews = self.project()["video"]["previews"]
+        self.assertEqual(set(previews), set(STYLE_PRESETS))
+        response = self.client.get(previews["Digital painting"])
+        self.assertEqual((response.status_code, response.headers["content-type"]), (200, "image/jpeg"))
+        self.assertGreater(len(response.content), 1000)
+
     def test_settings_are_saved_and_kept_in_range(self):
         video = self.ok(self.client.patch(f"{API}/project/video", params=NAME, json={
             "video_style": "Oil paint, thick impasto", "video_limit": 500, "video_engine": "flux3",

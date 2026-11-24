@@ -943,16 +943,28 @@ PREVIEWS_RECORD = "previews.json"
 _PREVIEWS_LOCK = Lock()
 
 
+BUNDLED_PREVIEWS_ROOT = Path(__file__).resolve().parent / "style_previews"
+
+
 def preview_prompt(name):
     """What a style preview draws: the preset's own scene in the preset's rendering."""
     return "\n".join([PREVIEW_LINE, STYLE_PRESETS[name], STYLE_PREVIEWS[name]])
 
 
-def previews_dir(root, engine):
-    """Where an image model's style previews are kept, shared by every project."""
+def _validate_preview_engine(engine):
     if not re.fullmatch(r"[A-Za-z0-9_]+", str(engine or "")):
         raise H3Error("Unknown image model.")
-    return Path(root) / ".soundstage" / "style_previews" / engine
+    return str(engine)
+
+
+def previews_dir(root, engine):
+    """Where an image model's style previews are kept, shared by every project."""
+    return Path(root) / ".soundstage" / "style_previews" / _validate_preview_engine(engine)
+
+
+def bundled_previews_dir(engine):
+    """Repository-bundled style previews for an image model, reused on fresh deployments."""
+    return BUNDLED_PREVIEWS_ROOT / _validate_preview_engine(engine)
 
 
 def _read_previews(folder):
@@ -963,12 +975,7 @@ def _read_previews(folder):
     return record if isinstance(record, dict) else {}
 
 
-def preview_images(root, engine):
-    """The image model's preview file for each preset, while drawn from the preset's current prompt."""
-    try:
-        folder = previews_dir(root, engine)
-    except H3Error:
-        return {}
+def _valid_previews(folder):
     found = {}
     for name, item in _read_previews(folder).items():
         if (name in STYLE_PRESETS and isinstance(item, dict) and item.get("prompt") == prompt_key(preview_prompt(name))
@@ -977,11 +984,41 @@ def preview_images(root, engine):
     return found
 
 
-def keep_preview(root, engine, name, image):
+def preview_images(root, engine):
+    """The image model's preview file for each preset, while drawn from the preset's current prompt."""
+    try:
+        bundled = bundled_previews_dir(engine)
+        folder = previews_dir(root, engine)
+    except H3Error:
+        return {}
+    found = _valid_previews(bundled)
+    found.update(_valid_previews(folder))
+    return found
+
+
+def preview_file_path(root, engine, file):
+    """Resolve a kept or bundled style preview file when the model's current record names it."""
+    if not file:
+        return None
+    try:
+        folder = previews_dir(root, engine)
+        bundled = bundled_previews_dir(engine)
+    except H3Error:
+        return None
+    runtime = _valid_previews(folder)
+    merged = {**_valid_previews(bundled), **runtime}
+    if file not in merged.values():
+        return None
+    if file in runtime.values():
+        return folder / file
+    return bundled / file
+
+
+def keep_preview(root, engine, name, image, *, folder=None):
     """Keep a web copy of a drawn preview for the model, replacing the preset's earlier one."""
     from PIL import Image
 
-    folder = previews_dir(root, engine)
+    folder = previews_dir(root, engine) if folder is None else Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     file = f"{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}-{uuid4().hex[:8]}.jpg"
     with Image.open(image) as picture:
@@ -991,7 +1028,7 @@ def keep_preview(root, engine, name, image):
         old = record.get(name)
         record[name] = {"image": file, "prompt": prompt_key(preview_prompt(name))}
         temporary = folder / f".{uuid4().hex[:8]}.tmp"
-        temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         temporary.replace(folder / PREVIEWS_RECORD)
     if isinstance(old, dict) and old.get("image"):
         (folder / str(old["image"])).unlink(missing_ok=True)

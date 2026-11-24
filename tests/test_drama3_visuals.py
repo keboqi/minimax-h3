@@ -409,6 +409,28 @@ class IllustratedMixTests(unittest.TestCase):
             with self.assertRaises(H3Error):
                 visuals.previews_dir(tmp, "../x")
 
+    def test_bundled_style_previews_ship_for_hosted_engines_and_allow_runtime_override(self):
+        from h3_ui.drama3 import visuals
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for engine in ("gpt_image", "mai_image", "nano_banana"):
+                kept = visuals.preview_images(tmp, engine)
+                self.assertEqual(set(kept), set(visuals.STYLE_PRESETS))
+                self.assertEqual(visuals.chosen_previews(tmp, engine, "missing"), [])
+                sample = kept["Anime"]
+                resolved = visuals.preview_file_path(tmp, engine, sample)
+                self.assertEqual(resolved, visuals.bundled_previews_dir(engine) / sample)
+                self.assertTrue(resolved.is_file())
+            bundled_anime = visuals.preview_images(tmp, "gpt_image")["Anime"]
+            override = visuals.keep_preview(tmp, "gpt_image", "Anime", png(tmp, "override"))
+            self.assertEqual(visuals.preview_images(tmp, "gpt_image")["Anime"], override)
+            self.assertEqual(visuals.preview_file_path(tmp, "gpt_image", override),
+                             visuals.previews_dir(tmp, "gpt_image") / override)
+            self.assertIsNone(visuals.preview_file_path(tmp, "gpt_image", bundled_anime))
+            with patch.dict(visuals.STYLE_PREVIEWS, {"Pixel art": "Changed preview scene."}):
+                self.assertNotIn("Pixel art", visuals.preview_images(tmp, "gpt_image"))
+                self.assertEqual(visuals.chosen_previews(tmp, "gpt_image", "missing"), ["Pixel art"])
+
     def test_portrait_frame_draws_tall_and_renders_a_tall_video(self):
         from h3_ui.drama3 import visuals
 

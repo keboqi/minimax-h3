@@ -1,0 +1,66 @@
+{
+  "2D cartoon": {
+    "image": "2d-cartoon-b45e70e8.jpg",
+    "prompt": "21325f96036519e8"
+  },
+  "3D animation": {
+    "image": "3d-animation-aba41e09.jpg",
+    "prompt": "6838daf1a2c39237"
+  },
+  "American comic": {
+    "image": "american-comic-ec08052a.jpg",
+    "prompt": "3100afbc88dbf69b"
+  },
+  "Anime": {
+    "image": "anime-d479953a.jpg",
+    "prompt": "ac05d32d8aacd745"
+  },
+  "Children's book": {
+    "image": "children-s-book-5d095b83.jpg",
+    "prompt": "01131778df07bbc6"
+  },
+  "Chinese ink painting": {
+    "image": "chinese-ink-painting-9f8eb281.jpg",
+    "prompt": "55c2fa82e9ad2dff"
+  },
+  "Digital painting": {
+    "image": "digital-painting-18427365.jpg",
+    "prompt": "2bb4178291038a77"
+  },
+  "Editorial illustration": {
+    "image": "editorial-illustration-566180c0.jpg",
+    "prompt": "7312593f4362d7fc"
+  },
+  "Flat illustration": {
+    "image": "flat-illustration-f47371c4.jpg",
+    "prompt": "660dd26da9a23631"
+  },
+  "Isometric illustration": {
+    "image": "isometric-illustration-9d884e23.jpg",
+    "prompt": "c8e7342ba5eba116"
+  },
+  "Japanese comic": {
+    "image": "japanese-comic-fcf1b8e5.jpg",
+    "prompt": "f09f5271521d6847"
+  },
+  "Minimal vector": {
+    "image": "minimal-vector-51d80d99.jpg",
+    "prompt": "ca1d6892a6cadc30"
+  },
+  "Oil painting": {
+    "image": "oil-painting-ce69069a.jpg",
+    "prompt": "b9176e8e258e46e6"
+  },
+  "Pixel art": {
+    "image": "pixel-art-295d356e.jpg",
+    "prompt": "38abeda70be8300d"
+  },
+  "Realistic photo": {
+    "image": "realistic-photo-1e2744df.jpg",
+    "prompt": "7e36c3a3e37fbc95"
+  },
+  "Watercolor": {
+    "image": "watercolor-0183a2ea.jpg",
+    "prompt": "cb621716f9f42c69"
+  }
+}
