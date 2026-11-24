@@ -493,6 +493,21 @@ def test_remake_roundtrip_and_conflict_modes(tmp_path: Path):
     assert renamed["target_name"] == "Dance Clip (imported)"
 
 
+@pytest.mark.parametrize("kind, metadata", [
+    ("remake", {"key": "subfolder/key"}),
+    ("dubbing", {"last_output_name": "movie.mp4", "last_output_stem": "other"}),
+    ("dubbing", {"last_output_name": "subfolder/movie.mp4"}),
+])
+def test_import_rejects_invalid_project_identifiers(tmp_path, kind, metadata):
+    runtime, store = _make_workspace(tmp_path / "target")
+    archive = tmp_path / "invalid.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"schema_version": 1, "kind": kind, "id": "test"}))
+        zf.writestr("project.json", json.dumps(metadata))
+    with pytest.raises(H3Error, match="Invalid|Unsafe|Inconsistent"):
+        import_project_archive(archive, store=store, runtime=runtime)
+
+
 def test_archive_security_rejects_traversal_and_symlinks(tmp_path: Path):
     runtime, store = _make_workspace(tmp_path / "target")
 
@@ -1163,6 +1178,20 @@ def test_dubbing_transfer_preserves_lipsync_plan_overrides_and_skips_caches(tmp_
         renamed_report = json.loads((dub_results.player_folder(renamed_dub) / REPORT_FILE).read_text(encoding="utf-8"))
         assert renamed_report["output"] == f"{renamed_dub.stem}.lipsync.mp4"
 
+    with _using_workspace_env(src_runtime):
+        dub_mp4.write_bytes(b"replacement video with a different fingerprint")
+        export_project_archive("dubbing", "Talk Dub", archive, store=src_store, runtime=src_runtime)
+    with _using_workspace_env(dst_runtime):
+        stale_subtitle = imported_dub.with_suffix(".obsolete.srt")
+        stale_subtitle.touch()
+        cached_audio = imported_session.root / "timed" / "0.wav"
+        cached_audio.parent.mkdir(exist_ok=True)
+        cached_audio.write_bytes(b"stretched take")
+        import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+        assert load_lip_sync_plan(imported_dub) is None
+        assert cached_audio.read_bytes() == b"stretched take"
+        assert not stale_subtitle.exists()
+
 
 def test_storyboard_references_cast_and_media_scenes_stay_done_after_transfer(tmp_path: Path):
     src_runtime, src_store = _make_workspace(tmp_path / "source")
@@ -1228,6 +1257,15 @@ def test_storyboard_references_cast_and_media_scenes_stay_done_after_transfer(tm
     dst_board = dst_service.load("imported", imported["target_id"])
     assert sb_model.scene_states(dst_board) == [sb_model.DONE, sb_model.DONE]
 
+    def replace_inputs(board):
+        board["takes"][board["scenes"][0]["in_use"]]["inputs"]["cast"][0][1] = "original.png"
+        board["takes"][board["scenes"][1]["in_use"]]["inputs"]["video"] = "original.mp4"
+
+    src_service.change("owner-a", board_id, replace_inputs)
+    export_project_archive("storyboard", board_id, archive, store=src_store, runtime=src_runtime)
+    import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+    assert sb_model.scene_states(dst_service.load("imported", board_id)) == [sb_model.OUTDATED, sb_model.OUTDATED]
+
 
 def test_soundstage_clip_collision_isolation_illustrated_video_and_pre1980_mtime(tmp_path: Path):
     from h3_ui.drama3.stage_video import ILLUSTRATED_FAMILY, latest_export
@@ -1291,6 +1329,12 @@ def test_soundstage_clip_collision_isolation_illustrated_video_and_pre1980_mtime
         renamed_vid = latest_export(Path(ep2_result))
         assert renamed_vid is not None and renamed_vid.name != exported_vid.name
         assert read_snapshot(renamed_vid)["settings"]["source"] == Path(ep2_result).name
+        obsolete = exported_vid.with_name(f"{Path(ep_result).stem}_illustrated_obsolete.mp4")
+        obsolete.write_bytes(b"older illustration")
+        write_snapshot(obsolete, {"family": ILLUSTRATED_FAMILY})
+        import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+        assert not obsolete.exists() and not snapshot_path(obsolete).exists()
+        assert exported_vid.is_file() and renamed_vid.is_file()
 
 
 def test_corrupt_archive_rollback_preserves_existing_projects_and_leaves_no_orphans(tmp_path: Path):
@@ -1930,8 +1974,11 @@ def test_delta_range_resume_legacy_server_fallback_and_missing_donor_recovery(tm
 
     remote_app = FastAPI()
     legacy_mode = False
+    from h3_ui import project_transfer as transfer_routes
+    monkeypatch.setattr(transfer_routes, "_EXPORT_CACHE_MAX_BYTES", 1)
     drop_delta_once = True
     delta_ranges: list[str | None] = []
+    resumed_responses = []
     export_hits = 0
 
     @remote_app.middleware("http")
@@ -1968,7 +2015,10 @@ def test_delta_range_resume_legacy_server_fallback_and_missing_donor_recovery(tm
                     headers=headers,
                     media_type="application/zip",
                 )
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.endswith("/delta") and request.headers.get("range"):
+            resumed_responses.append(response.status_code)
+        return response
 
     install_project_transfer_routes(remote_app, store=src_store, runtime_config=lambda: src_runtime)
 
@@ -1991,6 +2041,8 @@ def test_delta_range_resume_legacy_server_fallback_and_missing_donor_recovery(tm
         assert delta_ranges[0] is None
         assert delta_ranges[1] is not None and delta_ranges[1].startswith("bytes=")
         assert export_hits == 1  # Never fell back to full /export
+
+        assert resumed_responses == [206]
 
         # Simulate legacy remote server (404 without X-Prism-Transfer) -> falls back to /export cleanly
         legacy_mode = True

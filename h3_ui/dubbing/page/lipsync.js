@@ -210,7 +210,7 @@ function shotItems(plan) {
         speaker: a.speaker,
         seekTime: firstTurn
           ? (Math.max(shot.start, firstTurn.start) + Math.min(shot.end, firstTurn.end)) / 2
-          : Math.min(shot.end, Math.max(shot.start, a.reference_time ?? shot.start)),
+          : Math.max(shot.start, Math.min(shot.end - 0.001, a.reference_time ?? shot.start)),
         line: firstTurn?.text || "",
         key: `${shot.index}:${a.speaker}`,
       });

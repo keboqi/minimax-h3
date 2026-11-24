@@ -1009,14 +1009,13 @@ def load_lip_sync_plan(dub: Path) -> dict[str, Any] | None:
         if not isinstance(data, dict) or data.get("video") != dub.name:
             return None
         stat = dub.stat()
+        if "video_size" in data and data["video_size"] != stat.st_size:
+            return None
         if "video_fingerprint" in data:
             if data["video_fingerprint"] != video_fingerprint(dub):
                 return None
         elif "video_mtime_ns" in data and data["video_mtime_ns"] != stat.st_mtime_ns:
-            if "video_size" in data:
-                if data["video_size"] != stat.st_size:
-                    return None
-            elif not _legacy_plan_matches_dub(data, dub):
+            if "video_size" not in data and not _legacy_plan_matches_dub(data, dub):
                 return None
         if "revision" not in data:
             data["revision"] = hashlib.sha256(raw).hexdigest()

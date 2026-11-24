@@ -73,7 +73,21 @@ def subjects(plan):
 def _mentions(keys):
     """A pattern for ``@key`` or ``@key(current state)``, longest keys first so prefixes never win."""
     names = "|".join(re.escape(key) for key in sorted(keys, key=len, reverse=True))
-    return re.compile(rf"@({names})(?!\w)(?:\s*[(（]([^)）]*)[)）])?") if names else None
+    return re.compile(rf"@({names})(?!\w)") if names else None
+
+
+def parenthesis_end(text, start):
+    """Index after the matching closing parenthesis, or None for an incomplete state."""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "(\uff08":
+            depth += 1
+        elif text[i] in ")\uff09":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
+
 
 
 _SLOT = re.compile(r"⟦([^⟦⟧]+)⟧")
@@ -95,16 +109,29 @@ def expand_prompt(prompt, known, slots=False):
     if pattern is None:
         return prompt.replace("@", ""), ()
 
-    def inline(match):
-        key, state = match.group(1), (match.group(2) or "").strip()
-        mentioned.append(key)
-        # A state can mention another subject: @mara(holding @radio).
-        state = pattern.sub(inline, state)
-        anchor = known[key][1]
-        name = f"{key}⟦{key}⟧" if slots else key
-        return f"{name} ({anchor}; {state})" if state else f"{name} ({anchor})"
+    def expand(text):
+        parts = []
+        pos = 0
+        while match := pattern.search(text, pos):
+            parts.append(text[pos:match.start()])
+            key = match.group(1)
+            mentioned.append(key)
+            pos = match.end()
+            state = ""
+            opening = re.match(r"\s*[(\uff08]", text[pos:])
+            if opening:
+                start = pos + opening.end() - 1
+                end = parenthesis_end(text, start)
+                if end is not None:
+                    state = expand(text[start + 1:end - 1].strip())
+                    pos = end
+            anchor = known[key][1]
+            name = f"{key}\u27e6{key}\u27e7" if slots else key
+            parts.append(f"{name} ({anchor}; {state})" if state else f"{name} ({anchor})")
+        parts.append(text[pos:])
+        return "".join(parts)
 
-    text = pattern.sub(inline, prompt)
+    text = expand(prompt)
     # An @word the bible never defined is ordinary text.
     return re.sub(r"@(?=\w)", "", text), tuple(dict.fromkeys(mentioned))
 

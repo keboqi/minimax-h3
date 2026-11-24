@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import uuid
@@ -385,6 +386,8 @@ def gallery_thumbnail(video: Path, *, runtime: RuntimeConfig) -> Path | None:
         if thumbnail.is_file() and thumbnail.stat().st_mtime >= video_mtime:
             return thumbnail
 
+        if shutil.which("ffmpeg") is None:
+            return None
         runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
         temporary = (
             runtime.gallery_thumbnails_dir / f"{cache_key}.{uuid.uuid4().hex}.tmp.jpg"

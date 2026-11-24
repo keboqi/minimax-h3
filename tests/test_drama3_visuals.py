@@ -242,6 +242,13 @@ class IllustratedMixTests(unittest.TestCase):
         nested, keys = expand_prompt("@mara(holding @radio) waits.", known)
         self.assertEqual(nested, "mara (Mara, cropped black hair; holding radio (bakelite radio)) waits.")
         self.assertEqual(keys, ("mara", "radio"))
+
+        from h3_ui.drama3.visuals import visible_face_references
+        from dataclasses import replace
+        tagged, _ = expand_prompt("@mara(holding @radio(from behind); smiling) waits.", known, slots=True)
+        self.assertEqual(visible_face_references(replace(shot, tagged=tagged, references=("mara",))), ("mara",))
+        tagged, _ = expand_prompt("@mara(holding @radio(close up) with back turned) waits.", known, slots=True)
+        self.assertEqual(visible_face_references(replace(shot, tagged=tagged, references=("mara",))), ())
         self.assertNotIn("grey background", sheet_prompt("locations", "alley", "narrow", "ink", ""))
 
     def test_plan_is_saved_beside_the_mix_for_its_minimum_shots_in_any_style_and_frame(self):

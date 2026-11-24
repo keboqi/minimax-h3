@@ -298,8 +298,7 @@ export function resolveFocusDepthMeta(depthMeta, focusCues, elapsed) {
     const first = focusCues[0];
     return {
       ...depthMeta,
-      subject_z: first.z ?? depthMeta.subject_z,
-      subject_uv: first.uv ?? depthMeta.subject_uv,
+      focus_z: first.z ?? depthMeta.subject_z,
     };
   }
   const prev = focusCues[idx - 1];
@@ -308,13 +307,7 @@ export function resolveFocusDepthMeta(depthMeta, focusCues, elapsed) {
   const invPrev = 1 / Math.max(0.2, prev.z ?? depthMeta.subject_z ?? 4);
   const invCurr = 1 / Math.max(0.2, curr.z ?? depthMeta.subject_z ?? 4);
   const z = round3(1 / Math.max(1e-4, invPrev + (invCurr - invPrev) * p));
-  const prevUv = prev.uv ?? depthMeta.subject_uv ?? [0.5, 0.46];
-  const currUv = curr.uv ?? depthMeta.subject_uv ?? [0.5, 0.46];
-  const uv = [
-    round3(prevUv[0] + (currUv[0] - prevUv[0]) * p),
-    round3(prevUv[1] + (currUv[1] - prevUv[1]) * p),
-  ];
-  return { ...depthMeta, subject_z: z, subject_uv: uv };
+  return { ...depthMeta, focus_z: z };
 }
 
 export function cameraTransform(effects, progress, seconds) {
@@ -510,15 +503,13 @@ export async function paintDepthVisualization(canvas, depthUrl) {
 }
 
 export function preloadEffectMasks(shots) {
-  return preloadImagePool(maskImages, (shots || []).flatMap((shot) => (shot?.effect_layers || []).flatMap(layerMaskUrls)));
+  return preloadImagePool(maskImages, (shots || []).flatMap((shot) => (shot?.effect_layers || []).flatMap(layerMaskUrls)), { swallowErrors: true });
 }
 
 export function warmUpcomingShot(hostDoc, shot) {
   if (!hostDoc || !shot?.effect_layers?.length) return false;
   const layers = attachLayerAssets(shot.effect_layers);
-  if (!layers.some((layer) => layer.maskImages?.length)) return false;
-  warmWebGPUAssets(hostDoc, layers);
-  return true;
+  return warmWebGPUAssets(hostDoc, layers);
 }
 
 function drawInShot(ctx, image, cam, w, h) {
@@ -546,7 +537,7 @@ function paintShotStack(target, scratch, matte, image, layers, seconds, cue, see
     if (!atmosphere && !lightEffects.has(preset)) continue;
     const urls = layerMaskUrls(layer);
     const masks = urls.map((url) => maskImages.get(url)?.image).filter((img) => img?.naturalWidth);
-    if (mode !== "full_frame" && !masks.length) continue;
+    if (mode !== "full_frame" && (!masks.length || masks.length !== urls.length)) continue;
     scratch.clearRect(0, 0, w, h);
     paintLayer2D(scratch, atmosphere ? [preset] : [], atmosphere ? [] : [preset], seconds, cue, w, h, seed, cam, lightCue);
     if (mode !== "full_frame" && masks.length) {
@@ -643,8 +634,8 @@ export function paintEffects(canvas, effects, seconds, showBackend, scene = null
   }
 
   const hasDepthCam = Boolean(
-    (depthImage && (scene?.depthMeta?.depth_strength ?? 1) > 0.01 && camMovesForDepth(scene?.cam, effects)) ||
-    (fading && backDepthImage && (scene?.backDepthMeta?.depth_strength ?? 1) > 0.01 && camMovesForDepth(scene?.backCam, scene?.backEffects))
+    (depthImage && (scene?.depthMeta?.depth_strength ?? 1) > 0.01 && (scene?.depthMeta?.focus_z || camMovesForDepth(scene?.cam, effects))) ||
+    (fading && backDepthImage && (scene?.backDepthMeta?.depth_strength ?? 1) > 0.01 && (scene?.backDepthMeta?.focus_z || camMovesForDepth(scene?.backCam, scene?.backEffects)))
   );
 
   if (!atmospheres.length && !lights.length && !backAtmospheres.length && !backLights.length && !hasDepthCam) {

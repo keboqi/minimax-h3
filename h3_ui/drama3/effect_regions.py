@@ -42,8 +42,9 @@ MERGE_LABELS = frozenset({"window", "lamp", "candle", "fire", "tree"})
 MAX_REGIONS = 12
 
 
-def concepts(row, subjects):
+def concepts_with_people(row, subjects):
     descriptions = []
+    people = {"person", "woman", "man"}
     for key in row.get("subjects", []):
         subject = subjects.get(key)
         if not subject or subject.get("kind") == "locations":
@@ -57,6 +58,7 @@ def concepts(row, subjects):
             phrase = next((part.strip() for part in words if part.strip() and part.strip().casefold() != name), "")
             if phrase and phrase.isascii():
                 descriptions.append(phrase.lower())
+                people.add(phrase.lower())
             elif phrase:
                 sex = voice_looks.gender(anchor)
                 if sex == "female":
@@ -71,7 +73,12 @@ def concepts(row, subjects):
         if re.search(rf"\b{label}(?:s|es)?\b", text)
         or any(target == label and re.search(pattern, raw_text) for target, pattern in _CJK_OBJECT_PATTERNS)
     ]
-    return list(dict.fromkeys([*descriptions, "person", *detected_words, "window", "door", "lamp"]))[:MAX_REGIONS]
+    labels = list(dict.fromkeys([*descriptions, "person", *detected_words, "window", "door", "lamp"]))[:MAX_REGIONS]
+    return labels, sorted(people)
+
+
+def concepts(row, subjects):
+    return concepts_with_people(row, subjects)[0]
 
 
 def manifest_path(folder, image, labels):

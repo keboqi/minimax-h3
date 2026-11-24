@@ -47,7 +47,7 @@ struct Uniforms {
   backDepthAnchors1: vec4f,
   // x: intensity, y: maskMode (0=full_frame,1=inside,2=outside,3=behind), z: maskRefZ, w: hasMask
   layerParams: vec4f,
-  // x: lightningCueTime (< 0 uses periodic storm clock), y: backLightningCueTime, z: 0, w: 0
+  // x: lightningCueTime (< 0 uses periodic storm clock), y: backLightningCueTime, z: focusZ, w: backFocusZ
   lightningParams: vec4f,
 };
 
@@ -72,6 +72,7 @@ struct DepthParams {
   warmAnchor: vec4f,
   skyDir: vec2f,
   subjectUv: vec2f,
+  focusZ: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -107,7 +108,7 @@ fn frontDepthParams() -> DepthParams {
     u.depthMeta0.x, u.depthMeta0.y, u.depthMeta0.z, u.depthMeta0.w,
     u.depthMeta1.x, u.depthMeta1.y, u.depthMeta1.z, u.depthMeta1.w,
     u.depthMeta2.x, u.depthMeta2.y, u.depthMeta2.z, u.depthMeta2.w,
-    u.depthAnchors0, u.depthAnchors1.xy, u.depthAnchors1.zw
+    u.depthAnchors0, u.depthAnchors1.xy, u.depthAnchors1.zw, u.lightningParams.z
   );
 }
 
@@ -116,7 +117,7 @@ fn backDepthParams() -> DepthParams {
     u.backDepthMeta0.x, u.backDepthMeta0.y, u.backDepthMeta0.z, u.backDepthMeta0.w,
     u.backDepthMeta1.x, u.backDepthMeta1.y, u.backDepthMeta1.z, u.backDepthMeta1.w,
     u.backDepthMeta2.x, u.backDepthMeta2.y, u.backDepthMeta2.z, u.backDepthMeta2.w,
-    u.backDepthAnchors0, u.backDepthAnchors1.xy, u.backDepthAnchors1.zw
+    u.backDepthAnchors0, u.backDepthAnchors1.xy, u.backDepthAnchors1.zw, u.lightningParams.w
   );
 }
 
@@ -617,7 +618,7 @@ fn sampleScene(
   }
 
   let hasDepth = dp.hasDepth > 0.5 && dp.depthStrength > 0.01;
-  let opticalDof = hasDepth && (camBlur > 0.001 || rackActive > 0.5);
+  let opticalDof = hasDepth && (camBlur > 0.001 || rackActive > 0.5 || dp.focusZ > 0.0);
   let needsBloom = applyGrading && effectNeedsBloom(atmo, light, dist.z, cueT);
 
   if ((needsBloom || camBlur > 0.001 || opticalDof) && inside > 0.0) {
@@ -632,7 +633,7 @@ fn sampleScene(
     if (opticalDof) {
       let zCenter = decodeDepthFast(depthTex, tuv, dp).x;
       let blurAmt = clamp(camBlur, 0.0, 1.0);
-      let zFocus = mix(dp.subjectZ, dp.rackStartZ, blurAmt);
+      let zFocus = mix(select(dp.subjectZ, dp.focusZ, dp.focusZ > 0.0), dp.rackStartZ, blurAmt);
       let invC = 1.0 / max(zCenter, 0.1);
       let invF = 1.0 / max(zFocus, 0.1);
       let invSpread = max(0.08, (dp.invMax - dp.invMin) * 0.42);
@@ -861,7 +862,7 @@ fn renderLayer(
     if (useD) {
       let n = reconstructPosNormal(depthTex, dTuv, texSize, dp);
       let topRim = clamp(-n.y, 0.0, 1.0) * 0.6 + 0.25 * (1.0 - abs(n.z));
-      let skyBoost = mix(0.45, 1.25, max(skyScene, smoothstep(dp.subjectZ, dp.zP90, zScene)));
+      let skyBoost = mix(0.45, 1.25, max(skyScene, smoothstep(dp.subjectZ, max(dp.zP90, dp.subjectZ + 0.001), zScene)));
       lightA = clamp(lightA * mix(1.0, skyBoost + topRim * 0.4, ds), 0.0, 0.72);
     }
     scr = addScreen(scr, vec3f(0.88, 0.93, 1.0), lightA);
@@ -916,7 +917,7 @@ fn renderLayer(
     let edge = smoothstep(0.15, 1.05, length(screenUv - vec2f(0.5, 0.4)));
     var strength = select(mix(0.35, 1.0, edge) * 1.35, edge * 0.65, hasBaseTex);
     if (useD) {
-      let farGain = mix(0.85, 1.45, smoothstep(dp.subjectZ * 0.8, dp.zP90, zScene));
+      let farGain = mix(0.85, 1.45, smoothstep(dp.subjectZ * 0.8, max(dp.zP90, dp.subjectZ * 0.8 + 0.001), zScene));
       strength *= mix(1.0, farGain, ds * 0.55);
     }
     over = blendOver(over, vec3f(0.24, 0.44, 0.78), strength * pulse);
@@ -938,7 +939,7 @@ fn renderLayer(
     let rim = smoothstep(0.35, 0.92, length(screenUv - vec2f(0.5))) * 0.45;
     var dream = clamp((halo1 + halo2 + rim) * pulse, 0.0, 0.38);
     if (useD) {
-      let bgBloom = mix(0.65, 1.35, smoothstep(dp.subjectZ * 0.85, dp.zP90, zScene));
+      let bgBloom = mix(0.65, 1.35, smoothstep(dp.subjectZ * 0.85, max(dp.zP90, dp.subjectZ * 0.85 + 0.001), zScene));
       dream = clamp(dream * mix(1.0, bgBloom, ds * 0.75), 0.0, 0.44);
     }
     scr = addScreen(scr, vec3f(0.98, 0.87, 0.96), dream);
@@ -1389,7 +1390,7 @@ export async function probeWebGPU(onChange, { layers = false } = {}) {
           layerPipelinesPromise = null;
           gpuUniformBuffer = null;
           gpuSampler = null;
-          configuredCanvas = null;
+          configuredCanvases = new WeakSet();
           gpuState = "unavailable";
           notifyProbeListeners();
         });
@@ -1467,7 +1468,7 @@ function syncRenderTarget(name, width, height) {
 
 function syncMaskTexture(hostDoc, maskImages, feather, maskUrls) {
   const readyMasks = (maskImages || []).filter((img) => readyStill(img));
-  if (!readyMasks.length) return null;
+  if (!readyMasks.length || (maskUrls?.length && readyMasks.length !== maskUrls.length)) return null;
   const first = readyMasks[0];
   const mw = Math.min(1280, first.naturalWidth);
   const mh = Math.min(1280, first.naturalHeight);
@@ -1557,14 +1558,14 @@ export function clearWebGPU(hostCanvas) {
 export function destroyWebGPUCanvas(hostCanvas) {
   const gpuCanvas = getGpuCanvas(hostCanvas, false);
   if (gpuCanvas) {
-    if (configuredCanvas === gpuCanvas) configuredCanvas = null;
+    configuredCanvases.delete(gpuCanvas);
     try { gpuCanvas.getContext("webgpu")?.unconfigure?.(); } catch { /* ignore */ }
     gpuCanvas.remove();
   }
   if (hostCanvas?.style) hostCanvas.style.visibility = "visible";
 }
 
-let configuredCanvas = null;
+let configuredCanvases = new WeakSet();
 function prepareContext(hostCanvas, w, h) {
   const gpuCanvas = getGpuCanvas(hostCanvas, true);
   if (!gpuCanvas) return null;
@@ -1575,14 +1576,14 @@ function prepareContext(hostCanvas, w, h) {
     gpuCanvas.width = w;
     gpuCanvas.height = h;
   }
-  if (configuredCanvas !== gpuCanvas || resized) {
+  if (!configuredCanvases.has(gpuCanvas) || resized) {
     ctx.configure({
       device: gpuDevice,
       format: gpuFormat,
       alphaMode: "premultiplied",
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
-    configuredCanvas = gpuCanvas;
+    configuredCanvases.add(gpuCanvas);
   }
   return { gpuCanvas, ctx };
 }
@@ -1682,8 +1683,8 @@ function writeShotUniformSlot(slotIdx, {
 
   uniformFloats[b + 76] = lightningCueTime;
   uniformFloats[b + 77] = backLightningCueTime;
-  uniformFloats[b + 78] = 0;
-  uniformFloats[b + 79] = 0;
+  uniformFloats[b + 78] = depthMeta?.focus_z ?? 0;
+  uniformFloats[b + 79] = backDepthMeta?.focus_z ?? 0;
 }
 
 const IMAGE_ATMOSPHERE = new Set(["rain", "fog", "sunbeams", "smoke", "underwater"].map((id) => ATMO_IDS[id]));
@@ -1727,8 +1728,8 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
   let back = null, front = null, backDepth = null, frontDepth = null;
   if (
     backSrc && (!fading || frontSrc) && (
-      usesImage(atmoId, lightId, scene?.cam, fading ? hasFrontDepth : hasBackDepth, rackActive) ||
-      (fading && usesImage(backAtmoId, backLightId, scene?.backCam, hasBackDepth, backRackActive))
+      usesImage(atmoId, lightId, scene?.cam, fading ? hasFrontDepth : hasBackDepth, rackActive || scene?.depthMeta?.focus_z) ||
+      (fading && usesImage(backAtmoId, backLightId, scene?.backCam, hasBackDepth, backRackActive || scene?.backDepthMeta?.focus_z))
     )
   ) {
     try {
@@ -1837,13 +1838,16 @@ export function renderWebGPU(hostCanvas, atmoId, lightId, seconds, w, h, scene =
 const MASK_MODE_IDS = { full_frame: 0, inside: 1, outside: 2, behind: 3 };
 
 export function warmWebGPUAssets(hostDoc, layers) {
-  if (gpuState !== "ready" || !gpuDevice || !hostDoc || !Array.isArray(layers)) return;
-  for (const layer of layers) {
-    const mode = MASK_MODE_IDS[layer?.mode || "full_frame"] ?? 0;
-    if (mode > 0 && layer?.maskImages?.length) {
-      syncMaskTexture(hostDoc, layer.maskImages, layer.feather, layer.maskUrls);
-    }
+  if (!hostDoc || !layers?.length || gpuState === "unavailable") return false;
+  if (!gpuLayerPipeline || gpuState !== "ready") {
+    probeWebGPU(null, { layers: true });
+    return false;
   }
+  for (const layer of layers) {
+    if (MASK_MODE_IDS[layer.mode] > 0 &&
+        !syncMaskTexture(hostDoc, layer.maskImages, layer.feather, layer.maskUrls)) return false;
+  }
+  return true;
 }
 
 export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = null) {
@@ -1931,6 +1935,7 @@ export function renderWebGPULayers(hostCanvas, layers, seconds, w, h, scene = nu
       if (maskMode > 0 && layer.maskImages?.length) {
         maskEntry = syncMaskTexture(hostCanvas.ownerDocument, layer.maskImages, layer.feather, layer.maskUrls);
       }
+      if (maskMode > 0 && !maskEntry) continue;
       writeShotUniformSlot(slot, {
         w, h,
         seconds: shotT,

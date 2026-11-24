@@ -1,4 +1,4 @@
-import {paintDepthVisualization, preloadEffectDepths, preloadEffectMasks} from "./effects.js";
+import {clearEffectPreview, paintDepthVisualization, preloadEffectDepths, preloadEffectMasks} from "./effects.js";
 import {EFFECT_CATEGORIES, openEffectPresetPopup} from "./effects_picker.js";
 import {paintStage, showStageStills, stageFrame, stageLayers, stageTimeline} from "./stage.js";
 
@@ -223,6 +223,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       .map((sound) => ({...sound, start: sound.start - row.start}));
     const [view] = stageTimeline([{start: 0, end: duration, index: row.index, fade: 0, url: row.image,
       effects: effects.map(({preset}) => preset), effect_layers: effects,
+      focus_cues: stillShot?.focus_cues,
       depth_url: depthUrl,
       depth_meta: stillShot?.depth_meta ?? null}], sounds);
     const layers = {back, front, overlay};
@@ -254,7 +255,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       };
       playFrame = requestAnimationFrame(tick);
     }}, "Play preview");
-    const paint = () => paintStage(layers, stageFrame([view], Math.min(frameTime, duration)), true);
+    const paint = () => dialog()?.open && overlay.isConnected && paintStage(layers, stageFrame([view], Math.min(frameTime, duration)), true);
     showStageStills(layers, stageFrame([view], 0));
     Promise.all([back.decode(), preloadEffectMasks([view]), preloadEffectDepths([view])]).then(paint, paint);
     return h("div", {class: "pass-preview-wrap"}, stage,
@@ -780,6 +781,11 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       }
     }
     const scroll = modal.querySelector(".style-body")?.scrollTop ?? 0;
+    const releasePreview = () => {
+      stopPlayback();
+      clearEffectPreview(modal.querySelector(".pass-preview canvas.still-effects"));
+    };
+    releasePreview();
     modal.replaceChildren(h("div", {class: "library-head"},
       h("h2", {id: "effect-pass-title"}, mode === "edit" && shot ? `Shot ${shot.index + 1} effects` : "Enhance visual effects"),
       h("span", {class: "spacer"}),
@@ -788,7 +794,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     h("div", {class: "style-body pass-body"},
       running ? h("p", {role: "status"}, run.status) : null,
       ...(mode === "edit" && shot ? edit(shot) : batch())));
-    modal.onclose = () => { stopPlayback(); closePresetDialog(); };
+    modal.onclose = () => { releasePreview(); closePresetDialog(); };
     modal.querySelector(".style-body").scrollTop = scroll;
   }
 

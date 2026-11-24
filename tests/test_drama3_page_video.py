@@ -1435,6 +1435,8 @@ class Drama3PageVideoTests(unittest.TestCase):
                 {"id": "r_win", "label": "window", "depth_m": 9.0, "box": [0.70, 0.06, 0.94, 0.42]},
             ]
         }
+        enhanced["person_labels"] = ["person", "woman in a navy coat"]
+        enhanced["regions"][0]["label"] = "woman in a navy coat"
         refined = page_video._refine_subject_meta(meta, enhanced)
         self.assertEqual(refined["subject_z"], 1.8)
         self.assertEqual(refined["warm_anchor"], {"u": 0.5, "v": 0.4, "z": 2.6, "strength": 0.9})
@@ -1461,6 +1463,11 @@ class Drama3PageVideoTests(unittest.TestCase):
                 {"time": 4.5, "z": 1.8, "uv": [0.22, 0.56]},
             ],
         )
+
+        enhanced["regions"].append({"id": "p_third", "label": "person", "depth_m": 8.0, "box": [0, 0, 1, 1]})
+        timeline["lines"][-1]["speaker"] = "Unpanned"
+        cues = page_video._shot_focus_cues({"start": 0.0, "end": 6.5}, enhanced, timeline)
+        self.assertEqual([cue["z"] for cue in cues], [1.8, 5.4, 8.0])
 
 
 if __name__ == "__main__":

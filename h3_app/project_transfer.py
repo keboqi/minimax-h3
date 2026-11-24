@@ -18,8 +18,9 @@ import zlib
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import wraps
 from itertools import count
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from tempfile import TemporaryDirectory
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
@@ -112,12 +113,13 @@ _TRANSIENT_FS_SUFFIXES = (".tmp", ".partial", ".importing", ".replacing")
 _DIGEST_CACHE_MAX_ENTRIES = 16384
 _DIGEST_WORKERS = 4
 _INLINE_JSON_MAX_BYTES = 4 << 20
-_MAX_KNOWN_DIGESTS = 50000
+_MAX_METADATA_BYTES = 64 << 20
+MAX_KNOWN_DIGESTS = 50000
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TRANSFER_HEADER = "X-Prism-Transfer"
 
 
-class _MissingReusedFileError(Exception):
+class _MissingReusedFileError(H3Error):
     """Raised when a delta archive references a local file that vanished or mutated mid-transfer."""
 
 
@@ -435,6 +437,8 @@ def _iter_scandir_files(
         try:
             if entry.is_symlink():
                 continue
+            if os.name == "nt" and entry.stat(follow_symlinks=False).st_file_attributes & stat_mod.FILE_ATTRIBUTE_REPARSE_POINT:
+                continue
             rel = f"{rel_prefix}/{name}" if rel_prefix else name
             if skip_rel is not None and skip_rel(PurePosixPath(rel)):
                 continue
@@ -446,33 +450,38 @@ def _iter_scandir_files(
             continue
 
 
+def _archive_filename(value: str) -> str:
+    if not isinstance(value, str) or "/" in value:
+        raise H3Error(f"Unsafe archive filename: {value!r}")
+    _validate_arc_entry_name(value)
+    return value
+
+
+def _contained_path(root: Path, path: Path) -> Path:
+    resolved = path.resolve()
+    root = root.absolute()
+    relative = path.absolute().relative_to(root)
+    if not relative.parts or ".." in relative.parts or resolved != root.resolve() / relative:
+        raise H3Error(f"Unsafe import destination: {path.name!r}")
+    return resolved
+
+
 def _validate_arc_entry_name(name: str) -> PurePosixPath:
-    posix = PurePosixPath(name)
-    if (
-        not name
-        or name.startswith("/")
-        or "\\" in name
-        or ":" in name
-        or any(part in ("", ".", "..") for part in posix.parts)
-    ):
+    if any(ord(c) < 32 or c in '\\:' for c in name):
         raise H3Error(f"Unsafe archive entry: {name!r}")
-    return posix
+    for part in name.split("/"):
+        if part in {"", ".", ".."} or (os.name == "nt" and (
+            part.endswith((" ", ".")) or PureWindowsPath(part).is_reserved() or any(c in '<>"|?*' for c in part)
+        )):
+            raise H3Error(f"Unsafe archive entry: {name!r}")
+    return PurePosixPath(name)
 
 
 def _validate_archive(archive: zipfile.ZipFile) -> None:
     for info in archive.infolist():
-        name = info.filename
-        if (
-            not name
-            or name.startswith("/")
-            or "\\" in name
-            or ":" in name
-            or ((info.external_attr >> 16) & _FILE_TYPE_MASK) == _SYMLINK_MODE
-        ):
-            raise H3Error(f"Unsafe archive entry: {name!r}")
-        stripped = name.rstrip("/") if info.is_dir() else name
-        if not stripped or any(part in ("", ".", "..") for part in PurePosixPath(stripped).parts):
-            raise H3Error(f"Unsafe archive entry: {name!r}")
+        if ((info.external_attr >> 16) & _FILE_TYPE_MASK) == _SYMLINK_MODE:
+            raise H3Error(f"Unsafe archive entry: {info.filename!r}")
+        _validate_arc_entry_name(info.filename.removesuffix("/") if info.is_dir() else info.filename)
 
 
 class _StagingTransaction:
@@ -531,7 +540,7 @@ class _StagingTransaction:
         return staging
 
     def stage_delete_file(self, target_file: Path) -> None:
-        self._file_deletes.append(target_file.resolve())
+        self._file_deletes.append(_contained_path(target_file.parent, target_file))
 
     def prune_empty_dirs_under(self, root_dir: Path, *, remove_root: bool = False) -> None:
         self._prune_roots.append((root_dir.resolve(), remove_root))
@@ -603,7 +612,7 @@ class _StagingTransaction:
                 continue
             for dirpath, _dirnames, _filenames in os.walk(prune_root, topdown=False):
                 current_dir = Path(dirpath)
-                if current_dir == prune_root and not remove_root:
+                if current_dir.resolve() != current_dir or (current_dir == prune_root and not remove_root):
                     continue
                 try:
                     current_dir.rmdir()
@@ -682,12 +691,15 @@ class _ArchiveSource:
         return sorted(name for name in self.all_entries() if name.startswith(head))
 
     def read_bytes(self, arc_name: str) -> bytes:
+        if self._entry_size(arc_name) > _MAX_METADATA_BYTES:
+            raise H3Error(f"Archive metadata is too large: {arc_name!r}")
         if arc_name in self._zip_infos:
             return self.archive.read(arc_name)
         if arc_name in self.reused_specs:
             sha, size = self.reused_specs[arc_name]
             donor = self._find_donor(sha, size)
-            data = donor.read_bytes()
+            with donor.open("rb") as stream:
+                data = stream.read(size + 1)
             if len(data) != size or hashlib.sha256(data).hexdigest() != sha:
                 raise _MissingReusedFileError(arc_name)
             return data
@@ -759,7 +771,7 @@ class _ArchiveSource:
         allow_in_place: bool | None = None,
     ) -> tuple[Path, bool]:
         """Stage ``arc_name`` for ``destination``; returns ``(work_path, reused_unchanged)``."""
-        target = destination.resolve()
+        target = _contained_path(destination.parent, destination)
         if allow_in_place is None:
             allow_in_place = target.suffix.lower() != ".json"
 
@@ -804,9 +816,7 @@ class _ArchiveSource:
         for arc_name in self.prefix_entries(prefix):
             rel = arc_name[len(head) :]
             posix_rel = _validate_arc_entry_name(rel)
-            target = dest_root.joinpath(*posix_rel.parts)
-            if not Path(os.path.abspath(target)).is_relative_to(dest_root):
-                raise H3Error(f"Unsafe archive path: {arc_name!r}")
+            target = _contained_path(dest_root, dest_root.joinpath(*posix_rel.parts))
             if not overwrite and target.exists():
                 self._record_reuse(arc_name, self._entry_size(arc_name))
                 work_paths[arc_name] = target
@@ -830,9 +840,7 @@ class _ArchiveSource:
         for arc_name in self.prefix_entries(prefix):
             rel = arc_name[len(head) :]
             posix_rel = _validate_arc_entry_name(rel)
-            target = dest_root.joinpath(*posix_rel.parts)
-            if not Path(os.path.abspath(target)).is_relative_to(dest_root):
-                raise H3Error(f"Unsafe archive path: {arc_name!r}")
+            target = _contained_path(dest_root, dest_root.joinpath(*posix_rel.parts))
             if not overwrite and target.exists():
                 self._record_reuse(arc_name, self._entry_size(arc_name))
                 extracted[arc_name] = target
@@ -1268,6 +1276,15 @@ def _stat_stamp(path: Path | None) -> str:
         return "missing"
 
 
+def serialize_project_transfer(func):
+    @wraps(func)
+    def locked(*args, **kwargs):
+        with _PROJECT_TRANSFER_LOCK:
+            return func(*args, **kwargs)
+    return locked
+
+
+@serialize_project_transfer
 def project_export_stamp(kind: str, project_id: str, *, store, runtime) -> str:
     """Compute a fast freshness fingerprint for export caching, raising H3Error if missing."""
     if kind not in PROJECT_KINDS:
@@ -1951,7 +1968,7 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
     cast_map: dict[Path, str] = {}
     media_map: dict[Path, str] = {}
     raw_to_arc: dict[str, str] = {}
-    cast_name_by_member: dict[str, str] = {}
+    cast_name_by_member: dict[str, tuple[str, str]] = {}
     used_take_names: set[str] = set()
     take_map: dict[Path, str] = {}
 
@@ -2003,11 +2020,12 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
     def rewrite_snapshot_lists(snapshot: dict[str, Any], *, record_active_cast: bool = False) -> None:
         for member in snapshot.get("cast") or []:
             if isinstance(member, dict) and member.get("image"):
+                original_name = PurePosixPath(str(member["image"]).replace("\\", "/")).name
                 archived = archive_asset(member["image"], "cast", used_cast_names, cast_map)
                 if archived is not None:
                     member["image"] = archived
                     if record_active_cast and member.get("name"):
-                        cast_name_by_member[str(member["name"])] = PurePosixPath(archived).name
+                        cast_name_by_member[str(member["name"])] = (original_name, PurePosixPath(archived).name)
         for scene in snapshot.get("scenes") or []:
             if not isinstance(scene, dict):
                 continue
@@ -2019,6 +2037,8 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
                     items = [archive_asset(item, "media", used_media_names, media_map) for item in scene[key]]
                     scene[key] = [item for item in items if item is not None]
 
+    original_videos = {str(s["in_use"]): PurePosixPath(str(s["video"]).replace("\\", "/")).name
+                       for s in board.get("scenes") or [] if s.get("in_use") and s.get("video")}
     rewrite_snapshot_lists(board, record_active_cast=True)
     for version in board.get("versions") or []:
         if isinstance(version, dict):
@@ -2073,9 +2093,11 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
                         and len(pair) == 2
                         and isinstance(pair[0], str)
                         and pair[0] in cast_name_by_member
+                        and pair[1] == cast_name_by_member[pair[0]][0]
                     ):
-                        pair[1] = cast_name_by_member[pair[0]]
-            if inputs.get("kind") == "media" and str(take_id) in scene_media_video_by_take:
+                        pair[1] = cast_name_by_member[pair[0]][1]
+            if (inputs.get("kind") == "media" and str(take_id) in scene_media_video_by_take
+                    and inputs.get("video") == original_videos.get(str(take_id))):
                 inputs["video"] = scene_media_video_by_take[str(take_id)]
 
     plan_out.writestr("board.json", json.dumps({"id": project_id, "board": board}, ensure_ascii=False, indent=2))
@@ -2222,6 +2244,7 @@ def _export_remake(plan_out: _ExportPlan, project_id: str, *, runtime) -> str:
     return str(cleaned.get("name") or project_id)
 
 
+@serialize_project_transfer
 def build_project_export_plan(
     kind: str,
     project_id: str,
@@ -2298,12 +2321,14 @@ def _write_planned_archive(
     return destination
 
 
+@serialize_project_transfer
 def export_project_archive(kind: str, project_id: str, destination: Path, *, store, runtime) -> Path:
     """Export one project and all of its media, sidecars, and presets into a portable zip archive."""
     plan = build_project_export_plan(kind, project_id, store=store, runtime=runtime, compute_digests=False)
     return _write_planned_archive(plan, destination)
 
 
+@serialize_project_transfer
 def export_project_delta_archive(
     kind: str,
     project_id: str,
@@ -2484,9 +2509,7 @@ def _stage_soundstage_clips(
     for arc_name in src.prefix_entries("clips"):
         rel = arc_name[len("clips/") :]
         posix_rel = _validate_arc_entry_name(rel)
-        target = clips_root.joinpath(*posix_rel.parts)
-        if not Path(os.path.abspath(target)).is_relative_to(clips_root):
-            raise H3Error(f"Unsafe archive path: {arc_name!r}")
+        target = _contained_path(clips_root, clips_root.joinpath(*posix_rel.parts))
 
         same, size = src.matches_existing(arc_name, target)
         if same:
@@ -2591,6 +2614,9 @@ def _import_soundstage(
     payload = data["payload"]
     result_name = data.get("result_name")
     illustrated_name = data.get("illustrated_video_name")
+    for filename in (result_name, illustrated_name):
+        if filename:
+            _archive_filename(filename)
 
     existing = {name for name, _ in store.soundstage_projects()}
     target_name, status, skipped = _resolve_named_conflict("soundstage", source_id, orig_name, existing, conflict)
@@ -2601,13 +2627,14 @@ def _import_soundstage(
     target_result: Path | None = None
 
     with _StagingTransaction() as tx:
-        _stage_soundstage_clips(tx, src, _soundstage_clips_dir(runtime), payload, conflict=conflict)
+        output_dir = Path(runtime.output_dir)
+        clips_dir = _contained_path(output_dir, _soundstage_clips_dir(runtime))
+        _stage_soundstage_clips(tx, src, clips_dir, payload, conflict=conflict)
         if result_name and src.has_entry(f"result/{result_name}"):
-            output_dir = Path(runtime.output_dir)
-            h3_dir = (output_dir / "h3").resolve()
+            h3_dir = _contained_path(output_dir, output_dir / "h3")
             h3_dir.mkdir(parents=True, exist_ok=True)
             result_path_obj = Path(result_name)
-            orig_stem = result_path_obj.stem
+            orig_stem = _archive_filename(result_path_obj.stem)
             target_stem = orig_stem
             target_result_name = result_name
             drama3_dir = output_dir / "drama3"
@@ -2638,13 +2665,14 @@ def _import_soundstage(
             if not (result_reused and _is_media_already_cataloged(target_result, store)):
                 media_to_register.append((target_result, snap_data or {"family": "Drama 3"}))
 
+            target_vid = None
             if illustrated_name and src.has_entry(f"result/{illustrated_name}"):
                 target_vid_name = (
                     target_stem + illustrated_name[len(orig_stem) :]
                     if target_stem != orig_stem and illustrated_name.startswith(orig_stem)
                     else illustrated_name
                 )
-                target_vid = h3_dir / target_vid_name
+                target_vid = _contained_path(h3_dir, h3_dir / target_vid_name)
                 _staged_vid, vid_reused = src.stage_entry(tx, f"result/{illustrated_name}", target_vid)
                 vsnap_data = None
                 vsnap_arc = f"result/{illustrated_name}.settings.json"
@@ -2662,6 +2690,14 @@ def _import_soundstage(
                         (target_vid, vsnap_data or {"family": "Sound Stage illustrated video"})
                     )
 
+            if status == "overwritten":
+                for old in h3_dir.glob(f"{glob.escape(target_stem)}_illustrated_*.mp4"):
+                    if old != target_vid and old.is_file() and not old.is_symlink():
+                        tx.stage_delete_file(old)
+                        sidecar = snapshot_path(old)
+                        if sidecar.is_file() and not sidecar.is_symlink():
+                            tx.stage_delete_file(sidecar)
+
             plan_arc = f"result/.{orig_stem}.visual_plan.json"
             target_plan_path = visuals.plan_path(target_result)
             if src.has_entry(plan_arc):
@@ -2669,7 +2705,7 @@ def _import_soundstage(
             elif status == "overwritten" and target_plan_path.is_file():
                 tx.stage_delete_file(target_plan_path)
 
-            stills_dir = visuals.stills_dir(target_result, runtime.output_dir)
+            stills_dir = _contained_path(output_dir, visuals.stills_dir(target_result, output_dir))
             stills_entries = src.prefix_entries("stills")
             has_stills = bool(stills_entries)
             if has_stills or stills_dir.exists():
@@ -2693,7 +2729,7 @@ def _import_soundstage(
                 draft_plan_file = visuals.plan_path(draft_plan_audio)
                 if draft_plan_file.is_file():
                     tx.stage_delete_file(draft_plan_file)
-                draft_stills_dir = visuals.stills_dir(draft_plan_audio, runtime.output_dir)
+                draft_stills_dir = _contained_path(output_dir, visuals.stills_dir(draft_plan_audio, output_dir))
                 if draft_stills_dir.is_dir():
                     _schedule_obsolete_deletes(tx, draft_stills_dir, set(), remove_root_if_empty=True)
         else:
@@ -2703,7 +2739,7 @@ def _import_soundstage(
                 src.stage_entry(tx, "plan/visual_plan.json", draft_plan_path, allow_in_place=False)
             elif status == "overwritten" and draft_plan_path.is_file():
                 tx.stage_delete_file(draft_plan_path)
-            plan_stills_dir = visuals.stills_dir(plan_audio, runtime.output_dir)
+            plan_stills_dir = _contained_path(output_dir, visuals.stills_dir(plan_audio, output_dir))
             has_plan_stills = bool(src.prefix_entries("plan_stills"))
             if has_plan_stills or (status == "overwritten" and plan_stills_dir.exists()):
                 pstills_new = not plan_stills_dir.exists()
@@ -2741,6 +2777,9 @@ def _import_soundstage(
         else:
             _register_imported_media_batch(media_to_register, store=store, runtime=runtime)
 
+    for removed in tx.deleted_paths:
+        if target_result and removed.parent == target_result.parent and removed.suffix.lower() == ".mp4":
+            store.forget_asset(removed)
     return _transfer_result("soundstage", source_id, orig_name, target_name, target_name, status, src=src, tx=tx)
 
 
@@ -2779,10 +2818,11 @@ def _import_storyboard(
         target_name = orig_name
         status = "imported"
 
-    board_meta_dir = (store.root / "storyboards" / target_id).resolve()
-    cast_dir = (board_meta_dir / "cast").resolve()
-    takes_dir = (Path(runtime.output_dir) / "h3" / ".storyboard" / target_id).resolve()
-    media_dir = (takes_dir / "media").resolve()
+    board_meta_dir = _contained_path(store.root, store.root / "storyboards" / target_id)
+    cast_dir = _contained_path(board_meta_dir, board_meta_dir / "cast")
+    output_root = Path(runtime.output_dir)
+    takes_dir = _contained_path(output_root, output_root / "h3" / ".storyboard" / target_id)
+    media_dir = _contained_path(takes_dir, takes_dir / "media")
 
     with _StagingTransaction() as tx:
         cast_is_new = not cast_dir.exists()
@@ -2885,6 +2925,18 @@ def _import_dubbing(
     if skipped is not None:
         return skipped
 
+    last_output_name = data.get("last_output_name")
+    if last_output_name:
+        _archive_filename(last_output_name)
+    orig_stem = data.get("last_output_stem")
+    if orig_stem is not None:
+        _archive_filename(orig_stem)
+        if not last_output_name or orig_stem != Path(last_output_name).stem:
+            raise H3Error("Inconsistent dubbing output filename and stem.")
+    elif last_output_name:
+        orig_stem = _archive_filename(Path(last_output_name).stem)
+    if orig_stem and orig_stem.casefold() == dub_results.SCAN_CACHE_DIR.casefold():
+        raise H3Error("Reserved dubbing output stem.")
     _restore_referenced_speakers(data.get("referenced_speakers") or [], src, runtime)
 
     existing_session = None
@@ -2904,7 +2956,7 @@ def _import_dubbing(
 
     if reuse_session_in_place and existing_session is not None:
         active_session_id = existing_session.id
-        session_root = existing_session.root.resolve()
+        session_root = _contained_path(sessions.sessions_dir(runtime), existing_session.root)
     else:
         active_session_id = uuid.uuid4().hex
         session_root = (sessions.sessions_dir(runtime) / active_session_id).resolve()
@@ -2918,7 +2970,7 @@ def _import_dubbing(
             manifest_work_path = work_session.get(manifest_arc)
             if manifest_work_path is None:
                 raise H3Error("Imported dubbing archive is missing a valid session.json.")
-            _schedule_obsolete_deletes(tx, session_root, set(final_session.values()))
+            _schedule_obsolete_deletes(tx, session_root, set(final_session.values()), skip_rel=_skip_dubbing_session_rel)
         else:
             tx.track_created_dir(session_root)
             src.stage_prefix(tx, "session", session_root, direct_into_new_dir=True)
@@ -2933,18 +2985,14 @@ def _import_dubbing(
         session_data["id"] = active_session_id
         session_data["updated"] = time.time()
 
-        last_output_name = data.get("last_output_name")
         result_entries = src.prefix_entries("result")
-        dub_video: Path | None = None
-        player_dir: Path | None = None
         stale_lipsync: Path | None = None
         written_media: list[tuple[Path, bool]] = []
         snapshots_by_media: dict[Path, dict[str, Any]] = {}
 
         if last_output_name and result_entries:
-            dub_out_dir = (Path(runtime.outputs_dir) / "dubbing").resolve()
+            dub_out_dir = _contained_path(Path(runtime.outputs_dir), Path(runtime.outputs_dir) / "dubbing")
             dub_out_dir.mkdir(parents=True, exist_ok=True)
-            orig_stem = str(data.get("last_output_stem") or Path(last_output_name).stem)
             target_stem = orig_stem
             if conflict == "rename" and any(
                 (dub_out_dir / candidate).exists()
@@ -2961,7 +3009,7 @@ def _import_dubbing(
                     target_fname = target_stem + fname[len(orig_stem) :]
                 else:
                     target_fname = fname
-                dest = (dub_out_dir / target_fname).resolve()
+                dest = _contained_path(dub_out_dir, dub_out_dir / _archive_filename(target_fname))
                 if dest.name.endswith(".settings.json"):
                     staged, _ = src.stage_entry(tx, arc_name, dest, allow_in_place=False)
                     media_name = dest.name[: -len(".settings.json")]
@@ -2980,15 +3028,22 @@ def _import_dubbing(
 
             if status == "overwritten":
                 written_dest_set = {dest for dest, _reused in written_media}
-                candidate_lipsync = (dub_out_dir / f"{target_stem}.lipsync.mp4").resolve()
+                subtitles = [dub_out_dir / f"{target_stem}.srt", *dub_out_dir.glob(f"{glob.escape(target_stem)}.*.srt")]
+                for subtitle in subtitles:
+                    if subtitle.is_file() and subtitle not in written_dest_set and not subtitle.is_symlink():
+                        tx.stage_delete_file(subtitle)
+                        sidecar = snapshot_path(subtitle)
+                        if sidecar.is_file() and not sidecar.is_symlink():
+                            tx.stage_delete_file(sidecar)
+                candidate_lipsync = _contained_path(dub_out_dir, dub_out_dir / f"{target_stem}.lipsync.mp4")
                 if candidate_lipsync not in written_dest_set and candidate_lipsync.is_file():
                     stale_lipsync = candidate_lipsync
                     tx.stage_delete_file(stale_lipsync)
                     stale_snap = snapshot_path(stale_lipsync)
-                    if stale_snap.is_file():
+                    if stale_snap.is_file() and not stale_snap.is_symlink():
                         tx.stage_delete_file(stale_snap)
 
-            player_dir = (dub_out_dir / dub_results.PLAYER_DIR / target_stem).resolve()
+            player_dir = _contained_path(dub_out_dir, dub_out_dir / dub_results.PLAYER_DIR / target_stem)
             has_player = bool(src.prefix_entries("result_player"))
             if has_player or player_dir.exists():
                 player_is_new = not player_dir.exists()
@@ -3021,7 +3076,18 @@ def _import_dubbing(
                                     )
                             write_json_atomic(meta_path, meta)
 
-                    from h3_app.dubbing.lip_sync import REPORT_FILE
+                    from h3_app.dubbing.lip_sync import PLAN_FILE, REPORT_FILE
+
+                    plan_path = work_player.get(f"result_player/{PLAN_FILE}")
+                    if plan_path:
+                        try:
+                            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                        except (ValueError, OSError):
+                            plan = None
+                        if isinstance(plan, dict) and plan.get("video") == f"{orig_stem}.mp4":
+                            plan["video"] = f"{target_stem}.mp4"
+                            write_json_atomic(plan_path, plan)
+
 
                     report_path = work_player.get(f"result_player/{REPORT_FILE}")
                     if report_path is not None and report_path.is_file():
@@ -3046,7 +3112,6 @@ def _import_dubbing(
                         remove_root_if_empty=not has_player,
                     )
 
-            dub_video = dub_out_dir / f"{target_stem}.mp4"
             target_last_name = (
                 target_stem + last_output_name[len(orig_stem) :]
                 if target_stem != orig_stem and last_output_name.startswith(orig_stem)
@@ -3065,34 +3130,6 @@ def _import_dubbing(
 
     if store is not None and stale_lipsync is not None and stale_lipsync in tx.deleted_paths:
         store.forget_asset(stale_lipsync)
-
-    if player_dir is not None and dub_video is not None and dub_video.is_file():
-        from h3_app.dubbing.lip_sync import PLAN_FILE
-        from h3_app.dubbing.lip_sync_match import video_fingerprint
-
-        plan_path = player_dir / PLAN_FILE
-        if plan_path.is_file():
-            try:
-                plan = json.loads(plan_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                plan = None
-            if isinstance(plan, dict):
-                stat = dub_video.stat()
-                fp = (
-                    plan["video_fingerprint"]
-                    if (
-                        plan.get("video") == dub_video.name
-                        and plan.get("video_size") == stat.st_size
-                        and isinstance(plan.get("video_fingerprint"), str)
-                        and plan["video_fingerprint"]
-                    )
-                    else video_fingerprint(dub_video)
-                )
-                plan["video"] = dub_video.name
-                plan["video_mtime_ns"] = stat.st_mtime_ns
-                plan["video_size"] = stat.st_size
-                plan["video_fingerprint"] = fp
-                write_json_atomic(plan_path, plan)
 
     for media_path, media_reused in written_media:
         if media_reused and _is_media_already_cataloged(media_path, store):
@@ -3115,6 +3152,9 @@ def _import_remake(
 
     project = json.loads(src.read_bytes("project.json"))
     orig_key = str(project.get("key") or source_id)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", orig_key):
+        raise H3Error("Invalid Remake project key.")
+    _archive_filename(orig_key)
     orig_name = str(project.get("name") or source_name or orig_key)
 
     projects = RemakeProjects(runtime.output_dir)
@@ -3154,7 +3194,10 @@ def _import_remake(
         target_owner = owner
         target_folder = projects.folder(target_owner, target_key).resolve()
 
-    takes_final = (target_folder / "takes").resolve()
+    expected_folder = projects.folder(target_owner, target_key)
+    if target_folder != _contained_path(Path(runtime.output_dir), expected_folder):
+        raise H3Error("Unsafe Remake project directory.")
+    takes_final = _contained_path(target_folder, target_folder / "takes")
     with _StagingTransaction() as tx:
         folder_is_new = not target_folder.exists()
         if folder_is_new:
@@ -3195,7 +3238,7 @@ def _import_remake(
             if window.get("take"):
                 window["take"] = arc_map.get(str(window["take"]), window["take"])
 
-        project_json_dest = (target_folder / "project.json").resolve()
+        project_json_dest = _contained_path(target_folder, target_folder / "project.json")
         project_json_payload = json.dumps(
             {k: v for k, v in project.items() if k not in {"folder", "updated"}}, indent=1
         )
@@ -3234,6 +3277,8 @@ def import_project_archive(
     with _PROJECT_TRANSFER_LOCK, zipfile.ZipFile(archive_path, "r") as archive:
         _validate_archive(archive)
         try:
+            if archive.getinfo("manifest.json").file_size > _MAX_METADATA_BYTES:
+                raise H3Error("Archive manifest is too large.")
             manifest = json.loads(archive.read("manifest.json"))
         except (KeyError, ValueError) as exc:
             raise H3Error("Invalid project archive: missing manifest.json.") from exc
@@ -3273,23 +3318,27 @@ def import_project_archive(
                 source_name=source_name,
             )
         if kind == "dubbing":
-            return _import_dubbing(
+            from h3_app.dubbing import projects, session
+            with projects._LOCK, session._LOCK:
+                return _import_dubbing(
+                    src,
+                    store=store,
+                    runtime=runtime,
+                    conflict=conflict,
+                    source_id=source_id,
+                    source_name=source_name,
+                    deferred_media=deferred_media,
+                )
+        from h3_app.remake import project
+        with project._LOCK:
+            return _import_remake(
                 src,
-                store=store,
                 runtime=runtime,
                 conflict=conflict,
+                owner=owner,
                 source_id=source_id,
                 source_name=source_name,
-                deferred_media=deferred_media,
             )
-        return _import_remake(
-            src,
-            runtime=runtime,
-            conflict=conflict,
-            owner=owner,
-            source_id=source_id,
-            source_name=source_name,
-        )
 
 
 def _translate_http_error(response: httpx.Response, base_url: str) -> H3Error:
@@ -3558,7 +3607,7 @@ def _download_project_delta(
     req_body = {
         "kind": kind,
         "id": project_id,
-        "known_digests": sorted(local_state.known_digests)[:_MAX_KNOWN_DIGESTS],
+        "known_digests": sorted(local_state.known_digests)[:MAX_KNOWN_DIGESTS],
         "expected_tree_digest": local_state.portable_digest,
     }
     return _stream_archive_with_resume(

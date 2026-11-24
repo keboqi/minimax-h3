@@ -74,13 +74,13 @@ export function paintStage({back, front, overlay}, {shot, background, fading, ti
   if (overlay) {
     const backElapsed = fading ? time - background.start : 0;
     const depthMeta = shot.depth_meta
-      ? resolveFocusDepthMeta(shot.depth_meta, shot.focus_cues, elapsed)
+      ? resolveFocusDepthMeta(shot.depth_meta, enabled && elapsed >= 0 && shot.focus_cues, elapsed)
       : null;
     const backDepthMeta = fading && background.depth_meta
-      ? resolveFocusDepthMeta(background.depth_meta, background.focus_cues, backElapsed)
+      ? resolveFocusDepthMeta(background.depth_meta, enabled && background.focus_cues, backElapsed)
       : null;
     paintEffects(overlay, effects, elapsed, (backend) => {
-      showBackend?.(backend, Boolean(effects.length || backEffects.length));
+      showBackend?.(backend, Boolean(effects.length || backEffects.length || depthMeta?.focus_z || backDepthMeta?.focus_z));
     }, {
       shotIndex: shot.index, cam, stillBack: back, stillFront: front, fading, fadeMix,
       cueElapsed: cueElapsed(shot.cues.flash, time),

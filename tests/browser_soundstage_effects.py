@@ -175,6 +175,17 @@ def check_webgpu_depth_and_layers(page):
     far_right_c = _row_contrast(far_frame, w * 3 // 5, w * 5 // 6, h // 2)
     assert far_right_c > far_left_c + 15, (far_left_c, far_right_c)
 
+    # A speaker cue alone must focus the far stripes without moving the camera pivot.
+    assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPU}) => {
+      const p = window.__depthProbe;
+      return renderWebGPU(p.host, 0, 0, 1.0, 160, 90, {
+        stillBack: p.stripe, depthImage: p.depth, depthMeta: {...meta, focus_z: 25},
+      });
+    })""", {"meta": depth_meta})
+    cue_frame = Image.open(BytesIO(page.locator("#depth-probe").screenshot())).convert("RGB")
+    assert (_row_contrast(cue_frame, w * 3 // 5, w * 5 // 6, h // 2)
+            > _row_contrast(cue_frame, w // 6, w * 2 // 5, h // 2) + 15)
+
     # 3) Unified SAM renderWebGPULayers: inside cold_tint on left + behind fog (region_depth_m=3.0).
     assert page.evaluate("""({meta}) => import('/soundstage/effects_webgpu.js').then(({renderWebGPULayers}) => {
       const p = window.__depthProbe;

@@ -111,7 +111,7 @@ def _refine_subject_meta(meta: dict | None, enhanced: dict | None) -> dict | Non
 
     person_regions = [
         region for region in regions
-        if region.get("label") == "person" and region.get("depth_m") is not None
+        if region.get("label") in enhanced.get("person_labels", ("person", "woman", "man")) and region.get("depth_m") is not None
     ]
     if person_regions:
         primary = min(person_regions, key=lambda r: float(r["depth_m"]))
@@ -165,7 +165,7 @@ def _shot_focus_cues(shot: dict, enhanced: dict | None, timeline: dict | None) -
         return None
     person_regions = [
         region for region in (enhanced.get("regions") or ())
-        if region.get("label") == "person"
+        if region.get("label") in enhanced.get("person_labels", ("person", "woman", "man"))
         and region.get("depth_m") is not None
         and _region_center(region) is not None
         and 0.2 <= float(region["depth_m"]) <= 50.0
@@ -203,7 +203,7 @@ def _shot_focus_cues(shot: dict, enhanced: dict | None, timeline: dict | None) -
     selected_regions = sorted(person_regions, key=lambda r: float(r["depth_m"]))[:len(distinct_speakers)]
     if (
         len(distinct_speakers) >= 2
-        and all(spk in speaker_pans for spk in distinct_speakers[:2])
+        and all(spk in speaker_pans for spk in distinct_speakers[:len(selected_regions)])
         and abs(speaker_pans[distinct_speakers[0]] - speaker_pans[distinct_speakers[1]]) >= 0.1
     ):
         ordered_speakers = sorted(distinct_speakers[:len(selected_regions)], key=lambda s: speaker_pans[s])
@@ -285,8 +285,8 @@ def stills_payload(
             if depth_png and raw_meta is not None:
                 shot["depth_file"] = depth_png
                 shot["depth_url"] = effect_depth.depth_url(name, depth_png)
-                shot["depth_meta"] = _refine_subject_meta(
-                    effect_depth.effective_meta(raw_meta, style_preset), enhanced
+                shot["depth_meta"] = effect_depth.effective_meta(
+                    _refine_subject_meta(dict(raw_meta), enhanced), style_preset
                 )
                 focus_cues = _shot_focus_cues(shot, enhanced, timeline)
                 if focus_cues:
@@ -297,7 +297,7 @@ def stills_payload(
 
 
 def effect_scene(stills, mix_settings):
-    if stills and any(shot["effects"] for shot in stills["shots"]):
+    if stills and any(shot["effects"] or shot.get("focus_cues") for shot in stills["shots"]):
         return EffectScene(stills["revision"], stills["shots"], timeline_payload(mix_settings)["sounds"])
     return None
 
@@ -772,10 +772,7 @@ def install_video_routes(app: FastAPI, export, *, api: str, store, owner_of, ses
         root = export.deps.runtime_config().output_dir
         with runs.lock:
             check_available(owner, name)
-            data, result = project(name)
-            if not result:
-                raise H3Error("Speak the project and draw shots first.")
-            settings = video_settings(data, export.engines)
+            _, result, _, settings = mix_of(name)
             record = visuals.read_stills(result, root)
             if record is None or not record.get("shots"):
                 raise H3Error("Draw the shots first: depth is estimated from the drawn images.")

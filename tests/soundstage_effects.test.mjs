@@ -532,16 +532,17 @@ test("rack_focus S-curve holds initial defocus plateau and resolveFocusDepthMeta
     {time: 2.0, z: 8.0, uv: [0.75, 0.4]},
   ];
   const startMeta = resolveFocusDepthMeta(baseMeta, focusCues, 0.5);
-  assert.equal(startMeta.subject_z, 2.0);
-  assert.deepEqual(startMeta.subject_uv, [0.25, 0.5]);
+  assert.equal(startMeta.focus_z, 2.0);
+  assert.deepEqual(startMeta.subject_uv, baseMeta.subject_uv);
 
   const midPull = resolveFocusDepthMeta(baseMeta, focusCues, 2.425);
   // Midpoint in diopters between 1/2.0 (0.5) and 1/8.0 (0.125) is 0.3125 -> z = 3.2m.
-  assert.ok(Math.abs(midPull.subject_z - 3.2) < 0.05, `expected diopter midpoint ~3.2m, got ${midPull.subject_z}`);
-  assert.ok(Math.abs(midPull.subject_uv[0] - 0.5) < 0.02);
+  assert.ok(Math.abs(midPull.focus_z - 3.2) < 0.05, `expected diopter midpoint ~3.2m, got ${midPull.focus_z}`);
+  assert.deepEqual(midPull.subject_uv, baseMeta.subject_uv);
+  assert.equal(midPull.subject_z, baseMeta.subject_z);
 
   const settledPull = resolveFocusDepthMeta(baseMeta, focusCues, 3.2);
-  assert.equal(settledPull.subject_z, 8.0);
-  assert.deepEqual(settledPull.subject_uv, [0.75, 0.4]);
+  assert.equal(settledPull.focus_z, 8.0);
+  assert.deepEqual(settledPull.subject_uv, baseMeta.subject_uv);
 });
 

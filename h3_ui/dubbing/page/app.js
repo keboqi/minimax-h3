@@ -221,6 +221,7 @@ export function lineSignature(session) {
 }
 
 export function setSession(session, {focus, keepSettings = false} = {}) {
+  const previousId = app.session?.id;
   const changed = !app.session || app.session.id !== session?.id;
   app.session = session;
   app.sessionId = session?.id || null;
@@ -232,7 +233,7 @@ export function setSession(session, {focus, keepSettings = false} = {}) {
     if (app.filter === "combine") app.filter = "all";
   }
   if (changed) {
-    if (app.session?.id && session?.id && app.session.id !== session.id) {
+    if (previousId && previousId !== session?.id) {
       for (const kind of Object.keys(app.pendingRuns)) {
         if (kind !== "analyze" && kind !== "auto") delete app.pendingRuns[kind];
       }

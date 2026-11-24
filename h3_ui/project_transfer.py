@@ -23,6 +23,8 @@ from h3_app.errors import H3Error
 from h3_app.project_transfer import (
     CONFLICT_MODES,
     KIND_LABELS,
+    MAX_KNOWN_DIGESTS,
+    serialize_project_transfer,
     TRANSFER_HEADER,
     TRANSFER_SCHEMA_VERSION,
     build_auth_headers,
@@ -61,11 +63,43 @@ class _ExportArchiveCache:
         self._inflight: dict[tuple[str, ...], threading.Lock] = {}
         self._entries: dict[tuple[str, ...], _CachedArchive] = {}
         self._root: Path | None = None
+        self._readers: dict[Path, int] = {}
 
     def _ensure_root(self) -> Path:
         if self._root is None or not self._root.is_dir():
             self._root = Path(tempfile.mkdtemp(prefix="h3-project-export-cache-"))
         return self._root
+
+    def _discard_locked(self, path: Path) -> None:
+        if path not in self._readers:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def response(self, path: Path, filename: str) -> FileResponse:
+        with self._lock:
+            self._readers[path] = self._readers.get(path, 0) + 1
+        return _ArchiveResponse(self, path, filename)
+
+    def release(self, path: Path) -> None:
+        with self._lock:
+            self._readers[path] -= 1
+            if self._readers[path] == 0:
+                del self._readers[path]
+                if all(entry.path != path for entry in self._entries.values()):
+                    self._discard_locked(path)
+
+    def resume(self, runtime, kind: str, project_id: str, etag: str) -> Path | None:
+        scope = (str(Path(runtime.output_dir).resolve()), str(Path(runtime.outputs_dir).resolve()), kind, project_id)
+        with self._lock:
+            now = time.monotonic()
+            self._evict_locked(now)
+            for key, entry in self._entries.items():
+                if key[:4] == scope and etag == f'"{entry.path.stem}"':
+                    entry.last_access = now
+                    return entry.path
+        return None
 
     def _evict_locked(self, now: float) -> None:
         expired = [
@@ -75,24 +109,21 @@ class _ExportArchiveCache:
         ]
         for key in expired:
             entry = self._entries.pop(key)
-            try:
-                entry.path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            self._discard_locked(entry.path)
 
         total_bytes = sum(entry.size for entry in self._entries.values())
         if len(self._entries) <= _EXPORT_CACHE_MAX_ENTRIES and total_bytes <= _EXPORT_CACHE_MAX_BYTES:
             return
         by_oldest = sorted(self._entries.items(), key=lambda kv: kv[1].last_access)
         for key, entry in by_oldest:
-            if len(self._entries) <= _EXPORT_CACHE_MAX_ENTRIES and total_bytes <= _EXPORT_CACHE_MAX_BYTES:
+            # Keep the newest archive resumable even when it alone exceeds the byte budget.
+            if len(self._entries) == 1 or (
+                len(self._entries) <= _EXPORT_CACHE_MAX_ENTRIES and total_bytes <= _EXPORT_CACHE_MAX_BYTES
+            ):
                 break
             self._entries.pop(key, None)
             total_bytes -= entry.size
-            try:
-                entry.path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            self._discard_locked(entry.path)
 
     def _build_cached(
         self,
@@ -140,10 +171,7 @@ class _ExportArchiveCache:
                 stale_keys = [k for k in self._entries if k != cache_key and stale_predicate(k)]
                 for stale in stale_keys:
                     old = self._entries.pop(stale)
-                    try:
-                        old.path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    self._discard_locked(old.path)
                 self._entries[cache_key] = _CachedArchive(
                     path=built, size=size, created_at=now, last_access=now
                 )
@@ -233,6 +261,19 @@ class _ExportArchiveCache:
             shutil.rmtree(root, ignore_errors=True)
 
 
+class _ArchiveResponse(FileResponse):
+    def __init__(self, cache, path, filename):
+        super().__init__(path, media_type="application/zip", filename=filename,
+                         headers={TRANSFER_HEADER: "1", "etag": f'"{path.stem}"'})
+        self.cache = cache
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.cache.release(self.path)
+
+
 _EXPORT_CACHE = _ExportArchiveCache()
 atexit.register(_EXPORT_CACHE.cleanup)
 
@@ -299,6 +340,7 @@ def install_project_transfer_routes(
         }
 
     @app.get("/api/projects/transfer/export", include_in_schema=False)
+    @serialize_project_transfer
     def transfer_export(kind: str, id: str):
         try:
             archive_path = _EXPORT_CACHE.get_or_build(
@@ -314,15 +356,11 @@ def install_project_transfer_routes(
                 detail=str(exc),
                 headers={TRANSFER_HEADER: "1"},
             ) from exc
-        return FileResponse(
-            archive_path,
-            media_type="application/zip",
-            filename=_archive_filename(kind, id),
-            headers={TRANSFER_HEADER: "1"},
-        )
+        return _EXPORT_CACHE.response(archive_path, _archive_filename(kind, id))
 
     @app.post("/api/projects/transfer/delta", include_in_schema=False)
-    def transfer_delta(body: dict = Body(...)):
+    @serialize_project_transfer
+    def transfer_delta(request: Request, body: dict = Body(...)):
         if not isinstance(body, dict):
             raise HTTPException(
                 status_code=400,
@@ -346,13 +384,20 @@ def install_project_transfer_routes(
                 detail="known_digests must be a list.",
                 headers={TRANSFER_HEADER: "1"},
             )
+        if len(raw_digests) > MAX_KNOWN_DIGESTS:
+            raise HTTPException(status_code=400, detail="Too many known_digests.", headers={TRANSFER_HEADER: "1"})
+        runtime = runtime_config()
+        if request.headers.get("range") and request.headers.get("if-range"):
+            cached = _EXPORT_CACHE.resume(runtime, kind, project_id, request.headers["if-range"])
+            if cached is not None:
+                return _EXPORT_CACHE.response(cached, _archive_filename(kind, project_id))
         expected_tree_digest = str(body.get("expected_tree_digest") or "")
         try:
             outcome, payload = _EXPORT_CACHE.get_or_build_delta(
                 kind,
                 project_id,
                 store=store,
-                runtime=runtime_config(),
+                runtime=runtime,
                 known_digests=raw_digests,
                 expected_tree_digest=expected_tree_digest,
             )
@@ -366,12 +411,7 @@ def install_project_transfer_routes(
         if outcome == "up_to_date" and isinstance(payload, dict):
             return JSONResponse(payload, headers={TRANSFER_HEADER: "1"})
         assert isinstance(payload, Path)
-        return FileResponse(
-            payload,
-            media_type="application/zip",
-            filename=_archive_filename(kind, project_id),
-            headers={TRANSFER_HEADER: "1"},
-        )
+        return _EXPORT_CACHE.response(payload, _archive_filename(kind, project_id))
 
     @app.post("/api/projects/transfer/import", include_in_schema=False)
     def transfer_import(request: Request, body: dict = Body(...)):

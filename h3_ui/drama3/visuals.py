@@ -26,7 +26,7 @@ from h3_app.hosted_image import HOSTED_IMAGE_PROVIDERS
 from h3_app.drama3.results import DRAMA3_FAMILY
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.burned_subtitles import Line, ass_subtitles, word_pieces
-from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, plan_art_style, sheet_prompt,
+from h3_app.drama3.visual_plan import (ORIENTATIONS, compile_plan, parenthesis_end, plan_art_style, sheet_prompt,
                                       shot_cap, subjects)
 from h3_app.drama3.visuals import FPS, Shot, render_video
 from h3_app.errors import H3Error
@@ -115,11 +115,30 @@ def visible_face_references(shot):
         return shot.references
     kept = []
     for key in shot.references:
-        matches = re.findall(rf"{re.escape(key)}⟦{re.escape(key)}⟧\s*\(([^)]*)\)", tagged)
-        if matches:
-            states = [part.split(";", 1)[1].strip() if ";" in part else "" for part in matches]
-            if states and all(state and _OCCLUDED_FACE_STATE.search(state) for state in states):
-                continue
+        states = []
+        for match in re.finditer(rf"{re.escape(key)}\u27e6{re.escape(key)}\u27e7\s*\(", tagged):
+            end = parenthesis_end(tagged, match.end() - 1)
+            state = ""
+            if end is not None:
+                body = tagged[match.end():end - 1]
+                pos = 0
+                while pos < len(body):
+                    if body[pos] == ";":
+                        state = body[pos + 1:]
+                        break
+                    if body[pos] in "(\uff08":
+                        pos = parenthesis_end(body, pos) or len(body)
+                    else:
+                        pos += 1
+                # A nested subject's state describes that subject's face.
+                while nested := re.search(r"\u27e7\s*\(", state):
+                    stop = parenthesis_end(state, nested.end() - 1)
+                    if stop is None:
+                        break
+                    state = state[:nested.start()] + state[stop:]
+            states.append(state)
+        if states and all(_OCCLUDED_FACE_STATE.search(state) for state in states):
+            continue
         kept.append(key)
     return tuple(kept)
 
@@ -583,6 +602,12 @@ def keep_stills(audio, root, shots, images, details, *, extras=None, total_frame
     for old in [*folder.glob("*.jpg"), *folder.glob("*.png")]:
         if not old.name.startswith(f"{revision}-") and old.name not in keep:
             old.unlink(missing_ok=True)
+    active_prefixes = tuple(f"{name}." for name in keep)
+    for directory in (folder / ".effect-masks", folder / ".effect-depth"):
+        if directory.is_dir() and not directory.is_symlink():
+            for artifact in directory.iterdir():
+                if artifact.is_file() and not artifact.name.startswith(active_prefixes):
+                    artifact.unlink(missing_ok=True)
     return record
 
 

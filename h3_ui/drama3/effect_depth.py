@@ -157,7 +157,8 @@ def effective_meta(meta: dict | None, style_preset: str | None = None) -> dict |
                 z_p90 = float(out.get("z_p90") or subject_z * 2.2)
                 near_candidate = min(z_p10, 1.0 / ((1.0 / subject_z) + 0.14))
                 far_candidate = max(z_p90, 1.0 / max(1e-3, (1.0 / subject_z) - 0.14))
-                if subject_z - z_p10 >= subject_z * 0.28 and near_candidate >= 0.25:
+                prefer_near = subject_z - z_p10 >= subject_z * 0.28 or 1 / subject_z - 1 / 150 < 0.12
+                if prefer_near and 1 / max(0.25, near_candidate) - 1 / subject_z >= 0.12:
                     out["rack_start_z"] = round(max(0.25, near_candidate), 3)
                 else:
                     out["rack_start_z"] = round(min(150.0, far_candidate), 3)

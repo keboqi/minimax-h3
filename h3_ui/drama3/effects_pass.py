@@ -37,7 +37,7 @@ def inventory(audio, root, rows, subjects, data, *, speech=(), depth_model=None)
             continue
         shot_id = row["shot_id"]
         image = row["image_file"]
-        labels = effect_regions.concepts(row, subjects)
+        labels, person_labels = effect_regions.concepts_with_people(row, subjects)
         regions = effect_regions.read_regions(folder, image, labels)
         entry = saved.get(shot_id) or {}
         if entry.get("image") != image:
@@ -72,7 +72,7 @@ def inventory(audio, root, rows, subjects, data, *, speech=(), depth_model=None)
             "start": row["start"], "end": row["end"], "beat": row["beat"],
             "speech": [{"speaker": cue.get("speaker", ""), "text": spoken_text(cue["text"])}
                        for cue in speech if cue["start"] < row["end"] and row["start"] < cue["end"]],
-            "labels": labels, "regions": regions, "default": base_stack(row["effects"]),
+            "labels": labels, "person_labels": person_labels, "regions": regions, "default": base_stack(row["effects"]),
             "applied": stack, "manual": bool(entry.get("manual") and stack is not None),
         }
         if depth_entry is not None:

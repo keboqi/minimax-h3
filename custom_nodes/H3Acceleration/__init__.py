@@ -3894,12 +3894,16 @@ class H3EstimateDepthPro2:
         os.makedirs(full_output_folder, exist_ok=True)
         with _DEPTH_PRO2_LOCK:
             try:
+                if device.type != "cpu":
+                    memory = comfy.model_management.module_size(model) + comfy.model_management.minimum_inference_memory()
+                    comfy.model_management.free_memory(memory, device)
                 model = model.to(device).eval()
                 batch_uint8 = (
                     image[..., :3].detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8).cpu().numpy()
                 )
                 with torch.no_grad():
                     for index in range(batch_uint8.shape[0]):
+                        comfy.model_management.throw_exception_if_processing_interrupted()
                         rgb_np = batch_uint8[index]
                         tensor = to_normalized_tensor(rgb_np, device)
                         prediction = model.infer(tensor, f_px=None)
