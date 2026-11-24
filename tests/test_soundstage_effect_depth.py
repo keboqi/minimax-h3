@@ -251,6 +251,34 @@ class SoundStageEffectDepthTests(unittest.TestCase):
                 self.assertIsNotNone(loaded)
                 self.assertEqual(loaded["meta"]["subject_z"], 3.0 + idx)
 
+    def test_render_depth_preview_maps_near_far_and_sky_and_downscales(self):
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            depth = np.full((90, 160), 30.0, dtype=np.float32)
+            depth[0:18, :] = np.inf
+            depth[30:75, 10:70] = 1.4
+            rgb = np.full((90, 160, 3), 80, dtype=np.uint8)
+            png_img, meta = ENCODE_DEPTH(depth, rgb, 120.0, DEFAULT_SOUNDSTAGE_DEPTH_MODEL)
+
+            png_path, json_path = effect_depth.artifact_paths(folder, "shot_vis.jpg", DEFAULT_SOUNDSTAGE_DEPTH_MODEL)
+            png_path.parent.mkdir(parents=True, exist_ok=True)
+            png_img.save(png_path)
+            json_path.write_text(json.dumps({**meta, "png": png_path.name}), encoding="utf-8")
+
+            entry = effect_depth.read_depth(folder, "shot_vis.jpg", DEFAULT_SOUNDSTAGE_DEPTH_MODEL, exact=True)
+            out_file = folder / "vis" / "depth_vis.png"
+            rendered = effect_depth.render_depth_preview(folder, entry, out_file, max_side=80)
+            self.assertEqual(rendered, out_file)
+            with Image.open(out_file) as vis:
+                self.assertEqual(vis.size, (80, 45))
+                near_px = vis.getpixel((20, 26))
+                far_px = vis.getpixel((60, 26))
+                sky_px = vis.getpixel((40, 2))
+                self.assertGreater(near_px[0], 220)
+                self.assertGreater(near_px[1], 190)
+                self.assertLess(far_px[0], 60)
+                self.assertEqual(sky_px, effect_depth._SKY_VIS_RGB)
+
 
 if __name__ == "__main__":
     unittest.main()

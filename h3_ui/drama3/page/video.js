@@ -360,18 +360,20 @@ export function createVideo({state, $, h, mixAudio, mixVideo, clock, saveVideo, 
             type: "button", "aria-pressed": String(row.transition === name), disabled: busy || (row.index === 0 && name === "Dissolve"),
             onclick: () => row.transition !== name && editShot({index: row.index, transition: name})}, name)))),
         h("button", {type: "button", id: "shot-effects", class: "effect-summary", "aria-haspopup": "dialog",
-          "aria-controls": enhancement?.segmented ? "effect-pass-dialog" : "effects-dialog", disabled: busy,
+          "aria-controls": enhancement?.segmented || enhancement?.proposal ? "effect-pass-dialog" : "effects-dialog", disabled: busy,
           onclick: () => {
-            if (enhancement?.segmented) { effectPass.open(enhancement); return; }
+            if (enhancement?.segmented || enhancement?.proposal) { effectPass.open(enhancement); return; }
             const stillShot = (video.stills?.shots || []).find((item) => item.index === row.index || item.shot_id === row.shot_id);
             openEffectsPicker({h, dialog: $("effects-dialog"), row, orientation: video.orientation, presets,
               depthUrl: stillShot?.depth_url ?? null,
               depthMeta: stillShot?.depth_meta ?? null,
+              openEnhanceEditor: enhancement ? () => effectPass.open(enhancement) : null,
               save: (effects) => editShot({index: row.index, effects}),
               restoreFocus: () => $("shot-effects")?.focus()});
           }},
           h("span", {class: "effect-summary-head"},
-            h("strong", {}, "Visual effects", effectChips.length > 1 ? h("span", {class: "muted small"}, ` · ${effectChips.length} layers`) : null),
+            h("strong", {}, "Visual effects", effectChips.length > 1 ? h("span", {class: "muted small"}, ` · ${effectChips.length} layers`) : null,
+              enhancement?.proposal ? h("span", {class: "chip"}, "Suggestion") : null),
             h("span", {class: "drawn-chip-edit"}, "Edit")),
           h("span", {class: "effect-summary-chips"}, effectChips.length
             ? effectChips.map((label) => h("span", {class: "chip"}, label))

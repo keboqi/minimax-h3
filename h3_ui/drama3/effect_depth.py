@@ -526,3 +526,87 @@ def region_depth_stats(
     if res is None:
         return None
     return {"depth_m": res[0], "depth_band": res[1]}
+
+
+_DEPTH_VIS_PALETTE = (
+    (13, 8, 41),
+    (92, 26, 122),
+    (184, 55, 90),
+    (240, 124, 46),
+    (252, 242, 156),
+)
+_SKY_VIS_RGB = (8, 18, 52)
+
+
+@lru_cache(maxsize=1)
+def _depth_vis_lut() -> tuple[tuple[int, int, int], ...]:
+    max_idx = len(_DEPTH_VIS_PALETTE) - 1
+    entries = []
+    for step in range(1024):
+        u = step / 1023.0
+        t = (u ** 0.7) * max_idx
+        lo = min(max_idx - 1, int(t))
+        f = t - lo
+        a = _DEPTH_VIS_PALETTE[lo]
+        b = _DEPTH_VIS_PALETTE[lo + 1]
+        entries.append((
+            round(a[0] + (b[0] - a[0]) * f),
+            round(a[1] + (b[1] - a[1]) * f),
+            round(a[2] + (b[2] - a[2]) * f),
+        ))
+    return tuple(entries)
+
+
+def render_depth_preview(
+    folder: Path | str,
+    depth_entry: dict | None,
+    out_path: Path | str,
+    *,
+    max_side: int = 1024,
+) -> Path | None:
+    """Render a false-color depth visualization PNG (near=warm yellow, far/sky=dark indigo) for VLMs."""
+    if not depth_entry or not depth_entry.get("png"):
+        return None
+    src_path = Path(folder) / DEPTH_FOLDER / str(depth_entry["png"])
+    if not src_path.is_file():
+        return None
+    lut = _depth_vis_lut()
+    try:
+        with Image.open(src_path) as d_img:
+            packed = d_img.convert("RGB")
+            width, height = packed.size
+            if width <= 0 or height <= 0:
+                return None
+            try:
+                import numpy as np
+
+                arr = np.asarray(packed, dtype=np.uint16)
+                q = (arr[..., 0] << 8) | arr[..., 1]
+                idx = (q >> 6).astype(np.int32)
+                lut_arr = np.asarray(lut, dtype=np.uint8)
+                vis_arr = lut_arr[idx]
+                sky = (arr[..., 2] >= 200) & (q < 655)
+                if sky.any():
+                    vis_arr = vis_arr.copy()
+                    vis_arr[sky] = _SKY_VIS_RGB
+                vis = Image.fromarray(vis_arr, mode="RGB")
+            except ImportError:
+                raw_pixels = getattr(packed, "get_flattened_data", packed.getdata)()
+                colorized = [
+                    _SKY_VIS_RGB if (b >= 200 and ((r << 8) | g) < 655) else lut[((r << 8) | g) >> 6]
+                    for r, g, b in raw_pixels
+                ]
+                vis = Image.new("RGB", (width, height))
+                vis.putdata(colorized)
+    except OSError:
+        return None
+
+    longest = max(vis.size)
+    if max_side > 0 and longest > max_side:
+        scale = max_side / float(longest)
+        target_size = (max(1, round(vis.size[0] * scale)), max(1, round(vis.size[1] * scale)))
+        vis = vis.resize(target_size, Image.Resampling.LANCZOS)
+    dest = Path(out_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    vis.save(dest, format="PNG")
+    return dest

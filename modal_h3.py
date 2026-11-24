@@ -43,6 +43,7 @@ PROMPT_FILES = (
     "prompt_drama3_direction.txt",
     "prompt_drama3_visuals.txt",
     "prompt_soundstage_effects.txt",
+    "prompt_soundstage_shot_effects.txt",
     "prompt_drama3_guided_plan.txt",
     "prompt_drama3_guided_preserve.txt",
     "prompt_drama3_guided_brief.txt",

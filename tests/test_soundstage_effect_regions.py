@@ -220,3 +220,130 @@ class SoundStageEffectRegionsTests(unittest.TestCase):
         self.assertIn("lamp", labels)
         self.assertIn("fire", labels)
         self.assertTrue(all(label.isascii() for label in labels), labels)
+
+    def test_segment_new_regions_hybrid_selection_dedup_and_preview_render(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            still = root / "shot.jpg"
+            Image.new("RGB", (80, 48), (60, 80, 100)).save(still)
+            mask_dir = root / effect_regions.MASK_FOLDER
+            mask_dir.mkdir(parents=True, exist_ok=True)
+
+            # Existing region_1 covers left person [0, 0, 24, 47].
+            existing_mask_name = f"shot.jpg.{'a' * 32}.region_1.png"
+            existing_img = Image.new("RGBA", (80, 48), (0, 0, 0, 0))
+            ImageDraw.Draw(existing_img).rectangle((0, 0, 23, 47), fill=(255, 255, 255, 255))
+            existing_img.save(mask_dir / existing_mask_name)
+            existing_regions = [
+                {"id": "region_1", "label": "person", "mask": existing_mask_name, "box": [0.0, 0.0, 0.3, 1.0]}
+            ]
+
+            submitted = []
+
+            def submit(graph, client):
+                submitted.append(graph)
+                outputs = {}
+                out_folder = root / "h3" / "soundstage_masks" / client
+                out_folder.mkdir(parents=True, exist_ok=True)
+                for node, spec in graph.items():
+                    if spec["class_type"] != effect_regions.MASK_OUTPUT_NODE:
+                        continue
+                    sam = graph[spec["inputs"]["masks"][0]]
+                    outputs[node] = {"images": []}
+                    if "conditioning" in sam["inputs"]:
+                        text = graph[sam["inputs"]["conditioning"][0]]["inputs"]["text"]
+                        if text == "brass lantern":
+                            # Two lanterns: upper-middle (28..40, 6..18) and lower-right (56..74, 26..42).
+                            for idx, rect in enumerate(((28, 6, 40, 18), (56, 26, 74, 42))):
+                                p = out_folder / f"lantern_{idx}.png"
+                                m = Image.new("L", (80, 48), 0)
+                                ImageDraw.Draw(m).rectangle(rect, fill=255)
+                                m.save(p)
+                                outputs[node]["images"].append({"filename": p.name})
+                        elif text == "woman":
+                            # Same silhouette as existing region_1 -> should deduplicate to region_1!
+                            p = out_folder / "dup_person.png"
+                            m = Image.new("L", (80, 48), 0)
+                            ImageDraw.Draw(m).rectangle((0, 0, 23, 47), fill=255)
+                            m.save(p)
+                            outputs[node]["images"].append({"filename": p.name})
+                    elif "positive_coords" in sam["inputs"]:
+                        coords = json.loads(sam["inputs"]["positive_coords"])
+                        # Fallback point segmentation for "stone archway" where text missed.
+                        if coords and coords[0]["x"] == 40 and coords[0]["y"] == 24:
+                            p = out_folder / "arch_pt.png"
+                            m = Image.new("L", (80, 48), 0)
+                            ImageDraw.Draw(m).rectangle((32, 8, 48, 40), fill=255)
+                            m.save(p)
+                            outputs[node]["images"].append({"filename": p.name})
+                return {"outputs": outputs}
+
+            services = SimpleNamespace(
+                media=SimpleNamespace(stage_file=Mock(return_value="shot.jpg")),
+                execution=SimpleNamespace(
+                    submit_prompt=submit,
+                    poll_comfy_progress=Mock(return_value=[]),
+                    wait_for_history=lambda prompt: prompt,
+                ),
+            )
+            requests = [
+                # Picks the lower-right lantern matching include/box instead of upper-middle one.
+                {
+                    "id": "new_1",
+                    "label": "table lantern",
+                    "prompt": "brass lantern",
+                    "box": [0.68, 0.50, 0.95, 0.90],
+                    "include": [[0.81, 0.71]],
+                    "exclude": [],
+                    "merge": False,
+                },
+                # Text misses "stone archway", falls back to point branch in the same ComfyUI submission.
+                {
+                    "id": "new_2",
+                    "label": "archway",
+                    "prompt": "stone archway",
+                    "box": [0.40, 0.16, 0.60, 0.84],
+                    "include": [[0.50, 0.50]],
+                    "exclude": [],
+                    "merge": False,
+                },
+                # Deduplicates against existing region_1.
+                {
+                    "id": "new_3",
+                    "label": "hero",
+                    "prompt": "woman",
+                    "include": [[0.15, 0.50]],
+                    "exclude": [],
+                    "merge": False,
+                },
+                # Neither text nor point matches -> reported in skipped.
+                {
+                    "id": "new_4",
+                    "label": "distant bird",
+                    "prompt": "tiny bird",
+                    "include": [[0.95, 0.05]],
+                    "exclude": [],
+                    "merge": False,
+                },
+            ]
+
+            created, id_map, skipped = effect_regions.segment_new_regions(
+                still, requests, existing_regions, services, SimpleNamespace(output_dir=root)
+            )
+            self.assertEqual(len(submitted), 1)
+            self.assertEqual(skipped, ["distant bird"])
+            self.assertEqual(id_map, {"new_1": "custom_1", "new_2": "custom_2", "new_3": "region_1"})
+            self.assertEqual(set(created), {"custom_1", "custom_2"})
+            self.assertEqual(created["custom_1"]["label"], "table lantern")
+            self.assertGreater(created["custom_1"]["box"][0], 0.65)
+            self.assertTrue((mask_dir / created["custom_1"]["mask"]).is_file())
+            self.assertTrue((mask_dir / created["custom_2"]["mask"]).is_file())
+
+            # Verify annotated segment preview image renders all regions cleanly.
+            all_regions = [*existing_regions, *created.values()]
+            vis_out = root / "vis" / "segments.png"
+            rendered = effect_regions.render_regions_preview(still, mask_dir, all_regions, vis_out, max_side=64)
+            self.assertEqual(rendered, vis_out)
+            with Image.open(vis_out) as vis_img:
+                self.assertEqual(vis_img.size, (64, 38))
+                self.assertEqual(vis_img.mode, "RGB")

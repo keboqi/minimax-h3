@@ -739,6 +739,19 @@ button.link { padding: 0; border: 0; background: none; color: var(--accent); fon
   background: var(--surface); color: var(--text); font-size: 13.5px; }
 .pass-edit-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.15fr); gap: 20px; min-width: 0; }
 .pass-layers-col { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.pass-shot-ai { display: grid; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.pass-shot-ai-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.pass-shot-ai-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.pass-shot-direction { flex: 1 1 220px; min-width: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13.5px; }
+.pass-shot-enhance-btn { flex: none; border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.pass-shot-banner { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 8px; background: var(--surface); }
+.pass-shot-banner-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.pass-shot-summary { margin: 0; }
+.pass-shot-chat { margin-top: 2px; }
 .pass-layer-card { display: grid; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
   border-left: 4px solid var(--tok-effect); border-radius: 10px; background: var(--surface); }
 .pass-set-card { border-left-color: var(--set-color, var(--accent)); }

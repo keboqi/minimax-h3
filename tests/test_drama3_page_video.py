@@ -1481,6 +1481,198 @@ class Drama3PageVideoTests(unittest.TestCase):
         cues = page_video._shot_focus_cues({"start": 0.0, "end": 6.5}, enhanced, timeline)
         self.assertEqual([cue["z"] for cue in cues], [1.8, 5.4, 8.0])
 
+    def test_single_shot_effect_enhancement_sends_visual_inputs_and_adds_new_segments(self):
+        from PIL import Image, ImageDraw
+        from h3_app.drama3 import effect_enhancement
+        from h3_app.errors import H3Error
+        from h3_ui.drama3 import effect_regions
+
+        self.runtime.script_dir = Path.cwd()
+        self.ok(self.client.post(f"{API}/project/video/reply", params=NAME, json={"reply": json.dumps(PLAN)}))
+        list(self.fake_export(self.mix.name, "qwen", "ink wash", 2, True, "landscape", '"all"'))
+        folder = visuals.stills_dir(self.mix, self.runtime.output_dir)
+        self.export.deps.generation_services = lambda: self._depth_services(self.runtime.output_dir)
+
+        shot0_init = self.project()["video"]["effect_enhancement"]["shots"][0]
+        shot1_init = self.project()["video"]["effect_enhancement"]["shots"][1]
+        self.assertFalse(shot0_init["segmented"])
+
+        def call(action, body=None):
+            return self.client.post(f"{API}/project/video/effects/{action}", params=NAME, json=body or {})
+
+        auto_segmented = []
+
+        def fake_auto_segment(path, labels, _services, _runtime):
+            auto_segmented.append(path.name)
+            manifest = effect_regions.manifest_path(folder, path.name, labels)
+            manifest.parent.mkdir(exist_ok=True)
+            mask = f"{path.name}.{'d' * 32}.region_1.png"
+            img = Image.new("RGBA", (64, 36), (0, 0, 0, 0))
+            ImageDraw.Draw(img).rectangle((0, 4, 24, 34), fill=(255, 255, 255, 255))
+            img.save(manifest.parent / mask)
+            regions = [{"id": "region_1", "label": "person", "mask": mask, "box": [0.0, 0.1111, 0.375, 0.9444]}]
+            manifest.write_text(json.dumps(regions), encoding="utf-8")
+            return regions
+
+        new_seg_calls = []
+
+        def fake_segment_new_regions(path, requests, existing_regions, _services, _runtime, *, max_total=24):
+            new_seg_calls.append((path.name, requests, [r["id"] for r in existing_regions or ()], max_total))
+            mask_dir = folder / effect_regions.MASK_FOLDER
+            mask_dir.mkdir(exist_ok=True)
+            mask = f"{path.name}.{'e' * 32}.region_1.png"
+            img = Image.new("RGBA", (64, 36), (0, 0, 0, 0))
+            ImageDraw.Draw(img).rectangle((42, 10, 58, 28), fill=(255, 255, 255, 255))
+            img.save(mask_dir / mask)
+            created = {
+                "custom_1": {
+                    "id": "custom_1",
+                    "label": requests[0]["label"],
+                    "mask": mask,
+                    "box": [0.6562, 0.2778, 0.9062, 0.7778],
+                }
+            }
+            return created, {requests[0]["id"]: "custom_1"}, ["missing smoke"]
+
+        captured_media = []
+        captured_request = {}
+
+        def fake_write_prompt(**kwargs):
+            for label, media_path in kwargs["media_values"]:
+                p = Path(media_path)
+                self.assertTrue(p.is_file(), f"Missing visual attachment {p}")
+                captured_media.append((label, p.suffix, p.stat().st_size))
+            req = json.loads(kwargs["request_text"])
+            captured_request.update(req)
+            reply_obj = {
+                "revision": req["revision"],
+                "shot_id": req["shot"]["shot_id"],
+                "action": "replace",
+                "summary": "Added mist behind Mia and warm flicker inside the stall lantern.",
+                "new_regions": [
+                    {
+                        "id": "new_1",
+                        "label": "stall lantern",
+                        "prompt": "paper lantern",
+                        "box": [0.65, 0.25, 0.92, 0.80],
+                        "include": [[0.78, 0.52]],
+                    },
+                    {
+                        "id": "new_unused",
+                        "label": "unused crate",
+                        "prompt": "wooden crate",
+                        "include": [[0.1, 0.9]],
+                    },
+                ],
+                "effects": [
+                    {"presets": ["push_in", "rain"], "mode": "full_frame", "intensity": 0.6},
+                    {"preset": "fog", "mode": "behind", "region_id": "region_1", "intensity": 0.55, "feather": 6},
+                    {"presets": ["warm_glow", "flicker"], "mode": "inside", "region_id": "new_1", "intensity": 0.75, "feather": 5},
+                ],
+            }
+            return json.dumps(reply_obj), "OK"
+
+        with (
+            patch.object(effect_regions, "prepare"),
+            patch.object(effect_regions, "segment", side_effect=fake_auto_segment),
+            patch.object(effect_regions, "segment_new_regions", side_effect=fake_segment_new_regions),
+            patch("h3_app.drama3.effect_enhancement.write_prompt", side_effect=fake_write_prompt),
+        ):
+            self.ok(call("shot/generate", {
+                "shot_id": shot0_init["shot_id"],
+                "image": shot0_init["image"],
+                "draft_effects": [{"preset": "rain", "mode": "full_frame"}],
+                "direction": "  mist behind Mia and warm glow on the lantern ",
+                "writer": {"openai_model": "vision-pro", "prompt_writer_backend": "OpenAI-compatible"},
+            }))
+            self.assertIsNone(self.wait()["error"])
+
+        # Only shot 0 was auto-segmented; shot 1 remained unsegmented!
+        self.assertEqual(auto_segmented, [shot0_init["image"]])
+        # Both <Shot Image>, <Depth Map>, and <Segmented Regions Overlay> were attached!
+        self.assertEqual(len(captured_media), 3)
+        self.assertTrue(captured_media[0][0].startswith("<Shot Image>"))
+        self.assertTrue(captured_media[1][0].startswith("<Depth Map>"))
+        self.assertTrue(captured_media[2][0].startswith("<Segmented Regions Overlay>"))
+        self.assertTrue(all(size > 0 for _, _, size in captured_media))
+
+        # Request included rich single-shot context, depth_summary, neighbors, and user_direction.
+        self.assertEqual(captured_request["user_direction"], "mist behind Mia and warm glow on the lantern")
+        self.assertTrue(captured_request["can_add_regions"])
+        self.assertIn("depth_summary", captured_request["shot"])
+        self.assertIn("next_shot", captured_request["shot"]["neighbors"])
+        self.assertEqual(captured_request["shot"]["effects"], [{"preset": "rain", "mode": "full_frame"}])
+
+        # Unused new_regions ("new_unused") were pruned before calling SAM 3.1!
+        self.assertEqual(len(new_seg_calls), 1)
+        self.assertEqual([r["id"] for r in new_seg_calls[0][1]], ["new_1"])
+
+        after = self.project()["video"]["effect_enhancement"]
+        shot0 = after["shots"][0]
+        shot1 = after["shots"][1]
+        self.assertTrue(shot0["segmented"])
+        self.assertFalse(shot1["segmented"])
+        self.assertEqual([r["id"] for r in shot0["regions"]], ["region_1", "custom_1"])
+        self.assertEqual(shot0["regions"][1]["label"], "stall lantern")
+        self.assertIn("depth_m", shot0["regions"][1])
+        self.assertEqual(self.client.get(shot0["regions"][1]["url"]).status_code, 200)
+
+        proposal = shot0["proposal"]
+        self.assertIsNotNone(proposal)
+        self.assertEqual(proposal["action"], "replace")
+        self.assertEqual(proposal["added_regions"], ["custom_1"])
+        self.assertIn("stall lantern", proposal["summary"])
+        self.assertEqual(proposal["effects"][-1], {
+            "preset": "flicker",
+            "mode": "inside",
+            "region_id": "custom_1",
+            "intensity": 0.75,
+            "feather": 5,
+        })
+        self.assertEqual(self.client.get(proposal["layers"][-1]["mask_url"]).status_code, 200)
+
+        # Test Copy shot prompt and Pasted shot reply (and dismissing / saving).
+        copied = self.ok(call("shot/prompt", {
+            "shot_id": shot0["shot_id"],
+            "image": shot0["image"],
+            "direction": "keep simple",
+        }))["prompt"]
+        copied_req = json.loads(copied.split("\n\n")[-1])
+        self.assertEqual(copied_req["shot"]["shot_id"], shot0["shot_id"])
+        pasted_reply = json.dumps({
+            "revision": copied_req["revision"],
+            "shot_id": shot0["shot_id"],
+            "action": "replace",
+            "summary": "Focused rain inside the stall lantern.",
+            "effects": [{"preset": "rain", "mode": "inside", "region_id": "custom_1", "intensity": 0.5}],
+        })
+        pasted_state = self.ok(call("shot/reply", {
+            "shot_id": shot0["shot_id"],
+            "image": shot0["image"],
+            "direction": "keep simple",
+            "reply": pasted_reply,
+        }))["video"]["effect_enhancement"]["shots"][0]
+        self.assertEqual(pasted_state["proposal"]["effects"], [
+            {"preset": "rain", "mode": "inside", "region_id": "custom_1", "intensity": 0.5}
+        ])
+
+        # Dismissing proposal clears shot0["proposal"] without touching saved stack.
+        dismissed = self.ok(call("shot", {
+            "shot_id": shot0["shot_id"],
+            "image": shot0["image"],
+            "dismiss_proposal": True,
+        }))["video"]["effect_enhancement"]["shots"][0]
+        self.assertIsNone(dismissed["proposal"])
+
+        # Non-ASCII prompt with box/points degrades cleanly to point/box segmentation instead of failing.
+        cleaned_new = effect_enhancement.check_new_regions(
+            [{"id": "new_1", "label": "灯笼", "prompt": "纸灯笼", "box": [0.2, 0.2, 0.5, 0.6], "include": [[0.35, 0.4]]}],
+            {"region_1"},
+        )
+        self.assertEqual(cleaned_new[0]["prompt"], "")
+        with self.assertRaises(H3Error):
+            effect_enhancement.check_new_regions([{"id": "new_1", "label": "灯笼", "prompt": "纸灯笼"}], {"region_1"})
+
 
 if __name__ == "__main__":
     unittest.main()

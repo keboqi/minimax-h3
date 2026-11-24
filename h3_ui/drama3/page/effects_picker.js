@@ -69,7 +69,7 @@ function createHoverController(canPlay) {
   return {playHover, stopHover};
 }
 
-export function openEffectsPicker({h, dialog, row, orientation, presets, depthUrl = null, depthMeta = null, save, restoreFocus}) {
+export function openEffectsPicker({h, dialog, row, orientation, presets, depthUrl = null, depthMeta = null, openEnhanceEditor = null, save, restoreFocus}) {
   const initial = row.effects || [];
   const selected = new Map(initial.map((id) => [presets[id]?.kind, id]));
   const choices = Object.entries(presets);
@@ -83,6 +83,14 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, depthUr
   const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 
   const title = h("h2", {id: "effects-title"}, `Visual effects · Shot ${row.index + 1}`);
+  const enhanceBtn = openEnhanceEditor ? h("button", {
+    type: "button",
+    class: "btn btn-small pass-shot-enhance-btn",
+    onclick: () => {
+      dialog.close();
+      openEnhanceEditor();
+    },
+  }, "Enhance & layers…") : null;
   const close = h("button", {type: "button", class: "btn btn-icon", "aria-label": "Close",
     onclick: () => dialog.close()}, "×");
   const chips = h("div", {class: "effect-summary-chips", "aria-live": "polite"});
@@ -340,7 +348,7 @@ export function openEffectsPicker({h, dialog, row, orientation, presets, depthUr
   }
 
   dialog.replaceChildren(
-    h("div", {class: "library-head"}, h("div", {class: "style-head-text"}, title), close),
+    h("div", {class: "library-head"}, h("div", {class: "style-head-text"}, title), enhanceBtn, close),
     h("div", {class: "style-body effects-picker-body"},
       h("section", {class: "effect-preview", "aria-label": "Combined preview"},
         h("div", {class: "effect-preview-controls"},

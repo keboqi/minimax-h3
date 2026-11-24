@@ -546,3 +546,133 @@ test("rack_focus S-curve holds initial defocus plateau and resolveFocusDepthMeta
   assert.deepEqual(settledPull.subject_uv, baseMeta.subject_uv);
 });
 
+test("single-shot effects edit supports AI enhance direction, auto-segment controls, and proposal compare/discard", async (t) => {
+  const makeNode = (tag) => ({
+    tag, style: {}, dataset: {}, children: [],
+    removeAttribute() {}, setAttribute(k, v) { this[k] = v; },
+    decode: () => Promise.resolve(),
+    getContext: () => null,
+    replaceChildren(...nodes) { this.children = nodes; },
+    querySelector: (selector) => selector === ".style-body" ? {scrollTop: 0} : null,
+    showModal() { this.open = true; },
+    close() { this.open = false; },
+  });
+  const previousDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const previousImg = Object.getOwnPropertyDescriptor(globalThis, "Image");
+  Object.defineProperty(globalThis, "document", {value: {createElement: makeNode}, configurable: true});
+  Object.defineProperty(globalThis, "Image", {value: class { set src(v) { this._src = v; } decode() { return Promise.resolve(); } }, configurable: true});
+  t.after(() => {
+    previousDoc ? Object.defineProperty(globalThis, "document", previousDoc) : delete globalThis.document;
+    previousImg ? Object.defineProperty(globalThis, "Image", previousImg) : delete globalThis.Image;
+  });
+
+  const h = (tag, attrs = {}, ...children) => ({tag, ...attrs,
+    children: children.flat(Infinity).filter((child) => child != null && child !== false)});
+  const walk = (node) => typeof node === "object" ? [node, ...(node.children || []).flatMap(walk)] : [];
+  const text = (node) => typeof node === "object" ? (node.children || []).map(text).join("") : String(node);
+  const dialog = makeNode("dialog");
+  const $ = (id) => id === "effect-pass-dialog" ? dialog : null;
+
+  const catalog = {
+    push_in: {kind: "camera", label: "Slow push in", modes: ["full_frame"]},
+    rain: {kind: "atmosphere", label: "Rain", modes: ["full_frame", "inside", "outside", "behind"]},
+    warm_glow: {kind: "lighting", label: "Warm glow", modes: ["full_frame", "inside", "outside"]},
+  };
+  const shot = {
+    shot_id: "shot_1", index: 0, image: "shot_1.jpg", segmented: false,
+    regions: [],
+    effects: [{preset: "rain", mode: "full_frame"}],
+    default: [{preset: "rain", mode: "full_frame"}],
+    proposal: null,
+  };
+  const calls = [];
+  const state = {
+    boot: {gpu: true, video: {enhancement_presets: catalog, enhancement_max_layers: 16}},
+    project: {
+      name: "Lantern Night",
+      result: {sounds: []},
+      video: {
+        orientation: "landscape",
+        plan: {rows: [{index: 0, start: 0, end: 4, image: "/still/shot_1.jpg"}]},
+        stills: {shots: [{index: 0, shot_id: "shot_1", depth_url: "/depth/shot_1.png", depth_meta: {inv_min: 0, inv_max: 0.5}}]},
+        effect_enhancement: {shots: [shot]},
+      },
+    },
+  };
+  const writerCfg = {prompt_writer_backend: "Gemini", gemini_prompt_model: "gemini-2.5-pro"};
+  const pass = createEffectsPass({
+    state, $, h,
+    call: async (path, body) => { calls.push([path, body]); return {}; },
+    copy: () => {},
+    writer: () => writerCfg,
+    interrupt: () => {},
+    busy: () => false,
+  });
+
+  pass.open(shot);
+
+  // Unsegmented shot offers "Segment shot" instead of "+ Add segment".
+  assert.ok(walk(dialog).some((n) => n.tag === "button" && text(n) === "Segment shot"));
+  assert.ok(!walk(dialog).some((n) => n.tag === "button" && text(n) === "+ Add segment"));
+
+  // Typing a direction and clicking "Enhance with gemini-2.5-pro" sends draft_effects + direction + writer.
+  const dirInput = walk(dialog).find((n) => n.tag === "input" && n["aria-label"] === "Enhancement direction");
+  dirInput.oninput({target: {value: "warm glow inside lantern"}});
+  const enhanceBtn = walk(dialog).find((n) => n.tag === "button" && text(n) === "Enhance with gemini-2.5-pro");
+  enhanceBtn.onclick();
+  assert.deepEqual(calls.at(-1), [
+    "/project/video/effects/shot/generate",
+    {
+      shot_id: "shot_1",
+      image: "shot_1.jpg",
+      draft_effects: [{preset: "rain", mode: "full_frame"}],
+      direction: "warm glow inside lantern",
+      writer: writerCfg,
+    },
+  ]);
+
+  // Simulate completed single-shot proposal arriving with a newly added SAM segment (`custom_1`).
+  shot.segmented = true;
+  shot.regions = [
+    {id: "region_1", label: "person", position: "middle left", url: "/mask/r1.png"},
+    {id: "custom_1", label: "brass lantern", position: "middle right", url: "/mask/c1.png"},
+  ];
+  shot.proposal = {
+    id: "prop_1",
+    action: "replace",
+    effects: [
+      {preset: "push_in", mode: "full_frame"},
+      {preset: "warm_glow", mode: "inside", region_id: "custom_1", intensity: 0.75, feather: 6},
+    ],
+    summary: "Added push-in and warm glow inside the brass lantern.",
+    added_regions: ["custom_1"],
+    warnings: [],
+  };
+  pass.render(true);
+
+  const allText = text(dialog);
+  assert.ok(allText.includes("Suggested enhancement loaded"));
+  assert.ok(allText.includes("Added push-in and warm glow inside the brass lantern."));
+  assert.ok(allText.includes("+ brass lantern"));
+  assert.ok(allText.includes("2 sets · 2 / 16 effects"));
+
+  // Compare before / Show suggestion toggles preview cleanly.
+  const compareBtn = () => walk(dialog).find((n) => n.tag === "button" && (text(n) === "Compare before" || text(n) === "Show suggestion"));
+  assert.equal(text(compareBtn()), "Compare before");
+  compareBtn().onclick();
+  assert.equal(text(compareBtn()), "Show suggestion");
+  compareBtn().onclick();
+  assert.equal(text(compareBtn()), "Compare before");
+
+  // Discard restores pre-proposal draftSets (1 set · 1 / 16 effects) and calls dismiss_proposal.
+  const discardBtn = walk(dialog).find((n) => n.tag === "button" && text(n) === "Discard");
+  shot.proposal = null;
+  await discardBtn.onclick();
+  pass.render(true);
+  assert.deepEqual(calls.at(-1), [
+    "/project/video/effects/shot",
+    {shot_id: "shot_1", image: "shot_1.jpg", dismiss_proposal: true},
+  ]);
+  assert.ok(text(dialog).includes("1 set · 1 / 16 effects"));
+});
+

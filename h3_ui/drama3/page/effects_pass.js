@@ -101,7 +101,13 @@ function setAccentColor(set, colors, catalog) {
 
 export function createEffectsPass({state, $, h, call, copy, writer, interrupt, busy}) {
   let project, selected, mode, draftSets, pasted = "", includeManual = false;
+  let shotDirection = "", shotPasted = "", appliedProposalId = null, beforeProposalSets = null, showBeforeProposal = false;
   let before = false, refine, frameTime = 0, showSegments = false, showDepth = false, playFrame = null;
+  const cloneSets = (sets) => (sets || []).map((set) => ({
+    ...set,
+    region_ids: [...(set.region_ids || [])],
+    presets: [...(set.presets || [])],
+  }));
   const dialog = () => $("effect-pass-dialog");
   const presetDialog = () => $("effect-preset-dialog");
   const panel = () => state.project.video?.effect_enhancement;
@@ -114,6 +120,10 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     h("button", {type: "button", class: `btn btn-small ${extra}`.trim(), onclick, disabled}, label);
   const api = (action, body = {}) => call(`/project/video/effects/${action}`, body);
   const selectedWriter = () => writer();
+  const writerModelName = () => {
+    const model = selectedWriter() || {};
+    return model.prompt_writer_backend === "OpenAI-compatible" ? model.openai_model : model.gemini_prompt_model;
+  };
   const totalEffects = () => (draftSets || []).reduce((sum, set) => sum + set.presets.length, 0);
 
   function stopPlayback() {
@@ -141,6 +151,21 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     });
   }
 
+  function syncShotProposal(shot, catalog) {
+    if (shot.proposal && shot.proposal.id !== appliedProposalId) {
+      beforeProposalSets = cloneSets(draftSets);
+      appliedProposalId = shot.proposal.id;
+      showBeforeProposal = false;
+      if (shot.proposal.action === "replace") {
+        draftSets = layersToSets(shot.proposal.effects, catalog);
+      }
+    } else if (!shot.proposal && appliedProposalId) {
+      appliedProposalId = null;
+      beforeProposalSets = null;
+      showBeforeProposal = false;
+    }
+  }
+
   function open(shot = null) {
     stopPlayback();
     closePresetDialog();
@@ -152,6 +177,11 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     selected = shot?.shot_id;
     mode = shot ? "edit" : "batch";
     draftSets = shot ? layersToSets(shot.effects ?? shot.default, state.boot.video.enhancement_presets) : null;
+    appliedProposalId = null;
+    beforeProposalSets = null;
+    shotDirection = "";
+    shotPasted = "";
+    showBeforeProposal = false;
     before = false;
     refine = null;
     frameTime = 0;
@@ -274,8 +304,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     const skipped = shots.length - changed.length - kept;
     const target = changed.find((item) => item.shot_id === selected) || changed[0];
     const previewShot = target && shots.find((shot) => shot.shot_id === target.shot_id);
-    const model = selectedWriter();
-    const modelName = model.prompt_writer_backend === "OpenAI-compatible" ? model.openai_model : model.gemini_prompt_model;
+    const modelName = writerModelName();
     return [
       h("p", {class: "muted small"}, `${segmented} of ${shots.length} drawn shots segmented.`),
       h("div", {class: "pass-actions"},
@@ -310,8 +339,10 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
             return h("div", {class: "pass-proposal-card"},
               h("div", {class: "pass-proposal-card-head"},
                 h("strong", {}, `Shot ${shot ? shot.index + 1 : item.shot_id}`),
-                h("span", {class: `chip ${item.action === "replace" ? "" : "chip-quiet"}`},
-                  item.action === "replace" ? "Proposed" : "Kept")),
+                h("div", {class: "pass-actions"},
+                  h("span", {class: `chip ${item.action === "replace" ? "" : "chip-quiet"}`},
+                    item.action === "replace" ? "Proposed" : "Kept"),
+                  shot ? button("Edit shot", () => open(shot), locked) : null)),
               h("div", {class: "pass-proposal-row"},
                 h("span", {class: "label"}, "Now"),
                 h("span", {class: "effect-summary-chips"}, ...formatLayers(shot || {regions: []}, current, catalog))),
@@ -671,7 +702,100 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
         })) : null);
   }
 
-  function edit(shot) {
+  function renderShotEnhance({shot, catalog, colors, regionMap, locked, rowKey, chatOpen}) {
+    const modelName = writerModelName();
+    const currentDraft = () => setsToLayers(draftSets, catalog);
+    const proposal = shot.proposal;
+    const addedRegions = (proposal?.added_regions || []).map((id) => regionMap.get(id)).filter(Boolean);
+    const pasteBtn = h("button", {
+      type: "button",
+      class: "btn btn-small",
+      disabled: locked || !shotPasted.trim(),
+      onclick: () => {
+        showBeforeProposal = false;
+        api("shot/reply", {...rowKey, draft_effects: currentDraft(), direction: shotDirection, reply: shotPasted});
+      },
+    }, "Preview pasted reply");
+
+    return h("div", {class: "pass-shot-ai"},
+      h("div", {class: "pass-shot-ai-head"},
+        h("strong", {}, "Enhance this shot"),
+        h("span", {class: "muted small"}, state.boot.gpu
+          ? "Uses shot image, depth & SAM segments · adds object segments when needed"
+          : "Uses shot image & scene context")),
+      h("div", {class: "pass-shot-ai-row"},
+        h("input", {
+          type: "text",
+          class: "pass-shot-direction",
+          "aria-label": "Enhancement direction",
+          placeholder: "Optional direction (e.g. mist behind subject, warm glow on lantern)",
+          maxLength: 400,
+          value: shotDirection,
+          disabled: locked,
+          oninput: (event) => { shotDirection = event.target.value; },
+        }),
+        button(
+          modelName ? `Enhance with ${modelName}` : "Enhance with selected LLM",
+          () => {
+            showBeforeProposal = false;
+            api("shot/generate", {
+              ...rowKey,
+              draft_effects: currentDraft(),
+              direction: shotDirection,
+              writer: selectedWriter(),
+            });
+          },
+          locked,
+          "pass-shot-enhance-btn",
+        )),
+      proposal ? h("div", {class: "pass-shot-banner", role: "status"},
+        h("div", {class: "pass-shot-banner-head"},
+          h("strong", {}, proposal.action === "replace" ? "Suggested enhancement loaded" : "Writer kept current effects"),
+          h("div", {class: "pass-actions"},
+            proposal.action === "replace" && beforeProposalSets
+              ? button(showBeforeProposal ? "Show suggestion" : "Compare before", () => {
+                showBeforeProposal = !showBeforeProposal;
+                render(true);
+              }, locked)
+              : null,
+            button("Discard", async () => {
+              if (beforeProposalSets) draftSets = cloneSets(beforeProposalSets);
+              showBeforeProposal = false;
+              await api("shot", {...rowKey, dismiss_proposal: true});
+            }, locked))),
+        proposal.summary ? h("p", {class: "muted small pass-shot-summary"}, proposal.summary) : null,
+        addedRegions.length ? h("div", {class: "pass-proposal-row"},
+          h("span", {class: "label"}, "New segments"),
+          h("span", {class: "pass-seg-list"}, ...addedRegions.map((region) => h("span", {
+            class: "pass-seg-chip",
+            style: {"--seg-color": colors.get(region.id) || "var(--accent)"},
+          }, h("span", {class: "pass-seg-dot", "aria-hidden": "true"}), h("span", {class: "pass-seg-text"}, `+ ${region.label}`))))) : null,
+        ...(proposal.warnings || []).map((warning) => h("p", {class: "muted small pass-shot-summary"}, warning))) : null,
+      h("details", {class: "more pass-shot-chat", open: chatOpen || null},
+        h("summary", {}, "Use another chat model"),
+        h("div", {class: "more-body"},
+          h("div", {class: "pass-actions"},
+            button("Copy shot prompt", () => copy("shot/prompt", {
+              ...rowKey,
+              draft_effects: currentDraft(),
+              direction: shotDirection,
+            }), locked)),
+          h("label", {class: "field"},
+            h("span", {class: "label"}, "Pasted shot reply"),
+            h("textarea", {
+              rows: 3,
+              value: shotPasted,
+              disabled: locked,
+              placeholder: '{"revision": "...", "shot_id": "...", "action": "replace", "effects": [...]}',
+              oninput: (event) => {
+                shotPasted = event.target.value;
+                pasteBtn.disabled = locked || !shotPasted.trim();
+              },
+            })),
+          pasteBtn)));
+  }
+
+  function edit(shot, chatOpen = false) {
     const catalog = state.boot.video.enhancement_presets;
     const maxLayers = state.boot.video.enhancement_max_layers || 16;
     const locked = busy();
@@ -684,6 +808,9 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       render(true);
     };
     const flatLayers = setsToLayers(draftSets, catalog);
+    const previewLayers = showBeforeProposal && beforeProposalSets
+      ? setsToLayers(beforeProposalSets, catalog)
+      : flatLayers;
     const countEffects = flatLayers.length;
     const hasDepth = Boolean(stillOf(shot)?.depth_url);
     return [
@@ -698,13 +825,15 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
               shot.regions.length ? h("button", {type: "button", class: "btn btn-small pass-seg-toggle", "aria-pressed": String(showSegments),
                 onclick: () => { showSegments = !showSegments; render(true); }},
               showSegments ? `Hide segments (${shot.regions.length})` : `Show segments (${shot.regions.length})`) : null) : null),
-          preview(shot, withMasks(shot, flatLayers)),
+          preview(shot, withMasks(shot, previewLayers)),
           shot.regions.length || canRefine ? h("div", {class: "pass-segments"},
             h("div", {class: "pass-segments-head"},
               h("span", {class: "label"}, `Segments (${shot.regions.length})`),
-              h("span", {class: "muted small"}, shot.regions.length
-                ? (canRefine ? "Hover to highlight · click to refine" : "Hover to highlight")
-                : "No auto-detected segments · add one with points")),
+              h("span", {class: "muted small"}, !shot.segmented
+                ? (canRefine ? "Not segmented yet · segment now or enhance to auto-segment" : "Not segmented yet")
+                : shot.regions.length
+                  ? (canRefine ? "Hover to highlight · click to refine" : "Hover to highlight")
+                  : "No auto-detected segments · add one with points")),
             h("div", {class: "pass-seg-list"},
               ...shot.regions.map((region, index) => h("button", {
                 type: "button",
@@ -727,7 +856,8 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
               h("span", {class: "pass-seg-dot", "aria-hidden": "true"}),
               h("span", {class: "pass-seg-text"}, region.label),
               h("span", {class: "pass-seg-pos"}, `· ${region.position}`))),
-              canRefine ? h("button", {
+              !shot.segmented && canRefine ? button("Segment shot", () => api("segment", rowKey), locked) : null,
+              shot.segmented && canRefine ? h("button", {
                 type: "button",
                 class: "pass-seg-chip pass-seg-add",
                 disabled: locked || shot.regions.length >= MAX_TOTAL_REGIONS,
@@ -741,6 +871,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
               }, "+ Add segment") : null)) : null,
           refine ? maskEditor(shot) : null),
         h("section", {class: "pass-layers-col", "aria-label": "Effect sets"},
+          renderShotEnhance({shot, catalog, colors, regionMap, locked, rowKey, chatOpen}),
           h("div", {class: "effect-options-controls"},
             h("span", {class: "muted small"},
               `${draftSets.length} ${draftSets.length === 1 ? "set" : "sets"} · ${countEffects} / ${maxLayers} effects`),
@@ -768,19 +899,23 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
     if (!modal?.open) return;
     if (project !== state.project.name || !panel()) { stopPlayback(); closePresetDialog(); modal.close(); return; }
     if (!force && presetDialog()?.open) return;
-    if (!force && modal.contains(document.activeElement) && document.activeElement.matches("textarea, input[type='text']")) return;
+    if (!force && modal.contains?.(document.activeElement) && document.activeElement.matches("textarea, input[type='text']")) return;
     const shot = panel().shots.find((item) => item.shot_id === selected);
     const run = state.videoRun;
     const running = run?.active && ["segment_effects", "enhance_effects", "refine_effect_mask"].includes(run.kind);
-    if (mode === "edit" && shot && refine?.mode === "add" && refine.pendingFrom) {
-      const added = shot.regions.find((region) => !refine.pendingFrom.has(region.id));
-      if (added) {
-        refine = {mode: "refine", region: added.id, type: "include", include: [], exclude: []};
-      } else if (!running) {
-        delete refine.pendingFrom;
+    if (mode === "edit" && shot) {
+      syncShotProposal(shot, state.boot.video.enhancement_presets);
+      if (refine?.mode === "add" && refine.pendingFrom) {
+        const added = shot.regions.find((region) => !refine.pendingFrom.has(region.id));
+        if (added) {
+          refine = {mode: "refine", region: added.id, type: "include", include: [], exclude: []};
+        } else if (!running) {
+          delete refine.pendingFrom;
+        }
       }
     }
     const scroll = modal.querySelector(".style-body")?.scrollTop ?? 0;
+    const chatOpen = Boolean(modal.querySelector(".pass-shot-chat")?.open);
     const releasePreview = () => {
       stopPlayback();
       clearEffectPreview(modal.querySelector(".pass-preview canvas.still-effects"));
@@ -793,7 +928,7 @@ export function createEffectsPass({state, $, h, call, copy, writer, interrupt, b
       button("Close", () => { stopPlayback(); closePresetDialog(); modal.close(); })),
     h("div", {class: "style-body pass-body"},
       running ? h("p", {role: "status"}, run.status) : null,
-      ...(mode === "edit" && shot ? edit(shot) : batch())));
+      ...(mode === "edit" && shot ? edit(shot, chatOpen) : batch())));
     modal.onclose = () => { releasePreview(); closePresetDialog(); };
     modal.querySelector(".style-body").scrollTop = scroll;
   }
