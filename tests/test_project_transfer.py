@@ -1362,6 +1362,48 @@ def test_corrupt_archive_rollback_preserves_existing_projects_and_leaves_no_orph
         assert sessions_after == sessions_before
         assert "Safe Dub" not in dubbing_projects.names(dst_runtime)
 
+        # Overwriting Dubbing when a local .lipsync.mp4 is obsolete deletes it and forgets its catalog row.
+        import_project_archive(good_dub_zip, store=dst_store, runtime=dst_runtime, conflict="rename")
+        dst_lipsync = dst_runtime.outputs_dir / "dubbing" / "talk_fr.lipsync.mp4"
+        dst_lipsync.write_bytes(b"obsolete-lipsync-bytes")
+        dst_store.index_asset(dst_lipsync, "video", {"_media": {}, "family": "Dubbing lip sync"})
+        assert any(Path(r["path"]).resolve() == dst_lipsync.resolve() for r in dst_store.search_assets(kind="video"))
+        import_project_archive(good_dub_zip, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+        assert not dst_lipsync.exists()
+        assert not any(Path(r["path"]).resolve() == dst_lipsync.resolve() for r in dst_store.search_assets(kind="video"))
+
+    # 3. Soundstage failed overwrite rolls back staged clips without clobbering existing local clips
+    with _using_workspace_env(src_runtime):
+        ss_clips = src_runtime.output_dir / "h3" / ".soundstage" / "clips"
+        ss_clips.mkdir(parents=True, exist_ok=True)
+        (ss_clips / "host.wav").write_bytes(b"NEW-REMOTE-CLIP-BYTES-1234567890")
+        ss_h3 = src_runtime.output_dir / "h3"
+        ss_h3.mkdir(parents=True, exist_ok=True)
+        ss_mix = ss_h3 / "safe_stage.mp3"
+        ss_mix.write_bytes(b"NEW-REMOTE-MIX-BYTES-1234567890")
+        src_store.save_soundstage_project(
+            "Safe Stage",
+            {"text": "[Host] Remote", "voice_0_preset": UPLOAD_VOICE, "voice_0_audio": "host.wav"},
+        )
+        src_store.mark_soundstage_generated("Safe Stage", str(ss_mix))
+        good_ss_zip = export_project_archive(
+            "soundstage", "Safe Stage", tmp_path / "ss_good.zip", store=src_store, runtime=src_runtime
+        )
+    bad_ss_zip = corrupt_zip_entry(good_ss_zip, tmp_path / "ss_bad.zip", "safe_stage.mp3")
+
+    with _using_workspace_env(dst_runtime):
+        dst_clips = dst_runtime.output_dir / "h3" / ".soundstage" / "clips"
+        dst_clips.mkdir(parents=True, exist_ok=True)
+        (dst_clips / "host.wav").write_bytes(b"ORIGINAL-LOCAL-CLIP-MUST-SURVIVE")
+        dst_store.save_soundstage_project(
+            "Safe Stage",
+            {"text": "[Host] Local", "voice_0_preset": UPLOAD_VOICE, "voice_0_audio": "host.wav"},
+        )
+        with pytest.raises(zipfile.BadZipFile):
+            import_project_archive(bad_ss_zip, store=dst_store, runtime=dst_runtime, conflict="overwrite")
+        assert (dst_clips / "host.wav").read_bytes() == b"ORIGINAL-LOCAL-CLIP-MUST-SURVIVE"
+        assert dst_store.soundstage_project("Safe Stage")[0]["text"] == "[Host] Local"
+
 
 def test_http_retry_range_resume_skip_fastpath_and_parallel_ordering(tmp_path: Path, monkeypatch):
     from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -1506,3 +1548,487 @@ def test_http_retry_range_resume_skip_fastpath_and_parallel_ordering(tmp_path: P
         assert overwrite_res[0]["status"] == "overwritten"
         assert dst_store.soundstage_project("Stage 0")[0]["title"] == "T0-v2"
         assert export_builds.count(("soundstage", "Stage 0")) == 2
+
+
+def test_workshop_to_gpu_studio_and_back_incremental_sync_all_four_kinds(tmp_path: Path, monkeypatch):
+    from h3_app.project_transfer import import_remote_projects
+
+    monkeypatch.delenv("H3_WORKSPACE_DIR", raising=False)
+    ws_runtime, ws_store = _make_workspace(tmp_path / "workshop")
+    gpu_runtime, gpu_store = _make_workspace(tmp_path / "gpu_studio")
+
+    heavy_cast = os.urandom(160_000)
+    heavy_sb_take0 = os.urandom(220_000)
+    heavy_sb_latent0 = os.urandom(180_000)
+    heavy_dub_source = os.urandom(260_000)
+    heavy_dub_vocals = os.urandom(200_000)
+    heavy_dub_take0 = os.urandom(120_000)
+    heavy_ss_clip = os.urandom(140_000)
+    heavy_ss_take0 = os.urandom(130_000)
+    heavy_ss_still1 = os.urandom(110_000)
+    heavy_remake_src = os.urandom(240_000)
+    heavy_remake_pic = os.urandom(90_000)
+
+    # 1. Seed all 4 project kinds on Workshop with sizable binary assets.
+    ws_sb = StoryboardService(ws_store, lambda: ws_runtime)
+    cast_file = tmp_path / "hero_big.png"
+    cast_file.write_bytes(heavy_cast)
+    board_id = ws_sb.create(
+        "ws-owner",
+        "Big Storyboard",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        cast=[("Hero", cast_file)],
+    )
+    ws_sb.add_scene("ws-owner", board_id)
+    board = ws_sb.load("ws-owner", board_id)
+    sc0_id = board["scenes"][0]["id"]
+    sc1_id = board["scenes"][1]["id"]
+    tk0_id = sb_model.new_id()
+    tk0_prefix = ws_sb.take_prefix(board_id, sc0_id, tk0_id)
+    tk0_video = ws_sb.output_path(f"{tk0_prefix}.mp4")
+    tk0_video.parent.mkdir(parents=True, exist_ok=True)
+    tk0_video.write_bytes(heavy_sb_take0)
+    write_snapshot(tk0_video, {"family": "MiniMax H3", "settings": {"prompt": "Scene 0"}})
+    tk0_latent_rel = f"{tk0_prefix}.safetensors"
+    ws_sb.output_path(tk0_latent_rel).write_bytes(heavy_sb_latent0)
+    ws_sb.record_take(
+        "ws-owner",
+        board_id,
+        sc0_id,
+        tk0_id,
+        video=str(tk0_video),
+        latents={"latent": tk0_latent_rel, "stage_latent": None, "prefix_frames": 0},
+        seed=7,
+        inputs=sb_model.scene_inputs(ws_sb.load("ws-owner", board_id), 0),
+    )
+
+    # Dubbing
+    dub_src_file = tmp_path / "movie_big.mp4"
+    dub_src_file.write_bytes(heavy_dub_source)
+    ws_dub_sess = dub_sessions.create(ws_runtime, dub_src_file, video=True)
+    (ws_dub_sess.root / "vocals.wav").write_bytes(heavy_dub_vocals)
+    ws_dub_sess.set_file("vocals", ws_dub_sess.root / "vocals.wav")
+    (ws_dub_sess.root / "takes").mkdir(parents=True, exist_ok=True)
+    (ws_dub_sess.root / "takes" / "0.wav").write_bytes(heavy_dub_take0)
+    (ws_dub_sess.root / "takes" / "1.wav").write_bytes(b"old-line1-take")
+    ws_dub_sess.segments = [
+        {"start": 0.0, "end": 1.5, "speaker": "A", "source": "One", "translation": "Uno"},
+        {"start": 1.5, "end": 3.0, "speaker": "A", "source": "Two", "translation": "Dos"},
+    ]
+    ws_dub_sess.save()
+    dubbing_projects.save(ws_runtime, "Big Dub", ws_dub_sess.id, dub_src_file, {"target_language": "Spanish"})
+
+    # Soundstage
+    ss_clips = ws_runtime.output_dir / "h3" / ".soundstage" / "clips"
+    ss_clips.mkdir(parents=True, exist_ok=True)
+    (ss_clips / "narrator.wav").write_bytes(heavy_ss_clip)
+    ss_h3 = ws_runtime.output_dir / "h3"
+    ss_h3.mkdir(parents=True, exist_ok=True)
+    ss_mix = ss_h3 / "big_drama.mp3"
+    ss_mix.write_bytes(b"initial-mix-bytes")
+    take0_key = "1" * 32
+    write_snapshot(
+        ss_mix,
+        {"family": "Drama 3", "settings": {"title": "Big Drama", "chunks": [{"take": take0_key}]}},
+    )
+    ss_takes = takes_root(ws_runtime)
+    ss_takes.mkdir(parents=True, exist_ok=True)
+    (ss_takes / f"{take0_key}.wav").write_bytes(heavy_ss_take0)
+    ss_stills = drama3_visuals.stills_dir(ss_mix, ws_runtime.output_dir)
+    ss_stills.mkdir(parents=True, exist_ok=True)
+    (ss_stills / "shot1.jpg").write_bytes(heavy_ss_still1)
+    (ss_stills / "obsolete_shot.jpg").write_bytes(b"remove-me-on-sync")
+    (ss_stills / drama3_visuals.STILLS_RECORD).write_text(
+        json.dumps(
+            {
+                "revision": "r1",
+                "source": ss_mix.name,
+                "shots": [{"image": "shot1.jpg"}, {"image": "obsolete_shot.jpg"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ws_store.save_soundstage_project(
+        "Big Stage",
+        {
+            "text": "[Host] Part 1",
+            "title": "Big Drama",
+            "voice_0_preset": UPLOAD_VOICE,
+            "voice_0_audio": "narrator.wav",
+        },
+    )
+    ws_store.mark_soundstage_generated("Big Stage", str(ss_mix))
+
+    # Remake
+    ws_remakes = RemakeProjects(ws_runtime.output_dir)
+    remake_vid = tmp_path / "remake_big.mp4"
+    remake_vid.write_bytes(heavy_remake_src)
+    remake_key = "rk_big_sync_0001"
+    rm_proj = ws_remakes.create(
+        "ws-owner",
+        remake_key,
+        str(remake_vid),
+        {"name": "Big Remake", "start": 0.0, "frames": 162, "width": 832, "height": 480, "mix": 0},
+        [{"render": [0, 81], "own": [0, 81], "hold": 0}, {"render": [81, 162], "own": [81, 162], "hold": 0}],
+    )
+    rm_pic = Path(rm_proj["folder"]) / "pictures" / "actor.png"
+    rm_pic.write_bytes(heavy_remake_pic)
+    rm_w0_old = Path(rm_proj["folder"]) / "w0_old.mp4"
+    rm_w0_old.write_bytes(b"old-window0-take")
+    ws_remakes.edit(
+        rm_proj,
+        lambda cur: cur["windows"][0].update(
+            pictures=[str(rm_pic)], pins=[0], prompt="Walk", take=str(rm_w0_old), state="done"
+        ),
+    )
+
+    ws_app = FastAPI()
+    ws_commits = Mock()
+    install_project_transfer_routes(ws_app, store=ws_store, runtime_config=lambda: ws_runtime, on_imported=ws_commits)
+
+    gpu_app = FastAPI()
+    delta_wire_bytes: list[tuple[str, int]] = []
+
+    @gpu_app.middleware("http")
+    async def measure_gpu_transfer_bytes(request: Request, call_next):
+        resp = await call_next(request)
+        if request.url.path in {"/api/projects/transfer/delta", "/api/projects/transfer/export"}:
+            chunks = [chunk async for chunk in resp.body_iterator]
+            raw = b"".join(chunks)
+            delta_wire_bytes.append((request.url.path, len(raw)))
+            from starlette.responses import Response
+
+            return Response(
+                content=raw,
+                status_code=resp.status_code,
+                headers=dict(resp.headers),
+                media_type=resp.media_type,
+            )
+        return resp
+
+    install_project_transfer_routes(gpu_app, store=gpu_store, runtime_config=lambda: gpu_runtime)
+
+    all_selections = [
+        ("storyboard", board_id, "Big Storyboard"),
+        ("dubbing", "Big Dub", "Big Dub"),
+        ("soundstage", "Big Stage", "Big Stage"),
+        ("remake", remake_key, "Big Remake"),
+    ]
+
+    with _serve_fastapi(ws_app) as ws_url, _serve_fastapi(gpu_app) as gpu_url:
+        # 2. Temp GPU Studio imports all 4 projects from Workshop initially.
+        initial = import_remote_projects(
+            ws_url, all_selections, store=gpu_store, runtime=gpu_runtime, conflict="rename"
+        )
+        assert [r["status"] for r in initial] == ["imported", "imported", "imported", "imported"]
+
+        # 3. Syncing back to Workshop BEFORE any GPU edits detects 100% up_to_date statelesly (0 zip bytes, 0 commits).
+        delta_wire_bytes.clear()
+        noop_sync = import_remote_projects(
+            gpu_url,
+            all_selections,
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+            on_imported=ws_commits,
+        )
+        assert [r["status"] for r in noop_sync] == ["up_to_date", "up_to_date", "up_to_date", "up_to_date"]
+        assert ws_commits.call_count == 0
+        assert all(path == "/api/projects/transfer/delta" and size < 1024 for path, size in delta_wire_bytes)
+
+        # Record Workshop mtimes & session IDs of unchanged local files BEFORE partial GPU updates.
+        ws_dub_before_id = dubbing_projects.load(ws_runtime, "Big Dub")[1].id
+        ws_sessions_count_before = len(list(dub_sessions.sessions_dir(ws_runtime).iterdir()))
+        ws_dub_src_mtime = (dub_sessions.sessions_dir(ws_runtime) / ws_dub_before_id / "source.mp4").stat().st_mtime_ns
+        ws_sb_tk0_mtime = tk0_video.stat().st_mtime_ns
+        ws_remake_src_path = Path(RemakeProjects(ws_runtime.output_dir).load(None, remake_key)["source"])
+        ws_remake_src_mtime = ws_remake_src_path.stat().st_mtime_ns
+
+        # 4. Perform small GPU updates on Temp GPU Studio across all 4 projects.
+        gpu_sb = StoryboardService(gpu_store, lambda: gpu_runtime)
+        tk1_id = sb_model.new_id()
+        tk1_prefix = gpu_sb.take_prefix(board_id, sc1_id, tk1_id)
+        tk1_video = gpu_sb.output_path(f"{tk1_prefix}.mp4")
+        tk1_video.parent.mkdir(parents=True, exist_ok=True)
+        tk1_video.write_bytes(b"gpu-generated-scene1-video")
+        gpu_sb.record_take(
+            "gpu-owner",
+            board_id,
+            sc1_id,
+            tk1_id,
+            video=str(tk1_video),
+            latents={"latent": None},
+            seed=99,
+            inputs=sb_model.scene_inputs(gpu_sb.load("gpu-owner", board_id), 1),
+        )
+
+        # Dubbing: regenerate take 1 + output mp3/mp4 while keeping 260 KB source + 200 KB vocals + 120 KB take 0.
+        _, gpu_dub_sess = dubbing_projects.load(gpu_runtime, "Big Dub")
+        (gpu_dub_sess.root / "takes" / "1.wav").write_bytes(b"gpu-regenerated-line1-wav")
+        gpu_dub_out = gpu_runtime.outputs_dir / "dubbing"
+        gpu_dub_out.mkdir(parents=True, exist_ok=True)
+        (gpu_dub_out / "big_es.mp3").write_bytes(b"gpu-dub-mp3")
+        (gpu_dub_out / "big_es.mp4").write_bytes(b"gpu-dub-mp4")
+        gpu_dub_sess.data["last_output"] = str(gpu_dub_out / "big_es.mp4")
+        gpu_dub_sess.save()
+
+        # Soundstage: add take1 + shot2.jpg, drop obsolete_shot.jpg, keep clip + take0 + shot1.jpg.
+        take1_key = "2" * 32
+        (takes_root(gpu_runtime) / f"{take1_key}.wav").write_bytes(b"gpu-new-take1-wav")
+        _, gpu_ss_res = gpu_store.soundstage_project("Big Stage")
+        gpu_mix = Path(gpu_ss_res)
+        gpu_mix.write_bytes(b"gpu-updated-mix-mp3")
+        write_snapshot(
+            gpu_mix,
+            {
+                "family": "Drama 3",
+                "settings": {"title": "Big Drama", "chunks": [{"take": take0_key}, {"take": take1_key}]},
+            },
+        )
+        gpu_stills = drama3_visuals.stills_dir(gpu_mix, gpu_runtime.output_dir)
+        (gpu_stills / "obsolete_shot.jpg").unlink()
+        (gpu_stills / "shot2.jpg").write_bytes(b"gpu-new-shot2-jpg")
+        (gpu_stills / drama3_visuals.STILLS_RECORD).write_text(
+            json.dumps(
+                {
+                    "revision": "r2",
+                    "source": gpu_mix.name,
+                    "shots": [{"image": "shot1.jpg"}, {"image": "shot2.jpg"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        gpu_store.save_soundstage_project(
+            "Big Stage",
+            {
+                "text": "[Host] Part 1\n[Host] Part 2",
+                "title": "Big Drama",
+                "voice_0_preset": UPLOAD_VOICE,
+                "voice_0_audio": "narrator.wav",
+            },
+        )
+        gpu_store.mark_soundstage_generated("Big Stage", str(gpu_mix))
+
+        # Remake: render window 1 and replace window 0 take (removing old w0 take).
+        gpu_remakes = RemakeProjects(gpu_runtime.output_dir)
+        gpu_rm = gpu_remakes.load(None, remake_key)
+        Path(gpu_rm["windows"][0]["take"]).unlink()
+        w0_new = Path(gpu_rm["folder"]) / "w0_gpu.mp4"
+        w0_new.write_bytes(b"gpu-w0-rendered")
+        w1_new = Path(gpu_rm["folder"]) / "w1_gpu.mp4"
+        w1_new.write_bytes(b"gpu-w1-rendered")
+        gpu_remakes.edit(
+            gpu_rm,
+            lambda cur: (
+                cur["windows"][0].update(take=str(w0_new), state="done"),
+                cur["windows"][1].update(take=str(w1_new), state="done"),
+            ),
+        )
+
+        # 5. Workshop syncs back from GPU Studio with conflict="overwrite": only deltas transfer!
+        delta_wire_bytes.clear()
+        synced = import_remote_projects(
+            gpu_url,
+            all_selections,
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+            on_imported=ws_commits,
+        )
+        assert [r["status"] for r in synced] == ["overwritten", "overwritten", "overwritten", "overwritten"]
+        assert ws_commits.call_count == 1
+        for res in synced:
+            assert res["incremental"] is True
+            assert res["reused_files"] >= 2
+            assert "reused" in res["message"]
+
+        # Unchanged assets totalled >1.6 MB; total delta wire transfer across ALL 4 projects is tiny (<50 KB)!
+        total_wire = sum(size for _path, size in delta_wire_bytes)
+        assert all(path == "/api/projects/transfer/delta" for path, _ in delta_wire_bytes)
+        assert total_wire < 50_000
+
+        # Verify unchanged local files stayed untouched in place (exact mtime preserved) & updates landed:
+        ws_sb_loaded = ws_store.storyboard(None, board_id)
+        assert tk1_id in ws_sb_loaded["takes"]
+        assert Path(ws_sb_loaded["takes"][tk1_id]["video"]).read_bytes() == b"gpu-generated-scene1-video"
+        assert tk0_video.stat().st_mtime_ns == ws_sb_tk0_mtime
+
+        _, ws_dub_after = dubbing_projects.load(ws_runtime, "Big Dub")
+        assert ws_dub_after.id == ws_dub_before_id
+        assert len(list(dub_sessions.sessions_dir(ws_runtime).iterdir())) == ws_sessions_count_before
+        assert (ws_dub_after.root / "source.mp4").stat().st_mtime_ns == ws_dub_src_mtime
+        assert (ws_dub_after.root / "takes" / "0.wav").read_bytes() == heavy_dub_take0
+        assert (ws_dub_after.root / "takes" / "1.wav").read_bytes() == b"gpu-regenerated-line1-wav"
+        assert Path(ws_dub_after.data["last_output"]).read_bytes() == b"gpu-dub-mp4"
+
+        _, ws_ss_res = ws_store.soundstage_project("Big Stage")
+        ws_ss_mix = Path(ws_ss_res)
+        assert ws_ss_mix.read_bytes() == b"gpu-updated-mix-mp3"
+        assert (takes_root(ws_runtime) / f"{take1_key}.wav").read_bytes() == b"gpu-new-take1-wav"
+        ws_ss_stills = drama3_visuals.stills_dir(ws_ss_mix, ws_runtime.output_dir)
+        assert (ws_ss_stills / "shot1.jpg").read_bytes() == heavy_ss_still1
+        assert (ws_ss_stills / "shot2.jpg").read_bytes() == b"gpu-new-shot2-jpg"
+        assert not (ws_ss_stills / "obsolete_shot.jpg").exists()
+
+        ws_rm_after = RemakeProjects(ws_runtime.output_dir).load(None, remake_key)
+        assert Path(ws_rm_after["source"]).stat().st_mtime_ns == ws_remake_src_mtime
+        assert Path(ws_rm_after["windows"][0]["take"]).read_bytes() == b"gpu-w0-rendered"
+        assert Path(ws_rm_after["windows"][1]["take"]).read_bytes() == b"gpu-w1-rendered"
+        assert not [p for p in (Path(ws_rm_after["folder"]) / "takes").iterdir() if "w0_old" in p.name]
+
+        # 6. Running backup sync again immediately reports all 4 projects as up_to_date.
+        delta_wire_bytes.clear()
+        second_sync = import_remote_projects(
+            gpu_url,
+            all_selections,
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+            on_imported=ws_commits,
+        )
+        assert [r["status"] for r in second_sync] == ["up_to_date", "up_to_date", "up_to_date", "up_to_date"]
+        assert ws_commits.call_count == 1  # Unchanged: no extra volume commit!
+
+        # 7. Local edit on Workshop is detected and cleanly reverted when overwriting from GPU Studio.
+        ws_sb.update_scene("ws-owner", board_id, sc0_id, prompt="Accidental local edit")
+        revert_sync = import_remote_projects(
+            gpu_url,
+            [("storyboard", board_id, "Big Storyboard")],
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+            on_imported=ws_commits,
+        )
+        assert revert_sync[0]["status"] == "overwritten"
+        assert revert_sync[0]["transferred_files"] == 0
+        assert revert_sync[0]["reused_files"] >= 3
+        assert ws_store.storyboard(None, board_id)["scenes"][0]["prompt"] != "Accidental local edit"
+
+
+def test_delta_range_resume_legacy_server_fallback_and_missing_donor_recovery(tmp_path: Path, monkeypatch):
+    from fastapi.responses import PlainTextResponse, StreamingResponse
+
+    from h3_app import project_transfer as pt_mod
+    from h3_app.project_transfer import import_remote_projects
+
+    monkeypatch.setattr(pt_mod, "_retry_sleep_seconds", lambda *_args, **_kwargs: 0.01)
+
+    src_runtime, src_store = _make_workspace(tmp_path / "src")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "dst")
+
+    src_remakes = RemakeProjects(src_runtime.output_dir)
+    vid = tmp_path / "source.mp4"
+    vid.write_bytes(os.urandom(120_000))
+    rkey = "rk_resilience_1"
+    proj = src_remakes.create(
+        "owner-s",
+        rkey,
+        str(vid),
+        {"name": "Resilient Remake", "start": 0.0, "frames": 81, "width": 832, "height": 480, "mix": 0},
+        [{"render": [0, 81], "own": [0, 81], "hold": 0}],
+    )
+
+    remote_app = FastAPI()
+    legacy_mode = False
+    drop_delta_once = True
+    delta_ranges: list[str | None] = []
+    export_hits = 0
+
+    @remote_app.middleware("http")
+    async def fault_middleware(request: Request, call_next):
+        nonlocal drop_delta_once, export_hits
+        if request.url.path == "/api/projects/transfer/export":
+            export_hits += 1
+        if request.url.path == "/api/projects/transfer/delta":
+            if legacy_mode:
+                # Simulate an older server that has no /delta route (no X-Prism-Transfer header).
+                return PlainTextResponse('{"detail":"Not Found"}', status_code=404, media_type="application/json")
+            delta_ranges.append(request.headers.get("range"))
+            if drop_delta_once:
+                drop_delta_once = False
+                full_resp = await call_next(request)
+                body = b"".join([chunk async for chunk in full_resp.body_iterator])
+                half = max(1, len(body) // 2)
+                headers = {
+                    k: v
+                    for k, v in full_resp.headers.items()
+                    if k.lower() in {"content-length", "etag", "last-modified", "accept-ranges", "x-prism-transfer"}
+                }
+
+                async def truncated_delta():
+                    import asyncio
+
+                    yield body[:half]
+                    await asyncio.sleep(0.01)
+                    raise ConnectionResetError("Simulated delta mid-stream drop")
+
+                return StreamingResponse(
+                    truncated_delta(),
+                    status_code=200,
+                    headers=headers,
+                    media_type="application/zip",
+                )
+        return await call_next(request)
+
+    install_project_transfer_routes(remote_app, store=src_store, runtime_config=lambda: src_runtime)
+
+    with _serve_fastapi(remote_app) as remote_url:
+        # Initial import
+        res0 = import_remote_projects(remote_url, [("remake", rkey)], store=dst_store, runtime=dst_runtime)
+        assert res0[0]["status"] == "imported"
+        assert export_hits == 1
+
+        # Add a take on source and test mid-stream HTTP Range resume on /delta
+        take_file = Path(proj["folder"]) / "w0_new.mp4"
+        take_file.write_bytes(os.urandom(60_000))
+        src_remakes.edit(proj, lambda cur: cur["windows"][0].update(take=str(take_file), state="done"))
+
+        res1 = import_remote_projects(
+            remote_url, [("remake", rkey)], store=dst_store, runtime=dst_runtime, conflict="overwrite"
+        )
+        assert res1[0]["status"] == "overwritten"
+        assert res1[0]["incremental"] is True
+        assert delta_ranges[0] is None
+        assert delta_ranges[1] is not None and delta_ranges[1].startswith("bytes=")
+        assert export_hits == 1  # Never fell back to full /export
+
+        # Simulate legacy remote server (404 without X-Prism-Transfer) -> falls back to /export cleanly
+        legacy_mode = True
+        src_remakes.edit(proj, lambda cur: cur["windows"][0].update(prompt="Legacy server prompt"))
+        dst_src_before = Path(RemakeProjects(dst_runtime.output_dir).load(None, rkey)["source"]).stat().st_mtime_ns
+        res2 = import_remote_projects(
+            remote_url, [("remake", rkey)], store=dst_store, runtime=dst_runtime, conflict="overwrite"
+        )
+        assert res2[0]["status"] == "overwritten"
+        assert export_hits == 2
+        dst_loaded = RemakeProjects(dst_runtime.output_dir).load(None, rkey)
+        assert dst_loaded["windows"][0]["prompt"] == "Legacy server prompt"
+        # Even on legacy full-zip fallback, unchanged local source.mp4 was preserved in place!
+        assert Path(dst_loaded["source"]).stat().st_mtime_ns == dst_src_before
+
+        # Missing project on upgraded server returns 404 WITH X-Prism-Transfer -> fails fast without hitting /export
+        legacy_mode = False
+        missing_res = import_remote_projects(
+            remote_url, [("remake", "nonexistent_rk")], store=dst_store, runtime=dst_runtime, conflict="overwrite"
+        )
+        assert missing_res[0]["status"] == "failed"
+
+        # Mid-flight donor mutation triggers automatic full-export fallback recovery
+        orig_inspect = pt_mod.inspect_local_project_for_delta
+
+        def poisoned_inspect(*args, **kwargs):
+            state = orig_inspect(*args, **kwargs)
+            assert state is not None
+            # Point every known sha256 to a vanished path so _ArchiveSource raises _MissingReusedFileError
+            state.files_by_sha256 = {sha: [tmp_path / "vanished.bin"] for sha in state.files_by_sha256}
+            state.portable_digest = "0" * 64
+            return state
+
+        monkeypatch.setattr(pt_mod, "inspect_local_project_for_delta", poisoned_inspect)
+        src_remakes.edit(proj, lambda cur: cur["windows"][0].update(prompt="Recovered via fallback"))
+        res3 = import_remote_projects(
+            remote_url, [("remake", rkey)], store=dst_store, runtime=dst_runtime, conflict="overwrite"
+        )
+        assert res3[0]["status"] == "overwritten"
+        assert export_hits == 3
+        assert RemakeProjects(dst_runtime.output_dir).load(None, rkey)["windows"][0]["prompt"] == "Recovered via fallback"

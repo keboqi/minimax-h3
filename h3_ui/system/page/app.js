@@ -437,8 +437,10 @@
       : groups.filter((g) => g.kind === app.remoteKind);
     $("remote-projects-empty").hidden = visibleGroups.length > 0;
 
+    const localProjects = app.projects?.projects || [];
+    const localIds = new Set(localProjects.map((p) => `${p.kind}:${p.id}`));
     const localNames = new Set(
-      (app.projects?.projects || []).map((p) => `${p.kind}:${String(p.name || "").toLowerCase()}`),
+      localProjects.map((p) => `${p.kind}:${String(p.name || "").toLowerCase()}`),
     );
     $("remote-projects-list").replaceChildren(...visibleGroups.map((group) => {
       const groupKeys = group.items.map(projectKey);
@@ -472,7 +474,11 @@
         h("div", {class: "project-list"}, ...group.items.map((rp) => {
           const key = projectKey(rp);
           const checked = app.remoteSelected.has(key);
-          const collides = localNames.has(`${rp.kind}:${String(rp.name || "").toLowerCase()}`);
+          const collides = localIds.has(`${rp.kind}:${rp.id}`)
+            || localNames.has(`${rp.kind}:${String(rp.name || "").toLowerCase()}`);
+          const matchBadge = collides
+            ? (app.conflict === "overwrite" ? "Exists locally · incremental sync" : "Matches local")
+            : "";
           return h("label", {class: checked ? "project-check selected" : "project-check"},
             h("input", {
               type: "checkbox",
@@ -487,7 +493,7 @@
             h("span", {class: "stack-4 grow"},
               h("span", {class: "row tight"},
                 h("strong", {class: "project-check-title", text: rp.name}),
-                collides ? h("span", {class: "pill warn", text: "Matches local name"}) : null),
+                matchBadge ? h("span", {class: app.conflict === "overwrite" ? "pill" : "pill warn", text: matchBadge}) : null),
               rp.summary ? h("span", {class: "small muted", text: rp.summary}) : null));
         })));
     }));

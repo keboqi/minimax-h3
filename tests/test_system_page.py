@@ -359,16 +359,20 @@ class SystemPageTests(unittest.TestCase):
             self.assertEqual(remote["projects"][0]["kind_label"], "Soundstage")
 
         with patch("h3_ui.system.page.import_remote_projects", return_value=[
-            {"kind": "soundstage", "id": "remote-1", "status": "imported", "message": 'Imported Soundstage "Remote Play".'}
+            {"kind": "soundstage", "id": "remote-1", "status": "overwritten", "message": 'Overwritten Soundstage "Remote Play" (synced 1 changed file, reused 4 unchanged files).'},
+            {"kind": "storyboard", "id": "remote-2", "status": "up_to_date", "message": 'Storyboard "Board" is already up to date (6 files unchanged).'},
         ]) as mock_import:
             self.ok(self.client.post(f"{API}/projects/import", json={
                 "url": "https://workshop.example.com",
-                "items": [{"kind": "soundstage", "id": "remote-1"}],
-                "conflict": "rename",
+                "items": [
+                    {"kind": "soundstage", "id": "remote-1"},
+                    {"kind": "storyboard", "id": "remote-2"},
+                ],
+                "conflict": "overwrite",
             }))
             imp_run = self.wait_run("import")
-            self.assertIn("1 imported", imp_run["message"])
-            self.assertEqual(len(imp_run["results"]), 1)
+            self.assertIn("1 overwritten, 1 up to date", imp_run["message"])
+            self.assertEqual(len(imp_run["results"]), 2)
             mock_import.assert_called_once()
 
         deleted = self.ok(self.client.post(f"{API}/projects/delete", json={

@@ -37,6 +37,7 @@ from h3_app.project_transfer import (
     build_auth_headers,
     delete_local_project,
     fetch_remote_projects,
+    format_import_summary_headline,
     import_remote_projects,
     list_local_projects,
     rename_local_project,
@@ -271,12 +272,7 @@ def parse_backend_status(detail: str, *, cpu_only: bool | None = None) -> dict[s
 def _format_import_summary(results: list[dict[str, Any]]) -> str:
     if not results:
         return "No projects were imported."
-    counts: dict[str, int] = {}
-    for item in results:
-        status = str(item.get("status") or "imported")
-        counts[status] = counts.get(status, 0) + 1
-    parts = [f"{count} {status}" for status, count in counts.items() if count]
-    return f"Import finished ({', '.join(parts)})."
+    return f"{format_import_summary_headline(results)}."
 
 
 @dataclass(frozen=True)

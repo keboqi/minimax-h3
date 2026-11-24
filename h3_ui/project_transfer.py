@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import re
 import shutil
@@ -12,21 +13,25 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import gradio as gr
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from h3_app.errors import H3Error
 from h3_app.project_transfer import (
     CONFLICT_MODES,
     KIND_LABELS,
+    TRANSFER_HEADER,
     TRANSFER_SCHEMA_VERSION,
     build_auth_headers,
+    build_project_export_plan,
     delete_local_project,
     export_project_archive,
+    export_project_delta_archive,
     fetch_remote_projects,
+    format_import_summary_headline,
     import_remote_projects,
     list_local_projects,
     project_export_stamp,
@@ -89,15 +94,12 @@ class _ExportArchiveCache:
             except OSError:
                 pass
 
-    def get_or_build(self, kind: str, project_id: str, *, store, runtime) -> Path:
-        stamp = project_export_stamp(kind, project_id, store=store, runtime=runtime)
-        cache_key = (
-            str(Path(runtime.output_dir).resolve()),
-            str(Path(runtime.outputs_dir).resolve()),
-            kind,
-            project_id,
-            stamp,
-        )
+    def _build_cached(
+        self,
+        cache_key: tuple[str, ...],
+        stale_predicate: Callable[[tuple[str, ...]], bool],
+        builder: Callable[[Path], Path],
+    ) -> Path:
         now = time.monotonic()
         with self._lock:
             self._evict_locked(now)
@@ -121,7 +123,7 @@ class _ExportArchiveCache:
                 dest = root / f"{uuid.uuid4().hex}.zip"
 
             try:
-                built = export_project_archive(kind, project_id, dest, store=store, runtime=runtime)
+                built = builder(dest)
                 size = built.stat().st_size
             except BaseException:
                 try:
@@ -135,8 +137,7 @@ class _ExportArchiveCache:
             now = time.monotonic()
             with self._lock:
                 self._inflight.pop(cache_key, None)
-                # Drop any older cached versions of the same (output_dir, outputs_dir, kind, project_id).
-                stale_keys = [k for k in self._entries if k[:4] == cache_key[:4] and k != cache_key]
+                stale_keys = [k for k in self._entries if k != cache_key and stale_predicate(k)]
                 for stale in stale_keys:
                     old = self._entries.pop(stale)
                     try:
@@ -148,6 +149,80 @@ class _ExportArchiveCache:
                 )
                 self._evict_locked(now)
             return built
+
+    def get_or_build(self, kind: str, project_id: str, *, store, runtime) -> Path:
+        stamp = project_export_stamp(kind, project_id, store=store, runtime=runtime)
+        cache_key = (
+            str(Path(runtime.output_dir).resolve()),
+            str(Path(runtime.outputs_dir).resolve()),
+            kind,
+            project_id,
+            "full",
+            stamp,
+        )
+        return self._build_cached(
+            cache_key,
+            stale_predicate=lambda k: k[:5] == cache_key[:5],
+            builder=lambda dest: export_project_archive(kind, project_id, dest, store=store, runtime=runtime),
+        )
+
+    def get_or_build_delta(
+        self,
+        kind: str,
+        project_id: str,
+        *,
+        store,
+        runtime,
+        known_digests: Iterable[str] = (),
+        expected_tree_digest: str = "",
+    ) -> tuple[str, Path | dict[str, Any]]:
+        plan = build_project_export_plan(kind, project_id, store=store, runtime=runtime, compute_digests=True)
+        expected = str(expected_tree_digest or "").strip().lower()
+        if expected and expected == plan.portable_digest:
+            return (
+                "up_to_date",
+                {
+                    "status": "up_to_date",
+                    "kind": kind,
+                    "id": project_id,
+                    "name": plan.display_name,
+                    "tree_digest": plan.portable_digest,
+                    "total_files": plan.content_file_count,
+                    "total_bytes": plan.content_bytes,
+                },
+            )
+        known_set = {
+            str(d).strip().lower()
+            for d in known_digests
+            if isinstance(d, str) and len(d.strip()) == 64
+        }
+        matched = sorted(plan.reusable_digests & known_set)
+        if not matched:
+            return "archive", self.get_or_build(kind, project_id, store=store, runtime=runtime)
+        matched_hash = hashlib.sha256("\n".join(matched).encode("utf-8")).hexdigest()[:24]
+        cache_key = (
+            str(Path(runtime.output_dir).resolve()),
+            str(Path(runtime.outputs_dir).resolve()),
+            kind,
+            project_id,
+            "delta",
+            plan.portable_digest,
+            matched_hash,
+        )
+        built = self._build_cached(
+            cache_key,
+            stale_predicate=lambda k: k[:5] == cache_key[:5] and k[5] != plan.portable_digest,
+            builder=lambda dest: export_project_delta_archive(
+                kind,
+                project_id,
+                dest,
+                store=store,
+                runtime=runtime,
+                known_digests=known_set,
+                plan=plan,
+            ),
+        )
+        return "archive", built
 
     def cleanup(self) -> None:
         with self._lock:
@@ -201,17 +276,8 @@ def _project_choice_label(item: dict[str, Any]) -> str:
 def _format_import_summary(results: list[dict[str, Any]]) -> str:
     if not results:
         return "No projects were imported."
-    counts: dict[str, int] = {}
-    for item in results:
-        status = str(item.get("status") or "imported")
-        counts[status] = counts.get(status, 0) + 1
-    parts = [
-        f"{count} {status}"
-        for status, count in counts.items()
-        if count
-    ]
     lines = "\n".join(f"- {item['message']}" for item in results)
-    return f"Import finished ({', '.join(parts)}):\n\n{lines}"
+    return f"{format_import_summary_headline(results)}:\n\n{lines}"
 
 
 def install_project_transfer_routes(
@@ -221,13 +287,14 @@ def install_project_transfer_routes(
     runtime_config: Callable[[], Any],
     on_imported: Callable[[], None] | None = None,
 ) -> None:
-    """Mount `/api/projects/transfer/{list,export,import}` on Studio or Workshop."""
+    """Mount `/api/projects/transfer/{list,export,delta,import}` on Studio or Workshop."""
 
     @app.get("/api/projects/transfer/list", include_in_schema=False)
     def transfer_list():
         return {
             "app": "Prism Workshop" if is_cpu_only() else "Prism Studio",
             "schema_version": TRANSFER_SCHEMA_VERSION,
+            "incremental": True,
             "projects": list_local_projects(store, runtime_config()),
         }
 
@@ -242,11 +309,68 @@ def install_project_transfer_routes(
             )
         except (H3Error, ValueError) as exc:
             status_code = 404 if _is_not_found_error(exc) else 400
-            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status_code,
+                detail=str(exc),
+                headers={TRANSFER_HEADER: "1"},
+            ) from exc
         return FileResponse(
             archive_path,
             media_type="application/zip",
             filename=_archive_filename(kind, id),
+            headers={TRANSFER_HEADER: "1"},
+        )
+
+    @app.post("/api/projects/transfer/delta", include_in_schema=False)
+    def transfer_delta(body: dict = Body(...)):
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request body.",
+                headers={TRANSFER_HEADER: "1"},
+            )
+        kind = str(body.get("kind") or "")
+        project_id = str(body.get("id") or "")
+        if not kind or not project_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Specify project kind and id.",
+                headers={TRANSFER_HEADER: "1"},
+            )
+        raw_digests = body.get("known_digests")
+        if raw_digests is None:
+            raw_digests = []
+        if not isinstance(raw_digests, list):
+            raise HTTPException(
+                status_code=400,
+                detail="known_digests must be a list.",
+                headers={TRANSFER_HEADER: "1"},
+            )
+        expected_tree_digest = str(body.get("expected_tree_digest") or "")
+        try:
+            outcome, payload = _EXPORT_CACHE.get_or_build_delta(
+                kind,
+                project_id,
+                store=store,
+                runtime=runtime_config(),
+                known_digests=raw_digests,
+                expected_tree_digest=expected_tree_digest,
+            )
+        except (H3Error, ValueError) as exc:
+            status_code = 404 if _is_not_found_error(exc) else 400
+            raise HTTPException(
+                status_code=status_code,
+                detail=str(exc),
+                headers={TRANSFER_HEADER: "1"},
+            ) from exc
+        if outcome == "up_to_date" and isinstance(payload, dict):
+            return JSONResponse(payload, headers={TRANSFER_HEADER: "1"})
+        assert isinstance(payload, Path)
+        return FileResponse(
+            payload,
+            media_type="application/zip",
+            filename=_archive_filename(kind, project_id),
+            headers={TRANSFER_HEADER: "1"},
         )
 
     @app.post("/api/projects/transfer/import", include_in_schema=False)
@@ -504,7 +628,8 @@ def build_project_import_view(
         gr.Markdown(
             "### Import projects from another server\n"
             "Works with both Prism Studio and Prism Workshop URLs. Imports Soundstage, "
-            "Storyboard, Dubbing, and Remake projects along with their clips, cast, takes, and results.",
+            "Storyboard, Dubbing, and Remake projects along with their clips, cast, takes, and results. "
+            "Choosing **Overwrite existing** syncs incrementally so only changed or newly generated files transfer.",
             elem_classes=["h3-ops-section-title"],
         )
         with gr.Row():
