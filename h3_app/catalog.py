@@ -9,6 +9,8 @@ from h3_app.settings import (
     H3_REGENERATE_16, H3_REGENERATE_384,
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
     PIKA_FLEX, PIKA_FLEX_SIGMAS,
+    LIGHTX2V_FUSION_4STEP_FULL, LIGHTX2V_FUSION_4STEP_LITE,
+    LIGHTX2V_FUSION_8STEP_FULL, LIGHTX2V_FUSION_8STEP_LITE,
     preset_vae_settings,
 )
 from h3_models import (
@@ -674,7 +676,22 @@ STANDARD_TURBO_LORA_SETTINGS = {
     DMAD_4STEP_LORA: TurboSpec(4, 1.0, "dmad_4step_lora", "dmad_4step_lora"),
     PIKA_FLEX: TurboSpec(6, 1.0, "pika_flex_fl2va_lora", "pika_flex_ref2va_lora"),
 }
+LIGHTX2V_FUSION_TURBO_SETTINGS = {
+    LIGHTX2V_FUSION_4STEP_FULL: TurboSpec(
+        4, 1.0, "turbo_fusion_4step_full_lora", "turbo_fusion_4step_full_lora",
+    ),
+    LIGHTX2V_FUSION_4STEP_LITE: TurboSpec(
+        4, 1.0, "turbo_fusion_4step_lite_lora", "turbo_fusion_4step_lite_lora",
+    ),
+    LIGHTX2V_FUSION_8STEP_FULL: TurboSpec(
+        8, 1.0, "turbo_fusion_8step_full_lora", "turbo_fusion_8step_full_lora",
+    ),
+    LIGHTX2V_FUSION_8STEP_LITE: TurboSpec(
+        8, 1.0, "turbo_fusion_8step_lite_lora", "turbo_fusion_8step_lite_lora",
+    ),
+}
 TURBO_SETTINGS.update(STANDARD_TURBO_LORA_SETTINGS)
+TURBO_SETTINGS.update(LIGHTX2V_FUSION_TURBO_SETTINGS)
 REFINEMENT_LORA_SETTINGS = dict(TURBO_SETTINGS)
 REFINEMENT_LORA_CHOICES = (SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS)
 

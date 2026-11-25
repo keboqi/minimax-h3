@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Mapping
 from h3_app.catalog import (
     LARRY_TURBO,
     STANDARD_TURBO_LORA_SETTINGS,
+    LIGHTX2V_FUSION_TURBO_SETTINGS,
     LIGHTX2V_8STEP_TURBO,
     LIGHTX2V_4STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
@@ -136,6 +137,18 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         dmad_4step_lora=dmad_lora,
         pika_flex_fl2va_lora=data.get("pika_flex_fl2va_lora", MODEL_SPECS["pika_flex_fl2va_lora"].local_name),
         pika_flex_ref2va_lora=data.get("pika_flex_ref2va_lora", MODEL_SPECS["pika_flex_ref2va_lora"].local_name),
+        turbo_fusion_4step_full_lora=data.get(
+            "turbo_fusion_4step_full_lora", MODEL_SPECS["turbo_fusion_4step_full_lora"].local_name
+        ),
+        turbo_fusion_4step_lite_lora=data.get(
+            "turbo_fusion_4step_lite_lora", MODEL_SPECS["turbo_fusion_4step_lite_lora"].local_name
+        ),
+        turbo_fusion_8step_full_lora=data.get(
+            "turbo_fusion_8step_full_lora", MODEL_SPECS["turbo_fusion_8step_full_lora"].local_name
+        ),
+        turbo_fusion_8step_lite_lora=data.get(
+            "turbo_fusion_8step_lite_lora", MODEL_SPECS["turbo_fusion_8step_lite_lora"].local_name
+        ),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
@@ -443,6 +456,10 @@ def ensure_turbo_lora(
     reference = str(mode).strip().lower() == "reference media"
     if variant in STANDARD_TURBO_LORA_SETTINGS:
         spec = STANDARD_TURBO_LORA_SETTINGS[variant]
+        model_key = spec.ref_lora_attr if reference else spec.lora_attr
+        filename = getattr(models, model_key)
+    elif variant in LIGHTX2V_FUSION_TURBO_SETTINGS:
+        spec = LIGHTX2V_FUSION_TURBO_SETTINGS[variant]
         model_key = spec.ref_lora_attr if reference else spec.lora_attr
         filename = getattr(models, model_key)
     elif variant == LARRY_TURBO:

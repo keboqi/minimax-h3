@@ -441,7 +441,11 @@
         "LightX2V v1.2 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step",
-        "Pika H3 Flex (6-step)"
+        "Pika H3 Flex (6-step)",
+        "LightX2V Turbo Fusion v1.0 / 4-step Full",
+        "LightX2V Turbo Fusion v1.0 / 4-step Lite r32",
+        "LightX2V Turbo Fusion v1.0 / 8-step Full",
+        "LightX2V Turbo Fusion v1.0 / 8-step Lite r32"
       ],
       "title": "Radio",
       "type": "string"
@@ -847,7 +851,11 @@
         "LightX2V v1.2 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step",
-        "Pika H3 Flex (6-step)"
+        "Pika H3 Flex (6-step)",
+        "LightX2V Turbo Fusion v1.0 / 4-step Full",
+        "LightX2V Turbo Fusion v1.0 / 4-step Lite r32",
+        "LightX2V Turbo Fusion v1.0 / 8-step Full",
+        "LightX2V Turbo Fusion v1.0 / 8-step Lite r32"
       ]
     },
     "type_46": {

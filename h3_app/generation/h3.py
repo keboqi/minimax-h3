@@ -16,7 +16,13 @@ from h3_app.progress import ProgressCallback, no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
-from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS, STORYBOARD_NODES
+from h3_app.catalog import (
+    H3_REGENERATE_MODELS,
+    LIGHTX2V_FUSION_TURBO_SETTINGS,
+    PIKA_FLEX,
+    PIKA_FLEX_SIGMAS,
+    STORYBOARD_NODES,
+)
 from h3_app.errors import H3Error
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.media import history_output_candidates
@@ -42,6 +48,22 @@ def pika_sampling_profile(mode: str, adapter: str) -> dict[str, Any]:
         "sigmas": [float(value) for value in PIKA_FLEX_SIGMAS.split(",")],
         "video_shift": 12.0, "audio_shift": 3.0,
         "steps": 6, "strength": 1.0,
+        "adapter": adapter,
+        "repo_id": spec.repo_id if pinned else None,
+        "revision": spec.revision if pinned else None,
+        "sha256": spec.expected_sha256 if pinned else None,
+    }
+
+
+def lightx2v_fusion_sampling_profile(variant: str, adapter: str, steps: int) -> dict[str, Any]:
+    """Provenance for a LightX2V Turbo Fusion run; upstream identity only for the pinned file."""
+    spec = MODEL_SPECS[LIGHTX2V_FUSION_TURBO_SETTINGS[variant].lora_attr]
+    pinned = adapter == spec.local_name
+    return {
+        "name": variant,
+        "sampler": "euler",
+        "video_shift": 12.0, "audio_shift": 3.0,
+        "steps": int(steps), "strength": 1.0,
         "adapter": adapter,
         "repo_id": spec.repo_id if pinned else None,
         "revision": spec.revision if pinned else None,
@@ -157,6 +179,10 @@ def generate(
         if prepared.turbo_lora_name and prepared.selected_turbo == PIKA_FLEX:
             execution_snapshot["sampling_profile"] = pika_sampling_profile(
                 request.media.mode, prepared.turbo_lora_name,
+            )
+        elif prepared.turbo_lora_name and prepared.selected_turbo in LIGHTX2V_FUSION_TURBO_SETTINGS:
+            execution_snapshot["sampling_profile"] = lightx2v_fusion_sampling_profile(
+                prepared.selected_turbo, prepared.turbo_lora_name, prepared.effective_steps,
             )
         execution_snapshot["settings"].update(
             seed=prepared.actual_seed,

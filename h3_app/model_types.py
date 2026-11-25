@@ -77,6 +77,10 @@ class ModelConfig:
     dmad_4step_lora: str | None = None
     pika_flex_fl2va_lora: str | None = MODEL_SPECS["pika_flex_fl2va_lora"].local_name
     pika_flex_ref2va_lora: str | None = MODEL_SPECS["pika_flex_ref2va_lora"].local_name
+    turbo_fusion_4step_full_lora: str | None = MODEL_SPECS["turbo_fusion_4step_full_lora"].local_name
+    turbo_fusion_4step_lite_lora: str | None = MODEL_SPECS["turbo_fusion_4step_lite_lora"].local_name
+    turbo_fusion_8step_full_lora: str | None = MODEL_SPECS["turbo_fusion_8step_full_lora"].local_name
+    turbo_fusion_8step_lite_lora: str | None = MODEL_SPECS["turbo_fusion_8step_lite_lora"].local_name
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()

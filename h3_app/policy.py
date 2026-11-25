@@ -22,6 +22,7 @@ from h3_app.catalog import (
     IMAGE_VAE_CHOICES,
     LIGHTX2V_4STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
+    LIGHTX2V_FUSION_TURBO_SETTINGS,
     MAX_IMAGE_FRAMES,
     MIN_IMAGE_FRAMES,
     NATIVE_PIXEL_CAP,
@@ -77,14 +78,17 @@ def is_lightx2v_turbo_lora(turbo_variant: str, lora_filename: str | None) -> boo
     return bool(lora_filename) and normalize_turbo_variant(turbo_variant) in {
         LIGHTX2V_4STEP_TURBO,
         LIGHTX2V_8STEP_TURBO,
+        *LIGHTX2V_FUSION_TURBO_SETTINGS,
     }
 
 
 def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -> bool:
     """Older 768p FL2VA Turbo checkpoints (4-step, 8-step v1.0/v1.1) use shifts 6/3.
 
-    8-step v1.2 (FL2VA and Ref2VA) and Ref2VA checkpoints keep the model's default 12/3.
+    8-step v1.2 (FL2VA and Ref2VA), Turbo Fusion v1.0, and Ref2VA checkpoints keep 12/3.
     """
+    if normalize_turbo_variant(turbo_variant) in LIGHTX2V_FUSION_TURBO_SETTINGS:
+        return False
     name = Path(str(lora_filename)).name.lower()
     return is_lightx2v_turbo_lora(turbo_variant, lora_filename) and (
         "768p" in name and "fl2v" in name and "8step_v1.2" not in name
@@ -113,7 +117,7 @@ def turbo_sigma_shifts(
     """Return a trained video/audio shift override for an active adapter."""
     if not lora_filename:
         return None
-    if turbo_variant == PIKA_FLEX:
+    if turbo_variant == PIKA_FLEX or turbo_variant in LIGHTX2V_FUSION_TURBO_SETTINGS:
         return 12.0, 3.0
     if turbo_variant == DMAD_4STEP_LORA:
         return 12.0, 2.0

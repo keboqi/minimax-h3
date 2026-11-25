@@ -732,6 +732,16 @@ def backend_status() -> str:
             profile_lines.append(
                 f"**LightX2V Turbo v1.2 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · Ref2VA `{models.turbo_8step_ref_lora}` · 8-step default · strength 1.0 · FL2VA and Ref2VA"
             )
+        for label, filename, step_count in (
+            ("LightX2V Turbo Fusion v1.0 / 4-step Full", models.turbo_fusion_4step_full_lora, 4),
+            ("LightX2V Turbo Fusion v1.0 / 4-step Lite r32", models.turbo_fusion_4step_lite_lora, 4),
+            ("LightX2V Turbo Fusion v1.0 / 8-step Full", models.turbo_fusion_8step_full_lora, 8),
+            ("LightX2V Turbo Fusion v1.0 / 8-step Lite r32", models.turbo_fusion_8step_lite_lora, 8),
+        ):
+            if filename:
+                profile_lines.append(
+                    f"**{label}** | LoRA `{filename}` | T2VA / I2VA / Ref2VA | Euler / shifts 12/3 | {step_count}-step default | strength 1.0 | downloads on first use"
+                )
         return (
             f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · dense: {SERVER_DENSE_ATTENTION_BACKEND} · memory: {SERVER_MEMORY_PROFILE} · FirstBlockCache: {fbcache_status} · EasyCache: {easycache_status}  \n"
             + "  \n".join(profile_lines)

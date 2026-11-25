@@ -39,8 +39,15 @@ LIGHTX_LORA_PATTERN = re.compile(
 LIGHTX_BACKBONE_BLOCKS = 50
 LIGHTX_REFINER_BLOCKS = 2
 LIGHTX_TARGETS_PER_BLOCK = 4
-# v1.2 checkpoints add rank-16 adapters on every AdaLN projection.
+# v1.2 checkpoints add rank-16 AdaLN adapters; Turbo Fusion uses rank-32 AdaLN
+# with Full (320/960 QKV) or Lite r32 (32/96 QKV) backbone ranks.
 LIGHTX_ADALN_RANK = 16
+LIGHTX_RANK_PROFILES = frozenset({
+    (128, None),
+    (128, 16),
+    (320, 32),
+    (32, 32),
+})
 LIGHTX_ADALN_MODULES = frozenset(
     f"diffusion_model.blocks.{block}.adaln_proj.linear"
     for block in range(LIGHTX_BACKBONE_BLOCKS)
@@ -178,8 +185,9 @@ def _lightx_key_map(model, lora):
     expected_modules = (
         LIGHTX_BACKBONE_BLOCKS + LIGHTX_REFINER_BLOCKS
     ) * LIGHTX_TARGETS_PER_BLOCK
-    # AdaLN adapters are all-or-none: older checkpoints have none, v1.2 has all.
-    if set(modules) & LIGHTX_ADALN_MODULES:
+    # AdaLN adapters are all-or-none: older checkpoints have none, v1.2 and Fusion have all.
+    has_adaln = bool(set(modules) & LIGHTX_ADALN_MODULES)
+    if has_adaln:
         expected_module_names |= LIGHTX_ADALN_MODULES
         expected_modules += len(LIGHTX_ADALN_MODULES)
     if set(modules) != expected_module_names:
@@ -197,16 +205,28 @@ def _lightx_key_map(model, lora):
             + ", ".join(incomplete[:5])
         )
 
+    probe_core = lora["diffusion_model.blocks.0.attn.out_proj.lora_A.weight"]
+    core_rank = int(probe_core.shape[0]) if probe_core.ndim == 2 else -1
+    if has_adaln:
+        probe_adaln = lora["diffusion_model.blocks.0.adaln_proj.linear.lora_A.weight"]
+        adaln_rank = int(probe_adaln.shape[0]) if probe_adaln.ndim == 2 else -1
+    else:
+        adaln_rank = None
+    if (core_rank, adaln_rank) not in LIGHTX_RANK_PROFILES:
+        raise ValueError(
+            f"Unexpected LightX2V rank profile: core={core_rank}, adaln={adaln_rank}"
+        )
+
     for module in modules:
         down = lora[module + ".lora_A.weight"]
         up = lora[module + ".lora_B.weight"]
         alpha = lora[module + ".alpha"]
         if module in LIGHTX_ADALN_MODULES:
-            expected_rank = LIGHTX_ADALN_RANK
+            expected_rank = adaln_rank
         elif module.endswith("attn.qkv_proj"):
-            expected_rank = 384
+            expected_rank = core_rank * 3
         else:
-            expected_rank = 128
+            expected_rank = core_rank
         if (
             down.ndim != 2
             or up.ndim != 2

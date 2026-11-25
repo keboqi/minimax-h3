@@ -21,11 +21,19 @@ PDMD_4STEP = "PDMD / 4-step"
 DMAD_4STEP = "DMAD / 4-step"
 PIKA_FLEX = "Pika H3 Flex (6-step)"
 PIKA_FLEX_SIGMAS = "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"
+LIGHTX2V_FUSION_4STEP_FULL = "LightX2V Turbo Fusion v1.0 / 4-step Full"
+LIGHTX2V_FUSION_4STEP_LITE = "LightX2V Turbo Fusion v1.0 / 4-step Lite r32"
+LIGHTX2V_FUSION_8STEP_FULL = "LightX2V Turbo Fusion v1.0 / 8-step Full"
+LIGHTX2V_FUSION_8STEP_LITE = "LightX2V Turbo Fusion v1.0 / 8-step Lite r32"
 H3_REGENERATE_16 = "H3 Regenerate 2K · rank 16 (experimental)"
 H3_REGENERATE_384 = "H3 Regenerate 2K · rank 384 (experimental)"
 TURBO_STEPS = {
     LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, PDMD_4STEP: 4, DMAD_4STEP: 4,
     PIKA_FLEX: 6,
+    LIGHTX2V_FUSION_4STEP_FULL: 4,
+    LIGHTX2V_FUSION_4STEP_LITE: 4,
+    LIGHTX2V_FUSION_8STEP_FULL: 8,
+    LIGHTX2V_FUSION_8STEP_LITE: 8,
 }
 
 

@@ -44,6 +44,7 @@ from h3_app.catalog import (
     LARRY_TURBO_SAMPLER_NODE,
     LIGHTX2V_4STEP_TURBO,
     LIGHTX2V_BYPASS_LORA_NODE,
+    LIGHTX2V_FUSION_TURBO_SETTINGS,
     MAX_REFERENCE_AUDIOS,
     MAX_REFERENCE_IMAGES,
     MAX_REFERENCE_VIDEOS,
@@ -104,7 +105,10 @@ def turbo_required_nodes(
         CORE_SAMPLER_NODE,
         FUSED_MODULATION_NODE,
     }
-    if turbo_sigma_shifts(turbo_variant, lora_filename) is not None:
+    if (
+        turbo_variant in LIGHTX2V_FUSION_TURBO_SETTINGS
+        or turbo_sigma_shifts(turbo_variant, lora_filename) is not None
+    ):
         required.add(H3_SIGMA_SHIFT_NODE)
     return required
 

@@ -29,6 +29,8 @@ MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
+TURBO_FUSION_REPO = "lightx2v/Minimax-H3-Turbo-Fusion"
+TURBO_FUSION_REVISION = "660ce29d8082a504bc14bf6b7299e60441c05633"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TRT_VAE_REPO = "lihaoyun6/MiniMax-H3-VAE-ONNX"
@@ -586,6 +588,46 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         expected_sha256=(
             "2d8e2235c2f24c44507ab762f7b48e6f80dcd6cca3d304b9eb80212be2d93fd2"
         ),
+    ),
+    "turbo_fusion_4step_full_lora": ModelSpec(
+        TURBO_FUSION_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_fusion_4step_v1.0_comfyui.safetensors",
+        "LightX2V Turbo Fusion v1.0 · 4-step Full ComfyUI BF16",
+        expected_sha256=(
+            "6ca1cd6e9bb227051f97e7dfd69184fe3b287f2e18abba3319b8174dfa916907"
+        ),
+        revision=TURBO_FUSION_REVISION,
+    ),
+    "turbo_fusion_4step_lite_lora": ModelSpec(
+        TURBO_FUSION_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_fusion_4step_v1.0_lite_r32_comfyui.safetensors",
+        "LightX2V Turbo Fusion v1.0 · 4-step Lite r32 ComfyUI BF16",
+        expected_sha256=(
+            "9ac584289a082fed8043ad06344a74678f7cd7d09e6a613ab01c4a30489af263"
+        ),
+        revision=TURBO_FUSION_REVISION,
+    ),
+    "turbo_fusion_8step_full_lora": ModelSpec(
+        TURBO_FUSION_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_fusion_8step_v1.0_comfyui.safetensors",
+        "LightX2V Turbo Fusion v1.0 · 8-step Full ComfyUI BF16",
+        expected_sha256=(
+            "7ae8101c7c6d6576b4bc410e38e0a4bc4f21aa9108570d0f7394655a3700ce22"
+        ),
+        revision=TURBO_FUSION_REVISION,
+    ),
+    "turbo_fusion_8step_lite_lora": ModelSpec(
+        TURBO_FUSION_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_fusion_8step_v1.0_lite_r32_comfyui.safetensors",
+        "LightX2V Turbo Fusion v1.0 · 8-step Lite r32 ComfyUI BF16",
+        expected_sha256=(
+            "8cc3936ca0901284bf0504b2309ffd507468160e0d907103fb7febca77e20553"
+        ),
+        revision=TURBO_FUSION_REVISION,
     ),
     "pdmd_4step_lora": ModelSpec(
         "Kijai/MiniMax-H3-experimental", "loras",
@@ -1242,6 +1284,12 @@ SOUNDSTAGE_DEPTH_MODEL_LABELS = {
 }
 SOUNDSTAGE_DEPTH_FOCAL_KEY = "soundstage_depthpro2_focal"
 DEFAULT_SOUNDSTAGE_DEPTH_MODEL = "depthpro2-s"
+TURBO_FUSION_MODEL_KEYS = (
+    "turbo_fusion_4step_full_lora",
+    "turbo_fusion_4step_lite_lora",
+    "turbo_fusion_8step_full_lora",
+    "turbo_fusion_8step_lite_lora",
+)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_image_dit", "h3_image_vae", "h3_image_upsampler",
     "ph3_image_lora", "ph3_image_text_encoder", "ph3_image_vae", "ph3_image_upsampler",
@@ -1278,6 +1326,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "pika_flex_ref2va_lora",
     "turbo_8step_lora",
     "turbo_8step_ref_lora",
+    *TURBO_FUSION_MODEL_KEYS,
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_bf16",
     "h3_latent_upscaler_3d_fp16",
@@ -2230,6 +2279,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "dmad_4step_lora": MODEL_SPECS["dmad_4step_lora"].local_name,
         "pika_flex_fl2va_lora": MODEL_SPECS["pika_flex_fl2va_lora"].local_name,
         "pika_flex_ref2va_lora": MODEL_SPECS["pika_flex_ref2va_lora"].local_name,
+        **{key: MODEL_SPECS[key].local_name for key in TURBO_FUSION_MODEL_KEYS},
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -2458,6 +2508,7 @@ def selftest() -> None:
         "turbo_ref_lora",
         "turbo_8step_lora",
         "turbo_8step_ref_lora",
+        *TURBO_FUSION_MODEL_KEYS,
         "pdmd_4step_lora",
         "dmad_4step_lora",
         "larry_turbo_lora",
@@ -2595,6 +2646,11 @@ def selftest() -> None:
     assert {"turbo_lora", "turbo_ref_lora"}.issubset(PRELOAD_MODEL_KEYS)
     assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS
     assert "turbo_8step_ref_lora" not in PRELOAD_MODEL_KEYS
+    assert set(TURBO_FUSION_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    for key in TURBO_FUSION_MODEL_KEYS:
+        assert cfg[key] == MODEL_SPECS[key].local_name
+        assert MODEL_SPECS[key].repo_id == TURBO_FUSION_REPO
+        assert MODEL_SPECS[key].revision == TURBO_FUSION_REVISION
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert "larry_turbo_lora" in PRELOAD_MODEL_KEYS
