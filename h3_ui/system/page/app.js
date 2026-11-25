@@ -15,6 +15,7 @@
     ["dubbing", "Dubbing"],
     ["remake", "Remake"],
   ];
+  const KIND_LABELS = Object.fromEntries(PROJECT_KINDS.filter(([kind]) => kind !== "all"));
   const CONFLICT_MODES = [
     ["rename", "Import as copy (rename)"],
     ["skip", "Skip existing"],
@@ -52,9 +53,14 @@
     projects: {projects: [], counts: {}},
     localKind: "all",
     localQuery: "",
+    localSelected: new Set(),
     editingKey: null,
     renameDraft: "",
+    confirmClearKey: null,
+    confirmBatchClear: false,
     confirmDeleteKey: null,
+    localClearResults: [],
+    localClearing: false,
     remoteServerApp: "",
     remoteLoadedUrl: "",
     remoteProjects: [],
@@ -314,7 +320,67 @@
     $("gemini-key-clear").hidden = !gk.session_set;
   };
 
+  const visibleLocalProjects = () => {
+    const q = app.localQuery.trim().toLowerCase();
+    return (app.projects?.projects || []).filter((item) => {
+      if (app.localKind !== "all" && item.kind !== app.localKind) return false;
+      if (q && !String(item.name || "").toLowerCase().includes(q)
+          && !String(item.summary || "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  };
+
+  const syncSelectionWithProjects = () => {
+    const valid = new Set((app.projects?.projects || []).map(projectKey));
+    app.localSelected = new Set([...app.localSelected].filter((key) => valid.has(key)));
+    if (!app.localSelected.size) app.confirmBatchClear = false;
+  };
+
+  const renderBatchControls = (visible) => {
+    const selectedCount = app.localSelected.size;
+    const allVisibleSelected = visible.length > 0 && visible.every((item) => app.localSelected.has(projectKey(item)));
+    $("local-selection-banner").textContent = selectedCount
+      ? `${selectedCount} project(s) selected. History takes will be removed; only takes currently in use stay.`
+      : "Select projects to batch clear history takes (only keeps the take in use).";
+    const selectAllBtn = $("local-select-all");
+    selectAllBtn.textContent = allVisibleSelected ? "Unselect visible" : "Select visible";
+    selectAllBtn.disabled = !visible.length || app.localClearing;
+    const clearSelBtn = $("local-clear-selection");
+    clearSelBtn.hidden = selectedCount === 0;
+    clearSelBtn.disabled = app.localClearing;
+    const batchBtn = $("local-batch-clear-btn");
+    batchBtn.disabled = selectedCount === 0 || app.localClearing;
+    batchBtn.textContent = app.localClearing ? "Clearing takes…" : (selectedCount ? `Clear history takes (${selectedCount})` : "Clear history takes");
+
+    const confirmBox = $("local-batch-confirm");
+    confirmBox.hidden = !app.confirmBatchClear || selectedCount === 0;
+    if (!confirmBox.hidden) {
+      $("local-batch-confirm-text").textContent =
+        `Clear history takes for ${selectedCount} selected project(s)? Only the take(s) currently in use and published Media outputs are kept.`;
+      $("local-batch-confirm-cancel").disabled = app.localClearing;
+      $("local-batch-confirm-go").disabled = app.localClearing;
+    }
+
+    const resultsEl = $("local-clear-results");
+    if (!app.localClearResults.length) {
+      resultsEl.hidden = true;
+      resultsEl.replaceChildren();
+    } else {
+      resultsEl.hidden = false;
+      resultsEl.replaceChildren(...app.localClearResults.map((row) => {
+        const failed = row.ok === false || Boolean(row.error);
+        return h("div", {class: failed ? "project-item danger" : "project-item"},
+          h("div", {class: "row between"},
+            h("div", {class: "row tight"},
+              h("span", {class: "pill", text: row.kind_label || KIND_LABELS[row.kind] || row.kind || "Project"}),
+              h("strong", {text: row.name || row.id || ""})),
+            h("span", {class: failed ? "small fail-text" : "small muted", text: row.message || row.error || ""})));
+      }));
+    }
+  };
+
   const renderLocalProjects = () => {
+    syncSelectionWithProjects();
     const counts = app.projects?.counts || {};
     $("local-kind-filters").replaceChildren(...PROJECT_KINDS.map(([kind, label]) => {
       const count = counts[kind] ?? 0;
@@ -326,35 +392,51 @@
       }, label, " ", h("span", {class: "count mono", text: String(count)}));
     }));
 
-    const q = app.localQuery.trim().toLowerCase();
-    const visible = (app.projects?.projects || []).filter((item) => {
-      if (app.localKind !== "all" && item.kind !== app.localKind) return false;
-      if (q && !String(item.name || "").toLowerCase().includes(q)
-          && !String(item.summary || "").toLowerCase().includes(q)) return false;
-      return true;
-    });
+    const visible = visibleLocalProjects();
+    renderBatchControls(visible);
 
     const listEl = $("local-projects-list");
     $("local-projects-empty").hidden = visible.length > 0;
     listEl.replaceChildren(...visible.map((item) => {
       const key = projectKey(item);
+      const selected = app.localSelected.has(key);
       const renaming = app.editingKey === key;
+      const confirmingClear = app.confirmClearKey === key;
       const confirming = app.confirmDeleteKey === key;
+      const cardClass = confirming
+        ? "project-item danger"
+        : (confirmingClear ? "project-item warn" : (selected ? "project-item selected" : "project-item"));
 
-      const card = h("div", {class: confirming ? "project-item danger" : "project-item"},
+      const card = h("div", {class: cardClass},
         h("div", {class: "project-row"},
-          h("div", {class: "stack-4 grow"},
-            h("div", {class: "row tight"},
-              h("span", {class: "pill", text: item.kind_label || item.kind}),
-              h("strong", {text: item.name})),
-            item.summary ? h("span", {class: "small muted", text: item.summary}) : null),
+          h("div", {class: "row tight grow"},
+            h("input", {
+              type: "checkbox",
+              class: "local-check-input",
+              checked: selected,
+              disabled: app.localClearing,
+              "aria-label": `Select ${item.name || item.id}`,
+              onchange: (event) => {
+                if (event.target.checked) app.localSelected.add(key);
+                else app.localSelected.delete(key);
+                renderLocalProjects();
+                queueFit();
+              },
+            }),
+            h("div", {class: "stack-4 grow"},
+              h("div", {class: "row tight"},
+                h("span", {class: "pill", text: item.kind_label || item.kind}),
+                h("strong", {text: item.name})),
+              item.summary ? h("span", {class: "small muted", text: item.summary}) : null)),
           h("div", {class: "row tight"},
             h("button", {
               type: "button",
               class: "btn compact",
+              disabled: app.localClearing,
               text: "Rename",
               onclick: () => {
                 app.editingKey = key;
+                app.confirmClearKey = null;
                 app.confirmDeleteKey = null;
                 app.renameDraft = item.name || "";
                 renderLocalProjects();
@@ -363,10 +445,25 @@
             }),
             h("button", {
               type: "button",
+              class: "btn compact warn",
+              disabled: app.localClearing,
+              text: "Clear takes",
+              onclick: () => {
+                app.confirmClearKey = confirmingClear ? null : key;
+                app.editingKey = null;
+                app.confirmDeleteKey = null;
+                renderLocalProjects();
+                queueFit();
+              },
+            }),
+            h("button", {
+              type: "button",
               class: "btn compact danger",
+              disabled: app.localClearing,
               text: "Remove",
               onclick: () => {
                 app.confirmDeleteKey = key;
+                app.confirmClearKey = null;
                 app.editingKey = null;
                 renderLocalProjects();
                 queueFit();
@@ -389,6 +486,14 @@
           input,
           h("button", {type: "button", class: "btn compact primary", text: "Save name", onclick: () => commitRename(item)}),
           h("button", {type: "button", class: "btn compact", text: "Cancel", onclick: () => { app.editingKey = null; renderLocalProjects(); queueFit(); }})));
+      }
+
+      if (confirmingClear) {
+        card.append(h("div", {class: "row between line-above", role: "alert"},
+          h("span", {class: "small", text: `Clear history takes for "${item.name}"? Only the take(s) currently in use and published Media outputs are kept.`}),
+          h("div", {class: "row tight"},
+            h("button", {type: "button", class: "btn compact", disabled: app.localClearing, text: "Cancel", onclick: () => { app.confirmClearKey = null; renderLocalProjects(); queueFit(); }}),
+            h("button", {type: "button", class: "btn compact solid-warn", disabled: app.localClearing, text: "Clear history takes", onclick: () => commitClearTakes(item)}))));
       }
 
       if (confirming) {
@@ -690,9 +795,52 @@
     toast(data.outcome?.message || "Project renamed.");
   });
 
+  const runClearTakes = guard(async (payload, applyOutcome) => {
+    app.localClearing = true;
+    renderLocalProjects();
+    try {
+      const data = await post("/projects/clear-takes", payload);
+      app.projects = {projects: data.projects, counts: data.counts};
+      applyOutcome(data.outcome);
+      renderHeroAndTiles();
+      renderLocalProjects();
+      renderRemoteImport();
+      queueFit();
+      toast(data.outcome?.message || "Cleared history takes.");
+    } finally {
+      app.localClearing = false;
+      renderLocalProjects();
+      queueFit();
+    }
+  });
+
+  const commitClearTakes = (item) => runClearTakes(
+    {kind: item.kind, id: item.id},
+    (outcome) => {
+      app.confirmClearKey = null;
+      app.localClearResults = outcome ? [outcome] : [];
+    },
+  );
+
+  const commitBatchClearTakes = () => {
+    const selectedItems = (app.projects?.projects || [])
+      .filter((item) => app.localSelected.has(projectKey(item)))
+      .map((item) => ({kind: item.kind, id: item.id}));
+    if (!selectedItems.length) return;
+    return runClearTakes(
+      {items: selectedItems},
+      (outcome) => {
+        app.confirmBatchClear = false;
+        app.localSelected.clear();
+        app.localClearResults = outcome?.results || [];
+      },
+    );
+  };
+
   const commitDelete = guard(async (item) => {
     const data = await post("/projects/delete", {kind: item.kind, id: item.id});
     app.projects = {projects: data.projects, counts: data.counts};
+    app.localSelected.delete(projectKey(item));
     app.confirmDeleteKey = null;
     renderHeroAndTiles();
     renderLocalProjects();
@@ -840,6 +988,42 @@
       renderLocalProjects();
       queueFit();
     });
+
+    $("local-select-all").addEventListener("click", () => {
+      const visible = visibleLocalProjects();
+      const allSelected = visible.length > 0 && visible.every((item) => app.localSelected.has(projectKey(item)));
+      for (const item of visible) {
+        const key = projectKey(item);
+        if (allSelected) app.localSelected.delete(key);
+        else app.localSelected.add(key);
+      }
+      renderLocalProjects();
+      queueFit();
+    });
+
+    $("local-clear-selection").addEventListener("click", () => {
+      app.localSelected.clear();
+      app.confirmBatchClear = false;
+      renderLocalProjects();
+      queueFit();
+    });
+
+    $("local-batch-clear-btn").addEventListener("click", () => {
+      if (!app.localSelected.size) return;
+      app.confirmBatchClear = !app.confirmBatchClear;
+      app.confirmClearKey = null;
+      app.confirmDeleteKey = null;
+      renderLocalProjects();
+      queueFit();
+    });
+
+    $("local-batch-confirm-cancel").addEventListener("click", () => {
+      app.confirmBatchClear = false;
+      renderLocalProjects();
+      queueFit();
+    });
+
+    $("local-batch-confirm-go").addEventListener("click", commitBatchClearTakes);
 
     $("remote-load-form").addEventListener("submit", guard(async (event) => {
       event.preventDefault();

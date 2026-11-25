@@ -449,6 +449,35 @@ class SystemPageTests(unittest.TestCase):
         )
         self.assertEqual(remote["projects"][-1]["kind_label"], "Custom")
 
+    def test_clear_takes_endpoint_supports_single_and_batch_and_serves_updated_ui(self):
+        html = self.client.get("/system/").text
+        js = self.client.get("/system/app.js").text
+        self.assertIn("local-batch-clear-btn", html)
+        self.assertIn("/projects/clear-takes", js)
+
+        with patch("h3_ui.system.page.clear_local_project_history_takes", return_value={
+            "kind": "storyboard", "id": "sb-1", "name": "Board One",
+            "removed_takes": 3, "kept_takes": 1, "removed_files": 4, "freed_bytes": 1024,
+            "message": "Cleared 3 history take(s) in Board One (kept 1 in use).",
+        }) as single_mock, patch("h3_ui.system.page.list_local_projects", return_value=[]):
+            res = self.ok(self.client.post(f"{API}/projects/clear-takes", json={"kind": "storyboard", "id": "sb-1"}))
+        self.assertEqual(res["outcome"]["removed_takes"], 3)
+        single_mock.assert_called_once()
+
+        with patch("h3_ui.system.page.clear_local_projects_history_takes", return_value={
+            "cleared_count": 2, "failed_count": 0, "removed_takes": 5, "kept_takes": 2,
+            "removed_files": 7, "freed_bytes": 2048,
+            "results": [{"ok": True, "kind": "soundstage", "id": "ss-1", "message": "ok"}],
+            "message": "Cleared 5 history take(s) across 2 project(s) (kept 2 in use).",
+        }) as batch_mock, patch("h3_ui.system.page.list_local_projects", return_value=[]):
+            batch = self.ok(self.client.post(f"{API}/projects/clear-takes", json={
+                "items": [{"kind": "soundstage", "id": "ss-1"}, {"kind": "remake", "id": "rem-1"}],
+            }))
+        self.assertEqual(batch["outcome"]["cleared_count"], 2)
+        self.assertEqual(batch_mock.call_args.args[0], [("soundstage", "ss-1"), ("remake", "rem-1")])
+
+        self.refused(self.client.post(f"{API}/projects/clear-takes", json={"items": []}), "Select at least one project")
+
     # 8. Model readiness caching & refresh ------------------------------------
     def test_models_inventory_caches_and_refreshes_on_request(self):
         first = self.ok(self.client.get(f"{API}/models"))

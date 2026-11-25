@@ -716,3 +716,57 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(self.client.get("/storyboard/app.css").status_code, 200)
         self.assertEqual(self.client.get("/storyboard/other.txt").status_code, 404)
 
+    def test_clear_history_takes_removes_unused_takes_and_preserves_in_use_and_branches(self):
+        created = self.create("Scene one.")
+        board_id = created["id"]
+        scene_id = created["scenes"][0]["id"]
+        self.ok_board = self.client.patch(
+            f"{API}/boards/{board_id}/scenes/{scene_id}",
+            json={"prompt": "Shot prompt"},
+        )
+        self.assertEqual(self.ok_board.status_code, 200)
+
+        def add_take(tid: str) -> Path:
+            vid = self.service.output_path(f"{self.service.take_prefix(board_id, scene_id, tid)}.mp4")
+            vid.parent.mkdir(parents=True, exist_ok=True)
+            vid.write_bytes(f"video-{tid}".encode())
+            lat = self.service.output_path(f"{self.service.take_prefix(board_id, scene_id, tid)}.safetensors")
+            write_latent(lat)
+            board = self.service.load(created_owner, board_id)
+            self.service.record_take(
+                created_owner, board_id, scene_id, tid,
+                video=str(vid), latents={"latent": str(lat), "prefix_frames": 39}, seed=1,
+                inputs=sb.model.scene_inputs(board, 0),
+            )
+            return vid
+
+        created_owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        vid_branch_only = add_take("tk_branch")
+
+        # Duplicate board while only tk_branch exists on it, then add tk_old + tk_cur on the original.
+        self.service.use_take(created_owner, board_id, scene_id, "tk_branch")
+        dup = self.client.post(f"{API}/boards/{board_id}/duplicate")
+        self.assertEqual(dup.status_code, 200, dup.text)
+        dup_id = dup.json()["id"]
+
+        vid_old = add_take("tk_old")
+        vid_cur = add_take("tk_cur")
+        self.service.use_take(created_owner, board_id, scene_id, "tk_cur")
+        published = self.runtime.output_dir / "h3" / "Chase_media.mp4"
+        published.parent.mkdir(parents=True, exist_ok=True)
+        published.write_bytes(b"media-export")
+
+        res = self.client.post(f"{API}/boards/{board_id}/clear-history-takes")
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertEqual(data["outcome"]["removed_takes"], 2)
+        self.assertEqual(data["outcome"]["kept_takes"], 1)
+        self.assertEqual([t["id"] for t in data["scenes"][0]["takes"]], ["tk_cur"])
+        self.assertEqual(data["scenes"][0]["in_use"], "tk_cur")
+        self.assertEqual(set(self.service.load(created_owner, board_id)["takes"].keys()), {"tk_cur"})
+        self.assertFalse(vid_old.exists())
+        self.assertTrue(vid_cur.is_file())
+        # Shared with duplicated board so its video file remains intact.
+        self.assertTrue(vid_branch_only.is_file())
+        self.assertTrue(published.is_file())
+        self.assertIn("tk_branch", self.service.load(created_owner, dup_id)["takes"])

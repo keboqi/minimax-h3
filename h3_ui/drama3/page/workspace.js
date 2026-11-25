@@ -1408,6 +1408,23 @@ export function startWorkspace() {
     getLibrary: () => library,
     onCastRendered: () => layout.renderCastOverview(state.project),
   });
+  async function clearHistoryTakes() {
+    if (!state.project || isRunning()) return;
+    if (!confirm(`Clear history takes for "${state.project.title || state.project.name}"? Unused takes on disk will be removed; this mix's active takes and Media outputs stay.`)) return;
+    try {
+      await flushEdits();
+      const project = await api(named("/project/clear-history-takes"), {method: "POST"});
+      if (!project) return;
+      const {message, outcome, ...rest} = project;
+      if (!reconcile(rest)) return;
+      state.project = rest;
+      renderAll();
+      toast(message || outcome?.message || "Cleared history takes.");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   const {setSubtitles, sizeLimit, setSubtitleSize, subtitleControls, renderPlayer, showTimeline, wordNodes, renderFilters, renderLines, renderInspector, renderSettings} = createMix({
     state,
     $: (...args) => $(...args),
@@ -1439,6 +1456,7 @@ export function startWorkspace() {
     shotLanes: (...args) => shotLanes(...args),
     getPlayer: () => mix,
     toast,
+    clearHistoryTakes,
     jumpToScript: (kind, index) => jump.jumpToScript(kind, index),
   });
   const {videoRunning, visualSource, setMediaMode, videoFileButton, paintStills, videoField, renderVideo,

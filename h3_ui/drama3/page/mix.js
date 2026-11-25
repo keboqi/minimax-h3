@@ -24,7 +24,7 @@ export function lineTakes(result) {
   return matches;
 }
 
-export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast, jumpToScript = () => {}}) {
+export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, takeAudio, mixVideo, clock, isRunning, lineTakes, named, pick, rows, saveSettings, saveVideo, seek, setMediaMode, speak, speakerTone, svg, sync, toggleTake, toneColor, videoFileButton, visualSource, shotLanes, getPlayer, toast, clearHistoryTakes = () => {}, jumpToScript = () => {}}) {
   const box = $("player");
   const COMPACT_KEY = "h3-soundstage-player-compact";
   let compactPlayer = readPref(COMPACT_KEY) === "true";
@@ -149,6 +149,14 @@ export function createMix({state, $, h, API, STATUS_LABELS, FILTERS, ICONS, take
         h("strong", {}, result.title || state.project.title || state.project.name),
         h("span", {class: "muted small num", id: "clock"}, `0:00 / ${clock(result.duration)}`)),
       h("span", {class: "spacer"}),
+      h("button", {
+        type: "button",
+        class: "btn btn-small",
+        id: "clear-history-takes",
+        disabled: isRunning(),
+        title: "Remove unused history takes from disk while keeping this mix's takes and Media outputs",
+        onclick: () => clearHistoryTakes(),
+      }, "Clear history takes"),
       compactButton,
       source ? h("div", {class: "seg", role: "group", "aria-label": "Show"},
         ["audio", "video"].map((mode) => h("button", {type: "button", "aria-pressed": String(state.mediaMode === mode),

@@ -499,6 +499,24 @@ class Drama3PageTests(unittest.TestCase):
         self.assertEqual(self.ok(self.client.post(f"{API}/interrupt", params={"name": "Night Market"}))["message"],
                          "This project isn't speaking.")
 
+    def test_clear_history_takes_removes_unused_takes_and_keeps_active_mix_and_media(self):
+        self.save_project()
+        stale_key = "c" * 32
+        (self.takes / f"{stale_key}.wav").write_bytes(b"RIFF-stale")
+
+        published = self.output_dir / "h3" / "night_market_illustrated_00001.mp4"
+        published.parent.mkdir(parents=True, exist_ok=True)
+        published.write_bytes(b"mp4-media")
+
+        cleared = self.ok(self.client.post(f"{API}/project/clear-history-takes", params={"name": "Night Market"}))
+        self.assertEqual(cleared["outcome"]["removed_takes"], 1)
+        self.assertEqual(cleared["outcome"]["kept_takes"], 2)
+        self.assertFalse((self.takes / f"{stale_key}.wav").exists())
+        self.assertTrue((self.takes / f"{TAKE_MIA}.wav").is_file())
+        self.assertTrue((self.takes / f"{TAKE_LEO}.wav").is_file())
+        self.assertTrue(Path(self.result).is_file())
+        self.assertTrue(published.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

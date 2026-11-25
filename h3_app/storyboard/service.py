@@ -12,12 +12,13 @@ from itertools import chain
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import RLock
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from weakref import WeakValueDictionary
 
 from h3_app.burned_subtitles import Line, ass_subtitles, font_size, word_pieces
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.gallery_store import gallery_thumbnail_path
 from h3_app.media_review import review_path
 from h3_app.processes import run_media_process
 
@@ -703,6 +704,161 @@ class StoryboardService:
             if removed is not None:
                 self._unlink_take_files(removed, self._used_take_files())
             return board
+
+    def _resolve_owner(self, owner: str | None, storyboard_id: str) -> str:
+        if owner:
+            return str(owner)
+        with self.store.connect() as db:
+            row = db.execute("SELECT owner FROM storyboards WHERE id=?", (storyboard_id,)).fetchone()
+        return str(row["owner"]) if row and row["owner"] else "local"
+
+    @staticmethod
+    def _prune_board_history_takes(board: dict[str, Any]) -> tuple[set[str], list[dict[str, Any]], bool]:
+        takes = board.get("takes") if isinstance(board.get("takes"), dict) else {}
+        in_use_ids = {
+            str(scene["in_use"])
+            for scene in (board.get("scenes") or ())
+            if isinstance(scene, dict) and scene.get("in_use") and str(scene["in_use"]) in takes
+        }
+        dropped_ids = [tid for tid in list(takes) if str(tid) not in in_use_ids]
+        dropped_takes: list[dict[str, Any]] = []
+        changed = bool(dropped_ids)
+        for tid in dropped_ids:
+            dropped = takes.pop(tid)
+            if isinstance(dropped, dict):
+                dropped_takes.append(dropped)
+
+        for scene in board.get("scenes") or ():
+            if not isinstance(scene, dict):
+                continue
+            filtered = [tid for tid in (scene.get("takes") or ()) if str(tid) in in_use_ids]
+            if filtered != list(scene.get("takes") or ()):
+                scene["takes"] = filtered
+                changed = True
+
+        for version in board.get("versions") or ():
+            if not isinstance(version, dict):
+                continue
+            for vscene in version.get("scenes") or ():
+                if not isinstance(vscene, dict):
+                    continue
+                filtered = [tid for tid in (vscene.get("takes") or ()) if str(tid) in in_use_ids]
+                if filtered != list(vscene.get("takes") or ()):
+                    vscene["takes"] = filtered
+                    changed = True
+                if vscene.get("in_use") and str(vscene["in_use"]) not in in_use_ids:
+                    vscene["in_use"] = None
+                    changed = True
+
+        partial = board.get("_partial_takes")
+        if isinstance(partial, dict):
+            if partial.get("omitted_takes"):
+                partial["omitted_takes"] = []
+                changed = True
+            if not partial.get("omitted_versions") and not any(
+                isinstance(t, dict) and t.get("omitted") for t in takes.values()
+            ):
+                board.pop("_partial_takes", None)
+                changed = True
+
+        return in_use_ids, dropped_takes, changed
+
+    def _resolved_take_paths(self, values: Iterable[str]) -> set[Path]:
+        resolved_paths: set[Path] = set()
+        for value in values:
+            try:
+                raw_path = Path(value)
+                resolved_paths.add((raw_path if raw_path.is_absolute() else self.output_path(value)).resolve())
+            except (OSError, H3Error):
+                continue
+        return resolved_paths
+
+    @staticmethod
+    def _unlink_file(path: Path) -> tuple[int, int]:
+        try:
+            if not path.is_file() or path.is_symlink():
+                return 0, 0
+            size = path.stat().st_size
+            path.unlink(missing_ok=True)
+            return 1, size
+        except OSError:
+            return 0, 0
+
+    def _unlink_take_artifacts(self, path: Path, *, runtime, has_thumbs: bool) -> tuple[int, int]:
+        targets = [path, Path(f"{path}.settings.json"), review_path(path)]
+        if has_thumbs:
+            try:
+                targets.append(gallery_thumbnail_path(path, runtime=runtime))
+            except OSError:
+                pass
+        removed_files = 0
+        freed_bytes = 0
+        for target in targets:
+            count, size = self._unlink_file(target)
+            removed_files += count
+            freed_bytes += size
+        return removed_files, freed_bytes
+
+    def clear_history_takes(self, owner: str | None, storyboard_id: str) -> dict[str, Any]:
+        """Remove alternate takes and unused take files, keeping only each scene's take in use."""
+        with self.lock:
+            board = self.load(owner, storyboard_id)
+            sb_owner = self._resolve_owner(owner, storyboard_id)
+            in_use_ids, dropped_takes, changed = self._prune_board_history_takes(board)
+            if changed:
+                self.save(sb_owner, storyboard_id, board)
+
+            used = self._used_take_files()
+            used_resolved = self._resolved_take_paths(used)
+            rt = self.runtime()
+            has_thumbs = getattr(rt, "gallery_thumbnails_dir", None) is not None
+            removed_files = 0
+            freed_bytes = 0
+
+            for take in dropped_takes:
+                for value in take_files(take):
+                    try:
+                        raw_path = Path(value)
+                        path = raw_path if raw_path.is_absolute() else self.output_path(value)
+                        resolved = path.resolve()
+                    except (OSError, H3Error):
+                        continue
+                    if value not in used and resolved not in used_resolved:
+                        count, size = self._unlink_take_artifacts(path, runtime=rt, has_thumbs=has_thumbs)
+                        removed_files += count
+                        freed_bytes += size
+
+            take_dir = self.output_path(f"{TAKE_FOLDER}/{storyboard_id}")
+            if take_dir.is_dir():
+                keep_resolved = set(used_resolved)
+                take_dir_resolved = take_dir.resolve()
+                for p in used_resolved:
+                    if p.parent == take_dir_resolved:
+                        keep_resolved.add(Path(f"{p}.settings.json").resolve())
+                        keep_resolved.add(review_path(p).resolve())
+                keep_resolved.add((take_dir / "preview.mp4").resolve())
+                keep_resolved.add((take_dir / "preview.vtt").resolve())
+                try:
+                    entries = list(take_dir.iterdir())
+                except OSError:
+                    entries = []
+                for entry in entries:
+                    try:
+                        if not entry.is_dir() and not entry.is_symlink() and entry.resolve() not in keep_resolved:
+                            count, size = self._unlink_file(entry)
+                            removed_files += count
+                            freed_bytes += size
+                    except OSError:
+                        continue
+
+            return {
+                "board": board,
+                "name": str(board.get("name") or storyboard_id),
+                "kept_takes": len(in_use_ids),
+                "removed_takes": len(dropped_takes),
+                "removed_files": removed_files,
+                "freed_bytes": freed_bytes,
+            }
 
     def set_queue(self, owner, storyboard_id, scene_ids):
         def edit(board):

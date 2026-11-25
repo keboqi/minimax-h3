@@ -172,7 +172,7 @@
         <div class="panel-head">
           <div>
             <h2>Manage local projects</h2>
-            <p class="muted small">Rename or remove saved Soundstage, Storyboard, Dubbing, and Remake projects on this server.</p>
+            <p class="muted small">Rename, clear history takes, or remove saved Soundstage, Storyboard, Dubbing, and Remake projects on this server.</p>
           </div>
           <button type="button" class="btn" id="projects-refresh">Refresh list</button>
         </div>
@@ -181,6 +181,27 @@
           <div class="seg" role="group" aria-label="Project type" id="local-kind-filters"></div>
           <input type="search" class="field grow" id="local-search" placeholder="Filter local projects…" aria-label="Filter local projects">
         </div>
+
+        <div class="row between line-above" id="local-batch-bar">
+          <span class="small muted" id="local-selection-banner">Select projects to batch clear history takes (only keeps the take in use).</span>
+          <div class="row tight">
+            <button type="button" class="btn compact" id="local-select-all">Select visible</button>
+            <button type="button" class="btn compact" id="local-clear-selection" hidden>Clear selection</button>
+            <button type="button" class="btn compact warn" id="local-batch-clear-btn" disabled>Clear history takes</button>
+          </div>
+        </div>
+
+        <div class="project-item warn" id="local-batch-confirm" role="alert" hidden>
+          <div class="row between">
+            <span class="small" id="local-batch-confirm-text"></span>
+            <div class="row tight">
+              <button type="button" class="btn compact" id="local-batch-confirm-cancel">Cancel</button>
+              <button type="button" class="btn compact solid-warn" id="local-batch-confirm-go">Clear history takes</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="stack-4" id="local-clear-results" hidden></div>
 
         <div class="project-list" id="local-projects-list"></div>
         <div class="empty-box muted" id="local-projects-empty" hidden>No saved projects match this filter.</div>

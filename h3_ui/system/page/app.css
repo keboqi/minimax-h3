@@ -68,6 +68,7 @@ a:hover { text-decoration: underline; }
 }
 .muted { color: var(--muted); }
 .ink { color: var(--ink); }
+.fail-text { color: var(--fail-ink); }
 .small { font-size: 13px; }
 .label-strong { font-weight: 600; color: var(--muted); }
 .eyebrow {
@@ -161,6 +162,9 @@ a:hover { text-decoration: underline; }
 }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--primary-btn); }
 .btn.compact { min-height: 36px; padding: 0 11px; font-size: 13px; }
+.btn.warn { border-color: var(--warn-line, #e0b878); color: var(--warn-ink, #8a5300); }
+.btn.warn:hover:not(:disabled) { background: var(--warn, #fff6e5); }
+.btn.solid-warn { background: var(--warn-ink); border-color: var(--warn-ink); color: var(--surface); }
 .btn.danger { border-color: var(--fail-line); color: var(--fail-ink); }
 .btn.danger:hover:not(:disabled) { background: var(--fail); }
 .btn.solid-danger { background: var(--fail-ink); border-color: var(--fail-ink); color: #ffffff; }
@@ -444,7 +448,10 @@ a:hover { text-decoration: underline; }
   border-radius: 10px;
   background: var(--bg);
 }
+.project-item.selected { border-color: var(--accent, var(--line)); }
+.project-item.warn { background: var(--warn, #fff6e5); border-color: var(--warn-line, #e0b878); }
 .project-item.danger { background: var(--fail); border-color: var(--fail-line); }
+.local-check-input { width: 16px; height: 16px; accent-color: var(--accent, currentColor); cursor: pointer; flex: 0 0 auto; }
 .project-row {
   display: flex;
   flex-wrap: wrap;

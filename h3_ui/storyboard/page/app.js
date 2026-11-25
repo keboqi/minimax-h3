@@ -28,7 +28,7 @@
 
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
-    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null, addingTake: false,
+    confirmProfile: false, confirmClearTakes: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null, addingTake: false,
     includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
     showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
@@ -184,6 +184,7 @@
     if (!state.panel) return;
     state.panel = null;
     state.confirmProfile = false;
+    state.confirmClearTakes = false;
     renderTopbar();
     renderInspector();
   };
@@ -2381,6 +2382,24 @@
         const data = await act(() => request("POST", boardUrl("/duplicate")), "Duplicated.");
         if (data) adoptBoard(data);
       }),
+      button("Clear history takes", () => {
+        state.confirmClearTakes = !state.confirmClearTakes;
+        state.confirmProfile = false;
+        renderInspector();
+      }, "btn quiet", {disabled: Boolean(state.run?.active)}),
+      state.confirmClearTakes ? h("div", {className: "banner warn"},
+        h("p", {className: "small"}, "Remove unused takes across every scene in this storyboard? Each scene keeps only the take currently in use (and files shared with duplicated boards stay untouched)."),
+        h("div", {className: "row"},
+          button("Keep them", () => { state.confirmClearTakes = false; renderInspector(); }, "btn quiet"),
+          button("Clear history takes", async () => {
+            await flush();
+            const data = await act(() => request("POST", boardUrl("/clear-history-takes")));
+            if (data) {
+              state.confirmClearTakes = false;
+              adoptBoard(data);
+              toast(data.message || "Cleared history takes.");
+            }
+          }, "btn primary"))) : null,
       button("Delete storyboard", async () => {
         if (!confirm(`Delete "${state.board.name}" and all its takes?`)) return;
         dirty.clear();
@@ -2692,6 +2711,7 @@
     // Auto render follows the queue from board to board, so its panel stays open.
     state.panel = state.panel === "auto" ? "auto" : null;
     state.confirmProfile = false;
+    state.confirmClearTakes = false;
     stored.set("h3-storyboard-board", data.id);
     const saved = stored.get("h3-storyboard-scene");
     state.sceneId = data.scenes.some((item) => item.id === saved) ? saved : data.scenes[0].id;

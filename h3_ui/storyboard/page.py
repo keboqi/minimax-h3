@@ -23,7 +23,7 @@ from h3_app.catalog import (
 )
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
-from h3_app.project_transfer import format_clear_takes_message
+from h3_app.project_transfer import build_clear_takes_outcome
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
@@ -280,6 +280,21 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def duplicate(storyboard_id: str, request: Request):
         owner = owner_of(request)
         return payload(owner, handlers.service.branch(owner, storyboard_id))
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/clear-history-takes", include_in_schema=False)
+    @guarded
+    def clear_history_takes(storyboard_id: str, request: Request):
+        owner = owner_of(request)
+        if runs.active(owner, storyboard_id) is not None:
+            raise H3Error("Wait for this storyboard's run to finish before clearing history takes.")
+        queue = autos.latest(owner)
+        if queue is not None and queue.finished_at is None and any(
+                item.key == storyboard_id and item.state in autos.working
+                for item in queue.items):
+            raise H3Error("Auto render is currently working on this storyboard. Wait for it to finish.")
+        stats = handlers.service.clear_history_takes(owner, storyboard_id)
+        outcome = build_clear_takes_outcome("storyboard", storyboard_id, stats)
+        return {**payload(owner, storyboard_id), "outcome": outcome, "message": outcome["message"]}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/profile", include_in_schema=False)
     @guarded

@@ -810,13 +810,33 @@ function recoveryStripHtml(activeItem, plan, failedEntry, app) {
   return "";
 }
 
+function historyTakeCount(data) {
+  const entries = Object.values(data?.takes?.shots || {});
+  let removable = 0;
+  for (const entry of entries) {
+    const takes = Array.isArray(entry?.takes) ? entry.takes : [];
+    const activeId = entry?.active_take_id || "";
+    const keepId = activeId && activeId !== "original" ? activeId : "";
+    for (const tk of takes) {
+      if (tk?.id && tk.id !== keepId) removable += 1;
+    }
+  }
+  return removable;
+}
+
 function takesPanelHtml(activeItem, activeEntry, activeStatus, data) {
   if (!activeItem) return "";
+  const histCount = historyTakeCount(data);
+  const clearHistBtn = histCount > 0
+    ? `<button type="button" class="btn btn-small" data-ls-action="clear-history-takes" ${lsState.saving ? "disabled" : ""} title="Remove unused lip-sync takes across every shot, keeping only each shot's active take">Clear history takes (${histCount})</button>`
+    : "";
   if (!activeEntry.takes.length) {
     return `
       <div class="row align-center row-wrap">
         <strong class="small">Takes · Shot ${activeItem.shot.index + 1}</strong>
         <span class="muted small" id="ls-takes-empty-note">No takes yet — click Render shot above using ${esc(formatEngineShort(lsState.engine))}.</span>
+        <span class="spacer"></span>
+        ${clearHistBtn}
       </div>`;
   }
   return `
@@ -824,6 +844,7 @@ function takesPanelHtml(activeItem, activeEntry, activeStatus, data) {
       <strong class="small">Takes · Shot ${activeItem.shot.index + 1}</strong>
       <span class="muted small">Click a take to preview &amp; set active for assembly</span>
       <span class="spacer"></span>
+      ${clearHistBtn}
       ${activeStatus === "outdated" ? '<span class="chip chip-warn">Face changed — render a new take</span>' : ""}
     </div>
     <div class="ls-takes-row">
@@ -1607,6 +1628,30 @@ async function selectTake(app, shotKey, takeId, {remove = false} = {}) {
   }
 }
 
+async function clearHistoryTakes(app) {
+  const target = reviewTarget(app);
+  const targetKey = JSON.stringify(target);
+  if (!target || lsState.targetKey !== targetKey || lsState.loading || lsState.saving || isLipSyncBusy(app)) return;
+  if (!confirm("Clear unused lip-sync takes across every shot in this dubbing project? Each shot keeps only the take currently in use.")) return;
+  lsState.saving = true;
+  rerenderLipSync(app, {preserveVideo: true});
+  try {
+    const resp = await api.post("lip-sync-clear-history", target);
+    if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
+    lsState.data = resp;
+    lsState.compareOriginal = false;
+    toast(resp.message || "Cleared history takes.");
+  } catch (error) {
+    if (JSON.stringify(reviewTarget(app)) !== targetKey) return;
+    toast(error.message, {error: true});
+  } finally {
+    if (lsState.targetKey === targetKey) {
+      lsState.saving = false;
+      rerenderLipSync(app, {preserveVideo: true});
+    }
+  }
+}
+
 async function saveOverride(app, key, trackId) {
   const target = reviewTarget(app);
   const targetKey = JSON.stringify(target);
@@ -2081,6 +2126,8 @@ export function bindLipSync(app) {
     } else if (action === "clear-checked") {
       lsState.checkedKeys.clear();
       patchBulkSelection(app);
+    } else if (action === "clear-history-takes") {
+      await clearHistoryTakes(app);
     } else if (action === "render-shot") {
       const shotKey = btn.dataset.shotKey;
       if (shotKey) startShotRender(app, [shotKey]);

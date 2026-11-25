@@ -10,6 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from h3_app.catalog import VIDEO_EXTENSIONS
+from h3_app.errors import H3Error
+from h3_app.media_review import review_path
+from h3_app.provenance import snapshot_path
 from h3_app.staging import file_content_sha256
 
 from .model import FPS, MAX_PICTURES
@@ -93,6 +97,83 @@ class Projects:
         folder = Path(project["folder"]) if project.get("folder") else self.folder(project["owner"], project["key"])
         with _LOCK:
             shutil.rmtree(folder)
+
+    def clear_history_takes(self, project: dict[str, Any]) -> dict[str, Any]:
+        """Remove superseded or orphaned render takes in ``project``, keeping active window takes."""
+        with _LOCK:
+            folder = (
+                Path(project["folder"]).resolve()
+                if project.get("folder")
+                else self.folder(project["owner"], project["key"]).resolve()
+            )
+            path = folder / "project.json"
+            if not path.is_file():
+                raise H3Error(f'Remake project "{project.get("key") or folder.name}" no longer exists.')
+            current = {**json.loads(path.read_text("utf-8")), "folder": str(folder)}
+
+            keep_files: set[Path] = {path.resolve()}
+            if current.get("source"):
+                try:
+                    keep_files.add(Path(str(current["source"])).resolve())
+                except OSError:
+                    pass
+            kept_takes = 0
+            for window in current.get("windows") or ():
+                if not isinstance(window, dict) or not window.get("take"):
+                    continue
+                kept_takes += 1
+                try:
+                    tp = Path(str(window["take"])).resolve()
+                    keep_files.add(tp)
+                    keep_files.add(snapshot_path(tp).resolve())
+                    keep_files.add(review_path(tp).resolve())
+                except OSError:
+                    continue
+
+            removed_takes = 0
+            removed_files = 0
+            freed_bytes = 0
+            video_exts = VIDEO_EXTENSIONS | {".m4v"}
+
+            def prune_dir(directory: Path) -> None:
+                nonlocal removed_takes, removed_files, freed_bytes
+                if not directory.is_dir() or directory.is_symlink():
+                    return
+                try:
+                    entries = list(directory.iterdir())
+                except OSError:
+                    return
+                for entry in entries:
+                    try:
+                        if entry.is_dir() or entry.is_symlink():
+                            continue
+                        if entry.resolve() in keep_files:
+                            continue
+                        size = entry.stat().st_size
+                        entry.unlink(missing_ok=True)
+                        removed_files += 1
+                        freed_bytes += size
+                        if entry.suffix.lower() in video_exts:
+                            removed_takes += 1
+                    except OSError:
+                        continue
+
+            prune_dir(folder)
+            takes_dir = folder / "takes"
+            prune_dir(takes_dir)
+            if takes_dir.is_dir():
+                try:
+                    takes_dir.rmdir()
+                except OSError:
+                    pass
+
+            return {
+                "name": str(current.get("name") or current.get("key") or folder.name),
+                "kept_takes": kept_takes,
+                "removed_takes": removed_takes,
+                "removed_files": removed_files,
+                "freed_bytes": freed_bytes,
+            }
 
     def create(self, owner: str, key: str, source: str, data: dict[str, Any], plans: list[dict]) -> dict[str, Any]:
         folder = self.folder(owner, key)

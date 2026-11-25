@@ -20,7 +20,7 @@ import {
     slots: [null, null, null, null], useCarried: true, suggestion: "", previous: null, view: "source", wipe: 50,
     alignSlot: null, alignView: "Overlay", check: null, run: null, runSeen: -1, output: null, playing: false,
     muted: false, saveLabel: "All changes saved",
-    menu: false, renaming: null, confirming: null, target: null, settings: null, quick: null,
+    menu: false, renaming: null, confirming: null, confirmingClear: null, target: null, settings: null, quick: null,
   };
   const prefs = loadPrefs();
   const savePrefs = () => {
@@ -584,6 +584,7 @@ import {
     const rows = state.boot.projects.map((row) => {
       const open = row.key === state.project?.key;
       const renaming = state.renaming === row.key;
+      const confirmingClear = state.confirmingClear === row.key;
       const confirming = state.confirming === row.key;
       const name = renaming
         ? h("input", {className: "field", value: row.name, "aria-label": "Project name",
@@ -610,9 +611,22 @@ import {
               renderMenu();
             })),
             button("Keep it", () => { state.confirming = null; renderMenu(); }, "btn quiet"))
-          : h("div", {className: "row"},
-            button(renaming ? "Done" : "Rename", () => { state.renaming = renaming ? null : row.key; renderMenu(); }, "btn quiet"),
-            button("Delete", () => { state.confirming = row.key; state.renaming = null; renderMenu(); }, "btn quiet")));
+          : confirmingClear
+            ? h("div", {className: "row"},
+              h("span", {className: "small muted grow"}, "Removes unused history takes. Active window takes and Media outputs stay."),
+              button("Clear history takes", safely(async () => {
+                await saving.catch(() => {});
+                const data = await post(`/projects/${row.key}/clear-history-takes`, {});
+                state.boot.projects = data.projects;
+                state.confirmingClear = null;
+                renderMenu();
+                toast(data.message || "Cleared history takes.");
+              })),
+              button("Keep them", () => { state.confirmingClear = null; renderMenu(); }, "btn quiet"))
+            : h("div", {className: "row"},
+              button(renaming ? "Done" : "Rename", () => { state.renaming = renaming ? null : row.key; state.confirmingClear = null; renderMenu(); }, "btn quiet"),
+              button("Clear takes", () => { state.confirmingClear = row.key; state.confirming = null; state.renaming = null; renderMenu(); }, "btn quiet"),
+              button("Delete", () => { state.confirming = row.key; state.confirmingClear = null; state.renaming = null; renderMenu(); }, "btn quiet")));
     });
     menu.replaceChildren(
       h("div", {className: "row between"}, h("span", {className: "small muted strong"}, "Projects"),

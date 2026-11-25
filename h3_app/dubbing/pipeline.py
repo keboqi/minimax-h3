@@ -1735,7 +1735,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     for work_file in (speech, mix):
         work_file.unlink(missing_ok=True)
     # Only this field is the dub's: lines edited while it ran stay as saved.
-    sessions.modify(session, lambda latest: latest.data.update(last_output=str(video_out or audio_out)))
+    take_keys = [line.key for line in planned if line.key]
+    sessions.modify(session, lambda latest: latest.data.update(
+        last_output=str(video_out or audio_out),
+        last_take_keys=take_keys,
+    ))
     sped = sum(line.speed > 1.01 for line in planned)
     slowed = sum(line.speed < 0.99 for line in planned)
     message = (f"Voiced {len(planned)} edited line(s); every other line kept its original audio"

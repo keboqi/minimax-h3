@@ -30,6 +30,8 @@ from h3_app.project_transfer import (
     TRANSFER_SCHEMA_VERSION,
     build_auth_headers,
     build_project_export_plan,
+    clear_local_project_history_takes,
+    clear_local_projects_history_takes,
     delete_local_project,
     export_project_archive,
     export_project_delta_archive,
@@ -38,6 +40,7 @@ from h3_app.project_transfer import (
     import_remote_projects,
     list_local_projects,
     normalize_storyboard_takes,
+    parse_clear_takes_request,
     project_export_stamp,
     rename_local_project,
 )
@@ -518,6 +521,29 @@ def install_project_transfer_routes(
             status_code = 404 if _is_not_found_error(exc) else 400
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
+    @app.post("/api/projects/manage/clear-takes", include_in_schema=False)
+    def manage_clear_takes(body: dict = Body(...)):
+        try:
+            mode, selections = parse_clear_takes_request(body)
+            if mode == "batch":
+                return clear_local_projects_history_takes(
+                    selections,
+                    store=store,
+                    runtime=runtime_config(),
+                    on_changed=on_imported,
+                )
+            kind, project_id = selections[0]
+            return clear_local_project_history_takes(
+                kind,
+                project_id,
+                store=store,
+                runtime=runtime_config(),
+                on_changed=on_imported,
+            )
+        except H3Error as exc:
+            status_code = 404 if _is_not_found_error(exc) else 400
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
     @app.post("/api/projects/manage/delete", include_in_schema=False)
     def manage_delete(body: dict = Body(...)):
         if not isinstance(body, dict):
@@ -605,6 +631,7 @@ def build_project_manage_view(
                 scale=1,
             )
             rename_btn = gr.Button("Rename project", scale=0)
+            clear_takes_btn = gr.Button("Clear history takes", scale=0)
             delete_btn = gr.Button("Remove project", variant="stop", scale=0)
         manage_status = gr.Markdown(elem_classes=["h3-ops-note"])
         names_state = gr.State(initial_names)
@@ -661,6 +688,26 @@ def build_project_manage_view(
         choices, selected, selected_name, names_map = load_local_choices(selected_kind)
         return gr.update(choices=choices, value=selected), selected_name, names_map, outcome["message"]
 
+    def clear_takes_selected(
+        selected_kind: str,
+        selected_key: str | None,
+        current_names: dict[str, str] | None,
+    ):
+        try:
+            kind, project_id = _parse_project_key(selected_key)
+            outcome = clear_local_project_history_takes(
+                kind,
+                project_id,
+                store=store,
+                runtime=runtime_config(),
+                on_changed=on_changed,
+            )
+        except H3Error as exc:
+            fallback_name = current_names.get(selected_key or "", "") if isinstance(current_names, dict) else ""
+            return gr.update(), fallback_name, current_names or {}, f"**Error:** {exc}"
+        choices, selected, selected_name, names_map = load_local_choices(selected_kind, preferred_key=selected_key)
+        return gr.update(choices=choices, value=selected), selected_name, names_map, outcome["message"]
+
     kind_filter.change(
         refresh_projects,
         inputs=[kind_filter, project_select],
@@ -683,6 +730,12 @@ def build_project_manage_view(
     rename_btn.click(
         rename_selected,
         inputs=[kind_filter, project_select, new_name, names_state],
+        outputs=[project_select, new_name, names_state, manage_status],
+        api_name=False,
+    )
+    clear_takes_btn.click(
+        clear_takes_selected,
+        inputs=[kind_filter, project_select, names_state],
         outputs=[project_select, new_name, names_state, manage_status],
         api_name=False,
     )

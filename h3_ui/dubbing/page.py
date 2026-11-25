@@ -30,6 +30,7 @@ from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
     REPORT_FILE,
     TAKE_ORIGINAL,
+    clear_lip_sync_history_takes,
     delete_lip_sync_shot_take,
     filter_lip_sync_windows,
     lip_sync_take_preview_path,
@@ -1108,6 +1109,25 @@ def install_dubbing_page(
             else:
                 select_lip_sync_shot_take(dub, shot_key, take_id)
             return _lip_sync_plan_response(session_id, loaded, dub)
+
+    @app.post(f"{API}/lip-sync-clear-history", include_in_schema=False)
+    @guarded
+    def lip_sync_clear_history(request: Request, body: dict = Body(...)):
+        owner_of(request)
+        session_id = str(body.get("session") or "")
+        with admission_lock:
+            loaded, dub = lip_sync_source(session_id, body.get("video"), body.get("video_version"))
+            if lip_sync_busy(dub.name):
+                raise H3Error("Wait for the current lip-sync operation before clearing history takes.")
+            outcome = clear_lip_sync_history_takes(dub)
+            removed = int(outcome.get("removed_takes", 0))
+            kept = int(outcome.get("kept_takes", 0))
+            removed_files = int(outcome.get("removed_files", 0))
+            if removed or removed_files:
+                message = f"Cleared {removed} history take(s) across shots (kept {kept} active)."
+            else:
+                message = f"No history takes to clear (kept {kept} active)."
+            return {**_lip_sync_plan_response(session_id, loaded, dub), "outcome": outcome, "message": message}
 
     @app.post(f"{API}/lip-sync-shots", include_in_schema=False)
     @guarded

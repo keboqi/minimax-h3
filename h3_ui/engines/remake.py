@@ -28,6 +28,7 @@ from h3_app.generation.requests import QwenImage21Request
 from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_video_metadata
 from h3_app.progress import no_progress
+from h3_app.project_transfer import build_clear_takes_outcome
 from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.remake import (
     AUTO_SHORT_EDGE, DEFAULT_SHORT_EDGE, EDIT, FPS, MAX_PICTURES, MIN_FRAMES, RECOMMENDED_MAX_FRAMES, SHORT_EDGES, SWAP,
@@ -541,6 +542,13 @@ class RemakeHandlers:
         if family_busy(owner, "remake"):
             raise H3Error("Wait for the current Remake to finish.")
         self.runner.projects.delete(self._named_project(owner, key))
+
+    def clear_project_history_takes(self, owner, key) -> dict[str, Any]:
+        if family_busy(owner, "remake"):
+            raise H3Error("Wait for the current Remake to finish.")
+        project = self._named_project(owner, key)
+        stats = self.runner.projects.clear_history_takes(project)
+        return build_clear_takes_outcome("remake", project["key"], stats)
 
     # Windows ---------------------------------------------------------------
     def _project(self, owner, selection):

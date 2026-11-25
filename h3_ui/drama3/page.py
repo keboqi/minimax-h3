@@ -13,12 +13,14 @@ from functools import wraps
 import re
 from pathlib import Path
 from threading import RLock
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from fastapi import Body, FastAPI, Request
 
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
+from h3_app.project_transfer import clear_local_project_history_takes
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from h3_gpu import is_cpu_only
 
@@ -450,6 +452,27 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
         if not key.isalnum() or key not in keys:
             raise not_found()
         return file_response(Path(takes_dir()) / f"{key}.wav", media_type="audio/wav")
+
+    @app.post(f"{api}/project/clear-history-takes", include_in_schema=False)
+    @guarded
+    def clear_history_takes(name: str, request: Request):
+        owner = owner_of(request)
+        with admission_lock:
+            project(name)
+            if runs.active(owner, name) is not None:
+                raise H3Error("Wait for speaking to finish before clearing history takes.")
+            if video_runs is not None and video_runs.active(owner, name) is not None:
+                raise H3Error("Wait for illustration rendering to finish before clearing history takes.")
+            if cast_jobs is not None and cast_jobs.runs.active(owner, name) is not None:
+                raise H3Error("Wait for voice and sound generation to finish before clearing history takes.")
+            runtime = runtime_config() if callable(runtime_config) else runtime_config
+            if runtime is None:
+                root = Path(output_dir)
+                runtime = SimpleNamespace(output_dir=root, outputs_dir=root)
+            outcome = clear_local_project_history_takes(
+                "soundstage", name, store=store, runtime=runtime, takes_dir=Path(takes_dir()),
+            )
+            return {**payload(owner, name), "outcome": outcome, "message": outcome["message"]}
 
     # Speaking --------------------------------------------------------------
     @app.get(f"{api}/run", include_in_schema=False)

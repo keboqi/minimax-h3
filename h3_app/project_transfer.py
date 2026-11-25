@@ -29,16 +29,19 @@ import httpx
 
 from h3_app.errors import H3Error
 from h3_app.provenance import read_snapshot, snapshot_path
+from h3_app.take_cleanup import (
+    KIND_LABELS,
+    PROJECT_KINDS,
+    PROJECT_TRANSFER_LOCK,
+    build_clear_takes_outcome,
+    clear_local_project_history_takes,
+    clear_local_projects_history_takes,
+    format_clear_takes_message,
+    parse_clear_takes_request,
+)
 from h3_models import write_json_atomic
 
 TRANSFER_SCHEMA_VERSION = 1
-PROJECT_KINDS = ("soundstage", "storyboard", "dubbing", "remake")
-KIND_LABELS = {
-    "soundstage": "Soundstage",
-    "storyboard": "Storyboard",
-    "dubbing": "Dubbing",
-    "remake": "Remake",
-}
 CONFLICT_MODES = ("rename", "skip", "overwrite")
 STORYBOARD_TAKES_MODES = ("all", "in_use", "none")
 
@@ -73,7 +76,7 @@ _HTTP_MAX_ATTEMPTS = 4
 _MAX_PARALLEL_DOWNLOADS = 3
 _MEDIA_PREPARE_WORKERS = 4
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429, 502, 503, 504})
-_PROJECT_TRANSFER_LOCK = threading.RLock()
+_PROJECT_TRANSFER_LOCK = PROJECT_TRANSFER_LOCK
 _PRECOMPRESSED_SUFFIXES = frozenset(
     {
         ".mp4",

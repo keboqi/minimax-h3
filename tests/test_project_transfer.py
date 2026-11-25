@@ -29,6 +29,8 @@ from h3_app.errors import H3Error
 from h3_app.project_transfer import (
     TRANSFER_SCHEMA_VERSION,
     build_auth_headers,
+    clear_local_project_history_takes,
+    clear_local_projects_history_takes,
     delete_local_project,
     export_project_archive,
     fetch_remote_projects,
@@ -2747,3 +2749,166 @@ def test_export_archive_cache_isolates_storyboard_takes_modes_and_validates(tmp_
             json={"url": base_url, "items": [{"kind": "storyboard", "id": board_id}], "storyboard_takes": "invalid"},
         )
         assert bad_import.status_code == 400
+
+
+def test_clear_history_takes_across_all_four_project_kinds_and_batch_route(tmp_path: Path):
+    from h3_app.dubbing import lip_sync as dub_ls
+
+    runtime, store = _make_workspace(tmp_path / "ws")
+
+    # 1. Soundstage project + published Media mp3/mp4 + stale drama3 take
+    takes_dir = takes_root(runtime)
+    takes_dir.mkdir(parents=True, exist_ok=True)
+    key_active = "a" * 32
+    key_dub_shared = "b" * 32
+    key_stale = "c" * 32
+    for key in (key_active, key_dub_shared, key_stale):
+        (takes_dir / f"{key}.wav").write_bytes(f"wav-{key}".encode())
+
+    ss_dir = runtime.outputs_dir / "drama3"
+    ss_dir.mkdir(parents=True, exist_ok=True)
+    ss_mix = ss_dir / "story_mix.mp3"
+    ss_mix.write_bytes(b"mix-mp3")
+    write_snapshot(ss_mix, {"family": "Drama 3", "settings": {"chunks": [{"take": key_active}]}})
+    ss_media_vid = runtime.outputs_dir / "h3" / "story_illustrated_00001.mp4"
+    ss_media_vid.parent.mkdir(parents=True, exist_ok=True)
+    ss_media_vid.write_bytes(b"media-video")
+    store.save_soundstage_project("Stage One", {"text": "Mia: Hi"})
+    store.mark_soundstage_generated("Stage One", str(ss_mix))
+
+    # 2. Storyboard project + unused take + branched board sharing a file
+    sb_service = StoryboardService(store, lambda: runtime)
+    board_id = sb_service.create(
+        "owner-a",
+        "Board One",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+    )
+    sc0_id = sb_service.load("owner-a", board_id)["scenes"][0]["id"]
+    sb_service.update_scene("owner-a", board_id, sc0_id, prompt="Scene")
+    sb_vids = {}
+    for tid in ("t_old", "t_keep"):
+        vid = sb_service.output_path(f"{sb_service.take_prefix(board_id, sc0_id, tid)}.mp4")
+        vid.parent.mkdir(parents=True, exist_ok=True)
+        vid.write_bytes(f"sb-{tid}".encode())
+        write_snapshot(vid, {"tid": tid})
+        board_cur = sb_service.load("owner-a", board_id)
+        sb_service.record_take(
+            "owner-a", board_id, sc0_id, tid, video=str(vid), latents={"latent": None}, seed=1,
+            inputs=sb_model.scene_inputs(board_cur, 0),
+        )
+        sb_vids[tid] = vid
+    sb_service.use_take("owner-a", board_id, sc0_id, "t_keep")
+    sb_media_export = runtime.output_dir / "h3" / "Board_One_exported.mp4"
+    sb_media_export.parent.mkdir(parents=True, exist_ok=True)
+    sb_media_export.write_bytes(b"sb-media-export")
+
+    # 3. Dubbing project + lip-sync shot takes + dubbing output + shared drama3 take key
+    with _using_workspace_env(runtime):
+        src_video = tmp_path / "dub_src.mp4"
+        src_video.write_bytes(b"src-mp4")
+        dub_session = dub_sessions.create(runtime, src_video, video=True)
+        dub_dir = runtime.outputs_dir / "dubbing"
+        dub_dir.mkdir(parents=True, exist_ok=True)
+        dub_mp4 = dub_dir / "dub_out.mp4"
+        dub_mp4.write_bytes(b"dub-mp4")
+        dub_session.data["last_output"] = str(dub_mp4)
+        dub_session.data["last_take_keys"] = [key_dub_shared]
+        dub_session.save()
+        dubbing_projects.save(runtime, "Dub One", dub_session.id, src_video, {"target_language": "Spanish"})
+
+        folder = dub_results.player_folder(dub_mp4)
+        folder.mkdir(parents=True, exist_ok=True)
+        takes_ls_dir = folder / "lip_sync_takes"
+        cache_ls_dir = folder / "lip_sync_cache"
+        takes_ls_dir.mkdir(parents=True, exist_ok=True)
+        cache_ls_dir.mkdir(parents=True, exist_ok=True)
+        (takes_ls_dir / "old_prev.mp4").write_bytes(b"old-prev")
+        (takes_ls_dir / "keep_prev.mp4").write_bytes(b"keep-prev")
+        (cache_ls_dir / "old_cache.mp4").write_bytes(b"old-cache")
+        (cache_ls_dir / "keep_cache.mp4").write_bytes(b"keep-cache")
+        dub_ls.save_lip_sync_takes(dub_mp4, {
+            "version": 1,
+            "dub": dub_mp4.name,
+            "shots": {
+                "0:speaker1": {
+                    "active_take_id": "take-2",
+                    "takes": [
+                        {"id": "take-1", "number": 1, "preview_file": "old_prev.mp4",
+                         "windows": [{"cache_file": "old_cache.mp4"}]},
+                        {"id": "take-2", "number": 2, "preview_file": "keep_prev.mp4",
+                         "windows": [{"cache_file": "keep_cache.mp4"}]},
+                    ],
+                },
+            },
+        })
+
+    # 4. Remake project + active/old takes + Media export
+    remake_src = tmp_path / "remake_src.mp4"
+    remake_src.write_bytes(b"remake-src")
+    remake_mgr = RemakeProjects(runtime.output_dir)
+    remake_proj = remake_mgr.create(
+        "owner-a",
+        "remake-key-1",
+        str(remake_src),
+        {"name": "Remake One", "start": 0.0, "frames": 24, "width": 832, "height": 480, "mix": 0},
+        [{"own": [0, 24], "render": [0, 24], "hold": 0, "kind": "start"}],
+    )
+    remake_folder = Path(remake_proj["folder"])
+    rem_old = remake_folder / "win0_old.mp4"
+    rem_keep = remake_folder / "win0_keep.mp4"
+    for p in (rem_old, rem_keep):
+        p.write_bytes(b"rem-vid")
+        write_snapshot(p, {"win": 0})
+    remake_mgr.edit(remake_proj, lambda cur: cur.update(windows=[{"index": 0, "take": str(rem_keep)}]))
+    rem_media = runtime.output_dir / "h3" / "remake_final.mp4"
+    rem_media.write_bytes(b"remake-media")
+
+    app = FastAPI()
+    install_project_transfer_routes(app, store=store, runtime_config=lambda: runtime)
+    with _serve_fastapi(app) as base_url:
+        # Clear single Storyboard via manage endpoint
+        single_resp = httpx.post(
+            f"{base_url}/api/projects/manage/clear-takes",
+            json={"kind": "storyboard", "id": board_id},
+        )
+        assert single_resp.status_code == 200, single_resp.text
+        assert single_resp.json()["removed_takes"] == 1
+        assert not sb_vids["t_old"].exists()
+        assert sb_vids["t_keep"].is_file()
+        assert sb_media_export.is_file()
+
+        # Batch clear remaining 3 kinds via manage endpoint
+        batch_resp = httpx.post(
+            f"{base_url}/api/projects/manage/clear-takes",
+            json={
+                "items": [
+                    {"kind": "soundstage", "id": "Stage One"},
+                    {"kind": "dubbing", "id": "Dub One"},
+                    {"kind": "remake", "id": remake_proj["key"]},
+                ],
+            },
+        )
+        assert batch_resp.status_code == 200, batch_resp.text
+        outcome = batch_resp.json()
+        assert outcome["cleared_projects"] == 3
+        assert outcome["failed_projects"] == 0
+
+    # Verify Soundstage preserved active + dub-shared take and Media files, removed stale take
+    assert (takes_dir / f"{key_active}.wav").is_file()
+    assert (takes_dir / f"{key_dub_shared}.wav").is_file()
+    assert not (takes_dir / f"{key_stale}.wav").exists()
+    assert ss_mix.is_file() and ss_media_vid.is_file()
+
+    # Verify Dubbing preserved active lip-sync take and dub output
+    assert dub_mp4.is_file()
+    assert not (takes_ls_dir / "old_prev.mp4").exists()
+    assert (takes_ls_dir / "keep_prev.mp4").is_file()
+    assert not (cache_ls_dir / "old_cache.mp4").exists()
+    assert (cache_ls_dir / "keep_cache.mp4").is_file()
+
+    # Verify Remake preserved active take and Media export
+    assert not rem_old.exists()
+    assert not snapshot_path(rem_old).exists()
+    assert rem_keep.is_file()
+    assert snapshot_path(rem_keep).is_file()
+    assert rem_media.is_file()

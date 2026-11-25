@@ -207,6 +207,13 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
         handlers.delete_project(owner, key)
         return {"projects": handlers.project_rows(owner)}
 
+    @app.post(f"{api}/projects/{{key}}/clear-history-takes", include_in_schema=False)
+    @guarded
+    def clear_project_history_takes(key: str, request: Request):
+        owner = owner_of(request)
+        outcome = handlers.clear_project_history_takes(owner, key)
+        return {"projects": handlers.project_rows(owner), "outcome": outcome, "message": outcome["message"]}
+
     @app.post(f"{api}/save", include_in_schema=False)
     @guarded
     def save_project(request: Request, body: dict = Body(...)):

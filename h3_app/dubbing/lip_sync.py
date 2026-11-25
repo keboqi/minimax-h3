@@ -1324,6 +1324,79 @@ def delete_lip_sync_shot_take(dub: Path, shot_key: str, take_id: str) -> dict[st
     return registry
 
 
+def clear_lip_sync_history_takes(dub: Path) -> dict[str, Any]:
+    """Remove non-active per-shot lip-sync takes, keeping only each shot's active take."""
+    if dub.suffix.lower() != ".mp4" and dub.with_suffix(".mp4").is_file():
+        dub = dub.with_suffix(".mp4")
+    folder = player_folder(dub)
+    if not folder.is_dir():
+        return {"kept_takes": 0, "removed_takes": 0, "removed_files": 0, "freed_bytes": 0, "registry": None}
+
+    registry = load_lip_sync_takes(dub)
+    kept_takes = 0
+    removed_takes = 0
+    for entry in (registry.get("shots") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        active_id = str(entry.get("active_take_id") or TAKE_ORIGINAL)
+        takes = list(entry.get("takes") or ())
+        kept = [] if active_id == TAKE_ORIGINAL else [tk for tk in takes if tk.get("id") == active_id]
+        kept_takes += len(kept)
+        removed_takes += len(takes) - len(kept)
+        entry["takes"] = kept
+
+    kept_previews = {
+        str(tk["preview_file"])
+        for entry in (registry.get("shots") or {}).values()
+        if isinstance(entry, dict)
+        for tk in (entry.get("takes") or ())
+        if tk.get("preview_file")
+    }
+    kept_caches = {
+        str(win["cache_file"])
+        for entry in (registry.get("shots") or {}).values()
+        if isinstance(entry, dict)
+        for tk in (entry.get("takes") or ())
+        for win in (tk.get("windows") or ())
+        if isinstance(win, dict) and win.get("cache_file")
+    }
+
+    removed_files = 0
+    freed_bytes = 0
+
+    def prune_dir(directory: Path, keep_names: set[str]) -> None:
+        nonlocal removed_files, freed_bytes
+        if not directory.is_dir() or directory.is_symlink():
+            return
+        try:
+            items = list(directory.iterdir())
+        except OSError:
+            return
+        for item in items:
+            try:
+                if item.is_file() and not item.is_symlink() and item.name not in keep_names:
+                    size = item.stat().st_size
+                    item.unlink(missing_ok=True)
+                    removed_files += 1
+                    freed_bytes += size
+            except OSError:
+                continue
+
+    prune_dir(_takes_dir(dub), kept_previews)
+    prune_dir(_window_cache_dir(dub), kept_caches)
+
+    if (folder / TAKES_FILE).is_file() or removed_takes > 0:
+        save_lip_sync_takes(dub, registry)
+
+    return {
+        "kept_takes": kept_takes,
+        "removed_takes": removed_takes,
+        "removed_files": removed_files,
+        "freed_bytes": freed_bytes,
+        "registry": registry,
+    }
+
+
 def _is_no_face_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(marker in text for marker in _NO_FACE_MARKERS)

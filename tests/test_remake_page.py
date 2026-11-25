@@ -512,6 +512,50 @@ class RemakePageTests(unittest.TestCase):
         self.assertEqual(self.ok(self.client.post(f"{API}/interrupt"))["message"], "Nothing is running.")
         self.assertEqual(self.interrupted, [])
 
+    def test_clear_project_history_takes_keeps_active_take_and_media_outputs(self):
+        from h3_app.media_review import review_path
+        from h3_app.provenance import snapshot_path, write_snapshot
+        from h3_app.workspace_store import COOKIE
+
+        source = self.source()
+        selection = self.selection(source)
+        project = self.ok(self.client.post(f"{API}/split", json={"selection": selection, "video": source["path"]}))
+        key = project["key"]
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        saved = self.handlers.runner.projects.load(owner, key)
+        proj_dir = Path(saved["folder"])
+
+        old_take = proj_dir / "window_00_old.mp4"
+        active_take = proj_dir / "window_00_active.mp4"
+        for take in (old_take, active_take):
+            take.write_bytes(b"video")
+            review_path(take).write_bytes(b"review")
+            write_snapshot(take, {"window": 0})
+        stale_dir = proj_dir / "takes"
+        stale_dir.mkdir(parents=True, exist_ok=True)
+        stale_take = stale_dir / "extra.mp4"
+        stale_take.write_bytes(b"stale")
+
+        def set_active(current):
+            current["windows"][0]["take"] = str(active_take)
+
+        self.handlers.runner.projects.edit(saved, set_active)
+
+        media_out = self.output_dir / "h3" / "remake_00001.mp4"
+        media_out.parent.mkdir(parents=True, exist_ok=True)
+        media_out.write_bytes(b"published-media")
+
+        cleared = self.ok(self.client.post(f"{API}/projects/{key}/clear-history-takes"))
+        self.assertGreaterEqual(cleared["outcome"]["removed_takes"], 1)
+        self.assertTrue(active_take.is_file())
+        self.assertTrue(review_path(active_take).is_file())
+        self.assertTrue(snapshot_path(active_take).is_file())
+        self.assertFalse(old_take.exists())
+        self.assertFalse(review_path(old_take).exists())
+        self.assertFalse(snapshot_path(old_take).exists())
+        self.assertFalse(stale_take.exists())
+        self.assertTrue(media_out.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

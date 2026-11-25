@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 from threading import RLock
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from fastapi import Body, FastAPI, Request
 
@@ -35,12 +35,15 @@ from h3_app.project_transfer import (
     KIND_LABELS,
     PROJECT_KINDS,
     build_auth_headers,
+    clear_local_project_history_takes,
+    clear_local_projects_history_takes,
     delete_local_project,
     fetch_remote_projects,
     format_import_summary_headline,
     import_remote_projects,
     list_local_projects,
     normalize_storyboard_takes,
+    parse_clear_takes_request,
     rename_local_project,
 )
 from h3_gpu import CPU_ONLY_MESSAGE, is_a100, is_cpu_only
@@ -429,6 +432,25 @@ class SystemPageState:
         )
         return {"outcome": outcome, **self.local_projects()}
 
+    def clear_project_takes(self, kind: str, project_id: str) -> dict[str, Any]:
+        outcome = clear_local_project_history_takes(
+            kind,
+            project_id,
+            store=self.services.store,
+            runtime=self.services.runtime_config(),
+            on_changed=self.services.on_changed,
+        )
+        return {"outcome": outcome, **self.local_projects()}
+
+    def clear_projects_takes(self, items: Sequence[tuple[str, str]]) -> dict[str, Any]:
+        outcome = clear_local_projects_history_takes(
+            items,
+            store=self.services.store,
+            runtime=self.services.runtime_config(),
+            on_changed=self.services.on_changed,
+        )
+        return {"outcome": outcome, **self.local_projects()}
+
     def remote_projects(
         self, url: str, modal_key: str = "", modal_secret: str = ""
     ) -> dict[str, Any]:
@@ -665,6 +687,16 @@ def install_system_page(app: FastAPI, *, pages: SystemPageState) -> SystemPageSt
         if not kind or not project_id:
             raise H3Error("Specify project kind and id.")
         return pages.delete_project(kind, project_id)
+
+    @app.post(f"{API}/projects/clear-takes", include_in_schema=False)
+    @guarded
+    def project_clear_takes(request: Request, body: dict = Body(...)):
+        _owner(request)
+        mode, selections = parse_clear_takes_request(body)
+        if mode == "batch":
+            return pages.clear_projects_takes(selections)
+        kind, project_id = selections[0]
+        return pages.clear_project_takes(kind, project_id)
 
     @app.post(f"{API}/projects/remote", include_in_schema=False)
     @guarded

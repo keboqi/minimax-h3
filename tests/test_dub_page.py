@@ -770,6 +770,55 @@ class StudioPageTests(PageTests):
         self.assertEqual(forwarded[1], ("h3", expected))
         self.assertEqual(forwarded[2], ("musetalk", None))
 
+    def test_lip_sync_clear_history_keeps_only_active_shot_take_and_dub_output(self):
+        from h3_app.dubbing.lip_sync import load_lip_sync_takes, save_lip_sync_takes
+        from h3_app.dubbing.results import player_folder
+
+        created = self.session([{"start": 0, "end": 1, "speaker": "speaker1", "source": "Hi", "translation": "Salut"}])
+        out_dir = self.runtime.outputs_dir / "dubbing"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dub_video = out_dir / "clip.mp4"
+        dub_video.write_bytes(b"dub-mp4")
+        folder = player_folder(dub_video)
+        takes_dir = folder / "lip_sync_takes"
+        cache_dir = folder / "lip_sync_cache"
+        takes_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (takes_dir / "take1.mp4").write_bytes(b"old-preview")
+        (takes_dir / "take2.mp4").write_bytes(b"active-preview")
+        (cache_dir / "win1.mp4").write_bytes(b"old-cache")
+        (cache_dir / "win2.mp4").write_bytes(b"active-cache")
+        save_lip_sync_takes(dub_video, {
+            "version": 1,
+            "dub": dub_video.name,
+            "shots": {
+                "0:speaker1": {
+                    "active_take_id": "t2",
+                    "takes": [
+                        {"id": "t1", "number": 1, "preview_file": "take1.mp4",
+                         "windows": [{"cache_file": "win1.mp4"}]},
+                        {"id": "t2", "number": 2, "preview_file": "take2.mp4",
+                         "windows": [{"cache_file": "win2.mp4"}]},
+                    ],
+                },
+            },
+        })
+        sessions.modify(created, lambda current: current.data.update(last_output=str(dub_video)))
+
+        res = self.client.post(f"{API}/lip-sync-clear-history", json={"session": created.id})
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertEqual(data["outcome"]["removed_takes"], 1)
+        self.assertEqual(data["outcome"]["kept_takes"], 1)
+        self.assertIn("Cleared 1 history take", data["message"])
+        self.assertTrue(dub_video.is_file())
+        self.assertFalse((takes_dir / "take1.mp4").exists())
+        self.assertTrue((takes_dir / "take2.mp4").is_file())
+        self.assertFalse((cache_dir / "win1.mp4").exists())
+        self.assertTrue((cache_dir / "win2.mp4").is_file())
+        saved = load_lip_sync_takes(dub_video)
+        self.assertEqual([t["id"] for t in saved["shots"]["0:speaker1"]["takes"]], ["t2"])
+
 
 if __name__ == "__main__":
     unittest.main()
