@@ -18,13 +18,13 @@ from .media import (
     detect_cuts, extract_frame, frame_seconds, has_untouched_source, held_clip, join_windows, splice_into_source,
     trim_source,
 )
-from .model import FPS, RemakeGraph, RenderSize, check_pins, frames_for_seconds, render_size, request_overrides
+from .model import FPS, RemakeGraph, RenderSize, check_pins, render_size, request_overrides
 from .project import (
     DONE, FAILED, OPTION_DEFAULTS, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor,
     save_options, store_picture,
     window_inputs,
 )
-from .windows import needs_windows, plan_windows, selection_frames
+from .windows import plan_windows, render_frames
 
 
 class Selection(NamedTuple):
@@ -116,9 +116,8 @@ class WindowRunner:
         saved = self.saved(owner, selection)
         if saved is not None:
             return saved
-        start, total = float(selection.start or 0), selection_frames(selection.start, selection.end)
-        if not needs_windows(selection.start, selection.end, selection.max_window):
-            total = min(frames_for_seconds(total / FPS), selection.max_window)
+        start = float(selection.start or 0)
+        total = render_frames(start, selection.end, selection.max_window)
         metadata = probe_video_metadata(Path(video))
         if total > int(metadata.duration * FPS) + 1:
             raise H3Error("The selection runs past the end of the source.")

@@ -41,7 +41,7 @@ from h3_app.remake.align import align_image, comparison, load_image, measure_dri
 from h3_app.remake.media import extract_frame, filmstrip, frame_seconds, has_untouched_source, splice_into_source, trim_source
 from h3_app.remake.project import CHANGED, FOLDER as REMAKE_FOLDER, RENDERED, STATE_NAMES, window_inputs, with_selection
 from h3_app.remake.runner import CONTINUE_REQUEST, RunOptions, Selection, WindowRunner
-from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, needs_windows, selection_frames
+from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, needs_windows, render_frames, selection_frames
 from h3_app.staging import file_content_sha256
 from h3_app.storyboard import PROFILE_FIELDS
 from h3_models import is_baked_turbo_profile
@@ -286,7 +286,7 @@ def next_run_details(captured: Mapping[str, Any], mode, video, start, end, short
     windowed = needs_windows(start, end, max_window)
     reused = False
     try:
-        remade_frames = selection_frames(start, end) if windowed else min(selected_frames(start, end), int(max_window))
+        remade_frames = render_frames(start, end, max_window)
         duration = f"{remade_frames / FPS:.2f} s"
         if video:
             metadata = _source_metadata(Path(video))
@@ -531,7 +531,11 @@ class RemakeHandlers:
         """The selection's line, and its saved windows if it was split before."""
         long = needs_windows(selection.start, selection.end, selection.max_window)
         project = self.runner.saved(owner, selection)
-        return {"text": selection_text(selection.start, selection.end, selection.max_window), "long": long,
+        try:
+            frames = render_frames(selection.start, selection.end, selection.max_window)
+        except H3Error:
+            frames = None  # The editor still describes selections below the minimum.
+        return {"text": selection_text(selection.start, selection.end, selection.max_window), "long": long, "frames": frames,
                 "project": project_payload(project) if project is not None else None}
 
     # Projects --------------------------------------------------------------
@@ -837,7 +841,7 @@ class RemakeHandlers:
             return
         if not pictures:
             raise H3Error("Add at least one edited frame.")
-        frames = min(selected_frames(start, end), int(max_window))
+        frames = render_frames(start, end, max_window)
         pinned = resolved_pins(pin_frames, pins)
         if pin_frames and not pinned:
             raise H3Error("Give every picture a frame number, or turn pinning off.")

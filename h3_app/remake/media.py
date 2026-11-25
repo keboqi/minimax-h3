@@ -131,8 +131,8 @@ def held_clip(take: str | Path, output: Path, *, first: int, frames: int) -> Pat
 def has_untouched_source(source_duration: float, start: float, frames: int) -> tuple[bool, bool]:
     """Whether ``source_duration`` has untouched frames before and/or after the remade span."""
     start_frame = max(0, int(round(float(start or 0) * FPS)))
-    remade_end = (start_frame + int(frames)) / FPS
-    return start_frame > 0, float(source_duration) - remade_end > 1.5 / FPS
+    source_frames = int(float(source_duration) * FPS + 0.5)
+    return start_frame > 0, start_frame + int(frames) < source_frames
 
 
 def splice_into_source(

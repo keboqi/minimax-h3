@@ -606,6 +606,34 @@ class RemakePageTests(unittest.TestCase):
         self.assertTrue(spliced["spliced"])
         self.assertEqual(probe_video_metadata(Path(spliced["output"])).frame_count, 336)
 
+    def test_reuse_keeps_one_trailing_frame_and_next_handoff_starts_without_the_old_result(self):
+        self.video = self.root / "short.mp4"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x192:rate=24",
+                        "-frames:v", "91", "-pix_fmt", "yuv420p", str(self.video)], check=True)
+        source = self.source()
+        selection = self.selection(source, end=91 / 24)
+        self.ok(self.client.post(f"{API}/generate", json=self.editor(source, selection=selection, keep_rest=True)))
+        run = self.finished_run()
+        self.assertIsNone(run["error"])
+        self.assertTrue(run["spliced"])
+        self.assertEqual(probe_video_metadata(Path(run["result_url"])).frame_count, 91)
+        self.assertEqual(self.ok(self.client.get(f"{API}/boot"))["run"]["result_url"], run["result_url"])
+
+        from h3_app.workspace_store import COOKIE
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        self.handlers.receive_source(owner, type(self).video, "Next take")
+        boot = self.ok(self.client.get(f"{API}/boot"))
+        self.assertEqual(boot["incoming_source"]["name"], "Next take")
+        self.assertIsNone(boot["run"])
+
+    def test_selection_reports_the_render_length_before_splitting(self):
+        source = self.source()
+        for seconds, frames in [(4, 90), (12, 288), (2, None)]:
+            with self.subTest(seconds=seconds):
+                selection = self.selection(source, end=seconds)
+                data = self.ok(self.client.post(f"{API}/selection", json={"selection": selection}))
+                self.assertEqual(data["frames"], frames)
+
 
 if __name__ == "__main__":
     unittest.main()

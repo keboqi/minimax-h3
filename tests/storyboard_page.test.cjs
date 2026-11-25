@@ -332,6 +332,10 @@ test("renderTakes offers upload and Media library take actions and renders manua
   assert.ok(findAll(takeRow, (n) => n.id === "upload-take").length === 1);
   assert.ok(findAll(takeRow, (n) => n.id === "library-take").length === 0);
 
+  emptyScene.ref_videos = [{path: "/project/ref.mp4", name: "ref.mp4"}];
+  page.renderTakes();
+  assert.equal(findAll(takeRow, (n) => n.id === "library-take").length, 1);
+  emptyScene.ref_videos = [];
   page.state.boot.library = true;
   emptyScene.takes = [
     {id: "t1", number: 1, source: "upload", source_name: "edit.mp4", duration: 4.5, frames: 108, prefix_frames: 39, missing: false},

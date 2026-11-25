@@ -51,7 +51,8 @@ def main(shots=None):
         edited = root / "edited.png"
         extra = root / "extra.png"
         Image.new("RGB", (640, 360), (200, 120, 40)).save(extra)
-        env = {**os.environ, "H3_WORKSPACE_DIR": str(root / "state")}
+        env = {**os.environ, "H3_WORKSPACE_DIR": str(root / "state"), "COMFY_DIR": str(root / "ComfyUI"),
+               "GRADIO_OUTPUT_DIR": str(root / "gradio_outputs")}
         env.pop("H3_UI_LAYOUT", None)
         process = subprocess.Popen([sys.executable, "-m", "tests.workspace_fixture", str(port)], env=env)
         try:
@@ -194,8 +195,17 @@ def main(shots=None):
                 pin_field.press("Tab")
 
                 # A selection one window can hold shows no windows; a longer one does.
+                remake.locator("#keep-rest").check()
+                end_time = remake.locator("#end-time")
+                end_time.fill("4")
+                end_time.press("Tab")
+                expect(remake.locator("#reuse-summary")).to_contain_text("90 frames")
                 expect(remake.get_by_role("button", name="Split into windows")).to_be_hidden()
+                end_time.fill("5.5")
+                end_time.press("Tab")
+                expect(remake.locator("#reuse-summary")).to_contain_text("124 frames")
                 remake.get_by_label("Longest window").select_option(label="3.8 s (90 frames)")
+                expect(remake.locator("#reuse-summary")).to_contain_text("132 frames")
                 split = remake.get_by_role("button", name="Split into windows")
                 expect(split).to_be_visible(timeout=10000)
                 split.click()
@@ -206,6 +216,10 @@ def main(shots=None):
                 primary.click()
                 status = remake.get_by_label("Generation progress")
                 expect(status).to_contain_text("Combined", timeout=60000)
+                remake.get_by_role("button", name="Full result", exact=True).click()
+                expect(remake.locator("#result-video")).to_have_js_property("muted", False)
+                expect(remake.locator("#source-video")).to_have_js_property("muted", True)
+                remake.get_by_role("button", name="Result", exact=True).click()
                 if shots:
                     page.screenshot(path=str(Path(shots) / "remake-windows.png"), full_page=True)
 
@@ -239,8 +253,8 @@ def main(shots=None):
                 overview.scroll_into_view_if_needed()
                 start_before = remake.locator("#start-time").input_value()
                 end_before = remake.locator("#end-time").input_value()
-                box = overview.bounding_box()
-                x, y = box["x"] + box["width"] - 3, box["y"] + box["height"] / 2
+                box = overview.locator('[data-edge="end"]').bounding_box()
+                x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
                 page.mouse.move(x, y)
                 page.mouse.down()
                 page.mouse.move(x - 40, y, steps=4)

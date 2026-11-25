@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from h3_app.errors import H3Error
 
-from .model import FPS, MAX_FRAMES, MIN_FRAMES
+from .model import FPS, MAX_FRAMES, MIN_FRAMES, frames_for_seconds
 
 LENGTHS = tuple(range(MIN_FRAMES, MAX_FRAMES + 1, 17))
 DEFAULT_WINDOW_FRAMES = 226
@@ -23,6 +23,12 @@ def selection_frames(start: Any, end: Any) -> int:
 def needs_windows(start: Any, end: Any, max_window: int) -> bool:
     """Whether the selection is too long for one window; a shorter excess just rounds down."""
     return selection_frames(start, end) >= int(max_window) + 17
+
+
+def render_frames(start: Any, end: Any, max_window: int) -> int:
+    if needs_windows(start, end, max_window):
+        return selection_frames(start, end)
+    return min(frames_for_seconds(float(end or 0) - float(start or 0)), int(max_window))
 
 
 def plan_windows(total: int, cuts: Iterable[int], *, max_frames: int) -> list[dict[str, Any]]:

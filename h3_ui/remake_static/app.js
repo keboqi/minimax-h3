@@ -17,7 +17,7 @@ import {
   const state = {
     boot: null, source: null, start: 0, end: 0, lastStart: 0, shortEdge: 480, maxWindow: 226, mix: 0,
     long: false, text: "", project: null, index: 0, frame: 0, mode: "Swap", pinned: true, smart: true, auto: true,
-    keepRest: false, outputSpliced: false,
+    keepRest: false, outputSpliced: false, renderFrames: null,
     slots: [null, null, null, null], useCarried: true, suggestion: "", previous: null, view: "source", wipe: 50,
     alignSlot: null, alignView: "Overlay", check: null, run: null, runSeen: -1, output: null, playing: false,
     muted: false, saveLabel: "All changes saved",
@@ -74,11 +74,12 @@ import {
     if (!state.source || !state.keepRest) return null;
     const duration = Number(state.source.duration || 0);
     const startFrame = Math.max(0, Math.round(videoStart() * fps()));
-    const remadeFrames = total();
+    const remadeFrames = state.project?.frames ?? state.renderFrames;
+    if (!remadeFrames) return null;
     const remadeStart = startFrame / fps();
     const remadeEnd = (startFrame + remadeFrames) / fps();
     const hasBefore = startFrame > 0;
-    const hasAfter = duration - remadeEnd > 1.5 / fps();
+    const hasAfter = startFrame + remadeFrames < Math.round(duration * fps());
     return {
       duration, startFrame, remadeFrames, remadeStart, remadeEnd, hasBefore, hasAfter,
       reusesAny: hasBefore || hasAfter,
@@ -210,6 +211,7 @@ import {
   const applySelection = (data) => {
     state.text = data.text;
     state.long = data.long;
+    state.renderFrames = data.frames;
     const previous = state.project?.key;
     state.project = data.project;
     if (data.project) stored.set(SESSION.project, data.project.key);
@@ -224,9 +226,13 @@ import {
     }
     state.frame = Math.min(state.frame, total() - 1);
   };
+  let selectionRevision = 0;
   const refreshSelection = safely(async () => {
     if (!state.source) return;
-    applySelection(await post("/selection", {selection: selection()}));
+    const revision = ++selectionRevision;
+    const data = await post("/selection", {selection: selection()});
+    if (revision !== selectionRevision) return;
+    applySelection(data);
     renderAll();
     queueCheck();
   });
@@ -731,10 +737,11 @@ import {
       return `${seconds(frames)} of video`;
     }
     if (reuse?.reusesAny) {
-      return `${seconds(total())} remade → ${reuse.duration.toFixed(1)} s full video`;
+      return `${seconds(reuse.remadeFrames)} remade → ${reuse.duration.toFixed(1)} s full video`;
     }
-    if (state.long) return `${seconds(selectionFrames())} · a run splits it into windows`;
-    return `${seconds(total())} · one render`;
+    if (!state.renderFrames) return "";
+    if (state.long) return `${seconds(state.renderFrames)} · a run splits it into windows`;
+    return `${seconds(state.renderFrames)} · one render`;
   };
 
   // Where each section's header and body sit in the prompt, keyed by name. Each body runs to the next header.
@@ -1348,7 +1355,7 @@ import {
   };
 
   // Playback ---------------------------------------------------------------
-  const activeVideo = () => (state.view === "result" && !$("result-video").hidden ? $("result-video") : $("source-video"));
+  const activeVideo = () => (["result", "full"].includes(state.view) && !$("result-video").hidden ? $("result-video") : $("source-video"));
   const setPlaying = (playing) => {
     state.playing = playing;
     const videos = [$("source-video"), $("result-video")].filter((video) => !video.hidden && video.src);

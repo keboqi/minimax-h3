@@ -796,7 +796,8 @@
         state.boot?.library && state.remakeSent.has(item.id) && button("Use latest from Media",
           useLatestVideoFromLibrary, "btn primary sm",
           {id: "latest-library-take", disabled: busy, title: "Pick the newest video in Media (such as a Remake result) as a new take"}),
-        state.boot?.library && button("From Media", () => openLibrary((path, scope) => libraryTake(path, scope), "video", "Add as new take", {defaultSource: "global"}),
+        (state.boot?.library || projectMediaForKind("video").length > 0) && button("From Media",
+          () => openLibrary(libraryTake, "video", "Add as new take", {defaultSource: state.boot?.library ? "global" : "project"}),
           "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
   };
 

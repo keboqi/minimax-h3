@@ -141,14 +141,16 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @guarded
     def boot(request: Request):
         owner = owner_of(request)
-        active_run = runs.active(owner, RUN_KEY, "generate") is not None
+        run = run_payload(owner)
+        incoming = None if run and run["active"] else handlers.pop_incoming_source(owner)
         return {
-            "gpu": gpu, "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
+            "gpu": gpu, "projects": handlers.project_rows(owner), "run": None if incoming else run,
+            "fps": FPS, "sections": list(SECTIONS),
             "short_edges": list(SHORT_EDGES), "short_edge": DEFAULT_SHORT_EDGE,
             "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS
                             if gpu or model.id == "gpt_image"],
             "lengths": list(LENGTHS), "max_window": DEFAULT_WINDOW_FRAMES,
-            "incoming_source": None if active_run else handlers.pop_incoming_source(owner),
+            "incoming_source": incoming,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS), "openai_model": DEFAULT_OPENAI_PROMPT_MODEL},
         }
