@@ -99,6 +99,22 @@ def media(path: str | Path, *, resolution: str = "low") -> dict[str, Any]:
     return block
 
 
+def media_uri(file_info: Mapping[str, Any], path: str | Path, *, resolution: str = "low") -> dict[str, Any]:
+    """An image, video or audio file already uploaded to the Gemini Files API."""
+    path = Path(path)
+    mime = str(file_info.get("mimeType") or media_type(path))
+    kind = mime.split("/", 1)[0]
+    if kind not in ("image", "video", "audio"):
+        raise H3Error(f"{path.name} is not an image, video or audio file.")
+    uri = str(file_info.get("uri") or "").strip()
+    if not uri:
+        raise H3Error(f"Gemini did not return a file URI for {path.name}.")
+    block: dict[str, Any] = {"type": kind, "uri": uri, "mime_type": mime}
+    if kind != "audio":
+        block["resolution"] = resolution
+    return block
+
+
 # Answers -----------------------------------------------------------------------
 def yes_probability(answer: Mapping[str, Any] | None) -> float | None:
     """The probability a yes/no answer is yes, or None when there is no such answer."""

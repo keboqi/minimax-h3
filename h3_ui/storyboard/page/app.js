@@ -5,7 +5,7 @@
   const SAVE_DELAY_MS = 400;
   const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
-  const {$, h, visibleArea, createToast} = globalThis.H3PageCommon;
+  const {$, h, visibleArea, createToast, scoreTone, decisionScoreChips, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
   const {toast} = createToast();
   const chip = (label, pressed, onclick) =>
     h("button", {type: "button", className: "chip", "aria-pressed": String(pressed), onclick}, label);
@@ -34,6 +34,8 @@
     saveLabel: "All changes saved",
     run: null, seenRevision: null, pollTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
+    reviewAdvice: new Map(), reviewBusy: new Map(), reviewError: new Map(),
+    reviewModel: stored.get("h3-storyboard-review-model") || "", takeReviewKey: null,
   };
   const scenes = () => state.board.scenes;
   const scene = () => scenes().find((item) => item.id === state.sceneId) || scenes()[0];
@@ -513,6 +515,8 @@
           {disabled: item.issues.length > 0 || busy || (item.state === "done"), id: "prepare-scene",
             title: busy ? "Wait for the current run to finish." : "Fit the clip to the storyboard and cut its ending for the next scene"}));
       $("take-confirm").replaceChildren();
+      $("take-review").replaceChildren();
+      state.takeReviewKey = null;
       $("takes-panel").hidden = false;
       return;
     }
@@ -521,6 +525,8 @@
       const selected = shown?.id === take.id;
       const inUse = take.id === item.in_use;
       const thumbSrc = take.poster || item.thumb;
+      const doneReview = take.review?.status === "done" ? take.review : null;
+      const badgeScore = doneReview ? (doneReview.score ?? doneReview.fit) : null;
       return h("button", {
         type: "button",
         className: "take-card",
@@ -529,7 +535,8 @@
       },
       h("span", {className: "take-card-thumb"},
         thumbSrc ? h("img", {src: thumbSrc, alt: "", loading: "lazy"}) : null,
-        inUse ? h("span", {className: "take-in-use"}, "In use") : null),
+        inUse ? h("span", {className: "take-in-use"}, "In use") : null,
+        badgeScore !== null ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore)) : null),
       h("span", {className: "take-card-meta"},
         h("strong", {}, `Take ${take.number}`),
         h("span", {className: "mono small muted"}, take.seed !== undefined ? `#${take.seed}` : "")));
@@ -551,9 +558,7 @@
       // A take's score arrives after its run; look again until it has.
       if (!activeGenerate()) state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
     } else if (review?.status === "done") {
-      row.push(h("span", {className: `review-chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`,
-        title: `How well this take fits the scene prompt, scored by Gemini Decision.${review.tags.length ? ` Tags: ${review.tags.join(", ")}` : ""}`},
-        `Prompt fit ${review.fit} · ${review.label}`));
+      row.push(...decisionScoreChips(review, {chipClass: "review-chip", includeTags: false}));
     }
     if (shown) {
       row.push(h("span", {className: "take-meta mono"},
@@ -576,7 +581,121 @@
       button("Delete permanently", () => deleteTake(doomed), "btn danger"),
       button("Cancel", () => { state.deletingTake = null; renderTakes(); }),
     )] : []));
-    $("takes-panel").hidden = !$("take-row").children.length && !$("take-confirm").children.length;
+    renderTakeReview(item, shown);
+    $("takes-panel").hidden = !$("take-row").children.length && !$("take-confirm").children.length && !$("take-review").children.length;
+  };
+
+  const selectedReviewModel = () => {
+    const models = state.boot?.writer?.gemini_models || [];
+    if (state.reviewModel && models.includes(state.reviewModel)) return state.reviewModel;
+    const saved = writerSettings().gemini_prompt_model;
+    if (saved && models.includes(saved)) return saved;
+    return state.boot?.writer?.gemini_default || models[0] || "";
+  };
+
+  const applyTakeFinetunedPrompt = async (item, finetuned) => {
+    if (!finetuned) return;
+    state.previousPrompts.set(item.id, item.prompt);
+    edit("prompt", finetuned);
+    if (scene().id === item.id && !state.panel) renderInspector();
+    await flush();
+    toast(`Finetuned prompt applied to Scene ${item.number}. Generate another take or click Undo rewrite.`);
+  };
+
+  const runTakeReview = async (item, take, kind) => {
+    if (state.reviewBusy.get(take.id)) return;
+    const boardId = state.board.id;
+    const advice = (state.reviewAdvice.get(take.id) || "").trim();
+    const url = `${API}/boards/${boardId}/scenes/${item.id}/takes/${take.id}/${kind}`;
+    const body = kind === "review"
+      ? {advice, model: selectedReviewModel(), writer: writerSettings()}
+      : {advice, writer: writerSettings()};
+    state.reviewBusy.set(take.id, kind);
+    state.reviewError.delete(take.id);
+    renderTakes();
+    try {
+      const data = await request("POST", url, body);
+      state.reviewBusy.delete(take.id);
+      if (state.board?.id === boardId) {
+        applyBoard(data, {keepInspector: true});
+      }
+      toast(kind === "review" ? `Take ${take.number} reviewed by Gemini.` : `Take ${take.number} scored by Gemini Decision.`);
+    } catch (error) {
+      state.reviewBusy.delete(take.id);
+      state.reviewError.set(take.id, error.message);
+      toast(error.message, true);
+      if (state.board?.id === boardId) renderTakes();
+    }
+  };
+
+  const renderTakeReview = (item, shown) => {
+    const container = $("take-review");
+    if (!shown || shown.missing || item.kind === "media") {
+      if (state.takeReviewKey !== null) {
+        container.replaceChildren();
+        state.takeReviewKey = null;
+      }
+      return;
+    }
+    const busy = state.reviewBusy.get(shown.id) || "";
+    const err = state.reviewError.get(shown.id) || "";
+    const llm = shown.llm_review || null;
+    const model = selectedReviewModel();
+    const key = JSON.stringify([item.id, shown.id, shown.number, shown.ref_count || 0, busy, err, model, llm?.finished || 0, llm?.finetuned_prompt?.length || 0]);
+    if (key === state.takeReviewKey) return;
+    state.takeReviewKey = key;
+
+    const models = state.boot?.writer?.gemini_models || [];
+    const modelSelect = h("select", {
+      "aria-label": "Gemini review model",
+      onchange: (event) => {
+        state.reviewModel = event.target.value;
+        stored.set("h3-storyboard-review-model", state.reviewModel);
+      },
+    }, models.map((name) => h("option", {value: name, selected: name === model}, name)));
+
+    const adviceInput = h("textarea", {
+      className: "take-review-advice",
+      rows: 2,
+      value: state.reviewAdvice.get(shown.id) || "",
+      placeholder: "Optional advice or fixes to focus on (sent to both Gemini review and Gemini Decision scoring)…",
+      oninput: (event) => state.reviewAdvice.set(shown.id, event.target.value),
+    });
+
+    const refs = Number(shown.ref_count || 0);
+    const hint = refs
+      ? `Uses Take ${shown.number}, its prompt, ${refs} reference${refs === 1 ? "" : "s"}, and optional advice.`
+      : `Uses Take ${shown.number}, its prompt, and optional advice.`;
+
+    const llmCard = llm ? h("div", {className: "take-llm-card"}, llmReviewNodes(llm, {
+      chipClass: "review-chip",
+      headClass: "take-review-head",
+      rowClass: "chips",
+      listClass: "take-llm-list",
+      issueListClass: "take-llm-list take-llm-issues",
+      promptClass: "take-llm-prompt",
+      primaryBtnClass: "btn primary sm",
+      secondaryBtnClass: "btn sm",
+      onApply: (text) => applyTakeFinetunedPrompt(item, text),
+      onCopy: (text) => copyToClipboard(text, toast),
+    })) : null;
+
+    container.replaceChildren(h("div", {className: "take-review-box"},
+      h("div", {className: "take-review-head"},
+        h("div", {className: "chips"},
+          h("strong", {className: "small"}, `Review & score Take ${shown.number}`),
+          h("span", {className: "review-chip", title: "Only Gemini natively inspects both generated video and audio"}, "Gemini · video + audio")),
+        h("label", {className: "take-review-model"}, "Model", modelSelect)),
+      adviceInput,
+      h("div", {className: "chips"},
+        button(busy === "review" ? "Reviewing…" : "Review & finetune prompt", () => runTakeReview(item, shown, "review"), "btn primary sm", {disabled: Boolean(busy)}),
+        button(busy === "score" ? "Scoring…" : "Score take", () => runTakeReview(item, shown, "score"), "btn sm", {disabled: Boolean(busy)}),
+        h("span", {className: "small muted"}, hint)),
+      busy ? h("p", {className: "small muted", role: "status"},
+        busy === "review" ? `Uploading Take ${shown.number} and references to ${model}…` : `Scoring Take ${shown.number} with Gemini Decision…`) : null,
+      err ? h("div", {className: "warning", role: "status"}, err) : null,
+      llmCard,
+    ));
   };
 
   const deleteQuestion = (take) => {

@@ -173,4 +173,12 @@ input[type="range"] { accent-color: var(--accent); }
   .fine-content { border-left: 0; border-top: 1px solid var(--line); }
 }
 
-.review-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.review-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 12px 0; }
+.take-review { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.review-select { width: auto; min-height: 30px; padding: 3px 8px; font-size: 12.5px; }
+.llm-review { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.llm-review-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.llm-review-issues { list-style: none; padding-left: 0; }
+.llm-review-issues li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.llm-review-prompt { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+.llm-review-prompt pre { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: inherit; font-size: 13px; line-height: 1.55; }

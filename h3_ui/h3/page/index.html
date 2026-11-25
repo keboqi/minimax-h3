@@ -38,6 +38,25 @@
           <a class="btn" id="download" hidden download>Download</a>
         </div>
         <div class="review-line small" id="result-review" hidden></div>
+        <div class="take-review" id="take-review" hidden>
+          <div class="row between">
+            <div class="row tightrow">
+              <strong class="small">Take review &amp; scoring</strong>
+              <span class="chip" title="Only Gemini natively inspects both generated video and audio">Gemini · video + audio</span>
+            </div>
+            <label class="inline small muted">Model
+              <select id="review-model" class="field review-select" aria-label="Gemini review model"></select>
+            </label>
+          </div>
+          <textarea id="review-advice" class="field" rows="2" placeholder="Optional advice or fixes to focus on (sent to both Gemini review and Gemini Decision scoring)…"></textarea>
+          <div class="row tightrow">
+            <button type="button" class="btn primary" id="review-take">Review &amp; finetune prompt</button>
+            <button type="button" class="btn" id="score-take">Score take</button>
+            <span class="small muted grow" id="take-review-hint"></span>
+          </div>
+          <p class="small muted" id="take-review-status" role="status" hidden></p>
+          <div class="llm-review" id="take-llm-review" hidden></div>
+        </div>
         <details class="line-details" id="settings-used-box">
           <summary>Settings used for this result</summary>
           <div class="settings-used" id="settings-used">Settings used will appear with the generated result.</div>
@@ -150,7 +169,7 @@
 <div id="toast" class="toast" role="status" hidden></div>
 <dialog id="library" class="library" aria-label="Media library"></dialog>
 <input id="file-input" type="file" hidden>
-<script src="common.js"></script>
-<script src="app.js"></script>
+<script src="common.js?v=2"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

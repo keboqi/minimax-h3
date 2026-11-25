@@ -111,7 +111,17 @@ class ReferenceMap:
 
         return TAG.sub(translate, prompt)
 
-    def dense_values(self, values: dict) -> dict:
+    def restore_known_tags(self, prompt: str) -> str:
+        """Restore mapped engine ordinals to visible card tags, leaving unknown tags intact."""
+        mapping = {
+            b.engine_tag: b.tag
+            for b in self.bindings
+            if b.engine_ordinal and not b.unresolved
+        }
+        return TAG.sub(lambda match: mapping.get(match[0], match[0]), prompt)
+
+    def dense_media(self, values: dict) -> dict:
+        """Pack active reference media into dense engine ordinals without compiling the prompt."""
         result = dict(values)
         for kind, prefix, limit in KINDS:
             for slot in range(1, limit + 1):
@@ -119,5 +129,9 @@ class ReferenceMap:
             for binding in self.bindings:
                 if binding.kind == kind and binding.engine_ordinal:
                     result[f"{prefix}_{binding.engine_ordinal}"] = binding.path
+        return result
+
+    def dense_values(self, values: dict) -> dict:
+        result = self.dense_media(values)
         result["prompt"] = self.compile_prompt(values.get("prompt", ""))
         return result

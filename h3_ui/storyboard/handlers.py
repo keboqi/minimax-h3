@@ -11,12 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from h3_app import storyboard as sb
+from h3_app import storyboard as sb, take_review
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_PROMPT_WRITER_BACKEND,
 )
 from h3_app.errors import H3Error
-from h3_app import media_review
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB, JobCancelled
 from h3_app.staging import stage_file
@@ -169,6 +168,69 @@ class StoryboardHandlers(StoryboardApiHandlers):
         self.service.update_scene(owner, storyboard_id, scene_id, prompt=prompt)
         return str(status)
 
+    def _gemini_review_settings(self, owner, overrides: dict[str, Any] | None = None) -> tuple[str, str]:
+        """Resolve (gemini_model, gemini_api_key) for Gemini-only take review and scoring."""
+        captured = (self.settings.get(owner, {}) or {}).get("writer") or {}
+        chosen = overrides or {}
+        model = (
+            str(chosen.get("model") or chosen.get("gemini_prompt_model") or "").strip()
+            or str(captured.get("gemini_prompt_model") or "").strip()
+            or DEFAULT_GEMINI_PROMPT_MODEL
+        )
+        key = (
+            str(chosen.get("gemini_api_key") or "").strip()
+            or str(captured.get("gemini_api_key") or "").strip()
+        )
+        return model, key
+
+    def review_take(
+        self,
+        owner,
+        storyboard_id,
+        scene_id,
+        take_id,
+        *,
+        advice: str = "",
+        model: str = "",
+        gemini_api_key: str = "",
+    ) -> dict[str, Any]:
+        """Review one generated take with Gemini (video+audio) and produce a finetuned prompt."""
+        board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
+        take_input, cast_names = take_review.storyboard_take_input(
+            board, index, take_id, cast_dir=self.service.cast_dir(storyboard_id), advice=advice,
+        )
+        chosen_model, chosen_key = self._gemini_review_settings(
+            owner, {"model": model, "gemini_api_key": gemini_api_key},
+        )
+        return take_review.review_take_with_gemini(
+            take_input,
+            model=chosen_model,
+            api_key=chosen_key,
+            runtime=self.service.runtime(),
+            save=True,
+            transform_prompt=lambda prompt: take_review.strip_cast_tags(prompt, cast_names),
+        )
+
+    def score_take(
+        self,
+        owner,
+        storyboard_id,
+        scene_id,
+        take_id,
+        *,
+        advice: str = "",
+        gemini_api_key: str = "",
+    ) -> dict[str, Any]:
+        """Score one generated take with Gemini Decision using the same take + prompt + refs + advice."""
+        board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
+        take_input, _ = take_review.storyboard_take_input(
+            board, index, take_id, cast_dir=self.service.cast_dir(storyboard_id), advice=advice,
+        )
+        _, chosen_key = self._gemini_review_settings(owner, {"gemini_api_key": gemini_api_key})
+        return take_review.score_take(take_input, api_key=chosen_key, save=True)
+
     # Takes -----------------------------------------------------------------
     def depends_on(self, board, index) -> list[int]:
         """Later scenes that have a take made from this scene's take, through unbroken continues."""
@@ -272,11 +334,19 @@ class StoryboardHandlers(StoryboardApiHandlers):
         job = CURRENT_JOB.get()
         saved = service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
                                     seed=seed, inputs=inputs, job_id=job.id if job else None)
-        # Scored in the background with the MiniMax H3 page's option, so the next take starts at once.
+        # Scored in the background with the MiniMax H3 page's option (with prompt + active refs).
         captured = self.settings.get(owner, {})
-        media_review.schedule(video, values.get("prompt") or scene["prompt"],
-                              api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
-                              enabled=bool(captured.get("review", True)))
+        try:
+            take_input, _ = take_review.storyboard_take_input(
+                saved, index, take_id, cast_dir=service.cast_dir(storyboard_id),
+            )
+            take_review.schedule_take_score(
+                take_input,
+                api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
+                enabled=bool(captured.get("review", True)),
+            )
+        except H3Error:
+            pass
         if saved.get("auto_subtitles"):
             from h3_app.dubbing import tools
 

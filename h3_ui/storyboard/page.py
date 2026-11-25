@@ -517,6 +517,37 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
         return payload(owner, storyboard_id)
 
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}/review", include_in_schema=False)
+    @guarded
+    def review_take(storyboard_id: str, scene_id: str, take_id: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
+        reviewed = handlers.review_take(
+            owner,
+            storyboard_id,
+            scene_id,
+            take_id,
+            advice=str(body.get("advice") or ""),
+            model=str(body.get("model") or writer.get("gemini_prompt_model") or ""),
+            gemini_api_key=str(body.get("gemini_api_key") or writer.get("gemini_api_key") or ""),
+        )
+        return {**payload(owner, storyboard_id), "llm_review": reviewed}
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}/score", include_in_schema=False)
+    @guarded
+    def score_take(storyboard_id: str, scene_id: str, take_id: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
+        scored = handlers.score_take(
+            owner,
+            storyboard_id,
+            scene_id,
+            take_id,
+            advice=str(body.get("advice") or ""),
+            gemini_api_key=str(body.get("gemini_api_key") or writer.get("gemini_api_key") or ""),
+        )
+        return {**payload(owner, storyboard_id), "review": scored}
+
     @app.post(f"{api}/boards/{{storyboard_id}}/versions", include_in_schema=False)
     @guarded
     def save_version(storyboard_id: str, request: Request, body: dict = Body(default={})):

@@ -2,12 +2,12 @@
 // The MiniMax H3 page. The server owns every setting and its policy; this draws what it answers.
 (() => {
   const API = "/h3/api";
-  const {$, h, createClient, createToast, seg, openStudio} = globalThis.H3PageCommon;
+  const {$, h, createClient, createToast, seg, openStudio, decisionScoreChips, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
 
   const app = {boot: null, s: null, runs: {}, progress: [], files: [], take: 0, suggestion: null, previous: null,
-               enhanceContext: null, polling: false, picking: null,
+               enhanceContext: null, polling: false, picking: null, reviewModel: "", reviewAdvice: new Map(),
                input: {slots: [], preset: "1920 × 1920", width: 1920, height: 1920, model: "", seed: -1, force_offload: false}};
 
   const completedEnhancements = new Set();
@@ -477,9 +477,10 @@
         await new Promise((resolve) => setTimeout(resolve, 1000));
         const before = app.runs;
         const answer = await request("GET", "/run");
-        const settled = ["generate", "input-upscale"].some((kind) => before[kind]?.active && !answer.runs[kind]?.active);
+        const generateSettled = Boolean(before.generate?.active && !answer.runs.generate?.active);
+        const settled = ["generate", "input-upscale", "review", "score"].some((kind) => before[kind]?.active && !answer.runs[kind]?.active);
         take(settled ? await request("GET", "/run?state=true") : answer);
-        if (settled && app.runs.generate && !app.runs.generate.error) app.take = 0;
+        if (generateSettled && app.runs.generate && !app.runs.generate.error) app.take = 0;
         if (!Object.values(app.runs).some((run) => run?.active)) break;
       }
     } catch (error) {
@@ -530,27 +531,105 @@
   };
 
 
-  // The result's prompt-fit score and tags from Gemini Decision; while one is pending the page asks again.
+  // The result's Gemini Decision score, tags, and Gemini LLM take review.
   let reviewTimer = null;
   const renderReview = (current) => {
     const box = $("result-review");
     const review = current?.review;
-    box.hidden = !review;
+    const scoreRun = app.runs.score;
+    const scoringCurrent = Boolean(current && scoreRun?.active && scoreRun.target_path === current.path);
+    box.hidden = !review && !scoringCurrent;
     clearTimeout(reviewTimer);
     // Every result of a batch is scored on its own; keep asking while any of them is pending.
     if (current && app.s.results.videos.some((item) => item.review?.status === "pending")) {
       reviewTimer = setTimeout(guard(async () => take(await request("GET", "/run?state=true"))), 4000);
     }
+    if (scoringCurrent) {
+      box.replaceChildren(h("span", {class: "muted", text: scoreRun.status || "Scoring take with Gemini Decision…"}));
+      return;
+    }
     if (!review) return;
     if (review.status === "pending") {
-      box.replaceChildren(h("span", {class: "muted", text: "Scoring the result against the prompt…"}));
+      box.replaceChildren(h("span", {class: "muted", text: "Scoring the take with Gemini Decision…"}));
     } else if (review.status === "done") {
-      box.replaceChildren(
-        h("span", {class: `chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`, title: "How well the result fits its prompt, scored by Gemini Decision", text: `Prompt fit ${review.fit} · ${review.label}`}),
-        ...review.tags.map((tag) => h("span", {class: "chip", title: "Added to Media library tags", text: tag})));
+      box.replaceChildren(...decisionScoreChips(review, {chipClass: "chip", includeTags: true}));
     } else {
-      box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No prompt-fit score: the review failed."}));
+      box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No score: the Decision review failed."}));
     }
+  };
+
+  const applyFinetunedPrompt = guard(async (text) => {
+    if (!text) return;
+    app.previous = $("prompt").value;
+    app.suggestion = null;
+    app.enhanceNote = "Finetuned prompt from Gemini review applied.";
+    $("prompt").value = text;
+    app.s.prompt = text;
+    await savePrompt();
+    toast("Finetuned prompt applied. Generate again or Undo.");
+  });
+
+  const renderTakeReview = (current) => {
+    const panel = $("take-review");
+    const show = Boolean(current && !app.runs.generate?.active);
+    panel.hidden = !show;
+    if (!show) return;
+    const models = app.boot.choices.gemini_prompt_model || [];
+    const modelSelect = $("review-model");
+    if (!app.reviewModel || !models.includes(app.reviewModel)) {
+      app.reviewModel = models.includes(w("gemini_prompt_model")) ? w("gemini_prompt_model") : (models[0] || "");
+    }
+    if (modelSelect.options.length !== models.length) {
+      modelSelect.replaceChildren(...models.map((name) => h("option", {value: name, text: name})));
+    }
+    if (modelSelect.value !== app.reviewModel) modelSelect.value = app.reviewModel;
+
+    const adviceBox = $("review-advice");
+    if (adviceBox.dataset.path !== current.path) {
+      adviceBox.dataset.path = current.path;
+      adviceBox.value = app.reviewAdvice.get(current.path) || "";
+    }
+
+    const reviewRun = app.runs.review;
+    const scoreRun = app.runs.score;
+    const reviewing = Boolean(reviewRun?.active);
+    const scoring = Boolean(scoreRun?.active);
+    $("review-take").disabled = reviewing;
+    $("review-take").textContent = reviewing ? "Reviewing…" : "Review & finetune prompt";
+    $("score-take").disabled = scoring;
+    $("score-take").textContent = scoring ? "Scoring…" : "Score take";
+
+    const refs = Number(current.ref_count || 0);
+    $("take-review-hint").textContent = refs
+      ? `Uses this take, its prompt, ${refs} reference${refs === 1 ? "" : "s"}, and optional advice.`
+      : "Uses this take, its prompt, and optional advice.";
+
+    const status = $("take-review-status");
+    const activeMsg = (reviewRun?.target_path === current.path && (reviewRun.error || (reviewRun.active ? reviewRun.status : "")))
+      || (scoreRun?.target_path === current.path && (scoreRun.error || (scoreRun.active ? scoreRun.status : "")))
+      || "";
+    status.hidden = !activeMsg;
+    status.className = (reviewRun?.error && reviewRun?.target_path === current.path) || (scoreRun?.error && scoreRun?.target_path === current.path)
+      ? "status error" : "small muted";
+    status.textContent = activeMsg;
+
+    const llmBox = $("take-llm-review");
+    const llm = current.llm_review;
+    llmBox.hidden = !llm;
+    if (!llm) {
+      if (llmBox.dataset.key) {
+        delete llmBox.dataset.key;
+        llmBox.replaceChildren();
+      }
+      return;
+    }
+    const llmKey = JSON.stringify([current.path, llm.finished || 0, llm.model || "", llm.finetuned_prompt?.length || 0]);
+    if (llmBox.dataset.key === llmKey) return;
+    llmBox.dataset.key = llmKey;
+    llmBox.replaceChildren(...llmReviewNodes(llm, {
+      onApply: applyFinetunedPrompt,
+      onCopy: (text) => copyToClipboard(text, toast),
+    }));
   };
 
   const renderViewer = () => {
@@ -575,6 +654,7 @@
     $("viewer-line").textContent = current ? `${videos.length} ${videos.length === 1 ? "video" : "videos"}` : "No result yet";
     $("result-name").textContent = current?.name || "";
     renderReview(run?.active ? null : current);
+    renderTakeReview(run?.active ? null : current);
     $("download").hidden = !current;
     if (current) { $("download").href = `${current.url}&download=true`; $("download").download = current.name; }
     const used = app.s.results.settings || "Settings used will appear with the generated result.";
@@ -668,6 +748,26 @@
     $("confirm-references").addEventListener("click", guard(async () => {
       await savePrompt();
       take(await post("/references/confirm"));
+    }));
+    $("review-model").addEventListener("change", (event) => { app.reviewModel = event.target.value; });
+    $("review-advice").addEventListener("input", (event) => {
+      const path = event.target.dataset.path;
+      if (path) app.reviewAdvice.set(path, event.target.value);
+    });
+    const currentResultVideo = () => app.s?.results?.videos?.find((video, index) => (video.index ?? index) === app.take) || null;
+    $("review-take").addEventListener("click", guard(async () => {
+      const current = currentResultVideo();
+      if (!current) return toast("Generate a video before reviewing it.", true);
+      const advice = $("review-advice").value.trim();
+      app.reviewAdvice.set(current.path, $("review-advice").value);
+      take(await post("/take/review", {path: current.path, advice, model: app.reviewModel}));
+    }));
+    $("score-take").addEventListener("click", guard(async () => {
+      const current = currentResultVideo();
+      if (!current) return toast("Generate a video before scoring it.", true);
+      const advice = $("review-advice").value.trim();
+      app.reviewAdvice.set(current.path, $("review-advice").value);
+      take(await post("/take/score", {path: current.path, advice}));
     }));
     $("enhance").addEventListener("click", guard(async () => {
       app.suggestion = null;

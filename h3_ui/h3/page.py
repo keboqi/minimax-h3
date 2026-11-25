@@ -17,8 +17,9 @@ import uuid
 
 from fastapi import Body, FastAPI, File, Request, UploadFile
 
-from h3_app import catalog
+from h3_app import catalog, media_review, take_review
 from h3_app.capabilities import engines_for_task
+from h3_app.config import RuntimeConfig
 from h3_models import (
     H3_LATENT_UPSCALER_MODEL_CHOICES, H3_TEXT_ENCODER_CHOICES, LTX25_MODEL_CHOICES, SEEDVR2_MODEL_CHOICES,
 )
@@ -26,7 +27,6 @@ from h3_app.contracts import GENERATION_FIELDS
 from h3_app.decoder_intent import VideoDecoder
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
-from h3_app import media_review
 from h3_app.provenance import render_snapshot
 from h3_app.reference_bindings import KINDS, ReferenceBinding, ReferenceMap
 from h3_app.reference_metadata import describe_reference
@@ -51,9 +51,12 @@ STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
 ROUTE = "/h3"
 API = f"{ROUTE}/api"
 RUN_KEY = "h3"
-GENERATE, ENHANCE, UPSCALE, COMPILE = "generate", "enhance", "input-upscale", "compile"
+GENERATE, ENHANCE, UPSCALE, COMPILE, REVIEW, SCORE = (
+    "generate", "enhance", "input-upscale", "compile", "review", "score",
+)
 BUSY = {GENERATE: "A generation is already running.", ENHANCE: "The prompt writer is already running.",
-        UPSCALE: "Inputs are already being upscaled.", COMPILE: "The TensorRT engine is already compiling."}
+        UPSCALE: "Inputs are already being upscaled.", COMPILE: "The TensorRT engine is already compiling.",
+        REVIEW: "A take review is already running.", SCORE: "A take score is already running."}
 
 IMAGE_SLOTS = ("first_image", "last_image", *(f"ref_image_{i}" for i in range(1, 10)))
 VIDEO_SLOTS = tuple(f"ref_video_{i}" for i in range(1, 4))
@@ -88,6 +91,7 @@ class H3PageServices:
     library: Callable[[], Any] = lambda: None
     followers: tuple = ()
     attention_backend: str = "sol"
+    runtime: Callable[[], Any] | None = None
 
     @classmethod
     def from_bootstrap(cls, catalog_cfg, services, *, library: Callable[[], Any], followers: tuple) -> H3PageServices:
@@ -101,6 +105,7 @@ class H3PageServices:
             library=library,
             followers=followers,
             attention_backend=catalog_cfg.SERVER_ATTENTION_BACKEND,
+            runtime=services.engine_deps.runtime_config,
         )
 
 
@@ -112,9 +117,12 @@ class H3Run(Run):
     suggestion: str | None = None
     original: str | None = None
     files: list[str] = field(default_factory=list)
+    target_path: str | None = None
+    review: dict[str, Any] | None = None
 
     def public(self, scene_id=None) -> dict[str, Any]:
-        return {**super().public(scene_id), "suggestion": self.suggestion, "original": self.original}
+        return {**super().public(scene_id), "suggestion": self.suggestion, "original": self.original,
+                "target_path": self.target_path, "review": self.review}
 
 
 class Followed(dict):
@@ -212,9 +220,15 @@ class H3PageState(OwnerPageState):
         writer = self.load_writer(owner, saved, writer_defaults())
         media = {name: path for name, path in (saved.get("media") or {}).items()
                  if name in MEDIA_FIELDS and path and Path(path).is_file()}
+        results = [path for path in saved.get("results") or [] if path and Path(path).is_file()]
+        raw_context = saved.get("result_context")
+        result_context = (
+            {path: ctx for path, ctx in raw_context.items() if path in results and isinstance(ctx, dict)}
+            if isinstance(raw_context, dict) else {}
+        )
         return {"values": values, "memory": saved.get("memory") or None, "writer": writer, "media": media,
                 "prompt": str(saved.get("prompt") or ""), "references": saved.get("references") or {},
-                "results": [path for path in saved.get("results") or [] if path and Path(path).is_file()],
+                "results": results, "result_context": result_context,
                 "ui": saved.get("ui") if isinstance(saved.get("ui"), dict) else {}}
 
     def save(self, owner: str, state: dict[str, Any]) -> None:
@@ -356,11 +370,72 @@ class H3PageState(OwnerPageState):
         return {"path": path, "kind": kind, "detail": detail,
                 "url": f"{API}/file?path={_quote(path)}"}
 
+    def capture_result_context(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Snapshot the active prompt, mode, timing, and references that produced a generation batch."""
+        values = state["values"]
+        mode = values["mode"]
+        active = REFERENCE_SLOTS if mode == "Reference media" else FRAME_SLOTS if mode == "First / last frame" else ()
+        return {
+            "prompt": state["prompt"],
+            "mode": mode,
+            "duration": values["duration"],
+            "width": values["width"],
+            "height": values["height"],
+            "media": {name: state["media"][name] for name in active if state["media"].get(name)},
+            "references": state.get("references") or {},
+        }
+
+    def take_input(
+        self,
+        state: dict[str, Any],
+        path: str,
+        *,
+        advice: str = "",
+        context: dict[str, Any] | None = None,
+    ) -> tuple[take_review.TakeReviewInput, ReferenceMap | None]:
+        """Assemble the shared ``TakeReviewInput`` (take + prompt + refs + advice) for one H3 video."""
+        saved = context if context is not None else (state.get("result_context") or {}).get(path)
+        if isinstance(saved, dict):
+            mode = str(saved.get("mode") or state["values"]["mode"])
+            media = {name: item for name, item in (saved.get("media") or {}).items()
+                     if name in MEDIA_FIELDS and item and Path(str(item)).is_file()}
+            values = {
+                **request_defaults(),
+                "mode": mode,
+                "duration": saved.get("duration", state["values"]["duration"]),
+                "width": saved.get("width", state["values"]["width"]),
+                "height": saved.get("height", state["values"]["height"]),
+                "prompt": str(saved.get("prompt") or ""),
+                **{name: None for name in MEDIA_FIELDS},
+                **media,
+            }
+            mapping = _map_from(saved.get("references")).update(media, repair=True) if mode == "Reference media" else None
+        else:
+            values = self.request_values(state)
+            mode = values["mode"]
+            mapping = self.references(state) if mode == "Reference media" else None
+        if mode == "Reference media" and mapping is not None:
+            try:
+                values = mapping.dense_values(values)
+            except H3Error:
+                mapping = ReferenceMap().update(values, repair=True)
+                values = mapping.dense_media(values)
+        return take_review.h3_take_input(path, values, advice=advice), mapping
+
     def results(self, owner: str, state: dict[str, Any]) -> dict[str, Any]:
         paths = [self.grant(owner, path) for path in state["results"]]
-        return {"videos": [{"path": path, "name": Path(path).name, "url": f"{API}/file?path={_quote(path)}",
-                            "review": media_review.public(path)} for path in paths],
-                "settings": render_snapshot(paths) if paths else ""}
+        videos = []
+        for path in paths:
+            take_input, _ = self.take_input(state, path)
+            videos.append({
+                "path": path,
+                "name": Path(path).name,
+                "url": f"{API}/file?path={_quote(path)}",
+                "review": media_review.public(path),
+                "llm_review": media_review.public_llm(path),
+                "ref_count": len(take_input.references),
+            })
+        return {"videos": videos, "settings": render_snapshot(paths) if paths else ""}
 
 
 def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True) -> H3PageState:
@@ -648,14 +723,20 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
                     run.status = status
                 run.revision += 1
             finished = [run.results[index] for index in sorted(run.results) if index < count]
+            captured_context = pages.capture_result_context(state)
             for path in finished:
-                # In the background: the score and tags arrive after the run has finished.
-                media_review.schedule(path, state["prompt"], api_key=state["writer"].get("gemini_api_key") or "",
-                                      enabled=bool(state["writer"].get("review", True)))
+                # In the background: score with prompt + active references and add library tags.
+                take_input, _ = pages.take_input(state, path, context=captured_context)
+                take_review.schedule_take_score(
+                    take_input,
+                    api_key=state["writer"].get("gemini_api_key") or "",
+                    enabled=bool(state["writer"].get("review", True)),
+                )
             if finished:
                 with pages.lock:
                     latest = pages.load(owner)
                     latest["results"] = finished
+                    latest["result_context"] = {path: captured_context for path in finished}
                     pages.save(owner, latest)
 
         return start(owner, GENERATE, work)
@@ -694,6 +775,79 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
             run.status = f"{status} Preview ready; choose Accept or Keep original."
 
         return start(owner, ENHANCE, work)
+
+    def resolve_runtime() -> RuntimeConfig:
+        if services.runtime is not None:
+            return services.runtime()
+        return RuntimeConfig.from_environment(Path(__file__).resolve().parents[2])
+
+    def owned_result_path(state: dict[str, Any], raw_path: Any) -> str:
+        path = str(raw_path or "").strip()
+        if not path or path not in state["results"]:
+            raise H3Error("Choose a generated video from the current results first.")
+        if not Path(path).is_file():
+            raise H3Error("This generated video is no longer available on disk.")
+        return path
+
+    def restore_reference_tags(prompt: str, mapping: ReferenceMap | None) -> str:
+        return mapping.restore_known_tags(prompt) if mapping is not None else prompt
+
+    @app.post(f"{API}/take/review", include_in_schema=False)
+    @guarded
+    def review_take(request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        advice = str(body.get("advice") or "").strip()
+        requested_model = str(body.get("model") or "").strip()
+        with pages.lock:
+            state = pages.load(owner)
+            path = owned_result_path(state, body.get("path"))
+            take_input, mapping = pages.take_input(state, path, advice=advice)
+            writer = dict(state["writer"])
+        model = requested_model or writer.get("gemini_prompt_model") or catalog.DEFAULT_GEMINI_PROMPT_MODEL
+        if model not in catalog.GEMINI_PROMPT_MODELS:
+            raise H3Error(f"Unsupported Gemini model: {model}")
+
+        def work(run: H3Run):
+            run.target_path = path
+            run.status = f"Reviewing take with {model}…"
+            reviewed = take_review.review_take_with_gemini(
+                take_input,
+                model=model,
+                api_key=writer.get("gemini_api_key") or "",
+                runtime=resolve_runtime(),
+                save=True,
+                transform_prompt=lambda prompt: restore_reference_tags(prompt, mapping),
+            )
+            run.review = reviewed
+            run.status = f"Reviewed with {reviewed['model']} using {reviewed['ref_count']} reference(s)."
+
+        return start(owner, REVIEW, work)
+
+    @app.post(f"{API}/take/score", include_in_schema=False)
+    @guarded
+    def score_take(request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        advice = str(body.get("advice") or "").strip()
+        with pages.lock:
+            state = pages.load(owner)
+            path = owned_result_path(state, body.get("path"))
+            take_input, _ = pages.take_input(state, path, advice=advice)
+            writer = dict(state["writer"])
+
+        def work(run: H3Run):
+            run.target_path = path
+            run.status = "Scoring take with Gemini Decision…"
+            scored = take_review.score_take(
+                take_input,
+                api_key=writer.get("gemini_api_key") or "",
+                save=True,
+            )
+            run.review = scored
+            value = scored.get("score") if scored.get("score") is not None else scored.get("fit")
+            label = scored.get("score_label") or scored.get("label") or ""
+            run.status = f"Scored {value} · {label}." if label else f"Scored {value}."
+
+        return start(owner, SCORE, work)
 
     @app.post(f"{API}/input-upscale", include_in_schema=False)
     @guarded

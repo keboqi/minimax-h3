@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from h3_app import media_review, storyboard as sb
+from h3_app import media_review, storyboard as sb, take_review
 from h3_app.storyboard import subtitles
 
 MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
@@ -127,7 +127,9 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
          "subtitle_error": board["takes"][take_id].get("subtitle_error"),
          "missing": not Path(board["takes"][take_id]["video"]).is_file(),
          "continued_by": continuations.get(take_id, []),
-         "review": media_review.public(board["takes"][take_id]["video"])}
+         "ref_count": take_review.storyboard_take_ref_count(board, scene, board["takes"][take_id]),
+         "review": media_review.public(board["takes"][take_id]["video"]),
+         "llm_review": media_review.public_llm(board["takes"][take_id]["video"])}
         for number, take_id in enumerate(scene["takes"], 1) if take_id in board["takes"]
     ]
     pictures = []

@@ -152,8 +152,108 @@
     }
   };
 
+  const SCORE_FIELDS = [["prompt", "Prompt"], ["references", "Refs"], ["visuals", "Visuals"], ["audio", "Audio"], ["advice", "Advice"]];
+  const scoreTone = (value) => (value >= 70 ? "good" : value < 45 ? "warn" : "");
+
+  const decisionScoreChips = (review, {chipClass = "chip", includeTags = false} = {}) => {
+    const headline = review.score !== undefined && review.score !== null ? review.score : review.fit;
+    const headlineLabel = review.score_label || review.label || "";
+    const prefix = review.score !== undefined && review.score !== null ? "Take score" : "Prompt fit";
+    const meta = [];
+    if (review.ref_count) meta.push(`${review.ref_count} ref${review.ref_count === 1 ? "" : "s"}`);
+    if (review.advice) meta.push("with advice");
+    if (!includeTags && review.tags?.length) meta.push(`Tags: ${review.tags.join(", ")}`);
+    const chips = [
+      h("span", {
+        class: `${chipClass} ${scoreTone(headline)}`.trim(),
+        title: `Scored by Gemini Decision${meta.length ? ` (${meta.join(" · ")})` : ""}`,
+        text: `${prefix} ${headline}${headlineLabel ? ` · ${headlineLabel}` : ""}`,
+      }),
+    ];
+    if (review.scores && typeof review.scores === "object") {
+      for (const [key, label] of SCORE_FIELDS) {
+        if (review.scores[key] !== undefined && review.scores[key] !== null) {
+          chips.push(h("span", {class: `${chipClass} ${scoreTone(review.scores[key])}`.trim(), text: `${label} ${review.scores[key]}`}));
+        }
+      }
+    }
+    if (includeTags) {
+      for (const tag of review.tags || []) {
+        chips.push(h("span", {class: chipClass, title: "Added to Media library tags", text: tag}));
+      }
+    }
+    return chips;
+  };
+
+  const copyToClipboard = async (text, toast, label = "Finetuned prompt copied.") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast?.(label);
+    } catch {
+      toast?.("Could not copy to clipboard.", true);
+    }
+  };
+
+  const llmReviewNodes = (llm, {
+    chipClass = "chip",
+    headClass = "row between",
+    rowClass = "row tightrow",
+    listClass = "llm-review-list",
+    issueListClass = "llm-review-list llm-review-issues",
+    promptClass = "llm-review-prompt",
+    primaryBtnClass = "btn primary",
+    secondaryBtnClass = "btn",
+    onApply,
+    onCopy,
+  } = {}) => {
+    const metaChips = [
+      llm.model ? h("span", {class: chipClass, text: llm.model}) : null,
+      llm.ref_count ? h("span", {class: chipClass, text: `${llm.ref_count} ref${llm.ref_count === 1 ? "" : "s"}`}) : null,
+      llm.advice ? h("span", {class: chipClass, title: llm.advice, text: "with advice"}) : null,
+    ].filter(Boolean);
+    const sections = [
+      h("div", {class: headClass}, h("strong", {class: "small", text: "Gemini review"}), h("div", {class: rowClass}, ...metaChips)),
+      h("p", {class: "small", text: llm.summary || ""}),
+    ];
+    if (llm.strengths?.length) {
+      sections.push(
+        h("strong", {class: "small muted", text: "What worked"}),
+        h("ul", {class: listClass}, llm.strengths.map((item) => h("li", {text: item}))),
+      );
+    }
+    if (llm.issues?.length) {
+      sections.push(
+        h("strong", {class: "small muted", text: "Issues spotted"}),
+        h("ul", {class: issueListClass}, llm.issues.map((issue) => h("li", {},
+          h("span", {class: `${chipClass} ${issue.severity === "major" ? "warn" : ""}`.trim(), text: `${issue.area || "prompt"} · ${issue.severity || "minor"}`}),
+          issue.timestamp ? h("span", {class: `${chipClass} mono`, text: issue.timestamp}) : null,
+          h("span", {text: issue.detail || ""}),
+        ))),
+      );
+    }
+    if (llm.prompt_changes?.length) {
+      sections.push(
+        h("strong", {class: "small muted", text: "Prompt adjustments"}),
+        h("ul", {class: listClass}, llm.prompt_changes.map((item) => h("li", {text: item}))),
+      );
+    }
+    if (llm.finetuned_prompt) {
+      sections.push(
+        h("div", {class: promptClass},
+          h("strong", {class: "small", text: "Finetuned prompt"}),
+          h("pre", {text: llm.finetuned_prompt}),
+          h("div", {class: rowClass},
+            h("button", {type: "button", class: primaryBtnClass, text: "Apply finetuned prompt", onclick: () => onApply?.(llm.finetuned_prompt)}),
+            h("button", {type: "button", class: secondaryBtnClass, text: "Copy prompt", onclick: () => onCopy?.(llm.finetuned_prompt)}),
+          )),
+      );
+    }
+    return sections;
+  };
+
   globalThis.H3PageCommon = {
     $, h, visibleArea, visibleBottom, createToast, createClient,
     seg, multiSeg, rangeOf, presetText, openStudio, openSystem,
+    scoreTone, decisionScoreChips, llmReviewNodes, copyToClipboard,
   };
 })();
