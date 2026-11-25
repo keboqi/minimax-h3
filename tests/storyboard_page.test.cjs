@@ -885,3 +885,136 @@ test("renderTakes and renderStripActions wire batch scoring and take thumbnail s
   page.renderTakes();
   assert.equal(findAll(nodes["take-row"], (n) => n.id === "score-scene-takes").length, 0);
 });
+
+test("Media & Cast exposes Media library for images, videos, and audio with Project and Global selection", async () => {
+  const requests = [];
+  let resolveSlowGlobal;
+  let slowMode = false;
+  const {page, item, find, inspector, library} = inspectorFixture(async (url, opts = {}) => {
+    const method = opts.method || "GET";
+    requests.push({url, method, body: opts.body ? JSON.parse(opts.body) : null});
+    if (method === "PUT") return {ok: true, json: async () => null};
+    if (slowMode) {
+      return new Promise((resolve) => {
+        resolveSlowGlobal = () => resolve({
+          ok: true,
+          json: async () => ({total: 1, items: [{caption: "Slow global", path: "/global/slow.png", thumb: "/t/slow.png"}]}),
+        });
+      });
+    }
+    const kind = new URL(url, "http://localhost").searchParams.get("kind");
+    return {
+      ok: true,
+      json: async () => ({
+        total: 1,
+        items: [{caption: `Global ${kind}`, path: `/global/${kind}.dat`, thumb: `/t/${kind}.png`}],
+      }),
+    };
+  });
+
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+
+  const scene2 = {
+    id: "scene-B", number: 2, mode: "Reference media", prompt: "Second", seconds: 5,
+    issues: [], takes: [], pictures: [], tags: [],
+    cast: [], ref_images: [], ref_videos: [], ref_audios: [],
+  };
+  item.ref_images = [{name: "hero.png", path: "/proj/hero.png", thumb: "/t/hero.png", url: "/u/hero.png"}];
+  item.ref_videos = [{name: "clip.mp4", path: "/proj/clip.mp4", poster: "/t/clip.png", url: "/u/clip.mp4"}];
+  item.ref_audios = [{name: "voice.wav", path: "/proj/voice.wav", url: "/u/voice.wav"}];
+  page.state.board = {
+    id: "board-A",
+    name: "Pilot",
+    cast: [{name: "Mei", path: "/proj/mei.png", thumb: "/t/mei.png", url: "/u/mei.png"}],
+    scenes: [item, scene2],
+  };
+  page.state.boot.library = false;
+  page.state.sceneId = scene2.id;
+  page.state.inspectorTab = "media";
+  page.renderInspector();
+
+  // Even without Global Media Library, project assets make Media library available across images, videos, and audio.
+  const mediaButtons = findAll(inspector, (n) => n?.tag === "button" && n.textContent === "Media library");
+  assert.equal(mediaButtons.length, 3);
+
+  // Pick a project image from Extra images (includes Cast and Scene 1 images).
+  mediaButtons[0].onclick();
+  assert.equal(library.open, true);
+  assert.ok(find(library, (n) => n?.tag === "button" && n.textContent === "Project Media Library (2)"));
+  assert.equal(find(library, (n) => n?.tag === "button" && n.textContent === "Global Media Library"), undefined);
+  const queryInput = find(library, (n) => n?.tag === "input" && n.type === "search");
+  queryInput.value = "Mei";
+  queryInput.oninput();
+  assert.equal(findAll(library, (n) => n?.props?.["aria-label"] === "hero.png").length, 0);
+  const meiCard = find(library, (n) => n?.props?.["aria-label"] === "Mei");
+  assert.ok(meiCard);
+  meiCard.onclick({currentTarget: meiCard});
+  assert.equal(library.open, false);
+  assert.deepEqual(requests.pop(), {
+    url: "/storyboard/api/boards/board-A/scenes/scene-B/media/ref_images",
+    method: "PUT",
+    body: {source: "/proj/mei.png", scope: "project"},
+  });
+
+  // Pick a project video and a project audio (with sibling <audio> player).
+  mediaButtons[1].onclick();
+  const vidCard = find(library, (n) => n?.props?.["aria-label"] === "clip.mp4");
+  assert.ok(vidCard);
+  vidCard.onclick({currentTarget: vidCard});
+  assert.deepEqual(requests.pop(), {
+    url: "/storyboard/api/boards/board-A/scenes/scene-B/media/ref_videos",
+    method: "PUT",
+    body: {source: "/proj/clip.mp4", scope: "project"},
+  });
+
+  mediaButtons[2].onclick();
+  assert.ok(find(library, (n) => n?.tag === "audio" && n.src === "/u/voice.wav"));
+  const audCard = find(library, (n) => n?.props?.["aria-label"] === "voice.wav");
+  assert.ok(audCard);
+  assert.equal(find(audCard, (n) => n?.tag === "audio"), undefined);
+  audCard.onclick({currentTarget: audCard});
+  assert.deepEqual(requests.pop(), {
+    url: "/storyboard/api/boards/board-A/scenes/scene-B/media/ref_audios",
+    method: "PUT",
+    body: {source: "/proj/voice.wav", scope: "project"},
+  });
+
+  // With Global Media Library enabled, user can switch to Global and select global audio without scope,
+  // and stale global fetches after switching back to Project do not overwrite the project grid.
+  page.state.boot.library = true;
+  page.renderInspector();
+  const audioBtnWithGlobal = findAll(inspector, (n) => n?.tag === "button" && n.textContent === "Media library")[2];
+  audioBtnWithGlobal.onclick();
+  const globalTab = find(library, (n) => n?.tag === "button" && n.textContent === "Global Media Library");
+  const projectTab = find(library, (n) => n?.tag === "button" && n.textContent === "Project Media Library (1)");
+  assert.ok(globalTab && projectTab);
+  globalTab.onclick();
+  await new Promise(setImmediate);
+  const globalAudio = find(library, (n) => n?.props?.["aria-label"] === "Global audio");
+  assert.ok(globalAudio);
+  globalAudio.onclick({currentTarget: globalAudio});
+  assert.deepEqual(requests.slice(-2), [
+    {url: "/storyboard/api/library?kind=audio&limit=24&query=", method: "GET", body: null},
+    {url: "/storyboard/api/boards/board-A/scenes/scene-B/media/ref_audios", method: "PUT", body: {source: "/global/audio.dat"}},
+  ]);
+
+  slowMode = true;
+  findAll(inspector, (n) => n?.tag === "button" && n.textContent === "Media library")[0].onclick();
+  find(library, (n) => n?.tag === "button" && n.textContent === "Global Media Library").onclick();
+  find(library, (n) => n?.tag === "button" && n.textContent === "Project Media Library (2)").onclick();
+  resolveSlowGlobal();
+  await new Promise(setImmediate);
+  assert.ok(find(library, (n) => n?.props?.["aria-label"] === "hero.png"));
+  assert.equal(find(library, (n) => n?.props?.["aria-label"] === "Slow global"), undefined);
+
+  // First / last frame mode also exposes Media library on First frame, Last frame, and Voices.
+  scene2.mode = "First / last frame";
+  scene2.flow = false;
+  page.renderInspector();
+  assert.equal(findAll(inspector, (n) => n?.tag === "button" && n.textContent === "Media library").length, 3);
+});

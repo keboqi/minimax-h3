@@ -45,7 +45,14 @@ STATIC_TYPES = {"app.js": "application/javascript", "app.css": "text/css"}
 SCENE_FIELDS = ("title", "prompt", "seconds", "link", "overlap", "seed", "takes_per_run", "cast",
                 "video_in", "video_out", "fit")
 INTEGER_FIELDS = ("seconds", "overlap", "seed", "takes_per_run")
-LIBRARY_KINDS = {"image": "Image", "video": "Video"}
+LIBRARY_KINDS = {"image": "Image", "video": "Video", "audio": "Audio"}
+MEDIA_FIELD_KINDS = {
+    "first_image": "image",
+    "last_image": "image",
+    "ref_images": "image",
+    "ref_videos": "video",
+    "ref_audios": "audio",
+}
 STILLS = ("first", "last")
 UPLOAD_TYPES = {"first_image": IMAGE_EXTENSIONS, "last_image": IMAGE_EXTENSIONS, "ref_images": IMAGE_EXTENSIONS,
                 "ref_videos": VIDEO_EXTENSIONS, "ref_audios": AUDIO_EXTENSIONS}
@@ -412,6 +419,34 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             raise H3Error(f"This {kind.lower()} is unavailable. Refresh the library and choose another.")
         return path
 
+    def project_source(owner: str, storyboard_id: str, path: str, allowed_extensions, kind: str = "Image") -> str:
+        if not path:
+            raise H3Error(f"Choose a {kind.lower()} first.")
+        board = handlers.service.load(owner, storyboard_id)
+        candidate = Path(path)
+        if (
+            path not in referenced_paths(board)
+            or candidate.suffix.lower() not in allowed_extensions
+            or not candidate.is_file()
+        ):
+            raise H3Error(f"This {kind.lower()} is no longer available in this storyboard.")
+        return path
+
+    def resolve_source(
+        owner: str,
+        storyboard_id: str,
+        source: str,
+        scope: str,
+        allowed_extensions,
+        kind: str = "Image",
+    ) -> str:
+        normalized = (scope or "global").strip().lower()
+        if normalized == "project":
+            return project_source(owner, storyboard_id, source, allowed_extensions, kind)
+        if normalized == "global":
+            return library_source(source, kind)
+        raise H3Error("Choose from the Project Media Library or Global Media Library.")
+
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/media/{{field_name}}", include_in_schema=False)
     @guarded
     def upload_media(storyboard_id: str, scene_id: str, field_name: str, request: Request,
@@ -427,9 +462,18 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def library_media(storyboard_id: str, scene_id: str, field_name: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
-        if UPLOAD_TYPES.get(field_name) is not IMAGE_EXTENSIONS:
-            raise H3Error("The library holds pictures for this scene's picture inputs.")
-        set_media(owner, storyboard_id, scene_id, field_name, [library_source(body.get("source", ""))])
+        if field_name not in UPLOAD_TYPES:
+            raise H3Error(f"Unknown scene media {field_name!r}.")
+        kind = LIBRARY_KINDS[MEDIA_FIELD_KINDS[field_name]]
+        source = resolve_source(
+            owner,
+            storyboard_id,
+            str(body.get("source") or ""),
+            str(body.get("scope") or "global"),
+            UPLOAD_TYPES[field_name],
+            kind,
+        )
+        set_media(owner, storyboard_id, scene_id, field_name, [source])
         return payload(owner, storyboard_id)
 
     @app.delete(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/media/{{field_name}}", include_in_schema=False)
@@ -457,8 +501,15 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @guarded
     def library_video(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
-        handlers.service.set_scene_video(owner, storyboard_id, scene_id,
-                                         library_source(body.get("source", ""), "Video"))
+        source = resolve_source(
+            owner,
+            storyboard_id,
+            str(body.get("source") or ""),
+            str(body.get("scope") or "global"),
+            VIDEO_EXTENSIONS,
+            "Video",
+        )
+        handlers.service.set_scene_video(owner, storyboard_id, scene_id, source)
         return payload(owner, storyboard_id)
 
     @app.get(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/still", include_in_schema=False)
@@ -504,7 +555,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         if handlers.library is None:
             raise H3Error("The media library isn't available here.")
         if kind not in LIBRARY_KINDS:
-            raise H3Error("The library lists images or videos.")
+            raise H3Error("The library lists images, videos or audio.")
         mode = LIBRARY_KINDS[kind]
         limit = max(1, min(limit, 240))
         index = handlers.library.index
@@ -520,10 +571,12 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     @app.post(f"{api}/boards/{{storyboard_id}}/cast", include_in_schema=False)
     @guarded
     def add_cast(storyboard_id: str, request: Request, name: str = Form(...),
-                 file: UploadFile | None = File(default=None), source: str = Form(default="")):
+                 file: UploadFile | None = File(default=None), source: str = Form(default=""),
+                 scope: str = Form(default="global")):
         owner = owner_of(request)
         if source:
-            handlers.service.add_cast(owner, storyboard_id, name, library_source(source))
+            resolved = resolve_source(owner, storyboard_id, source, scope, IMAGE_EXTENSIONS, "Image")
+            handlers.service.add_cast(owner, storyboard_id, name, resolved)
         elif file is not None:
             with TemporaryDirectory(prefix="h3-storyboard-") as directory:
                 handlers.service.add_cast(owner, storyboard_id, name, spool([file], directory, IMAGE_EXTENSIONS)[0])
@@ -562,7 +615,14 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def library_take(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
         owner = owner_of(request)
         require_idle(owner, storyboard_id, "adding a take")
-        source = library_source(body.get("source", ""), "Video")
+        source = resolve_source(
+            owner,
+            storyboard_id,
+            str(body.get("source") or ""),
+            str(body.get("scope") or "global"),
+            VIDEO_EXTENSIONS,
+            "Video",
+        )
         fit = str(body.get("fit") or sb.RESIZE)
         _, take_id = handlers.service.add_manual_take(
             owner, storyboard_id, scene_id, source,

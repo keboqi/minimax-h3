@@ -793,7 +793,7 @@
           const [file] = await pickFiles("video/*", false);
           if (file) uploadTake(file);
         }, "btn sm", {id: "upload-take", disabled: busy, title: "Upload an edited or external video clip as a new take"}),
-        state.boot?.library && button("From Media", () => openLibrary((path) => libraryTake(path), "video", "Add as new take"),
+        state.boot?.library && button("From Media", () => openLibrary((path, scope) => libraryTake(path, scope), "video", "Add as new take", {defaultSource: "global"}),
           "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
   };
 
@@ -1080,11 +1080,12 @@
     toast("Uploading and preparing take…");
     await addManualTake(sceneId, boardId, () => request("POST", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, form, {form: true}));
   };
-  const libraryTake = async (source) => {
+  const libraryTake = async (source, scope = "global") => {
     const boardId = state.board.id;
     const sceneId = state.sceneId;
+    const body = scope === "project" ? {source, scope} : {source};
     toast("Preparing take from Media…");
-    await addManualTake(sceneId, boardId, () => request("PUT", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, {source}));
+    await addManualTake(sceneId, boardId, () => request("PUT", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, body));
   };
   const toggleTakeOverlap = async (take, trimOverlap) => {
     const boardId = state.board.id;
@@ -1906,7 +1907,8 @@
   const mediaScenePanel = (item) => {
     const video = item.video;
     const clip = video.clip;
-    const fromLibrary = state.boot.library && button("Media library", () => openLibrary((path) => libraryVideo(path), "video"), "btn sm");
+    const fromLibrary = (Boolean(state.boot?.library) || projectMediaForKind("video").length > 0)
+      && button("Media library", () => openLibrary((path, scope) => libraryVideo(path, scope), "video"), "btn sm");
     const upload = button(clip ? "Replace" : "Upload", async () => {
       const [file] = await pickFiles("video/*", false);
       if (file) uploadVideo(file);
@@ -1957,11 +1959,12 @@
     const data = await act(() => request("POST", boardUrl(`/scenes/${sceneId}/video`), form, {form: true}), "Video added.");
     if (data) applyBoard(data, {keepInspector: sceneId !== state.sceneId});
   };
-  const libraryVideo = async (source) => {
+  const libraryVideo = async (source, scope = "global") => {
     const url = sceneUrl("/video");
     await flush();
     await saves;
-    const data = await act(() => request("PUT", url, {source}), "Video added.");
+    const body = scope === "project" ? {source, scope} : {source};
+    const data = await act(() => request("PUT", url, body), "Video added.");
     if (data) applyBoard(data);
   };
   const startPrepare = async () => {
@@ -2027,6 +2030,43 @@
 
   // Media -----------------------------------------------------------------
   const ACCEPT = {first_image: "image/*", last_image: "image/*", ref_images: "image/*", ref_videos: "video/*", ref_audios: "audio/*"};
+  const MEDIA_KIND = {first_image: "image", last_image: "image", ref_images: "image", ref_videos: "video", ref_audios: "audio"};
+
+  const collectProjectMedia = ({includeCast = true} = {}) => {
+    const byKey = new Map();
+    const addAsset = (kind, media, usageLabel) => {
+      if (!media) return;
+      const key = `${kind}:${media.path || media.url || media.name}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          kind,
+          name: media.name || "Untitled asset",
+          thumb: media.thumb || media.poster || "",
+          url: media.url || "",
+          path: media.path || "",
+          usages: [],
+        });
+      }
+      const entry = byKey.get(key);
+      if (usageLabel && !entry.usages.includes(usageLabel)) entry.usages.push(usageLabel);
+    };
+    if (includeCast) {
+      (state.board?.cast || []).forEach((member) => addAsset("image", member, `Cast (${member.name})`));
+    }
+    scenes().forEach((s) => {
+      if (s.first_image) addAsset("image", s.first_image, `Scene ${s.number} (First frame)`);
+      if (s.last_image) addAsset("image", s.last_image, `Scene ${s.number} (Last frame)`);
+      (s.ref_images || []).forEach((m) => addAsset("image", m, `Scene ${s.number} (Ref image)`));
+      (s.ref_videos || []).forEach((m) => addAsset("video", m, `Scene ${s.number} (Ref video)`));
+      if (s.video?.clip) addAsset("video", s.video.clip, `Scene ${s.number} (Media clip)`);
+      (s.ref_audios || []).forEach((m) => addAsset("audio", m, `Scene ${s.number} (Audio)`));
+    });
+    return [...byKey.values()];
+  };
+
+  const projectMediaForKind = (kind, opts = {}) =>
+    collectProjectMedia(opts).filter((entry) => entry.kind === kind && entry.path);
+
   const pickFiles = (accept, multiple) => new Promise((resolve) => {
     const input = $("file-input");
     input.accept = accept;
@@ -2054,7 +2094,8 @@
     const item = scene();
     const value = item[field];
     const list = Array.isArray(value) ? value : value ? [value] : [];
-    const pictures = ACCEPT[field] === "image/*";
+    const kind = MEDIA_KIND[field];
+    const canOpenLibrary = Boolean(state.boot?.library) || projectMediaForKind(kind).length > 0;
     const castOffset = Math.max(0, item.pictures.length - item.ref_images.length);
     const tiles = list.map((media, index) => {
       if (field === "ref_audios") {
@@ -2092,67 +2133,190 @@
     tiles.length ? h("div", {className: field === "ref_audios" ? "audio-list" : "tiles"}, tiles) : null,
     h("div", {className: "slot-actions"},
       button(list.length && !multiple ? "Replace" : "Upload", async () => uploadMedia(field, await pickFiles(ACCEPT[field], multiple)), "btn sm"),
-      pictures && state.boot.library && button("Media library", () => openLibrary((path) => libraryMedia(sceneUrl(`/media/${field}`), path)), "btn sm")));
+      canOpenLibrary && button("Media library", () => openLibrary((path, scope) => libraryMedia(sceneUrl(`/media/${field}`), path, scope), kind), "btn sm")));
     return h("div", {className: "slot"}, h("div", {className: "slot-head"}, h("span", {}, label),
       optional ? h("span", {className: "muted"}, "Optional") : null), drop);
   };
-  const libraryMedia = async (url, source) => {
-    const data = await act(() => request("PUT", url, {source}), "Added.");
+  const libraryMedia = async (url, source, scope = "global") => {
+    const body = scope === "project" ? {source, scope} : {source};
+    const data = await act(() => request("PUT", url, body), "Added.");
     if (data) applyBoard(data);
   };
 
-  const openLibrary = (onPick, kind = "image", attachLabel = "") => {
+  const openLibrary = (onPick, kind = "image", attachLabel = "", {defaultSource = null, includeCast = true} = {}) => {
     const dialog = $("library");
     let limit = 24;
     let selectedPath = null;
-    const noun = kind === "video" ? "videos" : "images";
+    let selectedScope = null;
+    let requestSeq = 0;
+    const NOUNS = {image: "images", video: "videos", audio: "audio clips"};
+    const noun = NOUNS[kind] || "images";
+    const projectItems = projectMediaForKind(kind, {includeCast});
+    const hasGlobal = Boolean(state.boot?.library) || defaultSource === "global";
+    let sourceScope = (defaultSource === "global" && hasGlobal)
+      ? "global"
+      : defaultSource === "project"
+        ? "project"
+        : projectItems.length > 0
+          ? "project"
+          : (hasGlobal ? "global" : "project");
+
     const grid = h("div", {className: "library-grid"});
-    const status = h("p", {className: "small muted", role: "status"}, "Loading…");
-    const pick = (path) => { dialog.close(); onPick(path); };
-    const attach = attachLabel ? button(attachLabel, () => pick(selectedPath), "btn primary sm", {disabled: true}) : null;
-    const more = button(`Show more ${noun}`, () => { limit += 24; load(); }, "btn sm", {hidden: true});
-    const query = h("input", {type: "search", placeholder: "Filename, tags or settings",
-      onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); load(); } }});
-    const load = async () => {
-      const data = await act(() => request("GET", `${API}/library?kind=${kind}&limit=${limit}&query=${encodeURIComponent(query.value)}`));
-      if (!data) return;
-      const hint = attach ? " Select a thumbnail, then confirm the attachment."
-        : onPick ? " Select a thumbnail to use it." : "";
-      status.textContent = `${data.total} matching ${noun}.${hint}`;
-      more.hidden = !data.more;
-      if (attach) {
-        selectedPath = null;
-        attach.disabled = true;
+    const status = h("p", {className: "small muted", role: "status"}, "");
+    const pick = (path, scope) => { dialog.close(); onPick(path, scope); };
+    const attach = attachLabel ? button(attachLabel, () => pick(selectedPath, selectedScope), "btn primary sm", {disabled: true}) : null;
+    const more = button(`Show more ${noun}`, () => { limit += 24; loadGlobal(); }, "btn sm", {hidden: true});
+    const searchLabel = h("span", {}, "");
+    const query = h("input", {
+      type: "search",
+      value: "",
+      placeholder: "",
+      oninput: () => { if (sourceScope === "project") renderProject(); },
+      onkeydown: (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (sourceScope === "project") renderProject();
+          else loadGlobal();
+        }
+      },
+    });
+    const searchBtn = button("Search", () => loadGlobal());
+
+    const clearSelection = () => {
+      if (!attach) return;
+      selectedPath = null;
+      selectedScope = null;
+      attach.disabled = true;
+    };
+
+    const selectCard = (buttonNode, path, scope) => {
+      if (!attach) return pick(path, scope);
+      grid.querySelector('[aria-pressed="true"]')?.setAttribute("aria-pressed", "false");
+      buttonNode.setAttribute("aria-pressed", "true");
+      selectedPath = path;
+      selectedScope = scope;
+      attach.disabled = false;
+    };
+
+    const renderProject = () => {
+      requestSeq += 1;
+      more.hidden = true;
+      grid.className = "library-grid project-mode";
+      clearSelection();
+      const q = (query.value || "").trim().toLowerCase();
+      const filtered = projectItems.filter((entry) => !q
+        || entry.name.toLowerCase().includes(q)
+        || entry.usages.some((u) => u.toLowerCase().includes(q)));
+      const hint = attach ? " Select an item, then confirm the attachment."
+        : onPick ? " Select an item to use it." : "";
+      if (filtered.length) {
+        status.textContent = `${filtered.length} ${noun} in "${state.board?.name || "this storyboard"}".${hint}`;
+      } else if (!projectItems.length) {
+        status.textContent = `No ${noun} in this storyboard yet.${hasGlobal ? " Switch to Global Media Library to browse shared assets." : ""}`;
+      } else {
+        status.textContent = `No matching ${noun} in this storyboard.`;
       }
-      grid.replaceChildren(...data.items.map((row) => {
-        const thumbnail = h("img", {src: row.thumb, alt: onPick ? "" : row.caption, loading: "lazy"});
-        if (!onPick) return thumbnail;
-        return button(thumbnail, (event) => {
-          if (!attach) return pick(row.path);
-          grid.querySelector('[aria-pressed="true"]')?.setAttribute("aria-pressed", "false");
-          event.currentTarget.setAttribute("aria-pressed", "true");
-          selectedPath = row.path;
-          attach.disabled = false;
-        }, "", {title: row.caption, "aria-label": row.caption, "aria-pressed": attach ? "false" : null});
+      grid.replaceChildren(...filtered.map((entry) => {
+        const usageText = entry.usages.join(" · ");
+        const meta = h("div", {className: "library-card-meta"},
+          h("strong", {title: entry.name}, entry.name),
+          usageText ? h("span", {className: "small muted library-card-usages", title: usageText}, usageText) : null);
+        if (kind === "audio") {
+          const head = [h("div", {className: "project-media-thumb mono small"}, "AUDIO"), meta];
+          const picker = onPick
+            ? button(head, (event) => selectCard(event.currentTarget, entry.path, "project"),
+              "library-audio-pick", {title: `${entry.name} (${usageText})`, "aria-label": entry.name, "aria-pressed": attach ? "false" : null})
+            : h("div", {className: "library-card-meta"}, ...head);
+          return h("div", {className: "library-project-card library-audio-card"},
+            picker,
+            entry.url ? h("audio", {src: entry.url, controls: true, preload: "none", "aria-label": entry.name}) : null);
+        }
+        const preview = entry.kind === "video"
+          ? ((entry.thumb ? posterImg(entry.thumb, entry.url, {alt: onPick ? "" : entry.name, loading: "lazy"}) : null)
+            || h("div", {className: "project-media-thumb mono small"}, "VIDEO"))
+          : h("img", {src: entry.thumb || entry.url, alt: onPick ? "" : entry.name, loading: "lazy"});
+        const children = [preview, meta];
+        if (!onPick) return h("div", {className: "library-project-card"}, ...children);
+        return button(children, (event) => selectCard(event.currentTarget, entry.path, "project"),
+          "library-project-card", {title: `${entry.name} (${usageText})`, "aria-label": entry.name, "aria-pressed": attach ? "false" : null});
       }));
     };
+
+    const loadGlobal = async () => {
+      const seq = ++requestSeq;
+      grid.className = "library-grid";
+      more.hidden = true;
+      status.textContent = "Loading…";
+      clearSelection();
+      const data = await act(() => request("GET", `${API}/library?kind=${kind}&limit=${limit}&query=${encodeURIComponent(query.value)}`));
+      if (!data || seq !== requestSeq || sourceScope !== "global") return;
+      const hint = attach ? " Select an item, then confirm the attachment."
+        : onPick ? " Select an item to use it." : "";
+      status.textContent = `${data.total} matching ${noun}.${hint}`;
+      more.hidden = !data.more;
+      grid.replaceChildren(...data.items.map((row) => {
+        const thumbnail = h("img", {src: row.thumb, alt: onPick ? "" : row.caption, loading: "lazy"});
+        const content = kind === "audio"
+          ? [thumbnail, h("span", {className: "library-global-caption"}, row.caption)]
+          : thumbnail;
+        if (!onPick) {
+          return kind === "audio" ? h("div", {className: "library-project-card"}, ...content) : thumbnail;
+        }
+        return button(content, (event) => selectCard(event.currentTarget, row.path, "global"),
+          "", {title: row.caption, "aria-label": row.caption, "aria-pressed": attach ? "false" : null});
+      }));
+    };
+
+    const projectTab = chip(`Project Media Library (${projectItems.length})`, sourceScope === "project", () => setScope("project"));
+    const globalTab = hasGlobal ? chip("Global Media Library", sourceScope === "global", () => setScope("global")) : null;
+
+    const syncControls = () => {
+      projectTab.setAttribute("aria-pressed", String(sourceScope === "project"));
+      if (globalTab) globalTab.setAttribute("aria-pressed", String(sourceScope === "global"));
+      if (sourceScope === "project") {
+        searchLabel.textContent = `Filter project ${noun}`;
+        query.placeholder = "Filter by name or scene…";
+        searchBtn.hidden = true;
+      } else {
+        searchLabel.textContent = `Search library ${noun}`;
+        query.placeholder = "Filename, tags or settings";
+        searchBtn.hidden = false;
+      }
+    };
+
+    const setScope = (nextScope) => {
+      if (nextScope === sourceScope) return;
+      sourceScope = nextScope;
+      limit = 24;
+      syncControls();
+      if (sourceScope === "project") renderProject();
+      else loadGlobal();
+    };
+
     const area = visibleArea();
     dialog.style.marginTop = `${area.top + 16}px`;
     dialog.style.maxHeight = `${area.bottom - area.top - 32}px`;
     dialog.replaceChildren(
+      h("div", {className: "library-bar"},
+        globalTab
+          ? h("div", {className: "segmented two library-source-tabs", role: "group", "aria-label": "Media library source"}, projectTab, globalTab)
+          : h("div", {className: "chips"}, projectTab),
+        button("Close", () => dialog.close())),
       h("div", {className: "library-head"},
-        h("label", {className: "field grow"}, `Search library ${noun}`, query),
-        button("Search", load), button("Close", () => dialog.close())),
+        h("label", {className: "field grow"}, searchLabel, query),
+        searchBtn),
       attach ? h("div", {className: "row"}, status, attach) : status, grid, more);
+    syncControls();
     dialog.showModal();
-    load();
+    if (sourceScope === "project") renderProject();
+    else loadGlobal();
   };
 
   const browseGlobalMedia = () => {
     const item = scene();
-    if (item.kind === "media" || item.mode !== "Reference media") return openLibrary(null);
+    if (item.kind === "media" || item.mode !== "Reference media") return openLibrary(null, "image", "", {defaultSource: "global"});
     const url = sceneUrl("/media/ref_images");
-    openLibrary((path) => libraryMedia(url, path), "image", `Add image to Scene ${item.number}`);
+    openLibrary((path, scope) => libraryMedia(url, path, scope), "image", `Add image to Scene ${item.number}`, {defaultSource: "global"});
   };
 
   // Panels ----------------------------------------------------------------
@@ -2195,40 +2359,14 @@
             const [file] = await pickFiles("image/*", false);
             if (file) add((form) => form.append("file", file));
           }, "btn quiet"),
-          state.boot.library && button("Media library", () => openLibrary((path) => add((form) => form.append("source", path))), "btn"))),
+          (Boolean(state.boot?.library) || projectMediaForKind("image", {includeCast: false}).length > 0)
+            && button("Media library", () => openLibrary((path, scope) => add((form) => {
+              form.append("source", path);
+              if (scope === "project") form.append("scope", scope);
+            }), "image", "", {includeCast: false}), "btn"))),
     ]);
 
-    const collectProjectMedia = () => {
-      const byKey = new Map();
-      const addAsset = (kind, media, sceneNum, roleLabel) => {
-        if (!media) return;
-        const key = `${kind}:${media.path || media.url || media.name}`;
-        if (!byKey.has(key)) {
-          byKey.set(key, {
-            kind,
-            name: media.name || "Untitled asset",
-            thumb: media.thumb || media.poster || "",
-            url: media.url || "",
-            path: media.path || "",
-            usages: [],
-          });
-        }
-        const entry = byKey.get(key);
-        const tag = `Scene ${sceneNum} (${roleLabel})`;
-        if (!entry.usages.includes(tag)) entry.usages.push(tag);
-      };
-      scenes().forEach((s) => {
-        if (s.first_image) addAsset("image", s.first_image, s.number, "First frame");
-        if (s.last_image) addAsset("image", s.last_image, s.number, "Last frame");
-        (s.ref_images || []).forEach((m) => addAsset("image", m, s.number, "Ref image"));
-        (s.ref_videos || []).forEach((m) => addAsset("video", m, s.number, "Ref video"));
-        if (s.video?.clip) addAsset("video", s.video.clip, s.number, "Media clip");
-        (s.ref_audios || []).forEach((m) => addAsset("audio", m, s.number, "Audio"));
-      });
-      return [...byKey.values()];
-    };
-
-    const projectMedia = collectProjectMedia();
+    const projectMedia = collectProjectMedia({includeCast: false});
     const libGrid = h("div", {className: "project-media-grid"});
     const libStatus = h("p", {className: "small muted"});
     const libQuery = h("input", {type: "search", "aria-label": "Search project media", placeholder: "Filter by name or scene…"});

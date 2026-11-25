@@ -805,3 +805,162 @@ class StoryboardPageTests(unittest.TestCase):
                 if not run or not run["active"]:
                     break
                 time.sleep(0.02)
+    def _wav(self, name="voice.wav"):
+        import wave
+
+        path = self.root / name
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x00\x00" * 1600)
+        return path
+
+    def test_project_media_library_reuses_images_videos_audio_and_cast_without_global_library(self):
+        from tests.test_storyboard_media import make_video
+
+        self.assertIsNone(self.handlers.library)
+        board = self.create("One.\n\n---\n\nTwo.")
+        other_board = self.create("Other.")
+        board_id = board["id"]
+        s0_url = self.scene_url(board, 0)
+        s1_url = self.scene_url(board, 1)
+
+        with self.picture("hero.png").open("rb") as handle:
+            res = self.client.post(f"{s0_url}/media/ref_images", files=[("files", ("hero.png", handle, "image/png"))])
+        self.assertEqual(res.status_code, 200, res.text)
+        scene0_img = res.json()["scenes"][0]["ref_images"][0]["path"]
+
+        clip = make_video(self.root / "ref.mp4", width=320, height=192, seconds=2.0, audio=True, rate=24)
+        with clip.open("rb") as handle:
+            res = self.client.post(f"{s0_url}/media/ref_videos", files=[("files", ("ref.mp4", handle, "video/mp4"))])
+        self.assertEqual(res.status_code, 200, res.text)
+        scene0_vid = res.json()["scenes"][0]["ref_videos"][0]["path"]
+
+        wav = self._wav("ref.wav")
+        with wav.open("rb") as handle:
+            res = self.client.post(f"{s0_url}/media/ref_audios", files=[("files", ("ref.wav", handle, "audio/wav"))])
+        self.assertEqual(res.status_code, 200, res.text)
+        scene0_aud = res.json()["scenes"][0]["ref_audios"][0]["path"]
+
+        with self.picture("mei.png").open("rb") as handle:
+            cast_res = self.client.post(f"{API}/boards/{board_id}/cast",
+                                        data={"name": "Mei"},
+                                        files={"file": ("mei.png", handle, "image/png")})
+        self.assertEqual(cast_res.status_code, 200, cast_res.text)
+        cast_img = cast_res.json()["cast"][0]["path"]
+
+        # Reuse project assets across scene 2 slots (images, cast picture, video, audio).
+        r_img = self.client.put(f"{s1_url}/media/ref_images", json={"source": scene0_img, "scope": "project"})
+        self.assertEqual(r_img.status_code, 200, r_img.text)
+        self.assertEqual([m["path"] for m in r_img.json()["scenes"][1]["ref_images"]], [scene0_img])
+
+        r_first = self.client.put(f"{s1_url}/media/first_image", json={"source": cast_img, "scope": "project"})
+        self.assertEqual(r_first.status_code, 200, r_first.text)
+        self.assertTrue(r_first.json()["scenes"][1]["first_image"]["path"])
+
+        r_last = self.client.put(f"{s1_url}/media/last_image", json={"source": scene0_img, "scope": "project"})
+        self.assertEqual(r_last.status_code, 200, r_last.text)
+        self.assertEqual(r_last.json()["scenes"][1]["last_image"]["path"], scene0_img)
+
+        r_vid = self.client.put(f"{s1_url}/media/ref_videos", json={"source": scene0_vid, "scope": "project"})
+        self.assertEqual(r_vid.status_code, 200, r_vid.text)
+        self.assertEqual([m["path"] for m in r_vid.json()["scenes"][1]["ref_videos"]], [scene0_vid])
+
+        r_aud = self.client.put(f"{s1_url}/media/ref_audios", json={"source": scene0_aud, "scope": "project"})
+        self.assertEqual(r_aud.status_code, 200, r_aud.text)
+        self.assertEqual([m["path"] for m in r_aud.json()["scenes"][1]["ref_audios"]], [scene0_aud])
+
+        # Reuse project image as a new Cast member, and project video in a Media scene & manual take.
+        r_cast = self.client.post(f"{API}/boards/{board_id}/cast",
+                                  data={"name": "Kai", "source": scene0_img, "scope": "project"})
+        self.assertEqual(r_cast.status_code, 200, r_cast.text)
+        self.assertEqual([c["name"] for c in r_cast.json()["cast"]], ["Mei", "Kai"])
+
+        media_scene = self.client.post(f"{API}/boards/{board_id}/scenes", json={"kind": "media"}).json()
+        media_scene_id = media_scene["scene_id"]
+        r_mvid = self.client.put(f"{API}/boards/{board_id}/scenes/{media_scene_id}/video",
+                                 json={"source": scene0_vid, "scope": "project"})
+        self.assertEqual(r_mvid.status_code, 200, r_mvid.text)
+        self.assertEqual(r_mvid.json()["scenes"][-1]["video"]["clip"]["path"], scene0_vid)
+
+        r_take = self.client.put(f"{s1_url}/takes", json={"source": scene0_vid, "scope": "project"})
+        self.assertEqual(r_take.status_code, 200, r_take.text)
+        self.assertEqual(r_take.json()["scenes"][1]["takes"][0]["source"], "library")
+
+        # Reject invalid scope, non-project files, another board's files, and mismatched types.
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_images", json={"source": scene0_img, "scope": "external"}).status_code,
+            400,
+        )
+        outside = self.picture("outside.png")
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_images", json={"source": str(outside), "scope": "project"}).status_code,
+            400,
+        )
+        with self.picture("other_board.png").open("rb") as handle:
+            other_res = self.client.post(
+                f"{self.scene_url(other_board, 0)}/media/ref_images",
+                files=[("files", ("other_board.png", handle, "image/png"))],
+            ).json()
+        other_img = other_res["scenes"][0]["ref_images"][0]["path"]
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_images", json={"source": other_img, "scope": "project"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_images", json={"source": scene0_aud, "scope": "project"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_audios", json={"source": scene0_img, "scope": "project"}).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.put(f"{s1_url}/media/ref_videos", json={"source": scene0_img, "scope": "project"}).status_code,
+            400,
+        )
+
+    def test_global_library_supports_images_videos_and_audio_for_scene_media(self):
+        from types import SimpleNamespace
+        from h3_app.gallery_store import AssetPage
+        from tests.test_storyboard_media import make_video
+
+        board = self.create("One.")
+        s0_url = self.scene_url(board, 0)
+        vid = make_video(self.root / "global.mp4", width=320, height=192, seconds=2.0, audio=True, rate=24)
+        aud = self._wav("global.wav")
+        checked = []
+
+        class FakeIndex:
+            versions = {"Image": 1, "Video": 2, "Audio": 3}
+
+            def inventory(self, mode, query="", limit=24):
+                return (mode, query, limit)
+
+        def refresh_page(mode, limit, paths=None):
+            if mode == "Audio":
+                return AssetPage.from_scan(
+                    [(str(self.root / "aud_thumb.png"), "Voice · global.wav")],
+                    [str(aud)],
+                    1,
+                    limit,
+                    "audio files",
+                )
+            return AssetPage.from_scan([], [], 0, limit, mode.lower() + "s")
+
+        self.handlers.library = MediaLibrary(FakeIndex(), refresh_page, lambda path, mode: checked.append((path, mode)))
+
+        audio_list = self.client.get(f"{API}/library", params={"kind": "audio"})
+        self.assertEqual(audio_list.status_code, 200, audio_list.text)
+        self.assertEqual(audio_list.json()["items"][0]["path"], str(aud))
+        self.assertEqual(self.client.get(f"{API}/library", params={"kind": "other"}).status_code, 400)
+
+        r_vid = self.client.put(f"{s0_url}/media/ref_videos", json={"source": str(vid)})
+        self.assertEqual(r_vid.status_code, 200, r_vid.text)
+        self.assertEqual(len(r_vid.json()["scenes"][0]["ref_videos"]), 1)
+
+        r_aud = self.client.put(f"{s0_url}/media/ref_audios", json={"source": str(aud)})
+        self.assertEqual(r_aud.status_code, 200, r_aud.text)
+        self.assertEqual(len(r_aud.json()["scenes"][0]["ref_audios"]), 1)
+        self.assertEqual(checked, [(str(vid), "Video"), (str(aud), "Audio")])
