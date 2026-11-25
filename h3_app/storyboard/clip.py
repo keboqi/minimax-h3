@@ -18,12 +18,25 @@ from .model import CROP, FPS, RESIZE, TAIL_FRAMES
 AUDIO_RATE = 48000
 
 
+def _run_media(cmd: list[str], *, timeout: int, partial_outputs: tuple[Path, ...] = ()):
+    try:
+        return run_media_process(
+            cmd,
+            timeout=timeout,
+            partial_outputs=partial_outputs,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise H3Error("FFmpeg/FFprobe isn't installed in this environment.") from exc
+
+
 def probe(path: str | Path) -> dict[str, Any]:
     """Width, height, length in seconds and whether the file has a soundtrack."""
-    process = run_media_process(
+    process = _run_media(
         ["ffprobe", "-v", "error", "-show_entries",
          "stream=codec_type,width,height:stream_side_data=rotation:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, timeout=60,
+        timeout=60,
     )
     try:
         data = json.loads(process.stdout or "{}")
@@ -60,9 +73,9 @@ def frame_count(start: float, end: float) -> int:
 def _ffmpeg(arguments: list[str], output: Path, failure: str, *, timeout: int) -> Path:
     """Run ffmpeg into a partial file beside ``output``; only a non-empty result replaces it."""
     partial = output.with_name(f"{output.stem}.partial{output.suffix}")
-    process = run_media_process(
+    process = _run_media(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments, str(partial)],
-        timeout=timeout, partial_outputs=(partial,), capture_output=True, text=True,
+        timeout=timeout, partial_outputs=(partial,),
     )
     if process.returncode != 0 or not partial.is_file() or partial.stat().st_size == 0:
         partial.unlink(missing_ok=True)
@@ -110,10 +123,10 @@ def cut_tail(conformed: str | Path, output: Path, *, frames: int) -> Path:
 
 def video_frame_total(path: str | Path) -> int:
     """The exact number of video frames in a file (packets, so no decoding)."""
-    process = run_media_process(
+    process = _run_media(
         ["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
          "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, timeout=120,
+        timeout=120,
     )
     try:
         return int((process.stdout or "").strip().split(",")[0])

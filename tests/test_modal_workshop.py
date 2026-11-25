@@ -59,14 +59,14 @@ class ModalWorkshopDeployTests(unittest.TestCase):
             exec(compile(ast.Module(body=body, type_ignores=[]), str(SCRIPT), "exec"), namespace)
         return namespace, fake_modal, image, debian_slim
 
-    def test_minimal_image_skips_apt_playwright_and_heavy_build_steps(self):
+    def test_minimal_image_installs_ffmpeg_and_skips_playwright_and_heavy_build_steps(self):
         ns, fake_modal, image, debian_slim = self._exec_module(
             local=True,
             requirements=("gradio==6.31.0", "requests>=2.32"),
         )
         debian_slim.assert_called_once_with(python_version="3.12")
+        image.apt_install.assert_called_once_with("ffmpeg")
         image.uv_pip_install.assert_called_once_with("gradio==6.31.0", "requests>=2.32")
-        image.apt_install.assert_not_called()
         image.run_commands.assert_not_called()
         image.run_function.assert_not_called()
         self.assertEqual(ns["APP"], "minimax-h3-workshop")

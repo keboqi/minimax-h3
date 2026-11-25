@@ -358,7 +358,7 @@ modal deploy modal_h3.py
 ```
 
 For fast CPU-only deployment focused on project review, media browsing, and
-backup/transfer without building the GPU image, FFmpeg, Playwright, or URL
+backup/transfer without building the GPU image, Playwright, or URL
 downloaders, deploy the standalone minimal Workshop script instead:
 
 ```bash

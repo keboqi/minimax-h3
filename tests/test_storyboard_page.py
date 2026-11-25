@@ -858,6 +858,38 @@ class StoryboardPageTests(unittest.TestCase):
         )
         self.assertEqual(refused_media.status_code, 400)
 
+    def test_send_take_to_remake_reports_missing_ffprobe_as_400_instead_of_500(self):
+        from tests.test_storyboard_media import make_video
+        from h3_ui.engines.feature import EngineDeps
+        from h3_ui.engines.remake import RemakeHandlers, _probe_source
+
+        board = self.create("One scene.")
+        board_id = board["id"]
+        scene_id = board["scenes"][0]["id"]
+        clip = make_video(self.root / "take.mp4", width=320, height=192, seconds=4.0, audio=True, rate=24)
+        added = self.client.post(
+            f"{API}/boards/{board_id}/scenes/{scene_id}/takes",
+            files={"file": ("take.mp4", clip.read_bytes(), "video/mp4")},
+        ).json()
+        take_id = added["take_id"]
+
+        remake_handlers = RemakeHandlers(EngineDeps(
+            runtime_config=lambda: self.runtime, generation_services=lambda: None, stage_file=None, interrupt=None,
+        ))
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        install_storyboard_page(app, self.handlers, gpu=False, remake=remake_handlers.receive_source)
+        client = TestClient(app)
+
+        _probe_source.cache_clear()
+        with patch(
+            "h3_app.media_tools.run_media_process",
+            side_effect=FileNotFoundError(2, "No such file or directory", "ffprobe"),
+        ):
+            response = client.post(f"{API}/boards/{board_id}/scenes/{scene_id}/takes/{take_id}/send-to-remake")
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("ffprobe", response.json()["error"].lower())
+
     def _wav(self, name="voice.wav"):
         import wave
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Minimal CPU-only Modal deployment for Prism Workshop (project review and backup).
 
-Uses a bare Debian slim Python 3.12 image with only the core Python packages
-required to serve the Workshop UI, Media library, Models manager, and project
-export/import/transfer routes — skipping CUDA, ComfyUI, FFmpeg, Playwright,
-and URL downloaders so image builds and redeploys stay fast.
+Uses a bare Debian slim Python 3.12 image with FFmpeg/FFprobe and only the core
+Python packages required to serve the Workshop UI, Media library, Models
+manager, and project export/import/transfer routes — skipping CUDA, ComfyUI,
+Playwright, and URL downloaders so image builds and redeploys stay fast.
 """
 from __future__ import annotations
 
@@ -61,8 +61,12 @@ if IS_LOCAL:
             "Keep these files beside modal_workshop.py: " + ", ".join(missing)
         )
 
-# Minimal CPU base image: Python 3.12 slim + core Workshop Python packages only.
-image = modal.Image.debian_slim(python_version="3.12")
+# Minimal CPU base image: Python 3.12 slim + FFmpeg/FFprobe + core Workshop Python packages.
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    # ffmpeg/ffprobe: Remake source probing/frame extraction, Storyboard clips/joining, and video posters.
+    .apt_install("ffmpeg")
+)
 if IS_LOCAL:
     from h3_workshop_requirements import WORKSHOP_MINIMAL_REQUIREMENTS
 

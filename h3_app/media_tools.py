@@ -29,7 +29,7 @@ def has_encoder(name: str) -> bool:
             ],
             capture_output=True, text=True, timeout=15,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
     return proc.returncode == 0
 
@@ -55,13 +55,16 @@ def postprocess_video(source: Path, option: str, *, runtime: RuntimeConfig) -> P
         cmd += ["-c:v", encoder, "-preset", "medium", "-crf", "18"]
     cmd += ["-c:a", "aac", "-b:a", "192k", "-f", "mp4", str(pending)]
     try:
-        proc = run_media_process(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=runtime.generation_timeout,
-            partial_outputs=(pending,),
-        )
+        try:
+            proc = run_media_process(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=runtime.generation_timeout,
+                partial_outputs=(pending,),
+            )
+        except FileNotFoundError as exc:
+            raise H3Error("FFmpeg isn't installed in this environment.") from exc
         if proc.returncode != 0 or not pending.is_file():
             raise H3Error(f"Post-processing failed: {proc.stderr.strip()}")
         check_cancelled()
@@ -95,7 +98,12 @@ def probe_video_metadata(source: Path) -> VideoMetadata:
         "json",
         str(source),
     ]
-    proc = run_media_process(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        proc = run_media_process(cmd, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError as exc:
+        raise H3Error(
+            "FFprobe isn't installed in this environment. Install ffmpeg to inspect or remake videos."
+        ) from exc
     if proc.returncode != 0:
         raise H3Error(f"Could not inspect selected video: {proc.stderr.strip()}")
     try:

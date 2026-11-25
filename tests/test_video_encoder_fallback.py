@@ -15,7 +15,10 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from h3_app.media_tools import has_encoder
+from h3_app.errors import H3Error
+from h3_app.media_tools import has_encoder, probe_video_metadata
+from h3_app.remake.media import extract_frame as remake_extract_frame
+from h3_app.storyboard.clip import probe as storyboard_clip_probe
 
 try:
     import av
@@ -82,6 +85,22 @@ class EncoderSelectionTests(unittest.TestCase):
         with patch("h3_app.media_tools.run_media_process", side_effect=RuntimeError("cancelled")):
             with self.assertRaisesRegex(RuntimeError, "cancelled"):
                 has_encoder("h264_nvenc")
+
+    def test_missing_ffmpeg_or_ffprobe_raises_h3_error_and_encoder_probe_falls_back(self):
+        missing_ffmpeg = FileNotFoundError(2, "No such file or directory", "ffmpeg")
+        missing_ffprobe = FileNotFoundError(2, "No such file or directory", "ffprobe")
+        with patch("h3_app.media_tools.run_media_process", side_effect=missing_ffmpeg):
+            self.assertFalse(has_encoder("h264_nvenc"))
+        with patch("h3_app.media_tools.run_media_process", side_effect=missing_ffprobe):
+            with self.assertRaisesRegex(H3Error, "FFprobe"):
+                probe_video_metadata(Path("clip.mp4"))
+        with TemporaryDirectory() as directory:
+            with patch("h3_app.remake.media.run_media_process", side_effect=missing_ffmpeg):
+                with self.assertRaisesRegex(H3Error, "FFmpeg"):
+                    remake_extract_frame(Path("clip.mp4"), 0.0, Path(directory) / "frame.png")
+        with patch("h3_app.storyboard.clip.run_media_process", side_effect=missing_ffprobe):
+            with self.assertRaisesRegex(H3Error, "FFprobe"):
+                storyboard_clip_probe(Path("clip.mp4"))
 
 
 class CpuTensor:

@@ -1126,13 +1126,17 @@ class StoryboardService:
                     tracks += ["-map", f"{len(clips) + 1}:s:0", "-disposition:s:1", "0",
                                "-metadata:s:s:0", "handler_name=Original subtitles",
                                "-metadata:s:s:1", f"handler_name=Original + {translation_language}"]
-            process = run_media_process(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
-                 "-filter_complex", graph, "-map", "[burned]" if burn_subtitles else "[v]", "-map", "[a]", *tracks,
-                 "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial.resolve())],
-                timeout=timeout, partial_outputs=(partial,), cwd=cwd,
-            )
+            try:
+                process = run_media_process(
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments,
+                     "-filter_complex", graph, "-map", "[burned]" if burn_subtitles else "[v]", "-map", "[a]", *tracks,
+                     "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(partial.resolve())],
+                    timeout=timeout, partial_outputs=(partial,), cwd=cwd,
+                )
+            except FileNotFoundError as exc:
+                partial.unlink(missing_ok=True)
+                raise H3Error("FFmpeg isn't installed in this environment.") from exc
         if process.returncode != 0 or not partial.is_file() or partial.stat().st_size == 0:
             partial.unlink(missing_ok=True)
             raise H3Error(f"Joining the scenes failed: {process.stderr.strip()[-600:] or 'ffmpeg reported no output'}")

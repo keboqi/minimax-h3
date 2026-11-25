@@ -17,6 +17,26 @@ from .model import FPS
 MAX_HELD_LAST_FRAMES = 6
 
 
+def _run_ffmpeg(
+    cmd: Sequence[str],
+    *,
+    timeout: float,
+    partial_outputs: Sequence[Path] = (),
+    capture_output: bool = True,
+    text: bool = True,
+):
+    try:
+        return run_media_process(
+            cmd,
+            timeout=timeout,
+            partial_outputs=partial_outputs,
+            capture_output=capture_output,
+            text=text,
+        )
+    except FileNotFoundError as exc:
+        raise H3Error("FFmpeg isn't installed in this environment.") from exc
+
+
 def frame_seconds(start: float, frame: int) -> float:
     return float(start or 0) + int(frame) / FPS
 
@@ -24,7 +44,7 @@ def frame_seconds(start: float, frame: int) -> float:
 def extract_frame(video: str | Path, seconds: float, output: Path) -> Path:
     """Save the source frame at ``seconds`` as a lossless PNG."""
     partial = output.with_suffix(".partial.png")
-    run_media_process(
+    _run_ffmpeg(
         ["ffmpeg", "-y", "-v", "error", "-ss", f"{float(seconds):.3f}", "-i", str(video),
          "-frames:v", "1", str(partial)],
         timeout=60, partial_outputs=(partial,),
@@ -39,7 +59,7 @@ def filmstrip(video: str | Path, start: float, seconds: float, output: Path, cou
     """One image of ``count`` evenly spaced frames, side by side, for the page's timeline."""
     partial = output.with_suffix(".partial.jpg")
     rate = count / max(float(seconds), 0.04)
-    run_media_process(
+    _run_ffmpeg(
         ["ffmpeg", "-y", "-v", "error", "-ss", f"{float(start):.3f}", "-t", f"{float(seconds):.3f}", "-i", str(video),
          "-vf", f"fps={rate:.6f},scale=-2:72,tile={count}x1", "-frames:v", "1", "-q:v", "5", str(partial)],
         timeout=120, partial_outputs=(partial,),
@@ -56,7 +76,7 @@ def detect_cuts(video: str | Path, start: float, seconds: float) -> list[int]:
         # A file, because a process's captured output keeps only its tail.
         log = Path(folder) / "cuts.txt"
         target = log.as_posix().replace(":", r"\:")
-        process = run_media_process(
+        process = _run_ffmpeg(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", f"{float(start or 0):.3f}",
              "-t", f"{float(seconds):.3f}", "-i", str(video), "-map", "0:v:0",
              "-vf", f"scale=320:-2,select='gt(scene,0.3)',metadata=print:file='{target}'", "-f", "null", "-"],
@@ -97,7 +117,7 @@ def join_windows(pieces: Sequence[dict[str, Any]], audio_source: str | Path, *, 
         joined = f"j{index}"
     audio = ["-ss", f"{float(start or 0):.3f}", "-t", f"{frames / FPS:.3f}", "-i", str(audio_source)] if has_audio else []
     partial = output.with_suffix(".partial.mp4")
-    process = run_media_process(
+    process = _run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *arguments, *audio,
          "-filter_complex", ";".join(chains), "-map", f"[{joined}]",
          *(["-map", f"{len(pieces)}:a:0", "-c:a", "aac", "-b:a", "320k"] if has_audio else []),
@@ -115,7 +135,7 @@ def join_windows(pieces: Sequence[dict[str, Any]], audio_source: str | Path, *, 
 def held_clip(take: str | Path, output: Path, *, first: int, frames: int) -> Path:
     """Copy exactly these frames of a take, losslessly, for the next window to start from."""
     partial = output.with_suffix(".partial.mp4")
-    run_media_process(
+    _run_ffmpeg(
         ["ffmpeg", "-y", "-v", "error", "-i", str(take), "-map", "0:v:0",
          "-vf", f"trim=start_frame={int(first)}:end_frame={int(first) + int(frames)},setpts=PTS-STARTPTS",
          "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", str(partial)],
@@ -196,7 +216,7 @@ def splice_into_source(
         audio_args = ["-map", f"{audio_idx}:a:0", "-c:a", "aac", "-b:a", "320k"]
 
     partial = output.with_suffix(".partial.mp4")
-    process = run_media_process(
+    process = _run_ffmpeg(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
          "-filter_complex", ";".join(chains), "-map", video_map, *audio_args,
          "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
@@ -219,7 +239,7 @@ def trim_source(video: str | Path, output: Path, *, start: float, frames: int, w
     duration, which can outlast the video slightly, so a few missing frames repeat the last one.
     """
     partial = output.with_suffix(".partial.mp4")
-    run_media_process(
+    _run_ffmpeg(
         ["ffmpeg", "-y", "-v", "error", "-ss", f"{float(start):.3f}", "-i", str(video),
          "-t", f"{(frames + 2) / FPS:.3f}", "-map", "0:v:0", "-map", "0:a:0?",
          "-vf", f"fps={FPS},tpad=stop_mode=clone:stop={MAX_HELD_LAST_FRAMES},"

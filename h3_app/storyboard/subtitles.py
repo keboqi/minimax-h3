@@ -133,10 +133,13 @@ def transcribe(video: str, runtime, *, free_gpu, report) -> list[dict]:
 
     with TemporaryDirectory(prefix="h3-storyboard-subtitles-") as folder:
         audio = Path(folder) / "take.wav"
-        process = run_media_process(
-            ["ffmpeg", "-y", "-v", "error", "-i", video, "-map", "0:a:0", "-vn",
-             "-ac", "1", "-ar", str(ASR_RATE), str(audio)], timeout=120,
-        )
+        try:
+            process = run_media_process(
+                ["ffmpeg", "-y", "-v", "error", "-i", video, "-map", "0:a:0", "-vn",
+                 "-ac", "1", "-ar", str(ASR_RATE), str(audio)], timeout=120,
+            )
+        except FileNotFoundError as exc:
+            raise H3Error("FFmpeg isn't installed in this environment.") from exc
         if process.returncode != 0:
             raise H3Error(f"Could not extract the take's audio: {process.stderr.strip()[-300:]}")
         result = tools.run("transcribe", {"audio": str(audio), "aligner": True, "word_details": True},
