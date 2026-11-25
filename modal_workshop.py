@@ -37,7 +37,7 @@ VOL = os.getenv("H3_MODAL_VOLUME", "minimax-h3-data")
 LABEL = os.getenv("H3_MODAL_WORKSHOP_LABEL", "workshop-cpu")
 SCALEDOWN_WINDOW = int(os.getenv("H3_MODAL_SCALEDOWN_WINDOW", "300"))
 PROXY_AUTH = os.getenv("H3_MODAL_PROXY_AUTH", "0") != "0"
-HF_SECRET_NAME = os.getenv("H3_MODAL_HF_SECRET", "").strip()
+HF_SECRET_NAME = os.getenv("H3_MODAL_HF_SECRET", "custom-secret").strip()
 
 _BYTECODE_IGNORE = ["**/__pycache__", "**/*.pyc"]
 _LOCAL_FILES = (

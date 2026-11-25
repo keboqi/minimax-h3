@@ -367,10 +367,11 @@ modal deploy modal_workshop.py
 
 `modal_workshop.py` deploys a separate Modal app (`minimax-h3-workshop` by
 default, endpoint label `workshop-cpu`) attached to the same shared volume
-(`minimax-h3-data`) so it does not overwrite `modal_h3.py`'s endpoints. Secrets
-are optional (`H3_MODAL_HF_SECRET` is only attached when set), and
-`H3_MODAL_WORKSHOP_APP_NAME`, `H3_MODAL_WORKSHOP_LABEL`, and `H3_MODAL_VOLUME`
-override the defaults.
+(`minimax-h3-data`) so it does not overwrite `modal_h3.py`'s endpoints. It
+attaches the `custom-secret` Modal Secret by default (matching `modal_h3.py`;
+override with `H3_MODAL_HF_SECRET` or set `H3_MODAL_HF_SECRET=""` to omit it),
+and `H3_MODAL_WORKSHOP_APP_NAME`, `H3_MODAL_WORKSHOP_LABEL`, and
+`H3_MODAL_VOLUME` override the defaults.
 
 Deployment exposes four independent URLs: `workshop` for the CPU-only
 **Prism Workshop**, and three GPU endpoints that serve Prism Studio (`h3`,

@@ -54,11 +54,13 @@ class ModalWorkshopDeployTests(unittest.TestCase):
             patch.dict(sys.modules, patch_modules),
             patch.object(sys, "path", list(sys.path)),
         ):
+            if not env or "H3_MODAL_HF_SECRET" not in env:
+                os.environ.pop("H3_MODAL_HF_SECRET", None)
             exec(compile(ast.Module(body=body, type_ignores=[]), str(SCRIPT), "exec"), namespace)
         return namespace, fake_modal, image, debian_slim
 
     def test_minimal_image_skips_apt_playwright_and_heavy_build_steps(self):
-        ns, _modal, image, debian_slim = self._exec_module(
+        ns, fake_modal, image, debian_slim = self._exec_module(
             local=True,
             requirements=("gradio==6.31.0", "requests>=2.32"),
         )
@@ -70,7 +72,9 @@ class ModalWorkshopDeployTests(unittest.TestCase):
         self.assertEqual(ns["APP"], "minimax-h3-workshop")
         self.assertEqual(ns["VOL"], "minimax-h3-data")
         self.assertEqual(ns["LABEL"], "workshop-cpu")
-        self.assertEqual(ns["secrets"], [])
+        self.assertEqual(ns["HF_SECRET_NAME"], "custom-secret")
+        fake_modal.Secret.from_name.assert_called_once_with("custom-secret")
+        self.assertEqual(len(ns["secrets"]), 1)
 
     def test_minimal_requirements_exclude_playwright_and_video_downloaders(self):
         from h3_workshop_requirements import WORKSHOP_MINIMAL_REQUIREMENTS
@@ -100,13 +104,25 @@ class ModalWorkshopDeployTests(unittest.TestCase):
         image.add_local_file.assert_not_called()
         image.add_local_dir.assert_not_called()
 
-    def test_optional_secret_is_attached_only_when_configured(self):
-        ns, fake_modal, _image, _debian_slim = self._exec_module(
-            local=True,
-            env={"H3_MODAL_HF_SECRET": "custom-secret"},
-        )
+    def test_secret_defaults_to_custom_secret_and_supports_override_or_opt_out(self):
+        ns, fake_modal, _image, _debian_slim = self._exec_module(local=True)
         fake_modal.Secret.from_name.assert_called_once_with("custom-secret")
         self.assertEqual(len(ns["secrets"]), 1)
+
+        ns, fake_modal, _image, _debian_slim = self._exec_module(
+            local=True,
+            env={"H3_MODAL_HF_SECRET": "other-secret"},
+        )
+        fake_modal.Secret.from_name.assert_called_once_with("other-secret")
+        self.assertEqual(len(ns["secrets"]), 1)
+
+        for blank in ("", "   "):
+            ns, fake_modal, _image, _debian_slim = self._exec_module(
+                local=True,
+                env={"H3_MODAL_HF_SECRET": blank},
+            )
+            fake_modal.Secret.from_name.assert_not_called()
+            self.assertEqual(ns["secrets"], [])
 
     def test_workshop_decorator_is_cpu_only_without_snapshots(self):
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
