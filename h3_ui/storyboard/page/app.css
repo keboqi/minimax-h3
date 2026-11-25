@@ -259,6 +259,8 @@ video::cue(c.translation), video::cue(c.translation:past) { font-size: 0.78em; c
   border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-sm);
 }
 .take-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.take-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.take-toolbar-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
 .take-chips, .take-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
 .take-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 8px; }
 .take-card {

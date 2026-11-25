@@ -230,6 +230,150 @@ class MediaSceneServiceTests(unittest.TestCase):
             self.service.set_scene_video("a", self.storyboard_id, self.media_id, str(broken))
 
 
+class ManualTakeServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.store = WorkspaceStore(self.root / "state")
+        self.runtime = RuntimeConfig(script_dir=self.root, comfy_url="http://comfy", comfy_dir=self.root / "comfy",
+                                     models_config=self.root / "models.json", outputs_dir=self.root / "outputs")
+        self.service = sb.StoryboardService(self.store, lambda: self.runtime)
+        self.graphs = []
+        self.handlers = StoryboardHandlers(StoryboardServices(
+            service=lambda: self.service, generate_take=self.fake_take,
+            request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
+        ))
+        patcher = patch.object(handlers_module, "require_owner", lambda request: "a")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.storyboard_id = self.service.create(
+            "a", "Manual", {**profile(), "width": 320, "height": 192},
+            scenes=[
+                sb.new_scene("First", "scene one <d>Hello there.</d>", link=sb.CUT),
+                sb.new_scene("Second", "scene two", link=sb.FLOW),
+            ],
+        )
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def fake_take(self, values, graph, outputs):
+        self.graphs.append(graph)
+        video = self.runtime.output_dir / f"{graph.output_prefix}_00001_.mp4"
+        video.parent.mkdir(parents=True, exist_ok=True)
+        make_video(video, width=320, height=192, seconds=3, rate=24)
+        latent = f"{graph.latent_output_prefix}_00001_.safetensors"
+        write_latent(self.runtime.output_dir / latent, 39 if (graph.continuation_source or graph.continuation_video) else 0)
+        outputs["latent"] = latent
+        yield GenerationUpdate(str(video), "Completed")
+
+    def board(self):
+        return self.service.load("a", self.storyboard_id)
+
+    def test_manual_take_conforms_activates_continues_and_renders(self):
+        first_id = self.board()["scenes"][0]["id"]
+        # Silent, off-size, 30 fps clip gets conformed to 320x192, 24 fps, stereo audio + 73-frame tail.
+        edited = make_video(self.root / "edited.mp4", width=640, height=360, seconds=4, audio=False, rate=30)
+        board, take_id = self.service.add_manual_take(
+            "a", self.storyboard_id, first_id, str(edited), source_kind="upload", source_name="edited.mp4",
+        )
+        take = board["takes"][take_id]
+        self.assertEqual(board["scenes"][0]["in_use"], take_id)
+        self.assertEqual((take["source"], take["source_name"], take["seed"]), ("upload", "edited.mp4", None))
+        self.assertEqual((take["frames"], take["duration"], take["prefix_frames"]), (96, 4.0, 0))
+        self.assertEqual(probe(take["video"], "stream=width,height,nb_read_frames"), "320,192,96")
+        self.assertEqual(probe(take["video"], "stream=codec_type", "a:0"), "audio")
+        self.assertEqual(probe(take["tail"], "stream=width,height,nb_read_frames"), f"320,192,{sb.TAIL_FRAMES}")
+        self.assertEqual(sb.scene_states(board), [sb.DONE, sb.DRAFT])
+        self.assertAlmostEqual(sb.new_seconds(board, 0), 4.0)
+        lines = sb.subtitles.take_lines(take)
+        self.assertEqual(len(lines), 1)
+        self.assertAlmostEqual(lines[0]["end"], 4.0)
+
+        # Adding a second manual take while the scene already has a current take keeps the existing in_use.
+        other = make_video(self.root / "library.mp4", width=640, height=360, seconds=4, audio=True, rate=24)
+        board2, take2_id = self.service.add_manual_take(
+            "a", self.storyboard_id, first_id, str(other), source_kind="library", source_name="library.mp4",
+        )
+        self.assertEqual(board2["scenes"][0]["in_use"], take_id)
+        self.assertEqual(board2["scenes"][0]["takes"], [take_id, take2_id])
+
+        # Continuing scene encodes the manual take's tail and blends seamlessly in render().
+        with patch.object(handlers_module, "stage_file", return_value="h3_gradio/storyboard_tails/tail.mp4"):
+            list(self.handlers.generate_remaining(self.storyboard_id, SimpleNamespace()))
+        document = self.board()
+        self.assertEqual(sb.scene_states(document), [sb.DONE, sb.DONE])
+        self.assertEqual(self.graphs[0].continuation_video, "h3_gradio/storyboard_tails/tail.mp4")
+        self.assertIsNone(self.graphs[0].continuation_source)
+        self.assertEqual([item["blend"] for item in self.service.clips(document)], [False, True])
+        joined = self.service.render(document, self.root / "joined.mp4")
+        self.assertEqual(probe(joined, "stream=width,height,nb_read_frames"), f"320,192,{96 + 72 - 39}")
+
+        # Deleting the unused take cleans up its video and tail.
+        t2 = document["takes"][take2_id]
+        self.service.delete_take("a", self.storyboard_id, first_id, take2_id)
+        self.assertFalse(Path(t2["video"]).exists() or Path(t2["tail"]).exists())
+
+    def test_manual_take_on_continuing_scene_inherits_and_toggles_overlap(self):
+        list(self.handlers.generate_remaining(self.storyboard_id, SimpleNamespace()))
+        second_id = self.board()["scenes"][1]["id"]
+        generated_take_id = self.board()["scenes"][1]["in_use"]
+        with self.assertRaisesRegex(H3Error, "Only imported takes"):
+            self.service.set_take_overlap("a", self.storyboard_id, second_id, generated_take_id, False)
+        # Outdate scene 2's prompt or replace directly: first test inheriting prefix_frames when replacing outdated.
+        self.service.update_scene("a", self.storyboard_id, second_id, prompt="scene two revised")
+        edited = make_video(self.root / "edited_s2.mp4", width=320, height=192, seconds=3, audio=True, rate=24)
+        board, take_id = self.service.add_manual_take(
+            "a", self.storyboard_id, second_id, str(edited), source_kind="upload", source_name="edited_s2.mp4",
+        )
+        self.assertEqual(board["scenes"][1]["in_use"], take_id)
+        self.assertEqual(board["takes"][take_id]["prefix_frames"], 39)
+        self.assertAlmostEqual(sb.new_seconds(board, 1), (72 - 39) / 24.0, places=3)
+        payload = board_payload(self.storyboard_id, board)
+        self.assertEqual(payload["scenes"][1]["takes"][-1]["prefix_frames"], 39)
+        self.assertIn("skips", payload["scenes"][1]["added"])
+
+        board = self.service.set_take_overlap("a", self.storyboard_id, second_id, take_id, False)
+        self.assertEqual(board["takes"][take_id]["prefix_frames"], 0)
+        self.assertAlmostEqual(sb.new_seconds(board, 1), 3.0, places=3)
+        joined_full = self.service.render(board, self.root / "joined_full.mp4")
+        self.assertEqual(probe(joined_full, "stream=nb_read_frames"), str(72 + 72))
+
+        board = self.service.set_take_overlap("a", self.storyboard_id, second_id, take_id, True)
+        self.assertEqual(board["takes"][take_id]["prefix_frames"], 39)
+        joined_trimmed = self.service.render(board, self.root / "joined_trimmed.mp4")
+        self.assertEqual(probe(joined_trimmed, "stream=nb_read_frames"), str(72 + 72 - 39))
+
+        # A cut scene cannot enable opening overlap trim on an imported take.
+        first_id = board["scenes"][0]["id"]
+        _, cut_take_id = self.service.add_manual_take(
+            "a", self.storyboard_id, first_id, str(edited), source_kind="upload", source_name="cut.mp4",
+        )
+        with self.assertRaisesRegex(H3Error, "Only a continuing scene"):
+            self.service.set_take_overlap("a", self.storyboard_id, first_id, cut_take_id, True)
+
+    def test_short_manual_take_cannot_continue_and_media_scene_refuses_manual_take(self):
+        first_id = self.board()["scenes"][0]["id"]
+        short = make_video(self.root / "short.mp4", width=320, height=192, seconds=2.0, audio=True, rate=24)
+        board, take_id = self.service.add_manual_take(
+            "a", self.storyboard_id, first_id, str(short), source_kind="upload", source_name="short.mp4",
+        )
+        self.assertIsNone(board["takes"][take_id]["tail"])
+        issues = sb.scene_issues(board, 1)
+        self.assertTrue(issues and "too short to continue" in issues[0])
+        with self.assertRaisesRegex(ValueError, "too short to continue"):
+            sb.check_scene(board, 1)
+
+        _, media_id = self.service.add_media_scene("a", self.storyboard_id)
+        with self.assertRaisesRegex(H3Error, "Video input"):
+            self.service.add_manual_take("a", self.storyboard_id, media_id, str(short))
+
+        broken = self.root / "broken.mp4"
+        broken.write_bytes(b"not a video")
+        with self.assertRaisesRegex(H3Error, "isn't a video"):
+            self.service.add_manual_take("a", self.storyboard_id, first_id, str(broken))
+
+
 class MediaScenePageTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()

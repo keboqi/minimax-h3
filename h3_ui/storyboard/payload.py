@@ -10,7 +10,7 @@ from h3_app import media_review, storyboard as sb, take_review
 from h3_app.storyboard import subtitles
 
 MODE_NAMES = {sb.TEXT: "text only", sb.FRAMES: "picture frames", sb.REFERENCES: "references"}
-TAKE_NOTE = "Every take is kept. Generate again for another version, then choose which one to use."
+TAKE_NOTE = "Every take is kept. Generate again, upload a clip, or pick one from Media, then choose which one to use."
 
 
 def seconds_label(value: float) -> str:
@@ -93,6 +93,13 @@ def _added(board, index, scene, flow) -> str:
     added = sb.new_seconds(board, index)
     if sb.is_media(scene):
         return f"Adds {seconds_label(added)} of the video."
+    take = sb.active_take(board, scene)
+    if sb.is_imported_take(take) and take.get("duration") is not None:
+        prefix = int(take.get("prefix_frames", 0))
+        if flow and prefix > 0:
+            return (f"Uses imported take: adds {seconds_label(added)} "
+                    f"(skips {seconds_label(sb.model.overlap_seconds(prefix))} overlap).")
+        return f"Uses imported take: adds {seconds_label(added)}."
     if flow:
         return (f"Adds about {seconds_label(added)} of new footage; the first "
                 f"{seconds_label(scene['seconds'] - added)} repeats scene {index}.")
@@ -101,7 +108,7 @@ def _added(board, index, scene, flow) -> str:
 
 def _thumb(storyboard_id, board, scene, media) -> str | None:
     """A scene's filmstrip picture: its take in use, else its own pictures."""
-    take = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
+    take = sb.active_take(board, scene)
     if take is not None and take.get("video"):
         return poster_url(take["video"])
     if scene.get("video"):
@@ -128,7 +135,12 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
         takes.append({
             "id": take_id,
             "number": number,
-            "seed": take["seed"],
+            "seed": take.get("seed"),
+            "source": take.get("source"),
+            "source_name": take.get("source_name"),
+            "duration": take.get("duration"),
+            "frames": take.get("frames"),
+            "prefix_frames": int(take.get("prefix_frames", 0)),
             "video": file_url(storyboard_id, video) if video else None,
             "preview_start": sb.model.overlap_seconds(take["prefix_frames"]) if flow else 0,
             "poster": poster_url(video) if video else None,

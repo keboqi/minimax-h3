@@ -40,6 +40,7 @@ FITS = (RESIZE, CROP)
 # The frames of a Media scene that the next scene's graph encodes and continues from (5 + 17 * 4).
 TAIL_FRAMES = 73
 VIDEO_FIELDS = ("video_in", "video_out", "fit")
+MANUAL_TAKE_SOURCES = ("upload", "library")
 # What a scene waiting for the scene before it says; it is not the scene's own problem.
 WAITING_PREFIXES = ("Generate scene", "Prepare scene")
 
@@ -123,6 +124,16 @@ def new_media_scene(title="Video from Media") -> dict[str, Any]:
 
 def is_media(scene: dict[str, Any]) -> bool:
     return scene.get("kind") == MEDIA
+
+
+def active_take(board: dict[str, Any], scene: dict[str, Any]) -> dict[str, Any] | None:
+    """The take currently selected for ``scene``, or None."""
+    return board["takes"].get(scene["in_use"]) if scene.get("in_use") else None
+
+
+def is_imported_take(take: dict[str, Any] | None) -> bool:
+    """Whether ``take`` is an uploaded or Media library clip rather than a generated take."""
+    return bool(take and take.get("source") in MANUAL_TAKE_SOURCES and not take.get("latent"))
 
 
 def video_range(scene: dict[str, Any]) -> tuple[float, float]:
@@ -249,7 +260,7 @@ def scene_states(board: dict[str, Any]) -> list[str]:
     """Done, outdated or draft per scene. A flow scene follows its predecessor."""
     states = []
     for index, scene in enumerate(board["scenes"]):
-        take = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
+        take = active_take(board, scene)
         if take is None:
             states.append(DRAFT)
         elif take["inputs"] != scene_inputs(board, index) or (
@@ -281,8 +292,13 @@ def new_seconds(board: dict[str, Any], index: int) -> float:
     if is_media(scene):
         start, end = video_range(scene)
         return max(0.0, end - start)
+    flow = flows_from_previous(board, index)
+    take = active_take(board, scene)
+    if is_imported_take(take) and take.get("duration") is not None:
+        overlap = overlap_seconds(take.get("prefix_frames", 0)) if flow else 0.0
+        return max(0.0, float(take["duration"]) - overlap)
     seconds = float(scene["seconds"])
-    if flows_from_previous(board, index):
+    if flow:
         seconds -= overlap_seconds(scene["overlap"])
     return seconds
 
@@ -379,16 +395,21 @@ def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = N
             issues.append(f"Generate scene {index} first: this scene continues from it")
     elif flow:
         prev_scene = board["scenes"][index - 1]
-        prev_take = board["takes"].get(prev_scene["in_use"]) if prev_scene.get("in_use") else None
+        prev_take = active_take(board, prev_scene)
         if (
             isinstance(prev_take, dict)
-            and prev_take.get("omitted")
             and not prev_take.get("latent")
             and not prev_take.get("tail")
         ):
-            issues.append(
-                f"Scene {index}'s take wasn't transferred: regenerate scene {index} or re-import with takes in use"
-            )
+            if prev_take.get("omitted"):
+                issues.append(
+                    f"Scene {index}'s take wasn't transferred: regenerate scene {index} or re-import with takes in use"
+                )
+            elif not is_media(prev_scene):
+                issues.append(
+                    f"Scene {index}'s take is too short to continue from (needs at least {TAIL_FRAMES / FPS:.1f} s): "
+                    f"switch takes, upload a longer clip, or set this scene to Start fresh"
+                )
     return issues
 
 

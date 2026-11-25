@@ -89,6 +89,16 @@ first and names them, and the first fresh start after them that stays as it is:
 **Switch and regenerate them**, **Switch, regenerate later**, or **Cancel**. Fresh
 starts stop changes from rippling further.
 
+You can also add a video manually as a new take on any generated scene using **Upload
+take** (for example, after editing a generated take in another tool) or **From Media**
+(to pick a video from the Media library). The clip is conformed to the storyboard's
+canvas, 24 fps, and stereo audio on the CPU (so Workshop supports it too), and keeps
+its last 73 frames so later scenes can continue from it through `H3EncodeAVTail` (clips
+shorter than 73 frames can still be used, though a following scene must start fresh).
+On a continuing scene, an imported take defaults to keeping any overlap trim if it
+replaces a continuing take, and you can toggle **Skip N-frame overlap** below the take
+cards.
+
 ## Subtitles
 
 Dialogue and lyrics inside `<d>` tags in a take's prompt appear as optional subtitles

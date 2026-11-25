@@ -8,14 +8,16 @@ const vm = require("node:vm");
 const commonSource = fs.readFileSync(path.join(__dirname, "../h3_ui/page_static/common.js"), "utf8");
 const source = fs.readFileSync(path.join(__dirname, "../h3_ui/storyboard/page/app.js"), "utf8");
 
-for (const kind of ["picture", "video"]) {
+for (const kind of ["picture", "video", "upload-take", "library-take"]) {
   test(`a delayed ${kind} upload leaves the newly opened storyboard selected`, async () => {
     let finishUpload;
     let uploadUrl;
     const toast = {style: {}};
+    const nodeStub = () => ({style: {}, children: [], replaceChildren(...n) { this.children = n; }, setAttribute() {}, addEventListener() {}, append(...n) { this.children.push(...n); }, classList: {toggle() {}}});
+    const nodes = {toast, "take-row": nodeStub(), "take-confirm": nodeStub(), "take-review": nodeStub(), "takes-panel": nodeStub()};
     const context = vm.createContext({
       FormData, Blob,
-      document: {addEventListener() {}, getElementById: () => toast},
+      document: {addEventListener() {}, getElementById: (id) => nodes[id] || nodeStub(), createElement: () => nodeStub(), createTextNode: () => nodeStub()},
       window: {frameElement: null}, innerHeight: 1000,
       setTimeout() {}, clearTimeout() {},
       fetch: (url) => {
@@ -26,12 +28,17 @@ for (const kind of ["picture", "video"]) {
     // Expose the actual page actions without starting its DOM-dependent boot sequence.
     vm.runInContext(commonSource, context);
     vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
-      "  globalThis.page = {state, uploadMedia, uploadVideo};\n})();"), context);
+      "  globalThis.page = {state, uploadMedia, uploadVideo, uploadTake, libraryTake};\n})();"), context);
     const page = context.page;
-    page.state.board = {id: "board-A"};
+    page.state.boot = {gpu: false, library: true, writer: {gemini_models: []}};
+    page.state.board = {id: "board-A", scenes: [{id: "scene-A", kind: "generated", takes: [], in_use: null, overlap: 39}]};
     page.state.sceneId = "scene-A";
     const file = new Blob(["media"]);
-    const pending = kind === "picture" ? page.uploadMedia("ref_images", [file]) : page.uploadVideo(file);
+    const pending = kind === "picture" ? page.uploadMedia("ref_images", [file])
+      : kind === "video" ? page.uploadVideo(file)
+      : kind === "upload-take" ? page.uploadTake(file)
+      : page.libraryTake("/media/clip.mp4");
+    await new Promise(setImmediate);
     assert.match(uploadUrl, /\/boards\/board-A\/scenes\/scene-A\//);
 
     const newlyOpened = {id: "board-B", scenes: [{id: "scene-B", prompt: "Keep my edits"}]};
@@ -282,4 +289,61 @@ test("missing video posters fall back to a deduplicated client-side frame and hi
   assert.equal(stripImg2.src, "data:image/jpeg;base64,FALLBACK_FRAME");
   assert.equal(takeImgs2.length, 1);
   assert.equal(takeImgs2[0].src, "data:image/jpeg;base64,FALLBACK_FRAME");
+});
+
+test("renderTakes offers upload and Media library take actions and renders manual take metadata", () => {
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}},
+    textContent: children.filter((c) => typeof c === "string").join(""),
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+  });
+  const takeRow = h("div", {id: "take-row"});
+  const takeConfirm = h("div", {id: "take-confirm"});
+  const takeReview = h("div", {id: "take-review"});
+  const takesPanel = h("div", {id: "takes-panel"});
+  const nodes = {"take-row": takeRow, "take-confirm": takeConfirm, "take-review": takeReview, "takes-panel": takesPanel};
+  const context = vm.createContext({
+    H3PageCommon: {
+      $: (id) => nodes[id], h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast() {}}),
+      scoreTone: () => "", decisionScoreChips: () => [], llmReviewNodes: () => [], copyToClipboard() {},
+    },
+    document: {addEventListener() {}},
+    setTimeout() {}, clearTimeout() {},
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderTakes};\n})();"), context);
+  const page = context.page;
+  const emptyScene = {id: "s1", number: 1, kind: "generated", flow: true, overlap: 39, takes: [], in_use: null};
+  page.state.boot = {gpu: false, library: false, writer: {gemini_models: []}};
+  page.state.board = {id: "b1", scenes: [emptyScene]};
+  page.state.sceneId = "s1";
+
+  page.renderTakes();
+  assert.equal(takesPanel.hidden, false);
+  assert.ok(findAll(takeRow, (n) => n.id === "upload-take").length === 1);
+  assert.ok(findAll(takeRow, (n) => n.id === "library-take").length === 0);
+
+  page.state.boot.library = true;
+  emptyScene.takes = [
+    {id: "t1", number: 1, source: "upload", source_name: "edit.mp4", duration: 4.5, frames: 108, prefix_frames: 39, missing: false},
+    {id: "t2", number: 2, source: "library", source_name: "clip.mp4", duration: 5.0, frames: 120, prefix_frames: 0, missing: false},
+  ];
+  emptyScene.in_use = "t1";
+  page.renderTakes();
+  assert.ok(findAll(takeRow, (n) => n.id === "library-take").length === 1);
+  const labels = findAll(takeRow, (n) => n.className?.includes("take-card-meta")).map((n) => n.children.map((c) => c.textContent).join(" "));
+  assert.deepEqual(labels, ["Take 1 Uploaded", "Take 2 Media"]);
+  assert.equal(findAll(takeRow, (n) => n.textContent === "Use seed").length, 0);
+  const overlapCheck = findAll(takeRow, (n) => n.tag === "input" && n.type === "checkbox")[0];
+  assert.ok(overlapCheck);
+  assert.equal(overlapCheck.checked, true);
 });

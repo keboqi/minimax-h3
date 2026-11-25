@@ -521,6 +521,104 @@ class StoryboardService:
                 scene["in_use"] = take_id
         return self.change(owner, storyboard_id, edit)[0]
 
+    def add_manual_take(
+        self,
+        owner,
+        storyboard_id,
+        scene_id,
+        source,
+        *,
+        source_kind="upload",
+        source_name=None,
+        fit=model.RESIZE,
+    ) -> tuple[dict[str, Any], str]:
+        """Conform an uploaded or Media library video to the canvas and add it as a scene's new take."""
+        if source_kind not in model.MANUAL_TAKE_SOURCES:
+            raise ValueError(f"Unknown manual take source {source_kind!r}.")
+        if fit not in model.FITS:
+            raise H3Error("Fit is resize or crop.")
+        board = self.load(owner, storyboard_id)
+        scene = board["scenes"][self.scene_index(board, scene_id)]
+        if model.is_media(scene):
+            raise H3Error("A scene from Media uses its Video input instead of extra takes.")
+        width, height = model.canvas(board["profile"])
+        info = clip.probe(source)
+        if clip.frame_count(0.0, info["seconds"]) < 1:
+            raise H3Error("This video is too short to use as a take.")
+
+        take_id = model.new_id()
+        prefix = self.output_path(self.take_prefix(storyboard_id, scene_id, take_id))
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        video = prefix.with_name(prefix.name + ".mp4")
+        tail = prefix.with_name(prefix.name + "_tail.mp4")
+        try:
+            clip.conform(
+                source, video, start=0.0, end=info["seconds"], fit=fit,
+                width=width, height=height, has_audio=bool(info.get("audio")),
+            )
+            actual_frames = clip.video_frame_total(video)
+            if actual_frames < 1:
+                raise H3Error("Couldn't read any video frames from this clip.")
+            tail_path = str(clip.cut_tail(video, tail, frames=actual_frames)) if actual_frames >= model.TAIL_FRAMES else None
+
+            def edit(current):
+                index = self.scene_index(current, scene_id)
+                target = current["scenes"][index]
+                if model.is_media(target):
+                    raise H3Error("A scene from Media uses its Video input instead of extra takes.")
+                inputs = model.scene_inputs(current, index)
+                flow = model.flows_from_previous(current, index)
+                current_take = model.active_take(current, target)
+                inherited = int(current_take.get("prefix_frames") or 0) if current_take else 0
+                prefix_frames = inherited if flow and inherited > 0 and actual_frames > inherited else 0
+                current["takes"][take_id] = {
+                    "id": take_id, "scene": scene_id, "created": time.time(), "video": str(video),
+                    "latent": None, "stage_latent": None, "tail": tail_path,
+                    "prefix_frames": prefix_frames, "seed": None, "job_id": None, "inputs": inputs,
+                    "source": source_kind,
+                    "source_name": Path(str(source_name or source)).name,
+                    "duration": round(actual_frames / model.FPS, 3),
+                    "frames": actual_frames,
+                }
+                target["takes"].append(take_id)
+                if current_take is None or current_take["inputs"] != inputs or current_take.get("omitted"):
+                    target["in_use"] = take_id
+                return take_id
+
+            saved, _ = self.change(owner, storyboard_id, edit)
+        except Exception:
+            video.unlink(missing_ok=True)
+            tail.unlink(missing_ok=True)
+            raise
+        return saved, take_id
+
+    def set_take_overlap(self, owner, storyboard_id, scene_id, take_id, trim_overlap: bool) -> dict[str, Any]:
+        """Toggle whether an imported take skips the continuing scene's opening overlap frames."""
+        def edit(board):
+            index = self.scene_index(board, scene_id)
+            scene = board["scenes"][index]
+            if model.is_media(scene):
+                raise H3Error("Only imported takes can toggle opening overlap trim.")
+            if take_id not in scene["takes"]:
+                raise H3Error("That take belongs to another scene.")
+            take = board["takes"].get(take_id)
+            if not model.is_imported_take(take):
+                raise H3Error("Only imported takes can toggle opening overlap trim.")
+            if not trim_overlap:
+                take["prefix_frames"] = 0
+                return
+            if not model.flows_from_previous(board, index):
+                raise H3Error("Only a continuing scene has an opening overlap to trim.")
+            overlap = int(scene["overlap"])
+            frames = int(take.get("frames") or 0)
+            if not frames and take.get("video") and Path(take["video"]).is_file():
+                frames = clip.video_frame_total(take["video"])
+            if frames <= overlap:
+                raise H3Error("This take isn't longer than the scene's opening overlap.")
+            take["prefix_frames"] = overlap
+
+        return self.change(owner, storyboard_id, edit)[0]
+
     def use_take(self, owner, storyboard_id, scene_id, take_id):
         def edit(board):
             scene = board["scenes"][self.scene_index(board, scene_id)]
@@ -750,10 +848,12 @@ class StoryboardService:
                 raise H3Error(f"Scene {index + 1}'s take is missing from disk.")
             flows = model.flows_from_previous(board, index)
             trim = take["prefix_frames"] if flows else 0
-            # A take continuing a video from Media redraws the clip's ending through the VAE, so its
-            # overlap is blended in from the real frames rather than cut to: fine detail such as eyes
-            # would otherwise jump at the join.
-            blend = bool(flows and trim and model.is_media(board["scenes"][index - 1]))
+            # A take continuing a video from Media or an imported take redraws the clip's ending
+            # through the VAE, so its overlap is blended in from the real frames rather than cut to:
+            # fine detail such as eyes would otherwise jump at the join.
+            prev_scene = board["scenes"][index - 1] if index > 0 else None
+            prev_take = model.active_take(board, prev_scene) if prev_scene else None
+            blend = bool(flows and trim and (model.is_media(prev_scene) or (prev_take and not prev_take.get("latent"))))
             clips.append({"video": take["video"], "trim_frames": trim, "blend": blend})
         return clips
 
@@ -762,9 +862,12 @@ class StoryboardService:
                translations: dict[str, list[str]] | None = None, translation_language: str = "") -> Path:
         """Join the takes, trimming repeated overlap and optionally burning captions into the picture."""
         clips = self.clips(board, include_outdated=include_outdated)
-        # A video from Media is fitted to the canvas, which a generated take's size may differ from.
+        # A video from Media or imported take is fitted to the canvas, which a generated take's size may differ from.
         width, height = model.canvas(board["profile"])
-        mixed = any(model.is_media(scene) for scene in board["scenes"])
+        mixed = any(
+            model.is_media(scene) or ((take := model.active_take(board, scene)) and not take.get("latent"))
+            for scene in board["scenes"]
+        )
         fit = f",scale={width}:{height}:flags=lanczos,setsar=1" if mixed else ""
         sound = f",aresample={clip.AUDIO_RATE},aformat=channel_layouts=stereo" if mixed else ""
         arguments, chains, videos, sounds = [], [], "", ""

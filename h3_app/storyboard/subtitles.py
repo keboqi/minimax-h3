@@ -109,7 +109,7 @@ def take_lines(take: dict) -> list[dict]:
         return take["subtitles"]
     inputs = take["inputs"]
     start = take.get("prefix_frames", 0) / FPS
-    end = float(inputs.get("seconds", 0))
+    end = float(take.get("duration") or inputs.get("seconds", 0))
     duration = end - start
     if duration <= 0:
         return []

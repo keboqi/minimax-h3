@@ -314,7 +314,12 @@ class StoryboardHandlers(StoryboardApiHandlers):
                         f"Scene {index}'s continuation data wasn't transferred. "
                         f"Regenerate scene {index} or re-import with takes in use."
                     )
-                raise H3Error(f"Scene {index} has no ending to continue from. Prepare it again.")
+                if sb.is_media(board["scenes"][index - 1]):
+                    raise H3Error(f"Scene {index} has no ending to continue from. Prepare it again.")
+                raise H3Error(
+                    f"Scene {index}'s take is too short to continue from (needs at least "
+                    f"{sb.TAIL_FRAMES / sb.model.FPS:.1f} s)."
+                )
             tail = stage_file(source["tail"], TAIL_CATEGORY, reuse=True, runtime=service.runtime())
         graph = StoryboardGraph(
             output_prefix=prefix,

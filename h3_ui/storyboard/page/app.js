@@ -28,7 +28,7 @@
 
   const state = {
     boot: null, board: null, sceneId: null, previewTake: null, panel: null, inspectorTab: "prompt", question: null,
-    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null,
+    confirmProfile: false, previousPrompts: new Map(), dragSceneId: null, deletingTake: null, addingTake: false,
     includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
     showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
@@ -649,6 +649,52 @@
     if (generate.textContent !== label) generate.textContent = label;
   };
 
+  const takeMetaLabel = (take) => {
+    if (take.omitted) return "Not transferred";
+    if (take.source === "upload") return "Uploaded";
+    if (take.source === "library") return "Media";
+    if (take.seed !== undefined && take.seed !== null) return `#${take.seed}`;
+    return "";
+  };
+
+  const renderTakeToolbar = (item, busy) => h("div", {className: "take-toolbar"},
+    h("div", {className: "take-toolbar-head"},
+      h("strong", {className: "small"}, item.takes.length ? `Takes (${item.takes.length})` : "No takes yet"),
+      !item.takes.length ? h("span", {className: "small muted"},
+        "Generate, upload an edited clip, or pick one from Media.") : null),
+    h("div", {className: "chips"},
+      button(state.addingTake ? "Adding take…" : "Upload take", async () => {
+        const [file] = await pickFiles("video/*", false);
+        if (file) uploadTake(file);
+      }, "btn sm", {id: "upload-take", disabled: busy, title: "Upload an edited or external video clip as a new take"}),
+      state.boot?.library && button("From Media", () => openLibrary((path) => libraryTake(path), "video", "Add as new take"),
+        "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
+
+  const renderTakeOriginMeta = (item, shown, busy) => {
+    if (!shown) return [];
+    if (shown.source === "upload" || shown.source === "library") {
+      const origin = shown.source === "library" ? "From Media" : "Uploaded";
+      const dur = shown.duration !== undefined && shown.duration !== null ? ` · ${seconds(shown.duration)}` : "";
+      const nodes = [h("span", {className: "take-meta", title: shown.source_name || ""}, `${origin}${dur}`)];
+      if (item.flow && !shown.missing && (shown.frames === undefined || shown.frames > item.overlap)) {
+        nodes.push(h("label", {className: "check-label",
+          title: "Drop the first overlap frames when joining or playing the full video, like a generated continuing take"},
+          h("input", {type: "checkbox", checked: Boolean(shown.prefix_frames),
+            disabled: busy,
+            onchange: (event) => toggleTakeOverlap(shown, event.target.checked)}),
+          `Skip ${item.overlap}-frame overlap`));
+      }
+      return nodes;
+    }
+    if (shown.seed !== undefined && shown.seed !== null) {
+      return [h("span", {className: "take-meta mono"},
+        `Seed ${shown.seed}`,
+        button("Use seed", () => useSeed(shown.seed), "btn sm",
+          {title: "Set this scene's seed to this take's seed"}))];
+    }
+    return [];
+  };
+
   const renderTakes = () => {
     const item = scene();
     if (item.kind === "media") {
@@ -667,6 +713,8 @@
       $("takes-panel").hidden = false;
       return;
     }
+    const busy = Boolean(state.run?.active || state.addingTake);
+    const toolbar = renderTakeToolbar(item, busy);
     const shown = shownTake();
     const cards = item.takes.map((take) => {
       const selected = shown?.id === take.id;
@@ -687,8 +735,7 @@
         badgeScore !== null ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore)) : null),
       h("span", {className: "take-card-meta"},
         h("strong", {}, `Take ${take.number}`),
-        h("span", {className: "mono small muted"},
-          take.omitted ? "Not transferred" : (take.seed !== undefined ? `#${take.seed}` : ""))));
+        h("span", {className: "mono small muted"}, takeMetaLabel(take))));
     });
     const chips = cards;
     const row = [];
@@ -709,13 +756,9 @@
     } else if (review?.status === "done") {
       row.push(...decisionScoreChips(review, {chipClass: "review-chip", includeTags: false}));
     }
-    if (shown) {
-      row.push(h("span", {className: "take-meta mono"},
-        `Seed ${shown.seed}`,
-        button("Use seed", () => useSeed(shown.seed), "btn sm",
-          {title: "Set this scene's seed to this take's seed"})));
-    }
+    row.push(...renderTakeOriginMeta(item, shown, Boolean(state.run?.active)));
     $("take-row").replaceChildren(...[
+      toolbar,
       chips.length ? h("div", {className: "take-chips"}, chips) : null,
       row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
     ].filter(Boolean));
@@ -860,6 +903,57 @@
     const input = $("scene-seed");
     if (input) input.value = String(seed);
     toast(`Scene seed set to ${seed}.`);
+  };
+
+  const addManualTake = async (sceneId, boardId, work) => {
+    state.addingTake = true;
+    renderTakes();
+    let data;
+    try {
+      await flush();
+      await saves;
+      if (state.board?.id !== boardId) return;
+      data = await act(work);
+    } finally {
+      state.addingTake = false;
+    }
+    if (!data || state.board?.id !== boardId) {
+      if (state.board?.id === boardId) renderTakes();
+      return;
+    }
+    if (state.sceneId === sceneId && data.take_id) {
+      state.previewTake = data.take_id;
+      state.question = null;
+      state.deletingTake = null;
+    }
+    applyBoard(data, {keepInspector: true});
+    const addedScene = data.scenes.find((item) => item.id === sceneId);
+    const addedTake = addedScene?.takes.find((take) => take.id === data.take_id);
+    const label = addedTake ? `Take ${addedTake.number}` : "new take";
+    toast(addedScene?.in_use === data.take_id
+      ? `Added ${label} and set it in use.`
+      : `Added ${label}. Click Use this take to switch to it.`);
+  };
+  const uploadTake = async (file) => {
+    const boardId = state.board.id;
+    const sceneId = state.sceneId;
+    const form = new FormData();
+    form.append("file", file);
+    toast("Uploading and preparing take…");
+    await addManualTake(sceneId, boardId, () => request("POST", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, form, {form: true}));
+  };
+  const libraryTake = async (source) => {
+    const boardId = state.board.id;
+    const sceneId = state.sceneId;
+    toast("Preparing take from Media…");
+    await addManualTake(sceneId, boardId, () => request("PUT", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, {source}));
+  };
+  const toggleTakeOverlap = async (take, trimOverlap) => {
+    const boardId = state.board.id;
+    const sceneId = state.sceneId;
+    const data = await act(() => request("PATCH", `${API}/boards/${boardId}/scenes/${sceneId}/takes/${take.id}`,
+      {trim_overlap: trimOverlap}));
+    if (data && state.board?.id === boardId) applyBoard(data, {keepInspector: true});
   };
 
   const deleteTake = async (take) => {
@@ -1873,7 +1967,7 @@
           event.currentTarget.setAttribute("aria-pressed", "true");
           selectedPath = row.path;
           attach.disabled = false;
-        }, "", {"aria-label": row.caption, "aria-pressed": attach ? "false" : null});
+        }, "", {title: row.caption, "aria-label": row.caption, "aria-pressed": attach ? "false" : null});
       }));
     };
     const area = visibleArea();

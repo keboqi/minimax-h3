@@ -23,6 +23,7 @@ from h3_app.catalog import (
 )
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
+from h3_app.project_transfer import format_clear_takes_message
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
@@ -499,6 +500,48 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         return payload(owner, storyboard_id)
 
     # Takes and versions ----------------------------------------------------
+    def require_idle(owner, storyboard_id, action):
+        if runs.active(owner, storyboard_id) is not None:
+            raise H3Error(f"Wait for the current run to finish before {action}.")
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes", include_in_schema=False)
+    @guarded
+    def upload_take(storyboard_id: str, scene_id: str, request: Request,
+                    file: UploadFile = File(...), fit: str = Form(default=sb.RESIZE)):
+        owner = owner_of(request)
+        require_idle(owner, storyboard_id, "adding a take")
+        with TemporaryDirectory(prefix="h3-storyboard-") as directory:
+            spooled = spool([file], directory, VIDEO_EXTENSIONS)[0]
+            _, take_id = handlers.service.add_manual_take(
+                owner, storyboard_id, scene_id, spooled,
+                source_kind="upload", source_name=file.filename or "video.mp4", fit=fit,
+            )
+        return {**payload(owner, storyboard_id), "take_id": take_id}
+
+    @app.put(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes", include_in_schema=False)
+    @guarded
+    def library_take(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        require_idle(owner, storyboard_id, "adding a take")
+        source = library_source(body.get("source", ""), "Video")
+        fit = str(body.get("fit") or sb.RESIZE)
+        _, take_id = handlers.service.add_manual_take(
+            owner, storyboard_id, scene_id, source,
+            source_kind="library", source_name=Path(source).name, fit=fit,
+        )
+        return {**payload(owner, storyboard_id), "take_id": take_id}
+
+    @app.patch(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}", include_in_schema=False)
+    @guarded
+    def edit_take(storyboard_id: str, scene_id: str, take_id: str, request: Request, body: dict = Body(...)):
+        owner = owner_of(request)
+        require_idle(owner, storyboard_id, "changing a take")
+        trim_overlap = body.get("trim_overlap")
+        if not isinstance(trim_overlap, bool):
+            raise H3Error("Choose whether to skip the opening overlap.")
+        handlers.service.set_take_overlap(owner, storyboard_id, scene_id, take_id, trim_overlap)
+        return payload(owner, storyboard_id)
+
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/use-take", include_in_schema=False)
     @guarded
     def use_take(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(...)):
@@ -512,8 +555,7 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     def delete_take(storyboard_id: str, scene_id: str, take_id: str, request: Request):
         owner = owner_of(request)
         # A running scene may be reading this take's latent, and a join its video.
-        if runs.active(owner, storyboard_id) is not None:
-            raise H3Error("Wait for the current run to finish before deleting a take.")
+        require_idle(owner, storyboard_id, "deleting a take")
         handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
         return payload(owner, storyboard_id)
 

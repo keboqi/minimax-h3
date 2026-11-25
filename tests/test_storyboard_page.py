@@ -178,6 +178,51 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(checked, [(str(picture), "Image")])
         self.assertTrue(data["scenes"][0]["last_image"])
 
+    def test_manual_take_upload_library_and_overlap_routes_work_without_gpu(self):
+        from tests.test_storyboard_media import make_video
+
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        checked = []
+        workshop_handlers = StoryboardHandlers(StoryboardServices(
+            service=lambda: self.service, generate_take=None,
+            request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
+        ))
+        workshop_handlers.library = MediaLibrary(None, None, lambda path, mode: checked.append((path, mode)))
+        install_storyboard_page(app, workshop_handlers, gpu=False)
+        client = TestClient(app)
+
+        created = client.post(f"{API}/boards", json={"name": "Manual", "story": "One.\n\n---\n\nTwo."}).json()
+        board_id = created["id"]
+        s1_id, s2_id = created["scenes"][0]["id"], created["scenes"][1]["id"]
+
+        clip1 = make_video(self.root / "take1.mp4", width=320, height=192, seconds=3.5, audio=True, rate=24)
+        with clip1.open("rb") as handle:
+            res = client.post(f"{API}/boards/{board_id}/scenes/{s1_id}/takes",
+                              files={"file": ("take1.mp4", handle, "video/mp4")})
+        self.assertEqual(res.status_code, 200, res.text)
+        data1 = res.json()
+        t1 = data1["scenes"][0]["takes"][0]
+        self.assertEqual((t1["id"], t1["source"], t1["source_name"]), (data1["take_id"], "upload", "take1.mp4"))
+        self.assertEqual(data1["scenes"][0]["in_use"], t1["id"])
+
+        clip2 = make_video(self.root / "lib2.mp4", width=320, height=192, seconds=3.5, audio=True, rate=24)
+        res2 = client.put(f"{API}/boards/{board_id}/scenes/{s2_id}/takes", json={"source": str(clip2)})
+        self.assertEqual(res2.status_code, 200, res2.text)
+        self.assertEqual(checked, [(str(clip2), "Video")])
+        data2 = res2.json()
+        t2 = data2["scenes"][1]["takes"][0]
+        self.assertEqual((t2["source"], t2["prefix_frames"]), ("library", 0))
+
+        toggled = client.patch(f"{API}/boards/{board_id}/scenes/{s2_id}/takes/{t2['id']}",
+                               json={"trim_overlap": True})
+        self.assertEqual(toggled.status_code, 200, toggled.text)
+        self.assertEqual(toggled.json()["scenes"][1]["takes"][0]["prefix_frames"], 39)
+
+        bad_ext = client.post(f"{API}/boards/{board_id}/scenes/{s1_id}/takes",
+                              files={"file": ("bad.txt", b"hello", "text/plain")})
+        self.assertEqual(bad_ext.status_code, 400)
+
     def test_cast_needs_a_picture_and_scenes_lose_a_removed_member(self):
         board = self.create()
         url = f"{API}/boards/{board['id']}/cast"
@@ -670,3 +715,4 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertEqual(self.client.get("/storyboard/app.js").status_code, 200)
         self.assertEqual(self.client.get("/storyboard/app.css").status_code, 200)
         self.assertEqual(self.client.get("/storyboard/other.txt").status_code, 404)
+
