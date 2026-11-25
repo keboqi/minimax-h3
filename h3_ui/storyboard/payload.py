@@ -233,6 +233,7 @@ def board_payload(storyboard_id: str, board: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": storyboard_id, "name": board["name"], "settings": sb.profile_summary(board["profile"]),
         "auto_subtitles": board.get("auto_subtitles", False),
+        "auto_score": bool(board.get("auto_score", False)),
         "subtitle_language": board.get("subtitle_language", subtitles.TARGET_LANGUAGES[0]),
         "total": clock(sb.total_seconds(board)), "done": done, "pending": len(states) - done,
         "queue": list(board["queue"]), "scenes": scenes, "generated": bool(board["takes"]),

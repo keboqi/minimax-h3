@@ -202,6 +202,11 @@ class StoryboardService:
                 board["subtitle_language"] = subtitle_language
         return self.change(owner, storyboard_id, edit)[0]
 
+    def set_score_settings(self, owner, storyboard_id, *, auto_score: bool):
+        def edit(board):
+            board["auto_score"] = bool(auto_score)
+        return self.change(owner, storyboard_id, edit)[0]
+
     def apply_profile(self, owner, storyboard_id, profile):
         def edit(board):
             board["profile"] = profile
@@ -910,6 +915,7 @@ class StoryboardService:
                                         copy.deepcopy(source["scenes"]))
         branched["takes"] = copy.deepcopy(board["takes"])
         branched["auto_subtitles"] = board.get("auto_subtitles", False)
+        branched["auto_score"] = bool(board.get("auto_score", False))
         if "subtitle_language" in board:
             branched["subtitle_language"] = board["subtitle_language"]
         for member in source["cast"]:

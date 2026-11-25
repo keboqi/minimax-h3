@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import struct
 from tempfile import TemporaryDirectory
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -24,7 +25,7 @@ from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import JOBS
 from h3_app.llm import decisions, gemini
-from h3_app.workspace_store import WorkspaceStore, install_owner_cookie
+from h3_app.workspace_store import COOKIE, WorkspaceStore, install_owner_cookie
 from h3_ui.h3.handlers import H3Handlers, H3Services
 from h3_ui.h3.page import H3PageServices, install_h3_page
 from h3_ui.job_bindings import owned_generation
@@ -43,7 +44,12 @@ def _fake_decision_answers(questions, blocks, *, key, **kwargs):
                 "fit": 3.2,
                 "reference_fidelity": 2.8,
                 "visual_quality": 3.6,
+                "style_consistency": 3.4,
+                "camera_composition": 3.0,
+                "action_motion": 3.2,
+                "temporal_continuity": 2.6,
                 "audio_quality": 3.0,
+                "speech_lipsync": 2.2,
                 "advice_fit": 2.4,
                 "overall": 3.2,
             }.get(name, 3.0)
@@ -174,15 +180,29 @@ class TakeReviewCoreTests(unittest.TestCase):
 
         self.assertEqual(asked.call_count, 1)
         questions, blocks = asked.call_args.args
-        self.assertTrue({"fit", "reference_fidelity", "visual_quality", "audio_quality", "advice_fit", "overall"} <= set(questions))
+        self.assertTrue({
+            "fit", "reference_fidelity", "visual_quality", "style_consistency",
+            "camera_composition", "action_motion", "temporal_continuity",
+            "audio_quality", "speech_lipsync", "advice_fit", "overall",
+        } <= set(questions))
         media_types = [block["type"] for block in blocks if block.get("type") != "text"]
         self.assertEqual(media_types, ["image", "audio", "video"])
         combined_text = "\n".join(block["text"] for block in blocks if block.get("type") == "text")
         self.assertIn("Mei speaks softly", combined_text)
         self.assertIn("Make her lip-sync crisp", combined_text)
         self.assertEqual(scored["score"], 80)
-        self.assertEqual(scored["scores"]["references"], 70)
-        self.assertEqual(scored["scores"]["advice"], 60)
+        self.assertEqual(scored["scores"], {
+            "prompt": 80,
+            "references": 70,
+            "visuals": 90,
+            "style": 85,
+            "camera": 75,
+            "action": 80,
+            "continuity": 65,
+            "audio": 75,
+            "speech": 55,
+            "advice": 60,
+        })
         self.assertEqual(scored["ref_count"], 2)
         self.assertEqual(scored["advice"], "Make her lip-sync crisp and keep the lighting warm.")
         self.assertIn("dialogue", scored["tags"])
@@ -406,6 +426,9 @@ class H3PageTakeReviewApiTests(unittest.TestCase):
         shown = media_review.public(video_path)
         self.assertEqual(shown["score"], 80)
         self.assertEqual(shown["ref_count"], 2)
+        css = self.client.get("/h3/score_radar.css")
+        self.assertEqual(css.status_code, 200)
+        self.assertTrue(css.headers["content-type"].startswith("text/css"))
 
 
 class StoryboardTakeReviewApiTests(unittest.TestCase):
@@ -513,11 +536,22 @@ class StoryboardTakeReviewApiTests(unittest.TestCase):
                 f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/takes/{take['id']}/score",
                 json={"advice": "Have Mei pause before speaking.", "gemini_api_key": "gem-key"},
             )
+        self.assertEqual(asked.call_count, 1)
         self.assertEqual(scored.status_code, 200, scored.text)
         scored_data = scored.json()
         self.assertEqual(scored_data["review"]["score"], 80)
-        self.assertEqual(scored_data["review"]["scores"]["references"], 70)
-        self.assertEqual(scored_data["review"]["scores"]["advice"], 60)
+        self.assertEqual(scored_data["review"]["scores"], {
+            "prompt": 80,
+            "references": 70,
+            "visuals": 90,
+            "style": 85,
+            "camera": 75,
+            "action": 80,
+            "continuity": 65,
+            "audio": 75,
+            "speech": 55,
+            "advice": 60,
+        })
         # LLM review stays intact after scoring.
         self.assertEqual(scored_data["scenes"][0]["takes"][0]["llm_review"]["finetuned_prompt"], llm["finetuned_prompt"])
         media_blocks = [b for b in asked.call_args.args[1] if b.get("type") != "text"]
@@ -552,6 +586,100 @@ class StoryboardTakeReviewApiTests(unittest.TestCase):
         self.assertEqual(scored.status_code, 200, scored.text)
         self.assertIn("finetuned_prompt", reviewed.json()["llm_review"])
         self.assertEqual(scored.json()["review"]["score"], 80)
+
+    def test_storyboard_auto_score_setting_runs_async_when_enabled(self):
+        board = self.client.post("/storyboard/api/boards", json={
+            "name": "Bridge", "story": "Mei steps onto the rainy bridge.",
+        }).json()
+        board_id = board["id"]
+        scene_id = board["scenes"][0]["id"]
+        self.assertFalse(board["auto_score"])
+
+        owner = self.store.verify_owner(self.client.cookies.get(COOKIE))
+        self.handlers.settings[owner] = {"review": True, "writer": {"gemini_api_key": "gem-key"}}
+
+        # Off by default: generating a take does not schedule background scoring even if H3 review is enabled.
+        with patch.dict(os.environ, {"H3_DECISION": "1"}), \
+                patch.object(decisions, "decide", side_effect=_fake_decision_answers) as asked:
+            self.assertEqual(self.client.post(
+                f"/storyboard/api/boards/{board_id}/generate",
+                json={"action": "scene", "scene_id": scene_id},
+            ).status_code, 200)
+            self.wait_run(board_id)
+        asked.assert_not_called()
+        first_take = self.client.get(f"/storyboard/api/boards/{board_id}").json()["scenes"][0]["takes"][0]
+        self.assertIsNone(first_take["review"])
+
+        # Validation on score-settings endpoint.
+        self.assertEqual(self.client.put(f"/storyboard/api/boards/{board_id}/score-settings", json={}).status_code, 400)
+        self.assertEqual(
+            self.client.put(f"/storyboard/api/boards/{board_id}/score-settings", json={"auto_score": "yes"}).status_code,
+            400,
+        )
+
+        # Enable auto_score, verify persistence and duplication.
+        updated = self.client.put(f"/storyboard/api/boards/{board_id}/score-settings", json={"auto_score": True})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertTrue(updated.json()["auto_score"])
+        self.assertTrue(self.client.get(f"/storyboard/api/boards/{board_id}").json()["auto_score"])
+        duplicated = self.client.post(f"/storyboard/api/boards/{board_id}/duplicate")
+        self.assertEqual(duplicated.status_code, 200, duplicated.text)
+        self.assertTrue(duplicated.json()["auto_score"])
+
+        # Attach cast + audio reference, then generate while Decision blocks to prove async non-blocking behavior.
+        pic = self.root / "mei.png"
+        Image.new("RGB", (128, 128), (120, 40, 80)).save(pic)
+        with pic.open("rb") as handle:
+            self.client.post(f"/storyboard/api/boards/{board_id}/cast", data={"name": "Mei"}, files={"file": ("mei.png", handle)})
+        self.client.patch(f"/storyboard/api/boards/{board_id}/scenes/{scene_id}", json={"mode": "Reference media"})
+        audio = self.root / "voice.wav"
+        audio.write_bytes(b"RIFFwav")
+        with audio.open("rb") as handle:
+            self.client.post(f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/media/ref_audios",
+                             files=[("files", ("voice.wav", handle))])
+
+        started = threading.Event()
+        release = threading.Event()
+        seen_blocks = []
+
+        def slow_decide(questions, blocks, *, key, **kwargs):
+            seen_blocks.append(blocks)
+            started.set()
+            release.wait(timeout=5)
+            return _fake_decision_answers(questions, blocks, key=key, **kwargs)
+
+        try:
+            with patch.dict(os.environ, {"H3_DECISION": "1"}), \
+                    patch.object(decisions, "decide", side_effect=slow_decide):
+                self.assertEqual(self.client.post(
+                    f"/storyboard/api/boards/{board_id}/generate",
+                    json={"action": "scene", "scene_id": scene_id},
+                ).status_code, 200)
+                run = self.wait_run(board_id)
+                self.assertIsNone(run["error"])
+                self.assertTrue(started.wait(timeout=3))
+                pending_take = self.client.get(f"/storyboard/api/boards/{board_id}").json()["scenes"][0]["takes"][-1]
+                self.assertEqual(pending_take["review"]["status"], "pending")
+                release.set()
+
+                done_take = pending_take
+                for _ in range(100):
+                    done_take = self.client.get(f"/storyboard/api/boards/{board_id}").json()["scenes"][0]["takes"][-1]
+                    if (done_take.get("review") or {}).get("status") == "done":
+                        break
+                    time.sleep(0.02)
+        finally:
+            release.set()
+
+        self.assertEqual(done_take["review"]["status"], "done")
+        self.assertEqual(done_take["review"]["score"], 80)
+        self.assertEqual(done_take["review"]["scores"]["references"], 70)
+        self.assertEqual(done_take["review"]["ref_count"], 2)
+        media_blocks = [b for b in seen_blocks[0] if b.get("type") != "text"]
+        self.assertEqual([b["type"] for b in media_blocks], ["image", "audio", "video"])
+        css = self.client.get("/storyboard/score_radar.css")
+        self.assertEqual(css.status_code, 200)
+        self.assertTrue(css.headers["content-type"].startswith("text/css"))
 
 
 if __name__ == "__main__":

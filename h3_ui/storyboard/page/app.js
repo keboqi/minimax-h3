@@ -5,7 +5,7 @@
   const SAVE_DELAY_MS = 400;
   const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
-  const {$, h, visibleArea, createToast, scoreTone, decisionScoreChips, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
+  const {$, h, visibleArea, createToast, scoreTone, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
   const {toast} = createToast();
   const chip = (label, pressed, onclick) =>
     h("button", {type: "button", className: "chip", "aria-pressed": String(pressed), onclick}, label);
@@ -32,7 +32,7 @@
     includeOutdated: true, showSubtitles: true, burnSubtitles: false, subtitlesOpen: true,
     showTranslation: true, exportTranslation: stored.get("h3-storyboard-translate-subtitles") === "true",
     saveLabel: "All changes saved",
-    run: null, seenRevision: null, pollTimer: null, previewKey: null,
+    run: null, seenRevision: null, pollTimer: null, reviewTimer: null, previewKey: null,
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
     reviewAdvice: new Map(), reviewBusy: new Map(), reviewError: new Map(),
     reviewModel: stored.get("h3-storyboard-review-model") || "", takeReviewKey: null,
@@ -724,6 +724,7 @@
       const thumbVideo = take.missing ? null : take.video;
       const doneReview = take.review?.status === "done" ? take.review : null;
       const badgeScore = doneReview ? (doneReview.score ?? doneReview.fit) : null;
+      const pendingReview = badgeScore === null && take.review?.status === "pending";
       return h("button", {
         type: "button",
         className: "take-card",
@@ -733,7 +734,11 @@
       h("span", {className: "take-card-thumb"},
         thumbSrc ? posterImg(thumbSrc, thumbVideo, {alt: "", loading: "lazy"}) : null,
         inUse ? h("span", {className: "take-in-use"}, "In use") : null,
-        badgeScore !== null ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore)) : null),
+        badgeScore !== null
+          ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore))
+          : pendingReview
+            ? h("span", {className: "take-score-pill mono", title: "Scoring take in the background…"}, "…")
+            : null),
       h("span", {className: "take-card-meta"},
         h("strong", {}, `Take ${take.number}`),
         h("span", {className: "mono small muted"}, takeMetaLabel(take))));
@@ -749,19 +754,28 @@
           title: state.run?.active ? "Wait for the current run to finish." : "Delete this take for good"}));
     }
     clearTimeout(state.reviewTimer);
+    state.reviewTimer = null;
     const review = shown?.review;
+    let radar = null;
     if (review?.status === "pending") {
       row.push(h("span", {className: "small muted"}, "Scoring this take…"));
-      // A take's score arrives after its run; look again until it has.
-      if (!activeGenerate()) state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
     } else if (review?.status === "done") {
-      row.push(...decisionScoreChips(review, {chipClass: "review-chip", includeTags: false}));
+      radar = decisionScoreRadar?.(review, {chipClass: "review-chip", includeTags: false, includeHeadline: false}) || null;
+      row.push(...decisionScoreChips(review, {chipClass: "review-chip", includeTags: false, includeBreakdown: !radar}));
+    } else if (review?.status === "failed") {
+      row.push(h("span", {className: "small muted", title: review.error || ""}, "Auto score failed."));
+    }
+    const anyPendingReview = (state.board?.scenes || []).some((s) => (s.takes || []).some((t) => t.review?.status === "pending"));
+    // A take's score arrives after its run; look again until every pending score finishes.
+    if (anyPendingReview && !activeGenerate()) {
+      state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
     }
     row.push(...renderTakeOriginMeta(item, shown, Boolean(state.run?.active)));
     $("take-row").replaceChildren(...[
       toolbar,
       chips.length ? h("div", {className: "take-chips"}, chips) : null,
       row.length || choices.length ? h("div", {className: "take-detail"}, row, h("div", {className: "grow"}), choices) : null,
+      radar,
     ].filter(Boolean));
     const doomed = shown?.id === state.deletingTake && shown.id !== item.in_use ? shown : null;
     $("take-confirm").replaceChildren(...(state.question ? [h("div", {className: "confirm", role: "alertdialog", "aria-label": "Switch takes"},
@@ -2343,18 +2357,34 @@
 
   const settingsPanel = () => {
     const name = h("input", {value: state.board.name, maxLength: 120});
+    const settingToggle = (label, hint, checked, path, field) => [
+      h("label", {className: "check-label"},
+        h("input", {type: "checkbox", checked: Boolean(checked), onchange: async (event) => {
+          const input = event.target;
+          input.disabled = true;
+          const data = await act(() => request("PUT", boardUrl(path), {[field]: input.checked}));
+          if (data) applyBoard(data);
+          else { input.checked = !input.checked; input.disabled = false; }
+        }}), label),
+      h("p", {className: "small muted"}, hint),
+    ];
     return [
       panelHead("Storyboard settings"),
       state.board.settings && h("p", {className: "small muted"}, `Uses: ${state.board.settings}`),
-      h("label", {className: "check-label"},
-        h("input", {type: "checkbox", checked: state.board.auto_subtitles, onchange: async (event) => {
-          const input = event.target;
-          input.disabled = true;
-          const data = await act(() => request("PUT", boardUrl("/subtitle-settings"), {auto_subtitles: input.checked}));
-          if (data) applyBoard(data);
-          else { input.checked = !input.checked; input.disabled = false; }
-        }}), "Automatically generate word-aligned subtitles after each take"),
-      h("p", {className: "small muted"}, "Audio transcription runs on the GPU endpoint. Dialogue tagged in the prompt gets approximate subtitles until audio is analyzed."),
+      ...settingToggle(
+        "Automatically generate word-aligned subtitles after each take",
+        "Audio transcription runs on the GPU endpoint. Dialogue tagged in the prompt gets approximate subtitles until audio is analyzed.",
+        state.board.auto_subtitles,
+        "/subtitle-settings",
+        "auto_subtitles",
+      ),
+      ...settingToggle(
+        "Automatically score each take in the background after generation",
+        "Scores new takes asynchronously with Gemini Decision without delaying generation. Uses the session Gemini API key from System, or server GEMINI_API_KEY.",
+        state.board.auto_score,
+        "/score-settings",
+        "auto_score",
+      ),
       state.boot.gpu && [
         button("Use my current MiniMax H3 settings", () => {
           if (state.board.done > 0 && !state.confirmProfile) {
@@ -2602,6 +2632,8 @@
   const showStart = () => {
     flush();
     closeFullVideo();
+    clearTimeout(state.reviewTimer);
+    state.reviewTimer = null;
     $("editor").hidden = true;
     const root = $("start");
     root.hidden = false;
@@ -2702,6 +2734,8 @@
     clearPendingPosterQueue();
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
+    clearTimeout(state.reviewTimer);
+    state.reviewTimer = null;
     state.run = null;
     state.board = data;
     state.previewKey = null;

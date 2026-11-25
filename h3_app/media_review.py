@@ -84,6 +84,68 @@ AUDIO_LEVELS = (
     "Strong audio: natural, crisp dialogue/lip-sync, expressive sound effects, and balanced mix.",
 )
 
+STYLE_LEVELS = (
+    "Clashing style: wrong aesthetic, broken palette, or jarring visual inconsistencies across the shot.",
+    "Weak style: inconsistent lighting, flat look, or only faint resemblance to the requested aesthetic.",
+    "Acceptable style: generally coherent aesthetic with minor lighting, color, or texture drift.",
+    "Good style: cohesive visual aesthetic, atmospheric lighting, and consistent color grading.",
+    "Strong style: striking, cohesive art direction, lighting mood, and palette throughout.",
+)
+
+CAMERA_LEVELS = (
+    "Broken camera: chaotic framing, cut-off subjects, jarring unwanted cuts, or nauseating camera jitter.",
+    "Weak camera: awkward framing, stiff or erratic camera movement, or weak shot composition.",
+    "Acceptable camera: readable framing and basic camera motion with minor compositional awkwardness.",
+    "Good camera: well-composed framing and smooth, purposeful camera movement without jarring cuts.",
+    "Strong camera: cinematic composition, deliberate framing, and fluid, well-motivated camera work.",
+)
+
+ACTION_LEVELS = (
+    "Broken action: frozen subjects, wrong actions, or severe physics and motion breakdowns.",
+    "Weak action: stiff, sluggish, or unnatural subject movement that misses key beats of the action.",
+    "Acceptable action: main action occurs with passable pacing, though motion feels somewhat mechanical.",
+    "Good action: believable, expressive subject motion and natural pacing matching the prompt.",
+    "Strong action: fluid, physically grounded, expressive action and crisp timing on every beat.",
+)
+
+CONTINUITY_LEVELS = (
+    "Broken continuity: severe identity morphing, teleporting props, or broken scene handoff.",
+    "Weak continuity: noticeable drift in face, clothing, objects, or background across frames.",
+    "Acceptable continuity: core subject remains recognizable with minor frame-to-frame prop or detail drift.",
+    "Good continuity: consistent character identity, wardrobe, props, and environment across the clip.",
+    "Strong continuity: rock-solid temporal stability in identity, props, background, and scene continuity.",
+)
+
+SPEECH_LEVELS = (
+    "Broken speech: unintelligible garbled speech, wrong dialogue words, severe lip-sync failure, or unwanted hallucinated voices.",
+    "Weak speech: slurred or robotic delivery, noticeable lip-sync lag, or awkward vocal cadence.",
+    "Acceptable speech: intelligible words with minor lip-sync or vocal naturalness flaws.",
+    "Good speech: clear, well-timed dialogue and convincing lip-sync (or clean, speech-free audio when no speech is requested).",
+    "Strong speech: crisp, expressive, natural vocal delivery with tight lip-sync (or completely clean speech-free audio when no speech is requested).",
+)
+
+# (Decision answer key, public payload key, rubric question, ordered rubric levels)
+VIDEO_SCORE_ASPECTS = (
+    ("visual_quality", "visuals",
+     "How clean, stable, and physically natural are the visuals and motion in the generated take?", VISUAL_LEVELS),
+    ("style_consistency", "style",
+     "How cohesive and faithful is the visual style, lighting mood, color palette, and art direction?", STYLE_LEVELS),
+    ("camera_composition", "camera",
+     "How strong are the framing, shot composition, and camera movement control (without unwanted cuts or jitter)?",
+     CAMERA_LEVELS),
+    ("action_motion", "action",
+     "How accurate, fluid, physically plausible, and well-paced are the subject actions and motion?", ACTION_LEVELS),
+    ("temporal_continuity", "continuity",
+     "How consistent are character identity, wardrobe, props, background, and temporal continuity across the take?",
+     CONTINUITY_LEVELS),
+    ("audio_quality", "audio",
+     "How natural, clear, and well-synchronized is the audio in the generated take "
+     "(sound effects, ambience, music, and overall mix)?", AUDIO_LEVELS),
+    ("speech_lipsync", "speech",
+     "How clear, accurate, and tightly lip-synced is any requested speech or vocal delivery "
+     "(score high if no speech was requested and none is hallucinated)?", SPEECH_LEVELS),
+)
+
 ADVICE_LEVELS = (
     "Fails the user's advice: the requested fix or preference is completely ignored or contradicted.",
     "Barely addresses the user's advice: small hints, but the main requested point is not met.",
@@ -274,15 +336,8 @@ def _questions(
                 REFERENCE_LEVELS,
             )
         if kind == "video":
-            questions["visual_quality"] = decisions.score(
-                "How clean, stable, and physically natural are the visuals and motion in the generated take?",
-                VISUAL_LEVELS,
-            )
-            questions["audio_quality"] = decisions.score(
-                "How natural, clear, and well-synchronized is the audio in the generated take "
-                "(dialogue intelligibility and lip-sync if speaking, sound effects, ambience, music)?",
-                AUDIO_LEVELS,
-            )
+            for answer_key, _score_key, question, levels in VIDEO_SCORE_ASPECTS:
+                questions[answer_key] = decisions.score(question, levels)
         if advice:
             questions["advice_fit"] = decisions.score(
                 f"How well does the generated take satisfy this user advice?\nuser advice: {advice}",
@@ -294,7 +349,7 @@ def _questions(
         if advice:
             overall_parts.append("the user's advice")
         if kind == "video":
-            overall_parts.append("overall visual, motion, and audio quality")
+            overall_parts.append("overall visual, style, camera, action, continuity, audio, and speech quality")
         questions["overall"] = decisions.score(
             "Rate the overall quality of the generated take considering " + ", ".join(overall_parts) + ".",
             OVERALL_LEVELS,
@@ -419,8 +474,7 @@ def _format_decision_payload(
         breakdown: dict[str, int] = {"prompt": fit_pct}
         for answer_key, score_key in (
             ("reference_fidelity", "references"),
-            ("visual_quality", "visuals"),
-            ("audio_quality", "audio"),
+            *((ak, sk) for ak, sk, _, _ in VIDEO_SCORE_ASPECTS),
             ("advice_fit", "advice"),
         ):
             value = _score_percent(answers.get(answer_key))

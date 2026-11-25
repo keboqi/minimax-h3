@@ -79,6 +79,11 @@ def check(context, url):
     auto_subtitles.check()
     expect(auto_subtitles).to_be_checked()
     expect(auto_subtitles).to_be_enabled()
+    auto_score = page.get_by_role("checkbox", name="Automatically score each take in the background after generation")
+    expect(auto_score).not_to_be_checked()
+    auto_score.check()
+    expect(auto_score).to_be_checked()
+    expect(auto_score).to_be_enabled()
     assert context.request.post(url + "/test/seed").ok
 
     # The tab shows the page in a frame.

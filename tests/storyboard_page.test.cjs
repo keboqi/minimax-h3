@@ -347,3 +347,311 @@ test("renderTakes offers upload and Media library take actions and renders manua
   assert.ok(overlapCheck);
   assert.equal(overlapCheck.checked, true);
 });
+
+test("settingsPanel renders the auto_score checkbox and saves changes to /score-settings", async () => {
+  const find = (root, matches) => matches(root) ? root
+    : root?.children?.map((child) => find(child, matches)).find(Boolean);
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}},
+    textContent: children.filter((c) => typeof c === "string").join(""),
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+    append(...nodes) { this.children.push(...nodes); },
+    replaceWith(node) { Object.assign(this, node); },
+    setAttribute(key, value) { this.props[key] = value; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  });
+  const nodes = {inspector: h("aside", {id: "inspector"}), library: h("dialog", {id: "library"})};
+  const $ = (id) => {
+    if (!nodes[id]) nodes[id] = find(nodes.inspector, (node) => node?.id === id) || h("div", {id});
+    return nodes[id];
+  };
+  const requests = [];
+  const context = vm.createContext({
+    H3PageCommon: {
+      $, h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast() {}}),
+      scoreTone: () => "",
+      decisionScoreChips: () => [],
+      llmReviewNodes: () => [],
+      copyToClipboard() {},
+    },
+    document: {
+      addEventListener() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElementNS: () => h("svg"),
+    },
+    setTimeout() {}, clearTimeout() {},
+    fetch: async (url, {method, body}) => {
+      const parsed = JSON.parse(body);
+      requests.push({url, method, body: parsed});
+      return {ok: true, json: async () => ({...page.state.board, auto_score: parsed.auto_score})};
+    },
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderInspector};\n})();"), context);
+  const page = context.page;
+  const item = {
+    id: "scene-A", number: 1, title: "Opening", mode: "Text to video", prompt: "Shot",
+    seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "draft", state_label: "Not generated",
+    issues: [], takes: [], in_use: null, cast: [], ref_images: [], ref_audios: [], ref_videos: [],
+  };
+  page.state.boot = {
+    gpu: true, seconds: [5, 15], overlaps: [39], max_takes: 4,
+    boards: [{id: "board-A", name: "Board A", generated: false}],
+    subtitle_languages: ["Spanish"], subtitle_models: ["gemma"],
+    writer: {gemini_models: ["gemini-2.5-flash"], gemini_default: "gemini-2.5-flash", openai_models: ["gpt-4o"]},
+  };
+  page.state.board = {
+    id: "board-A", name: "Board A", total: "0:05", done: 0, pending: 1, queue: [],
+    auto_subtitles: false, auto_score: false, subtitle_language: "Spanish",
+    scenes: [item], cast: [], versions: [],
+  };
+  page.state.sceneId = item.id;
+  page.state.panel = "settings";
+  page.renderInspector();
+
+  const label = find(nodes.inspector, (node) => node?.tag === "label" && node.textContent?.includes("Automatically score each take in the background after generation"));
+  assert.ok(label);
+  const checkbox = find(label, (node) => node?.tag === "input" && node.type === "checkbox");
+  assert.ok(checkbox);
+  assert.equal(checkbox.checked, false);
+
+  checkbox.checked = true;
+  await checkbox.onchange({target: checkbox});
+  assert.deepEqual(requests, [{
+    url: "/storyboard/api/boards/board-A/score-settings",
+    method: "PUT",
+    body: {auto_score: true},
+  }]);
+  assert.equal(page.state.board.auto_score, true);
+});
+
+test("renderTakes shows pending pill, polls when another take is pending, and reports failed auto score", () => {
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}},
+    textContent: children.filter((c) => typeof c === "string").join(""),
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+  });
+  const takeRow = h("div", {id: "take-row"});
+  const takeConfirm = h("div", {id: "take-confirm"});
+  const takeReview = h("div", {id: "take-review"});
+  const takesPanel = h("div", {id: "takes-panel"});
+  const nodes = {"take-row": takeRow, "take-confirm": takeConfirm, "take-review": takeReview, "takes-panel": takesPanel};
+  const scheduled = [];
+  const context = vm.createContext({
+    H3PageCommon: {
+      $: (id) => nodes[id], h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast() {}}),
+      scoreTone: () => "good",
+      decisionScoreChips: (review) => [h("span", {className: "review-chip"}, `Take score ${review.score}`)],
+      llmReviewNodes: () => [],
+      copyToClipboard() {},
+    },
+    document: {addEventListener() {}},
+    setTimeout(fn, delay) { scheduled.push(delay); return scheduled.length; },
+    clearTimeout() {},
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderTakes};\n})();"), context);
+  const page = context.page;
+  const sceneItem = {
+    id: "s1", number: 1, kind: "generated", flow: false, overlap: 39, in_use: "t1",
+    takes: [
+      {id: "t1", number: 1, seed: 1, missing: false, review: {status: "failed", error: "Decision error"}},
+      {id: "t2", number: 2, seed: 2, missing: false, review: {status: "pending"}},
+    ],
+  };
+  page.state.boot = {gpu: false, library: false, writer: {gemini_models: []}};
+  page.state.board = {id: "b1", scenes: [sceneItem]};
+  page.state.sceneId = "s1";
+
+  page.renderTakes();
+  const pills = findAll(takeRow, (n) => n.className?.includes("take-score-pill"));
+  assert.deepEqual(pills.map((p) => p.textContent), ["…"]);
+  assert.ok(findAll(takeRow, (n) => n.textContent === "Auto score failed.").length === 1);
+  assert.deepEqual(scheduled, [4000]);
+});
+
+test("decisionScoreRadar builds an interactive SVG radar chart for multi-aspect scores", () => {
+  const makeNode = (tag, ns = null) => {
+    const classes = new Set();
+    const listeners = new Map();
+    const node = {
+      tag, ns, attrs: {}, children: [],
+      classList: {
+        toggle(name, force) {
+          const add = force === undefined ? !classes.has(name) : Boolean(force);
+          if (add) classes.add(name);
+          else classes.delete(name);
+          node.className = [...classes].join(" ");
+          return add;
+        },
+        contains(name) { return classes.has(name); },
+      },
+      setAttribute(key, value) {
+        this.attrs[key] = String(value);
+        if (key === "class") {
+          classes.clear();
+          for (const part of String(value).split(/\s+/).filter(Boolean)) classes.add(part);
+          node.className = [...classes].join(" ");
+        }
+      },
+      addEventListener(type, fn) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(fn);
+      },
+      dispatch(type) {
+        for (const fn of listeners.get(type) || []) fn({currentTarget: node, target: node});
+      },
+      append(...items) {
+        for (const item of items) {
+          if (item === null || item === undefined || item === false) continue;
+          const child = typeof item === "string" ? {textContent: item} : item;
+          this.children.push(child);
+        }
+      },
+    };
+    Object.defineProperty(node, "className", {
+      get() { return [...classes].join(" "); },
+      set(v) {
+        classes.clear();
+        for (const part of String(v || "").split(/\s+/).filter(Boolean)) classes.add(part);
+      },
+      configurable: true,
+    });
+    return node;
+  };
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const context = vm.createContext({
+    document: {
+      createElement: (tag) => makeNode(tag),
+      createElementNS: (ns, tag) => makeNode(tag, ns),
+      createTextNode: (text) => ({textContent: String(text)}),
+    },
+    window: {frameElement: null},
+    innerHeight: 900,
+  });
+  vm.runInContext(commonSource, context);
+  const {decisionScoreRadar, scoreAxes} = context.H3PageCommon;
+
+  assert.equal(decisionScoreRadar({status: "done", fit: 75, scores: {prompt: 75, visuals: 80}}), null);
+
+  const review = {
+    status: "done",
+    score: 78,
+    score_label: "Good take",
+    ref_count: 2,
+    advice: "Keep warm lighting",
+    tags: ["close-up", "dialogue"],
+    scores: {
+      prompt: 80, visuals: 90, style: 85, camera: 75,
+      action: 80, continuity: 65, audio: 75, speech: 55,
+      references: 70, advice: 60,
+    },
+  };
+  assert.equal(scoreAxes(review).length, 10);
+
+  const card = decisionScoreRadar(review, {chipClass: "review-chip", includeTags: true, includeHeadline: true});
+  assert.ok(card);
+  const rings = findAll(card, (n) => n.tag === "circle" && n.classList?.contains("radar-ring"));
+  const spokes = findAll(card, (n) => n.tag === "line" && n.classList?.contains("radar-spoke"));
+  const polygons = findAll(card, (n) => n.tag === "polygon" && n.classList?.contains("radar-area"));
+  const axisGroups = findAll(card, (n) => n.tag === "g" && n.classList?.contains("radar-axis"));
+  const labels = findAll(card, (n) => n.tag === "text" && n.classList?.contains("radar-label"));
+  const hits = findAll(card, (n) => n.tag === "circle" && n.classList?.contains("radar-hit"));
+  const listItems = findAll(card, (n) => n.classList?.contains("score-radar-item"));
+  const readout = findAll(card, (n) => n.classList?.contains("score-radar-readout"))[0];
+  const tags = findAll(card, (n) => n.classList?.contains("score-radar-tags"))[0];
+
+  assert.equal(rings.length, 5);
+  assert.equal(spokes.length, 10);
+  assert.equal(polygons.length, 1);
+  assert.equal(polygons[0].attrs.points.split(" ").length, 10);
+  assert.equal(axisGroups.length, 10);
+  assert.deepEqual(labels.map((l) => l.children[0].textContent),
+    ["Prompt", "Visuals", "Style", "Camera", "Action", "Continuity", "Audio", "Speech", "Refs", "Advice"]);
+  assert.equal(listItems.length, 10);
+  assert.equal(tags.children.length, 2);
+
+  // Hovering/focusing an SVG hit target highlights both the axis group and the side list item.
+  hits[2].dispatch("pointerenter");
+  assert.equal(axisGroups[2].classList.contains("is-active"), true);
+  assert.equal(listItems[2].classList.contains("is-active"), true);
+  assert.equal(readout.children[0].textContent, "85");
+  assert.equal(readout.children[1].textContent, "Style");
+  hits[2].dispatch("pointerleave");
+  assert.equal(axisGroups[2].classList.contains("is-active"), false);
+  assert.equal(readout.children[1].textContent, "Hover or focus any aspect");
+});
+
+test("renderTakes shows the radar chart under take-detail and keeps take-detail compact", () => {
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}, contains(c) { return (this.className || "").split(/\s+/).includes(c); }},
+    textContent: children.filter((c) => typeof c === "string").join(""),
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+  });
+  const takeRow = h("div", {id: "take-row"});
+  const takeConfirm = h("div", {id: "take-confirm"});
+  const takeReview = h("div", {id: "take-review"});
+  const takesPanel = h("div", {id: "takes-panel"});
+  const nodes = {"take-row": takeRow, "take-confirm": takeConfirm, "take-review": takeReview, "takes-panel": takesPanel};
+  const context = vm.createContext({
+    H3PageCommon: {
+      $: (id) => nodes[id], h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast() {}}),
+      scoreTone: () => "good",
+      decisionScoreChips: (review, {includeBreakdown = true} = {}) => includeBreakdown
+        ? [h("span", {className: "review-chip"}, `Take score ${review.score}`), h("span", {className: "review-chip"}, "Visuals 90")]
+        : [h("span", {className: "review-chip"}, `Take score ${review.score}`)],
+      decisionScoreRadar: () => h("div", {className: "score-radar-card"}, "RADAR"),
+      llmReviewNodes: () => [],
+      copyToClipboard() {},
+    },
+    document: {addEventListener() {}},
+    setTimeout() {}, clearTimeout() {},
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderTakes};\n})();"), context);
+  const page = context.page;
+  const sceneItem = {
+    id: "s1", number: 1, kind: "generated", flow: false, overlap: 39, in_use: "t1",
+    takes: [{
+      id: "t1", number: 1, seed: 1, missing: false,
+      review: {status: "done", score: 80, scores: {prompt: 80, visuals: 90, style: 85, camera: 75, action: 80, continuity: 65, audio: 75, speech: 55}},
+    }],
+  };
+  page.state.boot = {gpu: false, library: false, writer: {gemini_models: []}};
+  page.state.board = {id: "b1", scenes: [sceneItem]};
+  page.state.sceneId = "s1";
+
+  page.renderTakes();
+  const detail = findAll(takeRow, (n) => n.className === "take-detail")[0];
+  const radarCards = findAll(takeRow, (n) => n.className === "score-radar-card");
+  assert.equal(radarCards.length, 1);
+  assert.equal(findAll(detail, (n) => n.className === "review-chip").length, 1);
+});

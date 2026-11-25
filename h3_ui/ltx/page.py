@@ -528,7 +528,7 @@ def install_ltx_page(app: FastAPI, pages: LtxPageState, *, gpu: bool = True) -> 
                     pages.save(owner, latest)
                 # In the background: the video plays before its score and tags arrive.
                 media_review.schedule(run.result, prompt, api_key=writer.get("gemini_api_key") or "",
-                                      enabled=bool(writer.get("review", True)))
+                                      enabled=bool(writer.get("review", True)), detailed=True)
             if run.error is None and not run.result and run.status.startswith("Error"):
                 run.error = run.status
 

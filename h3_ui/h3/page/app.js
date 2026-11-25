@@ -2,7 +2,7 @@
 // The MiniMax H3 page. The server owns every setting and its policy; this draws what it answers.
 (() => {
   const API = "/h3/api";
-  const {$, h, createClient, createToast, seg, openStudio, decisionScoreChips, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
+  const {$, h, createClient, createToast, seg, openStudio, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
 
@@ -91,7 +91,7 @@
     [2, "openai_api_key", "Temporary OpenAI API key", "password", {store: "writer", when: writerIs("OpenAI-compatible"), placeholder: "Uses OPENAI_API_KEY when blank", hint: "The server does not store keys entered here."}],
     [2, "openai_base_url", "Base URL", "text", {store: "writer", when: writerIs("OpenAI-compatible"), placeholder: "Uses OPENAI_BASE_URL when blank"}],
     [2, null, "Result review", "head"],
-    [2, "review", "Score videos and tag them", "bool", {store: "writer", hint: "After each video is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Storyboard takes are scored too. Uses the session Gemini API key from System, or server GEMINI_API_KEY."}],
+    [2, "review", "Score videos and tag them", "bool", {store: "writer", hint: "After each video is saved, Gemini Decision scores how well it fits the prompt and adds Media library tags, in the background. Uses the session Gemini API key from System, or server GEMINI_API_KEY."}],
 
     [3, "attention_mode", "Attention", "choice", {locked: () => app.boot.attention_locked, hint: "SLA is the default: block-sparse, audio-safe, and dense for short sequences. Veda is experimental learned sparse attention. Auto enables Sol-Attn for Reference mode or large jobs and uses Kitchen for smaller ones. Sage 2 applies the pinned KJNodes override."}],
     [3, "sla_preset", "SLA / Veda preset", "choice", {when: is("attention_mode", "SLA", "Veda"), hint: "Fast uses validated 0.90 sparsity. Balanced uses the LoRA-distilled 0.85 sparsity. Quality also runs the final sampling step dense to recover fine detail."}],
@@ -552,7 +552,8 @@
     if (review.status === "pending") {
       box.replaceChildren(h("span", {class: "muted", text: "Scoring the take with Gemini Decision…"}));
     } else if (review.status === "done") {
-      box.replaceChildren(...decisionScoreChips(review, {chipClass: "chip", includeTags: true}));
+      const radar = decisionScoreRadar?.(review, {chipClass: "chip", includeTags: true, includeHeadline: true});
+      box.replaceChildren(...(radar ? [radar] : decisionScoreChips(review, {chipClass: "chip", includeTags: true})));
     } else {
       box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No score: the Decision review failed."}));
     }

@@ -152,25 +152,62 @@
     }
   };
 
-  const SCORE_FIELDS = [["prompt", "Prompt"], ["references", "Refs"], ["visuals", "Visuals"], ["audio", "Audio"], ["advice", "Advice"]];
+  const SCORE_FIELDS = [
+    ["prompt", "Prompt"],
+    ["visuals", "Visuals"],
+    ["style", "Style"],
+    ["camera", "Camera"],
+    ["action", "Action"],
+    ["continuity", "Continuity"],
+    ["audio", "Audio"],
+    ["speech", "Speech"],
+    ["references", "Refs"],
+    ["advice", "Advice"],
+  ];
   const scoreTone = (value) => (value >= 70 ? "good" : value < 45 ? "warn" : "");
 
-  const decisionScoreChips = (review, {chipClass = "chip", includeTags = false} = {}) => {
+  const scoreAxes = (review) => {
+    const scores = review?.scores;
+    if (!scores || typeof scores !== "object") return [];
+    const axes = [];
+    for (const [key, label] of SCORE_FIELDS) {
+      const raw = scores[key];
+      if (raw === undefined || raw === null || raw === "") continue;
+      const numeric = Number(raw);
+      if (!Number.isFinite(numeric)) continue;
+      axes.push({key, label, value: Math.max(0, Math.min(100, Math.round(numeric)))});
+    }
+    return axes;
+  };
+
+  const reviewHeadline = (review, {includeTagsInMeta = false} = {}) => {
     const headline = review.score !== undefined && review.score !== null ? review.score : review.fit;
     const headlineLabel = review.score_label || review.label || "";
     const prefix = review.score !== undefined && review.score !== null ? "Take score" : "Prompt fit";
     const meta = [];
     if (review.ref_count) meta.push(`${review.ref_count} ref${review.ref_count === 1 ? "" : "s"}`);
     if (review.advice) meta.push("with advice");
-    if (!includeTags && review.tags?.length) meta.push(`Tags: ${review.tags.join(", ")}`);
+    if (includeTagsInMeta && review.tags?.length) meta.push(`Tags: ${review.tags.join(", ")}`);
+    return {
+      headline,
+      headlineLabel,
+      prefix,
+      meta,
+      text: `${prefix} ${headline}${headlineLabel ? ` · ${headlineLabel}` : ""}`,
+      title: `Scored by Gemini Decision${meta.length ? ` (${meta.join(" · ")})` : ""}`,
+    };
+  };
+
+  const decisionScoreChips = (review, {chipClass = "chip", includeTags = false, includeBreakdown = true} = {}) => {
+    const info = reviewHeadline(review, {includeTagsInMeta: !includeTags});
     const chips = [
       h("span", {
-        class: `${chipClass} ${scoreTone(headline)}`.trim(),
-        title: `Scored by Gemini Decision${meta.length ? ` (${meta.join(" · ")})` : ""}`,
-        text: `${prefix} ${headline}${headlineLabel ? ` · ${headlineLabel}` : ""}`,
+        class: `${chipClass} ${scoreTone(info.headline)}`.trim(),
+        title: info.title,
+        text: info.text,
       }),
     ];
-    if (review.scores && typeof review.scores === "object") {
+    if (includeBreakdown && review.scores && typeof review.scores === "object") {
       for (const [key, label] of SCORE_FIELDS) {
         if (review.scores[key] !== undefined && review.scores[key] !== null) {
           chips.push(h("span", {class: `${chipClass} ${scoreTone(review.scores[key])}`.trim(), text: `${label} ${review.scores[key]}`}));
@@ -183,6 +220,140 @@
       }
     }
     return chips;
+  };
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svgEl = (tag, attrs = {}, ...children) => {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === undefined || value === null || value === false) continue;
+      node.setAttribute(key, value === true ? "" : String(value));
+    }
+    for (const child of children.flat(Infinity)) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(typeof child === "string" || typeof child === "number" ? document.createTextNode(String(child)) : child);
+    }
+    return node;
+  };
+
+  const decisionScoreRadar = (review, {chipClass = "chip", includeTags = false, includeHeadline = true} = {}) => {
+    const axes = scoreAxes(review);
+    if (axes.length < 3) return null;
+    const info = reviewHeadline(review);
+    const summaryParts = axes.map((axis) => `${axis.label} ${axis.value}`);
+    const ariaSummary = info.headline !== undefined && info.headline !== null
+      ? `${info.prefix} ${info.headline}${info.headlineLabel ? ` (${info.headlineLabel})` : ""}: ${summaryParts.join(", ")}`
+      : `Aspect scores: ${summaryParts.join(", ")}`;
+
+    const cx = 190, cy = 138, R = 86, LR = 102;
+    const rings = [];
+    const ticks = [];
+    for (const pct of [20, 40, 60, 80, 100]) {
+      const r = (R * pct) / 100;
+      rings.push(svgEl("circle", {cx, cy, r: r.toFixed(2), class: pct === 100 ? "radar-ring radar-backdrop" : "radar-ring"}));
+      ticks.push(svgEl("text", {x: cx - 4, y: (cy - r + 3).toFixed(2), "text-anchor": "end", class: "radar-tick mono"}, `${pct}%`));
+    }
+
+    const spokes = [];
+    const polygonPoints = [];
+    const axisGroups = [];
+    const listItems = [];
+    const readoutValue = h("strong", {class: "mono"});
+    const readoutLabel = h("span", {class: "small muted", text: "Hover or focus any aspect"});
+
+    const setActive = (activeIndex) => {
+      axisGroups.forEach((group, idx) => group.classList?.toggle("is-active", idx === activeIndex));
+      listItems.forEach((item, idx) => item.classList?.toggle("is-active", idx === activeIndex));
+      if (activeIndex === null || activeIndex === undefined) {
+        readoutValue.textContent = "";
+        readoutLabel.textContent = "Hover or focus any aspect";
+      } else {
+        const picked = axes[activeIndex];
+        readoutValue.textContent = String(picked.value);
+        readoutLabel.textContent = picked.label;
+      }
+    };
+
+    axes.forEach((axis, index) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * index) / axes.length;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      spokes.push(svgEl("line", {
+        x1: cx, y1: cy, x2: (cx + R * cos).toFixed(2), y2: (cy + R * sin).toFixed(2), class: "radar-spoke",
+      }));
+      const vr = (R * axis.value) / 100;
+      const vx = cx + vr * cos;
+      const vy = cy + vr * sin;
+      polygonPoints.push(`${vx.toFixed(2)},${vy.toFixed(2)}`);
+
+      const lx = cx + LR * cos;
+      const ly = cy + LR * sin;
+      const anchor = Math.abs(cos) < 0.2 ? "middle" : cos > 0 ? "start" : "end";
+      const baseline = sin < -0.7 ? "auto" : sin > 0.7 ? "hanging" : "middle";
+
+      const labelEl = svgEl("text", {
+        x: lx.toFixed(2), y: ly.toFixed(2), "text-anchor": anchor, "dominant-baseline": baseline, class: "radar-label",
+      }, axis.label);
+      const dotEl = svgEl("circle", {cx: vx.toFixed(2), cy: vy.toFixed(2), r: "4.5", class: "radar-dot"});
+      const hitEl = svgEl("circle", {
+        cx: vx.toFixed(2), cy: vy.toFixed(2), r: "14", class: "radar-hit",
+        tabindex: "0", role: "graphics-symbol", "aria-label": `${axis.label}: ${axis.value} out of 100`,
+      });
+      const group = svgEl("g", {class: "radar-axis"}, labelEl, dotEl, hitEl);
+
+      const activate = () => setActive(index);
+      const deactivate = () => setActive(null);
+      hitEl.addEventListener("pointerenter", activate);
+      hitEl.addEventListener("pointerleave", deactivate);
+      hitEl.addEventListener("focus", activate);
+      hitEl.addEventListener("blur", deactivate);
+      labelEl.addEventListener("pointerenter", activate);
+      labelEl.addEventListener("pointerleave", deactivate);
+      axisGroups.push(group);
+
+      const tone = scoreTone(axis.value);
+      const item = h("div", {
+        class: "score-radar-item", role: "listitem", tabIndex: 0,
+        onpointerenter: activate, onpointerleave: deactivate, onfocus: activate, onblur: deactivate,
+      },
+      h("span", {class: `score-radar-dot ${tone}`.trim(), "aria-hidden": "true"}),
+      h("span", {class: "score-radar-name", text: axis.label}),
+      h("span", {class: "score-radar-val mono", text: String(axis.value)}));
+      listItems.push(item);
+    });
+
+    const svg = svgEl("svg", {
+      viewBox: "0 0 380 276", class: "score-radar-svg", role: "img", "aria-label": ariaSummary,
+    },
+    ...rings,
+    ...spokes,
+    ...ticks,
+    svgEl("polygon", {points: polygonPoints.join(" "), class: "radar-area"}),
+    svgEl("circle", {cx, cy, r: "2.5", class: "radar-origin"}),
+    ...axisGroups);
+
+    const sideChildren = [];
+    if (includeHeadline && info.headline !== undefined && info.headline !== null) {
+      sideChildren.push(h("div", {class: "score-radar-head"},
+        h("span", {
+          class: `${chipClass} ${scoreTone(info.headline)}`.trim(),
+          title: info.title,
+          text: info.text,
+        }),
+        info.meta.length ? h("span", {class: "small muted", text: info.meta.join(" · ")}) : null));
+    }
+    sideChildren.push(
+      h("div", {class: "score-radar-readout", "aria-live": "polite"}, readoutValue, readoutLabel),
+      h("div", {class: "score-radar-list", role: "list"}, ...listItems),
+    );
+    if (includeTags && review.tags?.length) {
+      sideChildren.push(h("div", {class: "score-radar-tags"},
+        review.tags.map((tag) => h("span", {class: chipClass, title: "Added to Media library tags", text: tag}))));
+    }
+
+    return h("div", {class: "score-radar-card"},
+      h("div", {class: "score-radar-plot"}, svg),
+      h("div", {class: "score-radar-side"}, ...sideChildren));
   };
 
   const copyToClipboard = async (text, toast, label = "Finetuned prompt copied.") => {
@@ -254,6 +425,6 @@
   globalThis.H3PageCommon = {
     $, h, visibleArea, visibleBottom, createToast, createClient,
     seg, multiSeg, rangeOf, presetText, openStudio, openSystem,
-    scoreTone, decisionScoreChips, llmReviewNodes, copyToClipboard,
+    scoreTone, scoreAxes, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard,
   };
 })();

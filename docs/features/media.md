@@ -6,12 +6,17 @@ available from Media and as automatic H3 finishing.
 ## Result scores and automatic tags
 
 With **Score results and tag them** on (the default; it sits with the prompt
-writer on the MiniMax H3, Image, Song and LTX 2.5 pages, and Storyboard follows MiniMax
-H3's), each saved video, image, Storyboard take and song is sent with its prompt
+writer on the MiniMax H3, Image, Song and LTX 2.5 pages), each saved video,
+image, and song is sent with its prompt
 to Gemini Decision (`h3_app/media_review.py`) in a background thread, so
-generation never waits for it. One request asks how well the result fits the
+generation never waits for it. Storyboard has its own per-storyboard
+**Automatically score each take in the background after generation** toggle under
+**Storyboard settings** (off by default). One request asks how well the result fits the
 prompt (a five-level rubric shown as **Prompt fit 0–100** with a label; for an
-edit, whether the edit was made; for a song, the brief and lyrics) and a set of
+edit, whether the edit was made; for a song, the brief and lyrics; for generated
+videos and Storyboard takes, a multi-aspect rubric covering prompt fit, visuals,
+style, camera, action, continuity, audio, speech, plus references and advice when
+supplied, shown as an interactive radar chart) and a set of
 tag questions from a fixed vocabulary: shot, setting, time of day, mood, style,
 people, animals and text for pictures, plus speech, music and motion for video;
 genre, vocals, mood and tempo for songs. The result is saved beside the file as

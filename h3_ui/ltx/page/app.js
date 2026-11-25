@@ -2,7 +2,7 @@
 // The LTX 2.5 page. The server owns the draft, the options and their policy; this draws what it answers.
 (() => {
   const API = "/ltx/api";
-  const {$, h, createClient, createToast, seg, rangeOf, presetText: sharedPresetText, openStudio} = globalThis.H3PageCommon;
+  const {$, h, createClient, createToast, seg, rangeOf, presetText: sharedPresetText, openStudio, decisionScoreChips, decisionScoreRadar} = globalThis.H3PageCommon;
   const {request, post} = createClient(API);
   const {toast, guard} = createToast();
 
@@ -381,9 +381,8 @@
     if (review.status === "pending") {
       box.replaceChildren(h("span", {class: "muted", text: "Scoring the video against the prompt…"}));
     } else if (review.status === "done") {
-      box.replaceChildren(
-        h("span", {class: `chip ${review.fit >= 70 ? "good" : review.fit < 45 ? "warn" : ""}`, title: "How well the video fits its prompt, scored by Gemini Decision", text: `Prompt fit ${review.fit} · ${review.label}`}),
-        ...review.tags.map((tag) => h("span", {class: "chip", title: "Added to Media library tags", text: tag})));
+      const radar = decisionScoreRadar?.(review, {chipClass: "chip", includeTags: true, includeHeadline: true});
+      box.replaceChildren(...(radar ? [radar] : decisionScoreChips(review, {chipClass: "chip", includeTags: true})));
     } else {
       box.replaceChildren(h("span", {class: "muted", title: review.error || "", text: "No prompt-fit score: the review failed."}));
     }

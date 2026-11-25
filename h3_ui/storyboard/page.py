@@ -261,6 +261,16 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         handlers.service.set_subtitle_settings(owner, storyboard_id, auto_subtitles=enabled, subtitle_language=language)
         return payload(owner, storyboard_id)
 
+    @app.put(f"{api}/boards/{{storyboard_id}}/score-settings", include_in_schema=False)
+    @guarded
+    def score_settings(storyboard_id: str, request: Request, body: dict = Body(...)):
+        enabled = body.get("auto_score")
+        if not isinstance(enabled, bool):
+            raise H3Error("Choose whether takes should be scored automatically.")
+        owner = owner_of(request)
+        handlers.service.set_score_settings(owner, storyboard_id, auto_score=enabled)
+        return payload(owner, storyboard_id)
+
     @app.delete(f"{api}/boards/{{storyboard_id}}", include_in_schema=False)
     @guarded
     def delete(storyboard_id: str, request: Request):

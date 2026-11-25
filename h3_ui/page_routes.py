@@ -18,7 +18,7 @@ from .page_fields import UI_LIMIT
 from .page_runs import Run
 
 COMMON_STATIC = Path(__file__).with_name("page_static")
-COMMON_STATIC_TYPES = {"common.js": "application/javascript"}
+COMMON_STATIC_TYPES = {"common.js": "application/javascript", "score_radar.css": "text/css"}
 
 
 def install_common_static(app: FastAPI) -> None:

@@ -344,19 +344,20 @@ class StoryboardHandlers(StoryboardApiHandlers):
         job = CURRENT_JOB.get()
         saved = service.record_take(owner, storyboard_id, scene["id"], take_id, video=video, latents=outputs,
                                     seed=seed, inputs=inputs, job_id=job.id if job else None)
-        # Scored in the background with the MiniMax H3 page's option (with prompt + active refs).
-        captured = self.settings.get(owner, {})
-        try:
-            take_input, _ = take_review.storyboard_take_input(
-                saved, index, take_id, cast_dir=service.cast_dir(storyboard_id),
-            )
-            take_review.schedule_take_score(
-                take_input,
-                api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
-                enabled=bool(captured.get("review", True)),
-            )
-        except H3Error:
-            pass
+        if saved.get("auto_score"):
+            # Score asynchronously in the background with prompt + active refs so generation never waits.
+            captured = self.settings.get(owner, {})
+            try:
+                take_input, _ = take_review.storyboard_take_input(
+                    saved, index, take_id, cast_dir=service.cast_dir(storyboard_id),
+                )
+                take_review.schedule_take_score(
+                    take_input,
+                    api_key=(captured.get("writer") or {}).get("gemini_api_key") or "",
+                    enabled=True,
+                )
+            except H3Error:
+                pass
         if saved.get("auto_subtitles"):
             from h3_app.dubbing import tools
 

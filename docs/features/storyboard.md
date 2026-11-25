@@ -99,6 +99,13 @@ On a continuing scene, an imported take defaults to keeping any overlap trim if 
 replaces a continuing take, and you can toggle **Skip N-frame overlap** below the take
 cards.
 
+In **Storyboard settings**, turn on **Automatically score each take in the background after generation**
+to score each newly generated take asynchronously with Gemini Decision (evaluating prompt fit,
+visuals, style, camera, action, continuity, audio, speech, and active references in a single
+request, rendered as a radar chart) as soon as it finishes, without delaying generation or subsequent scenes.
+This setting is off by default and saved per storyboard. You can also score or review any take
+manually under its take cards.
+
 ## Subtitles
 
 Dialogue and lyrics inside `<d>` tags in a take's prompt appear as optional subtitles
