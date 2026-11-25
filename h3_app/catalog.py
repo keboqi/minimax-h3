@@ -9,8 +9,7 @@ from h3_app.settings import (
     H3_REGENERATE_16, H3_REGENERATE_384,
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
     PIKA_FLEX, PIKA_FLEX_SIGMAS,
-    LIGHTX2V_FUSION_4STEP_FULL, LIGHTX2V_FUSION_4STEP_LITE,
-    LIGHTX2V_FUSION_8STEP_FULL, LIGHTX2V_FUSION_8STEP_LITE,
+    LIGHTX2V_FUSION_4STEP_FULL, LIGHTX2V_FUSION_8STEP_FULL,
     preset_vae_settings,
 )
 from h3_models import (
@@ -164,7 +163,7 @@ LIGHTX2V_8STEP_TURBO = "LightX2V v1.2 / 8-step 768p"
 LARRY_TURBO = "Larry v4-600 EMA"
 
 
-DEFAULT_TURBO = PIKA_FLEX
+DEFAULT_TURBO = LIGHTX2V_FUSION_4STEP_FULL
 
 
 # Labels saved by earlier releases, mapped to the variant that replaced them.
@@ -172,6 +171,8 @@ LEGACY_TURBO_VARIANTS = {
     "LightX2V / 4-step (FL2V 768p · Ref2V 544p)": LIGHTX2V_4STEP_TURBO,
     "LightX2V v1.0 / 8-step 768p": LIGHTX2V_8STEP_TURBO,
     "LightX2V v1.1 / 8-step 768p": LIGHTX2V_8STEP_TURBO,
+    "LightX2V Turbo Fusion v1.0 / 4-step Lite r32": LIGHTX2V_FUSION_4STEP_FULL,
+    "LightX2V Turbo Fusion v1.0 / 8-step Lite r32": LIGHTX2V_FUSION_8STEP_FULL,
 }
 
 
@@ -680,14 +681,8 @@ LIGHTX2V_FUSION_TURBO_SETTINGS = {
     LIGHTX2V_FUSION_4STEP_FULL: TurboSpec(
         4, 1.0, "turbo_fusion_4step_full_lora", "turbo_fusion_4step_full_lora",
     ),
-    LIGHTX2V_FUSION_4STEP_LITE: TurboSpec(
-        4, 1.0, "turbo_fusion_4step_lite_lora", "turbo_fusion_4step_lite_lora",
-    ),
     LIGHTX2V_FUSION_8STEP_FULL: TurboSpec(
         8, 1.0, "turbo_fusion_8step_full_lora", "turbo_fusion_8step_full_lora",
-    ),
-    LIGHTX2V_FUSION_8STEP_LITE: TurboSpec(
-        8, 1.0, "turbo_fusion_8step_lite_lora", "turbo_fusion_8step_lite_lora",
     ),
 }
 TURBO_SETTINGS.update(STANDARD_TURBO_LORA_SETTINGS)
@@ -717,7 +712,7 @@ UI_DEFAULTS = {
     "duration": 5,
     "width": 1376,
     "height": 768,
-    "steps": 6,
+    "steps": 4,
     "scheduler": "simple",
     "seed": -1,
     "attention_mode": "SLA",

@@ -599,16 +599,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         revision=TURBO_FUSION_REVISION,
     ),
-    "turbo_fusion_4step_lite_lora": ModelSpec(
-        TURBO_FUSION_REPO,
-        "loras",
-        "minimax_h3_ref2v_turbo_fusion_4step_v1.0_lite_r32_comfyui.safetensors",
-        "LightX2V Turbo Fusion v1.0 · 4-step Lite r32 ComfyUI BF16",
-        expected_sha256=(
-            "9ac584289a082fed8043ad06344a74678f7cd7d09e6a613ab01c4a30489af263"
-        ),
-        revision=TURBO_FUSION_REVISION,
-    ),
     "turbo_fusion_8step_full_lora": ModelSpec(
         TURBO_FUSION_REPO,
         "loras",
@@ -616,16 +606,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "LightX2V Turbo Fusion v1.0 · 8-step Full ComfyUI BF16",
         expected_sha256=(
             "7ae8101c7c6d6576b4bc410e38e0a4bc4f21aa9108570d0f7394655a3700ce22"
-        ),
-        revision=TURBO_FUSION_REVISION,
-    ),
-    "turbo_fusion_8step_lite_lora": ModelSpec(
-        TURBO_FUSION_REPO,
-        "loras",
-        "minimax_h3_ref2v_turbo_fusion_8step_v1.0_lite_r32_comfyui.safetensors",
-        "LightX2V Turbo Fusion v1.0 · 8-step Lite r32 ComfyUI BF16",
-        expected_sha256=(
-            "8cc3936ca0901284bf0504b2309ffd507468160e0d907103fb7febca77e20553"
         ),
         revision=TURBO_FUSION_REVISION,
     ),
@@ -1286,9 +1266,7 @@ SOUNDSTAGE_DEPTH_FOCAL_KEY = "soundstage_depthpro2_focal"
 DEFAULT_SOUNDSTAGE_DEPTH_MODEL = "depthpro2-s"
 TURBO_FUSION_MODEL_KEYS = (
     "turbo_fusion_4step_full_lora",
-    "turbo_fusion_4step_lite_lora",
     "turbo_fusion_8step_full_lora",
-    "turbo_fusion_8step_lite_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "h3_image_dit", "h3_image_vae", "h3_image_upsampler",

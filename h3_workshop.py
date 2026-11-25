@@ -210,8 +210,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
     fibo = (FIBO2_MODEL_CHOICES["Dev"][DEFAULT_FIBO2_PRECISION], FIBO2_TEXT_ENCODERS["generate"], "flux3_vae")
     return {
         "MiniMax H3 defaults": tuple(dict.fromkeys((
-            *PRELOAD_MODEL_KEYS, "turbo_lora", "video_vae_lynnreal_int8",
-            "semantic_bridge_v1",
+            *PRELOAD_MODEL_KEYS, "turbo_lora", "turbo_fusion_4step_full_lora",
+            "video_vae_lynnreal_int8", "semantic_bridge_v1",
         ))),
         "Qwen Image 2.1 defaults": qwen,
         "Qwen Image 2.1 + Turbo LoRAs": (

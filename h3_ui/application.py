@@ -734,9 +734,7 @@ def backend_status() -> str:
             )
         for label, filename, step_count in (
             ("LightX2V Turbo Fusion v1.0 / 4-step Full", models.turbo_fusion_4step_full_lora, 4),
-            ("LightX2V Turbo Fusion v1.0 / 4-step Lite r32", models.turbo_fusion_4step_lite_lora, 4),
             ("LightX2V Turbo Fusion v1.0 / 8-step Full", models.turbo_fusion_8step_full_lora, 8),
-            ("LightX2V Turbo Fusion v1.0 / 8-step Lite r32", models.turbo_fusion_8step_lite_lora, 8),
         ):
             if filename:
                 profile_lines.append(

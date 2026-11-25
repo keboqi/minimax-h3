@@ -39,14 +39,13 @@ LIGHTX_LORA_PATTERN = re.compile(
 LIGHTX_BACKBONE_BLOCKS = 50
 LIGHTX_REFINER_BLOCKS = 2
 LIGHTX_TARGETS_PER_BLOCK = 4
-# v1.2 checkpoints add rank-16 AdaLN adapters; Turbo Fusion uses rank-32 AdaLN
-# with Full (320/960 QKV) or Lite r32 (32/96 QKV) backbone ranks.
+# v1.2 checkpoints add rank-16 AdaLN adapters; Turbo Fusion Full uses rank-32
+# AdaLN with 320/960 QKV backbone ranks.
 LIGHTX_ADALN_RANK = 16
 LIGHTX_RANK_PROFILES = frozenset({
     (128, None),
     (128, 16),
     (320, 32),
-    (32, 32),
 })
 LIGHTX_ADALN_MODULES = frozenset(
     f"diffusion_model.blocks.{block}.adaln_proj.linear"

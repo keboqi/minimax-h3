@@ -137,30 +137,30 @@ class LightXLoRALayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unexpected LightX2V LoRA key"):
             ns["_lightx_key_map"](model, lora)
 
-    def test_turbo_fusion_full_and_lite_layouts_load_on_dense_and_pruned_models(self):
-        for core_rank, adaln_rank in ((320, 32), (32, 32)):
-            with self.subTest(core_rank=core_rank, adaln_rank=adaln_rank):
-                modules = {**core_modules(core_rank), **adaln_modules(adaln_rank)}
-                key_map = self.run_map(modules)
-                self.assertEqual(len(key_map), 259)
-                self.assertIn("diffusion_model.final_layer.adaln_proj.linear", key_map)
-                pruned = {
-                    **core_modules(core_rank),
-                    **{name: (out, 8, rank) for name, (out, _, rank) in adaln_modules(adaln_rank).items()},
-                }
-                ns = load_key_map()
-                model, ns["comfy"] = fake_model(pruned, curves=True)
-                self.assertEqual(len(ns["_lightx_key_map"](model, lora_for(modules))), 259)
+    def test_turbo_fusion_full_layout_loads_on_dense_and_pruned_models(self):
+        modules = {**core_modules(320), **adaln_modules(32)}
+        key_map = self.run_map(modules)
+        self.assertEqual(len(key_map), 259)
+        self.assertIn("diffusion_model.final_layer.adaln_proj.linear", key_map)
+        pruned = {
+            **core_modules(320),
+            **{name: (out, 8, rank) for name, (out, _, rank) in adaln_modules(32).items()},
+        }
+        ns = load_key_map()
+        model, ns["comfy"] = fake_model(pruned, curves=True)
+        self.assertEqual(len(ns["_lightx_key_map"](model, lora_for(modules))), 259)
 
     def test_unsupported_or_mixed_rank_profiles_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, "Unexpected LightX2V rank profile"):
-            self.run_map({**core_modules(64), **adaln_modules(32)})
+        for core_rank, adaln_rank in ((64, 32), (32, 32)):
+            with self.subTest(core_rank=core_rank, adaln_rank=adaln_rank):
+                with self.assertRaisesRegex(ValueError, "Unexpected LightX2V rank profile"):
+                    self.run_map({**core_modules(core_rank), **adaln_modules(adaln_rank)})
         mixed = {**core_modules(320), **adaln_modules(32)}
         mixed["diffusion_model.blocks.1.mlp.fc1"] = (28672, HIDDEN, 128)
         with self.assertRaisesRegex(ValueError, "Unexpected LightX2V tensor layout"):
             self.run_map(mixed)
-        bad_qkv = {**core_modules(32), **adaln_modules(32)}
-        bad_qkv["diffusion_model.blocks.0.attn.qkv_proj"] = (21504, HIDDEN, 32)
+        bad_qkv = {**core_modules(320), **adaln_modules(32)}
+        bad_qkv["diffusion_model.blocks.0.attn.qkv_proj"] = (21504, HIDDEN, 320)
         with self.assertRaisesRegex(ValueError, "Unexpected LightX2V tensor layout"):
             self.run_map(bad_qkv)
 

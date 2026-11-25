@@ -56,7 +56,7 @@ def parse_groups(value: str) -> tuple[str, ...]:
 
 def h3_model_keys() -> tuple[str, ...]:
     """The files the MiniMax H3 tab's default Text to video run loads."""
-    from h3_app.catalog import STANDARD_TURBO_LORA_SETTINGS, UI_DEFAULTS
+    from h3_app.catalog import TURBO_SETTINGS, UI_DEFAULTS
     from h3_app.policy import h3_latent_upscaler_settings
     from h3_app.resources import resolve_decoders
     from h3_models import H3_TEXT_ENCODER_CHOICES, PRELOAD_MODEL_KEYS, PROFILE_MODEL_KEYS
@@ -70,7 +70,7 @@ def h3_model_keys() -> tuple[str, ...]:
         use_lynnreal_vae=defaults["use_lynnreal_vae"], use_sol_vae=defaults["use_sol_vae"],
         video_encoder=defaults["video_encoder"], lightvae_decoder=defaults["lightvae_decoder"],
     ).optional_model_keys
-    turbo = STANDARD_TURBO_LORA_SETTINGS.get(defaults["turbo_variant"])
+    turbo = TURBO_SETTINGS.get(defaults["turbo_variant"])
     if defaults["generation_mode"] == "Turbo" and turbo is not None:
         keys.append(turbo.lora_attr)
     if defaults["semantic_bridge"]:

@@ -140,14 +140,8 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         turbo_fusion_4step_full_lora=data.get(
             "turbo_fusion_4step_full_lora", MODEL_SPECS["turbo_fusion_4step_full_lora"].local_name
         ),
-        turbo_fusion_4step_lite_lora=data.get(
-            "turbo_fusion_4step_lite_lora", MODEL_SPECS["turbo_fusion_4step_lite_lora"].local_name
-        ),
         turbo_fusion_8step_full_lora=data.get(
             "turbo_fusion_8step_full_lora", MODEL_SPECS["turbo_fusion_8step_full_lora"].local_name
-        ),
-        turbo_fusion_8step_lite_lora=data.get(
-            "turbo_fusion_8step_lite_lora", MODEL_SPECS["turbo_fusion_8step_lite_lora"].local_name
         ),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),

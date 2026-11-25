@@ -68,7 +68,7 @@
   const FIELDS = [
     [0, "model_profile", "Base model", "choice", {hint: "Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. Speed, Original and Singularity download when first selected."}],
     [0, "generation_mode", "Generation", "choice", {hint: "Turbo uses the Turbo implementation below. LightX2V uses the matching reference adapter; Larry reference mode is experimental."}],
-    [0, "turbo_variant", "Turbo implementation", "choice", {when: is("generation_mode", "Turbo"), hint: "Each variant supplies its trained step count; steps remain adjustable except Pika H3 Flex's fixed six-step LCM schedule. Adapters download on first use. LightX2V Turbo Fusion v1.0 (4/8-step Full and Lite r32) uses Euler with video/audio shifts 12/3 across T2VA, I2VA, and Ref2VA. PDMD and DMAD 4-step adapters are experimental."}],
+    [0, "turbo_variant", "Turbo implementation", "choice", {when: is("generation_mode", "Turbo"), hint: "Each variant supplies its trained step count; steps remain adjustable except Pika H3 Flex's fixed six-step LCM schedule. Adapters download on first use. LightX2V Turbo Fusion v1.0 (4/8-step Full) uses Euler with video/audio shifts 12/3 across T2VA, I2VA, and Ref2VA. PDMD and DMAD 4-step adapters are experimental."}],
     [0, "steps", "Steps", "num", {range: "4 – 30"}],
     [0, "scheduler", "Scheduler", "choice", {hint: "Controls how sampling steps are distributed across denoising."}],
     [0, "semantic_bridge", "Semantic Bridge (experimental)", "bool", {hint: "May improve prompt adherence. Downloads an 11 MB adapter on first use. FL2VA only; disabled for reference media."}],

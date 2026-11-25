@@ -11,7 +11,8 @@ from h3_app.settings import (
     OutputSettings,
     ResolutionContext,
     SamplingSettings,
-    PIKA_FLEX,
+    LIGHTX2V_FUSION_4STEP_FULL,
+    LIGHTX2V_FUSION_8STEP_FULL,
     preset_settings,
     resolve_settings,
     transition_modes,
@@ -51,13 +52,13 @@ class SettingsTests(unittest.TestCase):
                 disabled = replace(request, finishing=replace(request.finishing, latent_upscale=False))
                 self.assertEqual(resolve_settings(disabled).effective.sampling.latent_upscale_refine_steps, 6)
 
-    def test_singularity_default_uses_pika_and_selects_base(self):
+    def test_singularity_default_uses_fusion_4step_and_selects_base(self):
         self.assertEqual(GenerationRequest().preset, "Singularity")
         self.assertEqual(GenerationRequest().model_profile, "Singularity")
         self.assertTrue(GenerationRequest().semantic_bridge)
         for mode in ("Normal", "Turbo"):
-            expected = replace(preset_settings("Fast", mode), turbo_variant=PIKA_FLEX,
-                               steps=6 if mode == "Turbo" else 15)
+            expected = replace(preset_settings("Fast", mode), turbo_variant=LIGHTX2V_FUSION_4STEP_FULL,
+                               steps=4 if mode == "Turbo" else 15)
             self.assertEqual(preset_settings("Singularity", mode), expected)
             for action in ("preset", "restore"):
                 _, values = transition_modes(None, {"preset": "Singularity", "generation_mode": mode, "model_profile": "Speed", "prompt": "keep", "width": 864}, action)
@@ -116,9 +117,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(
             [
                 preset_settings(n, "Turbo").steps
-                for n in ("Fast", "Balanced", "Quality")
+                for n in ("Singularity", "Fast", "Balanced", "Quality")
             ],
-            [4, 6, 6],
+            [4, 4, 8, 8],
         )
         self.assertEqual(
             [
@@ -127,9 +128,12 @@ class SettingsTests(unittest.TestCase):
             ],
             [15, 18, 20],
         )
-        for name in ("Singularity", "Balanced", "Quality"):
-            self.assertEqual(preset_settings(name, "Turbo").turbo_variant, PIKA_FLEX)
-            self.assertEqual(preset_settings(name, "Turbo").steps, 6)
+        for name in ("Singularity", "Fast"):
+            self.assertEqual(preset_settings(name, "Turbo").turbo_variant, LIGHTX2V_FUSION_4STEP_FULL)
+            self.assertEqual(preset_settings(name, "Turbo").steps, 4)
+        for name in ("Balanced", "Quality"):
+            self.assertEqual(preset_settings(name, "Turbo").turbo_variant, LIGHTX2V_FUSION_8STEP_FULL)
+            self.assertEqual(preset_settings(name, "Turbo").steps, 8)
         self.assertEqual(preset_settings("Quality", "Normal").text_encoder, "INT8 ConvRot")
         self.assertFalse(preset_settings("Quality", "Normal").stage_model_offload)
 

@@ -121,7 +121,10 @@ class H3PageTests(unittest.TestCase):
         self.assertEqual(state["differences"], {})
 
     def test_generation_mode_keeps_each_modes_steps(self):
-        self.assertEqual(self.boot["state"]["locked"]["steps"], 6)
+        self.assertEqual(self.boot["state"]["values"]["steps"], 4)
+        self.assertEqual(self.boot["state"]["locked"], {})
+        pika = self.change("turbo_variant", turbo_variant="Pika H3 Flex (6-step)")
+        self.assertEqual(pika["locked"]["steps"], 6)
         self.change("turbo_variant", turbo_variant="LightX2V v1.1 / 8-step 768p")
         state = self.change("steps", steps=9)
         self.assertEqual(state["locked"], {})

@@ -52,12 +52,13 @@ class PikaFlexTests(unittest.TestCase):
         self.assertEqual(turbo_sampler_name(PIKA_FLEX, None), "res_multistep")
 
     def test_unknown_turbo_label_resolves_to_the_adapter_that_runs(self):
-        # The workflow loads Pika for unknown labels, so settings must enforce its schedule.
+        from h3_app.catalog import DEFAULT_TURBO
+
         plan = resolve_settings(self.request(
             generation_mode="Turbo", turbo_variant="Removed adapter", steps=20, scheduler="beta",
         ))
-        self.assertEqual(plan.effective.sampling.turbo_variant, PIKA_FLEX)
-        self.assertEqual((plan.effective.sampling.steps, plan.effective.sampling.scheduler), (6, "simple"))
+        self.assertEqual(plan.effective.sampling.turbo_variant, DEFAULT_TURBO)
+        self.assertEqual((plan.effective.sampling.steps, plan.effective.sampling.scheduler), (20, "beta"))
         self.assertIn("turbo_variant", {item.field for item in plan.adjustments})
         legacy = resolve_settings(self.request(
             generation_mode="Turbo", turbo_variant="LightX2V v1.0 / 8-step 768p", steps=8,

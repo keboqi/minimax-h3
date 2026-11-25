@@ -1,4 +1,4 @@
-"""LightX2V Turbo Fusion v1.0 contracts across T2VA, I2VA/FL2VA, Ref2VA, and refinement."""
+"""LightX2V Turbo Fusion v1.0 Full contracts across T2VA, I2VA/FL2VA, Ref2VA, presets, and refinement."""
 
 import json
 from pathlib import Path
@@ -10,18 +10,17 @@ from unittest.mock import Mock, patch
 import h3_models
 from h3_app import model_service
 from h3_app.catalog import (
+    DEFAULT_TURBO,
     FUSED_MODULATION_NODE,
     H3_REFINEMENT,
     H3_SIGMA_SHIFT_NODE,
     LIGHTX2V_BYPASS_LORA_NODE,
     LIGHTX2V_FUSION_4STEP_FULL,
-    LIGHTX2V_FUSION_4STEP_LITE,
     LIGHTX2V_FUSION_8STEP_FULL,
-    LIGHTX2V_FUSION_8STEP_LITE,
-    LIGHTX2V_FUSION_TURBO_SETTINGS,
     PIKA_FLEX,
     REFINEMENT_LORA_SETTINGS,
     TURBO_SETTINGS,
+    UI_DEFAULTS,
 )
 from h3_app.errors import H3Error
 from h3_app.generation.h3 import lightx2v_fusion_sampling_profile
@@ -35,16 +34,14 @@ from h3_app.policy import (
     turbo_strength_for,
     turbo_uses_custom_nodes,
 )
-from h3_app.settings import GenerationRequest, resolve_settings, transition_modes
+from h3_app.settings import GenerationRequest, preset_settings, resolve_settings, transition_modes
 from h3_app.workflows import face_refine, h3, regenerate
 from h3_ui.persistence import restore_preferences
 from tests.workflow_cases import H3_DEFAULTS, MODELS
 
 FUSION_CASES = (
     (LIGHTX2V_FUSION_4STEP_FULL, "turbo_fusion_4step_full_lora", 4),
-    (LIGHTX2V_FUSION_4STEP_LITE, "turbo_fusion_4step_lite_lora", 4),
     (LIGHTX2V_FUSION_8STEP_FULL, "turbo_fusion_8step_full_lora", 8),
-    (LIGHTX2V_FUSION_8STEP_LITE, "turbo_fusion_8step_lite_lora", 8),
 )
 
 
@@ -62,7 +59,39 @@ class LightX2VTurboFusionTests(unittest.TestCase):
             **values,
         }
 
-    def test_policy_settings_and_preferences_for_all_four_variants(self):
+    def test_presets_and_retired_lite_migration(self):
+        self.assertEqual(DEFAULT_TURBO, LIGHTX2V_FUSION_4STEP_FULL)
+        self.assertEqual(UI_DEFAULTS["turbo_variant"], LIGHTX2V_FUSION_4STEP_FULL)
+        self.assertEqual(UI_DEFAULTS["steps"], 4)
+        for name in ("Singularity", "Fast"):
+            cfg = preset_settings(name, "Turbo")
+            self.assertEqual((cfg.turbo_variant, cfg.steps), (LIGHTX2V_FUSION_4STEP_FULL, 4))
+        for name in ("Balanced", "Quality"):
+            cfg = preset_settings(name, "Turbo")
+            self.assertEqual((cfg.turbo_variant, cfg.steps), (LIGHTX2V_FUSION_8STEP_FULL, 8))
+        for retired, replacement in (
+            ("LightX2V Turbo Fusion v1.0 / 4-step Lite r32", LIGHTX2V_FUSION_4STEP_FULL),
+            ("LightX2V Turbo Fusion v1.0 / 8-step Lite r32", LIGHTX2V_FUSION_8STEP_FULL),
+        ):
+            self.assertNotIn(retired, TURBO_SETTINGS)
+            self.assertNotIn(retired, REFINEMENT_LORA_SETTINGS)
+            self.assertEqual(normalize_turbo_variant(retired), replacement)
+            restored, _ = restore_preferences(
+                {"h3.turbo_variant": retired, "h3.latent_upscale_refine_lora": retired},
+                {
+                    "h3.turbo_variant": SimpleNamespace(value=DEFAULT_TURBO, choices=list(TURBO_SETTINGS)),
+                    "h3.latent_upscale_refine_lora": SimpleNamespace(
+                        value="Same as generation",
+                        choices=["Same as generation", *REFINEMENT_LORA_SETTINGS],
+                    ),
+                },
+            )
+            self.assertEqual(restored["h3.turbo_variant"], replacement)
+            self.assertEqual(restored["h3.latent_upscale_refine_lora"], replacement)
+        self.assertNotIn("turbo_fusion_4step_lite_lora", h3_models.MODEL_SPECS)
+        self.assertNotIn("turbo_fusion_8step_lite_lora", h3_models.MODEL_SPECS)
+
+    def test_policy_settings_and_preferences_for_both_full_variants(self):
         for variant, key, steps in FUSION_CASES:
             with self.subTest(variant=variant):
                 filename = h3_models.MODEL_SPECS[key].local_name
@@ -102,7 +131,6 @@ class LightX2VTurboFusionTests(unittest.TestCase):
                 self.assertNotIn("steps", plan.inactive)
                 self.assertNotIn("scheduler", plan.inactive)
 
-                # Steps remain editable (e.g., 6 steps with 4-step Fusion).
                 custom_steps = resolve_settings(GenerationRequest.from_values({
                     "turbo_variant": variant,
                     "steps": 6,
@@ -125,7 +153,7 @@ class LightX2VTurboFusionTests(unittest.TestCase):
                 self.assertEqual(restored["h3.turbo_variant"], variant)
                 self.assertEqual(restored["h3.latent_upscale_refine_lora"], variant)
 
-    def test_all_four_variants_work_for_t2va_i2va_and_ref2va_graphs(self):
+    def test_both_full_variants_work_for_t2va_i2va_and_ref2va_graphs(self):
         task_cases = (
             ("Text to video", h3.build_fl2va_graph, {"first_image": None, "last_image": None}),
             ("First / last frame", h3.build_fl2va_graph, {"first_image": "first.png", "last_image": "last.png"}),
@@ -221,8 +249,8 @@ class LightX2VTurboFusionTests(unittest.TestCase):
                 self.assertEqual(getattr(models, key), h3_models.MODEL_SPECS[key].local_name)
 
     def test_native_upscale_refinement_and_face_refine_with_fusion(self):
-        # 1. Two-stage native latent upscale: Pika base refined with Fusion 8-step Lite r32.
-        fusion_variant = LIGHTX2V_FUSION_8STEP_LITE
+        # 1. Two-stage native latent upscale: Pika base refined with Fusion 8-step Full.
+        fusion_variant = LIGHTX2V_FUSION_8STEP_FULL
         fusion_file = MODELS.turbo_lora_for("Text to video", fusion_variant)
         graph = h3.build_fl2va_graph(**{
             **H3_DEFAULTS,
