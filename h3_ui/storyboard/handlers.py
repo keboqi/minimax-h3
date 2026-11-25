@@ -309,6 +309,11 @@ class StoryboardHandlers(StoryboardApiHandlers):
         if source is not None and not source.get("latent"):
             # A scene from Media: this take's graph encodes the clip's ending itself.
             if not source.get("tail"):
+                if source.get("omitted"):
+                    raise H3Error(
+                        f"Scene {index}'s continuation data wasn't transferred. "
+                        f"Regenerate scene {index} or re-import with takes in use."
+                    )
                 raise H3Error(f"Scene {index} has no ending to continue from. Prepare it again.")
             tail = stage_file(source["tail"], TAIL_CATEGORY, reuse=True, runtime=service.runtime())
         graph = StoryboardGraph(
@@ -387,7 +392,7 @@ class StoryboardHandlers(StoryboardApiHandlers):
         board = self.service.load(owner, storyboard_id)
         takes = [(index, take) for index, scene in enumerate(board["scenes"], 1)
                  if not sb.is_media(scene) and (take := board["takes"].get(scene["in_use"]))
-                 and Path(take["video"]).is_file()]
+                 and take.get("video") and Path(take["video"]).is_file()]
         if not takes:
             raise H3Error("Generate at least one scene to create audio subtitles.")
         pending = [(index, take) for index, take in takes if "subtitles" not in take or take.get("subtitle_error")]

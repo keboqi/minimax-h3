@@ -622,10 +622,14 @@
     } else {
       updatePreviewSubtitles(null, null);
       node.replaceChildren(h("div", {className: "empty"},
-        h("strong", {}, take ? "This take is missing from disk" : item.kind === "media" ? "Not prepared yet" : "No take yet"),
-        h("span", {}, item.kind === "media"
-          ? "Choose a video, set In, Out and Fit, then press Prepare clip."
-          : state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
+        h("strong", {}, take
+          ? (take.omitted ? "Take kept on source server" : "This take is missing from disk")
+          : item.kind === "media" ? "Not prepared yet" : "No take yet"),
+        h("span", {}, take?.omitted
+          ? "Imported without takes to skip transfer. Generate a new take here, or import back to keep existing takes."
+          : item.kind === "media"
+            ? "Choose a video, set In, Out and Fit, then press Prepare clip."
+            : state.boot.gpu ? "Finish the scene, then generate it." : "Prepare it here, then generate it on the GPU endpoint.")));
     }
   };
 
@@ -683,7 +687,8 @@
         badgeScore !== null ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore)) : null),
       h("span", {className: "take-card-meta"},
         h("strong", {}, `Take ${take.number}`),
-        h("span", {className: "mono small muted"}, take.seed !== undefined ? `#${take.seed}` : "")));
+        h("span", {className: "mono small muted"},
+          take.omitted ? "Not transferred" : (take.seed !== undefined ? `#${take.seed}` : ""))));
     });
     const chips = cards;
     const row = [];
@@ -1073,7 +1078,14 @@
       if (item.state === "outdated" && !state.includeOutdated) {
         return toast(`Scene ${item.number} is outdated. Regenerate it or include out-of-date scenes.`, true);
       }
-      if (take.missing) return toast(`Scene ${item.number}'s take is missing from disk.`, true);
+      if (take.missing) {
+        return toast(
+          take.omitted
+            ? `Scene ${item.number}'s take wasn't transferred to this server.`
+            : `Scene ${item.number}'s take is missing from disk.`,
+          true,
+        );
+      }
       playlist.push(take);
     }
     closeFullVideo();

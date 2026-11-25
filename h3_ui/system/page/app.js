@@ -20,6 +20,15 @@
     ["skip", "Skip existing"],
     ["overwrite", "Overwrite existing"],
   ];
+  const STORYBOARD_TAKES_MODES = [
+    ["all", "All takes"],
+    ["in_use", "Takes in use only"],
+    ["none", "Without takes"],
+  ];
+  const STORYBOARD_TAKES_NOTES = {
+    in_use: "Transfers only each scene's active take, skipping alternate takes and version history. Re-importing back with Overwrite preserves existing local takes.",
+    none: "Skips take videos while keeping scene states (Done / Out of date) and continuation latents needed by pending flow scenes. Generate outdated scenes, then re-import back with Overwrite to merge them in.",
+  };
   const PRESENCE_FILTERS = [
     ["all", "All"],
     ["local", "Present locally"],
@@ -52,6 +61,7 @@
     remoteKind: "all",
     remoteSelected: new Set(),
     conflict: "rename",
+    storyboardTakes: "all",
     importResults: null,
     models: {items: [], present_count: 0, missing_count: 0, total_count: 0, families: []},
     presenceFilter: "all",
@@ -498,6 +508,25 @@
         })));
     }));
 
+    const hasStoryboard = app.remoteProjects.some((rp) => rp.kind === "storyboard");
+    $("remote-storyboard-takes-wrap").hidden = !hasStoryboard;
+    if (hasStoryboard) {
+      $("remote-storyboard-takes").replaceChildren(...STORYBOARD_TAKES_MODES.map(([mode, label]) =>
+        h("button", {
+          type: "button",
+          role: "radio",
+          "aria-checked": String(app.storyboardTakes === mode),
+          onclick: () => { app.storyboardTakes = mode; renderRemoteImport(); queueFit(); },
+        }, label)));
+      const noteEl = $("storyboard-takes-note");
+      const note = STORYBOARD_TAKES_NOTES[app.storyboardTakes] || "";
+      noteEl.hidden = !note;
+      noteEl.textContent = note;
+    } else {
+      $("remote-storyboard-takes").replaceChildren();
+      $("storyboard-takes-note").hidden = true;
+    }
+
     $("remote-conflict").replaceChildren(...CONFLICT_MODES.map(([mode, label]) =>
       h("button", {
         type: "button",
@@ -852,6 +881,7 @@
         url: app.remoteLoadedUrl,
         items,
         conflict: app.conflict,
+        storyboard_takes: app.storyboardTakes,
         modal_key: $("modal-key").value,
         modal_secret: $("modal-secret").value,
       })).runs);

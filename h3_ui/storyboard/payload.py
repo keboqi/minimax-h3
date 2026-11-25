@@ -37,7 +37,7 @@ def poster_url(path: str) -> str:
 def referenced_paths(board: dict[str, Any]) -> set[str]:
     """Every file this storyboard shows; the page's file routes serve nothing else."""
     paths = {member["image"] for member in board["cast"]}
-    paths |= {take["video"] for take in board["takes"].values()}
+    paths |= {take["video"] for take in board["takes"].values() if take.get("video")}
     for scene in board["scenes"]:
         paths |= set(sb.model.media_paths(scene))
     return paths
@@ -102,7 +102,7 @@ def _added(board, index, scene, flow) -> str:
 def _thumb(storyboard_id, board, scene, media) -> str | None:
     """A scene's filmstrip picture: its take in use, else its own pictures."""
     take = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
-    if take is not None:
+    if take is not None and take.get("video"):
         return poster_url(take["video"])
     if scene.get("video"):
         return poster_url(scene["video"])
@@ -118,20 +118,29 @@ def _scene(storyboard_id, board, index, states, continuations) -> dict[str, Any]
     state = states[index]
     issues = sb.scene_issues(board, index, states)
     own = [issue for issue in issues if not sb.is_waiting(issue)]
-    takes = [
-        {"id": take_id, "number": number, "seed": board["takes"][take_id]["seed"],
-         "video": file_url(storyboard_id, board["takes"][take_id]["video"]),
-         "preview_start": sb.model.overlap_seconds(board["takes"][take_id]["prefix_frames"]) if flow else 0,
-         "poster": poster_url(board["takes"][take_id]["video"]),
-         **_subtitle_tracks(storyboard_id, board["takes"][take_id]),
-         "subtitle_error": board["takes"][take_id].get("subtitle_error"),
-         "missing": not Path(board["takes"][take_id]["video"]).is_file(),
-         "continued_by": continuations.get(take_id, []),
-         "ref_count": take_review.storyboard_take_ref_count(board, scene, board["takes"][take_id]),
-         "review": media_review.public(board["takes"][take_id]["video"]),
-         "llm_review": media_review.public_llm(board["takes"][take_id]["video"])}
-        for number, take_id in enumerate(scene["takes"], 1) if take_id in board["takes"]
-    ]
+    takes = []
+    for number, take_id in enumerate(scene["takes"], 1):
+        take = board["takes"].get(take_id)
+        if take is None:
+            continue
+        video = take.get("video")
+        has_video = bool(video) and Path(video).is_file()
+        takes.append({
+            "id": take_id,
+            "number": number,
+            "seed": take["seed"],
+            "video": file_url(storyboard_id, video) if video else None,
+            "preview_start": sb.model.overlap_seconds(take["prefix_frames"]) if flow else 0,
+            "poster": poster_url(video) if video else None,
+            **_subtitle_tracks(storyboard_id, take),
+            "subtitle_error": take.get("subtitle_error"),
+            "missing": not has_video,
+            "omitted": bool(take.get("omitted")),
+            "continued_by": continuations.get(take_id, []),
+            "ref_count": take_review.storyboard_take_ref_count(board, scene, take),
+            "review": media_review.public(video) if has_video else None,
+            "llm_review": media_review.public_llm(video) if has_video else None,
+        })
     pictures = []
     if media["mode"] == sb.REFERENCES:
         _, cast_images = sb.model.cast_prompt(board, scene)

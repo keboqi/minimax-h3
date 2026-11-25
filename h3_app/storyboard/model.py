@@ -377,6 +377,18 @@ def scene_issues(board: dict[str, Any], index: int, states: list[str] | None = N
             issues.append(f"Prepare scene {index} first: this scene continues its video")
         else:
             issues.append(f"Generate scene {index} first: this scene continues from it")
+    elif flow:
+        prev_scene = board["scenes"][index - 1]
+        prev_take = board["takes"].get(prev_scene["in_use"]) if prev_scene.get("in_use") else None
+        if (
+            isinstance(prev_take, dict)
+            and prev_take.get("omitted")
+            and not prev_take.get("latent")
+            and not prev_take.get("tail")
+        ):
+            issues.append(
+                f"Scene {index}'s take wasn't transferred: regenerate scene {index} or re-import with takes in use"
+            )
     return issues
 
 

@@ -24,6 +24,7 @@ from h3_app.project_transfer import (
     CONFLICT_MODES,
     KIND_LABELS,
     MAX_KNOWN_DIGESTS,
+    STORYBOARD_TAKES_MODES,
     serialize_project_transfer,
     TRANSFER_HEADER,
     TRANSFER_SCHEMA_VERSION,
@@ -36,6 +37,7 @@ from h3_app.project_transfer import (
     format_import_summary_headline,
     import_remote_projects,
     list_local_projects,
+    normalize_storyboard_takes,
     project_export_stamp,
     rename_local_project,
 )
@@ -53,6 +55,10 @@ class _CachedArchive:
     size: int
     created_at: float
     last_access: float
+
+
+def _effective_storyboard_takes(kind: str, storyboard_takes: str) -> str:
+    return normalize_storyboard_takes(storyboard_takes) if kind == "storyboard" else "all"
 
 
 class _ExportArchiveCache:
@@ -178,20 +184,36 @@ class _ExportArchiveCache:
                 self._evict_locked(now)
             return built
 
-    def get_or_build(self, kind: str, project_id: str, *, store, runtime) -> Path:
+    def get_or_build(
+        self,
+        kind: str,
+        project_id: str,
+        *,
+        store,
+        runtime,
+        storyboard_takes: str = "all",
+    ) -> Path:
+        takes_mode = _effective_storyboard_takes(kind, storyboard_takes)
         stamp = project_export_stamp(kind, project_id, store=store, runtime=runtime)
         cache_key = (
             str(Path(runtime.output_dir).resolve()),
             str(Path(runtime.outputs_dir).resolve()),
             kind,
             project_id,
-            "full",
+            f"full:{takes_mode}",
             stamp,
         )
         return self._build_cached(
             cache_key,
             stale_predicate=lambda k: k[:5] == cache_key[:5],
-            builder=lambda dest: export_project_archive(kind, project_id, dest, store=store, runtime=runtime),
+            builder=lambda dest: export_project_archive(
+                kind,
+                project_id,
+                dest,
+                store=store,
+                runtime=runtime,
+                storyboard_takes=takes_mode,
+            ),
         )
 
     def get_or_build_delta(
@@ -203,8 +225,17 @@ class _ExportArchiveCache:
         runtime,
         known_digests: Iterable[str] = (),
         expected_tree_digest: str = "",
+        storyboard_takes: str = "all",
     ) -> tuple[str, Path | dict[str, Any]]:
-        plan = build_project_export_plan(kind, project_id, store=store, runtime=runtime, compute_digests=True)
+        takes_mode = _effective_storyboard_takes(kind, storyboard_takes)
+        plan = build_project_export_plan(
+            kind,
+            project_id,
+            store=store,
+            runtime=runtime,
+            compute_digests=True,
+            storyboard_takes=takes_mode,
+        )
         expected = str(expected_tree_digest or "").strip().lower()
         if expected and expected == plan.portable_digest:
             return (
@@ -226,14 +257,16 @@ class _ExportArchiveCache:
         }
         matched = sorted(plan.reusable_digests & known_set)
         if not matched:
-            return "archive", self.get_or_build(kind, project_id, store=store, runtime=runtime)
+            return "archive", self.get_or_build(
+                kind, project_id, store=store, runtime=runtime, storyboard_takes=takes_mode
+            )
         matched_hash = hashlib.sha256("\n".join(matched).encode("utf-8")).hexdigest()[:24]
         cache_key = (
             str(Path(runtime.output_dir).resolve()),
             str(Path(runtime.outputs_dir).resolve()),
             kind,
             project_id,
-            "delta",
+            f"delta:{takes_mode}",
             plan.portable_digest,
             matched_hash,
         )
@@ -248,6 +281,7 @@ class _ExportArchiveCache:
                 runtime=runtime,
                 known_digests=known_set,
                 plan=plan,
+                storyboard_takes=takes_mode,
             ),
         )
         return "archive", built
@@ -336,18 +370,20 @@ def install_project_transfer_routes(
             "app": "Prism Workshop" if is_cpu_only() else "Prism Studio",
             "schema_version": TRANSFER_SCHEMA_VERSION,
             "incremental": True,
+            "storyboard_takes_modes": list(STORYBOARD_TAKES_MODES),
             "projects": list_local_projects(store, runtime_config()),
         }
 
     @app.get("/api/projects/transfer/export", include_in_schema=False)
     @serialize_project_transfer
-    def transfer_export(kind: str, id: str):
+    def transfer_export(kind: str, id: str, storyboard_takes: str = "all"):
         try:
             archive_path = _EXPORT_CACHE.get_or_build(
                 kind,
                 id,
                 store=store,
                 runtime=runtime_config(),
+                storyboard_takes=storyboard_takes,
             )
         except (H3Error, ValueError) as exc:
             status_code = 404 if _is_not_found_error(exc) else 400
@@ -392,6 +428,7 @@ def install_project_transfer_routes(
             if cached is not None:
                 return _EXPORT_CACHE.response(cached, _archive_filename(kind, project_id))
         expected_tree_digest = str(body.get("expected_tree_digest") or "")
+        storyboard_takes = str(body.get("storyboard_takes") or "all")
         try:
             outcome, payload = _EXPORT_CACHE.get_or_build_delta(
                 kind,
@@ -400,6 +437,7 @@ def install_project_transfer_routes(
                 runtime=runtime,
                 known_digests=raw_digests,
                 expected_tree_digest=expected_tree_digest,
+                storyboard_takes=storyboard_takes,
             )
         except (H3Error, ValueError) as exc:
             status_code = 404 if _is_not_found_error(exc) else 400
@@ -433,6 +471,7 @@ def install_project_transfer_routes(
                 )
             )
         conflict = str(body.get("conflict") or "rename")
+        storyboard_takes = str(body.get("storyboard_takes") or "all")
         try:
             headers = build_auth_headers(
                 str(body.get("modal_key") or ""),
@@ -451,6 +490,7 @@ def install_project_transfer_routes(
                 headers=headers,
                 owner=owner,
                 on_imported=on_imported,
+                storyboard_takes=storyboard_takes,
             )
         except H3Error as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -700,6 +740,15 @@ def build_project_import_view(
                 value="rename",
                 label="If a project already exists locally",
             )
+            storyboard_takes = gr.Radio(
+                [
+                    ("All takes", "all"),
+                    ("Takes in use only", "in_use"),
+                    ("Without takes", "none"),
+                ],
+                value="all",
+                label="Storyboard takes",
+            )
         import_btn = gr.Button("Import selected projects", variant="primary", scale=0)
         status = gr.Markdown(elem_classes=["h3-ops-note"])
         loaded_choices = gr.State([])
@@ -747,12 +796,14 @@ def build_project_import_view(
         secret: str,
         selected: list[str] | None,
         conflict_mode: str,
+        storyboard_takes_mode: str = "all",
         progress=gr.Progress(),
     ) -> str:
         try:
             headers = build_auth_headers(key, secret)
             if conflict_mode not in CONFLICT_MODES:
                 raise H3Error(f"Unsupported conflict mode: {conflict_mode!r}")
+            takes_mode = normalize_storyboard_takes(storyboard_takes_mode)
             selections: list[tuple[str, str] | tuple[str, str, str]] = []
             for entry in selected or []:
                 parsed = json.loads(entry)
@@ -769,6 +820,7 @@ def build_project_import_view(
                 headers=headers,
                 progress=lambda fraction, desc: progress(fraction, desc=desc),
                 on_imported=on_imported,
+                storyboard_takes=takes_mode,
             )
         except (H3Error, ValueError, TypeError) as exc:
             return f"**Error:** {exc}"
@@ -795,7 +847,7 @@ def build_project_import_view(
     )
     import_btn.click(
         run_import,
-        inputs=[remote_url, modal_key, modal_secret, projects, conflict],
+        inputs=[remote_url, modal_key, modal_secret, projects, conflict, storyboard_takes],
         outputs=[status],
         api_name=False,
     )

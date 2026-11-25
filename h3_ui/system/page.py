@@ -40,6 +40,7 @@ from h3_app.project_transfer import (
     format_import_summary_headline,
     import_remote_projects,
     list_local_projects,
+    normalize_storyboard_takes,
     rename_local_project,
 )
 from h3_gpu import CPU_ONLY_MESSAGE, is_a100, is_cpu_only
@@ -698,6 +699,7 @@ def install_system_page(app: FastAPI, *, pages: SystemPageState) -> SystemPageSt
         conflict = str(body.get("conflict") or "rename")
         if conflict not in CONFLICT_MODES:
             raise H3Error(f"Unsupported conflict mode: {conflict!r}")
+        storyboard_takes = normalize_storyboard_takes(body.get("storyboard_takes"))
         headers = build_auth_headers(
             str(body.get("modal_key") or ""),
             str(body.get("modal_secret") or ""),
@@ -718,6 +720,7 @@ def install_system_page(app: FastAPI, *, pages: SystemPageState) -> SystemPageSt
                 progress=on_progress,
                 owner=owner,
                 on_imported=pages.services.on_changed,
+                storyboard_takes=storyboard_takes,
             )
             summary = _format_import_summary(results)
             run.results = results

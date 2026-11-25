@@ -40,6 +40,15 @@ KIND_LABELS = {
     "remake": "Remake",
 }
 CONFLICT_MODES = ("rename", "skip", "overwrite")
+STORYBOARD_TAKES_MODES = ("all", "in_use", "none")
+
+
+def normalize_storyboard_takes(value: str | None) -> str:
+    """Validate and normalize the storyboard take-transfer policy."""
+    mode = str(value or "all").strip().lower()
+    if mode not in STORYBOARD_TAKES_MODES:
+        raise H3Error(f"Unsupported storyboard takes mode: {value!r}")
+    return mode
 
 _APP_PAGE_SUFFIXES = (
     "/soundstage",
@@ -1586,6 +1595,7 @@ class _ExportPlan:
         self.kind = kind
         self.project_id = project_id
         self.display_name = project_id
+        self.storyboard_takes: str = "all"
         self.added: set[str] = set()
         self.files: list[_PlannedFile] = []
         self.inline: list[_PlannedBytes] = []
@@ -2003,13 +2013,58 @@ def _resolve_storyboard_posters(
     ]
 
 
-def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime) -> str:
+def _storyboard_continuation_take_ids(board: dict[str, Any]) -> set[str]:
+    """Return active take IDs of DONE scenes immediately preceding a pending flow scene."""
+    from h3_app.storyboard import model as sb_model
+
+    orig_takes = board.get("takes") or {}
+    states = sb_model.scene_states(board)
+    scenes_list = board.get("scenes") or []
+    continuation_ids: set[str] = set()
+    for idx, scene in enumerate(scenes_list):
+        if idx + 1 >= len(scenes_list):
+            continue
+        if (
+            states[idx] == sb_model.DONE
+            and sb_model.flows_from_previous(board, idx + 1)
+            and states[idx + 1] != sb_model.DONE
+        ):
+            in_use_id = scene.get("in_use")
+            if in_use_id and str(in_use_id) in orig_takes:
+                continuation_ids.add(str(in_use_id))
+    return continuation_ids
+
+
+def _export_storyboard(
+    plan_out: _ExportPlan,
+    project_id: str,
+    *,
+    store,
+    runtime,
+    storyboard_takes: str = "all",
+) -> str:
     from h3_app.catalog import VIDEO_EXTENSIONS
+
+    takes_mode = normalize_storyboard_takes(storyboard_takes)
 
     try:
         board = copy.deepcopy(store.storyboard(None, project_id))
     except ValueError as exc:
         raise H3Error(f'Storyboard "{project_id}" no longer exists.') from exc
+
+    orig_versions = board.get("versions") or []
+    orig_takes = board.get("takes") or {}
+    prev_partial = board.get("_partial_takes") if isinstance(board.get("_partial_takes"), dict) else {}
+    prev_omitted_takes = {str(tid) for tid in (prev_partial.get("omitted_takes") or ()) if tid}
+    prev_omitted_versions = bool(prev_partial.get("omitted_versions"))
+    in_use_ids = {
+        str(scene["in_use"])
+        for scene in (board.get("scenes") or [])
+        if isinstance(scene, dict) and scene.get("in_use") and str(scene["in_use"]) in orig_takes
+    }
+
+    # Compute scene states BEFORE rewriting paths so scene_inputs() matches stored take inputs.
+    continuation_only_ids = _storyboard_continuation_take_ids(board) if takes_mode == "none" else set()
 
     output_dir = Path(runtime.output_dir)
     used_cast_names: set[str] = set()
@@ -2096,9 +2151,12 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
     original_videos = {str(s["in_use"]): PurePosixPath(str(s["video"]).replace("\\", "/")).name
                        for s in board.get("scenes") or [] if s.get("in_use") and s.get("video")}
     rewrite_snapshot_lists(board, record_active_cast=True)
-    for version in board.get("versions") or []:
-        if isinstance(version, dict):
-            rewrite_snapshot_lists(version)
+    if takes_mode == "all":
+        for version in board.get("versions") or []:
+            if isinstance(version, dict):
+                rewrite_snapshot_lists(version)
+    else:
+        board["versions"] = []
     for resolved_media, media_arc in media_map.items():
         record_exported_video(resolved_media, media_arc)
 
@@ -2107,10 +2165,35 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
         if isinstance(scene, dict) and scene.get("in_use") and scene.get("video"):
             scene_media_video_by_take[str(scene["in_use"])] = PurePosixPath(str(scene["video"])).name
 
+    if takes_mode in {"in_use", "none"}:
+        dropped_ids = {str(tid) for tid in orig_takes} - in_use_ids
+        board["takes"] = {
+            tid: take for tid, take in orig_takes.items() if str(tid) in in_use_ids
+        }
+        for scene in board.get("scenes") or []:
+            if isinstance(scene, dict):
+                scene["takes"] = [tid for tid in (scene.get("takes") or []) if str(tid) in in_use_ids]
+        all_omitted = sorted(prev_omitted_takes | dropped_ids)
+        omitted_versions = prev_omitted_versions or bool(orig_versions)
+    else:
+        all_omitted = sorted(prev_omitted_takes)
+        omitted_versions = prev_omitted_versions
+
     for take_id, take in (board.get("takes") or {}).items():
         if not isinstance(take, dict):
             continue
-        for key in _STORYBOARD_TAKE_PATH_KEYS:
+        if takes_mode == "none":
+            take["video"] = None
+            keep_continuation = str(take_id) in continuation_only_ids
+            path_keys = ("latent", "stage_latent", "tail") if keep_continuation else ()
+            if not keep_continuation:
+                for key in ("latent", "stage_latent", "tail"):
+                    take[key] = None
+            take["omitted"] = True
+        else:
+            path_keys = _STORYBOARD_TAKE_PATH_KEYS
+
+        for key in path_keys:
             val = take.get(key)
             if not val:
                 continue
@@ -2160,6 +2243,27 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
             if (inputs.get("kind") == "media" and str(take_id) in scene_media_video_by_take
                     and inputs.get("video") == original_videos.get(str(take_id))):
                 inputs["video"] = scene_media_video_by_take[str(take_id)]
+
+    if takes_mode == "none":
+        if in_use_ids or all_omitted or omitted_versions:
+            board["_partial_takes"] = {
+                "mode": "none",
+                "omitted_takes": all_omitted,
+                "omitted_versions": omitted_versions,
+            }
+        else:
+            board.pop("_partial_takes", None)
+    elif takes_mode == "in_use":
+        if all_omitted or omitted_versions or any(
+            isinstance(t, dict) and t.get("omitted") for t in (board.get("takes") or {}).values()
+        ):
+            board["_partial_takes"] = {
+                "mode": "in_use",
+                "omitted_takes": all_omitted,
+                "omitted_versions": omitted_versions,
+            }
+        else:
+            board.pop("_partial_takes", None)
 
     for poster_path, poster_arc in _resolve_storyboard_posters(exported_videos, runtime=runtime):
         plan_out.add_file(poster_path, poster_arc)
@@ -2316,11 +2420,14 @@ def build_project_export_plan(
     store,
     runtime,
     compute_digests: bool = False,
+    storyboard_takes: str = "all",
 ) -> _ExportPlan:
     """Build a project's deterministic virtual archive layout, optionally hashing its entries."""
     if kind not in PROJECT_KINDS:
         raise H3Error(f"Unsupported project kind: {kind!r}")
+    takes_mode = normalize_storyboard_takes(storyboard_takes)
     plan = _ExportPlan(kind, project_id)
+    plan.storyboard_takes = takes_mode if kind == "storyboard" else "all"
     if kind == "soundstage":
         if store is None:
             raise H3Error("Workspace store is unavailable.")
@@ -2328,7 +2435,9 @@ def build_project_export_plan(
     elif kind == "storyboard":
         if store is None:
             raise H3Error("Workspace store is unavailable.")
-        plan.display_name = _export_storyboard(plan, project_id, store=store, runtime=runtime)
+        plan.display_name = _export_storyboard(
+            plan, project_id, store=store, runtime=runtime, storyboard_takes=takes_mode
+        )
     elif kind == "dubbing":
         plan.display_name = _export_dubbing(plan, project_id, runtime=runtime)
     else:
@@ -2357,6 +2466,8 @@ def _write_planned_archive(
         "name": plan.display_name,
         "exported_at": time.time(),
     }
+    if plan.kind == "storyboard" and plan.storyboard_takes != "all":
+        manifest["storyboard_takes"] = plan.storyboard_takes
     try:
         with zipfile.ZipFile(
             temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True
@@ -2386,9 +2497,19 @@ def _write_planned_archive(
 
 
 @serialize_project_transfer
-def export_project_archive(kind: str, project_id: str, destination: Path, *, store, runtime) -> Path:
+def export_project_archive(
+    kind: str,
+    project_id: str,
+    destination: Path,
+    *,
+    store,
+    runtime,
+    storyboard_takes: str = "all",
+) -> Path:
     """Export one project and all of its media, sidecars, and presets into a portable zip archive."""
-    plan = build_project_export_plan(kind, project_id, store=store, runtime=runtime, compute_digests=False)
+    plan = build_project_export_plan(
+        kind, project_id, store=store, runtime=runtime, compute_digests=False, storyboard_takes=storyboard_takes
+    )
     return _write_planned_archive(plan, destination)
 
 
@@ -2402,10 +2523,13 @@ def export_project_delta_archive(
     runtime,
     known_digests: Iterable[str] = (),
     plan: _ExportPlan | None = None,
+    storyboard_takes: str = "all",
 ) -> Path:
     """Export an incremental delta archive omitting content assets already present in ``known_digests``."""
     if plan is None:
-        plan = build_project_export_plan(kind, project_id, store=store, runtime=runtime, compute_digests=True)
+        plan = build_project_export_plan(
+            kind, project_id, store=store, runtime=runtime, compute_digests=True, storyboard_takes=storyboard_takes
+        )
     elif not plan.portable_digest:
         plan.populate_digests()
 
@@ -2473,10 +2597,12 @@ def inspect_local_project_for_delta(
     *,
     store,
     runtime,
+    storyboard_takes: str = "all",
 ) -> _LocalOverwriteState | None:
     """Collect local file digests and portable fingerprint when an overwrite target already exists locally."""
     if kind not in PROJECT_KINDS:
         return None
+    takes_mode = normalize_storyboard_takes(storyboard_takes)
 
     extra_candidates: list[tuple[Path, int, int]] = []
     with _PROJECT_TRANSFER_LOCK:
@@ -2493,7 +2619,12 @@ def inspect_local_project_for_delta(
         local_id, local_name = found
         try:
             plan = build_project_export_plan(
-                kind, local_id, store=store, runtime=runtime, compute_digests=False
+                kind,
+                local_id,
+                store=store,
+                runtime=runtime,
+                compute_digests=False,
+                storyboard_takes=takes_mode,
             )
         except H3Error:
             return None
@@ -2847,8 +2978,201 @@ def _import_soundstage(
     return _transfer_result("soundstage", source_id, orig_name, target_name, target_name, status, src=src, tx=tx)
 
 
+def _append_result_notes(base_message: str, notes: Sequence[str]) -> str:
+    """Append extra transfer details cleanly inside existing trailing parentheses when present."""
+    if not notes:
+        return base_message
+    joined = ", ".join(notes)
+    if base_message.endswith(")."):
+        return f"{base_message[:-2]}, {joined})."
+    if base_message.endswith("."):
+        return f"{base_message[:-1]} ({joined})."
+    return f"{base_message} ({joined})"
+
+
+def _merge_partial_storyboard_overwrite(
+    board: dict[str, Any],
+    existing_board: dict[str, Any],
+    *,
+    output_root: Path,
+    cast_dir: Path,
+    takes_dir: Path,
+) -> tuple[set[Path], set[Path], int]:
+    """Restore local takes, versions, and protected file paths when overwriting with a partial board."""
+    from h3_app.media_review import review_path
+    from h3_app.storyboard import model
+
+    preserved_cast: set[Path] = set()
+    preserved_takes_dir_files: set[Path] = set()
+    preserved_takes_count = 0
+    cast_dir_resolved = cast_dir.resolve()
+    takes_dir_resolved = takes_dir.resolve()
+
+    def protect_take_files(take_dict: dict[str, Any]) -> None:
+        for key in _STORYBOARD_TAKE_PATH_KEYS:
+            val = take_dict.get(key)
+            if not val:
+                continue
+            path = Path(str(val))
+            candidate = path if path.is_absolute() else (output_root / path)
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved.is_relative_to(takes_dir_resolved):
+                preserved_takes_dir_files.add(resolved)
+                if key == "video":
+                    for sidecar in (snapshot_path(resolved), review_path(resolved)):
+                        try:
+                            if sidecar.is_file() and sidecar.resolve().is_relative_to(takes_dir_resolved):
+                                preserved_takes_dir_files.add(sidecar.resolve())
+                        except OSError:
+                            pass
+
+    def protect_snapshot_files(snapshot: dict[str, Any]) -> None:
+        for member in snapshot.get("cast") or ():
+            if isinstance(member, dict) and member.get("image"):
+                try:
+                    resolved = Path(str(member["image"])).resolve()
+                except OSError:
+                    continue
+                if resolved.is_relative_to(cast_dir_resolved):
+                    preserved_cast.add(resolved)
+        for scene in snapshot.get("scenes") or ():
+            if isinstance(scene, dict):
+                for raw_media in model.media_paths(scene):
+                    path = Path(str(raw_media))
+                    candidate = path if path.is_absolute() else (output_root / path)
+                    try:
+                        resolved = candidate.resolve()
+                    except OSError:
+                        continue
+                    if resolved.is_relative_to(takes_dir_resolved):
+                        preserved_takes_dir_files.add(resolved)
+
+    raw_partial = board.get("_partial_takes")
+    partial_info = raw_partial if isinstance(raw_partial, dict) else {}
+    local_takes = existing_board.get("takes") if isinstance(existing_board.get("takes"), dict) else {}
+    board_takes = board.setdefault("takes", {})
+
+    for tid, take in list(board_takes.items()):
+        if not isinstance(take, dict) or not take.get("omitted"):
+            continue
+        local_take = local_takes.get(tid)
+        if isinstance(local_take, dict) and (not local_take.get("omitted") or local_take.get("video")):
+            restored = copy.deepcopy(local_take)
+            board_takes[tid] = restored
+            protect_take_files(restored)
+            preserved_takes_count += 1
+
+    omitted_ids = {str(tid) for tid in (partial_info.get("omitted_takes") or ()) if tid}
+    restored_omitted_ids: set[str] = set()
+    still_omitted_ids: set[str] = set()
+    for tid in sorted(omitted_ids):
+        if tid in board_takes:
+            continue
+        local_take = local_takes.get(tid)
+        if isinstance(local_take, dict):
+            restored = copy.deepcopy(local_take)
+            board_takes[tid] = restored
+            protect_take_files(restored)
+            restored_omitted_ids.add(tid)
+            preserved_takes_count += 1
+        else:
+            still_omitted_ids.add(tid)
+
+    if restored_omitted_ids:
+        local_scenes_by_id = {
+            str(s["id"]): s
+            for s in (existing_board.get("scenes") or ())
+            if isinstance(s, dict) and s.get("id")
+        }
+        for scene in board.get("scenes") or ():
+            if not isinstance(scene, dict):
+                continue
+            sid = str(scene.get("id") or "")
+            local_scene = local_scenes_by_id.get(sid)
+            if local_scene is None:
+                continue
+            incoming_list = list(scene.get("takes") or ())
+            incoming_set = set(incoming_list)
+            merged_takes: list[str] = []
+            seen_takes: set[str] = set()
+            for tid in local_scene.get("takes") or ():
+                if (tid in incoming_set or tid in restored_omitted_ids) and tid not in seen_takes:
+                    merged_takes.append(tid)
+                    seen_takes.add(tid)
+            for tid in incoming_list:
+                if tid not in seen_takes:
+                    merged_takes.append(tid)
+                    seen_takes.add(tid)
+            scene["takes"] = merged_takes
+
+    still_omitted_versions = False
+    if partial_info.get("omitted_versions"):
+        local_versions = (
+            existing_board.get("versions") if isinstance(existing_board.get("versions"), list) else []
+        )
+        if not local_versions:
+            still_omitted_versions = True
+        else:
+            incoming_versions = board.get("versions") if isinstance(board.get("versions"), list) else []
+            seen_ver_ids: set[str] = set()
+            merged_versions: list[dict[str, Any]] = []
+            for ver in local_versions:
+                if not isinstance(ver, dict):
+                    continue
+                vid = str(ver.get("id") or "")
+                if vid:
+                    seen_ver_ids.add(vid)
+                ver_copy = copy.deepcopy(ver)
+                protect_snapshot_files(ver_copy)
+                for vscene in ver_copy.get("scenes") or ():
+                    if not isinstance(vscene, dict):
+                        continue
+                    for vtid in (*(vscene.get("takes") or ()), vscene.get("in_use")):
+                        if not vtid:
+                            continue
+                        vtid_str = str(vtid)
+                        if vtid_str not in board_takes and isinstance(local_takes.get(vtid_str), dict):
+                            board_takes[vtid_str] = copy.deepcopy(local_takes[vtid_str])
+                            preserved_takes_count += 1
+                        if isinstance(board_takes.get(vtid_str), dict):
+                            protect_take_files(board_takes[vtid_str])
+                merged_versions.append(ver_copy)
+            for ver in incoming_versions:
+                if not isinstance(ver, dict):
+                    continue
+                vid = str(ver.get("id") or "")
+                if vid and vid in seen_ver_ids:
+                    continue
+                merged_versions.append(ver)
+            board["versions"] = merged_versions
+
+    if still_omitted_ids or still_omitted_versions or any(
+        isinstance(t, dict) and t.get("omitted") for t in board_takes.values()
+    ):
+        board["_partial_takes"] = {
+            "mode": str(partial_info.get("mode") or "none"),
+            "omitted_takes": sorted(still_omitted_ids),
+            "omitted_versions": still_omitted_versions,
+        }
+    else:
+        board.pop("_partial_takes", None)
+
+    return preserved_cast, preserved_takes_dir_files, preserved_takes_count
+
+
 def _import_storyboard(
-    src: _ArchiveSource, *, store, runtime, conflict: str, owner: str, source_id: str, source_name: str
+    src: _ArchiveSource,
+    *,
+    store,
+    runtime,
+    conflict: str,
+    owner: str,
+    source_id: str,
+    source_name: str,
+    manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from h3_app.storyboard import model
 
@@ -2882,11 +3206,20 @@ def _import_storyboard(
         target_name = orig_name
         status = "imported"
 
+    existing_board: dict[str, Any] | None = None
+    if status == "overwritten":
+        try:
+            existing_board = copy.deepcopy(store.storyboard(None, target_id))
+        except ValueError:
+            existing_board = None
+
     board_meta_dir = _contained_path(store.root, store.root / "storyboards" / target_id)
     cast_dir = _contained_path(board_meta_dir, board_meta_dir / "cast")
     output_root = Path(runtime.output_dir)
     takes_dir = _contained_path(output_root, output_root / "h3" / ".storyboard" / target_id)
     media_dir = _contained_path(takes_dir, takes_dir / "media")
+
+    preserved_takes_count = 0
 
     with _StagingTransaction() as tx:
         cast_is_new = not cast_dir.exists()
@@ -2924,13 +3257,6 @@ def _import_storyboard(
                 seen_posters.add(dest_poster)
                 src.stage_entry(tx, poster_arc, dest_poster)
                 imported_posters.append((dest_poster, target_video))
-
-        if not cast_is_new:
-            _schedule_obsolete_deletes(tx, cast_dir, set(extracted_cast.values()))
-        if not takes_is_new:
-            _schedule_obsolete_deletes(
-                tx, takes_dir, set(extracted_media.values()) | set(extracted_takes.values())
-            )
 
         for arc, staged_path in work_takes.items():
             final_path = extracted_takes[arc]
@@ -2986,6 +3312,32 @@ def _import_storyboard(
                     if isinstance(inputs.get(key), list):
                         inputs[key] = [arc_to_abs.get(str(item), item) for item in inputs[key]]
 
+        preserved_cast: set[Path] = set()
+        preserved_takes_dir_files: set[Path] = set()
+        raw_partial = board.get("_partial_takes")
+        has_partial = isinstance(raw_partial, dict) or any(
+            isinstance(t, dict) and t.get("omitted") for t in (board.get("takes") or {}).values()
+        )
+        if status == "overwritten" and existing_board is not None and has_partial:
+            preserved_cast, preserved_takes_dir_files, preserved_takes_count = (
+                _merge_partial_storyboard_overwrite(
+                    board,
+                    existing_board,
+                    output_root=output_root,
+                    cast_dir=cast_dir,
+                    takes_dir=takes_dir,
+                )
+            )
+
+        if not cast_is_new:
+            _schedule_obsolete_deletes(tx, cast_dir, set(extracted_cast.values()) | preserved_cast)
+        if not takes_is_new:
+            _schedule_obsolete_deletes(
+                tx,
+                takes_dir,
+                set(extracted_media.values()) | set(extracted_takes.values()) | preserved_takes_dir_files,
+            )
+
         board["name"] = target_name
         for scene in board.get("scenes") or []:
             model.validate_scene(scene)
@@ -3002,7 +3354,37 @@ def _import_storyboard(
         except OSError:
             pass
 
-    return _transfer_result("storyboard", orig_id, orig_name, target_id, target_name, status, src=src, tx=tx)
+    takes_mode = str((manifest or {}).get("storyboard_takes") or "all")
+    extra: dict[str, Any] | None = None
+    message: str | None = None
+    if takes_mode in {"in_use", "none"} or preserved_takes_count > 0:
+        extra = {"storyboard_takes": takes_mode}
+        if preserved_takes_count > 0:
+            extra["preserved_local_takes"] = preserved_takes_count
+        base_res = _transfer_result(
+            "storyboard", orig_id, orig_name, target_id, target_name, status, src=src, tx=tx
+        )
+        notes: list[str] = []
+        if takes_mode == "in_use":
+            notes.append("takes in use only")
+        elif takes_mode == "none":
+            notes.append("without takes")
+        if preserved_takes_count > 0:
+            notes.append(f"kept {_plural(preserved_takes_count, 'local take')}")
+        message = _append_result_notes(str(base_res["message"]), notes)
+
+    return _transfer_result(
+        "storyboard",
+        orig_id,
+        orig_name,
+        target_id,
+        target_name,
+        status,
+        message=message,
+        src=src,
+        tx=tx,
+        extra=extra,
+    )
 
 
 def _import_dubbing(
@@ -3415,6 +3797,7 @@ def import_project_archive(
                 owner=owner,
                 source_id=source_id,
                 source_name=source_name,
+                manifest=manifest,
             )
         if kind == "dubbing":
             from h3_app.dubbing import projects, session
@@ -3673,8 +4056,12 @@ def _download_project_archive(
     *,
     headers: dict[str, str] | None = None,
     on_bytes: Callable[[int, int], None] | None = None,
+    storyboard_takes: str = "all",
 ) -> Path:
     """Stream one exported project archive with transient retry and HTTP Range resume."""
+    params = {"kind": kind, "id": project_id}
+    if kind == "storyboard" and storyboard_takes != "all":
+        params["storyboard_takes"] = storyboard_takes
     _outcome, payload = _stream_archive_with_resume(
         client,
         normalized_url,
@@ -3683,7 +4070,7 @@ def _download_project_archive(
         kind=kind,
         project_id=project_id,
         archive_path=archive_path,
-        params={"kind": kind, "id": project_id},
+        params=params,
         headers=headers,
         on_bytes=on_bytes,
     )
@@ -3701,14 +4088,17 @@ def _download_project_delta(
     *,
     headers: dict[str, str] | None = None,
     on_bytes: Callable[[int, int], None] | None = None,
+    storyboard_takes: str = "all",
 ) -> tuple[str, Path | dict[str, Any] | None]:
     """Request an incremental delta archive; returns ``('up_to_date', meta)``, ``('archive', path)``, or ``('unsupported', None)``."""
-    req_body = {
+    req_body: dict[str, Any] = {
         "kind": kind,
         "id": project_id,
         "known_digests": sorted(local_state.known_digests)[:MAX_KNOWN_DIGESTS],
         "expected_tree_digest": local_state.portable_digest,
     }
+    if kind == "storyboard" and storyboard_takes != "all":
+        req_body["storyboard_takes"] = storyboard_takes
     return _stream_archive_with_resume(
         client,
         normalized_url,
@@ -3744,10 +4134,12 @@ def import_remote_projects(
     progress: Callable[[float, str], None] | None = None,
     on_imported: Callable[[], None] | None = None,
     timeout: float = 300.0,
+    storyboard_takes: str = "all",
 ) -> list[dict[str, Any]]:
     """Download and import selected projects from a remote Prism Studio or Workshop URL."""
     if conflict not in CONFLICT_MODES:
         raise H3Error(f"Unsupported conflict mode: {conflict!r}")
+    takes_mode = normalize_storyboard_takes(storyboard_takes)
     normalized = normalize_server_url(base_url)
     items = [_normalize_selection_item(entry) for entry in selections]
     if not items:
@@ -3833,7 +4225,12 @@ def import_remote_projects(
                         force=item_idx == pending_indices[0],
                     )
                     local_state = inspect_local_project_for_delta(
-                        kind, project_id, remote_name, store=store, runtime=runtime
+                        kind,
+                        project_id,
+                        remote_name,
+                        store=store,
+                        runtime=runtime,
+                        storyboard_takes=takes_mode,
                     )
 
                 if local_state is not None and delta_supported:
@@ -3846,6 +4243,7 @@ def import_remote_projects(
                         local_state,
                         headers=headers,
                         on_bytes=lambda done, exp: on_bytes(done, exp, verb="Syncing"),
+                        storyboard_takes=takes_mode,
                     )
                     if outcome == "up_to_date":
                         return _DownloadedItem(
@@ -3870,6 +4268,7 @@ def import_remote_projects(
                     archive_path,
                     headers=headers,
                     on_bytes=on_bytes,
+                    storyboard_takes=takes_mode,
                 )
                 return _DownloadedItem(outcome="archive", archive_path=full_path, local_state=local_state)
 
@@ -3950,6 +4349,7 @@ def import_remote_projects(
                             project_id,
                             archive_path,
                             headers=headers,
+                            storyboard_takes=takes_mode,
                         )
                         result = import_project_archive(
                             fallback_path,

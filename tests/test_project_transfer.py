@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -32,6 +33,7 @@ from h3_app.project_transfer import (
     export_project_archive,
     fetch_remote_projects,
     import_project_archive,
+    import_remote_projects,
     list_local_projects,
     normalize_server_url,
     rename_local_project,
@@ -2268,3 +2270,480 @@ def test_storyboard_transfer_preserves_video_posters_for_ffmpegless_workshop(tmp
             conflict="overwrite",
         )
         assert second[0]["status"] == "up_to_date"
+
+
+def test_storyboard_takes_in_use_roundtrip_and_merge_back(tmp_path: Path):
+    ws_runtime, ws_store = _make_workspace(tmp_path / "workshop")
+    gpu_runtime, gpu_store = _make_workspace(tmp_path / "gpu")
+    ws_sb = StoryboardService(ws_store, lambda: ws_runtime)
+    gpu_sb = StoryboardService(gpu_store, lambda: gpu_runtime)
+
+    board_id = ws_sb.create(
+        "ws-owner",
+        "In Use Board",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+    )
+    ws_sb.add_scene("ws-owner", board_id)
+    board = ws_sb.load("ws-owner", board_id)
+    sc0_id = board["scenes"][0]["id"]
+    sc1_id = board["scenes"][1]["id"]
+    ws_sb.update_scene("ws-owner", board_id, sc0_id, prompt="Scene zero")
+    ws_sb.update_scene("ws-owner", board_id, sc1_id, prompt="Scene one", link=sb_model.CUT)
+
+    ver_pic = tmp_path / "ver_only.png"
+    ver_pic.write_bytes(b"version-only-pic")
+    ws_sb.set_scene_media("ws-owner", board_id, sc0_id, "first_image", ver_pic)
+    ws_sb.save_version("ws-owner", board_id, "Version 1")
+    ws_sb.set_scene_media("ws-owner", board_id, sc0_id, "first_image", None)
+
+    def make_take(service: StoryboardService, bid: str, sid: str, tid: str, video_bytes: bytes, idx: int) -> Path:
+        prefix = service.take_prefix(bid, sid, tid)
+        vid = service.output_path(f"{prefix}.mp4")
+        vid.parent.mkdir(parents=True, exist_ok=True)
+        vid.write_bytes(video_bytes)
+        write_snapshot(vid, {"family": "MiniMax H3", "settings": {"seed": idx}})
+        lat = f"{prefix}.safetensors"
+        service.output_path(lat).write_bytes(f"latent-{tid}".encode())
+        b = service.load("ws-owner", bid)
+        s_idx = service.scene_index(b, sid)
+        service.record_take(
+            "ws-owner",
+            bid,
+            sid,
+            tid,
+            video=str(vid),
+            latents={"latent": lat, "stage_latent": None, "prefix_frames": 0},
+            seed=idx,
+            inputs=sb_model.scene_inputs(b, s_idx),
+        )
+        return vid
+
+    t0a, t0b, t1a, t1b = "t0a_old", "t0b_cur", "t1a_old", "t1b_cur"
+    v0a = make_take(ws_sb, board_id, sc0_id, t0a, b"unused-take-0a", 1)
+    v0b = make_take(ws_sb, board_id, sc0_id, t0b, b"active-take-0b", 2)
+    ws_sb.use_take("ws-owner", board_id, sc0_id, t0b)
+    v1a = make_take(ws_sb, board_id, sc1_id, t1a, b"unused-take-1a", 3)
+    v1b = make_take(ws_sb, board_id, sc1_id, t1b, b"active-take-1b", 4)
+    ws_sb.use_take("ws-owner", board_id, sc1_id, t1b)
+
+    v0a_mtime = v0a.stat().st_mtime_ns
+    v1a_mtime = v1a.stat().st_mtime_ns
+
+    archive = export_project_archive(
+        "storyboard",
+        board_id,
+        tmp_path / "in_use.zip",
+        store=ws_store,
+        runtime=ws_runtime,
+        storyboard_takes="in_use",
+    )
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = set(zf.namelist())
+        manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["storyboard_takes"] == "in_use"
+    assert any(v0b.name in n for n in names)
+    assert any(v1b.name in n for n in names)
+    assert not any(v0a.name in n for n in names)
+    assert not any(v1a.name in n for n in names)
+    assert not any(n.startswith("media/") for n in names)
+
+    ws_app = FastAPI()
+    install_project_transfer_routes(ws_app, store=ws_store, runtime_config=lambda: ws_runtime)
+    gpu_app = FastAPI()
+    install_project_transfer_routes(gpu_app, store=gpu_store, runtime_config=lambda: gpu_runtime)
+
+    with _serve_fastapi(ws_app) as ws_url, _serve_fastapi(gpu_app) as gpu_url:
+        res_gpu = import_remote_projects(
+            ws_url,
+            [("storyboard", board_id, "In Use Board")],
+            store=gpu_store,
+            runtime=gpu_runtime,
+            conflict="rename",
+            storyboard_takes="in_use",
+        )
+        assert res_gpu[0]["status"] == "imported"
+        assert res_gpu[0]["storyboard_takes"] == "in_use"
+        gpu_board = gpu_sb.load("imported", board_id)
+        assert set(gpu_board["takes"]) == {t0b, t1b}
+        assert gpu_board["scenes"][0]["takes"] == [t0b]
+        assert gpu_board["scenes"][1]["takes"] == [t1b]
+        assert gpu_board["versions"] == []
+        assert sb_model.scene_states(gpu_board) == [sb_model.DONE, sb_model.DONE]
+
+        # Generate a new alternate take on GPU for Scene 1 and merge back into Workshop.
+        t1c = "t1c_gpu"
+        make_take(gpu_sb, board_id, sc1_id, t1c, b"gpu-new-take-1c", 5)
+        gpu_sb.use_take("imported", board_id, sc1_id, t1c)
+
+        res_ws = import_remote_projects(
+            gpu_url,
+            [("storyboard", board_id, "In Use Board")],
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+        )
+        assert res_ws[0]["status"] == "overwritten"
+        assert res_ws[0]["preserved_local_takes"] == 2
+        merged = ws_sb.load("ws-owner", board_id)
+        assert "_partial_takes" not in merged
+        assert set(merged["takes"]) == {t0a, t0b, t1a, t1b, t1c}
+        assert merged["scenes"][0]["takes"] == [t0a, t0b]
+        assert merged["scenes"][1]["takes"] == [t1a, t1b, t1c]
+        assert merged["scenes"][1]["in_use"] == t1c
+        assert len(merged["versions"]) == 1
+        assert v0a.is_file() and v0a.stat().st_mtime_ns == v0a_mtime
+        assert v1a.is_file() and v1a.stat().st_mtime_ns == v1a_mtime
+
+
+def test_storyboard_takes_none_workshop_gpu_roundtrip(tmp_path: Path):
+    from h3_app.media_review import review_path
+    from h3_ui.storyboard.payload import board_payload
+
+    ws_runtime, ws_store = _make_workspace(tmp_path / "workshop")
+    gpu_runtime, gpu_store = _make_workspace(tmp_path / "gpu")
+    ws_sb = StoryboardService(ws_store, lambda: ws_runtime)
+    gpu_sb = StoryboardService(gpu_store, lambda: gpu_runtime)
+
+    cast_pic = tmp_path / "actor.png"
+    cast_pic.write_bytes(b"actor-png")
+    board_id = ws_sb.create(
+        "ws-owner",
+        "Remote Render Board",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+        cast=[("Actor", cast_pic)],
+    )
+    for _ in range(4):
+        ws_sb.add_scene("ws-owner", board_id)
+
+    board = ws_sb.load("ws-owner", board_id)
+    sc1_id, sc2_id, sc3_id, sc4_id, sc5_id = [s["id"] for s in board["scenes"]]
+    ws_sb.update_scene("ws-owner", board_id, sc1_id, prompt="Shot 1", link=sb_model.CUT)
+    ws_sb.update_scene("ws-owner", board_id, sc2_id, prompt="Shot 2 original", link=sb_model.CUT)
+    ws_sb.update_scene("ws-owner", board_id, sc3_id, prompt="Shot 3", link=sb_model.CUT)
+    ws_sb.update_scene("ws-owner", board_id, sc4_id, prompt="Shot 4 original", link=sb_model.FLOW)
+    ws_sb.update_scene("ws-owner", board_id, sc5_id, prompt="Shot 5 new draft", link=sb_model.CUT)
+
+    heavy_vid_payload = os.urandom(120_000)
+    t3_latent_bytes = os.urandom(8_000)
+    t3_stage_bytes = os.urandom(6_000)
+
+    def seed_take(
+        service: StoryboardService,
+        sid: str,
+        tid: str,
+        *,
+        video_bytes: bytes,
+        latent_bytes: bytes | None = None,
+        stage_bytes: bytes | None = None,
+        seed: int = 1,
+        add_review: bool = False,
+    ) -> Path:
+        prefix = service.take_prefix(board_id, sid, tid)
+        vid = service.output_path(f"{prefix}.mp4")
+        vid.parent.mkdir(parents=True, exist_ok=True)
+        vid.write_bytes(video_bytes)
+        write_snapshot(vid, {"family": "MiniMax H3", "settings": {"seed": seed}})
+        if add_review:
+            review_path(vid).write_text(json.dumps({"decision": {"score": 9}}), encoding="utf-8")
+        lat_rel = None
+        if latent_bytes is not None:
+            lat_rel = f"{prefix}.safetensors"
+            service.output_path(lat_rel).write_bytes(latent_bytes)
+        stage_rel = None
+        if stage_bytes is not None:
+            stage_rel = f"{prefix}_stage.safetensors"
+            service.output_path(stage_rel).write_bytes(stage_bytes)
+        b = service.load("ws-owner", board_id)
+        s_idx = service.scene_index(b, sid)
+        service.record_take(
+            "ws-owner",
+            board_id,
+            sid,
+            tid,
+            video=str(vid),
+            latents={"latent": lat_rel, "stage_latent": stage_rel, "prefix_frames": 0},
+            seed=seed,
+            inputs=sb_model.scene_inputs(b, s_idx),
+        )
+        return vid
+
+    t1a_vid = seed_take(ws_sb, sc1_id, "t1a_alt", video_bytes=heavy_vid_payload, latent_bytes=b"t1a-lat", seed=1)
+    t1b_vid = seed_take(
+        ws_sb, sc1_id, "t1b_use", video_bytes=heavy_vid_payload, latent_bytes=b"t1b-lat", seed=2, add_review=True
+    )
+    ws_sb.use_take("ws-owner", board_id, sc1_id, "t1b_use")
+    t2a_vid = seed_take(ws_sb, sc2_id, "t2a_old", video_bytes=heavy_vid_payload, latent_bytes=b"t2a-lat", seed=3)
+    t3a_vid = seed_take(
+        ws_sb,
+        sc3_id,
+        "t3a_use",
+        video_bytes=heavy_vid_payload,
+        latent_bytes=t3_latent_bytes,
+        stage_bytes=t3_stage_bytes,
+        seed=4,
+    )
+    t4a_vid = seed_take(ws_sb, sc4_id, "t4a_old", video_bytes=heavy_vid_payload, latent_bytes=b"t4a-lat", seed=5)
+
+    ws_sb.save_version("ws-owner", board_id, "Saved Cut")
+
+    # User edits Shot 2 and Shot 4 prompts in Workshop, making them OUTDATED.
+    ws_sb.update_scene("ws-owner", board_id, sc2_id, prompt="Shot 2 edited")
+    ws_sb.update_scene("ws-owner", board_id, sc4_id, prompt="Shot 4 edited")
+    assert sb_model.scene_states(ws_sb.load("ws-owner", board_id)) == [
+        sb_model.DONE,
+        sb_model.OUTDATED,
+        sb_model.DONE,
+        sb_model.OUTDATED,
+        sb_model.DRAFT,
+    ]
+
+    t1a_mtime = t1a_vid.stat().st_mtime_ns
+    t1b_mtime = t1b_vid.stat().st_mtime_ns
+    t1b_rev_mtime = review_path(t1b_vid).stat().st_mtime_ns
+    t3a_mtime = t3a_vid.stat().st_mtime_ns
+
+    ws_app = FastAPI()
+    ws_wire_bytes: list[tuple[str, int]] = []
+
+    @ws_app.middleware("http")
+    async def measure_ws_bytes(request: Request, call_next):
+        resp = await call_next(request)
+        if request.url.path in {"/api/projects/transfer/export", "/api/projects/transfer/delta"}:
+            chunks = [chunk async for chunk in resp.body_iterator]
+            raw = b"".join(chunks)
+            ws_wire_bytes.append((request.url.path, len(raw)))
+            from starlette.responses import Response
+
+            return Response(
+                content=raw,
+                status_code=resp.status_code,
+                headers=dict(resp.headers),
+                media_type=resp.media_type,
+            )
+        return resp
+
+    install_project_transfer_routes(ws_app, store=ws_store, runtime_config=lambda: ws_runtime)
+    gpu_app = FastAPI()
+    gpu_wire_bytes: list[tuple[str, int]] = []
+
+    @gpu_app.middleware("http")
+    async def measure_gpu_bytes(request: Request, call_next):
+        resp = await call_next(request)
+        if request.url.path in {"/api/projects/transfer/export", "/api/projects/transfer/delta"}:
+            chunks = [chunk async for chunk in resp.body_iterator]
+            raw = b"".join(chunks)
+            gpu_wire_bytes.append((request.url.path, len(raw)))
+            from starlette.responses import Response
+
+            return Response(
+                content=raw,
+                status_code=resp.status_code,
+                headers=dict(resp.headers),
+                media_type=resp.media_type,
+            )
+        return resp
+
+    install_project_transfer_routes(gpu_app, store=gpu_store, runtime_config=lambda: gpu_runtime)
+
+    with _serve_fastapi(ws_app) as ws_url, _serve_fastapi(gpu_app) as gpu_url:
+        # 1. Temp GPU Studio imports storyboard without takes (only Scene 3 continuation latents transfer).
+        gpu_import = import_remote_projects(
+            ws_url,
+            [("storyboard", board_id, "Remote Render Board")],
+            store=gpu_store,
+            runtime=gpu_runtime,
+            conflict="rename",
+            storyboard_takes="none",
+        )
+        assert gpu_import[0]["status"] == "imported"
+        assert gpu_import[0]["storyboard_takes"] == "none"
+        # 5 scenes x 120KB = 600KB of MP4 videos skipped; only ~14KB of Scene 3 continuation latents sent.
+        assert ws_wire_bytes and ws_wire_bytes[0][1] < 30_000
+
+        gpu_board = gpu_sb.load("imported", board_id)
+        assert sb_model.scene_states(gpu_board) == [
+            sb_model.DONE,
+            sb_model.OUTDATED,
+            sb_model.DONE,
+            sb_model.OUTDATED,
+            sb_model.DRAFT,
+        ]
+        assert sb_model.pending_scenes(gpu_board) == [1, 3, 4]
+        assert gpu_board["takes"]["t1b_use"]["omitted"] is True
+        assert gpu_board["takes"]["t1b_use"]["video"] is None
+        assert gpu_board["takes"]["t1b_use"]["latent"] is None
+        assert gpu_board["takes"]["t3a_use"]["omitted"] is True
+        assert gpu_board["takes"]["t3a_use"]["video"] is None
+        assert gpu_sb.output_path(gpu_board["takes"]["t3a_use"]["latent"]).read_bytes() == t3_latent_bytes
+        assert gpu_sb.output_path(gpu_board["takes"]["t3a_use"]["stage_latent"]).read_bytes() == t3_stage_bytes
+
+        # UI payload & clips safeguard check
+        ui_payload = board_payload(board_id, gpu_board)
+        assert ui_payload["scenes"][0]["takes"][0]["omitted"] is True
+        assert ui_payload["scenes"][0]["takes"][0]["missing"] is True
+        assert ui_payload["scenes"][0]["takes"][0]["video"] is None
+        with pytest.raises(H3Error, match="wasn't transferred"):
+            gpu_sb.clips(gpu_board)
+
+        # If user switches Scene 2 to flow from Scene 1 (whose latent wasn't transferred), scene_issues flags it.
+        board_flow_check = copy.deepcopy(gpu_board)
+        board_flow_check["scenes"][1]["link"] = sb_model.FLOW
+        assert any("wasn't transferred" in issue for issue in sb_model.scene_issues(board_flow_check, 1))
+
+        # Re-importing unchanged storyboard with overwrite + storyboard_takes="none" detects up_to_date.
+        noop_gpu = import_remote_projects(
+            ws_url,
+            [("storyboard", board_id, "Remote Render Board")],
+            store=gpu_store,
+            runtime=gpu_runtime,
+            conflict="overwrite",
+            storyboard_takes="none",
+        )
+        assert noop_gpu[0]["status"] == "up_to_date"
+
+        # 2. Temp GPU Studio generates new takes for outdated/draft scenes (Scenes 2, 4, 5).
+        def gpu_generate(sid: str, tid: str, video_bytes: bytes, seed: int) -> None:
+            prefix = gpu_sb.take_prefix(board_id, sid, tid)
+            vid = gpu_sb.output_path(f"{prefix}.mp4")
+            vid.parent.mkdir(parents=True, exist_ok=True)
+            vid.write_bytes(video_bytes)
+            lat_rel = f"{prefix}.safetensors"
+            gpu_sb.output_path(lat_rel).write_bytes(f"gpu-lat-{tid}".encode())
+            b = gpu_sb.load("imported", board_id)
+            s_idx = gpu_sb.scene_index(b, sid)
+            gpu_sb.record_take(
+                "imported",
+                board_id,
+                sid,
+                tid,
+                video=str(vid),
+                latents={"latent": lat_rel, "stage_latent": None, "prefix_frames": 0},
+                seed=seed,
+                inputs=sb_model.scene_inputs(b, s_idx),
+            )
+
+        gpu_generate(sc2_id, "t2_new", b"gpu-rendered-scene2", 20)
+        gpu_generate(sc4_id, "t4_new", b"gpu-rendered-scene4", 40)
+        gpu_generate(sc5_id, "t5_new", b"gpu-rendered-scene5", 50)
+        assert sb_model.scene_states(gpu_sb.load("imported", board_id)) == [sb_model.DONE] * 5
+
+        # Partial->partial overwrite preserves omitted_versions=True when target also has no versions.
+        gpu2_runtime, gpu2_store = _make_workspace(tmp_path / "gpu2")
+        gpu2_sb = StoryboardService(gpu2_store, lambda: gpu2_runtime)
+        import_remote_projects(
+            ws_url,
+            [("storyboard", board_id, "Remote Render Board")],
+            store=gpu2_store,
+            runtime=gpu2_runtime,
+            conflict="rename",
+            storyboard_takes="none",
+        )
+        import_remote_projects(
+            gpu_url,
+            [("storyboard", board_id, "Remote Render Board")],
+            store=gpu2_store,
+            runtime=gpu2_runtime,
+            conflict="overwrite",
+        )
+        gpu2_board = gpu2_sb.load("imported", board_id)
+        assert gpu2_board["_partial_takes"]["omitted_versions"] is True
+
+        # 3. Workshop imports back with conflict="overwrite": merges new takes & preserves all local takes!
+        gpu_wire_bytes.clear()
+        ws_sync = import_remote_projects(
+            gpu_url,
+            [("storyboard", board_id, "Remote Render Board")],
+            store=ws_store,
+            runtime=ws_runtime,
+            conflict="overwrite",
+        )
+        assert ws_sync[0]["status"] == "overwritten"
+        assert ws_sync[0]["preserved_local_takes"] == 5
+        assert ") (" not in ws_sync[0]["message"]
+        assert "kept 5 local takes" in ws_sync[0]["message"]
+        assert gpu_wire_bytes and gpu_wire_bytes[0][0] == "/api/projects/transfer/delta"
+        assert gpu_wire_bytes[0][1] < 40_000
+
+        final_ws = ws_sb.load("ws-owner", board_id)
+        assert "_partial_takes" not in final_ws
+        assert sb_model.scene_states(final_ws) == [sb_model.DONE] * 5
+        assert set(final_ws["takes"]) == {
+            "t1a_alt",
+            "t1b_use",
+            "t2a_old",
+            "t2_new",
+            "t3a_use",
+            "t4a_old",
+            "t4_new",
+            "t5_new",
+        }
+        assert final_ws["scenes"][0]["takes"] == ["t1a_alt", "t1b_use"]
+        assert final_ws["scenes"][0]["in_use"] == "t1b_use"
+        assert final_ws["scenes"][1]["takes"] == ["t2a_old", "t2_new"]
+        assert final_ws["scenes"][1]["in_use"] == "t2_new"
+        assert final_ws["scenes"][3]["takes"] == ["t4a_old", "t4_new"]
+        assert final_ws["scenes"][3]["in_use"] == "t4_new"
+        assert final_ws["scenes"][4]["takes"] == ["t5_new"]
+        assert final_ws["scenes"][4]["in_use"] == "t5_new"
+        assert len(final_ws["versions"]) == 1
+        assert t1a_vid.is_file() and t1a_vid.stat().st_mtime_ns == t1a_mtime
+        assert t1b_vid.is_file() and t1b_vid.stat().st_mtime_ns == t1b_mtime
+        assert review_path(t1b_vid).is_file() and review_path(t1b_vid).stat().st_mtime_ns == t1b_rev_mtime
+        assert t3a_vid.is_file() and t3a_vid.stat().st_mtime_ns == t3a_mtime
+        assert Path(final_ws["takes"]["t2_new"]["video"]).read_bytes() == b"gpu-rendered-scene2"
+        assert Path(final_ws["takes"]["t4_new"]["video"]).read_bytes() == b"gpu-rendered-scene4"
+        assert Path(final_ws["takes"]["t5_new"]["video"]).read_bytes() == b"gpu-rendered-scene5"
+
+
+def test_export_archive_cache_isolates_storyboard_takes_modes_and_validates(tmp_path: Path):
+    src_runtime, src_store = _make_workspace(tmp_path / "src")
+    src_sb = StoryboardService(src_store, lambda: src_runtime)
+    board_id = src_sb.create(
+        "owner-a",
+        "Cache Modes",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+    )
+    board = src_sb.load("owner-a", board_id)
+    sc0_id = board["scenes"][0]["id"]
+    src_sb.update_scene("owner-a", board_id, sc0_id, prompt="Shot")
+    for tid in ("tk_old", "tk_cur"):
+        vid = src_sb.output_path(f"{src_sb.take_prefix(board_id, sc0_id, tid)}.mp4")
+        vid.parent.mkdir(parents=True, exist_ok=True)
+        vid.write_bytes(f"vid-{tid}".encode())
+        b = src_sb.load("owner-a", board_id)
+        src_sb.record_take(
+            "owner-a", board_id, sc0_id, tid, video=str(vid), latents={"latent": None}, seed=1,
+            inputs=sb_model.scene_inputs(b, 0),
+        )
+    src_sb.use_take("owner-a", board_id, sc0_id, "tk_cur")
+
+    app = FastAPI()
+    install_project_transfer_routes(app, store=src_store, runtime_config=lambda: src_runtime)
+    with _serve_fastapi(app) as base_url:
+        r_all = httpx.get(f"{base_url}/api/projects/transfer/export", params={"kind": "storyboard", "id": board_id})
+        r_use = httpx.get(
+            f"{base_url}/api/projects/transfer/export",
+            params={"kind": "storyboard", "id": board_id, "storyboard_takes": "in_use"},
+        )
+        r_none = httpx.get(
+            f"{base_url}/api/projects/transfer/export",
+            params={"kind": "storyboard", "id": board_id, "storyboard_takes": "none"},
+        )
+        assert r_all.status_code == 200 and r_use.status_code == 200 and r_none.status_code == 200
+        assert len(r_all.content) > len(r_use.content) > len(r_none.content)
+
+        bad_export = httpx.get(
+            f"{base_url}/api/projects/transfer/export",
+            params={"kind": "storyboard", "id": board_id, "storyboard_takes": "invalid"},
+        )
+        assert bad_export.status_code == 400
+        bad_delta = httpx.post(
+            f"{base_url}/api/projects/transfer/delta",
+            json={"kind": "storyboard", "id": board_id, "storyboard_takes": "invalid"},
+        )
+        assert bad_delta.status_code == 400
+        bad_import = httpx.post(
+            f"{base_url}/api/projects/transfer/import",
+            json={"url": base_url, "items": [{"kind": "storyboard", "id": board_id}], "storyboard_takes": "invalid"},
+        )
+        assert bad_import.status_code == 400

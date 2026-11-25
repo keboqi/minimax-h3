@@ -143,10 +143,13 @@ class SystemPageTests(unittest.TestCase):
         self.assertIn("app.js", html.text)
         self.assertIn("remote-kind-filters", html.text)
         self.assertIn("remote-projects-empty", html.text)
+        self.assertIn("remote-storyboard-takes-wrap", html.text)
+        self.assertIn("remote-storyboard-takes", html.text)
 
         js = self.client.get("/system/app.js")
         self.assertEqual(js.status_code, 200)
         self.assertIn("javascript", js.headers["content-type"])
+        self.assertIn("storyboard_takes", js.text)
 
         css = self.client.get("/system/app.css")
         self.assertEqual(css.status_code, 200)
@@ -379,6 +382,29 @@ class SystemPageTests(unittest.TestCase):
             "kind": "soundstage", "id": renamed["projects"][0]["id"],
         }))
         self.assertEqual(deleted["counts"]["soundstage"], 0)
+
+    def test_project_import_forwards_and_validates_storyboard_takes(self):
+        with patch("h3_ui.system.page.import_remote_projects", return_value=[
+            {"kind": "storyboard", "id": "sb-1", "status": "imported", "message": 'Imported Storyboard "Board" (without takes).'},
+        ]) as mock_import:
+            self.ok(self.client.post(f"{API}/projects/import", json={
+                "url": "https://workshop.example.com",
+                "items": [{"kind": "storyboard", "id": "sb-1"}],
+                "conflict": "rename",
+                "storyboard_takes": "none",
+            }))
+            self.wait_run("import")
+            self.assertEqual(mock_import.call_args.kwargs["storyboard_takes"], "none")
+
+        self.refused(
+            self.client.post(f"{API}/projects/import", json={
+                "url": "https://workshop.example.com",
+                "items": [{"kind": "storyboard", "id": "sb-1"}],
+                "conflict": "rename",
+                "storyboard_takes": "bogus",
+            }),
+            "Unsupported storyboard takes mode",
+        )
 
     def test_remote_projects_orders_by_kind_preserving_relative_order_and_counts(self):
         mixed = [

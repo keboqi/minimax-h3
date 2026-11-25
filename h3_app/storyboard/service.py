@@ -517,7 +517,7 @@ class StoryboardService:
             # A take made from the scene as it is now replaces one made from older inputs;
             # later takes of the same inputs leave the choice in use alone.
             current = board["takes"].get(scene["in_use"]) if scene["in_use"] else None
-            if current is None or current["inputs"] != inputs:
+            if current is None or current["inputs"] != inputs or current.get("omitted"):
                 scene["in_use"] = take_id
         return self.change(owner, storyboard_id, edit)[0]
 
@@ -743,7 +743,10 @@ class StoryboardService:
                 raise H3Error(f"Scene {index + 1} has no take yet.")
             if state == model.OUTDATED and not include_outdated:
                 raise H3Error(f"Scene {index + 1} is outdated. Regenerate it or include outdated scenes.")
-            if not Path(take["video"]).is_file():
+            video = take.get("video")
+            if not video or not Path(video).is_file():
+                if take.get("omitted"):
+                    raise H3Error(f"Scene {index + 1}'s take wasn't transferred to this server.")
                 raise H3Error(f"Scene {index + 1}'s take is missing from disk.")
             flows = model.flows_from_previous(board, index)
             trim = take["prefix_frames"] if flows else 0
