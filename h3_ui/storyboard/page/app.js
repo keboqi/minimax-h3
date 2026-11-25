@@ -331,6 +331,147 @@
     video.load();
   };
 
+  // Client-side poster fallback when /video-posters is unavailable (e.g. a CPU-only Workshop
+  // without ffmpeg viewing a storyboard imported without cached posters).
+  const POSTER_FALLBACK_WIDTH = 480;
+  const POSTER_FALLBACK_CONCURRENCY = 2;
+  const POSTER_FALLBACK_CACHE_LIMIT = 256;
+  const posterFallbacks = new Map();
+  const posterPending = new Map();
+  const posterQueue = [];
+  let posterActive = 0;
+
+  const rememberPosterFallback = (videoUrl, dataUrl) => {
+    if (posterFallbacks.size >= POSTER_FALLBACK_CACHE_LIMIT && !posterFallbacks.has(videoUrl)) {
+      posterFallbacks.delete(posterFallbacks.keys().next().value);
+    }
+    posterFallbacks.set(videoUrl, dataUrl);
+  };
+
+  const clearPendingPosterQueue = () => {
+    while (posterQueue.length) {
+      const entry = posterQueue.shift();
+      posterPending.delete(entry.videoUrl);
+      entry.resolve("");
+    }
+  };
+
+  const extractVideoPoster = (videoUrl) => new Promise((resolve) => {
+    if (!videoUrl || typeof document?.createElement !== "function") { resolve(""); return; }
+    const video = document.createElement("video");
+    let settled = false;
+    let sought = false;
+    let timer = null;
+    const captureFrame = () => {
+      const vw = video.videoWidth || 0;
+      const vh = video.videoHeight || 0;
+      if (!vw || !vh) return "";
+      const scale = Math.min(1, POSTER_FALLBACK_WIDTH / vw);
+      const width = Math.max(1, Math.round(vw * scale));
+      const height = Math.max(1, Math.round(vh * scale));
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return "";
+        ctx.drawImage(video, 0, 0, width, height);
+        return canvas.toDataURL("image/jpeg", 0.82);
+      } catch {
+        return "";
+      }
+    };
+    const finish = (dataUrl) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      video.onloadedmetadata = video.onloadeddata = video.onseeked = video.onerror = null;
+      releaseVideo(video);
+      resolve(dataUrl);
+    };
+    const grabOrSeek = () => {
+      if (settled) return;
+      const target = Number.isFinite(video.duration) && video.duration > 0.2 ? 0.1 : 0;
+      if (!sought && target > 0 && video.currentTime < target) {
+        sought = true;
+        try {
+          video.currentTime = target;
+          return;
+        } catch { /* Fall through and capture current frame. */ }
+      }
+      if (video.readyState >= 2 && !video.seeking) finish(captureFrame());
+    };
+    timer = setTimeout(() => finish(video.readyState >= 2 ? captureFrame() : ""), 12000);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onloadedmetadata = grabOrSeek;
+    video.onloadeddata = grabOrSeek;
+    video.onseeked = () => { if (!settled && video.readyState >= 2 && !video.seeking) finish(captureFrame()); };
+    video.onerror = () => finish("");
+    video.src = videoUrl;
+  });
+
+  const drainPosterQueue = () => {
+    while (posterActive < POSTER_FALLBACK_CONCURRENCY && posterQueue.length) {
+      const {videoUrl, resolve} = posterQueue.shift();
+      posterActive += 1;
+      extractVideoPoster(videoUrl).then((dataUrl) => {
+        rememberPosterFallback(videoUrl, dataUrl);
+        posterPending.delete(videoUrl);
+        posterActive -= 1;
+        resolve(dataUrl);
+        drainPosterQueue();
+      });
+    }
+  };
+
+  const fallbackPosterFor = (videoUrl) => {
+    if (!videoUrl) return Promise.resolve("");
+    if (posterFallbacks.has(videoUrl)) return Promise.resolve(posterFallbacks.get(videoUrl));
+    if (posterPending.has(videoUrl)) return posterPending.get(videoUrl);
+    const promise = new Promise((resolve) => {
+      posterQueue.push({videoUrl, resolve});
+      drainPosterQueue();
+    });
+    posterPending.set(videoUrl, promise);
+    return promise;
+  };
+
+  const sceneThumbVideo = (item) => {
+    const inUse = item.takes?.find((take) => take.id === item.in_use);
+    if (inUse) return inUse.missing ? null : inUse.video;
+    return item.video?.clip?.url || null;
+  };
+
+  const resolvePosterSrc = (posterSrc, videoUrl) => {
+    if (videoUrl && posterFallbacks.has(videoUrl)) return posterFallbacks.get(videoUrl);
+    return posterSrc || "";
+  };
+
+  const posterImg = (posterSrc, videoUrl, attrs = {}) => {
+    const resolved = resolvePosterSrc(posterSrc, videoUrl);
+    if (!resolved) return null;
+    let triedFallback = false;
+    const img = h("img", {
+      ...attrs,
+      src: resolved,
+      onerror: () => {
+        img.hidden = true;
+        if (triedFallback || !videoUrl) return;
+        triedFallback = true;
+        fallbackPosterFor(videoUrl).then((dataUrl) => {
+          if (!dataUrl) return;
+          img.src = dataUrl;
+          img.hidden = false;
+          const stageVideo = document.querySelector?.("#preview video");
+          if (stageVideo && stageVideo.getAttribute?.("src") === videoUrl) stageVideo.poster = dataUrl;
+        });
+      },
+    });
+    return img;
+  };
+
   const bulkTranslations = new Map();
   let refreshFullSubtitles = null;
   const subtitleTakes = () => scenes().map((item) => item.takes.find((take) =>
@@ -466,7 +607,9 @@
     state.previewKey = key;
     node.querySelectorAll("video").forEach(releaseVideo);
     if (take && !take.missing) {
-      const video = h("video", {src: take.video, poster: take.poster, preload: "none", controls: true,
+      const previewPoster = resolvePosterSrc(take.poster, take.video);
+      const video = h("video", {src: take.video, ...(previewPoster ? {poster: previewPoster} : {}),
+        preload: previewPoster ? "none" : "metadata", controls: true,
         "aria-label": `Take ${take.number} of scene ${item.number}`,
         onplay: () => $("full-video").querySelector("video:not(.standby)")?.pause()});
       video.textTracks.addEventListener("change", () => {
@@ -525,6 +668,7 @@
       const selected = shown?.id === take.id;
       const inUse = take.id === item.in_use;
       const thumbSrc = take.poster || item.thumb;
+      const thumbVideo = take.missing ? null : take.video;
       const doneReview = take.review?.status === "done" ? take.review : null;
       const badgeScore = doneReview ? (doneReview.score ?? doneReview.fit) : null;
       return h("button", {
@@ -534,7 +678,7 @@
         onclick: () => { state.previewTake = take.id; state.question = null; state.deletingTake = null; renderPreview(); renderTakes(); },
       },
       h("span", {className: "take-card-thumb"},
-        thumbSrc ? h("img", {src: thumbSrc, alt: "", loading: "lazy"}) : null,
+        thumbSrc ? posterImg(thumbSrc, thumbVideo, {alt: "", loading: "lazy"}) : null,
         inUse ? h("span", {className: "take-in-use"}, "In use") : null,
         badgeScore !== null ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore)) : null),
       h("span", {className: "take-card-meta"},
@@ -805,10 +949,10 @@
           onclick: () => toggleSceneLink(item),
         }, h("span", {className: "link-pill-text"}, item.flow ? "CONT" : "CUT")));
       }
-      const thumb = item.thumb
-        ? h("img", {className: "thumb", alt: "", decoding: "async",
-          loading: item.id === state.sceneId ? "eager" : "lazy", src: item.thumb})
-        : h("span", {className: "thumb"});
+      const thumb = (item.thumb ? posterImg(item.thumb, sceneThumbVideo(item), {
+        className: "thumb", alt: "", decoding: "async",
+        loading: item.id === state.sceneId ? "eager" : "lazy",
+      }) : null) || h("span", {className: "thumb"});
       thumb.draggable = false;
       const isRunning = item.id === running;
       const durationText = item.flow
@@ -1206,10 +1350,10 @@
       const label = `video ${idx + 1} = ${tag}`;
       summaryLabels.push(label);
       const badge = h("span", {className: "tag-video-badge", "aria-hidden": "true"}, icon(PLAY_BADGE_ICON));
-      const thumb = video.poster
-        ? h("span", {className: "tag-thumb-wrap"},
-          h("img", {className: "tag-thumb", src: video.poster, alt: "", loading: "lazy"}), badge)
-        : h("span", {className: "tag-thumb-wrap"}, badge);
+      const thumbNode = video.poster
+        ? posterImg(video.poster, video.url, {className: "tag-thumb", alt: "", loading: "lazy"})
+        : null;
+      const thumb = h("span", {className: "tag-thumb-wrap"}, thumbNode, badge);
       chips.push(button([thumb, `+ ${label}`], () => insertIntoPrompt(tag), "tag-chip with-thumb",
         {title: `Insert ${tag}${video.name ? ` (${video.name})` : ""} into prompt`}));
     });
@@ -1831,9 +1975,10 @@
       libGrid.replaceChildren(...filtered.map((item) => {
         const preview = item.kind === "audio"
           ? h("div", {className: "project-media-thumb mono small"}, "AUDIO")
-          : item.thumb
-            ? h("img", {src: item.thumb, alt: item.name, loading: "lazy"})
-            : h("div", {className: "project-media-thumb mono small"}, item.kind.toUpperCase());
+          : (item.thumb
+            ? posterImg(item.thumb, item.kind === "video" ? item.url : null, {alt: item.name, loading: "lazy"})
+            : null)
+            || h("div", {className: "project-media-thumb mono small"}, item.kind.toUpperCase());
         return h("div", {className: "project-media-card"},
           preview,
           h("div", {className: "project-media-info"},
@@ -2429,6 +2574,7 @@
   };
   const showBoard = (data) => {
     closeFullVideo();
+    clearPendingPosterQueue();
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
     state.run = null;

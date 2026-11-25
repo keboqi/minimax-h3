@@ -1956,7 +1956,56 @@ def _export_soundstage(plan_out: _ExportPlan, project_id: str, *, store, runtime
     return project_id
 
 
+def _resolve_storyboard_posters(
+    videos: Sequence[tuple[Path, str]], *, runtime
+) -> list[tuple[Path, str]]:
+    """Return ``(poster_path, archive_name)`` pairs for exported storyboard videos.
+
+    Uses already-cached posters from ``runtime.gallery_thumbnails_dir`` first, and generates
+    any missing posters via ``gallery_thumbnail`` when FFmpeg is available (e.g. on Studio).
+    """
+    thumb_dir = getattr(runtime, "gallery_thumbnails_dir", None)
+    if not videos or thumb_dir is None:
+        return []
+    from h3_app.gallery_store import gallery_thumbnail, gallery_thumbnail_path
+
+    ready: dict[str, Path] = {}
+    uncached: list[tuple[Path, str]] = []
+    for video_path, video_arc in videos:
+        try:
+            video_mtime = video_path.stat().st_mtime
+            cached = gallery_thumbnail_path(video_path, runtime=runtime)
+            if cached.is_file() and cached.stat().st_mtime >= video_mtime:
+                ready[video_arc] = cached
+                continue
+        except OSError:
+            continue
+        uncached.append((video_path, video_arc))
+
+    if uncached:
+        if len(uncached) == 1 or shutil.which("ffmpeg") is None:
+            for video_path, video_arc in uncached:
+                poster = gallery_thumbnail(video_path, runtime=runtime)
+                if poster is not None and poster.is_file():
+                    ready[video_arc] = poster
+        else:
+            workers = min(_MEDIA_PREPARE_WORKERS, len(uncached))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="h3-transfer-poster") as pool:
+                posters = list(pool.map(lambda item: gallery_thumbnail(item[0], runtime=runtime), uncached))
+            for (_video_path, video_arc), poster in zip(uncached, posters):
+                if poster is not None and poster.is_file():
+                    ready[video_arc] = poster
+
+    return [
+        (ready[video_arc], f"posters/{video_arc}.jpg")
+        for _video_path, video_arc in videos
+        if video_arc in ready
+    ]
+
+
 def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime) -> str:
+    from h3_app.catalog import VIDEO_EXTENSIONS
+
     try:
         board = copy.deepcopy(store.storyboard(None, project_id))
     except ValueError as exc:
@@ -1971,6 +2020,13 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
     cast_name_by_member: dict[str, tuple[str, str]] = {}
     used_take_names: set[str] = set()
     take_map: dict[Path, str] = {}
+    exported_videos: list[tuple[Path, str]] = []
+    seen_video_arcs: set[str] = set()
+
+    def record_exported_video(resolved: Path, arc: str) -> None:
+        if arc not in seen_video_arcs and resolved.suffix.lower() in VIDEO_EXTENSIONS:
+            seen_video_arcs.add(arc)
+            exported_videos.append((resolved, arc))
 
     def resolve_path(raw: Any) -> Path | None:
         if not raw:
@@ -2043,6 +2099,8 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
     for version in board.get("versions") or []:
         if isinstance(version, dict):
             rewrite_snapshot_lists(version)
+    for resolved_media, media_arc in media_map.items():
+        record_exported_video(resolved_media, media_arc)
 
     scene_media_video_by_take: dict[str, str] = {}
     for scene in board.get("scenes") or []:
@@ -2063,6 +2121,8 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
             resolved = path.resolve()
             if resolved in take_map:
                 take[key] = take_map[resolved]
+                if key == "video":
+                    record_exported_video(resolved, take_map[resolved])
                 continue
             filename = path.name
             idx = 2
@@ -2073,6 +2133,7 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
             arc = f"takes/{filename}"
             plan_out.add_file(resolved, arc)
             if key == "video":
+                record_exported_video(resolved, arc)
                 snap = snapshot_path(resolved)
                 if snap.is_file():
                     plan_out.add_file(snap, f"takes/{filename}.settings.json")
@@ -2099,6 +2160,9 @@ def _export_storyboard(plan_out: _ExportPlan, project_id: str, *, store, runtime
             if (inputs.get("kind") == "media" and str(take_id) in scene_media_video_by_take
                     and inputs.get("video") == original_videos.get(str(take_id))):
                 inputs["video"] = scene_media_video_by_take[str(take_id)]
+
+    for poster_path, poster_arc in _resolve_storyboard_posters(exported_videos, runtime=runtime):
+        plan_out.add_file(poster_path, poster_arc)
 
     plan_out.writestr("board.json", json.dumps({"id": project_id, "board": board}, ensure_ascii=False, indent=2))
     return str(board.get("name") or project_id)
@@ -2836,6 +2900,31 @@ def _import_storyboard(
         _work_media, extracted_media = src.stage_prefix(tx, "media", media_dir, direct_into_new_dir=takes_is_new)
         work_takes, extracted_takes = src.stage_prefix(tx, "takes", takes_dir, direct_into_new_dir=takes_is_new)
 
+        imported_posters: list[tuple[Path, Path]] = []
+        thumb_dir = getattr(runtime, "gallery_thumbnails_dir", None)
+        if thumb_dir is not None:
+            from h3_app.gallery_store import gallery_thumbnail_path
+
+            thumb_root = Path(thumb_dir)
+            video_targets = {**extracted_media, **extracted_takes}
+            seen_posters: set[Path] = set()
+            for poster_arc in src.prefix_entries("posters"):
+                if not poster_arc.endswith(".jpg"):
+                    continue
+                video_arc = poster_arc[len("posters/") : -len(".jpg")]
+                target_video = video_targets.get(video_arc)
+                if target_video is None:
+                    continue
+                dest_poster = _contained_path(
+                    thumb_root,
+                    gallery_thumbnail_path(target_video, runtime=runtime),
+                )
+                if dest_poster in seen_posters:
+                    continue
+                seen_posters.add(dest_poster)
+                src.stage_entry(tx, poster_arc, dest_poster)
+                imported_posters.append((dest_poster, target_video))
+
         if not cast_is_new:
             _schedule_obsolete_deletes(tx, cast_dir, set(extracted_cast.values()))
         if not takes_is_new:
@@ -2902,6 +2991,16 @@ def _import_storyboard(
             model.validate_scene(scene)
 
         tx.commit(lambda: store.save_storyboard(owner, target_id, board))
+
+    for dest_poster, target_video in imported_posters:
+        try:
+            if dest_poster.is_file() and target_video.is_file():
+                video_mtime_ns = target_video.stat().st_mtime_ns
+                if dest_poster.stat().st_mtime_ns < video_mtime_ns:
+                    target_ns = max(time.time_ns(), video_mtime_ns)
+                    os.utime(dest_poster, ns=(target_ns, target_ns))
+        except OSError:
+            pass
 
     return _transfer_result("storyboard", orig_id, orig_name, target_id, target_name, status, src=src, tx=tx)
 

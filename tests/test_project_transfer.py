@@ -2084,3 +2084,187 @@ def test_delta_range_resume_legacy_server_fallback_and_missing_donor_recovery(tm
         assert res3[0]["status"] == "overwritten"
         assert export_hits == 3
         assert RemakeProjects(dst_runtime.output_dir).load(None, rkey)["windows"][0]["prompt"] == "Recovered via fallback"
+
+
+def test_storyboard_transfer_preserves_video_posters_for_ffmpegless_workshop(tmp_path: Path, monkeypatch):
+    from io import BytesIO
+    import shutil as std_shutil
+
+    import gradio as gr
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from h3_app import gallery_store
+    from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+    from h3_app.project_transfer import import_remote_projects
+    from h3_app.server import ServerConfig, build_server
+    from h3_ui.project_transfer import install_project_transfer_routes
+
+    def jpeg_bytes(color: tuple[int, int, int]) -> bytes:
+        buf = BytesIO()
+        Image.new("RGB", (64, 36), color).save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+
+    src_runtime, src_store = _make_workspace(tmp_path / "studio")
+    dst_runtime, dst_store = _make_workspace(tmp_path / "workshop")
+    src_service = StoryboardService(src_store, lambda: src_runtime)
+    dst_service = StoryboardService(dst_store, lambda: dst_runtime)
+
+    board_id = src_service.create(
+        "owner-a",
+        "Fox Mystery",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+    )
+    board = src_service.load("owner-a", board_id)
+    scene0_id = board["scenes"][0]["id"]
+    src_service.set_mode("owner-a", board_id, scene0_id, sb_model.REFERENCES)
+    src_service.update_scene("owner-a", board_id, scene0_id, prompt="Opening shot")
+
+    ref_video_src = tmp_path / "ref_clip.mp4"
+    ref_video_src.write_bytes(b"R" * 16_000)
+    src_service.set_scene_media("owner-a", board_id, scene0_id, "ref_videos", [ref_video_src])
+    stored_ref_video = Path(src_service.load("owner-a", board_id)["scenes"][0]["ref_videos"][0])
+
+    # Scene 1: Media scene with a clip video.
+    stored_clip = src_service.media_dir(board_id) / "intro_clip.mp4"
+    stored_clip.parent.mkdir(parents=True, exist_ok=True)
+    stored_clip.write_bytes(b"C" * 16_000)
+    media_scene = {
+        **sb_model.new_media_scene("Intro Clip"),
+        "video": str(stored_clip),
+        "video_info": {"seconds": 4.0, "fps": 24.0, "width": 1280, "height": 720},
+        "video_in": 0.0,
+        "video_out": 4.0,
+    }
+    src_service.change("owner-a", board_id, lambda b: b["scenes"].append(media_scene))
+
+    board = src_service.load("owner-a", board_id)
+    inputs0 = sb_model.scene_inputs(board, 0)
+    tk0_id = sb_model.new_id()
+    tk0_video = src_service.output_path(f"{src_service.take_prefix(board_id, scene0_id, tk0_id)}.mp4")
+    tk0_video.parent.mkdir(parents=True, exist_ok=True)
+    tk0_video.write_bytes(b"0" * 32_000)
+    src_service.record_take(
+        "owner-a", board_id, scene0_id, tk0_id,
+        video=str(tk0_video), latents={"latent": None}, seed=11, inputs=inputs0,
+    )
+
+    tk1_id = sb_model.new_id()
+    tk1_video = src_service.output_path(f"{src_service.take_prefix(board_id, scene0_id, tk1_id)}.mp4")
+    tk1_video.write_bytes(b"1" * 32_000)
+    src_service.record_take(
+        "owner-a", board_id, scene0_id, tk1_id,
+        video=str(tk1_video), latents={"latent": None}, seed=22, inputs=inputs0,
+    )
+
+    # Pre-cache posters for tk0, ref_video, and intro_clip on Studio; leave tk1 uncached to verify
+    # export generates missing posters via gallery_thumbnail when FFmpeg is available on Studio.
+    expected_posters = {
+        tk0_video.resolve(): jpeg_bytes((200, 40, 40)),
+        tk1_video.resolve(): jpeg_bytes((40, 200, 40)),
+        stored_ref_video.resolve(): jpeg_bytes((40, 40, 200)),
+        stored_clip.resolve(): jpeg_bytes((200, 200, 40)),
+    }
+    src_runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+    for video_path in (tk0_video, stored_ref_video, stored_clip):
+        poster = gallery_store.gallery_thumbnail_path(video_path, runtime=src_runtime)
+        poster.write_bytes(expected_posters[video_path.resolve()])
+
+    real_gallery_thumbnail = gallery_store.gallery_thumbnail
+
+    def studio_gallery_thumbnail(video: Path, *, runtime):
+        resolved = Path(video).resolve()
+        if resolved in expected_posters and Path(runtime.gallery_thumbnails_dir).resolve() == src_runtime.gallery_thumbnails_dir.resolve():
+            poster = gallery_store.gallery_thumbnail_path(resolved, runtime=runtime)
+            poster.parent.mkdir(parents=True, exist_ok=True)
+            poster.write_bytes(expected_posters[resolved])
+            return poster
+        return real_gallery_thumbnail(video, runtime=runtime)
+
+    with monkeypatch.context() as studio_mp:
+        studio_mp.setattr(gallery_store, "gallery_thumbnail", studio_gallery_thumbnail)
+        archive = export_project_archive(
+            "storyboard", board_id, tmp_path / "fox_mystery.zip", store=src_store, runtime=src_runtime
+        )
+
+    with zipfile.ZipFile(archive, "r") as zf:
+        poster_entries = sorted(name for name in zf.namelist() if name.startswith("posters/"))
+    assert len(poster_entries) == 4
+    assert any(name.startswith("posters/takes/") and name.endswith(".jpg") for name in poster_entries)
+    assert any(name.startswith("posters/media/") and name.endswith(".jpg") for name in poster_entries)
+
+    # Import into a minimal Workshop without FFmpeg (matching modal_workshop.py).
+    real_which = std_shutil.which
+    monkeypatch.setattr(std_shutil, "which", lambda cmd, *a, **kw: None if cmd == "ffmpeg" else real_which(cmd, *a, **kw))
+
+    with gr.Blocks() as demo:
+        gr.Markdown()
+    ws_server_cfg = ServerConfig(
+        comfy_url="http://127.0.0.1:9",
+        output_dir=dst_runtime.output_dir,
+        outputs_dir=dst_runtime.outputs_dir,
+        workflows={},
+        workflow_dir=tmp_path,
+        video_extensions=VIDEO_EXTENSIONS,
+        image_extensions=IMAGE_EXTENSIONS,
+        audio_extensions=AUDIO_EXTENSIONS,
+        css="",
+        thumbnail_dir=dst_runtime.gallery_thumbnails_dir,
+    )
+    ws_client = TestClient(build_server(demo, [str(dst_runtime.output_dir)], ws_server_cfg))
+
+    def assert_all_posters_served(imported_board: dict[str, Any]) -> None:
+        checks = [
+            (imported_board["takes"][tk0_id]["video"], expected_posters[tk0_video.resolve()]),
+            (imported_board["takes"][tk1_id]["video"], expected_posters[tk1_video.resolve()]),
+            (imported_board["scenes"][0]["ref_videos"][0], expected_posters[stored_ref_video.resolve()]),
+            (imported_board["scenes"][1]["video"], expected_posters[stored_clip.resolve()]),
+        ]
+        for video_str, expected_jpg in checks:
+            resp = ws_client.get("/video-posters", params={"path": video_str})
+            assert resp.status_code == 200, f"missing poster for {video_str}"
+            assert resp.headers["content-type"] == "image/jpeg"
+            assert resp.content == expected_jpg
+
+    imported = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+    assert imported["status"] == "imported"
+    dst_board = dst_service.load("imported", imported["target_id"])
+    assert_all_posters_served(dst_board)
+
+    # Importing a renamed copy allocates a new target_id and maps posters to the new video paths.
+    renamed = import_project_archive(archive, store=dst_store, runtime=dst_runtime, conflict="rename")
+    assert renamed["status"] == "renamed"
+    assert renamed["target_id"] != imported["target_id"]
+    renamed_board = dst_service.load("imported", renamed["target_id"])
+    assert_all_posters_served(renamed_board)
+
+    # Simulate an older Workshop import missing cached posters: incremental overwrite sync backfills
+    # only the posters while reusing the local MP4s, then reports up_to_date on the next sync.
+    for poster_file in dst_runtime.gallery_thumbnails_dir.glob("*.jpg"):
+        poster_file.unlink()
+    assert ws_client.get("/video-posters", params={"path": dst_board["takes"][tk0_id]["video"]}).status_code == 404
+
+    studio_app = FastAPI()
+    install_project_transfer_routes(studio_app, store=src_store, runtime_config=lambda: src_runtime)
+    with _serve_fastapi(studio_app) as studio_url:
+        backfill = import_remote_projects(
+            studio_url,
+            [("storyboard", board_id, "Fox Mystery")],
+            store=dst_store,
+            runtime=dst_runtime,
+            conflict="overwrite",
+        )
+        assert backfill[0]["status"] == "overwritten"
+        assert backfill[0]["incremental"] is True
+        assert backfill[0]["reused_files"] >= 4
+        assert_all_posters_served(dst_service.load("imported", imported["target_id"]))
+
+        second = import_remote_projects(
+            studio_url,
+            [("storyboard", board_id, "Fox Mystery")],
+            store=dst_store,
+            runtime=dst_runtime,
+            conflict="overwrite",
+        )
+        assert second[0]["status"] == "up_to_date"

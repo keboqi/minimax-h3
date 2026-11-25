@@ -152,3 +152,134 @@ test("global Media only attaches an image after explicit confirmation for a refe
   assert.equal(library.open, false);
   assert.deepEqual(writes, [{url: "/storyboard/api/boards/board-A/scenes/scene-A/media/ref_images", body: {source: "/sample.png"}}]);
 });
+
+test("missing video posters fall back to a deduplicated client-side frame and hide broken icons", async () => {
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}},
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+    getAttribute(key) { return this[key] ?? this.props?.[key] ?? null; },
+    removeAttribute(key) { delete this[key]; },
+    querySelectorAll() { return []; },
+  });
+  const strip = h("div", {id: "strip"});
+  const stripHeading = h("span", {id: "strip-heading"});
+  const takeRow = h("div", {id: "take-row"});
+  const takeConfirm = h("div", {id: "take-confirm"});
+  const takeReview = h("div", {id: "take-review"});
+  const takesPanel = h("div", {id: "takes-panel"});
+  const stageVideo = h("video", {src: "/storyboard/api/boards/b1/file?path=t1.mp4", poster: "/video-posters?path=t1.mp4"});
+  const nodes = {
+    strip, "strip-heading": stripHeading, "take-row": takeRow,
+    "take-confirm": takeConfirm, "take-review": takeReview, "takes-panel": takesPanel,
+  };
+  const createdVideos = [];
+  const context = vm.createContext({
+    H3PageCommon: {
+      $: (id) => nodes[id], h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast() {}}),
+      scoreTone: () => "", decisionScoreChips: () => [], llmReviewNodes: () => [], copyToClipboard() {},
+    },
+    document: {
+      addEventListener() {},
+      querySelector: (selector) => (selector === "#preview video" ? stageVideo : null),
+      createElementNS(_ns, tag) {
+        const node = h(tag);
+        node.setAttribute = (k, v) => { node.props[k] = v; };
+        node.append = (...kids) => { node.children.push(...kids); };
+        return node;
+      },
+      createElement(tag) {
+        if (tag === "video") {
+          const v = {
+            duration: 10, currentTime: 0, readyState: 2, seeking: false,
+            videoWidth: 960, videoHeight: 540,
+            pause() {}, load() {}, removeAttribute(key) { delete this[key]; },
+          };
+          Object.defineProperty(v, "src", {
+            get() { return this._src; },
+            set(value) {
+              this._src = value;
+              createdVideos.push(v);
+              setImmediate(() => {
+                if (value.includes("broken.mp4")) {
+                  v.onerror?.();
+                  return;
+                }
+                v.onloadedmetadata?.();
+                if (v.currentTime >= 0.1) v.onseeked?.();
+              });
+            },
+            configurable: true,
+          });
+          return v;
+        }
+        if (tag === "canvas") {
+          return {
+            width: 0, height: 0,
+            getContext() { return {drawImage() {}}; },
+            toDataURL() { return "data:image/jpeg;base64,FALLBACK_FRAME"; },
+          };
+        }
+        return h(tag);
+      },
+    },
+    setTimeout, clearTimeout,
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderStrip, renderTakes};\n})();"), context);
+  const page = context.page;
+  const sceneItem = {
+    id: "s1", number: 1, title: "Scene 1", seconds: 10, added_seconds: 10,
+    flow: false, kind: "generated", state: "done", state_label: "Done", summary: "",
+    thumb: "/video-posters?path=t1.mp4", in_use: "t1",
+    takes: [
+      {id: "t1", number: 1, seed: 1, video: "/storyboard/api/boards/b1/file?path=t1.mp4", poster: "/video-posters?path=t1.mp4", missing: false},
+      {id: "t2", number: 2, seed: 2, video: "/storyboard/api/boards/b1/file?path=broken.mp4", poster: "/video-posters?path=broken.mp4", missing: false},
+    ],
+  };
+  page.state.boot = {gpu: false, writer: {gemini_models: []}};
+  page.state.board = {id: "b1", scenes: [sceneItem]};
+  page.state.sceneId = "s1";
+
+  page.renderStrip();
+  page.renderTakes();
+  const [stripImg] = findAll(strip, (n) => n.tag === "img");
+  const [take1Img, take2Img] = findAll(takeRow, (n) => n.tag === "img");
+
+  // Trigger 404 onerror on both the timeline scene thumb and take cards.
+  stripImg.onerror();
+  take1Img.onerror();
+  take2Img.onerror();
+  assert.equal(stripImg.hidden, true);
+  assert.equal(take1Img.hidden, true);
+  assert.equal(take2Img.hidden, true);
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  // Shared video t1.mp4 is decoded only once; both strip & take cards and stage video poster update.
+  assert.equal(createdVideos.filter((v) => v._src.includes("t1.mp4")).length, 1);
+  assert.equal(stripImg.src, "data:image/jpeg;base64,FALLBACK_FRAME");
+  assert.equal(stripImg.hidden, false);
+  assert.equal(take1Img.src, "data:image/jpeg;base64,FALLBACK_FRAME");
+  assert.equal(take1Img.hidden, false);
+  assert.equal(stageVideo.poster, "data:image/jpeg;base64,FALLBACK_FRAME");
+  // Unreadable video stays hidden instead of showing a broken image icon.
+  assert.equal(take2Img.hidden, true);
+
+  // Subsequent re-renders reuse the cached fallback directly and omit permanently failed imgs.
+  page.renderStrip();
+  page.renderTakes();
+  const [stripImg2] = findAll(strip, (n) => n.tag === "img");
+  const takeImgs2 = findAll(takeRow, (n) => n.tag === "img");
+  assert.equal(stripImg2.src, "data:image/jpeg;base64,FALLBACK_FRAME");
+  assert.equal(takeImgs2.length, 1);
+  assert.equal(takeImgs2[0].src, "data:image/jpeg;base64,FALLBACK_FRAME");
+});
