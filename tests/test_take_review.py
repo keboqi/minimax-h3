@@ -681,6 +681,154 @@ class StoryboardTakeReviewApiTests(unittest.TestCase):
         self.assertEqual(css.status_code, 200)
         self.assertTrue(css.headers["content-type"].startswith("text/css"))
 
+    def test_storyboard_batch_score_scene_takes_schedules_only_unscored_and_failed(self):
+        board = self.client.post("/storyboard/api/boards", json={
+            "name": "BatchScene", "story": "Mei steps onto the rainy bridge.",
+        }).json()
+        board_id = board["id"]
+        scene_id = board["scenes"][0]["id"]
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+
+        # Add a media scene to verify per-scene batch score rejects media scenes cleanly.
+        media_added = self.client.post(f"/storyboard/api/boards/{board_id}/scenes", json={"kind": "media"}).json()
+        media_scene_id = media_added["scene_id"]
+
+        # Generate 4 takes in scene 1 without auto-scoring.
+        with patch.object(decisions, "key_or_none", return_value=None):
+            for _ in range(4):
+                self.assertEqual(self.client.post(
+                    f"/storyboard/api/boards/{board_id}/generate",
+                    json={"action": "scene", "scene_id": scene_id},
+                ).status_code, 200)
+                self.assertIsNone(self.wait_run(board_id)["error"])
+
+        doc = self.service.load(owner, board_id)
+        take_ids = doc["scenes"][0]["takes"]
+        self.assertEqual(len(take_ids), 4)
+        video_paths = [Path(doc["takes"][tid]["video"]) for tid in take_ids]
+
+        # Take 1: already done (preserve existing score 91); Take 2: pending; Take 3: failed; Take 4: unscored.
+        media_review.save_decision(video_paths[0], {"status": media_review.DONE, "score": 91, "fit": 91, "tags": []})
+        media_review._write_decision(video_paths[1], {"status": media_review.PENDING, "started": time.time()})
+        media_review._write_decision(video_paths[2], {"status": media_review.FAILED, "error": "Earlier failure", "finished": time.time()})
+
+        # Validation checks: H3_DECISION=0, missing key, media scene.
+        with patch.dict(os.environ, {"H3_DECISION": "0"}):
+            disabled = self.client.post(
+                f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(disabled.status_code, 400)
+            self.assertIn("H3_DECISION=0", disabled.json()["error"])
+
+        with patch.dict(os.environ, {"H3_DECISION": "1", "GEMINI_API_KEY": ""}, clear=False):
+            missing_key = self.client.post(f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/score-takes", json={})
+            self.assertEqual(missing_key.status_code, 400)
+
+        with patch.dict(os.environ, {"H3_DECISION": "1"}):
+            media_err = self.client.post(
+                f"/storyboard/api/boards/{board_id}/scenes/{media_scene_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(media_err.status_code, 400)
+
+        # Schedule batch scoring for scene 1.
+        with patch.dict(os.environ, {"H3_DECISION": "1"}), \
+                patch.object(decisions, "decide", side_effect=_fake_decision_answers) as asked:
+            res = self.client.post(
+                f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(res.status_code, 200, res.text)
+            payload = res.json()
+            self.assertEqual(payload["scheduled"], 2)
+            self.assertEqual(payload["already_scored"], 1)
+            self.assertEqual(payload["pending"], 1)
+            self.assertEqual(payload["skipped"], 0)
+
+            for idx in (2, 3):
+                for _ in range(100):
+                    if (media_review.read(video_paths[idx]) or {}).get("status") == media_review.DONE:
+                        break
+                    time.sleep(0.02)
+
+        self.assertEqual(asked.call_count, 2)
+        self.assertEqual(media_review.public(video_paths[0])["score"], 91)
+        self.assertEqual(media_review.public(video_paths[1])["status"], media_review.PENDING)
+        self.assertEqual(media_review.public(video_paths[2])["score"], 80)
+        self.assertEqual(media_review.public(video_paths[3])["score"], 80)
+
+    def test_storyboard_batch_score_board_in_use_takes_works_in_workshop_and_skips_unused_and_media(self):
+        board = self.client.post("/storyboard/api/boards", json={
+            "name": "BatchBoard",
+            "story": "Scene one.\n\n---\n\nScene two.\n\n---\n\nScene three.",
+        }).json()
+        board_id = board["id"]
+        s1_id, s2_id, s3_id = [s["id"] for s in board["scenes"]]
+        # Add a 4th scene from Media to ensure media scenes are skipped cleanly.
+        self.client.post(f"/storyboard/api/boards/{board_id}/scenes", json={"kind": "media"})
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+
+        with patch.object(decisions, "key_or_none", return_value=None):
+            # Generate 2 takes in scene 1 (take 2 becomes in_use, take 1 is unused).
+            for _ in range(2):
+                self.assertEqual(self.client.post(
+                    f"/storyboard/api/boards/{board_id}/generate",
+                    json={"action": "scene", "scene_id": s1_id},
+                ).status_code, 200)
+                self.assertIsNone(self.wait_run(board_id)["error"])
+            # Generate scenes 2 and 3.
+            self.assertEqual(self.client.post(
+                f"/storyboard/api/boards/{board_id}/generate",
+                json={"action": "remaining"},
+            ).status_code, 200)
+            self.assertIsNone(self.wait_run(board_id)["error"])
+
+        doc = self.service.load(owner, board_id)
+        s1_in_use_id, s1_unused_id = doc["scenes"][0]["takes"]
+        self.assertEqual(doc["scenes"][0]["in_use"], s1_in_use_id)
+        s2_in_use_id = doc["scenes"][1]["in_use"]
+        s3_in_use_id = doc["scenes"][2]["in_use"]
+
+        s1_unused_vid = Path(doc["takes"][s1_unused_id]["video"])
+        s1_in_use_vid = Path(doc["takes"][s1_in_use_id]["video"])
+        s2_in_use_vid = Path(doc["takes"][s2_in_use_id]["video"])
+        s3_in_use_vid = Path(doc["takes"][s3_in_use_id]["video"])
+
+        media_review.save_decision(s2_in_use_vid, {"status": media_review.DONE, "score": 92, "fit": 92, "tags": []})
+        media_review._write_decision(s3_in_use_vid, {"status": media_review.FAILED, "error": "Timeout", "finished": time.time()})
+
+        # Call via CPU-only Workshop app (gpu=False).
+        cpu_app = FastAPI()
+        install_owner_cookie(cpu_app, self.store)
+        install_storyboard_page(cpu_app, self.handlers, gpu=False)
+        cpu_client = TestClient(cpu_app, cookies=self.client.cookies)
+
+        with patch.dict(os.environ, {"H3_DECISION": "1"}), \
+                patch.object(decisions, "decide", side_effect=_fake_decision_answers) as asked:
+            res = cpu_client.post(
+                f"/storyboard/api/boards/{board_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(res.status_code, 200, res.text)
+            payload = res.json()
+            self.assertEqual(payload["scheduled"], 2)
+            self.assertEqual(payload["already_scored"], 1)
+            self.assertEqual(payload["pending"], 0)
+            self.assertEqual(payload["skipped"], 0)
+
+            for vid in (s1_in_use_vid, s3_in_use_vid):
+                for _ in range(100):
+                    if (media_review.read(vid) or {}).get("status") == media_review.DONE:
+                        break
+                    time.sleep(0.02)
+
+        self.assertEqual(asked.call_count, 2)
+        self.assertIsNone(media_review.public(s1_unused_vid))
+        self.assertEqual(media_review.public(s1_in_use_vid)["score"], 80)
+        self.assertEqual(media_review.public(s2_in_use_vid)["score"], 92)
+        self.assertEqual(media_review.public(s3_in_use_vid)["score"], 80)
+
 
 if __name__ == "__main__":
     unittest.main()

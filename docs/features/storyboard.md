@@ -49,10 +49,13 @@ The storyboard picker marks a project **Generated** as soon as it has a recorded
 
 ## A scene
 
-The timeline above the preview and inspector shows each scene's picture, number, title, length and a
+The timeline above the preview and inspector shows each scene's picture, number, title, length,
+in-use take score badge (color-coded by score level when scored), and a
 status: Done, Out of date, Not generated or Needs input. A line between two scenes marks
 a fresh start (a cut). Click a scene to edit it. Use **Add scene** at the end of the
 timeline or **Scene actions** above the preview to insert, duplicate, move, or delete a scene.
+Use **Score in-use takes** in the timeline bar to batch-score every unscored in-use generated
+take across the storyboard in the background (working in both Studio and Workshop).
 
 The heading names the scene and the H3 mode it runs as, and the inspector on the right
 says what it comes after. It then offers exactly what that scene can use:
@@ -103,8 +106,11 @@ In **Storyboard settings**, turn on **Automatically score each take in the backg
 to score each newly generated take asynchronously with Gemini Decision (evaluating prompt fit,
 visuals, style, camera, action, continuity, audio, speech, and active references in a single
 request, rendered as a radar chart) as soon as it finishes, without delaying generation or subsequent scenes.
-This setting is off by default and saved per storyboard. You can also score or review any take
-manually under its take cards.
+This setting is off by default and saved per storyboard. Take thumbnails and scene timeline
+thumbnails show each score as a badge colored by score level. You can also score or review
+any take manually under its take cards, use **Score unscored takes** in a scene's takes
+toolbar to batch-score every unscored take in that scene, or use **Score in-use takes** above
+the timeline to batch-score every unscored in-use take across the storyboard.
 
 ## Subtitles
 

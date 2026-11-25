@@ -615,6 +615,24 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         )
         return {**payload(owner, storyboard_id), "review": scored}
 
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/score-takes", include_in_schema=False)
+    @guarded
+    def score_scene_takes(storyboard_id: str, scene_id: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
+        gemini_api_key = str(body.get("gemini_api_key") or writer.get("gemini_api_key") or "")
+        result = handlers.score_scene_takes(owner, storyboard_id, scene_id, gemini_api_key=gemini_api_key)
+        return {**payload(owner, storyboard_id), **result}
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/score-takes", include_in_schema=False)
+    @guarded
+    def score_board_takes(storyboard_id: str, request: Request, body: dict = Body(default={})):
+        owner = owner_of(request)
+        writer = body.get("writer") if isinstance(body.get("writer"), dict) else {}
+        gemini_api_key = str(body.get("gemini_api_key") or writer.get("gemini_api_key") or "")
+        result = handlers.score_board_in_use_takes(owner, storyboard_id, gemini_api_key=gemini_api_key)
+        return {**payload(owner, storyboard_id), **result}
+
     @app.post(f"{api}/boards/{{storyboard_id}}/versions", include_in_schema=False)
     @guarded
     def save_version(storyboard_id: str, request: Request, body: dict = Body(default={})):

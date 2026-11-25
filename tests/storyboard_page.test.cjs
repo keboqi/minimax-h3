@@ -655,3 +655,223 @@ test("renderTakes shows the radar chart under take-detail and keeps take-detail 
   assert.equal(radarCards.length, 1);
   assert.equal(findAll(detail, (n) => n.className === "review-chip").length, 1);
 });
+
+test("scoreLevel maps scores into five distinct color levels", () => {
+  const context = vm.createContext({
+    document: {createElement: () => ({}), createElementNS: () => ({}), createTextNode: () => ({})},
+    window: {frameElement: null},
+    innerHeight: 900,
+  });
+  vm.runInContext(commonSource, context);
+  const {scoreLevel} = context.H3PageCommon;
+
+  assert.equal(scoreLevel(95), "strong");
+  assert.equal(scoreLevel(85), "strong");
+  assert.equal(scoreLevel(84), "good");
+  assert.equal(scoreLevel(70), "good");
+  assert.equal(scoreLevel(69), "fair");
+  assert.equal(scoreLevel(55), "fair");
+  assert.equal(scoreLevel(54), "weak");
+  assert.equal(scoreLevel(40), "weak");
+  assert.equal(scoreLevel(39), "poor");
+  assert.equal(scoreLevel(0), "poor");
+  assert.equal(scoreLevel(null), "");
+  assert.equal(scoreLevel(undefined), "");
+  assert.equal(scoreLevel("bad"), "");
+});
+
+function stageStripFixture({fetch, gpu = false} = {}) {
+  const findAll = (root, matches, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (matches(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, matches, out);
+    return out;
+  };
+  const h = (tag, props = {}, ...children) => ({
+    tag, props, ...props, style: {}, classList: {toggle() {}, add() {}, remove() {}},
+    textContent: children.filter((c) => typeof c === "string" || typeof c === "number").map(String).join(""),
+    children: children.flat(Infinity).filter(Boolean),
+    replaceChildren(...nodes) { this.children = nodes.filter(Boolean); },
+    append(...nodes) { this.children.push(...nodes.flat(Infinity).filter(Boolean)); },
+    setAttribute(k, v) { this.props[k] = v; },
+    getAttribute(k) { return this[k] ?? this.props?.[k] ?? null; },
+    querySelectorAll() { return []; },
+  });
+  const nodes = {
+    strip: h("div", {id: "strip"}),
+    "strip-heading": h("span", {id: "strip-heading"}),
+    "strip-actions": h("div", {id: "strip-actions"}),
+    "take-row": h("div", {id: "take-row"}),
+    "take-confirm": h("div", {id: "take-confirm"}),
+    "take-review": h("div", {id: "take-review"}),
+    "takes-panel": h("div", {id: "takes-panel"}),
+    "subtitle-language": h("select", {id: "subtitle-language"}),
+    "show-subtitles": h("input", {id: "show-subtitles"}),
+    "show-translation": h("input", {id: "show-translation"}),
+    "translate-scene": h("button", {id: "translate-scene"}),
+    "translate-board": h("button", {id: "translate-board"}),
+    "export-translation": h("input", {id: "export-translation"}),
+    "burn-subtitles": h("input", {id: "burn-subtitles"}),
+    "subtitle-status": h("p", {id: "subtitle-status"}),
+    "stage-head": h("div", {id: "stage-head"}),
+    preview: h("div", {id: "preview"}),
+    "stage-notes": h("div", {id: "stage-notes"}),
+    topbar: h("header", {id: "topbar"}),
+    inspector: h("aside", {id: "inspector"}),
+    editor: h("div", {id: "editor", hidden: false}),
+    toast: h("div", {id: "toast"}),
+  };
+  const scheduled = [];
+  const toasts = [];
+  const context = vm.createContext({
+    H3PageCommon: {
+      $: (id) => nodes[id], h,
+      visibleArea: () => ({top: 0, bottom: 800}),
+      createToast: () => ({toast(msg, err) { toasts.push({msg, err: Boolean(err)}); }}),
+      scoreTone: (v) => (v >= 70 ? "good" : v < 45 ? "warn" : ""),
+      scoreLevel: (v) => (v >= 85 ? "strong" : v >= 70 ? "good" : v >= 55 ? "fair" : v >= 40 ? "weak" : "poor"),
+      decisionScoreChips: (review) => [h("span", {className: "review-chip"}, `Take score ${review.score}`)],
+      decisionScoreRadar: () => null,
+      llmReviewNodes: () => [],
+      copyToClipboard() {},
+    },
+    document: {
+      addEventListener() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElementNS: () => h("svg"),
+    },
+    setTimeout(fn, delay) { scheduled.push(delay); return scheduled.length; },
+    clearTimeout() {},
+    fetch,
+  });
+  vm.runInContext(source.replace(/  start\(\);\s*\}\)\(\);\s*$/,
+    "  globalThis.page = {state, renderStrip, renderStripActions, renderTakes};\n})();"), context);
+  const page = context.page;
+  page.state.boot = {
+    gpu, library: false, subtitle_languages: ["Spanish"], subtitle_models: ["gemma"],
+    boards: [{id: "b1", name: "Board", generated: true}],
+    writer: {gemini_models: []},
+  };
+  return {page, nodes, findAll, scheduled, toasts};
+}
+
+test("renderStrip shows level-colored score badges on scene timeline thumbnails", () => {
+  const {page, nodes, findAll} = stageStripFixture();
+  page.state.board = {
+    id: "b1",
+    scenes: [
+      {id: "s1", number: 1, title: "One", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t1",
+        takes: [{id: "t1", number: 1, missing: false, review: {status: "done", score: 90, score_label: "Strong take"}}]},
+      {id: "s2", number: 2, title: "Two", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t2",
+        takes: [{id: "t2", number: 1, missing: false, review: {status: "done", score: 75, score_label: "Good take"}}]},
+      {id: "s3", number: 3, title: "Three", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t3",
+        takes: [{id: "t3", number: 1, missing: false, review: {status: "done", score: 60}}]},
+      {id: "s4", number: 4, title: "Four", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t4",
+        takes: [{id: "t4", number: 1, missing: false, review: {status: "done", score: 45}}]},
+      {id: "s5", number: 5, title: "Five", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t5",
+        takes: [{id: "t5", number: 1, missing: false, review: {status: "done", score: 25}}]},
+      {id: "s6", number: 6, title: "Six", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t6",
+        takes: [{id: "t6", number: 1, missing: false, review: {status: "pending"}}]},
+      {id: "s7", number: 7, title: "Seven", seconds: 5, added_seconds: 5, flow: false, kind: "generated", state: "done", state_label: "Done", summary: "", in_use: "t7",
+        takes: [{id: "t7", number: 1, missing: false, review: null}]},
+      {id: "s8", number: 8, title: "Clip", seconds: 5, added_seconds: 5, flow: false, kind: "media", state: "done", state_label: "Done", summary: "", in_use: "t8",
+        takes: [{id: "t8", number: 1, missing: false, review: {status: "done", score: 88}}]},
+    ],
+  };
+  page.state.sceneId = "s1";
+  page.renderStrip();
+
+  const frames = findAll(nodes.strip, (n) => n.className === "frame");
+  assert.equal(frames.length, 8);
+  const badgeFor = (frame) => findAll(frame, (n) => n.className?.includes("thumb-score"))[0];
+  assert.equal(badgeFor(frames[0]).textContent, "90");
+  assert.ok(badgeFor(frames[0]).className.includes("score-level-strong"));
+  assert.equal(badgeFor(frames[1]).textContent, "75");
+  assert.ok(badgeFor(frames[1]).className.includes("score-level-good"));
+  assert.equal(badgeFor(frames[2]).textContent, "60");
+  assert.ok(badgeFor(frames[2]).className.includes("score-level-fair"));
+  assert.equal(badgeFor(frames[3]).textContent, "45");
+  assert.ok(badgeFor(frames[3]).className.includes("score-level-weak"));
+  assert.equal(badgeFor(frames[4]).textContent, "25");
+  assert.ok(badgeFor(frames[4]).className.includes("score-level-poor"));
+  assert.equal(badgeFor(frames[5]).textContent, "…");
+  assert.equal(badgeFor(frames[6]), undefined);
+  assert.equal(badgeFor(frames[7]), undefined);
+});
+
+test("renderTakes and renderStripActions wire batch scoring and take thumbnail score levels", async () => {
+  const calls = [];
+  const {page, nodes, findAll, scheduled} = stageStripFixture({
+    gpu: false,
+    fetch: async (url, options = {}) => {
+      calls.push({url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null});
+      return {
+        ok: true,
+        json: async () => ({
+          ...page.state.board,
+          scheduled: 2, already_scored: 1, pending: 1, skipped: 0,
+        }),
+      };
+    },
+  });
+  page.state.board = {
+    id: "b1", name: "Board", total: "0:15", done: 3, pending: 0, queue: [],
+    subtitle_language: "Spanish", take_note: "", cast: [], versions: [],
+    scenes: [
+      {
+        id: "s1", number: 1, title: "One", seconds: 5, added_seconds: 5, flow: false, kind: "generated",
+        state: "done", state_label: "Done", summary: "", issues: [], in_use: "t2",
+        takes: [
+          {id: "t1", number: 1, missing: false, review: {status: "done", score: 88}},
+          {id: "t2", number: 2, missing: false, review: null},
+          {id: "t3", number: 3, missing: false, review: {status: "failed", error: "Oops"}},
+          {id: "t4", number: 4, missing: false, review: {status: "pending"}},
+          {id: "t5", number: 5, missing: true, review: null},
+        ],
+      },
+      {
+        id: "s2", number: 2, title: "Two", seconds: 5, added_seconds: 5, flow: false, kind: "generated",
+        state: "done", state_label: "Done", summary: "", issues: [], in_use: "t20",
+        takes: [{id: "t20", number: 1, missing: false, review: {status: "failed", error: "Err"}}],
+      },
+      {
+        id: "s3", number: 3, title: "Media", seconds: 5, added_seconds: 5, flow: false, kind: "media",
+        state: "done", state_label: "Done", summary: "", issues: [], in_use: "t30",
+        takes: [{id: "t30", number: 1, missing: false, review: null}],
+      },
+    ],
+  };
+  page.state.sceneId = "s1";
+
+  page.renderTakes();
+  page.renderStripActions();
+
+  const pills = findAll(nodes["take-row"], (n) => n.className?.includes("take-score-pill"));
+  assert.equal(pills[0].textContent, "88");
+  assert.ok(pills[0].className.includes("score-level-strong"));
+  assert.equal(pills[1].textContent, "…");
+
+  const sceneBatchBtn = findAll(nodes["take-row"], (n) => n.id === "score-scene-takes")[0];
+  assert.ok(sceneBatchBtn);
+  assert.equal(sceneBatchBtn.textContent, "Score unscored takes (2)");
+  assert.equal(sceneBatchBtn.disabled, false);
+
+  const boardBatchBtn = findAll(nodes["strip-actions"], (n) => n.id === "score-board-takes")[0];
+  assert.ok(boardBatchBtn);
+  assert.equal(boardBatchBtn.textContent, "Score in-use takes (2)");
+  assert.equal(boardBatchBtn.disabled, false);
+
+  await sceneBatchBtn.onclick();
+  await boardBatchBtn.onclick();
+  assert.deepEqual(calls.map((c) => [c.method, c.url]), [
+    ["POST", "/storyboard/api/boards/b1/scenes/s1/score-takes"],
+    ["POST", "/storyboard/api/boards/b1/score-takes"],
+  ]);
+
+  // Media scenes still keep the 4000ms review poll alive when another scene has a pending review.
+  scheduled.length = 0;
+  page.state.sceneId = "s3";
+  page.renderTakes();
+  assert.deepEqual(scheduled, [4000]);
+});

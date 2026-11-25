@@ -165,6 +165,16 @@
     ["advice", "Advice"],
   ];
   const scoreTone = (value) => (value >= 70 ? "good" : value < 45 ? "warn" : "");
+  const scoreLevel = (value) => {
+    if (value === null || value === undefined || value === "") return "";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "";
+    if (numeric >= 85) return "strong";
+    if (numeric >= 70) return "good";
+    if (numeric >= 55) return "fair";
+    if (numeric >= 40) return "weak";
+    return "poor";
+  };
 
   const scoreAxes = (review) => {
     const scores = review?.scores;
@@ -425,6 +435,6 @@
   globalThis.H3PageCommon = {
     $, h, visibleArea, visibleBottom, createToast, createClient,
     seg, multiSeg, rangeOf, presetText, openStudio, openSystem,
-    scoreTone, scoreAxes, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard,
+    scoreTone, scoreLevel, scoreAxes, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard,
   };
 })();

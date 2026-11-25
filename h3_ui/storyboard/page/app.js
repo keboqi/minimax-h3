@@ -5,7 +5,17 @@
   const SAVE_DELAY_MS = 400;
   const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
-  const {$, h, visibleArea, createToast, scoreTone, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
+  const {$, h, visibleArea, createToast, scoreTone, scoreLevel: commonScoreLevel, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
+  const scoreLevel = commonScoreLevel || ((value) => {
+    if (value === null || value === undefined || value === "") return "";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "";
+    if (numeric >= 85) return "strong";
+    if (numeric >= 70) return "good";
+    if (numeric >= 55) return "fair";
+    if (numeric >= 40) return "weak";
+    return "poor";
+  });
   const {toast} = createToast();
   const chip = (label, pressed, onclick) =>
     h("button", {type: "button", className: "chip", "aria-pressed": String(pressed), onclick}, label);
@@ -36,6 +46,7 @@
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
     reviewAdvice: new Map(), reviewBusy: new Map(), reviewError: new Map(),
     reviewModel: stored.get("h3-storyboard-review-model") || "", takeReviewKey: null,
+    batchScoreBusy: null,
   };
   const scenes = () => state.board.scenes;
   const scene = () => scenes().find((item) => item.id === state.sceneId) || scenes()[0];
@@ -658,18 +669,130 @@
     return "";
   };
 
-  const renderTakeToolbar = (item, busy) => h("div", {className: "take-toolbar"},
-    h("div", {className: "take-toolbar-head"},
-      h("strong", {className: "small"}, item.takes.length ? `Takes (${item.takes.length})` : "No takes yet"),
-      !item.takes.length ? h("span", {className: "small muted"},
-        "Generate, upload an edited clip, or pick one from Media.") : null),
-    h("div", {className: "chips"},
-      button(state.addingTake ? "Adding take…" : "Upload take", async () => {
-        const [file] = await pickFiles("video/*", false);
-        if (file) uploadTake(file);
-      }, "btn sm", {id: "upload-take", disabled: busy, title: "Upload an edited or external video clip as a new take"}),
-      state.boot?.library && button("From Media", () => openLibrary((path) => libraryTake(path), "video", "Add as new take"),
-        "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
+  const takeBadgeInfo = (take) => {
+    const doneReview = take?.review?.status === "done" ? take.review : null;
+    const rawScore = doneReview ? (doneReview.score ?? doneReview.fit) : null;
+    const numeric = rawScore === null || rawScore === undefined || rawScore === "" ? null : Number(rawScore);
+    const score = Number.isFinite(numeric) ? numeric : null;
+    const pending = score === null && take?.review?.status === "pending";
+    const level = score !== null ? scoreLevel(score) : "";
+    const label = doneReview?.score_label || doneReview?.label || "";
+    return {score, pending, level, label};
+  };
+
+  const isTakeUnscored = (take) => Boolean(take && !take.missing && take.review?.status !== "done" && take.review?.status !== "pending");
+  const isTakePendingScore = (take) => Boolean(take && !take.missing && take.review?.status === "pending");
+
+  const sceneScoreCounts = (item) => {
+    if (!item || item.kind === "media") return {unscored: 0, pending: 0, total: 0};
+    let unscored = 0;
+    let pending = 0;
+    let total = 0;
+    for (const take of item.takes || []) {
+      if (take.missing) continue;
+      total += 1;
+      if (isTakeUnscored(take)) unscored += 1;
+      else if (isTakePendingScore(take)) pending += 1;
+    }
+    return {unscored, pending, total};
+  };
+
+  const boardInUseScoreCounts = () => {
+    let unscored = 0;
+    let pending = 0;
+    let total = 0;
+    for (const item of scenes()) {
+      if (item.kind === "media") continue;
+      const inUse = (item.takes || []).find((take) => take.id === item.in_use);
+      if (!inUse || inUse.missing) continue;
+      total += 1;
+      if (isTakeUnscored(inUse)) unscored += 1;
+      else if (isTakePendingScore(inUse)) pending += 1;
+    }
+    return {unscored, pending, total};
+  };
+
+  const scheduleReviewPoll = () => {
+    clearTimeout(state.reviewTimer);
+    state.reviewTimer = null;
+    const anyPendingReview = (state.board?.scenes || []).some((s) => (s.takes || []).some((t) => t.review?.status === "pending"));
+    // A take's score arrives after its run; look again until every pending score finishes.
+    if (anyPendingReview && !activeGenerate()) {
+      state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
+    }
+  };
+
+  const batchScoreTakes = async (scope) => {
+    if (state.batchScoreBusy) return;
+    const boardId = state.board.id;
+    const sceneId = state.sceneId;
+    const url = scope === "scene"
+      ? `${API}/boards/${boardId}/scenes/${sceneId}/score-takes`
+      : `${API}/boards/${boardId}/score-takes`;
+    state.batchScoreBusy = scope;
+    if ($("take-row")) renderTakes();
+    if ($("strip-actions")) renderStripActions();
+    try {
+      await flush();
+      await saves;
+      if (state.board?.id !== boardId) return;
+      const data = await request("POST", url, {writer: writerSettings()});
+      if (state.board?.id !== boardId) return;
+      state.batchScoreBusy = null;
+      applyBoard(data, {keepInspector: true});
+      const scheduled = Number(data.scheduled || 0);
+      const pending = Number(data.pending || 0);
+      const already = Number(data.already_scored || 0);
+      if (scheduled > 0) {
+        toast(scope === "scene"
+          ? `Scoring ${scheduled} take${scheduled === 1 ? "" : "s"} in this scene…`
+          : `Scoring ${scheduled} in-use take${scheduled === 1 ? "" : "s"} in the background…`);
+      } else if (pending > 0) {
+        toast(`Scoring already in progress for ${pending} take${pending === 1 ? "" : "s"}.`);
+      } else if (already > 0) {
+        toast(scope === "scene" ? "All available takes in this scene are already scored." : "All in-use takes are already scored.");
+      } else {
+        toast("No unscored takes available to score.", true);
+      }
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      if (state.board?.id === boardId) {
+        state.batchScoreBusy = null;
+        if ($("take-row")) renderTakes();
+        if ($("strip-actions")) renderStripActions();
+      }
+    }
+  };
+
+  const renderTakeToolbar = (item, busy) => {
+    const scoreCounts = sceneScoreCounts(item);
+    const sceneScoreBusy = state.batchScoreBusy === "scene";
+    const scoreLabel = sceneScoreBusy
+      ? "Scoring takes…"
+      : scoreCounts.unscored > 0
+        ? `Score unscored takes (${scoreCounts.unscored})`
+        : scoreCounts.pending > 0
+          ? `Scoring takes (${scoreCounts.pending})…`
+          : "All takes scored";
+    return h("div", {className: "take-toolbar"},
+      h("div", {className: "take-toolbar-head"},
+        h("strong", {className: "small"}, item.takes.length ? `Takes (${item.takes.length})` : "No takes yet"),
+        !item.takes.length ? h("span", {className: "small muted"},
+          "Generate, upload an edited clip, or pick one from Media.") : null),
+      h("div", {className: "chips"},
+        item.takes.length ? button(scoreLabel, () => batchScoreTakes("scene"), "btn sm", {
+          id: "score-scene-takes",
+          disabled: Boolean(state.batchScoreBusy) || scoreCounts.unscored === 0,
+          title: "Score every unscored take in this scene in the background with Gemini Decision",
+        }) : null,
+        button(state.addingTake ? "Adding take…" : "Upload take", async () => {
+          const [file] = await pickFiles("video/*", false);
+          if (file) uploadTake(file);
+        }, "btn sm", {id: "upload-take", disabled: busy, title: "Upload an edited or external video clip as a new take"}),
+        state.boot?.library && button("From Media", () => openLibrary((path) => libraryTake(path), "video", "Add as new take"),
+          "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
+  };
 
   const renderTakeOriginMeta = (item, shown, busy) => {
     if (!shown) return [];
@@ -712,6 +835,7 @@
       $("take-review").replaceChildren();
       state.takeReviewKey = null;
       $("takes-panel").hidden = false;
+      scheduleReviewPoll();
       return;
     }
     const busy = Boolean(state.run?.active || state.addingTake);
@@ -722,9 +846,11 @@
       const inUse = take.id === item.in_use;
       const thumbSrc = take.poster || item.thumb;
       const thumbVideo = take.missing ? null : take.video;
-      const doneReview = take.review?.status === "done" ? take.review : null;
-      const badgeScore = doneReview ? (doneReview.score ?? doneReview.fit) : null;
-      const pendingReview = badgeScore === null && take.review?.status === "pending";
+      const badge = takeBadgeInfo(take);
+      const pillClass = badge.level ? `take-score-pill mono score-level-${badge.level}` : "take-score-pill mono";
+      const pillTitle = badge.label
+        ? `Gemini Decision score: ${badge.score} (${badge.label})`
+        : `Gemini Decision score: ${badge.score}`;
       return h("button", {
         type: "button",
         className: "take-card",
@@ -734,9 +860,9 @@
       h("span", {className: "take-card-thumb"},
         thumbSrc ? posterImg(thumbSrc, thumbVideo, {alt: "", loading: "lazy"}) : null,
         inUse ? h("span", {className: "take-in-use"}, "In use") : null,
-        badgeScore !== null
-          ? h("span", {className: `take-score-pill mono ${scoreTone(badgeScore)}`, title: `Gemini Decision score: ${badgeScore}`}, String(badgeScore))
-          : pendingReview
+        badge.score !== null
+          ? h("span", {className: pillClass, title: pillTitle}, String(badge.score))
+          : badge.pending
             ? h("span", {className: "take-score-pill mono", title: "Scoring take in the background…"}, "…")
             : null),
       h("span", {className: "take-card-meta"},
@@ -753,8 +879,6 @@
         {disabled: Boolean(state.run?.active),
           title: state.run?.active ? "Wait for the current run to finish." : "Delete this take for good"}));
     }
-    clearTimeout(state.reviewTimer);
-    state.reviewTimer = null;
     const review = shown?.review;
     let radar = null;
     if (review?.status === "pending") {
@@ -765,11 +889,7 @@
     } else if (review?.status === "failed") {
       row.push(h("span", {className: "small muted", title: review.error || ""}, "Auto score failed."));
     }
-    const anyPendingReview = (state.board?.scenes || []).some((s) => (s.takes || []).some((t) => t.review?.status === "pending"));
-    // A take's score arrives after its run; look again until every pending score finishes.
-    if (anyPendingReview && !activeGenerate()) {
-      state.reviewTimer = setTimeout(() => refreshBoard().catch(() => {}), 4000);
-    }
+    scheduleReviewPoll();
     row.push(...renderTakeOriginMeta(item, shown, Boolean(state.run?.active)));
     $("take-row").replaceChildren(...[
       toolbar,
@@ -1072,14 +1192,25 @@
       const durationText = item.flow
         ? `${item.seconds}s (+${Number(item.added_seconds.toFixed(1))}s)`
         : `${item.seconds}s`;
+      const inUseTake = item.kind === "media" ? null : (item.takes || []).find((take) => take.id === item.in_use) || null;
+      const badge = takeBadgeInfo(inUseTake && !inUseTake.missing ? inUseTake : null);
+      const scoreBadgeClass = badge.level ? `thumb-score mono score-level-${badge.level}` : "thumb-score mono";
+      const scoreBadgeTitle = badge.label
+        ? `In-use take score: ${badge.score} (${badge.label})`
+        : `In-use take score: ${badge.score}`;
       const thumbWrap = h("span", {className: "thumb-wrap"},
         thumb,
         h("span", {className: "thumb-num mono"}, String(item.number).padStart(2, "0")),
+        badge.score !== null
+          ? h("span", {className: scoreBadgeClass, title: scoreBadgeTitle}, String(badge.score))
+          : badge.pending
+            ? h("span", {className: "thumb-score mono", title: "Scoring in-use take in the background…"}, "…")
+            : null,
         h("span", {className: "thumb-dur mono"}, durationText));
       const card = h("button", {
         type: "button", className: "frame", draggable: true,
         "aria-current": String(item.id === state.sceneId), "data-scene": item.id,
-        "aria-label": `Scene ${item.number}, ${item.title}, ${item.seconds} seconds, ${item.state_label}. ${item.summary}`,
+        "aria-label": `Scene ${item.number}, ${item.title}, ${item.seconds} seconds, ${item.state_label}${badge.score !== null ? `, score ${badge.score}` : ""}. ${item.summary}`,
         onclick: () => select(item.id),
         ondragstart: (event) => {
           state.dragSceneId = item.id;
@@ -1144,7 +1275,23 @@
           title: "Transcribe and time the audio in all generated takes currently in use",
         }));
     }
+    const boardScores = boardInUseScoreCounts();
+    const boardScoreBusy = state.batchScoreBusy === "board";
+    const boardScoreLabel = boardScoreBusy
+      ? "Scoring in-use takes…"
+      : boardScores.unscored > 0
+        ? `Score in-use takes (${boardScores.unscored})`
+        : boardScores.pending > 0
+          ? `Scoring in-use (${boardScores.pending})…`
+          : boardScores.total > 0
+            ? "In-use takes scored"
+            : "Score in-use takes";
     actions.push(
+      button(boardScoreLabel, () => batchScoreTakes("board"), "btn", {
+        id: "score-board-takes",
+        disabled: Boolean(state.batchScoreBusy) || boardScores.unscored === 0,
+        title: "Score every unscored in-use generated take across this storyboard with Gemini Decision",
+      }),
       button("Export to Media", exportToMedia, "btn", {disabled: busy}),
       h("label", {className: "check-label"},
         h("input", {type: "checkbox", checked: state.includeOutdated,
@@ -1314,6 +1461,7 @@
     state.previewTake = null;
     state.question = null;
     state.deletingTake = null;
+    state.batchScoreBusy = null;
     state.panel = null;
     state.confirmProfile = false;
     const actions = $("scene-actions");
@@ -2742,6 +2890,7 @@
     state.previewTake = null;
     state.question = null;
     state.deletingTake = null;
+    state.batchScoreBusy = null;
     // Auto render follows the queue from board to board, so its panel stays open.
     state.panel = state.panel === "auto" ? "auto" : null;
     state.confirmProfile = false;

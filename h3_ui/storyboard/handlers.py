@@ -11,13 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from h3_app import storyboard as sb, take_review
+from h3_app import media_review, storyboard as sb, take_review
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_PROMPT_WRITER_BACKEND,
 )
 from h3_app.errors import H3Error
 from h3_app.generation.construct_graph import StoryboardGraph
 from h3_app.jobs import CURRENT_JOB, JobCancelled
+from h3_app.llm import decisions, gemini
 from h3_app.staging import stage_file
 from h3_app.storyboard import subtitles
 from h3_app.storyboard.text import parse_scenes
@@ -230,6 +231,105 @@ class StoryboardHandlers(StoryboardApiHandlers):
         )
         _, chosen_key = self._gemini_review_settings(owner, {"gemini_api_key": gemini_api_key})
         return take_review.score_take(take_input, api_key=chosen_key, save=True)
+
+    def _schedule_batch_scores(
+        self,
+        owner,
+        storyboard_id: str,
+        board: dict[str, Any],
+        targets: list[tuple[int, str]],
+        *,
+        gemini_api_key: str = "",
+    ) -> dict[str, int]:
+        """Schedule background Gemini Decision scoring for unscored (or previously failed) takes."""
+        if not decisions.enabled():
+            raise H3Error("Gemini Decision scoring is turned off (H3_DECISION=0).")
+        _, chosen_key = self._gemini_review_settings(owner, {"gemini_api_key": gemini_api_key})
+        resolved_key = gemini.api_key(chosen_key)
+
+        scheduled = 0
+        already_scored = 0
+        pending = 0
+        skipped = 0
+        cast_dir = self.service.cast_dir(storyboard_id)
+        seen_takes: set[str] = set()
+
+        for scene_index, take_id in targets:
+            if not take_id or take_id in seen_takes:
+                continue
+            seen_takes.add(take_id)
+            scene = board["scenes"][scene_index]
+            take = (board.get("takes") or {}).get(take_id)
+            if sb.is_media(scene) or take is None or take_id not in scene.get("takes", ()):
+                skipped += 1
+                continue
+            video = take.get("video")
+            if not video or not Path(video).is_file():
+                skipped += 1
+                continue
+            existing = media_review.public(video)
+            status = existing.get("status") if existing else None
+            if status == media_review.DONE:
+                already_scored += 1
+                continue
+            if status == media_review.PENDING:
+                pending += 1
+                continue
+            try:
+                take_input, _ = take_review.storyboard_take_input(
+                    board, scene_index, take_id, cast_dir=cast_dir,
+                )
+            except H3Error:
+                skipped += 1
+                continue
+            if take_review.schedule_take_score(take_input, api_key=resolved_key, enabled=True):
+                scheduled += 1
+            else:
+                skipped += 1
+
+        return {
+            "scheduled": scheduled,
+            "already_scored": already_scored,
+            "pending": pending,
+            "skipped": skipped,
+        }
+
+    def score_scene_takes(
+        self,
+        owner,
+        storyboard_id: str,
+        scene_id: str,
+        *,
+        gemini_api_key: str = "",
+    ) -> dict[str, int]:
+        """Batch-score every unscored generated take in one scene."""
+        board = self.service.load(owner, storyboard_id)
+        index = self.service.scene_index(board, scene_id)
+        scene = board["scenes"][index]
+        if sb.is_media(scene):
+            raise H3Error("Scoring applies to generated takes, not Video from Media scenes.")
+        targets = [(index, take_id) for take_id in scene.get("takes", ())]
+        return self._schedule_batch_scores(
+            owner, storyboard_id, board, targets, gemini_api_key=gemini_api_key,
+        )
+
+    def score_board_in_use_takes(
+        self,
+        owner,
+        storyboard_id: str,
+        *,
+        gemini_api_key: str = "",
+    ) -> dict[str, int]:
+        """Batch-score every unscored in-use generated take across the storyboard."""
+        board = self.service.load(owner, storyboard_id)
+        targets = [
+            (index, scene["in_use"])
+            for index, scene in enumerate(board["scenes"])
+            if not sb.is_media(scene) and scene.get("in_use")
+        ]
+        return self._schedule_batch_scores(
+            owner, storyboard_id, board, targets, gemini_api_key=gemini_api_key,
+        )
 
     # Takes -----------------------------------------------------------------
     def depends_on(self, board, index) -> list[int]:
