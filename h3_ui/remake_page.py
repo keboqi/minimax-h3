@@ -36,6 +36,17 @@ from .page_routes import install_static_page, interrupt_active_run, owner_of, se
 from .page_runs import Run, Runs, guarded
 from .player_fullscreen import FULLSCREEN_SCRIPT
 
+
+class RemakeRun(Run):
+    """A Remake run that also remembers whether its final video spliced untouched source."""
+
+    def __init__(self, owner: str, project_id: str, kind: str, *, project: str | None = None):
+        super().__init__(owner, project_id, kind, project=project)
+        self.spliced = False
+
+    def public(self, scene_id=None) -> dict[str, Any]:
+        return {**super().public(scene_id), "spliced": self.spliced}
+
 STATIC = Path(__file__).with_name("remake_static")
 STATIC_TYPES = {"app.js": "application/javascript", "helpers.js": "application/javascript", "app.css": "text/css"}
 # ``generate_remake``'s positions of the source and the four pictures.
@@ -130,27 +141,31 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @guarded
     def boot(request: Request):
         owner = owner_of(request)
+        active_run = runs.active(owner, RUN_KEY, "generate") is not None
         return {
             "gpu": gpu, "projects": handlers.project_rows(owner), "run": run_payload(owner), "fps": FPS, "sections": list(SECTIONS),
             "short_edges": list(SHORT_EDGES), "short_edge": DEFAULT_SHORT_EDGE,
             "edit_models": [{"id": model.id, "label": model.label} for model in EDIT_MODELS
                             if gpu or model.id == "gpt_image"],
             "lengths": list(LENGTHS), "max_window": DEFAULT_WINDOW_FRAMES,
+            "incoming_source": None if active_run else handlers.pop_incoming_source(owner),
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_model": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS), "openai_model": DEFAULT_OPENAI_PROMPT_MODEL},
         }
 
     @app.get(f"{api}/pulse", include_in_schema=False)
     @guarded
-    def pulse(request: Request, collect: bool = False):
+    def pulse(request: Request, collect: bool = False, accept_source: bool = True):
         """What can change from outside the page: Media, the H3 settings and a run.
 
         Pictures from Media wait until the page has an editor to ``collect`` them into.
         """
         owner = owner_of(request)
         waiting = handlers.inbox.pop(owner, {}) if collect else {}
+        incoming = handlers.pop_incoming_source(owner) if accept_source else None
         settings = json.dumps(handlers.captured(owner), sort_keys=True, default=str)
         return {"inbox": [{"slot": slot, "path": path} for slot, path in waiting.items()],
+                "incoming_source": incoming,
                 "settings": hashlib.sha256(settings.encode()).hexdigest()[:12], "run": run_payload(owner)}
 
     # Source and selection --------------------------------------------------
@@ -184,7 +199,8 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
             "ready": message.startswith(READY), "message": message, "step": readiness_step(video, message),
             "next_run": next_run_details(handlers.captured(owner), body.get("mode"), video, chosen.start, chosen.end,
                                          chosen.short_edge, sum(1 for path in pictures if path),
-                                         bool(body.get("pinned")), chosen.max_window),
+                                         bool(body.get("pinned")), chosen.max_window,
+                                         keep_rest=bool(body.get("keep_rest", False))),
         }
 
     # Projects --------------------------------------------------------------
@@ -262,7 +278,8 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
     @app.post(f"{api}/combine", include_in_schema=False)
     @guarded
     def combine(request: Request, body: dict = Body(...)):
-        return handlers.combine(owner_of(request), _selection(body))
+        keep_rest = body["keep_rest"] if "keep_rest" in body else None
+        return handlers.combine(owner_of(request), _selection(body), keep_rest=keep_rest)
 
     # Frames and pictures ---------------------------------------------------
     @app.post(f"{api}/extract", include_in_schema=False)
@@ -375,11 +392,11 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
             bool(body.get("smart")), chosen.mix, int(body.get("window") or 0), bool(body.get("use_carried")),
             writer.get("model") or DEFAULT_GEMINI_PROMPT_MODEL, writer.get("backend") or "Gemini",
             writer.get("openai_model") or DEFAULT_OPENAI_PROMPT_MODEL, chosen.sha or "",
-            bool(body.get("auto_prompts")),
+            bool(body.get("auto_prompts")), bool(body.get("keep_rest", False)),
         ]
         session = session_of(request)
 
-        def work(run: Run):
+        def work(run: RemakeRun):
             job = JOBS.accept(owner, "remake", values, callback=JOBS.callbacks["remake"], key=uuid.uuid4().hex,
                               media_indices=tuple(index for index in MEDIA_INDICES if values[index]),
                               output_indices=(0,))
@@ -389,9 +406,10 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
                     run.status = status
                 if output:
                     run.result_url = handlers.grant(owner, output)
+                    run.spliced = str(output) in handlers.spliced_outputs
                 run.revision += 1
 
-        runs.start(Run(owner, RUN_KEY, "generate", project=body.get("project")), work)
+        runs.start(RemakeRun(owner, RUN_KEY, "generate", project=body.get("project")), work)
         return {"run": run_payload(owner)}
 
     @app.post(f"{api}/interrupt", include_in_schema=False)

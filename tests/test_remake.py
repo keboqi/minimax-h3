@@ -27,9 +27,9 @@ from h3_app.remake import (
 )
 from h3_app.remake.model import REQUEST_STEPS
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
-from h3_app.remake.media import detect_cuts, extract_frame, join_windows, trim_source
+from h3_app.remake.media import detect_cuts, extract_frame, has_untouched_source, join_windows, splice_into_source, trim_source
 from h3_app.remake.project import window_inputs
-from h3_app.provenance import snapshot_path
+from h3_app.provenance import read_snapshot, snapshot_path
 from h3_app.remake.runner import CONTINUE_REQUEST, Selection
 from h3_app.remake.windows import LENGTHS, carried_frame, needs_windows, plan_windows
 from h3_app.staging import file_content_sha256
@@ -301,6 +301,53 @@ class MediaTests(unittest.TestCase):
         with Image.open(output) as image:
             self.assertEqual(image.size, (640, 480))
 
+    def test_has_untouched_source_boundaries(self):
+        self.assertEqual(has_untouched_source(6.0, 0.0, 144), (False, False))
+        self.assertEqual(has_untouched_source(6.0, 0.0, 90), (False, True))
+        self.assertEqual(has_untouched_source(6.0, 1.0, 120), (True, False))
+        self.assertEqual(has_untouched_source(6.0, 1.0, 90), (True, True))
+
+    def test_splice_into_source_reuses_before_and_after_with_matching_canvas_and_audio(self):
+        # Blue source (6s, 24fps, 640x480) + green remade middle (90 frames = 3.75s, 832x480)
+        src_blue = self.root / "blue_src.mp4"
+        remade_green = self.root / "green_remade.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=640x480:r=24:d=6",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-shortest", str(src_blue)], check=True,
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=832x480:r=24:d=3.75",
+             str(remade_green)], check=True,
+        )
+        middle = splice_into_source(src_blue, remade_green, start=1.0, frames=90,
+                                    output=self.root / "spliced_mid.mp4", has_audio=True)
+        meta = probe_video_metadata(middle)
+        self.assertEqual((meta.width, meta.height, meta.frame_count), (832, 480, 144))
+        self.assertTrue(meta.has_audio)
+        for sec, expected_channel in ((0.2, 2), (2.0, 1), (5.5, 2)):
+            frame_path = extract_frame(middle, sec, self.root / f"check_{sec}.png")
+            with Image.open(frame_path) as img:
+                pixel = img.convert("RGB").getpixel((416, 240))
+            self.assertGreater(pixel[expected_channel], 110, f"at {sec}s got {pixel}")
+            self.assertLess(pixel[1 if expected_channel == 2 else 2], 60)
+
+        # Start-only and end-only windows, silent source
+        src_silent = self.root / "blue_silent.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=640x480:r=24:d=6",
+             str(src_silent)], check=True,
+        )
+        start_only = splice_into_source(src_silent, remade_green, start=0.0, frames=90,
+                                        output=self.root / "spliced_start.mp4", has_audio=False)
+        meta_start = probe_video_metadata(start_only)
+        self.assertEqual((meta_start.width, meta_start.height, meta_start.frame_count), (832, 480, 144))
+        self.assertFalse(meta_start.has_audio)
+
+        end_only = splice_into_source(src_silent, remade_green, start=2.25, frames=90,
+                                      output=self.root / "spliced_end.mp4", has_audio=False)
+        meta_end = probe_video_metadata(end_only)
+        self.assertEqual((meta_end.width, meta_end.height, meta_end.frame_count), (832, 480, 144))
+
 
 class AlignmentTests(unittest.TestCase):
     def setUp(self):
@@ -472,6 +519,57 @@ class HandlerTests(unittest.TestCase):
             None, None, None, 12, None, None, None,
         ))[-1], ("result.mp4", "done"))
         self.assertTrue(self.handlers.extract("local", str(self.video), None, 0)["path"].endswith(".png"))
+
+    def test_single_window_keep_rest_splices_into_full_source_and_cleans_scratch(self):
+        # 10s source, remaking 1.0s..4.8s (90 frames = 3.75s) with keep_rest=True
+        long_src = self.root / "ten.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=24:duration=10",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=10", "-shortest", str(long_src)], check=True,
+        )
+
+        def staged_take(values, remake, progress):
+            self.takes.append((values, remake))
+            out = self.handlers.deps.runtime_config().output_dir / f"{remake.output_prefix}.mp4"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=832x480:r=24:d=3.75",
+                 str(out)], check=True,
+            )
+            snapshot_path(out).write_text('{"settings": {"seed": 7}}', "utf-8")
+            yield GenerationUpdate(str(out), "done")
+
+        self.handlers.deps = replace(self.handlers.deps, h3_take=staged_take)
+        updates = list(self.handlers.generate_remake(
+            SWAP, str(long_src), 1.0, 4.8, 480, SIX_SECTIONS, True, str(self.picture),
+            None, None, None, 12, None, None, None, keep_rest=True,
+        ))
+        final, status = updates[-1]
+        self.assertIn("reused untouched source", status)
+        final_path = Path(final)
+        self.assertEqual(final_path.parent, self.root / "output" / "h3")
+        meta = probe_video_metadata(final_path)
+        self.assertEqual(meta.frame_count, 240)
+        self.assertTrue(meta.has_audio)
+        snap = read_snapshot(final_path)
+        self.assertTrue(snap["remake"]["reused_rest"])
+        self.assertEqual(snap["remake"]["window_frames"], 90)
+        self.assertIn(str(final_path), self.handlers.spliced_outputs)
+        splice_dir = self.root / "output" / "h3" / ".remake" / "_splice"
+        self.assertEqual(list(splice_dir.glob("*")) if splice_dir.exists() else [], [])
+
+    def test_single_window_keep_rest_on_full_source_skips_splicing(self):
+        exact_src = self.root / "exact.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=24:duration=4.5",
+             str(exact_src)], check=True,
+        )
+        updates = list(self.handlers.generate_remake(
+            SWAP, str(exact_src), 0, 4.5, 480, SIX_SECTIONS, True, str(self.picture),
+            None, None, None, 12, None, None, None, keep_rest=True,
+        ))
+        self.assertEqual(updates[-1], ("result.mp4", "done"))
+        self.assertIsNone(self.takes[0][1].output_prefix)
 
     def test_alignment_measures_the_picture_when_applied(self):
         extract_frame(self.video, 0.5, self.root / "frame.png")
@@ -1071,6 +1169,32 @@ class WindowRunTests(unittest.TestCase):
         self.assertEqual(trim.call_args.kwargs["start"], first / 24)
         self.assertEqual(trim.call_args.kwargs["frames"], last - first)
         self.assertEqual(write.call_args.args[5], last - first)
+
+    def test_windowed_combine_splices_untouched_source_and_toggles_without_invalidating_windows(self):
+        updates = list(self.handlers.generate_remake(
+            SWAP, str(self.video), 2.0, 14.0, 480, SIX_SECTIONS, True, str(self.picture),
+            None, None, None, 12, None, None, None, 226, "make a robot", True, 0, 0, True,
+            keep_rest=True,
+        ))
+        final, status = updates[-1]
+        self.assertIn("untouched source", status)
+        meta = probe_video_metadata(Path(final))
+        # 22s source -> 528 frames total
+        self.assertEqual(meta.frame_count, 528)
+        self.assertTrue(meta.has_audio)
+        sel = Selection(file_content_sha256(self.video), 2.0, 14.0, 480, 0, 226)
+        project = self.handlers.runner.saved("local", sel)
+        self.assertTrue(project["keep_rest"])
+        self.assertTrue(project["combined"]["spliced"])
+        # Toggling keep_rest off does not invalidate rendered windows and allows direct re-combine
+        saved = self.handlers.save_project("local", sel, str(self.video), 0, SIX_SECTIONS, True,
+                                           [str(self.picture), None, None, None], [12, None, None, None],
+                                           {"mode": SWAP, "request": "make a robot", "keep_rest": False})
+        self.assertTrue(all(w["state"] == "done" for w in saved["windows"]))
+        self.assertIsNone(saved["output"])
+        recombined = self.handlers.combine("local", sel, keep_rest=False)
+        self.assertFalse(recombined["spliced"])
+        self.assertEqual(probe_video_metadata(Path(recombined["output"])).frame_count, 288)
 
 
 class CutTests(unittest.TestCase):

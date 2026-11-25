@@ -281,6 +281,7 @@ def build_ui(
                 # The MiniMax H3 page hands Storyboard its settings; nothing is captured from Gradio.
                 triggers=(),
                 interrupt=services.interrupt,
+                remake=engine_handlers["remake"].receive_source,
             )
         from .h3.page import H3PageServices, H3PageState, install_h3_page
         from .image.page import ImagePageState, install_image_page

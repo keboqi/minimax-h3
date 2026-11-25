@@ -173,7 +173,11 @@ details summary:hover { color: var(--text); }
 .timeline { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
 .timeline .row.line { padding: 10px 0 0; }
 .selection { flex: 1 1 280px; }
-.overview { position: relative; flex: 1 1 80px; height: 12px; border-radius: 6px; background: var(--raised); cursor: pointer; touch-action: none; }
+.overview { position: relative; flex: 1 1 80px; min-width: 120px; height: 14px; border-radius: 6px; background: var(--raised); cursor: pointer; touch-action: none; }
+.overview.reusing {
+  background: repeating-linear-gradient(135deg, var(--soft) 0 4px, var(--raised) 4px 8px);
+  border: 1px solid var(--dash);
+}
 .overview div { position: absolute; top: 0; bottom: 0; min-width: 10px; border-radius: 6px; background: var(--accent); cursor: grab; }
 .overview div:active { cursor: grabbing; }
 .overview .handle { position: absolute; top: -2px; bottom: -2px; width: 8px; border-radius: 4px; background: var(--ink); cursor: ew-resize; opacity: .75; }

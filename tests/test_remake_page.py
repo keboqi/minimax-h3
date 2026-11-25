@@ -556,6 +556,56 @@ class RemakePageTests(unittest.TestCase):
         self.assertFalse(stale_take.exists())
         self.assertTrue(media_out.is_file())
 
+    def test_incoming_source_from_external_page_lands_on_boot_and_pulse_without_moving_original(self):
+        original = self.root / "storyboard_take.mp4"
+        shutil.copy2(self.video, original)
+        self.handlers.receive_source("other-owner", str(original), "Chase - Scene 1 Take 1")
+        from h3_app.workspace_store import COOKIE
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+        self.handlers.receive_source(owner, str(original), "Chase - Scene 1 Take 1")
+        self.assertTrue(original.is_file())
+        # Cold load via /boot delivers incoming_source once
+        boot = self.ok(self.client.get(f"{API}/boot"))
+        self.assertEqual(boot["incoming_source"]["name"], "Chase - Scene 1 Take 1")
+        self.assertIsNone(self.ok(self.client.get(f"{API}/boot"))["incoming_source"])
+        # Warm delivery via /pulse respects accept_source flag
+        self.handlers.receive_source(owner, str(original), "Chase - Scene 2 Take 1")
+        self.assertIsNone(self.ok(self.client.get(f"{API}/pulse", params={"accept_source": False}))["incoming_source"])
+        pulled = self.ok(self.client.get(f"{API}/pulse", params={"accept_source": True}))["incoming_source"]
+        self.assertEqual(pulled["name"], "Chase - Scene 2 Take 1")
+        self.assertTrue(Path(pulled["path"]).is_file())
+        self.assertTrue(original.is_file())
+
+    def test_keep_rest_persists_through_save_check_generate_and_combine(self):
+        source = self.source()
+        selection = {**self.selection(source, end=7.0), "start": 2.0}
+        body = self.editor(source, selection=selection, keep_rest=True)
+        checked = self.ok(self.client.post(f"{API}/check", json=body))
+        self.assertIn("remade", checked["next_run"]["output"])
+        self.assertIn("rest of source reused", checked["next_run"]["context"])
+        saved = self.ok(self.client.post(f"{API}/save", json=body))
+        self.assertTrue(saved["keep_rest"])
+        loaded = self.ok(self.client.post(f"{API}/projects/{saved['key']}/load"))
+        self.assertTrue(loaded["keep_rest"])
+
+        # Single-window generate with keep_rest=True produces full 14s video (336 frames) and run.spliced=True
+        short_body = self.editor(source, selection={**self.selection(source, end=6.0), "start": 2.0}, keep_rest=True)
+        self.ok(self.client.post(f"{API}/generate", json=short_body))
+        run = self.finished_run()
+        self.assertIsNone(run["error"])
+        self.assertTrue(run["spliced"])
+        self.assertEqual(probe_video_metadata(Path(run["result_url"])).frame_count, 336)
+
+        # Combine endpoint toggles keep_rest on a saved windowed project
+        long_sel = {**self.selection(source, end=12.0), "start": 1.0}
+        proj = self.ok(self.client.post(f"{API}/split", json={"selection": long_sel, "video": source["path"]}))
+        long_body = self.editor(source, selection=long_sel, project=proj["key"], keep_rest=False)
+        self.ok(self.client.post(f"{API}/generate", json=long_body))
+        self.finished_run()
+        spliced = self.ok(self.client.post(f"{API}/combine", json={"selection": long_sel, "keep_rest": True}))
+        self.assertTrue(spliced["spliced"])
+        self.assertEqual(probe_video_metadata(Path(spliced["output"])).frame_count, 336)
+
 
 if __name__ == "__main__":
     unittest.main()

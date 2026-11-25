@@ -5,7 +5,7 @@
   const SAVE_DELAY_MS = 400;
   const SAVE_RETRY_MS = 3000;
   const POLL_MS = 1500;
-  const {$, h, visibleArea, createToast, scoreTone, scoreLevel: commonScoreLevel, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
+  const {$, h, visibleArea, createToast, openStudio, scoreTone, scoreLevel: commonScoreLevel, decisionScoreChips, decisionScoreRadar, llmReviewNodes, copyToClipboard} = globalThis.H3PageCommon;
   const scoreLevel = commonScoreLevel || ((value) => {
     if (value === null || value === undefined || value === "") return "";
     const numeric = Number(value);
@@ -46,7 +46,7 @@
     auto: null, autoBoards: null, autoSelected: new Set(), autoTimer: null,
     reviewAdvice: new Map(), reviewBusy: new Map(), reviewError: new Map(),
     reviewModel: stored.get("h3-storyboard-review-model") || "", takeReviewKey: null,
-    batchScoreBusy: null,
+    batchScoreBusy: null, remakeSent: new Set(),
   };
   const scenes = () => state.board.scenes;
   const scene = () => scenes().find((item) => item.id === state.sceneId) || scenes()[0];
@@ -793,6 +793,9 @@
           const [file] = await pickFiles("video/*", false);
           if (file) uploadTake(file);
         }, "btn sm", {id: "upload-take", disabled: busy, title: "Upload an edited or external video clip as a new take"}),
+        state.boot?.library && state.remakeSent.has(item.id) && button("Use latest from Media",
+          useLatestVideoFromLibrary, "btn primary sm",
+          {id: "latest-library-take", disabled: busy, title: "Pick the newest video in Media (such as a Remake result) as a new take"}),
         state.boot?.library && button("From Media", () => openLibrary((path, scope) => libraryTake(path, scope), "video", "Add as new take", {defaultSource: "global"}),
           "btn sm", {id: "library-take", disabled: busy, title: "Choose a video from Media as a new take"})));
   };
@@ -876,6 +879,11 @@
     const row = [];
     if (shown?.subtitle_error) row.push(h("span", {className: "small muted"}, shown.subtitle_error));
     const choices = [];
+    if (shown && !shown.missing && state.boot?.remake) {
+      choices.push(button("Remake take", () => sendTakeToRemake(item, shown), "btn sm",
+        {id: "remake-take", disabled: busy,
+          title: "Open this take in Remake; when Remake saves to Media, pick it back here as a new take"}));
+    }
     if (shown && shown.id !== item.in_use) {
       choices.push(button("Use this take", useTake, "btn quiet"));
       choices.push(button("Delete take", () => { state.deletingTake = shown.id; renderTakes(); }, "btn sm danger",
@@ -1086,6 +1094,22 @@
     const body = scope === "project" ? {source, scope} : {source};
     toast("Preparing take from Media…");
     await addManualTake(sceneId, boardId, () => request("PUT", `${API}/boards/${boardId}/scenes/${sceneId}/takes`, body));
+  };
+  const useLatestVideoFromLibrary = async () => {
+    const data = await act(() => request("GET", `${API}/library?kind=video&limit=1`));
+    if (!data) return;
+    if (!data.items?.length) {
+      toast("No videos in Media yet.", true);
+      return;
+    }
+    await libraryTake(data.items[0].path);
+  };
+  const sendTakeToRemake = async (item, take) => {
+    const data = await act(() => request("POST", `${API}/boards/${state.board.id}/scenes/${item.id}/takes/${take.id}/send-to-remake`));
+    if (!data) return;
+    state.remakeSent.add(item.id);
+    renderTakes();
+    openStudio("Remake", "", () => window.open(data.url || "/remake/", "_blank"));
   };
   const toggleTakeOverlap = async (take, trimOverlap) => {
     const boardId = state.board.id;

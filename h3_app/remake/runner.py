@@ -14,7 +14,10 @@ from h3_app.media_tools import probe_video_metadata
 from h3_app.prompt_writers.remake import enhance_remake_prompt
 from h3_app.provenance import snapshot_path, write_snapshot
 
-from .media import detect_cuts, extract_frame, frame_seconds, held_clip, join_windows, trim_source
+from .media import (
+    detect_cuts, extract_frame, frame_seconds, has_untouched_source, held_clip, join_windows, splice_into_source,
+    trim_source,
+)
 from .model import FPS, RemakeGraph, RenderSize, check_pins, frames_for_seconds, render_size, request_overrides
 from .project import (
     DONE, FAILED, OPTION_DEFAULTS, RENDERED, Projects, carry_position, fingerprint, record_take, save_editor,
@@ -152,7 +155,9 @@ class WindowRunner:
             project = self.projects.load(owner, project["key"])
         if all(window["take"] for window in project["windows"]):
             yield None, "Joining the windows"
-            yield self.combine(project), self.combined_status(project)
+            output = self.combine(project)
+            project = self.projects.load(owner, project["key"]) or project
+            yield output, self.combined_status(project)
         else:
             yield None, "Some windows still need a frame or an earlier window before they can be combined."
 
@@ -293,13 +298,32 @@ class WindowRunner:
                   for window in windows]
         output = Path(self.runtime().output_dir) / "h3" / f"remake_{project['key'][:8]}_{uuid.uuid4().hex[:8]}.mp4"
         output.parent.mkdir(parents=True, exist_ok=True)
-        join_windows(pieces, project["source"], start=project["start"], frames=project["frames"], mix=project["mix"],
-                     output=output, has_audio=project["has_audio"])
+        keep_rest = bool(project.get("keep_rest", False))
+        source_meta = probe_video_metadata(Path(project["source"]))
+        splice_needed = keep_rest and any(
+            has_untouched_source(source_meta.duration, project["start"], project["frames"])
+        )
+        if splice_needed:
+            joined = _scratch_clip()
+            try:
+                join_windows(pieces, project["source"], start=project["start"], frames=project["frames"],
+                             mix=project["mix"], output=joined, has_audio=False)
+                splice_into_source(
+                    project["source"], joined, start=project["start"], frames=project["frames"],
+                    output=output, has_audio=project["has_audio"],
+                )
+            finally:
+                joined.unlink(missing_ok=True)
+        else:
+            join_windows(pieces, project["source"], start=project["start"], frames=project["frames"],
+                         mix=project["mix"], output=output, has_audio=project["has_audio"])
         write_snapshot(output, {"family": "Remake", "remake": {
             "windows": len(windows), "frames": project["frames"], "mix": project["mix"],
+            **({"reused_rest": True, "window_start": project["start"]} if splice_needed else {}),
         }})
         self.projects.edit(project, lambda current: current.update(combined={
             "output": str(output), "takes": [window["take"] for window in windows],
+            "keep_rest": keep_rest, "spliced": splice_needed,
         }))
         return str(output)
 
@@ -307,4 +331,7 @@ class WindowRunner:
     def combined_status(project: dict[str, Any]) -> str:
         stale = [window["index"] + 1 for window in project["windows"] if window["state"] != DONE]
         note = f" Windows {', '.join(map(str, stale))} follow changed windows or edits." if stale else ""
-        return f"Combined {len(project['windows'])} windows.{note}"
+        windows = project["windows"]
+        if (project.get("combined") or {}).get("spliced"):
+            return f"Combined {len(windows)} window{'s' if len(windows) != 1 else ''} with untouched source.{note}"
+        return f"Combined {len(windows)} windows.{note}"

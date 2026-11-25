@@ -128,6 +128,89 @@ def held_clip(take: str | Path, output: Path, *, first: int, frames: int) -> Pat
     return output
 
 
+def has_untouched_source(source_duration: float, start: float, frames: int) -> tuple[bool, bool]:
+    """Whether ``source_duration`` has untouched frames before and/or after the remade span."""
+    start_frame = max(0, int(round(float(start or 0) * FPS)))
+    remade_end = (start_frame + int(frames)) / FPS
+    return start_frame > 0, float(source_duration) - remade_end > 1.5 / FPS
+
+
+def splice_into_source(
+    source: str | Path,
+    remade: str | Path,
+    *,
+    start: float,
+    frames: int,
+    output: Path,
+    has_audio: bool,
+) -> Path:
+    """Splice ``remade`` into ``source`` at ``start``..``start + frames``, keeping the untouched source and soundtrack."""
+    remade_meta = probe_video_metadata(Path(remade))
+    remade_count = min(int(frames), remade_meta.frame_count)
+    if remade_count < 1:
+        raise H3Error("The remade clip has no frames.")
+    source_meta = probe_video_metadata(Path(source))
+    start_frame = max(0, int(round(float(start or 0) * FPS)))
+    has_before, has_after = has_untouched_source(source_meta.duration, start_frame / FPS, remade_count)
+    remade_end = (start_frame + remade_count) / FPS
+
+    target_w, target_h = remade_meta.width, remade_meta.height
+    fit = (
+        f"fps={FPS},scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{target_h},setsar=1,format=yuv420p,settb=AVTB"
+    )
+    inputs: list[str] = []
+    chains: list[str] = []
+    segments: list[str] = []
+
+    if has_before:
+        idx = sum(1 for item in inputs if item == "-i")
+        inputs += ["-t", f"{(start_frame + 2) / FPS:.3f}", "-i", str(source)]
+        chains.append(f"[{idx}:v]{fit},trim=start_frame=0:end_frame={start_frame},setpts=PTS-STARTPTS[seg_before]")
+        segments.append("[seg_before]")
+
+    remade_idx = sum(1 for item in inputs if item == "-i")
+    inputs += ["-i", str(remade)]
+    chains.append(
+        f"[{remade_idx}:v]fps={FPS},trim=start_frame=0:end_frame={remade_count},"
+        f"setpts=PTS-STARTPTS,setsar=1,format=yuv420p,settb=AVTB[seg_remade]"
+    )
+    segments.append("[seg_remade]")
+
+    if has_after:
+        after_idx = sum(1 for item in inputs if item == "-i")
+        inputs += ["-ss", f"{max(0.0, remade_end - 0.001):.6f}", "-i", str(source)]
+        chains.append(f"[{after_idx}:v]{fit},setpts=PTS-STARTPTS[seg_after]")
+        segments.append("[seg_after]")
+
+    if len(segments) > 1:
+        chains.append(f"{''.join(segments)}concat=n={len(segments)}:v=1:a=0[vout]")
+        video_map = "[vout]"
+    else:
+        video_map = "[seg_remade]"
+
+    audio_args: list[str] = []
+    if has_audio:
+        audio_idx = sum(1 for item in inputs if item == "-i")
+        inputs += ["-i", str(source)]
+        audio_args = ["-map", f"{audio_idx}:a:0", "-c:a", "aac", "-b:a", "320k"]
+
+    partial = output.with_suffix(".partial.mp4")
+    process = run_media_process(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
+         "-filter_complex", ";".join(chains), "-map", video_map, *audio_args,
+         "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+         "-movflags", "+faststart", str(partial)],
+        timeout=7200, partial_outputs=(partial,), capture_output=True, text=True,
+    )
+    if process.returncode != 0 or not partial.is_file():
+        partial.unlink(missing_ok=True)
+        raise H3Error("Couldn't splice the remade window into the source: "
+                      + (process.stderr or "ffmpeg failed").strip()[-300:])
+    partial.replace(output)
+    return output
+
+
 def trim_source(video: str | Path, output: Path, *, start: float, frames: int, width: int, height: int) -> Path:
     """Write exactly ``frames`` at 24 fps, cover-cropped to the canvas, keeping any soundtrack.
 

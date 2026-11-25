@@ -805,6 +805,59 @@ class StoryboardPageTests(unittest.TestCase):
                 if not run or not run["active"]:
                     break
                 time.sleep(0.02)
+
+    def test_send_take_to_remake_validates_and_delivers_take_to_remake_pulse(self):
+        from types import SimpleNamespace
+        from tests.test_storyboard_media import make_video
+        from h3_ui.engines.feature import EngineDeps
+        from h3_ui.engines.remake import RemakeHandlers
+        from h3_ui.remake_page import install_remake_page
+
+        self.assertFalse(self.client.get(f"{API}/boot").json()["remake"])
+        board = self.create("One scene.")
+        board_id = board["id"]
+        scene_id = board["scenes"][0]["id"]
+        clip = make_video(self.root / "take.mp4", width=320, height=192, seconds=4.0, audio=True, rate=24)
+        added = self.client.post(
+            f"{API}/boards/{board_id}/scenes/{scene_id}/takes",
+            files={"file": ("take.mp4", clip.read_bytes(), "video/mp4")},
+        ).json()
+        take_id = added["take_id"]
+        refused = self.client.post(f"{API}/boards/{board_id}/scenes/{scene_id}/takes/{take_id}/send-to-remake")
+        self.assertEqual(refused.status_code, 400)
+
+        remake_handlers = RemakeHandlers(EngineDeps(
+            runtime_config=lambda: self.runtime, generation_services=lambda: None, stage_file=None, interrupt=None,
+        ))
+        app = FastAPI()
+        install_owner_cookie(app, self.store)
+        install_storyboard_page(app, self.handlers, gpu=True, remake=remake_handlers.receive_source)
+        install_remake_page(app, remake_handlers, gpu=True)
+        client = TestClient(app)
+
+        self.assertTrue(client.get(f"{API}/boot").json()["remake"])
+        sent = client.post(f"{API}/boards/{board_id}/scenes/{scene_id}/takes/{take_id}/send-to-remake")
+        self.assertEqual(sent.status_code, 200, sent.text)
+        self.assertEqual(sent.json(), {"ok": True, "url": "/remake/"})
+
+        pulled = client.get("/remake/api/pulse").json()["incoming_source"]
+        self.assertEqual(pulled["name"], "Chase - Scene 1 Take 1")
+        self.assertTrue(Path(pulled["path"]).is_file())
+        # Original storyboard take video stays intact
+        owner = self.store.verify_owner(client.cookies[COOKIE])
+        take_video = Path(self.service.load(owner, board_id)["takes"][take_id]["video"])
+        self.assertTrue(take_video.is_file())
+
+        # Missing take or media scene is refused
+        missing = client.post(f"{API}/boards/{board_id}/scenes/{scene_id}/takes/nope/send-to-remake")
+        self.assertEqual(missing.status_code, 400)
+        media_board = client.post(f"{API}/boards/{board_id}/scenes", json={"kind": "media"}).json()
+        media_scene_id = media_board["scene_id"]
+        refused_media = client.post(
+            f"{API}/boards/{board_id}/scenes/{media_scene_id}/takes/{take_id}/send-to-remake"
+        )
+        self.assertEqual(refused_media.status_code, 400)
+
     def _wav(self, name="voice.wav"):
         import wave
 

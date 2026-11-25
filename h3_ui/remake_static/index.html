@@ -110,7 +110,9 @@
             </span>
             <div class="overview" id="overview" title="Drag to move or resize selection"><div id="band"><span class="handle left" data-edge="start"></span><span class="handle right" data-edge="end"></span></div></div>
             <span class="small muted mono" id="source-length"></span>
+            <button type="button" class="btn compact" id="select-full" title="Select the entire source video">Full</button>
           </div>
+          <label class="inline check" id="keep-rest-wrap" title="Remake only the selected timespan and splice it back into the untouched parts of the source video."><input type="checkbox" id="keep-rest">Reuse rest of video</label>
           <div class="row" id="window-options" hidden>
             <label class="inline check" title="Gives each window a frame from the render before it and writes its prompt from your edit request."><input type="checkbox" id="smart">Smart continue</label>
             <label class="inline check" title="Turn off to reuse window 1's prompt, which often works for a single scene. A prompt you typed for a window stays."><input type="checkbox" id="auto-prompts">Prompt per window</label>
@@ -118,6 +120,7 @@
           <label class="inline" title="The longest clip your GPU renders in one go. Lower it if long clips run out of memory."><span class="small muted">Longest window</span><select id="max-window" class="field tight" aria-label="Longest window"></select></label>
         </div>
         <p class="small muted" id="summary"></p>
+        <p class="small muted" id="reuse-summary" hidden></p>
         <div class="tracks-scroll">
           <div class="tracks" id="tracks">
             <div class="ruler" id="ruler" aria-hidden="true"></div>

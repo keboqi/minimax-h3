@@ -95,7 +95,8 @@ def _still(video: Path, which: str, start: float, end: float, root: Path) -> Pat
     return still
 
 
-def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: bool, interrupt=None) -> None:
+def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: bool, interrupt=None,
+                            remake=None) -> None:
     # One run per storyboard of any kind: the page shows one, and a join reads the takes a
     # generation writes.
     runs = Runs(blocked=lambda run: (
@@ -208,7 +209,8 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
             "seconds": [sb.SCENE_SECONDS[0], sb.SCENE_SECONDS[-1]],
             "tail_frames": sb.TAIL_FRAMES,
             "overlaps": list(OVERLAP_FRAMES), "max_takes": MAX_TAKES_PER_RUN,
-            "library": handlers.library is not None, "auto": auto_payload(owner),
+            "library": handlers.library is not None, "remake": remake is not None,
+            "auto": auto_payload(owner),
             "enhance": handlers.services.enhance_prompt is not None,
             "writer": {"gemini_models": list(GEMINI_PROMPT_MODELS), "gemini_default": DEFAULT_GEMINI_PROMPT_MODEL,
                        "openai_models": list(OPENAI_PROMPT_MODELS)},
@@ -657,6 +659,29 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
         require_idle(owner, storyboard_id, "deleting a take")
         handlers.service.delete_take(owner, storyboard_id, scene_id, take_id)
         return payload(owner, storyboard_id)
+
+    @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}/send-to-remake",
+              include_in_schema=False)
+    @guarded
+    def send_take_to_remake(storyboard_id: str, scene_id: str, take_id: str, request: Request):
+        if remake is None:
+            raise H3Error("Remake isn't available here.")
+        owner = owner_of(request)
+        board = handlers.service.load(owner, storyboard_id)
+        index = handlers.service.scene_index(board, scene_id)
+        scene = board["scenes"][index]
+        if sb.is_media(scene):
+            raise H3Error("A scene from Media is already a video clip.")
+        if take_id not in scene.get("takes", ()):
+            raise H3Error("That take belongs to another scene.")
+        take = (board.get("takes") or {}).get(take_id)
+        video = take.get("video") if take else None
+        if not video or not Path(video).is_file():
+            raise H3Error("This take's video isn't available on disk.")
+        number = scene["takes"].index(take_id) + 1
+        label = f"{board.get('name') or 'Storyboard'} - Scene {index + 1} Take {number}"
+        remake(owner, str(video), label)
+        return {"ok": True, "url": "/remake/"}
 
     @app.post(f"{api}/boards/{{storyboard_id}}/scenes/{{scene_id}}/takes/{{take_id}}/review", include_in_schema=False)
     @guarded

@@ -64,7 +64,7 @@ def _bind_settings_capture(handlers, h3_values, triggers):
 
 
 def build_storyboard_tab(root, demo: gr.Blocks, handlers: StoryboardHandlers, *, h3_values=None, triggers=(),
-                         interrupt=None, gpu=True):
+                         interrupt=None, gpu=True, remake=None):
     """Fill ``root``. ``h3_values`` maps MiniMax H3 setting names to their components (Studio only).
 
     Without them (the Workshop) storyboards start from the default settings and the page's
@@ -77,4 +77,5 @@ def build_storyboard_tab(root, demo: gr.Blocks, handlers: StoryboardHandlers, *,
         _bind_settings_capture(handlers, h3_values, list(triggers))
     # Read by build_server, which owns the application these routes join.
     demo.h3_routes = (*getattr(demo, "h3_routes", ()),
-                      partial(install_storyboard_page, handlers=handlers, gpu=gpu, interrupt=interrupt))
+                      partial(install_storyboard_page, handlers=handlers, gpu=gpu, interrupt=interrupt,
+                              remake=remake))

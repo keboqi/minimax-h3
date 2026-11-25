@@ -262,6 +262,8 @@ def save_editor(window: dict[str, Any], pictures: list[str], pins: list[int | No
 
 def save_options(project: dict[str, Any], options: dict[str, Any]) -> None:
     """Queue takes affected by changed conditioning or automatic prompt settings."""
+    if "keep_rest" in options:
+        options = {**options, "keep_rest": bool(options["keep_rest"])}
     changed = {key for key, default in OPTION_DEFAULTS.items()
                if key in options and options[key] != project.get(key, default)}
     conditioning = bool(changed & {"mode", "pinned", "smart"})

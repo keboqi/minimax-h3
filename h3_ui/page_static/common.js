@@ -133,8 +133,10 @@
         if (found && !found.disabled) { if (!found.checked) found.click(); }
         else if (tries > 0) setTimeout(() => choose(tries - 1), 100);
       };
-      if (needsTask) setTimeout(() => choose(50), 50);
-      else choose(50);
+      if (label) {
+        if (needsTask) setTimeout(() => choose(50), 50);
+        else choose(50);
+      }
     } catch {
       onFallback?.(`Open ${label} from the ${task} task.`);
     }

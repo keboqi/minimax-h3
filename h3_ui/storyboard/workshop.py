@@ -33,9 +33,9 @@ def workshop_handlers(runtime: RuntimeConfig, store) -> StoryboardHandlers:
 
 
 def build_storyboard_workshop(tab: gr.Tab, ui: gr.Blocks, runtime: RuntimeConfig, store, *,
-                              library=None) -> StoryboardHandlers:
+                              library=None, remake=None) -> StoryboardHandlers:
     """The GPU-free Storyboard in ``tab``; ``library`` lends its media picker index."""
     handlers = workshop_handlers(runtime, store)
-    build_storyboard_tab(workshop_column(tab), ui, handlers, gpu=False)
+    build_storyboard_tab(workshop_column(tab), ui, handlers, gpu=False, remake=remake)
     handlers.library = workshop_media_library(runtime, library)
     return handlers

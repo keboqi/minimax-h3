@@ -25,19 +25,21 @@ from h3_app.capabilities import engines_for_task
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, QWEN_IMAGE21_DEFAULTS
 from h3_app.errors import H3Error
 from h3_app.generation.requests import QwenImage21Request
+from h3_app.generation.results import GenerationUpdate
 from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_video_metadata
 from h3_app.progress import no_progress
 from h3_app.project_transfer import build_clear_takes_outcome
 from h3_app.prompt_writers.remake import enhance_remake_prompt
+from h3_app.provenance import read_snapshot, snapshot_path, write_snapshot
 from h3_app.remake import (
     AUTO_SHORT_EDGE, DEFAULT_SHORT_EDGE, EDIT, FPS, MAX_PICTURES, MIN_FRAMES, RECOMMENDED_MAX_FRAMES, SHORT_EDGES, SWAP,
     RemakeGraph, RenderSize, check_pins, frames_for_seconds, missing_sections, output_size, render_size,
     request_overrides,
 )
 from h3_app.remake.align import align_image, comparison, load_image, measure_drift
-from h3_app.remake.media import extract_frame, filmstrip, frame_seconds, trim_source
-from h3_app.remake.project import CHANGED, RENDERED, STATE_NAMES, window_inputs, with_selection
+from h3_app.remake.media import extract_frame, filmstrip, frame_seconds, has_untouched_source, splice_into_source, trim_source
+from h3_app.remake.project import CHANGED, FOLDER as REMAKE_FOLDER, RENDERED, STATE_NAMES, window_inputs, with_selection
 from h3_app.remake.runner import CONTINUE_REQUEST, RunOptions, Selection, WindowRunner
 from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, needs_windows, selection_frames
 from h3_app.staging import file_content_sha256
@@ -149,6 +151,7 @@ class RemakeView:
     writer_backend: gr.Textbox
     openai_model: gr.Textbox
     source_sha: gr.Textbox
+    keep_rest: gr.Checkbox
     output: gr.Video
     run: gr.Button
     stop: gr.Button
@@ -274,26 +277,33 @@ def readiness_message(video, start, end, prompt, pin_frames, originals, pictures
 
 
 def next_run_details(captured: Mapping[str, Any], mode, video, start, end, short_edge, picture_count, pin_frames,
-                     max_window: int = 345) -> dict[str, Any]:
+                     max_window: int = 345, keep_rest: bool = False) -> dict[str, Any]:
     """What the page's Next run line shows."""
     profile = str(captured.get("model_profile") or "Current selection")
     upscale = bool(captured.get("latent_upscale")) if int(short_edge) else False
     size = "Set by the source"
     duration = "Set by the selection"
     windowed = needs_windows(start, end, max_window)
+    reused = False
     try:
-        duration = f"{selection_frames(start, end) / FPS:.2f} s" if windowed else (
-            f"{min(selected_frames(start, end), int(max_window)) / FPS:.2f} s")
+        remade_frames = selection_frames(start, end) if windowed else min(selected_frames(start, end), int(max_window))
+        duration = f"{remade_frames / FPS:.2f} s"
         if video:
-            sampled = _render_size(video, short_edge)
+            metadata = _source_metadata(Path(video))
+            sampled = render_size(short_edge, metadata.width, metadata.height)
             upscale = sampled.upscale(upscale)
             size = "{} × {}".format(*output_size(sampled.width, sampled.height, upscale))
+            if keep_rest and any(has_untouched_source(metadata.duration, start, remade_frames)):
+                reused = True
+                duration = f"{remade_frames / FPS:.2f} s remade → {metadata.duration:.2f} s full"
     except H3Error:
         pass
     context = [f"Remake {mode} LoRA", f"{picture_count} edited frame{'' if picture_count == 1 else 's'}",
                "frames pinned" if pin_frames else "not pinned", "source audio kept"]
     if windowed:
         context.append("rendered in windows")
+    if reused:
+        context.append("rest of source reused")
     notes = []
     if is_baked_turbo_profile(profile):
         notes.append(
@@ -333,8 +343,12 @@ def project_payload(project: Mapping[str, Any]) -> dict[str, Any]:
     windows = project["windows"]
     done = sum(window["state"] in RENDERED for window in windows)
     cuts = sum(1 for window in windows[1:] if not window["continues"])
+    keep_rest = bool(project.get("keep_rest", False))
     combined = project.get("combined") or {}
-    current = combined.get("takes") == [window["take"] for window in windows]
+    current = (
+        combined.get("takes") == [window["take"] for window in windows]
+        and bool(combined.get("keep_rest", False)) == keep_rest
+    )
     return {
         "key": project["key"], "name": project.get("name") or Path(project["source"]).stem,
         "source": project["source"], "start": project["start"], "frames": project["frames"],
@@ -342,9 +356,10 @@ def project_payload(project: Mapping[str, Any]) -> dict[str, Any]:
         "summary": f"{len(windows)} windows · {cuts} at cuts, {len(windows) - 1 - cuts} continuing · "
                    f"{done} of {len(windows)} rendered",
         "rendered": done, "output": combined.get("output") if current else None,
+        "output_spliced": bool(combined.get("spliced", False)) if current else False,
         "mode": project.get("mode") or SWAP, "request": project.get("request") or "",
         "smart": project.get("smart", True), "pinned": project.get("pinned", True),
-        "auto_prompts": project.get("auto_prompts", True),
+        "auto_prompts": project.get("auto_prompts", True), "keep_rest": keep_rest,
     }
 
 
@@ -359,6 +374,10 @@ class RemakeHandlers:
         # Pictures on their way between the page and Gradio.
         self.inbox: dict[str, dict[int, str]] = {}
         self.outgoing: dict[str, str] = {}
+        # Source clips handed over from another page (such as Storyboard) waiting for Remake to collect.
+        self.incoming_source: dict[str, dict[str, Any]] = {}
+        # Spliced final outputs so runs know when Result covers the full source timeline.
+        self.spliced_outputs: set[str] = set()
         # Files outside this owner's Remake folder that the page may show, such as joined videos.
         self.granted: dict[str, set[str]] = {}
         # The Media library, set once Media is built.
@@ -458,6 +477,31 @@ class RemakeHandlers:
             shutil.move(str(path), target)
         target.touch()
         return self.source_payload(target, sha)
+
+    def adopt_source(self, owner, path, name=None) -> dict[str, Any]:
+        """Copy an existing workspace video (such as a Storyboard take) into Remake without moving it."""
+        source = Path(path)
+        sha = file_content_sha256(source)
+        raw_name = str(name or source.stem)
+        stem = re.sub(r"[^\w. -]", "_", Path(raw_name).stem if "." in raw_name else raw_name).strip(" .") or "source"
+        suffix = source.suffix.lower() or ".mp4"
+        target = self._upload_folder(owner) / sha[:24] / f"{stem}{suffix}"
+        if not target.exists():
+            target.parent.mkdir(exist_ok=True)
+            partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+            shutil.copy2(source, partial)
+            partial.replace(target)
+        target.touch()
+        return self.source_payload(target, sha, name=raw_name.strip() or target.stem)
+
+    def receive_source(self, owner, path, name=None) -> dict[str, Any]:
+        """Accept a video from another page so Remake opens it as its active source."""
+        payload = self.adopt_source(owner, path, name)
+        self.incoming_source[owner] = payload
+        return payload
+
+    def pop_incoming_source(self, owner) -> dict[str, Any] | None:
+        return self.incoming_source.pop(owner, None)
 
     @staticmethod
     def source_payload(video, sha=None, name=None) -> dict[str, Any]:
@@ -588,7 +632,8 @@ class RemakeHandlers:
             project, index, prompt, use_carried, pictures, pins,
             options={"mode": options.get("mode", SWAP), "request": str(options.get("request") or ""),
                      "smart": bool(options.get("smart", True)), "pinned": bool(options.get("pinned", True)),
-                     "auto_prompts": bool(options.get("auto_prompts", True))},
+                     "auto_prompts": bool(options.get("auto_prompts", True)),
+                     "keep_rest": bool(options.get("keep_rest", False))},
             originals=options.get("originals") or {}, save_order=save_order,
         )
         return project_payload(project)
@@ -614,11 +659,17 @@ class RemakeHandlers:
         project = runner.projects.edit(project, lambda current: current["windows"][int(index)].update(state=CHANGED))
         return project_payload(project)
 
-    def combine(self, owner, selection) -> dict[str, Any]:
+    def combine(self, owner, selection, *, keep_rest=None) -> dict[str, Any]:
         project = self._project(owner, selection)
         runner = self.runner
+        if keep_rest is not None:
+            project = runner.projects.edit(project, lambda current: current.update(keep_rest=bool(keep_rest)))
         output = self.grant(owner, runner.combine(project))
-        return {"output": output, "status": runner.combined_status(project)}
+        updated = runner.projects.load(owner, project["key"]) or project
+        spliced = bool((updated.get("combined") or {}).get("spliced", False))
+        if spliced:
+            self.spliced_outputs.add(output)
+        return {"output": output, "status": runner.combined_status(updated), "spliced": spliced}
 
     # Frames ----------------------------------------------------------------
     def extract(self, owner, video, base, frame) -> dict[str, Any]:
@@ -754,7 +805,7 @@ class RemakeHandlers:
                         max_window=DEFAULT_WINDOW_FRAMES, edit_request="", smart=True, mix=0,
                         window_index=0, use_carried=True, writer_model=DEFAULT_GEMINI_PROMPT_MODEL,
                         writer_backend="Gemini", openai_model=DEFAULT_OPENAI_PROMPT_MODEL, source_sha="",
-                        auto_prompts=True, progress=gr.Progress(track_tqdm=False)):
+                        auto_prompts=True, keep_rest=False, progress=gr.Progress(track_tqdm=False)):
         slots = (picture_1, picture_2, picture_3, picture_4), (pin_1, pin_2, pin_3, pin_4)
         pictures, pins = filled_slots(*slots)
         if mode not in (SWAP, EDIT):
@@ -771,12 +822,18 @@ class RemakeHandlers:
             project = runner.plan(owner, source_video, selection)
             project = runner.store_editor(project, window_index, prompt, use_carried, *slots, options=dict(
                 mode=mode, request=str(edit_request or ""), smart=bool(smart), pinned=bool(pin_frames),
-                auto_prompts=bool(auto_prompts),
+                auto_prompts=bool(auto_prompts), keep_rest=bool(keep_rest),
             ))
-            yield from runner.run(project, RunOptions(
+            for output, status in runner.run(project, RunOptions(
                 mode, bool(pin_frames), bool(smart), str(edit_request or ""), writer_model, writer_backend,
                 openai_model, self.writer_keys.get(owner, {}), self.captured(owner), bool(auto_prompts),
-            ), progress)
+            ), progress):
+                if output:
+                    updated = runner.projects.load(owner, project["key"])
+                    combined = (updated or {}).get("combined") or {}
+                    if combined.get("output") == str(output) and combined.get("spliced"):
+                        self.spliced_outputs.add(str(output))
+                yield output, status
             return
         if not pictures:
             raise H3Error("Add at least one edited frame.")
@@ -785,8 +842,11 @@ class RemakeHandlers:
         if pin_frames and not pinned:
             raise H3Error("Give every picture a frame number, or turn pinning off.")
         check_pins(pinned, len(pictures), frames)
-        size = _render_size(source_video, short_edge)
+        metadata = _source_metadata(Path(source_video))
+        size = render_size(short_edge, metadata.width, metadata.height)
         width, height = size.width, size.height
+        splice_needed = bool(keep_rest) and any(has_untouched_source(metadata.duration, start, frames))
+        trim_start = round(float(start or 0) * FPS) / FPS if splice_needed else float(start or 0)
 
         yield None, "Trimming the source to the selection"
         captured = self.captured(owner) if job is not None else {}
@@ -800,16 +860,60 @@ class RemakeHandlers:
             values["postprocess"] = "None"
         clip = _scratch_path(".mp4")
         try:
-            trim_source(source_video, clip, start=float(start or 0), frames=frames, width=width, height=height)
+            trim_source(source_video, clip, start=trim_start, frames=frames, width=width, height=height)
             staged = self.deps.stage_file(str(clip), "remake_sources", reuse=True)
         finally:
             clip.unlink(missing_ok=True)
+        splice_tag = f"s_{uuid.uuid4().hex[:10]}" if splice_needed else None
         remake = RemakeGraph(
             mode=mode, source_video=staged,
             pictures=tuple(self.deps.stage_file(str(path), "remake_pictures", reuse=True) for path in pictures),
             pins=pinned, frames=frames,
+            output_prefix=f"{REMAKE_FOLDER}/_splice/{splice_tag}" if splice_tag else None,
         )
-        yield from self.deps.h3_take(values, remake, progress)
+        if not splice_needed:
+            yield from self.deps.h3_take(values, remake, progress)
+            return
+        raw_take = None
+        last_status = "done"
+        for update in self.deps.h3_take(values, remake, progress):
+            status = str(update.status)
+            if status.startswith("Error:"):
+                yield update
+                return
+            raw_take = update.output or raw_take
+            last_status = status
+            yield GenerationUpdate(None, update.status)
+        if raw_take is None:
+            raise H3Error("Remake finished without a video.")
+        yield GenerationUpdate(None, "Reusing untouched parts of the source video")
+        output = Path(self.deps.runtime_config().output_dir) / "h3" / f"remake_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        splice_into_source(
+            source_video, raw_take, start=trim_start, frames=frames,
+            output=output, has_audio=bool(metadata.has_audio),
+        )
+        raw_path = Path(raw_take)
+        raw_snap = read_snapshot(raw_path)
+        write_snapshot(output, {
+            **(raw_snap or {}),
+            "family": "Remake",
+            "remake": {
+                **((raw_snap or {}).get("remake") or {}),
+                "reused_rest": True,
+                "window_start": trim_start,
+                "window_frames": frames,
+            },
+        })
+        raw_path.unlink(missing_ok=True)
+        snapshot_path(raw_path).unlink(missing_ok=True)
+        splice_dir = raw_path.parent
+        if splice_dir.name == "_splice" and splice_tag:
+            for extra in splice_dir.glob(f"{splice_tag}*"):
+                if extra.is_file():
+                    extra.unlink(missing_ok=True)
+        self.spliced_outputs.add(str(output))
+        yield GenerationUpdate(str(output), f"{last_status} · reused untouched source")
 
 
 
@@ -840,6 +944,7 @@ def build_remake_view(root) -> RemakeView:
             writer_backend = gr.Textbox(value="Gemini", label="Writer service")
             openai_model = gr.Textbox(value=DEFAULT_OPENAI_PROMPT_MODEL, label="OpenAI model")
             source_sha = gr.Textbox(value="", label="Source hash")
+            keep_rest = gr.Checkbox(value=False, label="Reuse rest of video")
             output = gr.Video(label="Generated remake", interactive=False)
             output.h3_metadata_root = gr.Column()
             run, stop, status = generation_actions("Generate remake", elem_id=RUN_BUTTON)
@@ -848,8 +953,8 @@ def build_remake_view(root) -> RemakeView:
             settings_bridge = gr.Button("Open MiniMax H3 settings", elem_id=SETTINGS_BRIDGE)
     return RemakeView(
         mode, source_video, start, end, *pictures, *pins, pin_frames, request, prompt, short_edge, max_window, smart,
-        auto_prompts, mix, window_index, use_carried, writer_model, writer_backend, openai_model, source_sha, output,
-        run, stop, status, edit_bridges, settings_bridge,
+        auto_prompts, mix, window_index, use_carried, writer_model, writer_backend, openai_model, source_sha, keep_rest,
+        output, run, stop, status, edit_bridges, settings_bridge,
     )
 
 
@@ -869,7 +974,7 @@ def generation_inputs(view: RemakeView) -> list:
     return [view.mode, view.source_video, view.start, view.end, view.short_edge, view.prompt, view.pin_frames,
             *view.pictures(), *view.pins(), view.max_window, view.request, view.smart, view.mix, view.window_index,
             view.use_carried, view.writer_model, view.writer_backend, view.openai_model, view.source_sha,
-            view.auto_prompts]
+            view.auto_prompts, view.keep_rest]
 
 
 def _receiver(handlers: RemakeHandlers, slot: int):

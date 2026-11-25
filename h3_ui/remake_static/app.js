@@ -17,6 +17,7 @@ import {
   const state = {
     boot: null, source: null, start: 0, end: 0, lastStart: 0, shortEdge: 480, maxWindow: 226, mix: 0,
     long: false, text: "", project: null, index: 0, frame: 0, mode: "Swap", pinned: true, smart: true, auto: true,
+    keepRest: false, outputSpliced: false,
     slots: [null, null, null, null], useCarried: true, suggestion: "", previous: null, view: "source", wipe: 50,
     alignSlot: null, alignView: "Overlay", check: null, run: null, runSeen: -1, output: null, playing: false,
     muted: false, saveLabel: "All changes saved",
@@ -65,9 +66,24 @@ import {
     (slot?.original && slot.untouched ? [[index + 1, slot.original]] : [])));
   const editFields = () => ({
     video: state.source?.path, selection: selection(), prompt: $("prompt").value, request: $("request").value,
-    pinned: state.pinned, smart: state.smart, auto_prompts: state.auto, window: state.index, mode: state.mode,
-    originals: originals(), use_carried: state.useCarried,
+    pinned: state.pinned, smart: state.smart, auto_prompts: state.auto, keep_rest: state.keepRest,
+    window: state.index, mode: state.mode, originals: originals(), use_carried: state.useCarried,
   });
+
+  const reuseBreakdown = () => {
+    if (!state.source || !state.keepRest) return null;
+    const duration = Number(state.source.duration || 0);
+    const startFrame = Math.max(0, Math.round(videoStart() * fps()));
+    const remadeFrames = total();
+    const remadeStart = startFrame / fps();
+    const remadeEnd = (startFrame + remadeFrames) / fps();
+    const hasBefore = startFrame > 0;
+    const hasAfter = duration - remadeEnd > 1.5 / fps();
+    return {
+      duration, startFrame, remadeFrames, remadeStart, remadeEnd, hasBefore, hasAfter,
+      reusesAny: hasBefore || hasAfter,
+    };
+  };
   const editor = () => ({...editFields(), slots: state.slots, writer: writer()});
 
   // Saving and checking ----------------------------------------------------
@@ -251,6 +267,8 @@ import {
     state.index = 0;
     state.project = null;
     state.output = null;
+    state.keepRest = false;
+    state.outputSpliced = false;
     state.view = "source";
     loadEditor({});
     showSource(source);
@@ -276,8 +294,10 @@ import {
     const targetWindow = Math.max(0, Math.min((data.windows?.length || 1) - 1, Number(initialWindow) || 0));
     Object.assign(state, {start: chosen.start, lastStart: chosen.start, end: chosen.end, shortEdge: chosen.short_edge,
                           mix: chosen.mix, maxWindow: chosen.max_window, mode: data.mode, smart: data.smart,
-                          pinned: data.pinned, auto: data.auto_prompts, long: data.long, project: data, index: targetWindow,
-                          frame: data.windows?.[targetWindow]?.own?.[0] ?? 0, output: data.output, view: "source",
+                          pinned: data.pinned, auto: data.auto_prompts, keepRest: Boolean(data.keep_rest),
+                          long: data.long, project: data, index: targetWindow,
+                          frame: data.windows?.[targetWindow]?.own?.[0] ?? 0, output: data.output,
+                          outputSpliced: Boolean(data.output_spliced), view: "source",
                           menu: false, check: null, saveLabel: "All changes saved"});
     stored.set(SESSION.project, data.key);
     stored.set(SESSION.window, String(targetWindow));
@@ -470,10 +490,11 @@ import {
   const combine = safely(async () => {
     $("run-status").hidden = false;
     $("run-status").textContent = "Joining the windows…";
-    const {output, status} = await post("/combine", {selection: selection()});
+    const {output, status, spliced} = await post("/combine", {selection: selection(), keep_rest: state.keepRest});
     $("run-status").textContent = status;
     state.project = (await request("GET", `/projects/${state.project.key}`));
     state.output = output;
+    state.outputSpliced = Boolean(spliced ?? state.project?.output_spliced);
     state.view = "result";
     renderAll();
   });
@@ -496,7 +517,10 @@ import {
     const open = openWindow();
     // A prompt the run wrote reaches the editor; one you're typing stays yours.
     if (open.prompt_auto && document.activeElement !== $("prompt")) $("prompt").value = open.prompt;
-    if (project.output) state.output = project.output;
+    if (project.output) {
+      state.output = project.output;
+      state.outputSpliced = Boolean(project.output_spliced);
+    }
   });
 
   let pollTimer;
@@ -514,7 +538,10 @@ import {
     if (run && run.revision !== state.runSeen) {
       state.runSeen = run.revision;
       syncProject().then(() => {
-        if (run.result_url && !state.project) state.output = run.result_url;
+        if (run.result_url && !state.project) {
+          state.output = run.result_url;
+          state.outputSpliced = Boolean(run.spliced);
+        }
         if (wasActive && !run.active && !run.error && state.output) state.view = "result";
         renderAll();
         queueCheck();
@@ -536,7 +563,13 @@ import {
     try {
       const frame = window.frameElement;
       if (!document.hidden && (!frame || frame.offsetParent !== null)) {
-        const data = await request("GET", `/pulse?collect=${Boolean(state.source)}`);
+        const data = await request("GET", `/pulse?collect=${Boolean(state.source)}&accept_source=${!running()}`);
+        if (data.incoming_source) {
+          await autosave();
+          await useSource(data.incoming_source);
+          toast(`Loaded "${data.incoming_source.name}" from Storyboard.`);
+          return;
+        }
         for (const {slot, path} of data.inbox) replacePicture(slot - 1, path);
         if (data.settings !== state.settings) {
           state.settings = data.settings;
@@ -691,10 +724,14 @@ import {
   const primaryDetail = (waiting) => {
     if (running() || !state.source || !gpu()) return "";
     const seconds = (frames) => `${(frames / fps()).toFixed(1)} s`;
+    const reuse = reuseBreakdown();
     if (state.project) {
       if (!waiting) return "";
       const frames = queue().reduce((sum, window) => sum + window.own[1] - window.own[0], 0);
       return `${seconds(frames)} of video`;
+    }
+    if (reuse?.reusesAny) {
+      return `${seconds(total())} remade → ${reuse.duration.toFixed(1)} s full video`;
     }
     if (state.long) return `${seconds(selectionFrames())} · a run splits it into windows`;
     return `${seconds(total())} · one render`;
@@ -742,6 +779,7 @@ import {
   const resultSource = () => (state.project?.output ?? (state.project ? openWindow().take : state.output));
 
   const seekVideos = () => {
+    if (state.view === "full") return;
     const source = $("source-video");
     const time = videoStart() + state.frame / fps();
     const seek = (video, value) => {
@@ -753,7 +791,10 @@ import {
     const result = $("result-video");
     if (!result.hidden && !state.playing) {
       const whole = Boolean(state.project?.output) || !state.project;
-      seek(result, (whole ? state.frame : state.frame - openWindow().render[0]) / fps());
+      const resultTime = whole && state.outputSpliced
+        ? videoStart() + state.frame / fps()
+        : (whole ? state.frame : state.frame - openWindow().render[0]) / fps();
+      seek(result, resultTime);
     }
     const fallback = $("fallback");
     if (!fallback.hidden) {
@@ -773,15 +814,18 @@ import {
   };
 
   const renderViewer = () => {
+    const take = resultSource();
+    const canFull = Boolean(state.outputSpliced && take);
+    if (state.view === "full" && !canFull) state.view = "result";
     const view = state.view;
     const align = view === "align";
     const tabs = [["source", "Source"], ["result", "Result"], ["compare", "Compare"]];
+    if (canFull) tabs.push(["full", "Full result"]);
     if (state.alignSlot !== null) tabs.push(["align", "Alignment"]);
     $("tabs").replaceChildren(...pressed(tabs, view, (value) => { state.view = value; renderViewer(); }));
     // Keys 1–3 switch the first three views.
     [...$("tabs").children].slice(0, 3).forEach((tab, index) => { tab.title = `${tabs[index][1]} (${index + 1})`; });
-    const take = resultSource();
-    const wantsResult = view === "result" || view === "compare";
+    const wantsResult = view === "result" || view === "compare" || view === "full";
     const result = $("result-video");
     const url = take ? fileUrl(take) : "";
     if (wantsResult && take && result.dataset.url !== url) {
@@ -789,8 +833,9 @@ import {
       result.dataset.url = url;
     }
     result.hidden = !(wantsResult && take);
-    $("source-video").hidden = view === "result" || align || $("source-video").dataset.failed === "true";
-    $("fallback").hidden = view === "result" || align || $("source-video").dataset.failed !== "true";
+    result.controls = view === "full";
+    $("source-video").hidden = view === "result" || view === "full" || align || $("source-video").dataset.failed === "true";
+    $("fallback").hidden = view === "result" || view === "full" || align || $("source-video").dataset.failed !== "true";
     $("stage-empty").hidden = !(wantsResult && !take);
     $("empty-line").textContent = state.project
       ? `Window ${state.index + 1} has no render. The source is still in the Source view.`
@@ -804,7 +849,7 @@ import {
     $("align-image").hidden = !check;
     if (check) $("align-image").src = fileUrl(check.preview);
     $("align-bar").hidden = !align;
-    $("transport").hidden = align;
+    $("transport").hidden = align || view === "full";
     if (align) {
       $("align-views").replaceChildren(...pressed([["Overlay", "Overlay"], ["Difference", "Difference"]], state.alignView, (value) => {
         state.alignView = value;
@@ -868,9 +913,27 @@ import {
     $("max-window").value = state.maxWindow;
     $("smart").checked = state.smart;
     $("auto-prompts").checked = state.auto;
+    $("keep-rest").checked = state.keepRest;
+    $("overview").classList.toggle("reusing", state.keepRest);
+    $("select-full").disabled = !state.source || (state.start <= 0.001 && state.end >= (state.source.duration || 0) - 0.05);
     $("window-options").hidden = !state.long;
     const line = state.project ? state.project.summary : state.text;
     $("summary").replaceChildren(...bold(`${line}${state.project ? " · hatched frames are held from the window before" : ""}`));
+    const reuse = reuseBreakdown();
+    const reuseLine = $("reuse-summary");
+    if (reuse) {
+      const parts = [];
+      if (reuse.hasBefore) parts.push(`keep 0.00–${reuse.remadeStart.toFixed(2)} s`);
+      parts.push(`remake ${reuse.remadeStart.toFixed(2)}–${reuse.remadeEnd.toFixed(2)} s (${reuse.remadeFrames} frames)`);
+      if (reuse.hasAfter) parts.push(`keep ${reuse.remadeEnd.toFixed(2)}–${reuse.duration.toFixed(2)} s`);
+      reuseLine.textContent = reuse.reusesAny
+        ? `Output splices into the full source: ${parts.join(" · ")}.`
+        : "Selected window already covers the full source video.";
+      reuseLine.hidden = false;
+    } else {
+      reuseLine.hidden = true;
+      reuseLine.textContent = "";
+    }
 
     renderRuler(frames, last, start);
     $("legend").hidden = !state.project;
@@ -960,12 +1023,12 @@ import {
       }
       return node;
     }));
-    $("final").hidden = !state.long;
+    $("final").hidden = !(state.long || (state.project && allTaken()));
     $("split").hidden = Boolean(state.project);
     $("combine").hidden = !state.project;
     $("combine").disabled = !allTaken() || Boolean(state.project?.output) || running();
     $("final-line").textContent = !state.project ? "Longer than one window. A run splits it, or split now to edit each window first."
-      : state.project.output ? "Joined with the source's soundtrack and saved to Media."
+      : state.project.output ? (state.project.output_spliced ? "Spliced into the full source with its soundtrack and saved to Media." : "Joined with the source's soundtrack and saved to Media.")
       : allTaken() ? "Every window has a take. A run joins them itself, or combine now."
       : `Joins when every window has a take: ${state.project.windows.filter((window) => window.take).length} of ${windows().length} so far.`;
     renderRunBar();
@@ -1299,9 +1362,9 @@ import {
     if (!playing) setFrame(state.frame);
   };
   const followPlayback = (event) => {
-    if (!state.playing || event.target !== activeVideo()) return;
+    if (!state.playing || state.view === "full" || event.target !== activeVideo()) return;
     const whole = event.target.id === "source-video" || Boolean(state.project?.output) || !state.project;
-    const zero = event.target.id === "source-video" ? videoStart() : 0;
+    const zero = event.target.id === "source-video" || (whole && state.outputSpliced) ? videoStart() : 0;
     const offset = whole ? 0 : openWindow().render[0];
     const frame = (event.target.currentTime - zero) * fps() + offset;
     if (frame >= total() - 1) { state.frame = total() - 1; setPlaying(false); return; }
@@ -1495,6 +1558,20 @@ import {
 
     $("smart").addEventListener("change", (event) => { state.smart = event.target.checked; renderPictures(); changed(); autosave(); });
     $("auto-prompts").addEventListener("change", (event) => { state.auto = event.target.checked; changed(); autosave(); });
+    $("keep-rest").addEventListener("change", (event) => {
+      state.keepRest = event.target.checked;
+      renderTimeline();
+      renderAction();
+      changed();
+      autosave();
+    });
+    $("select-full").addEventListener("click", () => {
+      if (!state.source || selectionRefused(true)) return;
+      state.start = 0;
+      state.end = Math.round((state.source.duration || 0) * 100) / 100;
+      followStart();
+      refreshSelection();
+    });
     $("pinned").addEventListener("change", (event) => { state.pinned = event.target.checked; renderPictures(); changed(); autosave(); });
     $("scrub").addEventListener("input", (event) => setFrame(Number(event.target.value)));
     $("wipe").addEventListener("input", (event) => { state.wipe = Number(event.target.value); renderViewer(); });
@@ -1684,9 +1761,14 @@ import {
       renderMute();
       bind();
       renderStart();
-      const savedKey = stored.get(SESSION.project);
-      if (savedKey && state.boot.projects.some((row) => row.key === savedKey)) {
-        await openProject(savedKey, {initialWindow: Number(stored.get(SESSION.window) || 0)});
+      if (state.boot.incoming_source) {
+        await useSource(state.boot.incoming_source);
+        toast(`Loaded "${state.boot.incoming_source.name}" from Storyboard.`);
+      } else {
+        const savedKey = stored.get(SESSION.project);
+        if (savedKey && state.boot.projects.some((row) => row.key === savedKey)) {
+          await openProject(savedKey, {initialWindow: Number(stored.get(SESSION.window) || 0)});
+        }
       }
       if (!state.source) {
         stored.remove(SESSION.project);
