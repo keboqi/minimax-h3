@@ -103,7 +103,16 @@ class StoryboardService:
         self.store = store
         self.runtime = runtime
         # One process edits a storyboard at a time; each change is read-modify-write.
-        self.lock = RLock()
+        # Share the lock per WorkspaceStore so transient StoryboardService helpers
+        # (e.g. cleanup/transfer) serialize against the live server instance.
+        lock = getattr(store, "_storyboard_service_lock", None)
+        if lock is None:
+            lock = RLock()
+            try:
+                setattr(store, "_storyboard_service_lock", lock)
+            except AttributeError:
+                pass
+        self.lock = lock
         self._export_media: dict[int, set[str]] = {}
         self._translation_locks = WeakValueDictionary()
 
@@ -739,6 +748,9 @@ class StoryboardService:
             filtered = [tid for tid in (scene.get("takes") or ()) if str(tid) in in_use_ids]
             if filtered != list(scene.get("takes") or ()):
                 scene["takes"] = filtered
+                changed = True
+            if scene.get("in_use") and str(scene["in_use"]) not in in_use_ids:
+                scene["in_use"] = None
                 changed = True
 
         for version in board.get("versions") or ():

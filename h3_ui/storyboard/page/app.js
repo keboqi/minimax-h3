@@ -680,8 +680,11 @@
     return {score, pending, level, label};
   };
 
-  const isTakeUnscored = (take) => Boolean(take && !take.missing && take.review?.status !== "done" && take.review?.status !== "pending");
-  const isTakePendingScore = (take) => Boolean(take && !take.missing && take.review?.status === "pending");
+  const isImportedTake = (take) => take?.source === "upload" || take?.source === "library";
+  const isTakeUnscored = (take) => Boolean(
+    take && !take.missing && !isImportedTake(take) && take.review?.status !== "done" && take.review?.status !== "pending",
+  );
+  const isTakePendingScore = (take) => Boolean(take && !take.missing && !isImportedTake(take) && take.review?.status === "pending");
 
   const sceneScoreCounts = (item) => {
     if (!item || item.kind === "media") return {unscored: 0, pending: 0, total: 0};
@@ -689,7 +692,7 @@
     let pending = 0;
     let total = 0;
     for (const take of item.takes || []) {
-      if (take.missing) continue;
+      if (take.missing || isImportedTake(take)) continue;
       total += 1;
       if (isTakeUnscored(take)) unscored += 1;
       else if (isTakePendingScore(take)) pending += 1;
@@ -704,7 +707,7 @@
     for (const item of scenes()) {
       if (item.kind === "media") continue;
       const inUse = (item.takes || []).find((take) => take.id === item.in_use);
-      if (!inUse || inUse.missing) continue;
+      if (!inUse || inUse.missing || isImportedTake(inUse)) continue;
       total += 1;
       if (isTakeUnscored(inUse)) unscored += 1;
       else if (isTakePendingScore(inUse)) pending += 1;
@@ -781,7 +784,7 @@
         !item.takes.length ? h("span", {className: "small muted"},
           "Generate, upload an edited clip, or pick one from Media.") : null),
       h("div", {className: "chips"},
-        item.takes.length ? button(scoreLabel, () => batchScoreTakes("scene"), "btn sm", {
+        scoreCounts.total > 0 ? button(scoreLabel, () => batchScoreTakes("scene"), "btn sm", {
           id: "score-scene-takes",
           disabled: Boolean(state.batchScoreBusy) || scoreCounts.unscored === 0,
           title: "Score every unscored take in this scene in the background with Gemini Decision",

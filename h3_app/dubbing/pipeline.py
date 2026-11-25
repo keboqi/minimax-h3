@@ -49,6 +49,7 @@ from .segments import TARGET_LANGUAGES as TARGET_LANGUAGES
 from .text import (
     DEFAULT_REWRITE_STYLE as DEFAULT_REWRITE_STYLE,
     DEFAULT_STYLE,
+    LINE_TAKE_KEYS,
     REWRITE_STYLES as REWRITE_STYLES,
     SAME_LANGUAGE,
     SUBTITLE_MODES,
@@ -1127,6 +1128,7 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     pending = [line for line in planned if line.take is None]
     reused = len(planned) - len(pending)
     if not pending:
+        _record_line_take_keys(session, planned)
         yield f"Reusing all {reused} saved take(s)"
         return
     yield f"Reusing {reused} saved take(s); generating {len(pending)}" if reused else f"Generating {len(pending)} line(s)"
@@ -1178,9 +1180,29 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         # Recorded even when interrupted, so the lines voiced so far keep their marks.
         if outcomes:
             _record_take_problems(session, outcomes)
+    _record_line_take_keys(session, planned)
     if getattr(speaker, "settings", None) is not None:
         persist_caches()
     take_store.prune(store)
+
+
+def _record_line_take_keys(session: sessions.Session, planned: list[_Line]) -> None:
+    """Persist the active Drama 3 take key per line so cleanup keeps previewed and dubbed takes."""
+    if not planned:
+        return
+
+    def change(latest: sessions.Session) -> None:
+        current = {_take_mark(line) for line in latest.segments}
+        marks = {mark: key for mark, key in _stored_marks(latest, LINE_TAKE_KEYS).items() if mark in current}
+        for line in planned:
+            mark = _take_mark(line.segment)
+            if line.take is not None and line.key:
+                marks[mark] = line.key
+            else:
+                marks.pop(mark, None)
+        _save_marks(latest, LINE_TAKE_KEYS, marks)
+
+    sessions.modify(session, change)
 
 
 def _record_take_problems(session: sessions.Session, outcomes: dict[int, tuple[dict, str]]) -> None:

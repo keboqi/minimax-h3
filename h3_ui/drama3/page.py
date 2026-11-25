@@ -21,6 +21,7 @@ from fastapi import Body, FastAPI, Request
 from h3_app.drama3.results import result_settings
 from h3_app.errors import H3Error
 from h3_app.project_transfer import clear_local_project_history_takes
+from h3_app.take_cleanup import register_project_busy_check
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from h3_gpu import is_cpu_only
 
@@ -781,3 +782,18 @@ def install_soundstage_page(app: FastAPI, actions, *, store, output_dir, takes_d
             else:
                 message = interrupt(session_of(request), family=run.family or "drama3", job_id=run.job_id)
         return {"message": message, "run": run_payload(owner, name)}
+
+    def _is_soundstage_busy(project_id: str) -> str | None:
+        if any(item.storyboard_id == project_id and item.finished_at is None for item in runs.items.values()):
+            return "Wait for speaking to finish before clearing history takes."
+        if video_runs is not None and any(
+            item.storyboard_id == project_id and item.finished_at is None for item in video_runs.items.values()
+        ):
+            return "Wait for illustration rendering to finish before clearing history takes."
+        if cast_jobs is not None and any(
+            item.storyboard_id == project_id and item.finished_at is None for item in cast_jobs.runs.items.values()
+        ):
+            return "Wait for voice and sound generation to finish before clearing history takes."
+        return None
+
+    register_project_busy_check(app, "soundstage", _is_soundstage_busy)

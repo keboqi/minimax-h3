@@ -325,6 +325,9 @@ def storyboard_take_input(
         fl2va_audios=fields["ref_audios"] if mode == sb.FRAMES else (),
         cast_names=cast_names,
     )
+    cleaned_advice = str(advice or "").strip()
+    if not prompt.strip() and not references and not cleaned_advice:
+        raise H3Error("Write a scene prompt before reviewing or scoring this take.")
 
     context_parts = [f"Storyboard scene {scene_index + 1} ({scene.get('title') or 'Untitled scene'})"]
     if flow:
@@ -344,7 +347,7 @@ def storyboard_take_input(
             width=int(profile["width"]) if profile.get("width") else None,
             height=int(profile["height"]) if profile.get("height") else None,
             references=references,
-            advice=str(advice or "").strip(),
+            advice=cleaned_advice,
             scene_context=" ".join(context_parts),
         ),
         cast_names,

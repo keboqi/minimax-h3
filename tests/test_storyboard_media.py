@@ -387,7 +387,7 @@ class MediaScenePageTests(unittest.TestCase):
             request_defaults=lambda: dict(PROFILE_VALUES), publish=lambda path, metadata: None,
         ))
         app = FastAPI()
-        patcher = patch.object(page_module, "request_owner", lambda request, store: "a")
+        patcher = patch.object(page_module, "owner_of", lambda request: "a")
         patcher.start()
         self.addCleanup(patcher.stop)
         page_module.install_storyboard_page(app, self.handlers, gpu=False)

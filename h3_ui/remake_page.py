@@ -62,6 +62,16 @@ def install_remake_page(app: FastAPI, handlers: RemakeHandlers, *, interrupt=Non
                         image_pages=None) -> None:
     runs = Runs(busy="A Remake is already running.")
     edits = Runs(busy="A quick edit is already running.")
+    from h3_app.take_cleanup import register_project_busy_check
+
+    def _is_remake_busy(_project_id: str) -> str | None:
+        if any(item.finished_at is None for item in runs.items.values()):
+            return "Wait for the current Remake to finish before clearing history takes."
+        if any(item.finished_at is None for item in edits.items.values()):
+            return "Wait for the current Remake edit to finish before clearing history takes."
+        return None
+
+    register_project_busy_check(app, "remake", _is_remake_busy)
     callback = owned_generation(handlers.generate_remake, "remake")
     # The Gradio bridge registers an equal callback; without it, retries still need one.
     if gpu:

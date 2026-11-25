@@ -874,4 +874,14 @@ test("renderTakes and renderStripActions wire batch scoring and take thumbnail s
   page.state.sceneId = "s3";
   page.renderTakes();
   assert.deepEqual(scheduled, [4000]);
+
+  // Scenes with only uploaded/Media manual takes omit the batch-score button.
+  page.state.board.scenes.push({
+    id: "s4", number: 4, title: "Manual only", seconds: 5, added_seconds: 5, flow: false, kind: "generated",
+    state: "done", state_label: "Done", summary: "", issues: [], in_use: "t40",
+    takes: [{id: "t40", number: 1, source: "upload", missing: false, review: null}],
+  });
+  page.state.sceneId = "s4";
+  page.renderTakes();
+  assert.equal(findAll(nodes["take-row"], (n) => n.id === "score-scene-takes").length, 0);
 });

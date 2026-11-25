@@ -829,6 +829,68 @@ class StoryboardTakeReviewApiTests(unittest.TestCase):
         self.assertEqual(media_review.public(s2_in_use_vid)["score"], 92)
         self.assertEqual(media_review.public(s3_in_use_vid)["score"], 80)
 
+    def test_storyboard_batch_score_skips_imported_takes_and_promptless_manual_score_errors(self):
+        board = self.client.post("/storyboard/api/boards", json={
+            "name": "ManualTakes", "story": "Scene one.",
+        }).json()
+        board_id = board["id"]
+        scene_id = board["scenes"][0]["id"]
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+
+        # Clear the scene prompt and attach an uploaded take directly.
+        self.service.update_scene(owner, board_id, scene_id, prompt="")
+        uploaded_vid = self.service.output_path(f"{self.service.take_prefix(board_id, scene_id, 'tk_up')}.mp4")
+        uploaded_vid.parent.mkdir(parents=True, exist_ok=True)
+        uploaded_vid.write_bytes(b"fake-uploaded-video")
+
+        def add_uploaded(doc):
+            doc["takes"]["tk_up"] = {
+                "id": "tk_up",
+                "scene": scene_id,
+                "created": time.time(),
+                "video": str(uploaded_vid),
+                "latent": None,
+                "stage_latent": None,
+                "tail": None,
+                "prefix_frames": 0,
+                "seed": None,
+                "job_id": None,
+                "inputs": sb.model.scene_inputs(doc, 0),
+                "source": "upload",
+                "source_name": "edit.mp4",
+                "duration": 2.0,
+                "frames": 48,
+            }
+            doc["scenes"][0]["takes"].append("tk_up")
+            doc["scenes"][0]["in_use"] = "tk_up"
+
+        self.service.change(owner, board_id, add_uploaded)
+
+        with patch.dict(os.environ, {"H3_DECISION": "1"}), \
+                patch.object(decisions, "decide", side_effect=_fake_decision_answers) as asked:
+            scene_res = self.client.post(
+                f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(scene_res.status_code, 200, scene_res.text)
+            self.assertEqual(scene_res.json()["scheduled"], 0)
+            self.assertEqual(scene_res.json()["skipped"], 1)
+
+            board_res = self.client.post(
+                f"/storyboard/api/boards/{board_id}/score-takes",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(board_res.status_code, 200, board_res.text)
+            self.assertEqual(board_res.json()["scheduled"], 0)
+
+            manual_res = self.client.post(
+                f"/storyboard/api/boards/{board_id}/scenes/{scene_id}/takes/tk_up/score",
+                json={"gemini_api_key": "gem-key"},
+            )
+            self.assertEqual(manual_res.status_code, 400)
+            self.assertIn("Write a scene prompt", manual_res.json()["error"])
+        self.assertEqual(asked.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

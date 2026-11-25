@@ -48,6 +48,7 @@ from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMIL
 from h3_app.drama3.serving.audio import encode_wav
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
+from h3_app.take_cleanup import register_project_busy_check
 
 from ..drama3.page_common import SKIP, PageRun, file_response, found, not_found, run_job, value
 from ..job_bindings import owned_generation
@@ -1407,3 +1408,33 @@ def install_dubbing_page(
         if name not in files:
             raise not_found()
         return file_response(files[name], filename=None if inline else name)
+
+    def _is_dubbing_busy(project_id: str) -> str | None:
+        try:
+            _data, sess = projects.load(runtime(), project_id)
+        except H3Error:
+            return None
+        session_id = sess.id
+        last_output = sess.data.get("last_output")
+        dub_name = Path(str(last_output)).name if last_output else ""
+        for collection in runs.values():
+            for item in collection.items.values():
+                if item.finished_at is not None:
+                    continue
+                if (
+                    item.session == session_id
+                    or item.storyboard_id == session_id
+                    or item.kind == AUTO
+                    or item.batch
+                    or (dub_name and item.dub_video == dub_name)
+                ):
+                    return "Wait for the current dubbing action before clearing history takes."
+        if any(
+            q.finished_at is None
+            and any(item.key == project_id and item.state in batches.working for item in q.items)
+            for q in batches.queues.values()
+        ):
+            return "Wait for the current dubbing batch before clearing history takes."
+        return None
+
+    register_project_busy_check(app, "dubbing", _is_dubbing_busy)

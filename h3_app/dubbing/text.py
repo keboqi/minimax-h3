@@ -42,6 +42,7 @@ DEFAULT_REWRITE_STYLE = "Simpler words"
 # generated, or Smart timing found them still too long in the last dub.
 TAKE_PROBLEMS = "take_problems"
 TIMING_PROBLEMS = "timing_problems"
+LINE_TAKE_KEYS = "line_take_keys"
 # What a subtitled export can show, by the result player's Subtitles switch names, and how
 # its progress names them.
 SUBTITLE_MODES = {"translation": "translated", "source": "original", "both": "translated and original"}

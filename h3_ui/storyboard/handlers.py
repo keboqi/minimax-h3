@@ -260,7 +260,12 @@ class StoryboardHandlers(StoryboardApiHandlers):
             seen_takes.add(take_id)
             scene = board["scenes"][scene_index]
             take = (board.get("takes") or {}).get(take_id)
-            if sb.is_media(scene) or take is None or take_id not in scene.get("takes", ()):
+            if (
+                sb.is_media(scene)
+                or take is None
+                or take_id not in scene.get("takes", ())
+                or sb.is_imported_take(take)
+            ):
                 skipped += 1
                 continue
             video = take.get("video")
@@ -280,6 +285,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
                     board, scene_index, take_id, cast_dir=cast_dir,
                 )
             except H3Error:
+                skipped += 1
+                continue
+            if not take_input.prompt.strip() and not take_input.references:
                 skipped += 1
                 continue
             if take_review.schedule_take_score(take_input, api_key=resolved_key, enabled=True):
@@ -325,7 +333,9 @@ class StoryboardHandlers(StoryboardApiHandlers):
         targets = [
             (index, scene["in_use"])
             for index, scene in enumerate(board["scenes"])
-            if not sb.is_media(scene) and scene.get("in_use")
+            if not sb.is_media(scene)
+            and scene.get("in_use")
+            and not sb.is_imported_take((board.get("takes") or {}).get(scene["in_use"]))
         ]
         return self._schedule_batch_scores(
             owner, storyboard_id, board, targets, gemini_api_key=gemini_api_key,

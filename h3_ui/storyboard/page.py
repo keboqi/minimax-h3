@@ -24,6 +24,7 @@ from h3_app.catalog import (
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS
 from h3_app.project_transfer import build_clear_takes_outcome
+from h3_app.take_cleanup import register_project_busy_check
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.storyboard import clip, subtitles
 from h3_app.storyboard.model import MAX_TAKES_PER_RUN, OVERLAP_FRAMES
@@ -158,6 +159,19 @@ def install_storyboard_page(app: FastAPI, handlers: StoryboardHandlers, *, gpu: 
     )
 
     auto_payload = autos.payload
+
+    def _is_storyboard_busy(project_id: str) -> str | None:
+        if any(item.storyboard_id == project_id and item.finished_at is None for item in runs.items.values()):
+            return "Wait for this storyboard's run to finish before clearing history takes."
+        if any(
+            q.finished_at is None
+            and any(item.key == project_id and item.state in autos.working for item in q.items)
+            for q in autos.queues.values()
+        ):
+            return "Auto render is currently working on this storyboard. Wait for it to finish."
+        return None
+
+    register_project_busy_check(app, "storyboard", _is_storyboard_busy)
 
     install_static_page(app, "/storyboard", STATIC, STATIC_TYPES)
 

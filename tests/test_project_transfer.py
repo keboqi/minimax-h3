@@ -2912,3 +2912,125 @@ def test_clear_history_takes_across_all_four_project_kinds_and_batch_route(tmp_p
     assert rem_keep.is_file()
     assert snapshot_path(rem_keep).is_file()
     assert rem_media.is_file()
+
+
+def test_clear_history_takes_protects_legacy_unnamed_and_line_key_dubbing_sessions(tmp_path: Path):
+    from h3_app.drama3.serving import generate as d3_generate, takes as take_store
+    from h3_app.dubbing import pipeline as dub_pipeline, text as dub_text
+
+    runtime, store = _make_workspace(tmp_path / "ws")
+    takes_dir = takes_root(runtime)
+    takes_dir.mkdir(parents=True, exist_ok=True)
+
+    with _using_workspace_env(runtime):
+        # 1. Pre-aa76daa named Dubbing project with segments + references/clip_*.wav, but no last_take_keys
+        legacy_src = tmp_path / "legacy_src.mp4"
+        legacy_src.write_bytes(b"legacy-mp4")
+        legacy_session = dub_sessions.create(runtime, legacy_src, video=True)
+        legacy_seg = {
+            "start": 0.0,
+            "end": 3.5,
+            "speaker": "SPEAKER_00",
+            "source": "Hello world",
+            "translation": "Hola mundo",
+            "dub": True,
+        }
+        legacy_session.data["segments"] = [legacy_seg]
+        legacy_session.data["pipeline"] = "Local: Qwen3-ASR + aligner + Hy-MT"
+        legacy_session.save()
+        legacy_clip = legacy_session.root / "references" / "clip_0.000_3.500.wav"
+        legacy_clip.parent.mkdir(parents=True, exist_ok=True)
+        legacy_clip.write_bytes(b"RIFF-legacy-ref")
+        legacy_digest = d3_generate._reference_digest(legacy_clip)
+        t, p, k = dub_pipeline.VOICE_PRESETS["Balance"]
+        legacy_key = take_store.take_key(
+            speaker="dub:SPEAKER_00",
+            text="Hola mundo",
+            reference=legacy_digest,
+            transcript="Hello world",
+            sampling={"temperature": t, "top_p": p, "top_k": k},
+            max_new_tokens=d3_generate.frame_budget("Hola mundo", d3_generate.MAX_FRAMES),
+        )
+        (takes_dir / f"{legacy_key}.wav").write_bytes(b"RIFF-legacy-take")
+        dubbing_projects.save(runtime, "Legacy Dub", legacy_session.id, legacy_src, {"target_language": "Spanish"})
+
+        # 2. Unnamed recent session in sessions_dir (e.g. from Preview before saving as a named project)
+        unnamed_src = tmp_path / "unnamed_src.mp4"
+        unnamed_src.write_bytes(b"unnamed-mp4")
+        unnamed_session = dub_sessions.create(runtime, unnamed_src, video=True)
+        unnamed_seg = {
+            "start": 1.0,
+            "end": 4.0,
+            "speaker": "SPEAKER_01",
+            "source": "Good morning",
+            "translation": "Buenos dias",
+            "dub": True,
+        }
+        unnamed_session.data["segments"] = [unnamed_seg]
+        unnamed_session.save()
+        unnamed_key = "d" * 32
+        (takes_dir / f"{unnamed_key}.wav").write_bytes(b"RIFF-unnamed-take")
+        dub_pipeline._record_line_take_keys(
+            unnamed_session,
+            [dub_pipeline._Line(0, unnamed_seg, unnamed_src, "Good morning", key=unnamed_key, take=[1.0])],
+        )
+        # Ensure _record_line_take_keys also cleared no stale marks and persisted line_take_keys
+        reloaded_unnamed = dub_sessions.load(runtime, unnamed_session.id)
+        assert reloaded_unnamed.data[dub_text.LINE_TAKE_KEYS][0]["reason"] == unnamed_key
+
+        # 3. Orphaned take not referenced by any project or recent session
+        orphan_key = "e" * 32
+        (takes_dir / f"{orphan_key}.wav").write_bytes(b"RIFF-orphan")
+
+        outcome = clear_local_project_history_takes("dubbing", "Legacy Dub", store=store, runtime=runtime)
+        assert outcome["kept_takes"] == 1
+        assert outcome["removed_takes"] == 1
+        assert (takes_dir / f"{legacy_key}.wav").is_file()
+        assert (takes_dir / f"{unnamed_key}.wav").is_file()
+        assert not (takes_dir / f"{orphan_key}.wav").exists()
+
+
+def test_clear_history_takes_refuses_active_jobs_and_batches_around_busy_projects(tmp_path: Path):
+    from h3_app.jobs import JOBS, Job
+
+    runtime, store = _make_workspace(tmp_path / "ws")
+    sb_service = StoryboardService(store, lambda: runtime)
+    board_id = sb_service.create(
+        "owner-a",
+        "Busy Board",
+        sb_model.make_profile(sb_model.request_defaults(), sb_model.request_defaults()),
+    )
+
+    remake_src = tmp_path / "remake_src.mp4"
+    remake_src.write_bytes(b"remake-src")
+    remake_mgr = RemakeProjects(runtime.output_dir)
+    remake_proj = remake_mgr.create(
+        "owner-a",
+        "remake-idle-1",
+        str(remake_src),
+        {"name": "Idle Remake", "start": 0.0, "frames": 24, "width": 832, "height": 480, "mix": 0},
+        [{"own": [0, 24], "render": [0, 24], "hold": 0, "kind": "start"}],
+    )
+    stale_take = Path(remake_proj["folder"]) / "w01_stale.mp4"
+    stale_take.write_bytes(b"stale-remake")
+
+    active_job = Job("owner-a", "storyboard")
+    active_job.snapshot_json = json.dumps(["scene", board_id, None, None])
+    with JOBS.lock:
+        JOBS.records[active_job.id] = active_job
+    try:
+        with pytest.raises(H3Error, match="Wait for this storyboard's run"):
+            clear_local_project_history_takes("storyboard", board_id, store=store, runtime=runtime)
+
+        batch = clear_local_projects_history_takes(
+            [("storyboard", board_id), ("remake", remake_proj["key"])],
+            store=store,
+            runtime=runtime,
+        )
+        assert batch["failed_projects"] == 1
+        assert batch["cleared_projects"] == 1
+        assert batch["results"][0]["error"]
+        assert not stale_take.exists()
+    finally:
+        with JOBS.lock:
+            JOBS.records.pop(active_job.id, None)

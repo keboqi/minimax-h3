@@ -770,3 +770,38 @@ class StoryboardPageTests(unittest.TestCase):
         self.assertTrue(vid_branch_only.is_file())
         self.assertTrue(published.is_file())
         self.assertIn("tk_branch", self.service.load(created_owner, dup_id)["takes"])
+
+    def test_prune_board_history_takes_clears_dangling_in_use_and_system_clear_respects_active_run(self):
+        from h3_app.errors import H3Error
+        from h3_app.take_cleanup import clear_local_project_history_takes
+
+        created = self.create("Scene one.")
+        board_id = created["id"]
+        owner = self.store.verify_owner(self.client.cookies[COOKIE])
+
+        # Dangling scene["in_use"] pointing at a missing take ID should be cleared cleanly.
+        def corrupt_in_use(doc):
+            doc["scenes"][0]["in_use"] = "missing_take_id"
+
+        self.service.change(owner, board_id, corrupt_in_use)
+        res = self.client.post(f"{API}/boards/{board_id}/clear-history-takes")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertIsNone(res.json()["scenes"][0]["in_use"])
+
+        # While a page run is active on this storyboard, system-level clear must refuse too.
+        self.release = Event()
+        try:
+            started = self.client.post(
+                f"{API}/boards/{board_id}/generate",
+                json={"action": "scene", "scene_id": created["scenes"][0]["id"]},
+            )
+            self.assertEqual(started.status_code, 200)
+            with self.assertRaisesRegex(H3Error, "Wait for this storyboard's run"):
+                clear_local_project_history_takes("storyboard", board_id, store=self.store, runtime=self.runtime)
+        finally:
+            self.release.set()
+            for _ in range(100):
+                run = self.client.get(f"{API}/boards/{board_id}/run").json()["run"]
+                if not run or not run["active"]:
+                    break
+                time.sleep(0.02)

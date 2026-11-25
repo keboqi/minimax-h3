@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from weakref import WeakKeyDictionary
 
 from h3_app.errors import H3Error
 
@@ -19,6 +21,58 @@ KIND_LABELS = {
     "remake": "Remake",
 }
 PROJECT_TRANSFER_LOCK = threading.RLock()
+_BUSY_CHECKS_LOCK = threading.Lock()
+_BUSY_CHECKS: WeakKeyDictionary[Any, dict[str, Callable[[str], str | None]]] = WeakKeyDictionary()
+
+
+def register_project_busy_check(app: Any, kind: str, check: Callable[[str], str | None]) -> None:
+    """Register a page-level active-run checker for ``kind`` tied to ``app``'s lifetime."""
+    if app is None or kind not in PROJECT_KINDS:
+        return
+    with _BUSY_CHECKS_LOCK:
+        checks = _BUSY_CHECKS.get(app)
+        if checks is None:
+            checks = {}
+            _BUSY_CHECKS[app] = checks
+        checks[kind] = check
+
+
+def ensure_project_idle(kind: str, project_id: str) -> None:
+    """Refuse take cleanup while ``project_id`` has an active page run or queued/running job."""
+    with _BUSY_CHECKS_LOCK:
+        checks = [by_kind[kind] for by_kind in _BUSY_CHECKS.values() if kind in by_kind]
+    for check in checks:
+        reason = check(project_id)
+        if reason:
+            raise H3Error(reason)
+
+    from h3_app.jobs import JOBS
+
+    with JOBS.lock:
+        active_jobs = [job for job in JOBS.records.values() if job.finished_at is None and not job.recovered]
+
+    if kind == "storyboard":
+        for job in active_jobs:
+            if job.family != "storyboard":
+                continue
+            vals = job.values() if job.snapshot_json else []
+            if not vals or (len(vals) >= 2 and str(vals[1]) == project_id):
+                raise H3Error("Wait for this storyboard's run to finish before clearing history takes.")
+    elif kind == "remake":
+        if any(job.family in {"remake", "remake_edit"} for job in active_jobs):
+            raise H3Error("Wait for the current Remake to finish before clearing history takes.")
+    elif kind == "soundstage":
+        if any(job.family in {"drama3", "drama3_visuals", "voice_design", "stable_audio"} for job in active_jobs):
+            raise H3Error("Wait for the current Soundstage run to finish before clearing history takes.")
+    elif kind == "dubbing":
+        from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
+
+        dubbing_families = {
+            FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB, FAMILY_WORDS,
+            "dubbing_lip_sync", "dubbing_lip_sync_detect",
+        }
+        if any(job.family in dubbing_families for job in active_jobs):
+            raise H3Error("Wait for the current Dubbing operation to finish before clearing history takes.")
 
 
 def _format_bytes(num_bytes: int) -> str:
@@ -92,7 +146,218 @@ def _resolve_soundstage_result(result: Any, runtime) -> Path | None:
     return result_path
 
 
-def _active_drama3_take_keys(store, runtime) -> set[str]:
+def _take_mark_tuple(entry: Mapping[str, Any]) -> tuple[float, str, str] | None:
+    try:
+        return (
+            round(float(entry["start"]), 3),
+            str(entry.get("speaker") or ""),
+            str(entry["translation"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _derive_legacy_dubbing_take_keys(
+    sess_dir: Path,
+    sess_data: Mapping[str, Any],
+    runtime,
+    *,
+    existing_stems: set[str] | None,
+) -> set[str]:
+    """Derive active Drama 3 take keys for pre-aa76daa or imported sessions without starting servers."""
+    from h3_app.drama3.results import result_settings
+    from h3_app.drama3.serving import generate as d3_generate, takes as take_store
+    from h3_app.drama3.serving.speech import LineSpeaker
+    from h3_app.drama3.speakers import load_speaker
+    from h3_app.dubbing import session as dub_sessions, voices as dub_voices
+
+    segments = sess_data.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return set()
+    translated_indices = [
+        idx for idx, seg in enumerate(segments)
+        if isinstance(seg, dict) and seg.get("translation") and "start" in seg and "end" in seg
+    ]
+    if not translated_indices:
+        return set()
+
+    sess_obj = dub_sessions.Session(sess_dir, dict(sess_data))
+    refs_dir = sess_dir / "references"
+    digest_cache: dict[Path, str] = {}
+
+    def clip_digest(path: Path) -> str | None:
+        try:
+            resolved = path.resolve()
+            if not resolved.is_file():
+                return None
+            cached = digest_cache.get(resolved)
+            if cached is None:
+                cached = digest_cache[resolved] = d3_generate._reference_digest(resolved)
+            return cached
+        except OSError:
+            return None
+
+    def segment_clip(seg: Mapping[str, Any]) -> Path:
+        return refs_dir / f"clip_{float(seg['start']):.3f}_{float(seg['end']):.3f}.wav"
+
+    speaker_presets: dict[str, tuple[str, str]] = {}
+    for spk, cfg in dub_voices.speaker_settings(sess_obj).items():
+        voice = cfg.get("voice")
+        if not voice or voice == dub_voices.ORIGINAL_VOICE:
+            continue
+        try:
+            preset = load_speaker(voice, runtime)
+        except H3Error:
+            continue
+        digest = clip_digest(preset.audio)
+        if digest:
+            speaker_presets[spk] = (digest, preset.transcript)
+
+    speaker_best: dict[str, tuple[str, str]] = {}
+    clean_set: set[int] | None = None
+    if refs_dir.is_dir():
+        try:
+            clean_set = dub_voices.clean_lines(segments, dub_voices.speaker_activity(sess_obj))
+        except Exception:
+            clean_set = None
+
+    def candidate_refs_for(idx: int) -> list[tuple[str, str]]:
+        seg = segments[idx]
+        spk = str(seg.get("speaker") or "")
+        if spk in speaker_presets:
+            return [speaker_presets[spk]]
+        if not refs_dir.is_dir():
+            return []
+        refs: list[tuple[str, str]] = []
+        seen_ref: set[tuple[str, str]] = set()
+
+        def add_clip(path: Path, transcript: str) -> None:
+            digest = clip_digest(path)
+            if digest:
+                pair = (digest, str(transcript or ""))
+                if pair not in seen_ref:
+                    seen_ref.add(pair)
+                    refs.append(pair)
+
+        source_txt = str(seg.get("source") or "")
+        add_clip(segment_clip(seg), source_txt or str(seg.get("translation") or ""))
+        if clean_set is not None:
+            try:
+                best_clean = dub_voices.nearest_clean(segments, idx, clean_set)
+                if best_clean is not None:
+                    trimmed_seg, trimmed_txt = dub_voices._trimmed(sess_obj, segments[best_clean])
+                    add_clip(segment_clip(trimmed_seg), trimmed_txt)
+            except Exception:
+                pass
+        if spk not in speaker_best:
+            best_spk = dub_voices.speaker_reference(segments, spk)
+            if best_spk is None and segments:
+                best_spk = max(
+                    range(len(segments)),
+                    key=lambda i: (float(segments[i]["end"]) - float(segments[i]["start"]))
+                    if segments[i].get("source") else -1.0,
+                )
+            if best_spk is not None:
+                d = clip_digest(segment_clip(segments[best_spk]))
+                if d:
+                    speaker_best[spk] = (d, str(segments[best_spk].get("source") or ""))
+        if spk in speaker_best and speaker_best[spk] not in seen_ref:
+            seen_ref.add(speaker_best[spk])
+            refs.append(speaker_best[spk])
+        return refs
+
+    # Sampling presets from h3_app.dubbing.pipeline.VOICE_PRESETS (without importing heavy pipeline deps).
+    presets = ((0.7, 0.7, 30), (1.0, 0.9, 0), (2.0, 1.0, 30))
+    engines: list[str | None] = [None]
+    last_output = sess_data.get("last_output")
+    if last_output:
+        snap_model = result_settings(str(last_output)).get("drama3_model")
+        if isinstance(snap_model, str) and snap_model:
+            engines.append(snap_model)
+    try:
+        current_engine = LineSpeaker(runtime).take_engine_id
+        if isinstance(current_engine, str) and current_engine and current_engine not in engines:
+            engines.append(current_engine)
+    except Exception:
+        pass
+
+    derived: set[str] = set()
+    for engine in engines:
+        for temp, top_p, top_k in presets:
+            sampling = {"temperature": temp, "top_p": top_p, "top_k": top_k}
+            occurrences: dict[str, int] = {}
+            for idx in translated_indices:
+                seg = segments[idx]
+                translation = str(seg.get("translation") or "")
+                speaker = f"dub:{seg.get('speaker') or ''}"
+                budget = d3_generate.frame_budget(translation, d3_generate.MAX_FRAMES)
+                ref_pairs = candidate_refs_for(idx)
+                for ref_digest, transcript in ref_pairs:
+                    content = take_store.take_key(
+                        speaker=speaker,
+                        text=translation,
+                        reference=ref_digest,
+                        transcript=transcript,
+                        sampling=sampling,
+                        max_new_tokens=budget,
+                        engine=engine,
+                    )
+                    occ = occurrences.get(content, 0)
+                    occurrences[content] = occ + 1
+                    key = take_store.occurrence_key(content, occ)
+                    if existing_stems is None or key in existing_stems:
+                        derived.add(key)
+    return derived
+
+
+def _session_active_drama3_take_keys(
+    sess_dir: Path,
+    sess_data: Mapping[str, Any],
+    runtime,
+    *,
+    existing_stems: set[str] | None = None,
+) -> set[str]:
+    """Collect active Drama 3 take keys for one Dubbing session (explicit + legacy fallback)."""
+    protected: set[str] = {str(k) for k in (sess_data.get("last_take_keys") or ()) if k}
+
+    segments = sess_data.get("segments") or ()
+    current_marks: set[tuple[float, str, str]] = set()
+    speakerless_marks: set[tuple[float, str]] = set()
+    for seg in segments:
+        if not isinstance(seg, Mapping) or not seg.get("translation"):
+            continue
+        mark = _take_mark_tuple(seg)
+        if mark is not None:
+            current_marks.add(mark)
+            speakerless_marks.add((mark[0], mark[2]))
+
+    raw_line_entries = sess_data.get("line_take_keys")
+    has_line_entries = False
+    if isinstance(raw_line_entries, list):
+        for entry in raw_line_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            key = str(entry.get("reason") or "").strip()
+            if not key or key == "failed":
+                continue
+            has_line_entries = True
+            mark = _take_mark_tuple(entry)
+            if mark is not None and (mark in current_marks or (mark[0], mark[2]) in speakerless_marks):
+                protected.add(key)
+
+    if not protected and not has_line_entries:
+        protected |= _derive_legacy_dubbing_take_keys(
+            sess_dir, sess_data, runtime, existing_stems=existing_stems,
+        )
+    return protected
+
+
+def _active_drama3_take_keys(
+    store,
+    runtime,
+    *,
+    existing_stems: set[str] | None = None,
+) -> set[str]:
     """Return every Drama 3 take key still referenced by any Soundstage mix or Dubbing session."""
     from h3_app.drama3.results import result_settings
     from h3_app.dubbing import projects as dubbing_projects, session as dub_sessions
@@ -110,19 +375,36 @@ def _active_drama3_take_keys(store, runtime) -> set[str]:
                     protected.add(str(chunk["take"]))
 
     sess_root = dub_sessions.sessions_dir(runtime)
-    for entry in dubbing_projects.summaries(runtime):
-        session_id = str(entry.get("session") or "")
+    session_ids: set[str] = set(dubbing_projects.retained_sessions(runtime))
+    if sess_root.is_dir():
+        cutoff = time.time() - dub_sessions.KEEP_SECONDS
+        try:
+            for folder in sess_root.iterdir():
+                if not folder.is_dir():
+                    continue
+                manifest = folder / dub_sessions.MANIFEST
+                try:
+                    mtime = (manifest if manifest.is_file() else folder).stat().st_mtime
+                except OSError:
+                    continue
+                if mtime >= cutoff:
+                    session_ids.add(folder.name)
+        except OSError:
+            pass
+
+    for session_id in session_ids:
         if not session_id:
             continue
-        manifest = sess_root / session_id / dub_sessions.MANIFEST
+        sess_dir = sess_root / session_id
+        manifest = sess_dir / dub_sessions.MANIFEST
         try:
             sess_data = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
         if isinstance(sess_data, dict):
-            for key in sess_data.get("last_take_keys") or ():
-                if key:
-                    protected.add(str(key))
+            protected |= _session_active_drama3_take_keys(
+                sess_dir, sess_data, runtime, existing_stems=existing_stems,
+            )
     return protected
 
 
@@ -137,14 +419,20 @@ def _prune_unreferenced_drama3_takes(
     root = Path(takes_dir) if takes_dir is not None else takes_root(runtime)
     if not root.is_dir():
         return 0, 0, 0
-    protected = _active_drama3_take_keys(store, runtime)
-    removed_takes = 0
-    removed_files = 0
-    freed_bytes = 0
     try:
         entries = list(root.iterdir())
     except OSError:
         return 0, 0, 0
+    existing_stems = {
+        entry.stem
+        for entry in entries
+        if entry.is_file() and not entry.is_symlink()
+        and entry.suffix.lower() == ".wav" and not entry.name.startswith(".")
+    }
+    protected = _active_drama3_take_keys(store, runtime, existing_stems=existing_stems)
+    removed_takes = 0
+    removed_files = 0
+    freed_bytes = 0
     for entry in entries:
         try:
             if not entry.is_file() or entry.is_symlink():
@@ -303,6 +591,9 @@ def _clear_soundstage_history_takes(
     store,
     runtime,
     takes_dir: Path | None = None,
+    prune_shared: bool = True,
+    prune_drama3: bool | None = None,
+    prune_music: bool | None = None,
 ) -> dict[str, Any]:
     if store is None:
         raise H3Error("Workspace store is unavailable.")
@@ -322,13 +613,21 @@ def _clear_soundstage_history_takes(
             if isinstance(chunk, dict) and chunk.get("take")
         )
 
-    removed_takes, removed_files, freed_bytes = _prune_unreferenced_drama3_takes(
-        store, runtime, takes_dir=takes_dir,
+    do_drama3 = prune_shared if prune_drama3 is None else prune_drama3
+    do_music = prune_shared if prune_music is None else prune_music
+    removed_takes, removed_files, freed_bytes = (
+        _prune_unreferenced_drama3_takes(store, runtime, takes_dir=takes_dir)
+        if do_drama3
+        else (0, 0, 0)
     )
     stills_files, stills_bytes = _prune_soundstage_stills(
         payload, result_path, _soundstage_plan_audio(runtime, project_id), Path(runtime.output_dir),
     )
-    mix_files, mix_bytes = _prune_soundstage_music_mixes(store, runtime)
+    mix_files, mix_bytes = (
+        _prune_soundstage_music_mixes(store, runtime)
+        if do_music
+        else (0, 0)
+    )
 
     return {
         "name": project_id,
@@ -339,11 +638,33 @@ def _clear_soundstage_history_takes(
     }
 
 
-def _clear_dubbing_history_takes(project_id: str, *, store, runtime) -> dict[str, Any]:
+def _clear_dubbing_history_takes(
+    project_id: str,
+    *,
+    store,
+    runtime,
+    prune_shared: bool = True,
+) -> dict[str, Any]:
+    from h3_app.drama3.serving.takes import takes_root
     from h3_app.dubbing import lip_sync, projects as dubbing_projects
 
     _data, session = dubbing_projects.load(runtime, project_id)
-    kept_takes = len([k for k in (session.data.get("last_take_keys") or ()) if k])
+    root = takes_root(runtime)
+    existing_stems: set[str] | None = None
+    if root.is_dir():
+        try:
+            existing_stems = {
+                entry.stem
+                for entry in root.iterdir()
+                if entry.is_file() and not entry.is_symlink()
+                and entry.suffix.lower() == ".wav" and not entry.name.startswith(".")
+            }
+        except OSError:
+            existing_stems = None
+    active_line_keys = _session_active_drama3_take_keys(
+        session.root, session.data, runtime, existing_stems=existing_stems,
+    )
+    kept_takes = len(active_line_keys)
     removed_takes = 0
     removed_files = 0
     freed_bytes = 0
@@ -361,7 +682,7 @@ def _clear_dubbing_history_takes(project_id: str, *, store, runtime) -> dict[str
         removed_files += c
         freed_bytes += s
 
-    t_rm, f_rm, b_rm = _prune_unreferenced_drama3_takes(store, runtime)
+    t_rm, f_rm, b_rm = _prune_unreferenced_drama3_takes(store, runtime) if prune_shared else (0, 0, 0)
     return {
         "name": project_id,
         "kept_takes": kept_takes,
@@ -458,6 +779,9 @@ def clear_local_project_history_takes(
     runtime,
     on_changed: Callable[[], None] | None = None,
     takes_dir: Path | None = None,
+    prune_shared: bool = True,
+    prune_drama3: bool | None = None,
+    prune_music: bool | None = None,
 ) -> dict[str, Any]:
     """Clear history takes for one local Soundstage, Storyboard, Dubbing, or Remake project, keeping takes in use."""
     if kind not in PROJECT_KINDS:
@@ -466,9 +790,16 @@ def clear_local_project_history_takes(
         raise H3Error("Specify a project id.")
 
     with PROJECT_TRANSFER_LOCK:
+        ensure_project_idle(kind, project_id)
         if kind == "soundstage":
             stats = _clear_soundstage_history_takes(
-                project_id, store=store, runtime=runtime, takes_dir=takes_dir,
+                project_id,
+                store=store,
+                runtime=runtime,
+                takes_dir=takes_dir,
+                prune_shared=prune_shared,
+                prune_drama3=prune_drama3,
+                prune_music=prune_music,
             )
         elif kind == "storyboard":
             if store is None:
@@ -480,7 +811,10 @@ def clear_local_project_history_takes(
             except ValueError as exc:
                 raise H3Error(str(exc)) from exc
         elif kind == "dubbing":
-            stats = _clear_dubbing_history_takes(project_id, store=store, runtime=runtime)
+            do_drama3 = prune_shared if prune_drama3 is None else prune_drama3
+            stats = _clear_dubbing_history_takes(
+                project_id, store=store, runtime=runtime, prune_shared=do_drama3,
+            )
         else:
             from h3_app.remake.project import Projects as RemakeProjects
 
@@ -529,6 +863,8 @@ def clear_local_projects_history_takes(
         total_removed_takes = 0
         total_removed_files = 0
         total_freed_bytes = 0
+        pruned_drama3 = False
+        pruned_music = False
 
         for kind, pid in deduped:
             try:
@@ -538,6 +874,8 @@ def clear_local_projects_history_takes(
                     store=store,
                     runtime=runtime,
                     on_changed=None,
+                    prune_drama3=not pruned_drama3,
+                    prune_music=not pruned_music,
                 )
             except H3Error as exc:
                 failed_projects += 1
@@ -555,6 +893,10 @@ def clear_local_projects_history_takes(
                     }
                 )
                 continue
+            if kind in {"soundstage", "dubbing"}:
+                pruned_drama3 = True
+            if kind == "soundstage":
+                pruned_music = True
             results.append(res)
             total_kept += res["kept_takes"]
             total_removed_takes += res["removed_takes"]
