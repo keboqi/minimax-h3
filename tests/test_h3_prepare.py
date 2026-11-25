@@ -41,8 +41,8 @@ class GroupTests(unittest.TestCase):
         for keys in (h3, qwen, h3_prepare.drama3_model_keys()):
             self.assertTrue(keys)
             self.assertTrue(set(keys) <= set(MODEL_SPECS), keys)
-        self.assertIn("singularity_fl2va", h3)
-        self.assertIn("turbo_fusion_4step_full_lora", h3)
+        self.assertIn("quality_fl2va", h3)
+        self.assertIn("turbo_fusion_8step_full_lora", h3)
         self.assertFalse(any(key.startswith("qwen_image21_") for key in h3))
         self.assertTrue(all(key.startswith("qwen_image21_") for key in qwen))
 

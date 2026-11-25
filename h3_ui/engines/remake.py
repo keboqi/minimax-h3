@@ -41,6 +41,7 @@ from h3_app.remake.runner import CONTINUE_REQUEST, RunOptions, Selection, Window
 from h3_app.remake.windows import DEFAULT_WINDOW_FRAMES, needs_windows, selection_frames
 from h3_app.staging import file_content_sha256
 from h3_app.storyboard import PROFILE_FIELDS
+from h3_models import is_baked_turbo_profile
 
 from ..image_library import build_image_input
 from ..job_admission import family_busy, require_owner
@@ -293,7 +294,12 @@ def next_run_details(captured: Mapping[str, Any], mode, video, start, end, short
     if windowed:
         context.append("rendered in windows")
     notes = []
-    if profile != DOCUMENTED_PROFILE:
+    if is_baked_turbo_profile(profile):
+        notes.append(
+            f"Unsupported base model: {profile} has Turbo built in and cannot run Viggle Remake. "
+            "Switch Base model in MiniMax H3 to Original, Speed, Quality, or Singularity."
+        )
+    elif profile != DOCUMENTED_PROFILE:
         notes.append(f"Untested pairing: {profile} isn't the stock FL2VA base Remake documents.")
     if upscale:
         notes.append("Untested: latent upscale refines with the Remake LoRA, which Viggle doesn't document.")

@@ -52,20 +52,27 @@ class SettingsTests(unittest.TestCase):
                 disabled = replace(request, finishing=replace(request.finishing, latent_upscale=False))
                 self.assertEqual(resolve_settings(disabled).effective.sampling.latent_upscale_refine_steps, 6)
 
-    def test_singularity_default_uses_fusion_4step_and_selects_base(self):
-        self.assertEqual(GenerationRequest().preset, "Singularity")
-        self.assertEqual(GenerationRequest().model_profile, "Singularity")
+    def test_balanced_default_and_preset_base_models(self):
+        self.assertEqual(GenerationRequest().preset, "Balanced")
+        self.assertEqual(GenerationRequest().model_profile, "Quality")
         self.assertTrue(GenerationRequest().semantic_bridge)
         for mode in ("Normal", "Turbo"):
             expected = replace(preset_settings("Fast", mode), turbo_variant=LIGHTX2V_FUSION_4STEP_FULL,
                                steps=4 if mode == "Turbo" else 15)
             self.assertEqual(preset_settings("Singularity", mode), expected)
-            for action in ("preset", "restore"):
-                _, values = transition_modes(None, {"preset": "Singularity", "generation_mode": mode, "model_profile": "Speed", "prompt": "keep", "width": 864}, action)
-                self.assertEqual(values["model_profile"], "Singularity")
-                self.assertEqual(values["steps"], preset_settings("Singularity", mode).steps)
-                self.assertEqual(values["prompt"], "keep")
-                self.assertEqual(values["width"], 864)
+            for preset, expected_profile in (
+                ("Balanced", "Quality"),
+                ("Quality", "Original"),
+                ("Fast", "Speed"),
+                ("Singularity", "Singularity"),
+                ("10Eros", "10Eros v1.0"),
+            ):
+                for action in ("preset", "restore"):
+                    _, values = transition_modes(None, {"preset": preset, "generation_mode": mode, "model_profile": "Speed", "prompt": "keep", "width": 864}, action)
+                    self.assertEqual(values["model_profile"], expected_profile)
+                    self.assertEqual(values["steps"], preset_settings(preset, mode).steps)
+                    self.assertEqual(values["prompt"], "keep")
+                    self.assertEqual(values["width"], 864)
 
 
     def test_video_vae_preset_defaults_and_decoder_switches(self):
@@ -157,7 +164,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_inactive_overrides_are_not_modifications(self):
         r = GenerationRequest(
-            sampling=replace(preset_settings("Singularity", "Turbo"), sol_tau=0.7, sol_exact_mode="exact_kv")
+            sampling=replace(preset_settings("Balanced", "Turbo"), sol_tau=0.7, sol_exact_mode="exact_kv_and_rows")
         )
         self.assertEqual(resolve_settings(r).differences(), {})
         r = replace(r, sampling=replace(r.sampling, attention_mode="Sol-Attn"))

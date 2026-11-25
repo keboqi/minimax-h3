@@ -9,6 +9,7 @@ from threading import Lock
 from typing import Any, Callable, Iterable, Mapping
 
 from h3_app.catalog import (
+    BUILTIN_TURBO_SETTINGS,
     LARRY_TURBO,
     STANDARD_TURBO_LORA_SETTINGS,
     LIGHTX2V_FUSION_TURBO_SETTINGS,
@@ -118,7 +119,7 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
         video_vae_sol_int8=data.get("video_vae_sol_int8", MODEL_SPECS["video_vae_sol_int8"].local_name),
-        video_vae_int8=data.get("video_vae_int8"),
+        video_vae_int8=data.get("video_vae_int8", MODEL_SPECS["video_vae_int8"].local_name),
         video_vae_lynnreal_int8=data.get(
             "video_vae_lynnreal_int8", MODEL_SPECS["video_vae_lynnreal_int8"].local_name
         ),
@@ -447,6 +448,8 @@ def ensure_turbo_lora(
         turbo_variant if turbo_variant in STANDARD_TURBO_LORA_SETTINGS
         else normalize_turbo_variant(turbo_variant)
     )
+    if variant in BUILTIN_TURBO_SETTINGS:
+        return False
     reference = str(mode).strip().lower() == "reference media"
     if variant in STANDARD_TURBO_LORA_SETTINGS:
         spec = STANDARD_TURBO_LORA_SETTINGS[variant]

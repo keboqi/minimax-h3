@@ -30,7 +30,7 @@ from h3_app import media_review
 from h3_app.provenance import render_snapshot
 from h3_app.reference_bindings import KINDS, ReferenceBinding, ReferenceMap
 from h3_app.reference_metadata import describe_reference
-from h3_app.settings import transition_modes
+from h3_app.settings import DEFAULT_PRESET, PRESET_CHOICES, transition_modes
 from h3_app.storyboard import PROFILE_FIELDS
 from h3_app.storyboard.model import request_defaults
 
@@ -147,7 +147,7 @@ def writer_defaults() -> dict[str, Any]:
 
 
 def setting_defaults() -> dict[str, Any]:
-    values = {**request_defaults(), "preset": "Singularity",
+    values = {**request_defaults(), "preset": DEFAULT_PRESET,
               "batch_count": catalog.DEFAULT_VIDEO_BATCH_COUNT, "result_format": "Video"}
     return {name: values[name] for name in SETTING_FIELDS}
 
@@ -308,9 +308,15 @@ class H3PageState(OwnerPageState):
         else:
             inactive, issues = sorted(plan.inactive), list(plan.issues)
             differences = {key: [before, after] for key, (before, after) in plan.differences().items()}
-            for name in ("steps", "scheduler"):
-                if name in plan.inactive:
+            for name in ("steps", "scheduler", "turbo_variant"):
+                if name in plan.inactive and (name != "turbo_variant" or plan.effective.generation_mode == "Turbo"):
                     locked[name] = getattr(plan.effective.sampling, name)
+            if "generation_mode" in plan.inactive:
+                locked["generation_mode"] = plan.effective.generation_mode
+            if plan.effective.finishing.latent_upscale:
+                for name in ("latent_upscale_refine_lora", "latent_upscale_method"):
+                    if name in plan.inactive:
+                        locked[name] = getattr(plan.effective.finishing, name)
             if "stage_model_offload" in plan.inactive:
                 locked["stage_model_offload"] = True
             if "semantic_bridge" in plan.inactive:
@@ -415,7 +421,7 @@ def install_h3_page(app: FastAPI, services: H3PageServices, *, gpu: bool = True)
                 for engine in engines_for_task("Video")
             ],
             "choices": {
-                "preset": ["Singularity", "Quality", "Balanced", "Fast"],
+                "preset": list(PRESET_CHOICES),
                 "mode": ["Text to video", "First / last frame", "Reference media"],
                 "model_profile": list(catalog.MODEL_PROFILE_CHOICES),
                 "generation_mode": ["Normal", "Turbo"],

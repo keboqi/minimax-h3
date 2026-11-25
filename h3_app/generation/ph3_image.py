@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from h3_app.errors import H3Error
+from h3_models import is_baked_turbo_profile
 from h3_app.jobs import record_failure
 from h3_app.policy import collect_reference_slots
 from h3_app.progress import no_progress
@@ -58,6 +59,11 @@ def generate_ph3_image(request, services, runtime, *, progress=no_progress):
         output = plan.effective.output
         models = services.models.load_model_config()
         profile_key = models.profile_key(request.sampling.model_profile)
+        if is_baked_turbo_profile(profile_key):
+            raise H3Error(
+                "P-H3-Image requires a non-turbo FL2VA base model "
+                "(Original, Speed, Quality, or Singularity)."
+            )
         profile = models.profiles[profile_key]
         image_request = PH3ImageRequest(request.media.prompt, profile.fl2va,
                                         output.width, output.height, output.seed, references)

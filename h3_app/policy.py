@@ -12,6 +12,7 @@ from h3_app.catalog import (
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_RESOLUTION_PIXEL_CAP,
     AUTO_SOL_TOKEN_THRESHOLD,
+    BUILTIN_TURBO_SETTINGS,
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
@@ -73,6 +74,11 @@ def turbo_uses_custom_nodes(value: str) -> bool:
     return TURBO_SETTINGS[normalize_turbo_variant(value)].custom_nodes
 
 
+def is_builtin_turbo_variant(value: str | None) -> bool:
+    """Return whether ``value`` is a built-in (no-LoRA) Turbo mode."""
+    return bool(value) and str(value) in BUILTIN_TURBO_SETTINGS
+
+
 def is_lightx2v_turbo_lora(turbo_variant: str, lora_filename: str | None) -> bool:
     """Return whether a configured LightX2V Turbo LoRA is active."""
     return bool(lora_filename) and normalize_turbo_variant(turbo_variant) in {
@@ -96,6 +102,9 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
+    # Built-in Turbo checkpoints (e.g. 10Eros v1.0) run Euler without a LoRA.
+    if is_builtin_turbo_variant(turbo_variant):
+        return "euler"
     # DMAD's trained re-noise rule is implemented by ComfyUI's stock LCM.
     # A missing LoRA means normal generation and keeps res_multistep.
     if lora_filename and normalize_turbo_variant(turbo_variant) in {DMAD_4STEP_LORA, PIKA_FLEX}:
@@ -115,6 +124,8 @@ def turbo_sigma_shifts(
     turbo_variant: str, lora_filename: str | None,
 ) -> tuple[float, float] | None:
     """Return a trained video/audio shift override for an active adapter."""
+    if is_builtin_turbo_variant(turbo_variant):
+        return 12.0, 3.0
     if not lora_filename:
         return None
     if turbo_variant == PIKA_FLEX or turbo_variant in LIGHTX2V_FUSION_TURBO_SETTINGS:

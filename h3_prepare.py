@@ -71,7 +71,7 @@ def h3_model_keys() -> tuple[str, ...]:
         video_encoder=defaults["video_encoder"], lightvae_decoder=defaults["lightvae_decoder"],
     ).optional_model_keys
     turbo = TURBO_SETTINGS.get(defaults["turbo_variant"])
-    if defaults["generation_mode"] == "Turbo" and turbo is not None:
+    if defaults["generation_mode"] == "Turbo" and turbo is not None and turbo.lora_attr:
         keys.append(turbo.lora_attr)
     if defaults["semantic_bridge"]:
         keys.append("semantic_bridge_v1")

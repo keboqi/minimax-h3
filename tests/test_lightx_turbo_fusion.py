@@ -60,9 +60,9 @@ class LightX2VTurboFusionTests(unittest.TestCase):
         }
 
     def test_presets_and_retired_lite_migration(self):
-        self.assertEqual(DEFAULT_TURBO, LIGHTX2V_FUSION_4STEP_FULL)
-        self.assertEqual(UI_DEFAULTS["turbo_variant"], LIGHTX2V_FUSION_4STEP_FULL)
-        self.assertEqual(UI_DEFAULTS["steps"], 4)
+        self.assertEqual(DEFAULT_TURBO, LIGHTX2V_FUSION_8STEP_FULL)
+        self.assertEqual(UI_DEFAULTS["turbo_variant"], LIGHTX2V_FUSION_8STEP_FULL)
+        self.assertEqual(UI_DEFAULTS["steps"], 8)
         for name in ("Singularity", "Fast"):
             cfg = preset_settings(name, "Turbo")
             self.assertEqual((cfg.turbo_variant, cfg.steps), (LIGHTX2V_FUSION_4STEP_FULL, 4))

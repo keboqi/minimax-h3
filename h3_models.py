@@ -28,6 +28,8 @@ from h3_gpu import is_a100
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
+EROS_MAX_REPO = "TenStrip/10Eros-Max"
+EROS_MAX_V1_REVISION = "875036a9e9c363483095c82ee5da18fee3cef08b"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 TURBO_FUSION_REPO = "lightx2v/Minimax-H3-Turbo-Fusion"
 TURBO_FUSION_REVISION = "660ce29d8082a504bc14bf6b7299e60441c05633"
@@ -476,6 +478,22 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
         "Singularity V2 · pruned INT8",
         expected_sha256="d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f",
+    ),
+    "eros_max_v1_fl2va": ModelSpec(
+        EROS_MAX_REPO,
+        "diffusion_models",
+        "10Eros_Max_8stepTurbo_v1.0_hybrid-int8_HQ.safetensors",
+        "10Eros v1.0 · hybrid 8-step Turbo INT8 HQ",
+        expected_sha256="776194990379ecaf81f8c56925164894f78f3ab27d905c23d85c1164f20ec5bc",
+        revision=EROS_MAX_V1_REVISION,
+    ),
+    "eros_max_v1_ref2va": ModelSpec(
+        EROS_MAX_REPO,
+        "diffusion_models",
+        "10Eros_Max_8stepTurbo_v1.0_hybrid-int8_HQ.safetensors",
+        "10Eros v1.0 · hybrid 8-step Turbo INT8 HQ",
+        expected_sha256="776194990379ecaf81f8c56925164894f78f3ab27d905c23d85c1164f20ec5bc",
+        revision=EROS_MAX_V1_REVISION,
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -1009,6 +1027,7 @@ PROFILE_MODEL_KEYS = {
     "original": ("original_fl2va", "original_ref2va"),
     "singularity": ("singularity_fl2va", "singularity_ref2va"),
     "singularity_v2": ("singularity_v2_fl2va", "singularity_v2_ref2va"),
+    "10eros": ("eros_max_v1_fl2va", "eros_max_v1_ref2va"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
@@ -1016,9 +1035,21 @@ PROFILE_LABELS = {
     "original": "Original",
     "singularity": "Singularity",
     "singularity_v2": "Singularity V2",
+    "10eros": "10Eros v1.0",
 }
-PRELOAD_PROFILES = ("singularity",)
-PRELOAD_PROFILE_MODEL_KEYS = ("singularity_fl2va",)
+BAKED_TURBO_PROFILES = frozenset({"10eros"})
+
+
+def is_baked_turbo_profile(profile: str | None) -> bool:
+    """Return whether a base model profile has Turbo distillation baked in."""
+    key = str(profile or "").strip().lower()
+    return key in BAKED_TURBO_PROFILES or any(
+        PROFILE_LABELS[item].strip().lower() == key for item in BAKED_TURBO_PROFILES
+    )
+
+
+PRELOAD_PROFILES = ("quality",)
+PRELOAD_PROFILE_MODEL_KEYS = ("quality_fl2va",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -1322,8 +1353,8 @@ SHARED_MODEL_KEYS = tuple(
 )
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
-    # Keep provisioning aligned with the UI's initial Singularity preset.
-    "text_encoder_int8" if is_a100() else "text_encoder",
+    # Keep provisioning aligned with the UI's initial Balanced preset.
+    "text_encoder_int8",
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
@@ -2396,11 +2427,10 @@ def validate_config_files(
 ) -> list[str]:
     """Return missing/invalid files from the startup preload inventory.
 
-    ``h3_models.json`` keeps ``text_encoder`` as a legacy compatibility field
-    pointing at the INT8 ConvRot encoder. That checkpoint is intentionally lazy:
-    the default Singularity UI preset uses the preloaded NVFP4/AWQ encoder
-    instead. Do not validate every file named in the complete catalog here, or
-    Modal will fail startup before the on-demand downloader can run.
+    The default Balanced UI preset preloads the Quality FL2VA checkpoint and
+    the official INT8 ConvRot text encoder. Do not validate every file named in
+    the complete catalog here, or Modal will fail startup before the on-demand
+    downloader can run.
     """
     root = Path(root)
     # ``config`` and ``profiles`` remain accepted for API compatibility with
@@ -2462,6 +2492,8 @@ def selftest() -> None:
         "singularity_ref2va",
         "singularity_v2_fl2va",
         "singularity_v2_ref2va",
+        "eros_max_v1_fl2va",
+        "eros_max_v1_ref2va",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -2553,15 +2585,16 @@ def selftest() -> None:
 
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
-    assert "diffusion_models/" + cfg["profiles"]["singularity"]["fl2va"] in missing
+    assert "diffusion_models/" + cfg["profiles"]["quality"]["fl2va"] in missing
     assert "speed_fl2va" not in PRELOAD_MODEL_KEYS
-    preload_encoder = "text_encoder_int8" if is_a100() else "text_encoder"
+    preload_encoder = "text_encoder_int8"
     assert "text_encoders/" + MODEL_SPECS[preload_encoder].local_name in missing
     assert "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
     assert "diffusion_models/" + cfg["profiles"]["speed"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
-    assert "singularity_fl2va" in PRELOAD_MODEL_KEYS
-    assert PRELOAD_PROFILE_MODEL_KEYS == ("singularity_fl2va",)
+    assert "quality_fl2va" in PRELOAD_MODEL_KEYS
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("quality_fl2va",)
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["singularity"])
     assert (
         MODEL_SPECS["singularity_fl2va"].local_name
         == MODEL_SPECS["singularity_ref2va"].local_name
@@ -2572,6 +2605,15 @@ def selftest() -> None:
         MODEL_SPECS["singularity_v2_fl2va"].local_name
         == MODEL_SPECS["singularity_v2_ref2va"].local_name
     )
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["10eros"])
+    assert (
+        MODEL_SPECS["eros_max_v1_fl2va"].local_name
+        == MODEL_SPECS["eros_max_v1_ref2va"].local_name
+    )
+    assert MODEL_SPECS["eros_max_v1_fl2va"].repo_id == EROS_MAX_REPO
+    assert MODEL_SPECS["eros_max_v1_fl2va"].revision == EROS_MAX_V1_REVISION
+    assert is_baked_turbo_profile("10eros") and is_baked_turbo_profile("10Eros v1.0")
+    assert not is_baked_turbo_profile("Quality")
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
@@ -2708,6 +2750,7 @@ def selftest() -> None:
         "original",
         "singularity",
         "singularity_v2",
+        "10eros",
     ]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     assert DRAMA3_COMFY_CODEC_KEY == "drama3_comfy_codec"

@@ -70,6 +70,7 @@ from h3_app.policy import (
     frame_length,
     h3_latent_upscale_dimensions,
     image_sampling_length,
+    is_builtin_turbo_variant,
     normalize_image_vae,
     normalize_result_format,
     normalize_turbo_variant,
@@ -89,6 +90,8 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
+    if is_builtin_turbo_variant(turbo_variant):
+        return {CORE_SAMPLER_NODE, H3_SIGMA_SHIFT_NODE}
     if turbo_variant in H3_REGENERATE_MODELS:
         return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, "ManualSigmas", "H3RegeneratePrepareLatent"}
     if turbo_variant in STANDARD_TURBO_LORA_SETTINGS:
@@ -1301,6 +1304,11 @@ def _build_h3_graph(
             if initial_h3 == target_h3
             else bridge(initial_conditioning)
         )
+    active_turbo = (
+        o.turbo_variant
+        if (o.turbo_lora_name or is_builtin_turbo_variant(o.turbo_variant))
+        else None
+    )
     finish_sampling(
         graph,
         model_ref=model_ref,
@@ -1311,8 +1319,8 @@ def _build_h3_graph(
         seed=o.seed,
         steps=o.steps,
         scheduler=o.scheduler,
-        turbo_variant=o.turbo_variant if o.turbo_lora_name else None,
-        sampler_name=turbo_sampler_name(o.turbo_variant, o.turbo_lora_name),
+        turbo_variant=active_turbo,
+        sampler_name=turbo_sampler_name(active_turbo or "", o.turbo_lora_name),
         filename_prefix=(
             o.output_prefix
             if o.output_prefix

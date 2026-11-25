@@ -5,11 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from h3_app.settings import (
+    BUILTIN_TURBO,
+    DEFAULT_PRESET,
     PRESETS,
+    PRESET_MODEL_PROFILES,
     H3_REGENERATE_16, H3_REGENERATE_384,
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
     PIKA_FLEX, PIKA_FLEX_SIGMAS,
     LIGHTX2V_FUSION_4STEP_FULL, LIGHTX2V_FUSION_8STEP_FULL,
+    preset_settings,
     preset_vae_settings,
 )
 from h3_models import (
@@ -163,7 +167,7 @@ LIGHTX2V_8STEP_TURBO = "LightX2V v1.2 / 8-step 768p"
 LARRY_TURBO = "Larry v4-600 EMA"
 
 
-DEFAULT_TURBO = LIGHTX2V_FUSION_4STEP_FULL
+DEFAULT_TURBO = LIGHTX2V_FUSION_8STEP_FULL
 
 
 # Labels saved by earlier releases, mapped to the variant that replaced them.
@@ -643,6 +647,7 @@ class TurboSpec:
     lora_attr: str
     ref_lora_attr: str
     custom_nodes: bool = False
+    builtin: bool = False
 
 
 TURBO_SETTINGS = {
@@ -685,13 +690,20 @@ LIGHTX2V_FUSION_TURBO_SETTINGS = {
         8, 1.0, "turbo_fusion_8step_full_lora", "turbo_fusion_8step_full_lora",
     ),
 }
+BUILTIN_TURBO_SETTINGS = {
+    BUILTIN_TURBO: TurboSpec(
+        8, 1.0, "", "", builtin=True,
+    ),
+}
 TURBO_SETTINGS.update(STANDARD_TURBO_LORA_SETTINGS)
 TURBO_SETTINGS.update(LIGHTX2V_FUSION_TURBO_SETTINGS)
 REFINEMENT_LORA_SETTINGS = dict(TURBO_SETTINGS)
 REFINEMENT_LORA_CHOICES = (SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS)
+TURBO_SETTINGS.update(BUILTIN_TURBO_SETTINGS)
 
 
 SAMPLING_PRESET_TEXT_ENCODERS = {name: settings.text_encoder for name, settings in PRESETS.items()}
+_DEFAULT_SAMPLING = preset_settings(DEFAULT_PRESET, "Turbo")
 
 
 UI_DEFAULTS = {
@@ -699,28 +711,28 @@ UI_DEFAULTS = {
     "result_format": DEFAULT_RESULT_FORMAT,
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
-    "model_profile": "Singularity",
-    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Singularity"],
-    "stage_model_offload": PRESETS["Singularity"].stage_model_offload,
-    "encoder_small_input": False,
+    "model_profile": PRESET_MODEL_PROFILES[DEFAULT_PRESET],
+    "text_encoder": _DEFAULT_SAMPLING.text_encoder,
+    "stage_model_offload": _DEFAULT_SAMPLING.stage_model_offload,
+    "encoder_small_input": _DEFAULT_SAMPLING.encoder_small_input,
     "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
-    **preset_vae_settings("Singularity"),
+    **preset_vae_settings(DEFAULT_PRESET),
     "generation_mode": "Turbo",
-    "turbo_variant": DEFAULT_TURBO,
+    "turbo_variant": _DEFAULT_SAMPLING.turbo_variant,
     "duration": 5,
     "width": 1376,
     "height": 768,
-    "steps": 4,
-    "scheduler": "simple",
+    "steps": _DEFAULT_SAMPLING.steps,
+    "scheduler": _DEFAULT_SAMPLING.scheduler,
     "seed": -1,
-    "attention_mode": "SLA",
-    "sla_preset": "Fast",
-    "sol_tau": 1.2,
-    "sol_thresh_type": "diag",
-    "sol_exact_mode": "off",
-    "sol_dense_steps": 1,
+    "attention_mode": _DEFAULT_SAMPLING.attention_mode,
+    "sla_preset": _DEFAULT_SAMPLING.sla_preset,
+    "sol_tau": _DEFAULT_SAMPLING.sol_tau,
+    "sol_thresh_type": _DEFAULT_SAMPLING.sol_thresh_type,
+    "sol_exact_mode": _DEFAULT_SAMPLING.sol_exact_mode,
+    "sol_dense_steps": _DEFAULT_SAMPLING.sol_dense_steps,
     "cache_mode": DEFAULT_ACCELERATOR,
     "fbcache_preset": DEFAULT_FBCACHE_PRESET,
     "fbcache_threshold": DEFAULT_FBCACHE_THRESHOLD,
@@ -786,7 +798,7 @@ AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
 }
 
 
-DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "1 MP"
+DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = _DEFAULT_SAMPLING.auto_megapixels
 
 
 # How H3 sizes an image edit from its first frame. Match stops at the largest cap.

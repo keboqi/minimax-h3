@@ -96,7 +96,7 @@ def run():
                 preset.get_by_label("Quality", exact=True).check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
-                expect(card).to_contain_text("Base model: Singularity")
+                expect(card).to_contain_text("Base model: Original")
                 page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 steps = (
                     page.get_by_text("Steps", exact=True)

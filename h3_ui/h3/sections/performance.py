@@ -64,6 +64,8 @@ def build_performance_section(
                 "deployment GPU validation is pending, including native latent upscale. "
                 "LightX2V Turbo Fusion v1.0 (4/8-step Full) adapters download on first use, "
                 "share weights across T2VA, I2VA, and Ref2VA, and use Euler with video/audio shifts 12/3. "
+                "Built-in Turbo (no LoRA) is selected automatically for fused Turbo bases like 10Eros v1.0 "
+                "(8-step default, 6–12 editable steps, Euler / shifts 12/3). "
                 "Experimental PDMD and DMAD 4-step adapters download on first use "
                 "and share weights across conditioning modes. DMAD uses LCM "
                 "with video/audio shifts 12/2; reference conditioning is experimental."

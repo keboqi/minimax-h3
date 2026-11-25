@@ -76,7 +76,7 @@ class PreloaderTests(unittest.TestCase):
             sidecar = Path(directory) / "h3_t2va_1.mp4.settings.json"
 
             def generate(**values):
-                self.assertEqual(values["model_profile"], "Singularity")
+                self.assertEqual(values["model_profile"], "Quality")
                 self.assertEqual(values["prompt"], snapshot_preload.VIDEO_WARMUP_PROMPT)
                 yield None, "Validating request"
                 video.write_bytes(b"clip")

@@ -604,6 +604,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-recipe-cards .wrap > label:has(input:checked) { border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); }
 .h3-workspace .h3-recipe-cards .wrap > label::after { flex-basis: 100%; padding-left: 24px; color: var(--h3-muted); font-size: 12px; font-weight: 400; }
 .h3-workspace .h3-recipe-cards .wrap > label[data-testid="Singularity-radio-label"]::after { content: "Fine-tuned checkpoint" / ""; }
+.h3-workspace .h3-recipe-cards .wrap > label[data-testid="10Eros-radio-label"]::after { content: "Built-in 8-step Turbo" / ""; }
 .h3-workspace .h3-recipe-cards .wrap > label[data-testid="Quality-radio-label"]::after { content: "Final renders" / ""; }
 .h3-workspace .h3-recipe-cards .wrap > label[data-testid="Balanced-radio-label"]::after { content: "Detail and speed" / ""; }
 .h3-workspace .h3-recipe-cards .wrap > label[data-testid="Fast-radio-label"]::after { content: "Quick drafts" / ""; }

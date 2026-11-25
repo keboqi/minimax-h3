@@ -47,7 +47,7 @@ class ModelConfig:
     audio_vae: str
     text_encoders: dict[str, str] | None = None
     video_vae_sol_int8: str = MODEL_SPECS["video_vae_sol_int8"].local_name
-    video_vae_int8: str | None = None
+    video_vae_int8: str = MODEL_SPECS["video_vae_int8"].local_name
     video_vae_lynnreal_int8: str | None = None
     video_vae_lynnreal_int8_source: str = "unknown"
     video_vae_trt_encoder: str | None = None
@@ -104,7 +104,8 @@ class ModelConfig:
             REFINEMENT_LORA_SETTINGS.get(turbo_variant)
             or TURBO_SETTINGS[normalize_turbo_variant(turbo_variant)]
         )
-        return getattr(self, spec.ref_lora_attr if reference else spec.lora_attr)
+        attr = spec.ref_lora_attr if reference else spec.lora_attr
+        return getattr(self, attr) if attr else None
 
 
 def model_file_is_ready(path: Path) -> bool:

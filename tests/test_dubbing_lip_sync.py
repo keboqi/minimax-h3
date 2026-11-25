@@ -17,7 +17,7 @@ import wave
 
 import numpy as np
 
-from h3_app.catalog import PIKA_FLEX
+from h3_app.catalog import DEFAULT_TURBO
 from h3_app.dubbing.alignment import FITTED_AUDIO_RATE as RATE
 from h3_app.dubbing.lip_sync import (
     LipSyncWindow,
@@ -243,7 +243,7 @@ class LipSyncTests(unittest.TestCase):
         composite = by_class(graph, "ImageCompositeMasked")
         self.assertEqual(composite["mask"], [link_id(graph, "H3LipSyncMask"), 1])
         self.assertEqual(composite["destination"], mask["source_frames"])
-        self.assertEqual(by_class(graph, "KSamplerSelect")["sampler_name"], "lcm")
+        self.assertEqual(by_class(graph, "KSamplerSelect")["sampler_name"], "euler")
 
     def test_prepared_crop_can_submit_with_fitted_audio(self):
         def stage(path, category):
@@ -260,7 +260,7 @@ class LipSyncTests(unittest.TestCase):
                 "speed", self.models.profile("speed"), "Text to video",
             )
             self.model_services.ensure_turbo_lora.assert_called_once_with(
-                self.models, PIKA_FLEX, "Text to video",
+                self.models, DEFAULT_TURBO, "Text to video",
             )
             self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
             return client_id
@@ -302,7 +302,7 @@ class LipSyncTests(unittest.TestCase):
             "speed", cfg.profile("speed"), "Text to video",
         )
         self.model_services.ensure_turbo_lora.assert_called_once_with(
-            cfg, PIKA_FLEX, "Text to video",
+            cfg, DEFAULT_TURBO, "Text to video",
         )
         self.model_services.ensure_h3_text_encoder.assert_called_once_with(cfg, "INT8 ConvRot")
         self.model_services.ensure_base_video_vae.assert_called_once_with(cfg)
@@ -591,29 +591,29 @@ class LipSyncTests(unittest.TestCase):
         self.assertEqual(ref2v["ref_images.ref_image_1"], [link_id(ref_graph, "H3LipSyncSelectRefFrames"), 1])
         self.assertEqual(ref2v["ref_image_size"], "match")
 
-    def test_auto_graph_uses_ui_default_singularity_profile_when_available(self):
+    def test_auto_graph_uses_ui_default_quality_profile_when_available(self):
         from h3_app.model_types import ModelConfig, ModelProfile
 
         prod_models = ModelConfig(
             {
                 "speed": ModelProfile("Speed", "minimax_h3_fl2va_pruned_nvfp4.safetensors", "speed_ref.safetensors"),
-                "singularity": ModelProfile(
-                    "Singularity",
-                    "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
-                    "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+                "quality": ModelProfile(
+                    "Quality",
+                    "minimax_h3_fl2va_int8_convrot.safetensors",
+                    "minimax_h3_ref2va_int8_convrot.safetensors",
                 ),
             },
             "speed", "text.safetensors", "video.safetensors", "audio.safetensors",
             turbo_lora="turbo.safetensors",
         )
-        prod_models.turbo_lora_for = lambda _mode, _variant: "pika.safetensors"
+        prod_models.turbo_lora_for = lambda _mode, _variant: "fusion8.safetensors"
         graph = build_auto_lip_sync_graph(
             video="slice.mp4", dialogue="dialogue.wav", frames=73, models=prod_models,
             refinement={"_source_duration": 73 / 24}, output_prefix="auto",
         )
         self.assertEqual(
             by_class(graph, "UNETLoader")["unet_name"],
-            "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+            "minimax_h3_fl2va_int8_convrot.safetensors",
         )
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
@@ -688,7 +688,7 @@ class LipSyncTests(unittest.TestCase):
                     "speed", self.models.profile("speed"), "Text to video",
                 )
                 self.model_services.ensure_turbo_lora.assert_called_once_with(
-                    self.models, PIKA_FLEX, "Text to video",
+                    self.models, DEFAULT_TURBO, "Text to video",
                 )
                 self.model_services.ensure_base_video_vae.assert_called_once_with(self.models)
                 self.model_services.ensure_audio_vae.assert_called_once_with(self.models)

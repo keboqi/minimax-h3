@@ -7,7 +7,13 @@ from h3_app.catalog import (
     H3_REGENERATE_MODELS, H3_CONDITIONING_CACHE_NODE, H3_SEMANTIC_BRIDGE_NODE,
     LARRY_TURBO_SAMPLER_NODE, PIKA_FLEX, PIKA_FLEX_SIGMAS, REFINEMENT_LORA_SETTINGS,
 )
-from h3_app.policy import resolve_sol_policy, turbo_sampler_name, turbo_sigma_shifts, turbo_uses_custom_nodes
+from h3_app.policy import (
+    is_builtin_turbo_variant,
+    resolve_sol_policy,
+    turbo_sampler_name,
+    turbo_sigma_shifts,
+    turbo_uses_custom_nodes,
+)
 
 
 def add_partial_refinement_schedule(graph, schedule_model, config, strength):
@@ -50,7 +56,8 @@ def add_refinement_stack(graph, models, config, width, height):
     lora = config["lora"]
     available = required_nodes_for(
         settings["mode"], cache_mode=settings["cache_mode"], model_filename=model_name,
-        use_turbo=bool(lora), turbo_variant=variant, turbo_lora_filename=lora or "", **flags,
+        use_turbo=bool(lora) or is_builtin_turbo_variant(variant),
+        turbo_variant=variant, turbo_lora_filename=lora or "", **flags,
     ) | {"LightVAELoader", "MiniMaxH3TRTVAELoader", H3_CONDITIONING_CACHE_NODE, H3_SEMANTIC_BRIDGE_NODE}
     kwargs = {name: settings[name] for name in inspect.signature(add_model_stack).parameters if name in settings}
     kwargs.update(

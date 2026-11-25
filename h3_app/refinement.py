@@ -7,9 +7,11 @@ from h3_app.catalog import (
 from h3_app.errors import H3Error
 from h3_app.contracts import GENERATION_FIELDS, GENERATION_COMPONENTS
 from h3_app.policy import (
-    h3_latent_upscaler_settings, resolve_h3_latent_upscale_method,
+    h3_latent_upscaler_settings, is_builtin_turbo_variant, resolve_h3_latent_upscale_method,
     normalize_turbo_variant, turbo_steps_for,
 )
+from h3_app.settings import BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE
+from h3_models import is_baked_turbo_profile
 
 
 # The selected Media video supplies conditioning, timing and audio. Media supplies
@@ -35,8 +37,8 @@ def refinement_settings(values, *, latent_upscale=True):
     effective = plan.effective
     settings = {**requested, **asdict(effective.sampling), **asdict(effective.finishing),
                 **{name: getattr(effective, name) for name in (
-                    "cache_mode", "use_trt_vae", "use_int8_vae", "use_lynnreal_vae", "use_sol_vae",
-                    "video_encoder", "lightvae_decoder", "semantic_bridge", "semantic_bridge_alpha")}}
+                    "generation_mode", "cache_mode", "use_trt_vae", "use_int8_vae", "use_lynnreal_vae",
+                    "use_sol_vae", "video_encoder", "lightvae_decoder", "semantic_bridge", "semantic_bridge_alpha")}}
     return settings
 
 
@@ -45,8 +47,9 @@ def resolve_face_refinement(values, models):
     # VAE and cache constraints independent of the generation sampler settings.
     settings = refinement_settings({**values, "use_trt_vae": False, "cache_mode": "Off"}, latent_upscale=False)
     variant = settings["turbo_variant"] if settings["generation_mode"] == "Turbo" else "Off"
-    lora = None if variant == "Off" else models.turbo_lora_for(settings["mode"], variant)
-    if variant != "Off" and not lora:
+    builtin_turbo = is_builtin_turbo_variant(variant)
+    lora = None if variant == "Off" or builtin_turbo else models.turbo_lora_for(settings["mode"], variant)
+    if variant != "Off" and not builtin_turbo and not lora:
         raise H3Error(f"{variant} Turbo LoRA is not provisioned. Re-run setup/provisioning.")
     return dict(settings=settings, variant=variant, lora=lora,
                 text_encoder=_refinement_text_encoder(values, models), steps=int(settings["steps"]))
@@ -70,8 +73,13 @@ def resolve_refinement(values, models):
     elif variant not in REFINEMENT_LORA_SETTINGS:
         raise H3Error(f"Unknown refinement LoRA: {variant}")
     regenerate = variant in H3_REGENERATE_MODELS
-    lora = None if regenerate or variant == "Off" else models.turbo_lora_for(settings["mode"], variant)
-    if variant != "Off" and not regenerate and not lora:
+    builtin_turbo = is_builtin_turbo_variant(variant)
+    if is_baked_turbo_profile(settings["model_profile"]) and (
+        regenerate or (variant != "Off" and not builtin_turbo)
+    ):
+        raise H3Error(BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE)
+    lora = None if regenerate or variant == "Off" or builtin_turbo else models.turbo_lora_for(settings["mode"], variant)
+    if variant != "Off" and not regenerate and not builtin_turbo and not lora:
         raise H3Error(f"{variant} refinement LoRA is not configured.")
     key, model_name, precision = h3_latent_upscaler_settings(settings["latent_upscaler_model"])
     steps = 3 if regenerate else int(settings["latent_upscale_refine_steps"])

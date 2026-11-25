@@ -255,6 +255,11 @@ def restore_preferences(saved, components):
             "use_int8_vae", "use_lynnreal_vae", "use_trt_vae", "lightvae_decoder"
         )):
             restored["h3.use_sol_vae"] = False
+    if "h3.use_int8_vae" in restored and "h3.use_int8_vae" not in values:
+        if any(restored.get("h3." + name) is True for name in (
+            "use_sol_vae", "use_lynnreal_vae", "use_trt_vae"
+        )) or restored.get("h3.lightvae_decoder") not in (None, "none"):
+            restored["h3.use_int8_vae"] = False
     if "workspace.task" in restored and "workspace.engine" in restored:
         from h3_app.capabilities import engines_for_task
 

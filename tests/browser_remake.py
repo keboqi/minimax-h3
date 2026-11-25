@@ -81,7 +81,7 @@ def main(shots=None):
                 expect(primary).to_have_text("Generate remake")
                 expect(primary).to_be_disabled()
                 expect(remake.get_by_label("Next run")).to_contain_text("Remake Swap")
-                expect(remake.get_by_label("Next run")).to_contain_text("Singularity")
+                expect(remake.get_by_label("Next run")).to_contain_text("Quality")
                 expect(remake.get_by_label("Next run")).to_contain_text("Untested pairing")
 
                 remake.get_by_role("button", name="Extract frame").click()

@@ -68,7 +68,7 @@ def build_model_section(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
             label="Base model",
-            info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. Speed, Original and Singularity download when first selected.",
+            info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files (preloaded for Balanced). Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. 10Eros v1.0 is a 22.89 GB hybrid INT8 HQ checkpoint with 8-step Turbo built in (no external Turbo LoRA). Non-preloaded profiles download when first selected.",
         )
         generation_mode = gr.Radio(
             ["Normal", "Turbo"],

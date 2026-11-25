@@ -277,6 +277,16 @@ class SettingsController:
         previous_locked = (memory or {}).get("locked", {})
         locked = {}
         previous_values = (memory or {}).get("values", before)
+
+        def apply_lock(name: str, props: dict[str, Any], value: Any) -> None:
+            # Write the fixed value only when it is not already shown,
+            # so a refresh does not echo it over the control.
+            locked[name] = value
+            props["interactive"] = False
+            props.pop("value", None)
+            if previous_locked.get(name) != value:
+                props["value"] = value
+
         for name in self.names:
             props = {
                 key: value
@@ -313,6 +323,12 @@ class SettingsController:
                 props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
                 props["visible"] = current["generation_mode"] == "Turbo"
+                if "turbo_variant" in plan.inactive and plan.effective.generation_mode == "Turbo":
+                    apply_lock(name, props, plan.effective.sampling.turbo_variant)
+                else:
+                    props["interactive"] = fmt != "Image"
+                    if name in previous_locked:
+                        props["value"] = current[name]
             if name == "mode":
                 props.update(
                     choices=["Text to video", "First / last frame", "Reference media"],
@@ -320,17 +336,20 @@ class SettingsController:
                 )
             if name in {"generation_mode", "steps", "scheduler"}:
                 props["interactive"] = fmt != "Image"
-                if name in {"steps", "scheduler"} and plan.effective.generation_mode == "Turbo" and plan.effective.sampling.turbo_variant == PIKA_FLEX:
-                    # Pika Flex fixes these. Write the fixed value only when it is not
-                    # already shown, so a refresh does not echo it over the control.
-                    locked[name] = getattr(plan.effective.sampling, name)
-                    props["interactive"] = False
-                    props.pop("value", None)
-                    if previous_locked.get(name) != locked[name]:
-                        props["value"] = locked[name]
+                if name == "generation_mode" and "generation_mode" in plan.inactive:
+                    apply_lock(name, props, plan.effective.generation_mode)
+                elif name in {"steps", "scheduler"} and plan.effective.generation_mode == "Turbo" and plan.effective.sampling.turbo_variant == PIKA_FLEX:
+                    apply_lock(name, props, getattr(plan.effective.sampling, name))
                 elif name in previous_locked:
                     # Leaving the lock shows the stored value again.
                     props["value"] = current[name]
+            if name in {"latent_upscale_refine_lora", "latent_upscale_method"}:
+                if current["latent_upscale"] and name in plan.inactive:
+                    apply_lock(name, props, getattr(plan.effective.finishing, name))
+                else:
+                    props["interactive"] = fmt == "Video"
+                    if name in previous_locked:
+                        props["value"] = current[name]
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
             if name == "image_edit_size":

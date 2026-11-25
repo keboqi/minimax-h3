@@ -111,6 +111,7 @@ class H3PageTests(unittest.TestCase):
 
     def test_a_recipe_sets_its_sampling_and_a_change_is_counted(self):
         state = self.change("preset", preset="Quality")
+        self.assertEqual(state["values"]["model_profile"], "Original")
         self.assertEqual(state["values"]["text_encoder"], "INT8 ConvRot")
         self.assertEqual(state["values"]["sla_preset"], "Quality")
         self.assertEqual(state["differences"], {})
@@ -121,7 +122,7 @@ class H3PageTests(unittest.TestCase):
         self.assertEqual(state["differences"], {})
 
     def test_generation_mode_keeps_each_modes_steps(self):
-        self.assertEqual(self.boot["state"]["values"]["steps"], 4)
+        self.assertEqual(self.boot["state"]["values"]["steps"], 8)
         self.assertEqual(self.boot["state"]["locked"], {})
         pika = self.change("turbo_variant", turbo_variant="Pika H3 Flex (6-step)")
         self.assertEqual(pika["locked"]["steps"], 6)
@@ -129,7 +130,7 @@ class H3PageTests(unittest.TestCase):
         state = self.change("steps", steps=9)
         self.assertEqual(state["locked"], {})
         normal = self.change("generation_mode", generation_mode="Normal")
-        self.assertEqual(normal["values"]["steps"], 15)
+        self.assertEqual(normal["values"]["steps"], 18)
         turbo = self.change("generation_mode", generation_mode="Turbo")
         self.assertEqual(turbo["values"]["steps"], 9)
 

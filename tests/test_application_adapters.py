@@ -527,7 +527,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         api_kwargs = captured_api_call["kwargs"]
         self.assertEqual(api_kwargs["prompt"], "API prompt")
         self.assertEqual(api_kwargs["mode"], "Text to video")
-        self.assertEqual(api_kwargs["model_profile"], "Singularity")
+        self.assertEqual(api_kwargs["model_profile"], "Quality")
         self.assertEqual(api_kwargs["turbo_variant"], _catalog.DEFAULT_TURBO)
         for key, expected in app.UI_DEFAULTS.items():
             self.assertEqual(api_kwargs[key], expected)
@@ -706,7 +706,14 @@ class ApplicationAdaptersTests(unittest.TestCase):
     def test_resolution_controls(self):
         auto_landscape = h3_app.policy.resolution_for_aspect_ratio(4096, 2304)
         auto_portrait = h3_app.policy.resolution_for_aspect_ratio(2304, 4096)
-        self.assertEqual(h3_app.policy.resolution_for_aspect_ratio(1024, 1024), (992, 992))
+        self.assertEqual(h3_app.policy.resolution_for_aspect_ratio(1024, 1024), (1024, 1024))
+        self.assertEqual(
+            h3_app.policy.resolution_for_aspect_ratio(
+                1024, 1024, pixel_cap=h3_app.policy.auto_resolution_pixel_cap("1 MP")
+            ),
+            (992, 992),
+        )
+        self.assertEqual(h3_app.policy.resolution_for_aspect_ratio(1536, 1536), (1408, 1408))
         self.assertTrue(auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0)
         self.assertTrue(auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0)
         self.assertLess(auto_landscape[0] * auto_landscape[1], 4000000)
@@ -723,8 +730,8 @@ class ApplicationAdaptersTests(unittest.TestCase):
         self.assertLess(two_mp_landscape[0] * two_mp_landscape[1], 2000000)
         self.assertEqual(h3_app.policy.auto_resolution_pixel_cap("4 MP"), 4000000 - 1)
         self.assertEqual(h3_app.policy.auto_resolution_pixel_cap("8 MP"), 8000000 - 1)
-        self.assertEqual(app.UI_DEFAULTS["model_profile"], "Singularity")
-        self.assertEqual(app.UI_DEFAULTS["text_encoder"], "NVFP4 / AWQ")
+        self.assertEqual(app.UI_DEFAULTS["model_profile"], "Quality")
+        self.assertEqual(app.UI_DEFAULTS["text_encoder"], "INT8 ConvRot")
         self.assertIs(app.UI_DEFAULTS["stage_model_offload"], False)
         self.assertEqual(
             h3_app.policy.resolution_for_aspect_ratio(4096, 2304, preserve_native=True),

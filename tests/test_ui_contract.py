@@ -449,6 +449,7 @@ class UiContractTests(unittest.TestCase):
 
     def test_only_supported_model_and_turbo_options_are_selectable(self):
         from h3_app.catalog import (
+            BUILTIN_TURBO,
             DMAD_4STEP_LORA,
             LIGHTX2V_FUSION_TURBO_SETTINGS,
             PDMD_4STEP_LORA,
@@ -464,16 +465,19 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(PDMD_4STEP_LORA, choices)
         self.assertIn(DMAD_4STEP_LORA, choices)
         self.assertIn(PIKA_FLEX, choices)
+        self.assertIn(BUILTIN_TURBO, choices)
         for variant in LIGHTX2V_FUSION_TURBO_SETTINGS:
             self.assertIn(variant, choices)
         profiles = [c[0] for c in controls["Base model"]["props"]["choices"]]
         self.assertNotIn("FastH3 8-Step V2", profiles)
+        self.assertIn("10Eros v1.0", profiles)
         refinements = [
             c[0]
             for c in controls["High-resolution refinement LoRA"]["props"]["choices"]
         ]
         self.assertNotIn("PDMD / 2-step", refinements)
         self.assertNotIn("TaoMate-H3 / 3-step", refinements)
+        self.assertNotIn(BUILTIN_TURBO, refinements)
         self.assertIn(DMAD_4STEP_LORA, refinements)
         self.assertIn(PIKA_FLEX, refinements)
         for variant in LIGHTX2V_FUSION_TURBO_SETTINGS:
@@ -1198,7 +1202,7 @@ class UiContractTests(unittest.TestCase):
         controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
         encoder = controls["Video encoder"]
         decoder = controls["Video decoder"]
-        self.assertEqual(encoder["props"]["value"], "LightVAE Lite")
+        self.assertEqual(encoder["props"]["value"], "Original")
         self.assertEqual([c[1] for c in encoder["props"]["choices"]], ["Original", "LightVAE Lite"])
         self.assertEqual([c[1] for c in decoder["props"]["choices"]], [d.value for d in VideoDecoder])
         session = self.restored_session()
@@ -1229,12 +1233,12 @@ class UiContractTests(unittest.TestCase):
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
-        self.assertFalse(controls["INT8 ConvRot video VAE"]["props"]["value"])
+        self.assertTrue(controls["INT8 ConvRot video VAE"]["props"]["value"])
         self.assertFalse(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
-        self.assertEqual(controls["Video encoder"]["props"]["value"], "LightVAE Lite")
-        self.assertEqual(controls["Video decoder"]["props"]["value"], "Sol INT8")
+        self.assertEqual(controls["Video encoder"]["props"]["value"], "Original")
+        self.assertEqual(controls["Video decoder"]["props"]["value"], "Official INT8")
         summary = next(c for c in self.config["components"] if "h3-settings-summary" in c.get("props", {}).get("elem_classes", []))
-        self.assertIn("LightVAE Lite", summary["props"]["value"])
+        self.assertIn("Official INT8", summary["props"]["value"])
         self.assertNotIn("Original FP16", summary["props"]["value"])
         preset = controls["Recipe"]
         int8 = controls["INT8 ConvRot video VAE"]
@@ -1250,14 +1254,25 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(trt["id"], transition["outputs"])
         fn = self.demo.fns[transition["id"]]
         session = self.restored_session()
-        for recipe, expected in (("Fast", True), ("Singularity", True), ("Balanced", False), ("Fast", True)):
+        for recipe, expected_sol, expected_profile in (
+            ("Fast", True, "Speed"),
+            ("Singularity", True, "Singularity"),
+            ("10Eros", True, "10Eros v1.0"),
+            ("Balanced", False, "Quality"),
+            ("Quality", False, "Original"),
+            ("Fast", True, "Speed"),
+        ):
             args = [deepcopy(c.value) for c in fn.inputs]
             args[1], args[-1] = recipe, session
             fn.fn(*args)
             selected = session.memory["values"]
+            self.assertEqual(selected["model_profile"], expected_profile)
             self.assertEqual(selected["lightvae_decoder"], "none")
-            self.assertEqual(selected["use_sol_vae"], expected)
-            self.assertEqual(selected["video_encoder"], "Original" if recipe == "Balanced" else "LightVAE Lite")
+            self.assertEqual(selected["use_sol_vae"], expected_sol)
+            self.assertEqual(
+                selected["video_encoder"],
+                "LightVAE Lite" if recipe in {"Fast", "Singularity"} else "Original",
+            )
             self.assertFalse(selected["use_lynnreal_vae"])
 
     def test_settings_transition_owns_summary_and_bypasses_gpu_queue(self) -> None:
@@ -2241,7 +2256,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("Next run", summary)
         self.assertNotIn("Ready to generate", summary)
         self.assertIn("Acceleration: Off", summary)
-        self.assertIn("LightX2V v1.1 / 8-step 768p", summary)
+        self.assertIn("LightX2V v1.2 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
         # Fine-tune's tab badges count each recipe change under the tab that holds it.
@@ -2252,7 +2267,7 @@ class UiContractTests(unittest.TestCase):
         self.assertLessEqual(
             set(changed_tabs), {label for label, _ in h3_ui.h3.view.SETTINGS_TABS}
         )
-        self.assertIn("NVFP4 / AWQ → BF16 · Memory &amp; decoding", summary)
+        self.assertIn("INT8 ConvRot → BF16 · Memory &amp; decoding", summary)
 
     def test_scoped_setup_css_contract(self) -> None:
         for rule in (

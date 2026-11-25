@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 from h3_app.decoder_intent import VideoDecoder
-from h3_app.settings import PIKA_FLEX, ResolvedSettings
+from h3_app.settings import BUILTIN_TURBO, PIKA_FLEX, ResolvedSettings
 
 LABELS = {
     "semantic_bridge": "Semantic Bridge",
@@ -139,9 +139,14 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         if finishing.latent_upscale
         else dimensions
     )
+    builtin_turbo = effective.generation_mode == "Turbo" and sampling.turbo_variant == BUILTIN_TURBO
     enhancement = (
         f"Native 2× refinement · {sampling.latent_upscale_refine_steps} refinement steps"
-        f" · LoRA {finishing.latent_upscale_refine_lora}"
+        + (
+            " · Built-in Turbo (no LoRA)"
+            if builtin_turbo
+            else f" · LoRA {finishing.latent_upscale_refine_lora}"
+        )
         if finishing.latent_upscale
         else "Native refinement off"
     )
@@ -182,9 +187,18 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         ),
     )
     pika = effective.generation_mode == "Turbo" and sampling.turbo_variant == PIKA_FLEX
-    technical += detail("Scheduler", "Pika fixed sigmas · LCM · 6 steps" if pika else sampling.scheduler)
+    technical += detail(
+        "Scheduler",
+        "Pika fixed sigmas · LCM · 6 steps"
+        if pika
+        else f"{sampling.scheduler} · Euler · shifts 12/3 · no LoRA"
+        if builtin_turbo
+        else sampling.scheduler,
+    )
     if pika:
         technical += detail("Pika H3 Flex", "Experimental; deployment GPU validation pending, including native latent upscale/refinement.")
+    if builtin_turbo:
+        technical += detail("Built-in Turbo", "10Eros v1.0 fuses 8-step Turbo into the base weights (6–12 editable steps); no external Turbo LoRA is loaded.")
     technical += detail(
         "Semantic Bridge",
         (

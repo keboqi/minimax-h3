@@ -113,17 +113,16 @@ print(json.dumps(dict(encoder=UI_DEFAULTS['text_encoder'], offload=UI_DEFAULTS['
             data = json.loads(result.stdout)
             a100 = profile == "a100"
             encoder = "INT8 ConvRot" if a100 else "NVFP4 / AWQ"
-            self.assertEqual(data['encoder'], encoder)
+            self.assertEqual(data['encoder'], "INT8 ConvRot")
             self.assertEqual(data['preset'], encoder)
             self.assertEqual(data['offload'], a100)
             self.assertEqual(data['preset_offload'], a100)
             self.assertEqual(data['flux'], "INT8 ConvRot (lower VRAM)" if a100 else "NVFP4 (Blackwell)")
             self.assertEqual(data['drama'], "int4" if a100 else "fp8")
             self.assertEqual(data['drama_prefill'], "disabled" if a100 else "breakable")
-            key, other = ("text_encoder_int8", "text_encoder") if a100 else ("text_encoder", "text_encoder_int8")
             for keys in (data['preload'], data['prepare']):
-                self.assertIn(key, keys)
-                self.assertNotIn(other, keys)
+                self.assertIn("text_encoder_int8", keys)
+                self.assertNotIn("text_encoder", keys)
             if a100:
                 self.assertEqual(data['attention'], ["PyTorch", "SLA", "Auto"])
 

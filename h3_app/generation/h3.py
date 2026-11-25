@@ -15,8 +15,10 @@ from h3_app.contracts import GENERATION_FIELDS
 from h3_app.progress import ProgressCallback, no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
-from h3_models import MODEL_SPECS
+from h3_models import MODEL_SPECS, is_baked_turbo_profile
 from h3_app.catalog import (
+    BUILTIN_TURBO,
+    DEFAULT_PRESET,
     H3_REGENERATE_MODELS,
     LIGHTX2V_FUSION_TURBO_SETTINGS,
     PIKA_FLEX,
@@ -24,6 +26,7 @@ from h3_app.catalog import (
     STORYBOARD_NODES,
 )
 from h3_app.errors import H3Error
+from h3_app.policy import is_builtin_turbo_variant, turbo_sampler_name, turbo_sigma_shifts
 from h3_gpu import CPU_ONLY_MESSAGE, is_cpu_only
 from h3_app.media import history_output_candidates
 from h3_app.remake import REMAKE_NODES, STEPS as REMAKE_STEPS, RemakeGraph
@@ -65,6 +68,25 @@ def lightx2v_fusion_sampling_profile(variant: str, adapter: str, steps: int) -> 
         "video_shift": 12.0, "audio_shift": 3.0,
         "steps": int(steps), "strength": 1.0,
         "adapter": adapter,
+        "repo_id": spec.repo_id if pinned else None,
+        "revision": spec.revision if pinned else None,
+        "sha256": spec.expected_sha256 if pinned else None,
+    }
+
+
+def builtin_turbo_sampling_profile(model_filename: str, steps: int, scheduler: str) -> dict[str, Any]:
+    """Provenance for a fused built-in Turbo base checkpoint; upstream identity only for the pinned file."""
+    spec = MODEL_SPECS["eros_max_v1_fl2va"]
+    pinned = model_filename == spec.local_name
+    video_shift, audio_shift = turbo_sigma_shifts(BUILTIN_TURBO, None) or (12.0, 3.0)
+    return {
+        "name": BUILTIN_TURBO,
+        "sampler": turbo_sampler_name(BUILTIN_TURBO, None),
+        "scheduler": str(scheduler),
+        "video_shift": video_shift, "audio_shift": audio_shift,
+        "steps": int(steps),
+        "adapter": None,
+        "base_model": model_filename,
         "repo_id": spec.repo_id if pinned else None,
         "revision": spec.revision if pinned else None,
         "sha256": spec.expected_sha256 if pinned else None,
@@ -117,6 +139,11 @@ def generate(
     queued_at = time.time()
     fallback_video: Path | None = None
     try:
+        if remake is not None and is_baked_turbo_profile(request.sampling.model_profile):
+            raise H3Error(
+                "Viggle Remake requires a non-turbo base model (Original, Speed, Quality, or Singularity). "
+                "Switch Base model in MiniMax H3 before running Remake."
+            )
         services.models.unload_prompt_rewriter()
         progress(0, desc="Validating request")
         yield GenerationUpdate(
@@ -156,7 +183,7 @@ def generate(
         websocket_note = getattr(prompt_id, "notice", None)
         execution_snapshot = {
             "job_id": prompt_id,
-            "preset": requested_values.get("preset", "Singularity"),
+            "preset": requested_values.get("preset", DEFAULT_PRESET),
             "settings": {
                 key: value
                 for key, value in requested_values.items()
@@ -183,6 +210,10 @@ def generate(
         elif prepared.turbo_lora_name and prepared.selected_turbo in LIGHTX2V_FUSION_TURBO_SETTINGS:
             execution_snapshot["sampling_profile"] = lightx2v_fusion_sampling_profile(
                 prepared.selected_turbo, prepared.turbo_lora_name, prepared.effective_steps,
+            )
+        elif not prepared.turbo_lora_name and is_builtin_turbo_variant(prepared.selected_turbo):
+            execution_snapshot["sampling_profile"] = builtin_turbo_sampling_profile(
+                prepared.selected_model, prepared.effective_steps, prepared.effective_scheduler,
             )
         execution_snapshot["settings"].update(
             seed=prepared.actual_seed,
@@ -323,7 +354,12 @@ def generate(
                 "3 Euler refinement steps · refiner + LightX2V · "
                 if prepared.refinement_variant in H3_REGENERATE_MODELS else
                 f"{int(request.finishing.latent_upscale_refine_steps)} low-denoise refinement steps · "
-                f"LoRA {request.finishing.latent_upscale_refine_lora} · "
+                + (
+                    "built-in Turbo (no LoRA) · "
+                    if is_builtin_turbo_variant(prepared.selected_turbo)
+                    and not prepared.refinement_lora_name
+                    else f"LoRA {request.finishing.latent_upscale_refine_lora} · "
+                )
             )
             queued_status += (
                 f"\n\nH3 latent upscale: {request.finishing.latent_upscaler_model} · "

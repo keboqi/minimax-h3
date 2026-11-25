@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from typing import Any, Generator
 
 from h3_app.catalog import (
+    BUILTIN_TURBO,
     COMFY_UPSCALE_OPTIONS,
     DEFAULT_SLA_PRESET,
+    DEFAULT_TURBO,
     GENERATION_POSTPROCESS_OPTIONS,
     H3_LATENT_UPSCALE_STANDARD,
     H3_REGENERATE_MODELS,
@@ -37,6 +39,7 @@ from h3_app.policy import (
     frame_length,
     h3_latent_upscale_dimensions,
     h3_latent_upscaler_settings,
+    is_builtin_turbo_variant,
     normalize_image_vae,
     normalize_result_format,
     normalize_turbo_variant,
@@ -53,7 +56,12 @@ from h3_app.status import progress_status
 from h3_app.workflows.h3 import required_nodes_for, turbo_required_nodes
 from h3_app.workflows.face_refine import REQUIRED_FACE_REFINE_NODES
 from h3_app.workflows.upscale import required_upscale_nodes
-from h3_models import MODEL_SPECS
+from h3_app.settings import (
+    BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE,
+    BUILTIN_TURBO_MIN_STEPS,
+    BUILTIN_TURBO_REQUIRES_BAKED_MESSAGE,
+)
+from h3_models import MODEL_SPECS, is_baked_turbo_profile
 
 from .requests import H3Request
 from .results import GenerationUpdate
@@ -67,9 +75,13 @@ def _validate_sampling_steps(
     effective_steps: int,
 ) -> None:
     if use_turbo:
-        minimum = 4
+        minimum = BUILTIN_TURBO_MIN_STEPS if is_builtin_turbo_variant(selected_turbo) else 4
         if effective_steps < minimum:
-            raise H3Error(f"Turbo requires at least {minimum} steps.")
+            raise H3Error(
+                f"{selected_turbo} requires at least {minimum} steps."
+                if minimum > 4
+                else f"Turbo requires at least {minimum} steps."
+            )
     elif effective_steps < 10:
         raise H3Error(
             "Normal H3 generation requires at least 10 steps. "
@@ -277,7 +289,9 @@ class _TurboChoice:
 def _resolve_turbo(request, effective, services, models, profile, *, progress) -> _TurboChoice:
     requested_generation = str(effective.generation_mode).strip().lower()
     use_turbo = requested_generation == "turbo"
+    baked_turbo = is_baked_turbo_profile(profile.label)
     selected_turbo = normalize_turbo_variant(effective.sampling.turbo_variant)
+    builtin_turbo = is_builtin_turbo_variant(selected_turbo)
     generation_note = (
         f"Reference Turbo is experimental and currently uses the "
         f"FL2VA-trained {selected_turbo} LoRA."
@@ -292,19 +306,41 @@ def _resolve_turbo(request, effective, services, models, profile, *, progress) -
         generation_note = "Pika H3 Flex uses six-step LCM with fixed sigmas. Deployment GPU validation is pending; native latent upscale/refinement, quantized bases and attention/decoder accelerators are experimental."
 
     if use_turbo:
-        turbo_lora_name = models.turbo_lora_for(request.media.mode, selected_turbo)
-        if not turbo_lora_name:
-            raise H3Error(
-                f"{selected_turbo} Turbo LoRA is not provisioned. "
-                "Re-run setup/provisioning."
+        if builtin_turbo:
+            if not baked_turbo:
+                raise H3Error(BUILTIN_TURBO_REQUIRES_BAKED_MESSAGE)
+            turbo_lora_name = None
+            turbo_strength = 1.0
+            label = f"{profile.label} · {selected_turbo}"
+            generation_note = (
+                "10Eros v1.0 has 8-step Turbo baked into the base weights (Euler / simple, "
+                "video/audio shifts 12/3, no external Turbo LoRA). Adjust steps (6–12) to "
+                "trade speed for detail; deployment GPU validation is pending."
             )
-        if services.models.ensure_turbo_lora(
-            models, selected_turbo, request.media.mode
-        ):
-            progress(0, desc=f"Downloaded {selected_turbo} Turbo LoRA")
-        label = f"{profile.label} · Turbo · {selected_turbo}"
-        turbo_strength = turbo_strength_for(selected_turbo)
+        else:
+            if baked_turbo:
+                raise H3Error(
+                    f"{profile.label} has Turbo built in and cannot stack external Turbo LoRA {selected_turbo}."
+                )
+            turbo_lora_name = models.turbo_lora_for(request.media.mode, selected_turbo)
+            if not turbo_lora_name:
+                raise H3Error(
+                    f"{selected_turbo} Turbo LoRA is not provisioned. "
+                    "Re-run setup/provisioning."
+                )
+            if services.models.ensure_turbo_lora(
+                models, selected_turbo, request.media.mode
+            ):
+                progress(0, desc=f"Downloaded {selected_turbo} Turbo LoRA")
+            label = f"{profile.label} · Turbo · {selected_turbo}"
+            turbo_strength = turbo_strength_for(selected_turbo)
     else:
+        if baked_turbo:
+            raise H3Error(
+                f"{profile.label} has Turbo built in and must run in Turbo mode with {BUILTIN_TURBO}."
+            )
+        if builtin_turbo:
+            selected_turbo = DEFAULT_TURBO
         label = f"{profile.label} · Normal"
         turbo_lora_name = None
         turbo_strength = 1.0
@@ -351,6 +387,11 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
     refinement_variant = None
     method = resolve_h3_latent_upscale_method(request.finishing.latent_upscale_method)
     refine_choice = request.finishing.latent_upscale_refine_lora
+    sampling = getattr(request, "sampling", None)
+    if sampling is not None and is_baked_turbo_profile(sampling.model_profile) and (
+        method in H3_REGENERATE_MODELS or refine_choice != SAME_REFINEMENT_LORA
+    ):
+        raise H3Error(BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE)
     if method in H3_REGENERATE_MODELS:
         refinement_variant = method
         key = H3_REGENERATE_MODELS[method]
@@ -572,6 +613,8 @@ def prepare_h3(
     request.finishing.postprocess = effective.finishing.postprocess
     request.finishing.face_refine = effective.finishing.face_refine
     request.finishing.latent_upscale = effective.finishing.latent_upscale
+    request.finishing.latent_upscale_method = effective.finishing.latent_upscale_method
+    request.finishing.latent_upscale_refine_lora = effective.finishing.latent_upscale_refine_lora
     generation_frames = (
         selected_image_sampling_length(
             requested_image_frames,

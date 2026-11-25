@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 from html import escape
 from typing import Any, Mapping
 import gradio as gr
+from h3_app.settings import DEFAULT_PRESET, PRESET_CHOICES
 from .services import H3ViewServices
 from ..step_cards import StepStrip, card_heading
 from .sections.finishing import build_finishing_section
@@ -503,8 +504,8 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             )
             with gr.Column(elem_id="h3-output-settings"):
                 preset = gr.Radio(
-                    ["Singularity", "Quality", "Balanced", "Fast"],
-                    value="Singularity",
+                    list(PRESET_CHOICES),
+                    value=DEFAULT_PRESET,
                     label="Recipe",
                     interactive=True,
                     info="Sets Fine-tune's sampling, attention, memory, refinement and decoding. Keeps your prompt, media and output size.",

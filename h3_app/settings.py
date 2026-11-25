@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping
 
 from h3_gpu import default_text_encoder, is_a100, validate_attention_mode
+from h3_models import is_baked_turbo_profile
 
 from .resources import resolve_decoders
 from .decoder_intent import VideoDecoder
@@ -23,39 +24,55 @@ PIKA_FLEX = "Pika H3 Flex (6-step)"
 PIKA_FLEX_SIGMAS = "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"
 LIGHTX2V_FUSION_4STEP_FULL = "LightX2V Turbo Fusion v1.0 / 4-step Full"
 LIGHTX2V_FUSION_8STEP_FULL = "LightX2V Turbo Fusion v1.0 / 8-step Full"
+BUILTIN_TURBO = "Built-in Turbo (no LoRA)"
+BUILTIN_TURBO_MIN_STEPS = 6
+BUILTIN_TURBO_REQUIRES_BAKED_MESSAGE = (
+    f"{BUILTIN_TURBO} requires a fused Turbo base model such as 10Eros v1.0. "
+    "Choose an external Turbo LoRA or switch Base model to 10Eros v1.0."
+)
+BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE = (
+    "10Eros v1.0 has Turbo built in and refines without external Turbo LoRAs."
+)
 H3_REGENERATE_16 = "H3 Regenerate 2K · rank 16 (experimental)"
 H3_REGENERATE_384 = "H3 Regenerate 2K · rank 384 (experimental)"
+DEFAULT_PRESET = "Balanced"
+PRESET_MODEL_PROFILES = {
+    "Balanced": "Quality",
+    "Quality": "Original",
+    "Fast": "Speed",
+    "Singularity": "Singularity",
+    "10Eros": "10Eros v1.0",
+}
 TURBO_STEPS = {
     LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, PDMD_4STEP: 4, DMAD_4STEP: 4,
     PIKA_FLEX: 6,
     LIGHTX2V_FUSION_4STEP_FULL: 4,
     LIGHTX2V_FUSION_8STEP_FULL: 8,
+    BUILTIN_TURBO: 8,
 }
 
 
 @dataclass(frozen=True)
 class SamplingSettings:
-    steps: int = 4
-    sol_tau: float = 1.2
+    steps: int = 8
+    sol_tau: float = 1.0
     sol_thresh_type: str = "diag"
     scheduler: str = "simple"
-    sol_exact_mode: str = "off"
+    sol_exact_mode: str = "exact_kv"
     sol_dense_steps: int = 1
-    auto_megapixels: str = "1 MP"
+    auto_megapixels: str = "2 MP"
     image_edit_size: str = "Match first image size"
-    turbo_variant: str = LIGHTX2V_FUSION_4STEP_FULL
+    turbo_variant: str = LIGHTX2V_FUSION_8STEP_FULL
     attention_mode: str = "SLA"
-    sla_preset: str = "Fast"
+    sla_preset: str = "Balanced"
     latent_upscale_refine_steps: int = 2
-    text_encoder: str = default_text_encoder()
+    text_encoder: str = "INT8 ConvRot"
     stage_model_offload: bool = is_a100()
     encoder_small_input: bool = False
 
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)
 PRESETS = {
-    "Singularity": SamplingSettings(steps=15, turbo_variant=LIGHTX2V_FUSION_4STEP_FULL),
-    "Fast": SamplingSettings(steps=15, turbo_variant=LIGHTX2V_FUSION_4STEP_FULL),
     "Balanced": SamplingSettings(
         steps=18,
         sol_tau=1.0,
@@ -76,12 +93,40 @@ PRESETS = {
         sla_preset="Quality",
         text_encoder="INT8 ConvRot",
     ),
+    "Fast": SamplingSettings(
+        steps=15,
+        sol_tau=1.2,
+        sol_exact_mode="off",
+        auto_megapixels="1 MP",
+        turbo_variant=LIGHTX2V_FUSION_4STEP_FULL,
+        sla_preset="Fast",
+        text_encoder=default_text_encoder(),
+    ),
+    "Singularity": SamplingSettings(
+        steps=15,
+        sol_tau=1.2,
+        sol_exact_mode="off",
+        auto_megapixels="1 MP",
+        turbo_variant=LIGHTX2V_FUSION_4STEP_FULL,
+        sla_preset="Fast",
+        text_encoder=default_text_encoder(),
+    ),
+    "10Eros": SamplingSettings(
+        steps=8,
+        sol_tau=1.2,
+        sol_exact_mode="off",
+        auto_megapixels="1 MP",
+        turbo_variant=BUILTIN_TURBO,
+        sla_preset="Balanced",
+        text_encoder=default_text_encoder(),
+    ),
 }
+PRESET_CHOICES = tuple(PRESETS)
 
 
 def preset_settings(name: str, mode: str) -> SamplingSettings:
-    baseline = PRESETS.get(name, PRESETS["Balanced"])
-    if mode == "Turbo":
+    baseline = PRESETS.get(name, PRESETS[DEFAULT_PRESET])
+    if mode == "Turbo" or is_baked_turbo_profile(PRESET_MODEL_PROFILES.get(name)):
         return replace(
             baseline, steps=TURBO_STEPS[baseline.turbo_variant], scheduler="simple"
         )
@@ -115,10 +160,10 @@ class GenerationRequest:
     sampling: SamplingSettings = field(default_factory=SamplingSettings)
     output: OutputSettings = field(default_factory=OutputSettings)
     finishing: FinishingSettings = field(default_factory=FinishingSettings)
-    preset: str = "Singularity"
+    preset: str = DEFAULT_PRESET
     generation_mode: str = "Turbo"
     mode: str = "Text to video"
-    model_profile: str = "Singularity"
+    model_profile: str = PRESET_MODEL_PROFILES[DEFAULT_PRESET]
     cache_mode: str = "Spectrum"
     use_trt_vae: bool = False
     use_int8_vae: bool = False
@@ -226,6 +271,26 @@ def resolve_settings(
     except ValueError as exc:
         issues.append(str(exc))
 
+    baked_turbo = is_baked_turbo_profile(request.model_profile)
+    if baked_turbo:
+        generation_mode = adjusted(
+            "generation_mode",
+            generation_mode,
+            "Turbo",
+            "10Eros v1.0 has Turbo distillation baked into the base weights.",
+        )
+        inactive.add("generation_mode")
+        sampling = replace(
+            sampling,
+            turbo_variant=adjusted(
+                "turbo_variant",
+                sampling.turbo_variant,
+                BUILTIN_TURBO,
+                "10Eros v1.0 uses built-in Turbo without an external Turbo LoRA.",
+            ),
+        )
+        inactive.add("turbo_variant")
+
     if generation_mode == "Turbo":
         # Resolve legacy and unknown labels here so every later check sees the
         # adapter that the workflow will actually load.
@@ -238,6 +303,9 @@ def resolve_settings(
             "Renamed Turbo variant." if sampling.turbo_variant in LEGACY_TURBO_VARIANTS
             else "Unknown Turbo variant; using the default adapter.",
         ))
+        if not baked_turbo and sampling.turbo_variant == BUILTIN_TURBO:
+            issues.append(BUILTIN_TURBO_REQUIRES_BAKED_MESSAGE)
+    builtin_turbo = generation_mode == "Turbo" and sampling.turbo_variant == BUILTIN_TURBO
     pika = generation_mode == "Turbo" and sampling.turbo_variant == PIKA_FLEX
     if pika:
         sampling = replace(
@@ -304,6 +372,23 @@ def resolve_settings(
         )
     if not finishing.latent_upscale:
         inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
+    elif baked_turbo:
+        finishing = replace(
+            finishing,
+            latent_upscale_method=adjusted(
+                "latent_upscale_method",
+                finishing.latent_upscale_method,
+                "Full-frame refinement",
+                BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE,
+            ),
+            latent_upscale_refine_lora=adjusted(
+                "latent_upscale_refine_lora",
+                finishing.latent_upscale_refine_lora,
+                "Same as generation",
+                BAKED_TURBO_NO_EXTERNAL_REFINE_MESSAGE,
+            ),
+        )
+        inactive.update({"latent_upscale_method", "latent_upscale_refine_lora"})
     elif finishing.latent_upscale_method in {H3_REGENERATE_16, H3_REGENERATE_384}:
         refine_steps = adjusted(
             "latent_upscale_refine_steps",
@@ -330,10 +415,12 @@ def resolve_settings(
         inactive.add("auto_megapixels")
     if request.mode != "First / last frame" or request.output.result_format != "Image":
         inactive.add("image_edit_size")
-    minimum = 4 if generation_mode == "Turbo" else 10
+    minimum = BUILTIN_TURBO_MIN_STEPS if builtin_turbo else 4 if generation_mode == "Turbo" else 10
     if sampling.steps < minimum:
         issues.append(
-            f"{generation_mode} requires at least {minimum} sampling steps."
+            f"{BUILTIN_TURBO} requires at least {minimum} sampling steps."
+            if builtin_turbo
+            else f"{generation_mode} requires at least {minimum} sampling steps."
         )
     refine_limit = (
         6
@@ -428,12 +515,42 @@ def resolve_settings(
 def preset_vae_settings(preset: str) -> dict[str, Any]:
     decoder = {
         "Singularity": VideoDecoder.SOL_INT8,
+        "10Eros": VideoDecoder.SOL_INT8,
         "Fast": VideoDecoder.SOL_INT8,
     }.get(preset, VideoDecoder.OFFICIAL_INT8)
     return {
         "video_encoder": "LightVAE Lite" if preset in {"Singularity", "Fast"} else "Original",
         **decoder.workflow_flags(),
     }
+
+
+def _external_turbo_variant(preset: str) -> str:
+    candidate = PRESETS.get(preset, PRESETS[DEFAULT_PRESET]).turbo_variant
+    return LIGHTX2V_FUSION_8STEP_FULL if candidate == BUILTIN_TURBO else candidate
+
+
+def _apply_baked_turbo_defaults(
+    current: dict[str, Any], *, include_sampling: bool = True
+) -> str:
+    current["generation_mode"] = "Turbo"
+    current["latent_upscale_refine_lora"] = "Same as generation"
+    current["latent_upscale_method"] = "Full-frame refinement"
+    if include_sampling:
+        current.update(
+            turbo_variant=BUILTIN_TURBO,
+            steps=TURBO_STEPS[BUILTIN_TURBO],
+            scheduler="simple",
+        )
+    return "Turbo"
+
+
+def _restore_external_turbo_variant(current: dict[str, Any], mode: str) -> None:
+    if current.get("turbo_variant") != BUILTIN_TURBO:
+        return
+    variant = _external_turbo_variant(current.get("preset", DEFAULT_PRESET))
+    current["turbo_variant"] = variant
+    if mode == "Turbo":
+        current.update(steps=TURBO_STEPS[variant], scheduler="simple")
 
 
 def transition_modes(
@@ -452,16 +569,27 @@ def transition_modes(
         if key in current
     }
     if action == "generation_mode" and mode != previous:
-        current.update(
-            modes.get(mode)
-            or asdict(preset_settings(current.get("preset", "Singularity"), mode))
-        )
+        if is_baked_turbo_profile(current.get("model_profile")):
+            mode = current["generation_mode"] = "Turbo"
+        else:
+            current.update(
+                modes.get(mode)
+                or asdict(preset_settings(current.get("preset", DEFAULT_PRESET), mode))
+            )
+            _restore_external_turbo_variant(current, mode)
     elif action in {"preset", "restore"}:
-        preset = current.get("preset", "Singularity")
+        preset = current.get("preset", DEFAULT_PRESET)
+        if preset in PRESET_MODEL_PROFILES:
+            current["model_profile"] = PRESET_MODEL_PROFILES[preset]
+        if is_baked_turbo_profile(current.get("model_profile")):
+            mode = _apply_baked_turbo_defaults(current, include_sampling=False)
         current.update(asdict(preset_settings(preset, mode)))
         current.update(preset_vae_settings(preset))
-        if preset == "Singularity":
-            current["model_profile"] = "Singularity"
+    elif action == "model_profile":
+        if is_baked_turbo_profile(current.get("model_profile")):
+            mode = _apply_baked_turbo_defaults(current)
+        else:
+            _restore_external_turbo_variant(current, mode)
     elif action == "use_trt_vae" and current.get("use_trt_vae"):
         current["use_sol_vae"] = False
         current["lightvae_decoder"] = "none"
@@ -480,9 +608,12 @@ def transition_modes(
     elif action == "use_sol_vae" and current.get("use_sol_vae"):
         current.update(use_int8_vae=False, use_lynnreal_vae=False, use_trt_vae=False, lightvae_decoder="none")
     elif action == "turbo_variant" and mode == "Turbo":
-        current.update(
-            steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"
-        )
+        if is_baked_turbo_profile(current.get("model_profile")):
+            _apply_baked_turbo_defaults(current)
+        else:
+            current.update(
+                steps=TURBO_STEPS.get(current["turbo_variant"], 8), scheduler="simple"
+            )
     mode = current.get("generation_mode", mode)
     modes[mode] = {
         key: current[key]
