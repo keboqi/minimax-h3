@@ -206,6 +206,38 @@ class TenErosTests(unittest.TestCase):
         self.assertEqual(back_to_quality["turbo_variant"], LIGHTX2V_FUSION_8STEP_FULL)
         self.assertEqual(back_to_quality["steps"], 8)
 
+    def test_mode_switch_restores_preset_and_manual_base_profile(self):
+        for profile in ("Quality", "Speed"):
+            with self.subTest(profile=profile):
+                turbo = dict(UI_DEFAULTS, preset="Balanced", model_profile=profile)
+                memory, values = transition_modes(None, turbo, "edit")
+                memory, values = transition_modes(memory, dict(values, generation_mode="Normal"), "generation_mode")
+                memory, values = transition_modes(memory, dict(values, preset="Quality"), "preset")
+                self.assertEqual(values["model_profile"], "Original")
+                _, values = transition_modes(memory, dict(values, generation_mode="Turbo"), "generation_mode")
+                self.assertEqual((values["preset"], values["model_profile"], values["steps"]),
+                                 ("Balanced", profile, 8))
+
+    def test_first_normal_mode_after_switching_away_from_10eros(self):
+        for profile, preset in (("Quality", "Balanced"), ("Speed", "Fast"), ("Original", "Quality")):
+            with self.subTest(profile=profile):
+                memory, values = transition_modes(None, dict(UI_DEFAULTS, preset="10Eros"), "preset")
+                memory, values = transition_modes(memory, dict(values, model_profile=profile), "model_profile")
+                _, values = transition_modes(memory, dict(values, generation_mode="Normal"), "generation_mode")
+                self.assertEqual((values["preset"], values["model_profile"], values["steps"]),
+                                 (preset, profile, preset_settings(preset, "Normal").steps))
+                self.assertEqual(resolve_settings(GenerationRequest.from_values(values)).issues, ())
+
+    def test_saved_lite_refinement_resolves_to_matching_full_adapter(self):
+        for steps, variant in ((4, LIGHTX2V_FUSION_4STEP_FULL), (8, LIGHTX2V_FUSION_8STEP_FULL)):
+            for mode in ("Turbo", "Normal"):
+                with self.subTest(steps=steps, mode=mode):
+                    values = dict(UI_DEFAULTS, generation_mode=mode, steps=18,
+                                  latent_upscale_refine_lora=f"LightX2V Turbo Fusion v1.0 / {steps}-step Lite r32")
+                    config = resolve_refinement(values, EROS_MODELS)
+                    self.assertEqual(config["variant"], variant)
+                    self.assertEqual(config["lora"], EROS_MODELS.turbo_lora_for(values["mode"], variant))
+
     def test_builtin_turbo_policy_steps_locks_and_guards(self):
         self.assertIn(BUILTIN_TURBO, TURBO_SETTINGS)
         self.assertIn(BUILTIN_TURBO, BUILTIN_TURBO_SETTINGS)

@@ -72,6 +72,7 @@ class SamplingSettings:
 
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)
+MODE_MEMORY_FIELDS = (*PRESET_FIELDS, "preset", "cache_mode", "model_profile")
 PRESETS = {
     "Balanced": SamplingSettings(
         steps=18,
@@ -291,10 +292,18 @@ def resolve_settings(
         )
         inactive.add("turbo_variant")
 
+    from .catalog import LEGACY_TURBO_VARIANTS
+
+    refine_variant = finishing.latent_upscale_refine_lora
+    if refine_variant in LEGACY_TURBO_VARIANTS:
+        finishing = replace(finishing, latent_upscale_refine_lora=adjusted(
+            "latent_upscale_refine_lora", refine_variant, LEGACY_TURBO_VARIANTS[refine_variant],
+            "Renamed refinement LoRA.",
+        ))
+
     if generation_mode == "Turbo":
         # Resolve legacy and unknown labels here so every later check sees the
         # adapter that the workflow will actually load.
-        from .catalog import LEGACY_TURBO_VARIANTS
         from .policy import normalize_turbo_variant
 
         turbo_variant = normalize_turbo_variant(sampling.turbo_variant)
@@ -562,21 +571,30 @@ def transition_modes(
     mode = values.get("generation_mode", "Turbo")
     previous = memory.get("active", mode)
     current = dict(values)
-    # Input values on a mode event still contain the outgoing mode's settings.
-    modes[previous] = {
-        key: current[key]
-        for key in (*PRESET_FIELDS, "preset", "cache_mode")
-        if key in current
-    }
     if action == "generation_mode" and mode != previous:
+        # Only a mode event carries the outgoing controls intact. A preset or
+        # model edit that forces Turbo already carries the new preset or model.
+        modes[previous] = {key: current[key] for key in MODE_MEMORY_FIELDS if key in current}
         if is_baked_turbo_profile(current.get("model_profile")):
             mode = current["generation_mode"] = "Turbo"
         else:
-            current.update(
-                modes.get(mode)
-                or asdict(preset_settings(current.get("preset", DEFAULT_PRESET), mode))
-            )
-            _restore_external_turbo_variant(current, mode)
+            remembered = modes.get(mode)
+            if remembered:
+                current.update(remembered)
+                # Older mode memories only recorded the preset.
+                if "model_profile" not in remembered and remembered.get("preset") in PRESET_MODEL_PROFILES:
+                    profile = PRESET_MODEL_PROFILES[remembered["preset"]]
+                    if not is_baked_turbo_profile(profile) or remembered.get("turbo_variant") == BUILTIN_TURBO:
+                        current["model_profile"] = profile
+            else:
+                preset = current.get("preset", DEFAULT_PRESET)
+                if mode == "Normal" and is_baked_turbo_profile(PRESET_MODEL_PROFILES.get(preset)):
+                    preset = next((name for name, profile in PRESET_MODEL_PROFILES.items()
+                                   if profile == current.get("model_profile")), DEFAULT_PRESET)
+                    current["preset"] = preset
+                current.update(asdict(preset_settings(preset, mode)))
+            if not is_baked_turbo_profile(current.get("model_profile")):
+                _restore_external_turbo_variant(current, mode)
     elif action in {"preset", "restore"}:
         preset = current.get("preset", DEFAULT_PRESET)
         if preset in PRESET_MODEL_PROFILES:
@@ -615,11 +633,7 @@ def transition_modes(
                 steps=TURBO_STEPS.get(current["turbo_variant"], 8), scheduler="simple"
             )
     mode = current.get("generation_mode", mode)
-    modes[mode] = {
-        key: current[key]
-        for key in (*PRESET_FIELDS, "preset", "cache_mode")
-        if key in current
-    }
+    modes[mode] = {key: current[key] for key in MODE_MEMORY_FIELDS if key in current}
     return {"active": mode, "modes": modes}, current
 
 

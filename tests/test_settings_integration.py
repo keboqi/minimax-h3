@@ -65,19 +65,25 @@ class MigrationTests(unittest.TestCase):
         self.assertFalse(values["h3.stage_model_offload"])
 
     def test_mode_preferences_validate_on_restore(self):
+        components = self.components()
+        components["h3.model_profile"] = SimpleNamespace(
+            value="Quality", choices=["Quality", "Original", "Speed"]
+        )
         _, memory = restore_preferences(
             {
                 "schema_version": 4,
                 "values": {"h3.steps": 9},
                 "mode_memory": {
-                    "modes": {"Normal": {"steps": 22}, "Turbo": {"steps": 999}},
+                    "modes": {"Normal": {"steps": 22, "model_profile": "Speed"}, "Turbo": {"steps": 999}},
                     "offload_preference": False,
                 },
             },
-            self.components(),
+            components,
         )
         self.assertEqual(memory["modes"]["Normal"]["steps"], 22)
         self.assertEqual(memory["modes"]["Turbo"]["steps"], 4)
+        self.assertEqual(memory["modes"]["Normal"]["model_profile"], "Speed")
+        self.assertNotIn("model_profile", memory["modes"]["Turbo"])
         self.assertFalse(memory["offload_preference"])
 
     def test_persistence_allowlist_excludes_secrets_and_outputs(self):

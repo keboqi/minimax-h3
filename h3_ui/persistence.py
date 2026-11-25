@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import gradio as gr
-from h3_app.settings import valid_preference, PRESET_FIELDS
+from h3_app.settings import MODE_MEMORY_FIELDS, valid_preference
 from h3_gpu import attention_choices, is_a100, normalize_attention_mode
 from .settings_controller import SETTING_NAMES
 
@@ -279,8 +279,8 @@ def restore_preferences(saved, components):
                         components["h3." + name],
                         candidate.get(name, restored.get("h3." + name)),
                     )
-                    for name in (*PRESET_FIELDS, "preset", "cache_mode")
-                    if "h3." + name in components
+                    for name in MODE_MEMORY_FIELDS
+                    if "h3." + name in components and (name != "model_profile" or name in candidate)
                 }
     active = restored.get("h3.generation_mode", "Turbo")
     memory = {"active": active, "modes": modes}
