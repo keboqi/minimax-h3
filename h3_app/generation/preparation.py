@@ -716,6 +716,7 @@ def prepare_h3(
             use_turbo=turbo.use_turbo,
             turbo_variant=turbo.selected_turbo,
             model_filename=selected_model,
+            text_encoder_name=selected_text_encoder,
             turbo_lora_filename=turbo.turbo_lora_name or "",
             latent_upscale=bool(request.finishing.latent_upscale),
             latent_upscale_method=latent.method,

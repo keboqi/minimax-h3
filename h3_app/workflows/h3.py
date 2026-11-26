@@ -60,7 +60,7 @@ from h3_app.catalog import (
     H3_REGENERATE_SIGMAS,
 )
 from h3_app.errors import H3Error
-from h3_models import MODEL_SPECS
+from h3_models import MODEL_SPECS, QWEN35_H3_FILENAMES
 from h3_app.workflows.regenerate import add_regenerate_model
 from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 from h3_app.graph import Graph
@@ -179,6 +179,14 @@ def add_turbo_model_patch(
         enabled=True,
     )
     return Graph.out(fused_modulation)
+
+
+def add_h3_clip(graph: Graph, filename: str) -> str:
+    clip = graph.add("CLIPLoader", clip_name=filename, type="minimax", device="default")
+    if filename in QWEN35_H3_FILENAMES:
+        clip = graph.add("Qwen35H3Apply", clip=Graph.out(clip), use_lora=True,
+                         auto_download=False, weights_version="v2 (latest)", lora_strength=1.0)
+    return clip
 
 
 def add_model_stack(
@@ -436,12 +444,7 @@ def add_model_stack(
         )
         model_ref = Graph.out(shifted)
 
-    clip = graph.add(
-        "CLIPLoader",
-        clip_name=text_encoder_name or models.text_encoder,
-        type="minimax",
-        device="default",
-    )
+    clip = add_h3_clip(graph, text_encoder_name or models.text_encoder)
     if lightvae_decoder not in {"none", "lite", "int8"}:
         raise H3Error("Unsupported LightVAE decoder.")
     if sum((use_sol_vae, use_int8_vae, use_trt_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
@@ -1625,6 +1628,7 @@ def required_nodes_for(
     image_vae: str = DEFAULT_IMAGE_VAE,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
+    text_encoder_name: str = "",
 ) -> set[str]:
     result_format = normalize_result_format(result_format)
     common = {
@@ -1636,6 +1640,8 @@ def required_nodes_for(
         "BasicScheduler",
         "SamplerCustomAdvanced",
     }
+    if text_encoder_name in QWEN35_H3_FILENAMES:
+        common.add("Qwen35H3Apply")
     if result_format == "Image":
         common |= {"VAEDecode", "SaveImage"}
         if normalize_image_vae(image_vae) == SINGLE_FRAME_IMAGE_VAE:

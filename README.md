@@ -147,8 +147,8 @@ backends; GPU inference and deployment are validated separately.
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Switchable video/image/audio gallery with thumbnails and lazy previews
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
-- Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
-- Optional model offload at every H3 stage boundary, automatically required for BF16
+- Selectable Qwen3.5 9B BF16 and INT8 ConvRot encoders with the [MiniMax H3 v2 projection and LoRA](https://huggingface.co/Alissonerdx/Qwen3.5-9B-Minimax-H3), alongside the official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
+- Optional model offload at every H3 stage boundary, automatically required for the 32B BF16 encoder
 - Default-on reuse of unchanged prompt and image/audio/video conditioning through
   content-addressed ComfyUI input staging
 - Optional [face refine](docs/features/h3.md#face-refine) pass for small faces in wide shots

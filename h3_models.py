@@ -36,6 +36,8 @@ TURBO_FUSION_REVISION = "660ce29d8082a504bc14bf6b7299e60441c05633"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TRT_VAE_REPO = "lihaoyun6/MiniMax-H3-VAE-ONNX"
+QWEN35_H3_WEIGHTS_REPO = "Alissonerdx/Qwen3.5-9B-Minimax-H3"
+QWEN35_H3_WEIGHTS_REVISION = "d47830a2576ffac2f20ff31bcf754d73250dea33"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
@@ -506,6 +508,16 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "text_encoders",
         "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "Official Qwen3-VL 32B INT8 ConvRot text encoder",
+    ),
+    "qwen35_h3_projection": ModelSpec(
+        QWEN35_H3_WEIGHTS_REPO, "clip_projections", "minimax_h3_qwen3.5_9b_projection_v2.safetensors",
+        "Qwen3.5 9B MiniMax H3 projection v2", revision=QWEN35_H3_WEIGHTS_REVISION,
+        expected_sha256="2975d7cdb68c29077b63ec5072a727bbcc36d7b1d46d394f64332a33e0581366",
+    ),
+    "qwen35_h3_lora": ModelSpec(
+        QWEN35_H3_WEIGHTS_REPO, "clip_projections", "minimax_h3_qwen3.5_9b_lora_v2.safetensors",
+        "Qwen3.5 9B MiniMax H3 lora v2", revision=QWEN35_H3_WEIGHTS_REVISION,
+        expected_sha256="37f690a8896d6c630c2458a7960b4a4fa2c394f112a73173c311e7e5f61b4e9a",
     ),
     "text_encoder_bf16": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -1100,17 +1112,20 @@ H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Quality (FP32)": "h3_latent_upscaler_3d_fp32",
 }
 DEFAULT_H3_LATENT_UPSCALER_MODEL = "Quality (FP32)"
+QWEN35_H3_ENCODERS = {
+    "Qwen3.5 9B BF16": "moss_image_text_bf16",
+    "Qwen3.5 9B INT8 ConvRot": "moss_image_text_int8",
+}
+QWEN35_H3_FILENAMES = frozenset(MODEL_SPECS[key].local_name for key in QWEN35_H3_ENCODERS.values())
+QWEN35_H3_ADAPTER_KEYS = ("qwen35_h3_projection", "qwen35_h3_lora")
 H3_TEXT_ENCODER_CHOICES = {
     "NVFP4 / AWQ": "text_encoder",
     "INT8 ConvRot": "text_encoder_int8",
     "BF16": "text_encoder_bf16",
+    **QWEN35_H3_ENCODERS,
 }
 DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_int8"
-H3_OPTIONAL_TEXT_ENCODER_KEYS = (
-    "text_encoder",
-    "text_encoder_int8",
-    "text_encoder_bf16",
-)
+H3_OPTIONAL_TEXT_ENCODER_KEYS = tuple(H3_TEXT_ENCODER_CHOICES.values())
 LTX25_MODEL_CHOICES = {
     "INT8 ConvRot": "ltx25_distilled_int8",
     "BF16": "ltx25_distilled",
@@ -1321,6 +1336,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "veda_t2va",
     "veda_r2va",
     "semantic_bridge_v1",
+    *QWEN35_H3_ADAPTER_KEYS,
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
     "video_vae_lynnreal_int8",
@@ -2497,6 +2513,7 @@ def selftest() -> None:
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
+        *QWEN35_H3_ADAPTER_KEYS,
         "video_vae",
         "video_vae_int8",
         "video_vae_lynnreal_int8",
@@ -2633,6 +2650,8 @@ def selftest() -> None:
         "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "BF16": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+        "Qwen3.5 9B BF16": "qwen3.5_9b_bf16.safetensors",
+        "Qwen3.5 9B INT8 ConvRot": "qwen3.5_9b_int8_convrot.safetensors",
     }
     assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {preload_encoder}).isdisjoint(
         PRELOAD_MODEL_KEYS

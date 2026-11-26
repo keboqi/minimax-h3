@@ -112,7 +112,7 @@
     [3, "easycache_end", "End percent", "num", {when: is("cache_mode", "EasyCache"), range: "0.1 – 1.0"}],
     [3, "easycache_verbose", "Log EasyCache decisions", "bool", {when: is("cache_mode", "EasyCache"), hint: "Logs skipped-step counts and estimated speedup in ComfyUI."}],
 
-    [4, "text_encoder", "Text encoder", "choice", {hint: "BF16 is approximately 51.5 GB. NVFP4/AWQ and INT8 ConvRot download on first use."}],
+    [4, "text_encoder", "Text encoder", "choice", {hint: "32B BF16 is 51.5 GB. Qwen3.5 9B encodes text and static images. Its encoder and H3 adapters download on first use."}],
     [4, "stage_model_offload", "Offload models between H3 stages", "bool", {hint: "Unload resident models between text encoding, diffusion, latent upscaling, and VAE decoding. Required by the BF16 encoder."}],
     [4, "reuse_unchanged_inputs", "Reuse unchanged prompt and media", "bool", {hint: "Reuse matching prompt/media encoding and unchanged workflow nodes. Off forces fresh conditioning at every stage, including refinement. Sampling still reruns when the seed changes."}],
     [4, "encoder_small_input", "Qwen small input attention", "bool", {hint: "On: upstream PyTorch/basic attention. Off: the server attention backend. Applies to Qwen text and vision encoding. Changing this rebuilds conditioning on the next generation."}],

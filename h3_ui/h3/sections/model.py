@@ -99,7 +99,7 @@ def build_model_section(
                 choices=list(services.H3_TEXT_ENCODER_CHOICES),
                 value=defaults["text_encoder"],
                 label="Text encoder",
-                info="BF16 is approximately 51.5 GB. NVFP4/AWQ and INT8 ConvRot download on first use.",
+                info="32B BF16 is 51.5 GB. Qwen3.5 9B encodes text and static images. Its encoder and H3 adapters download on first use.",
             )
             stage_model_offload = gr.Checkbox(
                 value=defaults["stage_model_offload"],

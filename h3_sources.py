@@ -1,6 +1,8 @@
 """Pinned external source catalog shared by local and Modal provisioning."""
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
+QWEN35_H3_REPO = "https://github.com/alisson-anjos/ComfyUI-Qwen3.5-H3.git"
+QWEN35_H3_REF = "de9835a31a0c200b6149bb84e84d2df015c2b622"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
 KJNODES_REF = "57105374f47d0fbb49c9c3926fb981702e0a4b5c"

@@ -22,7 +22,7 @@ from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig
 from h3_app.policy import snap32, turbo_sampler_name, turbo_uses_custom_nodes
 from h3_app.refinement import resolve_refinement
-from h3_models import MODEL_SPECS
+from h3_models import MODEL_SPECS, QWEN35_H3_FILENAMES
 from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 
 
@@ -59,6 +59,8 @@ def required_h3_regenerate_nodes(models: ModelConfig | None = None, refinement=N
         H3_REFINEMENT_COMPILER_GUARD_NODE,
     }
     required |= {"LoraLoaderModelOnly", "KSamplerSelect", "ManualSigmas", "SamplerCustomAdvanced"}
+    if models and models.text_encoder in QWEN35_H3_FILENAMES:
+        required.add("Qwen35H3Apply")
     profile = models.default_profile if models else None
     if models and "convrot" in models.profile(profile).fl2va.lower():
         required.add(CHUNK_FEED_FORWARD_NODE)
@@ -92,7 +94,8 @@ def build_h3_regenerate_graph(
         vae_ref = Graph.out(graph.add("VAELoader", vae_name=models.video_vae))
         decoder_ref = vae_ref
         audio_vae_ref = Graph.out(graph.add("VAELoader", vae_name=models.audio_vae))
-        clip_ref = Graph.out(graph.add("CLIPLoader", clip_name=models.text_encoder, type="minimax", device="default"))
+        from .h3 import add_h3_clip
+        clip_ref = Graph.out(add_h3_clip(graph, models.text_encoder))
     encoded = graph.add("H3RegenerateEncodeVideo", images=Graph.out(resized), vae=vae_ref)
     if config:
         from .h3 import h3_conditioning_cache_key

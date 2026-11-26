@@ -41,6 +41,8 @@ from h3_models import (
     CQ_IMAGE_MODEL_KEYS,
     DEFAULT_LTX25_MODEL,
     MODEL_SPECS,
+    QWEN35_H3_ADAPTER_KEYS,
+    QWEN35_H3_ENCODERS,
     PROFILE_LABELS,
     PROFILE_MODEL_KEYS,
     QWEN_IMAGE21_MODEL_CHOICES,
@@ -386,9 +388,10 @@ def ensure_h3_text_encoder(
     model_key, filename, requires_offload = h3_text_encoder_settings(
         models, model_choice
     )
+    adapters = QWEN35_H3_ADAPTER_KEYS if model_key in QWEN35_H3_ENCODERS.values() else ()
     ensure_models(
-        (model_key,), runtime=runtime, log_prefix="[h3-text-encoder-on-demand]",
-        files={model_key: filename}, verify_always=True,
+        (model_key, *adapters), runtime=runtime, log_prefix="[h3-text-encoder-on-demand]",
+        files={model_key: filename, **spec_files(adapters)}, verify_always=True,
         failure="On-demand H3 text encoder download did not produce {name}.",
     )
     return filename, requires_offload
@@ -778,7 +781,9 @@ def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: Ru
     encoder_key = next((key for key, spec in MODEL_SPECS.items()
                         if spec.folder == "text_encoders" and spec.local_name == text_encoder), None)
     if encoder_key:
-        keys += (encoder_key,)
+        adapters = QWEN35_H3_ADAPTER_KEYS if encoder_key in QWEN35_H3_ENCODERS.values() else ()
+        keys += (encoder_key, *adapters)
+        files.update(spec_files(adapters))
         files[encoder_key] = text_encoder
     elif not model_file_is_ready(_models_root(runtime) / "text_encoders" / text_encoder):
         raise H3Error(f"Configured H3 text encoder is missing: {text_encoder}")

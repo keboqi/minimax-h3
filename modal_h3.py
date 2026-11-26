@@ -137,6 +137,8 @@ from h3_sources import (  # noqa: E402
     SPECTRUM_REPO,
     SPECTRUM_QWEN_REF,
     SPECTRUM_QWEN_REPO,
+    QWEN35_H3_REF,
+    QWEN35_H3_REPO,
     SPECTRUM_MOSS_REF,
     SPECTRUM_MOSS_REPO,
     VIDEO_DEPTH_REF,
@@ -340,6 +342,8 @@ def build(revision: str) -> None:
     _clone(SPECTRUM_QWEN_REPO, spectrum_qwen_dir, ref=SPECTRUM_QWEN_REF)
     patch_qwen_spectrum_node(spectrum_qwen_dir)
     _print_git_revision(spectrum_qwen_dir)
+
+    _clone(QWEN35_H3_REPO, Path(COMFY) / "custom_nodes" / "ComfyUI-Qwen3.5-H3", ref=QWEN35_H3_REF)
 
     spectrum_moss_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-MOSS"
     _clone(SPECTRUM_MOSS_REPO, spectrum_moss_dir, ref=SPECTRUM_MOSS_REF)

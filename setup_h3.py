@@ -45,6 +45,8 @@ from h3_sources import (
     SPECTRUM_REPO,
     SPECTRUM_QWEN_REF,
     SPECTRUM_QWEN_REPO,
+    QWEN35_H3_REF,
+    QWEN35_H3_REPO,
     SPECTRUM_MOSS_REF,
     SPECTRUM_MOSS_REPO,
     VIDEO_DEPTH_REF,
@@ -985,6 +987,7 @@ def sync_external_nodes(
 
     official_nodes = (
         (LTXVIDEO_REPO, LTXVIDEO_REF, "ComfyUI-LTXVideo"),
+        (QWEN35_H3_REPO, QWEN35_H3_REF, "ComfyUI-Qwen3.5-H3"),
         (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
         (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),
         (VIDEO_DEPTH_REPO, VIDEO_DEPTH_REF, "ComfyUI-Video-Depth-Anything"),

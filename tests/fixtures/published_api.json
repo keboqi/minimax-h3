@@ -421,7 +421,9 @@
       "enum": [
         "NVFP4 / AWQ",
         "INT8 ConvRot",
-        "BF16"
+        "BF16",
+        "Qwen3.5 9B BF16",
+        "Qwen3.5 9B INT8 ConvRot"
       ]
     },
     "type_6": {
